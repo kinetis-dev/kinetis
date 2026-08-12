@@ -392,45 +392,75 @@ final class Hydrator
      */
     private static function resolveListValue(string $name, mixed $value, array $parameter): array
     {
-        if (is_array($value)) {
-            if ($parameter['listItemPlan'] === null) {
-                // Self-referencing list guard: same reasoning as above.
-                return [$value, []];
+        if (!is_array($value)) {
+            if (is_scalar($value)) {
+                return [null, [$name => ['must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
             }
 
-            /** @var HydrationPlan $listItemPlan */
-            $listItemPlan = $parameter['listItemPlan'];
-            $items = [];
+            // null, or already an array-like object — pass through unchanged.
+            return [$value, []];
+        }
+
+        if ($parameter['listItemPlan'] === null) {
+            // Self-referencing list guard: same reasoning as above.
+            return [$value, []];
+        }
+
+        /** @var HydrationPlan $listItemPlan */
+        $listItemPlan = $parameter['listItemPlan'];
+        $items = [];
+        $errors = [];
+
+        foreach ($value as $index => $item) {
+            [$hydratedItem, $itemErrors] = self::hydrateListItem($listItemPlan, $name, $index, $item);
+
+            if ($itemErrors !== []) {
+                foreach ($itemErrors as $errorKey => $messages) {
+                    $errors[$errorKey] = $messages;
+                }
+
+                continue;
+            }
+
+            $items[$index] = $hydratedItem;
+        }
+
+        if ($errors !== []) {
+            return [null, $errors];
+        }
+
+        return [array_values($items), []];
+    }
+
+    /**
+     * One #[ListOf] element's own hydration, split out of resolveListValue()'s
+     * loop body once that whole method's cognitive complexity grew past the
+     * linter's threshold — a pure move, no behavior change: a non-array
+     * element still passes through unchanged, a hydration failure still
+     * surfaces under the identical dotted "field.index.nestedField" key, and
+     * a failed element is still simply absent from the returned items rather
+     * than added as null.
+     *
+     * @param HydrationPlan $listItemPlan
+     * @return array{0: mixed, 1: array<string, list<string>>}
+     */
+    private static function hydrateListItem(array $listItemPlan, string $name, int|string $index, mixed $item): array
+    {
+        if (!is_array($item)) {
+            return [$item, []];
+        }
+
+        try {
+            return [self::hydrateFromPlan($listItemPlan, $item), []];
+        } catch (ValidationException $e) {
             $errors = [];
 
-            foreach ($value as $index => $item) {
-                if (!is_array($item)) {
-                    $items[$index] = $item;
-                    continue;
-                }
-
-                try {
-                    $items[$index] = self::hydrateFromPlan($listItemPlan, $item);
-                } catch (ValidationException $e) {
-                    foreach ($e->errors as $nestedField => $messages) {
-                        $errors["{$name}.{$index}.{$nestedField}"] = $messages;
-                    }
-                }
+            foreach ($e->errors as $nestedField => $messages) {
+                $errors["{$name}.{$index}.{$nestedField}"] = $messages;
             }
 
-            if ($errors !== []) {
-                return [null, $errors];
-            }
-
-            return [array_values($items), []];
+            return [null, $errors];
         }
-
-        if (is_scalar($value)) {
-            return [null, [$name => ['must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
-        }
-
-        // null, or already an array-like object — pass through unchanged.
-        return [$value, []];
     }
 
     /**
