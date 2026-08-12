@@ -44,19 +44,40 @@ function loadManifest(): array
 }
 
 /**
+ * @param array{major: int, minor: int, patch: int} $v
+ */
+function majorMinorConstraint(string $version): string
+{
+    $v = parseSemver($version);
+
+    return "^{$v['major']}.{$v['minor']}";
+}
+
+/**
  * @param array<string, mixed> $pkg
- * @param array<string, mixed> $defaults
+ * @param array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} $manifest
  * @return array<string, mixed>
  */
-function assembleComposerJson(array $pkg, array $defaults): array
+function assembleComposerJson(array $pkg, array $manifest, bool $release = false): array
 {
+    $defaults = $manifest['defaults'];
     $requiresSiblings = $pkg['requires'] ?? [];
     $requiresDevSiblings = $pkg['requiresDev'] ?? [];
+
+    // Dev mode: every sibling is "dev-main", resolved via a path repo.
+    // Release mode: every sibling resolves to a real ^X.Y constraint,
+    // read from that sibling's own *current* version in the manifest —
+    // not whether it's also releasing this round. No repositories key
+    // at all, since there's nothing local to point at once this ships
+    // to its own standalone repo.
+    $siblingConstraint = $release
+        ? static fn (string $sibling): string => majorMinorConstraint($manifest['packages'][$sibling]['version'])
+        : static fn (string $sibling): string => 'dev-main';
 
     $require = ['php' => $defaults['phpVersion']];
 
     foreach ($requiresSiblings as $sibling) {
-        $require["kinetis/{$sibling}"] = 'dev-main';
+        $require["kinetis/{$sibling}"] = $siblingConstraint($sibling);
     }
 
     foreach ($pkg['require'] ?? [] as $name => $version) {
@@ -66,7 +87,7 @@ function assembleComposerJson(array $pkg, array $defaults): array
     $requireDev = [];
 
     foreach ($requiresDevSiblings as $sibling) {
-        $requireDev["kinetis/{$sibling}"] = 'dev-main';
+        $requireDev["kinetis/{$sibling}"] = $siblingConstraint($sibling);
     }
 
     if (array_key_exists('requireDevOverride', $pkg)) {
@@ -107,16 +128,19 @@ function assembleComposerJson(array $pkg, array $defaults): array
         $out['bin'] = $pkg['bin'];
     }
 
-    // repositories: requiresDev siblings first, then requires siblings —
-    // confirmed against every real composer.json, including the one
-    // package (aws-sigv4) with both kinds present at once.
-    $repoSiblings = [...$requiresDevSiblings, ...$requiresSiblings];
+    if (!$release) {
+        // repositories: requiresDev siblings first, then requires
+        // siblings — confirmed against every real composer.json,
+        // including the one package (aws-sigv4) with both kinds
+        // present at once.
+        $repoSiblings = [...$requiresDevSiblings, ...$requiresSiblings];
 
-    if ($repoSiblings !== []) {
-        $out['repositories'] = array_map(
-            static fn (string $sibling): array => ['type' => 'path', 'url' => "../{$sibling}"],
-            $repoSiblings,
-        );
+        if ($repoSiblings !== []) {
+            $out['repositories'] = array_map(
+                static fn (string $sibling): array => ['type' => 'path', 'url' => "../{$sibling}"],
+                $repoSiblings,
+            );
+        }
     }
 
     $config = ['sort-packages' => true];
@@ -140,13 +164,28 @@ function encodeComposerJson(array $data): string
     ) . "\n";
 }
 
-/** @return array<string, string> package key => generated composer.json content */
+/** @return array<string, string> package key => generated dev-mode composer.json content */
 function generateAll(array $manifest): array
 {
     $generated = [];
 
     foreach ($manifest['packages'] as $key => $pkg) {
-        $generated[$key] = encodeComposerJson(assembleComposerJson($pkg, $manifest['defaults']));
+        $generated[$key] = encodeComposerJson(assembleComposerJson($pkg, $manifest, release: false));
+    }
+
+    return $generated;
+}
+
+/**
+ * @param list<string> $keys
+ * @return array<string, string> package key => generated release-mode composer.json content
+ */
+function generateRelease(array $manifest, array $keys): array
+{
+    $generated = [];
+
+    foreach ($keys as $key) {
+        $generated[$key] = encodeComposerJson(assembleComposerJson($manifest['packages'][$key], $manifest, release: true));
     }
 
     return $generated;
@@ -292,6 +331,26 @@ function runBump(array $manifest, array $argv): int
     return 0;
 }
 
+function runRelease(array $manifest, string $keysArg): int
+{
+    $keys = explode(',', $keysArg);
+
+    foreach ($keys as $key) {
+        if (!isset($manifest['packages'][$key])) {
+            fwrite(STDERR, "Unknown package: {$key}\n");
+
+            return 1;
+        }
+    }
+
+    foreach (generateRelease($manifest, $keys) as $key => $content) {
+        echo "===== {$key} =====\n";
+        echo $content;
+    }
+
+    return 0;
+}
+
 function generatorMain(array $argv): int
 {
     $manifest = loadManifest();
@@ -299,6 +358,12 @@ function generatorMain(array $argv): int
 
     if (in_array('--check', $args, true)) {
         return runCheck($manifest);
+    }
+
+    foreach ($args as $arg) {
+        if (str_starts_with($arg, '--release=')) {
+            return runRelease($manifest, substr($arg, strlen('--release=')));
+        }
     }
 
     if (array_filter($args, static fn (string $a): bool => str_starts_with($a, '--bump=') || str_starts_with($a, '--set-version=')) !== []) {

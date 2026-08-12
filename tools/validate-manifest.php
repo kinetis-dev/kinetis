@@ -22,7 +22,7 @@ declare(strict_types=1);
  * Usage: php tools/validate-manifest.php
  */
 
-require __DIR__ . '/generate-composer.php';
+require_once __DIR__ . '/generate-composer.php';
 
 /**
  * @param array<string, array<string, mixed>> $packages
@@ -200,7 +200,7 @@ function checkVersionBumpCompleteness(?array $oldManifest, array $newManifest): 
     return $problems;
 }
 
-function main(): int
+function validatorMain(): int
 {
     $manifest = loadManifest();
     $ok = true;
@@ -257,5 +257,5 @@ function main(): int
 }
 
 if (realpath($argv[0]) === __FILE__) {
-    exit(main());
+    exit(validatorMain());
 }
