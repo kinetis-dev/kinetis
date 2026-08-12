@@ -1,18 +1,11 @@
 name: Deploy Docs
 
-# TEMPORARILY DISABLED — a temp measure. The `push` trigger below is
-# commented out, replaced with `workflow_dispatch` so the file stays
-# valid (a workflow file with no real `on:`/`jobs:` content fails to
-# parse at all, showing as a failed run on every push instead of simply
-# not running). Re-enable by uncommenting `push` and removing
-# `workflow_dispatch`.
 on:
-  workflow_dispatch: {}
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - 'docs/**'
-  #     - '.github/workflows/deploy-docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/deploy-docs.yml'
 
 permissions:
   id-token: write
