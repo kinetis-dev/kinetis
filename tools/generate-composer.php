@@ -1,0 +1,305 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Generates each packages/<name>/composer.json from the one canonical
+ * packages.manifest.json — see CLAUDE.md and the monorepo packaging plan
+ * for the full design. Three usages:
+ *
+ *   php tools/generate-composer.php            Write every package's
+ *                                               composer.json (dev-mode:
+ *                                               path repos, dev-main).
+ *   php tools/generate-composer.php --check     Regenerate in memory,
+ *                                               diff against what's
+ *                                               committed, never write.
+ *                                               Exit 1 if anything's
+ *                                               stale.
+ *   php tools/generate-composer.php --bump=<key>[,<key>,...]|all
+ *       (--major|--minor|--patch|--set-version=<key>=<version>)
+ *                                               Force-bump one or more
+ *                                               packages' version field
+ *                                               only — nothing else in
+ *                                               the manifest changes.
+ *
+ * Never runs `composer` itself — see tools/README.md for the full
+ * edit-manifest -> regenerate -> composer update -> commit flow.
+ */
+
+const PROJECT_ROOT = __DIR__ . '/..';
+const MANIFEST_PATH = PROJECT_ROOT . '/packages.manifest.json';
+
+/** @return array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} */
+function loadManifest(): array
+{
+    $json = file_get_contents(MANIFEST_PATH);
+
+    if ($json === false) {
+        fwrite(STDERR, "Could not read " . MANIFEST_PATH . "\n");
+        exit(1);
+    }
+
+    /** @var array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} */
+    return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+}
+
+/**
+ * @param array<string, mixed> $pkg
+ * @param array<string, mixed> $defaults
+ * @return array<string, mixed>
+ */
+function assembleComposerJson(array $pkg, array $defaults): array
+{
+    $requiresSiblings = $pkg['requires'] ?? [];
+    $requiresDevSiblings = $pkg['requiresDev'] ?? [];
+
+    $require = ['php' => $defaults['phpVersion']];
+
+    foreach ($requiresSiblings as $sibling) {
+        $require["kinetis/{$sibling}"] = 'dev-main';
+    }
+
+    foreach ($pkg['require'] ?? [] as $name => $version) {
+        $require[$name] = $version;
+    }
+
+    $requireDev = [];
+
+    foreach ($requiresDevSiblings as $sibling) {
+        $requireDev["kinetis/{$sibling}"] = 'dev-main';
+    }
+
+    if (array_key_exists('requireDevOverride', $pkg)) {
+        $requireDev = [...$requireDev, ...$pkg['requireDevOverride']];
+    } else {
+        $requireDev = [...$requireDev, ...$defaults['requireDev'], ...($pkg['requireDevExtra'] ?? [])];
+    }
+
+    ksort($requireDev, SORT_STRING);
+
+    $out = [
+        'name' => $pkg['name'],
+        'description' => $pkg['description'],
+        'type' => $pkg['type'] ?? $defaults['type'],
+        'license' => $defaults['license'],
+        'authors' => $defaults['authors'],
+        'require' => $require,
+        'require-dev' => $requireDev,
+    ];
+
+    if (!empty($pkg['suggest'])) {
+        $out['suggest'] = $pkg['suggest'];
+    }
+
+    $autoload = ['psr-4' => [$pkg['namespace'] => 'src/']];
+
+    if (!empty($pkg['autoloadFiles'])) {
+        $autoload['files'] = $pkg['autoloadFiles'];
+    }
+
+    $out['autoload'] = $autoload;
+
+    if (!empty($pkg['testNamespace'])) {
+        $out['autoload-dev'] = ['psr-4' => [$pkg['testNamespace'] => 'tests/']];
+    }
+
+    if (!empty($pkg['bin'])) {
+        $out['bin'] = $pkg['bin'];
+    }
+
+    // repositories: requiresDev siblings first, then requires siblings —
+    // confirmed against every real composer.json, including the one
+    // package (aws-sigv4) with both kinds present at once.
+    $repoSiblings = [...$requiresDevSiblings, ...$requiresSiblings];
+
+    if ($repoSiblings !== []) {
+        $out['repositories'] = array_map(
+            static fn (string $sibling): array => ['type' => 'path', 'url' => "../{$sibling}"],
+            $repoSiblings,
+        );
+    }
+
+    $config = ['sort-packages' => true];
+
+    if (array_key_exists('infection/infection', $requireDev)) {
+        $config['allow-plugins'] = ['infection/extension-installer' => true];
+    }
+
+    $out['config'] = $config;
+    $out['minimum-stability'] = $defaults['minimumStability'];
+    $out['prefer-stable'] = $defaults['preferStable'];
+
+    return $out;
+}
+
+function encodeComposerJson(array $data): string
+{
+    return json_encode(
+        $data,
+        JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+    ) . "\n";
+}
+
+/** @return array<string, string> package key => generated composer.json content */
+function generateAll(array $manifest): array
+{
+    $generated = [];
+
+    foreach ($manifest['packages'] as $key => $pkg) {
+        $generated[$key] = encodeComposerJson(assembleComposerJson($pkg, $manifest['defaults']));
+    }
+
+    return $generated;
+}
+
+function composerJsonPath(string $key): string
+{
+    return PROJECT_ROOT . "/packages/{$key}/composer.json";
+}
+
+function runWrite(array $manifest): int
+{
+    foreach (generateAll($manifest) as $key => $content) {
+        file_put_contents(composerJsonPath($key), $content);
+        echo "wrote packages/{$key}/composer.json\n";
+    }
+
+    return 0;
+}
+
+function runCheck(array $manifest): int
+{
+    $stale = [];
+
+    foreach (generateAll($manifest) as $key => $content) {
+        $path = composerJsonPath($key);
+        $current = is_file($path) ? file_get_contents($path) : null;
+
+        if ($current !== $content) {
+            $stale[] = $key;
+        }
+    }
+
+    if ($stale === []) {
+        echo "All " . count($manifest['packages']) . " packages match the manifest.\n";
+
+        return 0;
+    }
+
+    fwrite(STDERR, "Stale composer.json for: " . implode(', ', $stale) . "\n");
+    fwrite(STDERR, "Run: php tools/generate-composer.php\n");
+
+    return 1;
+}
+
+/** @return array{major: int, minor: int, patch: int} */
+function parseSemver(string $version): array
+{
+    if (preg_match('/^(\d+)\.(\d+)\.(\d+)$/', $version, $m) !== 1) {
+        fwrite(STDERR, "Not a plain X.Y.Z version: {$version}\n");
+        exit(1);
+    }
+
+    return ['major' => (int) $m[1], 'minor' => (int) $m[2], 'patch' => (int) $m[3]];
+}
+
+function bumpVersion(string $current, string $component): string
+{
+    $v = parseSemver($current);
+
+    return match ($component) {
+        'major' => ($v['major'] + 1) . '.0.0',
+        'minor' => "{$v['major']}." . ($v['minor'] + 1) . '.0',
+        'patch' => "{$v['major']}.{$v['minor']}." . ($v['patch'] + 1),
+        default => throw new InvalidArgumentException("Unknown bump component: {$component}"),
+    };
+}
+
+/** @param list<string> $argv */
+function runBump(array $manifest, array $argv): int
+{
+    $bumpArg = null;
+    $component = null;
+    $setVersions = [];
+
+    foreach ($argv as $arg) {
+        if (str_starts_with($arg, '--bump=')) {
+            $bumpArg = substr($arg, strlen('--bump='));
+        } elseif (in_array($arg, ['--major', '--minor', '--patch'], true)) {
+            $component = substr($arg, 2);
+        } elseif (str_starts_with($arg, '--set-version=')) {
+            [$key, $version] = explode('=', substr($arg, strlen('--set-version=')), 2);
+            $setVersions[$key] = $version;
+        }
+    }
+
+    if ($bumpArg === null && $setVersions === []) {
+        fwrite(STDERR, "Usage: --bump=<key>[,<key>,...]|all --major|--minor|--patch\n");
+        fwrite(STDERR, "   or: --set-version=<key>=<version>\n");
+
+        return 1;
+    }
+
+    $keys = [];
+
+    if ($bumpArg !== null) {
+        if ($component === null) {
+            fwrite(STDERR, "--bump requires --major, --minor, or --patch.\n");
+
+            return 1;
+        }
+
+        $keys = $bumpArg === 'all' ? array_keys($manifest['packages']) : explode(',', $bumpArg);
+    }
+
+    foreach ($keys as $key) {
+        if (!isset($manifest['packages'][$key])) {
+            fwrite(STDERR, "Unknown package: {$key}\n");
+
+            return 1;
+        }
+
+        $current = $manifest['packages'][$key]['version'];
+        $next = bumpVersion($current, $component);
+        $manifest['packages'][$key]['version'] = $next;
+        echo "{$key}: {$current} -> {$next}\n";
+    }
+
+    foreach ($setVersions as $key => $version) {
+        if (!isset($manifest['packages'][$key])) {
+            fwrite(STDERR, "Unknown package: {$key}\n");
+
+            return 1;
+        }
+
+        parseSemver($version); // validates shape, exits on failure
+        $current = $manifest['packages'][$key]['version'];
+        $manifest['packages'][$key]['version'] = $version;
+        echo "{$key}: {$current} -> {$version}\n";
+    }
+
+    file_put_contents(MANIFEST_PATH, encodeComposerJson($manifest));
+    echo "Wrote " . MANIFEST_PATH . "\n";
+
+    return 0;
+}
+
+function main(array $argv): int
+{
+    $manifest = loadManifest();
+    $args = array_slice($argv, 1);
+
+    if (in_array('--check', $args, true)) {
+        return runCheck($manifest);
+    }
+
+    if (array_filter($args, static fn (string $a): bool => str_starts_with($a, '--bump=') || str_starts_with($a, '--set-version=')) !== []) {
+        return runBump($manifest, $args);
+    }
+
+    return runWrite($manifest);
+}
+
+if (realpath($argv[0]) === __FILE__) {
+    exit(main($argv));
+}

@@ -1,0 +1,319 @@
+{
+  "defaults": {
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+      {"name": "Alon Noy"}
+    ],
+    "minimumStability": "stable",
+    "preferStable": true,
+    "phpVersion": "^8.4",
+    "requireDev": {
+      "infection/infection": "^0.34.2",
+      "phpstan/phpstan": "^2.2",
+      "phpunit/phpunit": "^11.0",
+      "vimeo/psalm": "^6.16"
+    },
+    "phpstanRules": [
+      "Kinetis\\Linting\\NoStaticPropertiesRule"
+    ]
+  },
+
+  "packages": {
+    "kinetis": {
+      "name": "kinetis/kinetis",
+      "description": "The Runtime-Aware PHP Framework",
+      "namespace": "Kinetis\\",
+      "testNamespace": "Kinetis\\Tests\\",
+      "version": "1.0.0",
+      "bin": ["bin/kinetis"],
+      "autoloadFiles": ["src/Async/functions.php"],
+      "requireDevExtra": {
+        "nikic/php-parser": "^5.0"
+      },
+      "require": {
+        "nyholm/psr7": "^1.8",
+        "nyholm/psr7-server": "^1.1",
+        "psr/container": "^2.0",
+        "psr/event-dispatcher": "^1.0",
+        "psr/http-message": "^2.0",
+        "psr/http-server-middleware": "^1.0",
+        "psr/log": "^3.0",
+        "psr/simple-cache": "^3.0",
+        "revolt/event-loop": "^1.0",
+        "vlucas/phpdotenv": "^5.6"
+      }
+    },
+
+    "persistence": {
+      "name": "kinetis/persistence",
+      "description": "Request-scoped SQL transaction safety net and connection-pool factory for Kinetis — MySQL and Postgres via amphp/mysql and amphp/postgres.",
+      "namespace": "Kinetis\\Persistence\\",
+      "testNamespace": "Kinetis\\Persistence\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "amphp/sql": "^2",
+        "amphp/mysql": "^3.1",
+        "amphp/postgres": "^2.2"
+      },
+      "requireDevExtra": {
+        "nyholm/psr7": "^1.8"
+      },
+      "suggest": {
+        "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+      }
+    },
+
+    "cache-redis": {
+      "name": "kinetis/cache-redis",
+      "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
+      "namespace": "Kinetis\\SimpleCache\\",
+      "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "amphp/redis": "^2.0",
+        "amphp/socket": "^2.3",
+        "amphp/serialization": "^1.0"
+      }
+    },
+
+    "bref-adapter": {
+      "name": "kinetis/bref-adapter",
+      "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
+      "namespace": "Kinetis\\BrefAdapter\\",
+      "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "nyholm/psr7": "^1.8",
+        "psr/http-message": "^2.0",
+        "riverline/multipart-parser": "^2.1"
+      }
+    },
+
+    "query-builder": {
+      "name": "kinetis/query-builder",
+      "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via amphp, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
+      "namespace": "Kinetis\\QueryBuilder\\",
+      "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "amphp/mysql": "^3.1",
+        "amphp/postgres": "^2.2"
+      },
+      "suggest": {
+        "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+      }
+    },
+
+    "auth": {
+      "name": "kinetis/auth",
+      "description": "Bearer/opaque-token authentication middleware for Kinetis, built entirely on interfaces core already requires (PSR-7/PSR-15). See kinetis/auth-jwt for stateless JWT verification instead.",
+      "namespace": "Kinetis\\Auth\\",
+      "testNamespace": "Kinetis\\Auth\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "nyholm/psr7": "^1.8",
+        "psr/http-message": "^2.0",
+        "psr/http-server-middleware": "^1.0"
+      }
+    },
+
+    "auth-jwt": {
+      "name": "kinetis/auth-jwt",
+      "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
+      "namespace": "Kinetis\\AuthJwt\\",
+      "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "firebase/php-jwt": "^7.1",
+        "nyholm/psr7": "^1.8",
+        "psr/http-message": "^2.0",
+        "psr/http-server-middleware": "^1.0",
+        "psr/simple-cache": "^3.0"
+      }
+    },
+
+    "migrations": {
+      "name": "kinetis/migrations",
+      "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+      "namespace": "Kinetis\\Migrations\\",
+      "testNamespace": "Kinetis\\Migrations\\Tests\\",
+      "version": "1.0.0",
+      "bin": ["bin/migrate"],
+      "requires": ["kinetis", "persistence"],
+      "require": {
+        "amphp/mysql": "^3.1",
+        "amphp/postgres": "^2.2",
+        "amphp/sql": "^2"
+      },
+      "suggest": {
+        "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+      }
+    },
+
+    "queue": {
+      "name": "kinetis/queue",
+      "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
+      "namespace": "Kinetis\\Queue\\",
+      "testNamespace": "Kinetis\\Queue\\Tests\\",
+      "version": "1.0.0",
+      "bin": ["bin/queue"],
+      "requires": ["kinetis", "persistence", "cache-redis"],
+      "require": {
+        "amphp/redis": "^2.0",
+        "amphp/sql": "^2",
+        "psr/container": "^2.0",
+        "psr/log": "^3.0"
+      }
+    },
+
+    "storage": {
+      "name": "kinetis/storage",
+      "description": "File storage for Kinetis, built on League\\Flysystem — local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
+      "namespace": "Kinetis\\Storage\\",
+      "testNamespace": "Kinetis\\Storage\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis"],
+      "require": {
+        "league/flysystem": "^3.0",
+        "league/mime-type-detection": "^1.0",
+        "amphp/file": "^3.0",
+        "amphp/byte-stream": "^2"
+      }
+    },
+
+    "revolt-http-client": {
+      "name": "kinetis/revolt-http-client",
+      "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
+      "namespace": "Kinetis\\RevoltHttpClient\\",
+      "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
+      "version": "1.0.0",
+      "requiresDev": ["kinetis"],
+      "require": {
+        "symfony/http-client": "^8.0",
+        "symfony/http-client-contracts": "^3.7",
+        "amphp/http-client": "^5.3"
+      }
+    },
+
+    "storage-s3": {
+      "name": "kinetis/storage-s3",
+      "description": "Fiber-native non-blocking S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3.",
+      "namespace": "Kinetis\\StorageS3\\",
+      "testNamespace": "Kinetis\\StorageS3\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis", "revolt-http-client"],
+      "require": {
+        "async-aws/s3": "^3.4",
+        "league/flysystem": "^3.35",
+        "league/flysystem-async-aws-s3": "^3.0"
+      }
+    },
+
+    "queue-sqs": {
+      "name": "kinetis/queue-sqs",
+      "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
+      "namespace": "Kinetis\\QueueSqs\\",
+      "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis", "queue", "persistence", "cache-redis", "revolt-http-client"],
+      "require": {
+        "async-aws/sqs": "^2.9"
+      }
+    },
+
+    "queue-rabbitmq": {
+      "name": "kinetis/queue-rabbitmq",
+      "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
+      "namespace": "Kinetis\\QueueRabbitMq\\",
+      "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis", "queue", "persistence", "cache-redis"],
+      "require": {
+        "amphp/amp": "^3.1",
+        "thesis/amqp": "^1.0",
+        "thesis/time-span": "^0.2"
+      }
+    },
+
+    "mailer": {
+      "name": "kinetis/mailer",
+      "description": "Non-blocking mail sending for Kinetis — Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
+      "namespace": "Kinetis\\Mailer\\",
+      "testNamespace": "Kinetis\\Mailer\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis", "revolt-http-client"],
+      "require": {
+        "symfony/mailer": "^7.2|^8.0"
+      }
+    },
+
+    "search-opensearch": {
+      "name": "kinetis/search-opensearch",
+      "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, via kinetis/revolt-http-client's Revolt-backed HTTP transport.",
+      "namespace": "Kinetis\\SearchOpenSearch\\",
+      "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["kinetis", "revolt-http-client"],
+      "require": {
+        "opensearch-project/opensearch-php": "^2.6",
+        "symfony/http-client": "^8.0"
+      }
+    },
+
+    "aws-sigv4": {
+      "name": "kinetis/aws-sigv4",
+      "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
+      "namespace": "Kinetis\\AwsSigV4\\",
+      "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
+      "version": "1.0.0",
+      "requires": ["revolt-http-client"],
+      "requiresDev": ["kinetis"],
+      "require": {
+        "async-aws/core": "^1.20",
+        "psr/http-client": "^1.0",
+        "psr/http-message": "^2.0"
+      },
+      "requireDevExtra": {
+        "nyholm/psr7": "^1.8"
+      }
+    },
+
+    "pingpong": {
+      "name": "kinetis/pingpong",
+      "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
+      "namespace": "App\\",
+      "testNamespace": null,
+      "version": "1.0.0",
+      "type": "project",
+      "requireDevOverride": {
+        "phpstan/phpstan": "^2.2",
+        "vimeo/psalm": "^6.16"
+      },
+      "requires": ["kinetis", "migrations", "persistence", "cache-redis", "query-builder", "queue"],
+      "require": {
+        "amphp/mysql": "^3.1",
+        "league/plates": "^3.6",
+        "monolog/monolog": "^3.0",
+        "psr/http-message": "^2.0",
+        "pusher/pusher-php-server": "^7.2"
+      }
+    },
+
+    "skeleton": {
+      "name": "kinetis/skeleton",
+      "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
+      "namespace": "App\\",
+      "testNamespace": "App\\Tests\\",
+      "version": "1.0.0",
+      "type": "project",
+      "requires": ["kinetis"]
+    }
+  }
+}
