@@ -117,7 +117,7 @@
       "version": "1.0.0",
       "requires": ["kinetis"],
       "require": {
-        "nyholm/psr7": "^1.8",
+        "nyholm/psr7": "^1.9",
         "psr/http-message": "^2.0",
         "psr/http-server-middleware": "^1.0"
       }
