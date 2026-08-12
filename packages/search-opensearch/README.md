@@ -1,0 +1,59 @@
+<p align="center">
+  <img src="logo.svg" alt="Kinetis" width="420">
+</p>
+
+<p align="center">
+  <strong>kinetis/search-opensearch</strong>
+  <br>
+  <strong>Non-blocking OpenSearch client construction for Kinetis</strong>
+</p>
+
+---
+
+Builds a real `OpenSearch\Client` (from `opensearch-project/opensearch-php`)
+through OpenSearch's own `TransportFactory`/`HttpTransport` construction
+path, with `kinetis/revolt-http-client`'s Revolt-native HTTP transport
+injected as its PSR-18 client instead of the default blocking one. The
+returned object is the real, un-wrapped client — nothing Kinetis-specific
+sits on top of it.
+
+```php
+use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
+
+$client = OpenSearchClientFactory::fromConfig($config);
+
+$client->index(['index' => 'articles', 'id' => '1', 'body' => ['title' => 'Kinetis']]);
+$results = $client->search(['index' => 'articles', 'body' => ['query' => ['match' => ['title' => 'Kinetis']]]]);
+```
+
+## Configuring
+
+```
+SEARCH_OPENSEARCH_HOST=http://localhost:9200
+```
+
+Optional: `SEARCH_OPENSEARCH_USERNAME`/`SEARCH_OPENSEARCH_PASSWORD` for
+Basic auth, `SEARCH_OPENSEARCH_VERIFY_PEER` (default `true`) to accept a
+self-signed certificate on a security-enabled cluster.
+
+`SEARCH_OPENSEARCH_HOST` is a single base URI, not a list — this
+construction path has no multi-node selector/failover; put a load
+balancer in front of a multi-node cluster instead.
+
+Named connections read a distinct set of variables via
+`Config::scopedKey()` — `SEARCH_OPENSEARCH_HOST` + `logs` becomes
+`SEARCH_LOGS_OPENSEARCH_HOST`.
+
+## Installation
+
+```sh
+composer require kinetis/search-opensearch
+```
+
+Requires PHP 8.4+, `kinetis/kinetis`, and `kinetis/revolt-http-client`.
+Full documentation:
+[docs.kinetis.dev/search-opensearch.html](https://docs.kinetis.dev/search-opensearch.html).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

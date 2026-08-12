@@ -1,0 +1,46 @@
+name: Deploy Docs
+
+# TEMPORARILY DISABLED — a temp measure. The `push` trigger below is
+# commented out, replaced with `workflow_dispatch` so the file stays
+# valid (a workflow file with no real `on:`/`jobs:` content fails to
+# parse at all, showing as a failed run on every push instead of simply
+# not running). Re-enable by uncommenting `push` and removing
+# `workflow_dispatch`.
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'docs/**'
+  #     - '.github/workflows/deploy-docs.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Sphinx docs
+        run: |
+          docker run --rm -v "$PWD/docs":/app -w /app python:3.12-slim \
+            bash -c "pip install -q -r requirements.txt && sphinx-build -M html . _build -W --keep-going"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::227129576823:role/github-actions-kinetis-docs-deploy
+          aws-region: eu-west-1
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync docs/_build/html s3://docs.kinetis.dev/ \
+            --exclude ".doctrees/*" --exclude ".buildinfo" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation --distribution-id E11W3VP7H5SHG2 --paths '/*'

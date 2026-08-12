@@ -1,0 +1,21 @@
+/* Logo alone is enough branding in the sidebar; the repeated text title
+   underneath it is redundant. */
+.sidebar-brand-text {
+    display: none;
+}
+
+/* Page headings use the logo's own palette: the K monogram's red for the
+   page title, the wordmark's amber for every heading below it. Scoped to
+   the actual content area so the sidebar's navigation tree (which reuses
+   h-level markup for its own captions) is untouched. */
+article[role="main"] h1 {
+    color: #DC2626;
+}
+
+article[role="main"] h2,
+article[role="main"] h3,
+article[role="main"] h4,
+article[role="main"] h5,
+article[role="main"] h6 {
+    color: #F59E0B;
+}

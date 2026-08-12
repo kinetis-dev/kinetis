@@ -1,0 +1,101 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /repo/packages/pingpong
+    volumes:
+      - ../..:/repo
+      - vendor:/repo/packages/pingpong/vendor
+    env_file: .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    # Only migrate runs `composer install`; others wait on it first.
+    entrypoint: []
+    command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/repo/packages/pingpong/public", "--worker", "/repo/packages/pingpong/public/index.php"]
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: pingpong
+      MYSQL_USER: pingpong
+      MYSQL_PASSWORD: pingpong
+      MYSQL_ROOT_PASSWORD: root
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+
+  soketi:
+    image: quay.io/soketi/soketi:1.4-16-debian
+    environment:
+      SOKETI_DEFAULT_APP_ID: ${SOKETI_APP_ID:-app-id}
+      SOKETI_DEFAULT_APP_KEY: ${SOKETI_KEY:-app-key}
+      SOKETI_DEFAULT_APP_SECRET: ${SOKETI_SECRET:-app-secret}
+    ports:
+      - "6001:6001"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /repo/packages/pingpong
+    volumes:
+      - ../..:/repo
+      - vendor:/repo/packages/pingpong/vendor
+    env_file: .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["php", "vendor/bin/migrate", "migrate"]
+    healthcheck:
+      disable: true
+
+  queue-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /repo/packages/pingpong
+    volumes:
+      - ../..:/repo
+      - vendor:/repo/packages/pingpong/vendor
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: []
+    command: ["php", "vendor/bin/queue", "work"]
+    healthcheck:
+      disable: true
+
+  cron:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /repo/packages/pingpong
+    volumes:
+      - ../..:/repo
+      - vendor:/repo/packages/pingpong/vendor
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: []
+    # Plain interval loop instead of a real cron daemon.
+    command: ["sh", "-c", "while true; do php vendor/bin/kinetis pings:pong-cron; sleep 5; done"]
+    healthcheck:
+      disable: true
+
+volumes:
+  vendor:

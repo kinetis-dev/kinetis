@@ -1,0 +1,59 @@
+{
+    "name": "kinetis/migrations",
+    "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/kinetis": "dev-main",
+        "kinetis/persistence": "dev-main",
+        "amphp/mysql": "^3.1",
+        "amphp/postgres": "^2.2",
+        "amphp/sql": "^2"
+    },
+    "require-dev": {
+        "infection/infection": "^0.34.2",
+        "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^11.0",
+        "vimeo/psalm": "^6.16"
+    },
+    "suggest": {
+        "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\Migrations\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\Migrations\\Tests\\": "tests/"
+        }
+    },
+    "bin": [
+        "bin/migrate"
+    ],
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../kinetis"
+        },
+        {
+            "type": "path",
+            "url": "../persistence"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -1,0 +1,54 @@
+name: SonarQube Cloud
+
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [main]
+  # pull_request:
+
+jobs:
+  sonarqube:
+    name: SonarQube Cloud scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # SonarQube Cloud's new-code/blame analysis needs real history,
+          # not the default single-commit shallow clone.
+          fetch-depth: 0
+
+      - name: Package coverage
+        # Same Docker-based pattern every other workflow here uses
+        # (php:8.4-cli-alpine via `docker run`, not a host-level PHP setup
+        # action) — pcov installed via pecl inside the container, the
+        # identical snippet infection.yml's own coverage step already
+        # uses. GIT_CONFIG_* works around "detected dubious ownership":
+        # the container runs as a different UID than the host checkout it
+        # bind-mounts, which git (invoked internally by Composer for
+        # path-repo version resolution) refuses by default.
+        run: |
+          for pkg in kinetis persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch skeleton storage storage-s3; do
+            docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
+            docker run --rm -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
+              apk add --no-cache gcc g++ make autoconf pkgconf re2c
+              pecl install pcov
+              echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+              php vendor/bin/phpunit --coverage-clover=coverage.xml
+            "
+          done
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarQube Cloud quality gate
+        # Fails the build if the gate fails — the scan step above only
+        # ever uploads results; nothing checked the outcome before this.
+        # Reads the scan step's own report-task.txt (the scanner writes
+        # it to .scannerwork/ by default, which this action already knows
+        # to look for) and polls SonarQube Cloud until the gate resolves.
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

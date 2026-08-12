@@ -1,0 +1,12 @@
+parameters:
+    level: 8
+    paths:
+        - src
+        - bin/kinetis
+        - public
+
+services:
+    -
+        class: Kinetis\Linting\NoStaticPropertiesRule
+        tags:
+            - phpstan.rules.rule

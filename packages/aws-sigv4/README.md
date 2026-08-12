@@ -1,0 +1,62 @@
+<p align="center">
+  <img src="logo.svg" alt="Kinetis" width="420">
+</p>
+
+<p align="center">
+  <strong>kinetis/aws-sigv4</strong>
+  <br>
+  <strong>A PSR-18 client decorator that signs requests with AWS Signature Version 4</strong>
+</p>
+
+---
+
+Wraps any PSR-18 HTTP client and signs every outgoing request with AWS
+Signature Version 4 (SigV4) before delegating to it — the signing math
+itself is `AsyncAws\Core\Signer\SignerV4`, the same class every AsyncAws
+service client already uses internally, reused directly rather than
+reimplemented. Usable standalone with any PSR-18 client, not only
+`kinetis/revolt-http-client` — and usable outside Kinetis entirely, the
+same relationship `kinetis/revolt-http-client` already has with the wider
+PHP ecosystem.
+
+```php
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
+use Symfony\Component\HttpClient\Psr18Client;
+
+$signedClient = new SigV4SigningClient(
+    client: new Psr18Client(AmpHttpClientFactory::create()),
+    region: 'us-east-1',
+    service: 'es', // Amazon OpenSearch Service's signing name
+);
+
+$response = $signedClient->sendRequest($request);
+```
+
+`$service` is the AWS signing service name (`"es"` for Amazon OpenSearch
+Service, `"execute-api"` for API Gateway, and so on) — required, with no
+default, since guessing wrong produces a signature that fails
+verification rather than an obvious error.
+
+## Credentials
+
+Resolved through AsyncAws's own default provider chain
+(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, a shared credentials file,
+or an IAM role) unless a `CredentialProvider` is passed directly as the
+fourth constructor argument. The chain's own bootstrap HTTP calls (an
+instance-metadata or container-credentials lookup) go through
+`AmpHttpClientFactory::create()` too, so credential resolution never
+blocks the worker either.
+
+## Installation
+
+```sh
+composer require kinetis/aws-sigv4
+```
+
+Requires PHP 8.4+ and `kinetis/revolt-http-client`. Full documentation:
+[docs.kinetis.dev/aws-sigv4.html](https://docs.kinetis.dev/aws-sigv4.html).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

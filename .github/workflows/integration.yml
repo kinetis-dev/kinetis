@@ -1,0 +1,596 @@
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  query-builder:
+    name: query-builder (${{ matrix.mysql.name }} + Postgres, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+        mysql:
+          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
+    services:
+      mysql:
+        image: ${{ matrix.mysql.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="${{ matrix.mysql.healthCmd }}"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: pgsql
+
+      - name: Install dependencies
+        working-directory: packages/query-builder
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/query-builder
+        run: php tests-integration/run.php
+        env:
+          MYSQL_HOST: 127.0.0.1
+          POSTGRES_HOST: 127.0.0.1
+
+  queue:
+    name: queue (Redis + SQL on ${{ matrix.mysql.name }}, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+        mysql:
+          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      mysql:
+        image: ${{ matrix.mysql.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="${{ matrix.mysql.healthCmd }}"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Install dependencies
+        working-directory: packages/queue
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/queue
+        run: php tests-integration/run.php
+        env:
+          REDIS_HOST: 127.0.0.1
+          MYSQL_HOST: 127.0.0.1
+
+      - name: Run RedisQueue delayed-job race check (10 concurrent processes)
+        working-directory: packages/queue
+        run: php tests-integration/redis_delayed_race.php
+        env:
+          REDIS_HOST: 127.0.0.1
+
+  queue-rabbitmq:
+    name: queue-rabbitmq (RabbitMQ, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+    # RabbitMqQueue's own docblock discloses that Kinetis\Async\
+    # concurrently() can never be called again anywhere in the same OS
+    # process once its connection opens — a real, permanent limitation,
+    # not a reason to leave this backend untested in CI: a dedicated job
+    # here is already its own separate runner process, sharing nothing
+    # with any other job's tests, so that limitation never actually
+    # applies to this workflow.
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=5s --health-timeout=5s --health-retries=15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Install dependencies
+        working-directory: packages/queue-rabbitmq
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/queue-rabbitmq
+        run: php tests-integration/run.php
+        env:
+          RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
+
+  persistence-and-cache-redis:
+    # Renamed from the original "core" job: TransactionGuard/
+    # RedisSimpleCache both moved out of kinetis/kinetis into their own
+    # satellite packages (kinetis/persistence, kinetis/cache-redis), so
+    # core itself has no remaining real-backend-dependent code at all.
+    name: persistence + cache-redis (TransactionGuard on ${{ matrix.mysql.name }} + RedisSimpleCache, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+        mysql:
+          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
+    services:
+      mysql:
+        image: ${{ matrix.mysql.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="${{ matrix.mysql.healthCmd }}"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: pgsql
+
+      - name: Install persistence dependencies
+        working-directory: packages/persistence
+        run: composer install --no-interaction --prefer-dist
+
+      - name: TransactionGuard integration checks
+        working-directory: packages/persistence
+        run: php tests-integration/transaction-guard.php
+        env:
+          MYSQL_HOST: 127.0.0.1
+          POSTGRES_HOST: 127.0.0.1
+
+      - name: Install cache-redis dependencies
+        working-directory: packages/cache-redis
+        run: composer install --no-interaction --prefer-dist
+
+      - name: RedisSimpleCache integration checks
+        working-directory: packages/cache-redis
+        run: php tests-integration/redis-simple-cache.php
+        env:
+          REDIS_HOST: 127.0.0.1
+
+  mailer:
+    name: mailer (Mailpit, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+    services:
+      mailpit:
+        image: axllent/mailpit
+        ports:
+          - 1025:1025
+          - 8025:8025
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Install dependencies
+        working-directory: packages/mailer
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/mailer
+        run: php tests-integration/run.php
+        env:
+          MAILPIT_HOST: 127.0.0.1
+
+  migrations:
+    name: migrations (${{ matrix.mysql.name }} + Postgres, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+        mysql:
+          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
+    services:
+      mysql:
+        image: ${{ matrix.mysql.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="${{ matrix.mysql.healthCmd }}"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: pgsql
+
+      - name: Install dependencies
+        working-directory: packages/migrations
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/migrations
+        run: php tests-integration/run.php
+        env:
+          MYSQL_HOST: 127.0.0.1
+          POSTGRES_HOST: 127.0.0.1
+
+  redis-cluster:
+    name: cache-redis (Redis Cluster, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+    # A genuine multi-node Redis Cluster, not a single-node stand-in —
+    # grokzen/redis-cluster runs 3 masters + 3 replicas as real,
+    # independent redis-server processes inside one container, bootstrapped
+    # via the real `redis-cli --cluster create`. This is the one
+    # integration job that needs the job itself wrapped in `container:`
+    # rather than running on the bare runner like every job above: Redis
+    # Cluster nodes advertise their own container-internal IP (via
+    # CLUSTER NODES/SHARDS) for node-to-node gossip and for a client's own
+    # MOVED-redirect targets, and only a job attached to the *same* Docker
+    # bridge network the service container runs on can reach that address
+    # directly — a bare runner reaching only the service's published
+    # `localhost:<port>` mapping never sees a route to it. Confirmed
+    # directly (not assumed) against a manually reproduced GHA-equivalent
+    # network topology before writing this job. Because of this, PHP/
+    # Composer run directly inside this step rather than via a nested
+    # `docker run` the way every other job here invokes them — there's no
+    # Docker-in-Docker socket available inside a job container by default.
+    container:
+      image: php:${{ matrix.php-version }}-cli-alpine
+    services:
+      redis-cluster:
+        image: grokzen/redis-cluster:7.0.10
+    env:
+      REDIS_CLUSTER_SEEDS: redis-cluster:7000,redis-cluster:7001,redis-cluster:7002
+    steps:
+      # php:*-cli-alpine has no git binary — without it, actions/checkout
+      # silently falls back to downloading the repo as a tarball via the
+      # GitHub REST API instead of a real `git clone`. That tarball is
+      # generated server-side via `git archive`, which — unlike a real
+      # clone — does respect .gitattributes' export-ignore directives,
+      # so composer.lock and any export-ignored test fixtures would
+      # simply be missing from the checkout. Installing git here first
+      # makes checkout behave identically to every other job in this file.
+      - name: Install git
+        run: apk add --no-cache git
+
+      # grokzen/redis-cluster's own entrypoint bootstraps in two phases:
+      # first `--cluster create` with all 6 nodes as independent
+      # single-node masters (cluster_state already reports "ok" here,
+      # since all 16384 slots are already covered), then a second pass
+      # that attaches 3 of them as replicas of the other 3. Querying
+      # CLUSTER SHARDS/NODES during that second phase — confirmed
+      # directly by polling a real container every 0.5s from the moment
+      # it starts — can see a node still labeled "master" that's a
+      # replica moments later, which is exactly what made the very first
+      # real run of this job (once the checkout fix above let it get
+      # this far) fail with a real Redis "READONLY" error on a node
+      # ClusteredRedisSimpleCache::clear() treated as a master. Waiting
+      # for cluster_state:ok alone is insufficient — confirmed by the
+      # same polling that state flips to "ok" ~4-5s in, several seconds
+      # before the master/replica split settles. The real, stable signal
+      # is the final 3-master/3-replica split itself, confirmed to hold
+      # from the moment it first appears through 20+ more seconds of
+      # polling, never flipping back.
+      - name: Wait for Redis Cluster to finish bootstrapping
+        run: |
+          apk add --no-cache redis
+          for i in $(seq 1 30); do
+            nodes=$(redis-cli -h redis-cluster -p 7000 cluster nodes 2>/dev/null || true)
+            masters=$(echo "$nodes" | grep -c 'master' || true)
+            replicas=$(echo "$nodes" | grep -c 'slave' || true)
+            if [ "$masters" = "3" ] && [ "$replicas" = "3" ]; then
+              echo "Cluster ready: 3 masters, 3 replicas."
+              exit 0
+            fi
+            echo "Not ready yet (masters=$masters replicas=$replicas), waiting..."
+            sleep 2
+          done
+          echo "Cluster did not reach a stable 3-master/3-replica split in time." >&2
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - name: Install Composer
+        run: |
+          apk add --no-cache curl
+          php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+          php composer-setup.php --quiet
+          mv composer.phar /usr/local/bin/composer
+          rm composer-setup.php
+
+      - name: Install dependencies
+        working-directory: packages/cache-redis
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/cache-redis
+        run: php tests-integration/redis-cluster.php
+
+  localstack:
+    name: queue-sqs + storage-s3 (LocalStack, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+    services:
+      localstack:
+        image: localstack/localstack:3.0.2
+        env:
+          SERVICES: sqs,s3
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd="curl -s http://localhost:4566/_localstack/health"
+          --health-interval=5s --health-timeout=5s --health-retries=15
+    env:
+      LOCALSTACK_ENDPOINT: http://127.0.0.1:4566
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Install queue-sqs dependencies
+        working-directory: packages/queue-sqs
+        run: composer install --no-interaction --prefer-dist
+
+      - name: queue-sqs integration checks
+        working-directory: packages/queue-sqs
+        run: php tests-integration/run.php
+
+      - name: Install storage-s3 dependencies
+        working-directory: packages/storage-s3
+        run: composer install --no-interaction --prefer-dist
+
+      - name: storage-s3 integration checks
+        working-directory: packages/storage-s3
+        run: php tests-integration/run.php
+
+  pingpong:
+    name: kinetis/pingpong (real demo, end-to-end)
+    runs-on: ubuntu-latest
+    # Brings up the real Docker Compose stack, hits the real routes,
+    # polls the real database — a permanent regression check, rather
+    # than something verified once by hand and never re-checked.
+    # Deliberately its own job, not part of the per-package matrix
+    # above: this exercises the whole compose stack (app, mysql, redis,
+    # soketi, migrate, queue-worker, cron) together, not one package's
+    # own composer dependencies in isolation.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create .env from the committed example
+        working-directory: packages/pingpong
+        run: cp .env.example .env
+
+      - name: Build and start the real stack
+        working-directory: packages/pingpong
+        run: docker compose up --build -d
+
+      - name: Wait for the app to answer real requests
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:8080/; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App never became reachable on :8080" >&2
+          exit 1
+
+      - name: GET / serves the dashboard
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)
+          test "$code" = "200"
+
+      - name: POST /pong/direct pongs synchronously, in the same request
+        working-directory: packages/pingpong
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/pong/direct)
+          test "$code" = "200"
+          row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
+            "SELECT status FROM ping_messages WHERE scenario='direct' ORDER BY id DESC LIMIT 1;")
+          test "$row" = "ponged"
+
+      - name: POST /pong/queued is pending immediately, ponged later by the queue worker
+        working-directory: packages/pingpong
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/pong/queued)
+          test "$code" = "200"
+
+          row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
+            "SELECT status FROM ping_messages WHERE scenario='queued' ORDER BY id DESC LIMIT 1;")
+          test "$row" = "pending"
+
+          for i in $(seq 1 30); do
+            row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
+              "SELECT status FROM ping_messages WHERE scenario='queued' ORDER BY id DESC LIMIT 1;")
+            if [ "$row" = "ponged" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "The queued ping was never ponged by the queue worker." >&2
+          exit 1
+
+      - name: The cron container creates and pongs its own rows with no request involved
+        working-directory: packages/pingpong
+        run: |
+          for i in $(seq 1 30); do
+            row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
+              "SELECT status FROM ping_messages WHERE scenario='cron' ORDER BY id DESC LIMIT 1;" 2>/dev/null)
+            if [ "$row" = "ponged" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "No ponged cron-scenario row ever appeared." >&2
+          exit 1
+
+      - name: Dump container logs on failure
+        if: failure()
+        working-directory: packages/pingpong
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        working-directory: packages/pingpong
+        run: docker compose down -v
+
+  search-opensearch:
+    name: search-opensearch (OpenSearch, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd="curl -sf http://localhost:9200/_cluster/health"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+      opensearch-secure:
+        image: opensearchproject/opensearch:2
+        env:
+          discovery.type: single-node
+          OPENSEARCH_INITIAL_ADMIN_PASSWORD: Kinetis-CI-Verify-2026!
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9201:9200
+        options: >-
+          --health-cmd="curl -sfk -u admin:Kinetis-CI-Verify-2026! https://localhost:9200/_cluster/health"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Install dependencies
+        working-directory: packages/search-opensearch
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/search-opensearch
+        run: php tests-integration/opensearch.php
+        env:
+          SEARCH_OPENSEARCH_HOST: http://127.0.0.1:9200
+
+      - name: Run auth/TLS integration checks
+        working-directory: packages/search-opensearch
+        run: php tests-integration/opensearch-auth.php
+        env:
+          SEARCH_OPENSEARCH_SECURE_HOST: https://127.0.0.1:9201
+          SEARCH_OPENSEARCH_PASSWORD: Kinetis-CI-Verify-2026!

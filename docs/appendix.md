@@ -1,0 +1,143 @@
+# Appendix: System Layout
+
+A reference map of what exists in core, by namespace. For the optional
+satellite packages (`kinetis/auth`, `kinetis/queue`, `kinetis/storage`, and
+so on), see {doc}`appendix-packages`.
+
+## `Kinetis\Container`
+
+- `AppScope` — the persistent, worker-lifetime container. `bind()`/`instance()`/`middleware()` before `boot()`; locked after. `boot()` registers three defaults if not already set: `Psr\Log\LoggerInterface` → `NullLogger`, `Kinetis\Config\Config` → `Config::fromEnvironment()`, `Psr\SimpleCache\CacheInterface` → `Kinetis\SimpleCache\ClusteredRedisSimpleCache`/`RedisSimpleCache::fromConfig()` (both `class_exists()`-gated against the optional `kinetis/cache-redis` package) when Redis is configured, else `NullSimpleCache` — configured but not installed is a clear `SimpleCacheUnavailableException`, not a silent fallback.
+- `RequestScope` — the per-request container, created by `AppScope::createRequestScope()`, which also registers the scope onto itself (`RequestScope::class` resolves to that exact instance), disposed by `Kernel` in a `finally` block. Delegates to `AppScope` for explicitly registered ids only; autowires anything else, discarded on `dispose()`.
+- `Autowire` — reflection-based constructor injection, used by both scopes.
+
+## `Kinetis\Http`
+
+- `Kernel` — the runtime-agnostic entry point. `handle(ServerRequestInterface): ResponseInterface`. Serves `/openapi.json` and `/docs` directly (toggle: `exposeOpenApi`), routes `/mcp` to an `McpServer` if one is passed (`$mcp`), otherwise creates a `RequestScope`, matches a route, dispatches.
+- `Dispatcher` — resolves a matched route's controller from the container, binds each parameter: `#[Body]` DTO (JSON, or `getParsedBody()` for `multipart/form-data`/`application/x-www-form-urlencoded`), `#[Query]` scalar, same-named path parameter, or — for a parameter typed `ServerRequestInterface`/`UploadedFileInterface` — the raw request/an uploaded file directly, invokes it.
+- `CurrentUserInterface` — one method, `id(): string|int`. Nothing implements or registers it by default; a middleware registers a concrete implementation on the current `RequestScope` (see `Kinetis\Container` above), and any class downstream — a controller, another package — depends on this interface rather than a specific implementation.
+- `MiddlewarePipeline` / `CallableRequestHandler` — PSR-15 (`Psr\Http\Server\MiddlewareInterface`/`RequestHandlerInterface`) composition. `Kernel` builds two: a global one (from `AppScope::middlewares()` plus `$discoveredGlobalMiddleware`, wraps the whole request) and a per-route one (from a matched `Route`'s `#[Middleware]` attributes, wraps just `Dispatcher::dispatch()`).
+- `Middleware\ExceptionHandlerMiddleware` — always the outermost global middleware. Catches `Throwable`, logs via the container's `LoggerInterface`, returns a 500.
+- `Middleware\MaxBodySizeMiddleware` — always the second global middleware, right after `ExceptionHandlerMiddleware`. Constructor-injects `Config` directly and reads `MAX_BODY_SIZE` (bytes, default `2097152`) once; rejects a request whose declared `Content-Length` exceeds it with a `413`, before `#[Body]` ever reads the body. Only the declared header is checked, not the actual bytes read.
+- `Middleware\GlobalMiddlewareDiscovery::discover(string $projectRoot, ?array $paths = null): list<class-string>` — finds every `#[AsGlobalMiddleware]`-attributed class anywhere under a project's own PSR-4 root(s), plus `Kinetis\Http` itself, sorted by priority (descending, ties broken by class name). `$paths`, or `MIDDLEWARE_DISCOVERY_PATHS` when omitted, restricts the project-side scan. `discoverAll(string $projectRoot, ?array $paths = null): array{global: list<class-string>, mcp: list<class-string>, openApi: list<class-string>}` performs exactly one project-wide scan and buckets by which of `#[AsGlobalMiddleware]`/`#[AsMcpMiddleware]`/`#[AsOpenApiMiddleware]` a class carries, each sorted independently — `discover()` is a thin wrapper returning just `['global']`, kept for any caller that only ever wanted that one list.
+- `Middleware\GlobalMiddlewareOrder::resolve(array $explicit, array $discovered): list<class-string>` — computes the global-middleware order: `ExceptionHandlerMiddleware` first, `MaxBodySizeMiddleware` second, then `merge($explicit, $discovered)`. `merge(array $explicit, array $discovered): list<class-string>` is the plain explicit-then-discovered precedence rule with no fixed prepended classes, factored out so `Kernel`'s `/mcp` and `/openapi.json`/`/docs` scoped pipelines can reuse the identical rule without inheriting `ExceptionHandlerMiddleware`/`MaxBodySizeMiddleware`, which neither needs. `Kernel` and `Console\RoutesListCommand` each map either method's result through their own container afterward — both return plain class-strings.
+- `Middleware\RateLimitMiddleware` — opt-in, global or route. Fixed-window counter keyed by client IP (sha256-hashed) against `Psr\SimpleCache\CacheInterface`. `identifierFor()` only consults `X-Forwarded-For` when `REMOTE_ADDR` matches one of the constructor's `trustedProxies` CIDRs (empty by default — `REMOTE_ADDR` always used otherwise), walking the chain from the end backward past any further trusted hops. Not `final` — a subclass overriding the constructor defaults is how two routes get two different limits at once, since `#[Middleware]` carries only a class-string. `identifierFor()` is `protected`, not `private`, specifically so a subclass's override actually takes effect.
+- `Middleware\AuthenticatedRateLimitMiddleware` — extends `RateLimitMiddleware`, overriding `identifierFor()` to key by `CurrentUserInterface::id()` when one is already resolved on the current `RequestScope`, falling back to IP otherwise. Route middleware only, registered after the auth middleware that resolves `CurrentUserInterface` — never global, and never bound directly on `AppScope` (the same disconnected-`RequestScope` hazard `JwtAuthMiddleware` documents in {doc}`appendix-packages`).
+- `Middleware\CorsMiddleware` — opt-in, global only (a route-level registration would never see a preflight to an unmatched route). `allowedOrigins`/`allowedMethods`/`allowedHeaders`/`exposedHeaders`/`allowCredentials`/`maxAge`/`allowedOriginPatterns` constructor config; `allowedHeaders: ['*']` reflects the preflight's requested headers, `allowedOriginPatterns` matches origins by PCRE pattern (must be anchored — an unanchored pattern is a CORS-bypass footgun). Echoes the specific origin (never a literal `*`) whenever credentials are allowed, per spec.
+- `Routing\Router` / `Routing\Route` — `#[Get]`/`#[Post]`/`#[Put]`/`#[Patch]`/`#[Delete]` discovery, path-template compilation, `toArray()`/`fromArray()` for the AOT cache.
+- `Routing\RouteDiscovery` — builds a `Router` from every class found anywhere under a project's own PSR-4 root(s), plus `Kinetis\Http` itself, mirroring `Kinetis\Console\CommandDiscovery`/`Kinetis\Mcp\McpDiscovery`. `discover(string $projectRoot, ?array $paths = null)` — `$paths`, or the `ROUTE_DISCOVERY_PATHS` env var when omitted, restricts the project-side scan to one or more sub-paths relative to each PSR-4 base directory.
+- `Attributes\{Get,Post,Put,Patch,Delete,Body,Query,Middleware,Response,Hidden,PaginatedItem}` — the route/binding/middleware/OpenAPI-documentation attributes. `Hidden` (class- or method-level) excludes a route from the generated OpenAPI document without affecting routing/dispatch. `PaginatedItem(class-string $itemClass)` (`TARGET_METHOD`) names the item class a `Paginator`/`CursorPaginator` return actually wraps, purely for `OpenApiGenerator::paginatedResponseSchema()` — see below. `Attributes\AsGlobalMiddleware`/`AsMcpMiddleware`/`AsOpenApiMiddleware` (each `{priority: int = 50}`, bounded `0`-`100`, throwing `InvalidArgumentException` outside that range) are the opposite direction from `Middleware` — they live on the middleware class itself, not on a controller referencing one — and are what `Middleware\GlobalMiddlewareDiscovery` looks for. `AsMcpMiddleware`/`AsOpenApiMiddleware` scope a class to `Kernel`'s `/mcp` or `/openapi.json`+`/docs` endpoints specifically, alongside (not instead of) the global pipeline, which already wraps both — see {doc}`middleware`. `AppScope::mcpMiddleware()`/`openApiMiddleware()` are their explicit-registration counterparts, mirroring `AppScope::middleware()`.
+- `Responses\HtmlResponse` / `FileResponse` / `RedirectResponse` / `ErrorResponse` — static factories over `Nyholm\Psr7\Response`, not distinct `ResponseInterface` implementations (unlike `StreamedResponse`); each builds a plain response with the right headers/body already set. `FileResponse::fromPath()` detects the content type with PHP's bundled `finfo` when `$contentType` is omitted; `fromContents()` takes the same parameters for in-memory data. `Kernel::error()`/`Middleware\ExceptionHandlerMiddleware`'s own 404/405/500 responses are built through `ErrorResponse::create()` too, the same helper a controller uses.
+- `Pagination\Paginator` (`data`, `currentPage`, `perPage`, `total`, `lastPage`) / `Pagination\CursorPaginator` (`data`, `nextCursor`, `hasMore`) — plain `readonly` result envelopes with no dependency on `kinetis/query-builder` or any other source; `kinetis/query-builder`'s `Query::paginate()`/`cursorPaginate()` (see {doc}`appendix-packages`) are the convenient way to build one from a real query, not the only way.
+
+## `Kinetis\Events`
+
+- `EventDispatcher` — implements `Psr\EventDispatcher\EventDispatcherInterface`. Never explicitly registered; autowired fresh per request through `RequestScope`, constructor-injecting `RequestScope`, `EventListenerRegistry`, and `ListenerInvokerInterface`. `dispatch()` stops at a listener once `Psr\EventDispatcher\StoppableEventInterface::isPropagationStopped()` returns `true`.
+- `Listener` — a `TARGET_METHOD` attribute, `{priority: int = 50}` (bounded `0`-`100`, throwing `InvalidArgumentException` outside that range); the event class is inferred from the method's own single parameter type.
+- `EventListenerRegistry` — reflects every public `#[Listener]` method on a registered class, the same shape as `Router`/`McpRegistry`. Exact event-class matching only. Each event's own list is re-sorted (priority descending, ties broken alphabetically by class then method name) on every `register()` call that adds to it. `listenersFor(class-string): list<array{class, method, priority}>`. `toArray()`/`fromArray()` for the AOT cache.
+- `EventListenerDiscovery::discover(string $projectRoot, ?array $paths = null): EventListenerRegistry` — builds a registry from every class found anywhere under a project's own PSR-4 root(s), plus `Kinetis\Events` itself, rather than an explicit `bootstrap.php` registration. `$paths`, or `LISTENER_DISCOVERY_PATHS` when omitted, restricts the project-side scan.
+- `ShouldQueue` — a marker interface a listener implements to be invoked through `ListenerInvokerInterface` instead of directly.
+- `ListenerInvokerInterface` / `SynchronousListenerInvoker` — the seam a `ShouldQueue` listener's invocation is routed through; `AppScope::boot()` registers the synchronous default automatically. `kinetis/queue`'s `QueuedListenerInvoker` (see {doc}`appendix-packages`) implements this to actually defer invocation.
+
+## `Kinetis\Runtime`
+
+- `RuntimeAdapterInterface` + `RuntimeDetector::detect()` — picks `FrankenPhpAdapter` or `FpmAdapter` based on `function_exists('frankenphp_handle_request')`; picks `Kinetis\BrefAdapter\BrefLambdaAdapter` (separate `kinetis/bref-adapter` package — `class_exists()`-gated, not a hard reference) when `getenv('AWS_LAMBDA_RUNTIME_API')` is set and that package is installed, otherwise throws `RuntimeUnavailableException::missingAdapterPackage()`. Both signals are also accepted as optional `detect()` parameters so tests can exercise every branch without faking global PHP/process state.
+- `Adapters\FrankenPhpAdapter` — `run()` is a `do`/`while` loop calling `frankenphp_handle_request()` repeatedly for as long as it returns `true`; `isPersistent(): true`.
+- `Adapters\FpmAdapter` — `run()` handles exactly one request from superglobals, calling `fastcgi_finish_request()` when available so the response flushes before any post-response cleanup; `isPersistent(): false`.
+- `AppEnvironment` — `Development`/`Production` enum. `detect()` reads `APP_ENV`; unset or unrecognized → `Production`.
+- `ProjectRoot::detect()` — resolves the consumer project root, accounting for Composer's `vendor/bin/kinetis` proxy.
+- `SuperglobalsBridge` — PSR-7 ⇄ superglobal conversion, shared by `FrankenPhpAdapter`/`FpmAdapter`. Also runs PHP 8.4's `request_parse_body()` for a `PUT`/`PATCH` multipart or url-encoded body, which `fromGlobals()` alone doesn't populate.
+- `Exception\RuntimeUnavailableException` — `missingFunction()`, `missingEnvironmentVariable()`, `missingAdapterPackage()`.
+
+## `Kinetis\Config`
+
+- `Config` — typed environment access: `get()`, `string()`, `int()`, `float()`, `bool()`, `required()`.
+- `Config::scopedKey(string $key, string $connection = 'default'): string` — the named-connection convention every technology-specific connection builder shares. `'default'` returns `$key` unchanged; any other name inserts itself, uppercased, after the key's own prefix (`REDIS_HOST` + `cache2` → `REDIS_CACHE2_HOST`).
+- `EnvFile::safeLoad(string $projectRoot)` — loads `.env` via `vlucas/phpdotenv`, called unconditionally in `public/index.php` and `bin/kinetis`, before `AppEnvironment::detect()`.
+
+## `Kinetis\Async`
+
+- `Socket` — non-blocking TCP, Fiber-suspending `connect()`/`read()`/`write()`.
+- `Timer::delay()` — Fiber-suspending delay.
+- `concurrently(array $tasks)` — runs each task in its own `Fiber`, collects results/rethrows the first failure once all tasks finish.
+
+## `Kinetis\Persistence`
+
+Core itself only ships `Pool` here — `TransactionGuard`/`SqlConnectionFactory`
+live in the separate `kinetis/persistence` package (see
+{doc}`appendix-packages`), since they're the only classes in this
+namespace with a real MySQL/Postgres dependency.
+
+- `Pool` — generic connection-pool infrastructure, not used by
+  `kinetis/persistence`'s own MySQL/Postgres/Redis integration
+  (`amphp/mysql`, `amphp/postgres`, `amphp/redis` already pool
+  internally); kept here in case a future hand-rolled protocol client
+  needs it.
+- `Exception\PoolExhaustedException`.
+
+## `Kinetis\SimpleCache`
+
+A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cache` below despite the shared word; that one is build-time AOT compilation, this one is a general-purpose runtime cache. Core itself ships only the interface's always-available default and its exception types — `RedisSimpleCache`/`ClusteredRedisSimpleCache`/`Cluster\*`/`Connection\TlsRedisConnector` all live in the separate `kinetis/cache-redis` package (see {doc}`appendix-packages`), since they're the only classes in this namespace with a real Redis dependency.
+
+- `NullSimpleCache` — the default when Redis isn't configured, or when `kinetis/cache-redis` isn't installed at all. Always misses, never stores.
+- `Exception\CacheException` / `Exception\InvalidArgumentException` — implement the matching `Psr\SimpleCache\*` exception interfaces; reused by `kinetis/cache-redis`'s own classes, not redeclared there.
+- `Exception\SimpleCacheUnavailableException` — thrown by `AppScope::boot()` when Redis is configured (`REDIS_HOST`/`REDIS_URL`/`REDIS_CLUSTER`) but `kinetis/cache-redis` isn't installed, naming the package rather than silently falling back to `NullSimpleCache`.
+
+## `Kinetis\Mcp`
+
+- `McpServer` — handles one decoded JSON-RPC message. Supports the legacy (`2025-03-26`) `initialize` handshake and the modern (`2026-07-28`) stateless `server/discover` model side by side. `logger` param defaults to `NullLogger` (constructed directly, not through the container).
+- `McpRegistry` — `#[McpTool]`/`#[McpResource]` discovery, `toArray()`/`fromArray()` for the AOT cache.
+- `McpDispatcher` — the MCP analogue of `Http\Dispatcher`.
+- `ProgressReporter` — injected by type into a tool method; `report()` streams a `notifications/progress` event when `_meta.progressToken` is present, a no-op otherwise.
+- `Transport\StdioTransport` — one JSON-RPC message per line on stdin/stdout.
+- `KinetisDocsResource` — registers every `docs/*.md` page as an MCP resource (`kinetis://docs/{slug}`), read directly from wherever `kinetis/kinetis` is installed. Lives under `Kinetis\Mcp`, so `McpDiscovery` always finds it for `mcp:serve`; registering it manually (`$registry->register(KinetisDocsResource::class)`) is only needed for a hand-wired `McpRegistry`, e.g. the HTTP `/mcp` transport, which discovery never touches. `docs/` is deliberately not `export-ignore`d in `.gitattributes` so this actually has something to read once installed as a dependency.
+- `McpDiscovery::discover(string $projectRoot, ?array $paths = null): McpRegistry` — builds a registry from every class found anywhere under a project's own PSR-4 root(s), plus `Kinetis\Mcp` itself (`NamespaceScanner`, see `Kinetis\Cache` below), rather than an explicit registration file. `$paths`, or `MCP_DISCOVERY_PATHS` when omitted, restricts the project-side scan.
+
+## `Kinetis\Cache`
+
+- `Compiler::compile()` / `compileProject()` — walks a `Router`/`McpRegistry`/`CommandRegistry`/`EventListenerRegistry`, derives binding/validation plans, generates the OpenAPI document, produces a `CompiledCache`. `compileProject()` builds them via `RouteDiscovery`/`McpDiscovery`/`CommandDiscovery`/`EventListenerDiscovery`.
+- `HttpCache` / `McpCache` / `OpenApiCache` / `CommandCache` / `EventCache` — the five independent artifacts. `CacheStore` writes them via atomic tmp-file + `rename()`, reads via `require`.
+- `NamespaceScanner::classesInProject(string $projectRoot, array $paths = [])` — finds every class reachable from any PSR-4 prefix a project's own `composer.json` declares, at any depth, with no directory/namespace convention required; `$paths` restricts the walk to one or more sub-paths relative to each PSR-4 base directory, deduplicated internally when `$paths` names overlapping sub-paths. `classesUnderFrameworkSegment(string $segment, ?string $frameworkRoot = null)` — the framework-side counterpart, walking one fixed segment ("Console", "Mcp", "Events") under Kinetis's own package root specifically. Both skip a file entirely (no `class_exists()` autoload) unless it contains at least one PHP attribute, found via a cheap token scan rather than a full parse — what keeps an unrestricted, whole-project scan affordable on every request under PHP-FPM. Deduplicating a class found through *both* methods together (developing Kinetis itself makes the framework root and project root the same repository) is each Discovery class's own responsibility, not `NamespaceScanner`'s — `RouteDiscovery`/`McpDiscovery`/`CommandDiscovery`/`EventListenerDiscovery`/`GlobalMiddlewareDiscovery` each merge both calls through their own `$seen` set (or, for `GlobalMiddlewareDiscovery`, a class-string-keyed priority map) before ever registering anything.
+- `RoutesFile::loadBootstrap()` — loads a consumer's `bootstrap.php`, run with `(AppScope, Config)` before `boot()` locks bindings. Routes, MCP tools/resources, commands, global middleware, and event listeners are all found by namespace instead (`RouteDiscovery`/`McpDiscovery`/`CommandDiscovery`/`GlobalMiddlewareDiscovery`/`EventListenerDiscovery`).
+- Not part of this cache: `Kinetis\Config` (`.env`/environment values) — the cache is rebuilt from source via `bin/kinetis build`; environment configuration isn't.
+
+## `Kinetis\Validation` / `Kinetis\OpenApi`
+
+- `Hydrator` — builds and validates a `#[Body]`-bound DTO from constructor-parameter reflection and `Constraint`-implementing attributes (`#[Email]`, `#[NotBlank]`, `#[MinLength]`, `#[MaxLength]`, `#[GreaterThan]`, `#[LessThan]`, `#[Regex]`, `#[In]`, `#[Url]`, `#[Uuid]`). A class-typed constructor parameter is hydrated as a nested DTO, recursively, whenever the corresponding value is an array; `compilePlan()` embeds each nested class's own plan inline (`nestedPlan`), stopping at a repeated class to stay `var_export()`-representable.
+- `JsonSchema` — the type/constraint → JSON Schema mapping shared by `OpenApiGenerator` and MCP tool input schemas. An optional `$classSchema` callback lets a caller substitute something other than inlining for a nested class-typed parameter's schema; `null` (every MCP call site) keeps inlining.
+- `OpenApiGenerator::generate()` — builds the OpenAPI 3.1 document from a `Router`'s registered routes, deduplicating every DTO schema (request body, response, or nested at any depth) into `components/schemas` with `$ref`, and deriving the default response's schema from the controller method's declared return type. `paginatedResponseSchema()` special-cases a `Paginator`/`CursorPaginator` return: with a `#[PaginatedItem]` attribute present, `data` describes as an array of the named class's own (deduplicated) schema, built inline rather than through `schemaRefFor()` for the wrapper itself — a shared "Paginator" component would otherwise collapse two different routes' different item types into one; without the attribute, `data` stays the bare `{type: object}` fallback.
+
+## `Kinetis\Console`
+
+- `Attributes\Command` — `TARGET_METHOD`, `{name, description}`. Discovered by `CommandRegistry::register()` the same way `Router`/`McpRegistry` discover their own attributes.
+- `CommandRegistry` — validates each `#[Command]` method's signature at registration time (zero parameters, or exactly one parameter typed `CommandArguments`; anything else throws `Exception\InvalidCommandException`), and rejects a duplicate command name across two different registrations. `commands(): list<CommandDefinition>`, `findCommand(string $name): ?CommandDefinition`, `toArray()`/`fromArray()` for the AOT cache.
+- `CommandDiscovery::discover(string $projectRoot, ?array $paths = null): CommandRegistry` — builds a registry from every class found anywhere under a project's own PSR-4 root(s), plus `Kinetis\Console` itself (`Kinetis\Cache\NamespaceScanner`), rather than an explicit registration file. `$paths`, or `COMMAND_DISCOVERY_PATHS` when omitted, restricts the project-side scan.
+- `CommandArguments` — injected by type into a command method, the same by-type special-casing `ProgressReporter` already gets for MCP tools. `parse(array $argv)` splits into positional values (`get(int)`, `all()`) and `--key=value`/bare-`--flag` options (`option(string, ?string)`, `hasOption(string)`).
+- `CommandDispatcher::run(CommandDefinition, list<string> $arguments): int` — resolves the controller through the container and invokes it; no per-call reflection, since `CommandRegistry::register()` already validated the signature. The method's own return value becomes the exit code (`int` used directly, `void`/`null` means `0`).
+- `BuildCommand` — `#[Command('build')]`. The one command that has to be found before it can be used to build anything, via `bin/kinetis`'s own lazy-generate-on-first-run bootstrap. Always removes `.kinetis-cache/` before writing a fresh one; `--destroy` removes it and stops there, without writing anything back.
+- `McpServeCommand` — `#[Command('mcp:serve')]`. Constructor-injects the concrete `RequestScope` (never a generic `ContainerInterface` — interfaces aren't autowirable by reflection here); safe because `bin/kinetis` always dispatches a command through the request's own scope.
+- `RoutesListCommand` — `#[Command('routes:list')]`. A read-only introspection tool, not a caching mechanism: runs `RouteDiscovery`/`GlobalMiddlewareDiscovery` live (regardless of `APP_ENV`) and prints the result — never touches `.kinetis-cache/`. Constructs its own throwaway `AppScope` and re-runs `bootstrap.php` to read `AppScope::middlewares()`, since `AppScope` itself is never registered onto the `RequestScope` a command is dispatched through. `$output` (a `resource`, defaulting to `STDOUT`) is an appended constructor parameter for testability against `php://memory` — the same reason `StdioTransport`'s input/output streams are injectable — since a `#[Command]` method itself must stay parameter-free or take exactly one `CommandArguments`.
+- `bin/kinetis` — has no hardcoded verbs at all. In production, loads `CommandCache` (auto-generating it, via a full `Compiler::compileProject()`, on the first invocation that finds none); in development, builds the registry live via `CommandDiscovery::discover()`. Every name — including `build`/`mcp:serve` — is looked up in that same registry. One fresh `RequestScope` per invocation, with `Kinetis\Persistence\TransactionGuard::rollbackDangling()` registered as a dispose hook whenever that class is available — the same `class_exists()`-gated safety net `Kernel` gives every HTTP request, since `TransactionGuard` lives in the optional `kinetis/persistence` package, not core. An uncaught exception is logged through the container's `LoggerInterface` and produces exit code `1`; a missing or unknown command name lists every available command, one per line, and also exits `1`.
+
+## `Kinetis\Linting`
+
+- `NoStaticPropertiesRule` — a PHPStan rule flagging `static` property declarations, shipped under the main autoload for consumer projects to add to their own `phpstan.neon`.
+
+## `Kinetis\Testing`
+
+- `TestClient` — wraps a `Kernel`. `get()`/`post()`/`put()`/`patch()`/`delete()` build a PSR-7 request and dispatch it; a `body` array is JSON-encoded with `Content-Type: application/json` set unless already provided. `request()` is the general form all five call.
+
+## Request lifecycle, in order
+
+1. A `RuntimeAdapterInterface` receives the request and converts it to PSR-7.
+2. `Kernel::handle()` runs the global `MiddlewarePipeline`.
+3. Inside it: `AppScope::createRequestScope()`, then `TransactionGuard::rollbackDangling()` registered as a dispose hook when `kinetis/persistence` is installed.
+4. `Router::match()` resolves a `Route`, or throws `RouteNotFoundException`/`MethodNotAllowedException` (→ 404/405).
+5. The route's `#[Middleware]` pipeline runs, wrapping `Dispatcher::dispatch()`.
+6. `Dispatcher` resolves parameters (via a compiled plan if `HttpCache` is present, live reflection otherwise), invokes the controller.
+7. `RequestScope::dispose()` runs in a `finally` block; `gc_collect_cycles()` runs if the adapter is persistent.
+
+## See also
+
+- {doc}`appendix-packages` — the same reference map for every optional satellite package.
+- {doc}`appendix-ci` — what actually runs in CI, and what's deliberately not covered.
+- {doc}`core-concepts`, {doc}`container`, {doc}`config`, {doc}`routing-validation`, {doc}`middleware`, {doc}`logging`, {doc}`runtime-adapters`, {doc}`concurrency`, {doc}`persistence`, {doc}`mcp`, {doc}`caching`, {doc}`cli`, {doc}`testing` — the task-oriented page for each namespace above.

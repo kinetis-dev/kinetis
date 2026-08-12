@@ -1,0 +1,72 @@
+name: Infection
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  mutation-test:
+    name: ${{ matrix.package.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # minMsi/minCoveredMsi are real thresholds, not 0 — each measured
+        # directly against this exact codebase (not estimated), then set
+        # a real margin below the measured score so ordinary variance
+        # doesn't flake the gate while a genuine regression still fails
+        # it. Mutation Code Coverage is 100% for every package here, so
+        # min-msi and min-covered-msi land on the same number throughout;
+        # they're kept as two separate flags anyway since that stops
+        # being true the moment any package's coverage ever drops below
+        # 100%, and at that point the two numbers need to already mean
+        # different things. A few packages score low by design, not by
+        # neglect — queue-sqs/storage-s3 wrap real AWS clients that are
+        # deliberately real-backend-verified only (see kinetis/queue's
+        # own RedisQueue/SqlQueue precedent for this project's established
+        # "don't fake what a real backend has to prove" testing
+        # discipline) — their thresholds reflect that scope honestly
+        # rather than being padded to look stronger than they are.
+        package:
+          - { name: core, dir: packages/kinetis, minMsi: 75, minCoveredMsi: 75 }
+          - { name: persistence, dir: packages/persistence, minMsi: 85, minCoveredMsi: 85 }
+          - { name: cache-redis, dir: packages/cache-redis, minMsi: 75, minCoveredMsi: 75 }
+          - { name: auth, dir: packages/auth, minMsi: 70, minCoveredMsi: 70 }
+          - { name: auth-jwt, dir: packages/auth-jwt, minMsi: 70, minCoveredMsi: 70 }
+          - { name: bref-adapter, dir: packages/bref-adapter, minMsi: 70, minCoveredMsi: 70 }
+          - { name: mailer, dir: packages/mailer, minMsi: 90, minCoveredMsi: 90 }
+          - { name: migrations, dir: packages/migrations, minMsi: 75, minCoveredMsi: 75 }
+          - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
+          - { name: search-opensearch, dir: packages/search-opensearch, minMsi: 70, minCoveredMsi: 70 }
+          - { name: queue, dir: packages/queue, minMsi: 60, minCoveredMsi: 60 }
+          - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, minMsi: 90, minCoveredMsi: 90 }
+          - { name: queue-sqs, dir: packages/queue-sqs, minMsi: 55, minCoveredMsi: 55 }
+          # Measured at 20% MSI, not 70% — this package's own committed
+          # suite is deliberately thin (construction, a type check, one
+          # real HTTP round trip, one default-options round trip), so 70
+          # was a stale/copy-pasted threshold this package never actually
+          # hit.
+          - { name: revolt-http-client, dir: packages/revolt-http-client, minMsi: 15, minCoveredMsi: 15 }
+          - { name: aws-sigv4, dir: packages/aws-sigv4, minMsi: 90, minCoveredMsi: 90 }
+          - { name: skeleton, dir: packages/skeleton, minMsi: 90, minCoveredMsi: 90 }
+          - { name: storage, dir: packages/storage, minMsi: 90, minCoveredMsi: 90 }
+          - { name: storage-s3, dir: packages/storage-s3, minMsi: 15, minCoveredMsi: 15 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        # GIT_CONFIG_* env vars work around "detected dubious ownership" —
+        # the container runs as a different UID than the host checkout it
+        # bind-mounts, which git (invoked internally by Composer for
+        # path-repo version resolution) refuses by default.
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist
+
+      - name: Infection (mutation testing)
+        run: |
+          docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:8.4-cli-alpine sh -c "
+            apk add --no-cache gcc g++ make autoconf pkgconf re2c
+            pecl install pcov
+            echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+            php -d memory_limit=512M vendor/bin/infection --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4
+          "

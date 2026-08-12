@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  test:
+    name: ${{ matrix.package.name }} (PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # PHP 8.5 added alongside the existing 8.4 leg: dunglas/frankenphp
+        # — the documented primary deployment target — already ships PHP
+        # 8.5, which no CI job previously exercised at all.
+        php-version: ['8.4', '8.5']
+        package:
+          - { name: core, dir: packages/kinetis, phpunit: true }
+          - { name: persistence, dir: packages/persistence, phpunit: true }
+          - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
+          - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }
+          - { name: query-builder, dir: packages/query-builder, phpunit: true }
+          - { name: auth, dir: packages/auth, phpunit: true }
+          - { name: auth-jwt, dir: packages/auth-jwt, phpunit: true }
+          - { name: migrations, dir: packages/migrations, phpunit: true }
+          - { name: queue, dir: packages/queue, phpunit: true }
+          - { name: storage, dir: packages/storage, phpunit: true }
+          - { name: revolt-http-client, dir: packages/revolt-http-client, phpunit: true }
+          - { name: aws-sigv4, dir: packages/aws-sigv4, phpunit: true }
+          - { name: storage-s3, dir: packages/storage-s3, phpunit: true }
+          - { name: queue-sqs, dir: packages/queue-sqs, phpunit: true }
+          - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, phpunit: true }
+          - { name: mailer, dir: packages/mailer, phpunit: true }
+          - { name: search-opensearch, dir: packages/search-opensearch, phpunit: true }
+          - { name: pingpong, dir: packages/pingpong, phpunit: false }
+          - { name: skeleton, dir: packages/skeleton, phpunit: true }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate composer.json
+        # GIT_CONFIG_* env vars work around "detected dubious ownership" —
+        # the container runs as a different UID than the host checkout it
+        # bind-mounts, which git (invoked internally by Composer for
+        # path-repo version resolution) refuses by default.
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 validate --strict
+
+      - name: Install dependencies
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist
+
+      - name: Composer audit
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 audit
+
+      - name: PHPUnit
+        if: matrix.package.phpunit
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/phpunit
+
+      - name: PHPStan
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
+
+      - name: Psalm (taint analysis)
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress --report=psalm.sarif --report-show-info=false
+
+      - name: Upload Psalm SARIF to code scanning
+        # Requires GitHub Code Security enabled on the repo to work while
+        # private (free automatically once public) — soft-fails until
+        # then rather than reddening every run over a dashboard step.
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ matrix.package.dir }}/psalm.sarif
+          category: psalm-${{ matrix.package.name }}
+
+  docs:
+    name: docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Sphinx docs
+        run: |
+          docker run --rm -v "$PWD/docs":/app -w /app python:3.12-slim \
+            bash -c "pip install -q -r requirements.txt && sphinx-build -M html . _build -W --keep-going"

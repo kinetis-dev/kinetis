@@ -1,0 +1,149 @@
+# Concurrency
+
+`Kinetis\Async` is a thin wrapper over [Revolt](https://revolt.run/) — the
+AMPHP v3 event loop — not a hand-rolled reactor. PHP Fibers alone are just
+cooperative coroutines; they need an event loop scheduling I/O around them,
+and Revolt is the PHP ecosystem's de facto standard for that. Nothing in
+this page is Kinetis reinventing an event loop — it's a small, deliberately
+thin layer of primitives built on Revolt's suspend/resume pattern.
+
+## The suspend/resume pattern
+
+Every non-blocking primitive in `Kinetis\Async` is built the same way:
+capture the currently-running `Fiber`, register a Revolt watcher for
+whatever condition you're waiting on, then suspend — and let the watcher's
+callback resume the fiber once that condition is met.
+
+```{code-block} php
+:caption: The pattern Socket/Timer both reduce to
+
+use Revolt\EventLoop;
+
+$fiber = Fiber::getCurrent();
+
+EventLoop::onReadable($stream, static function (string $watcherId) use ($fiber): void {
+    EventLoop::cancel($watcherId);
+    $fiber?->resume();
+});
+
+Fiber::suspend();
+```
+
+`Timer::delay()` is the simplest concrete example — a Fiber-suspending
+delay with nothing to read or write, useful mainly as a deterministic way
+to *prove* concurrency actually overlaps, without depending on real network
+timing in a test:
+
+```{code-block} php
+use Kinetis\Async\Timer;
+
+Timer::delay(0.05); // suspends this Fiber for 50ms, without blocking the process
+```
+
+## `Socket` — non-blocking TCP
+
+`connect()`/`read()`/`write()` suspend the calling Fiber while the
+underlying stream isn't ready, rather than blocking on it — the worker is
+free to run other Fibers, or process other watchers, for however long that
+takes. Calling any of these methods **outside a Fiber is a programming
+error** — there's nothing to resume — and surfaces as PHP's own
+`FiberError`, not a silent hang. In practice that means calling `Socket`
+from inside a `concurrently()` task (below), which is what actually
+supplies the Fiber — a bare top-level `Socket::connect(...)` call with no
+surrounding Fiber will throw:
+
+```{code-block} php
+use Kinetis\Async\Socket;
+
+use function Kinetis\Async\concurrently;
+
+[$response] = concurrently([
+    function (): string {
+        $socket = Socket::connect('example.com', 80);
+        $socket->write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+
+        return $socket->read(4096);
+    },
+]);
+```
+
+```{warning}
+This is why Kinetis's database clients (see {doc}`persistence`) aren't
+built on `PDO`, `ext-mysqli`, or `ext-pgsql`. A blocking call has no point
+where it can hand control back to other work, so wrapping one in a Fiber
+doesn't make it non-blocking — it blocks the *entire worker process* just
+as hard, only less visibly, defeating `concurrently()`'s whole purpose.
+```
+
+## `concurrently()` — running tasks side by side
+
+```{code-block} php
+use function Kinetis\Async\concurrently;
+
+[$user, $orders, $inventory] = concurrently([
+    fn () => $userClient->fetch($userId),
+    fn () => $ordersClient->fetch($userId),
+    fn () => $inventoryClient->checkStock($sku),
+]);
+```
+
+Each task becomes its own `Fiber`. A single `EventLoop::run()` call
+afterwards drives all of them to completion — Revolt's own run loop
+doesn't return until nothing is left to wait on, so it doesn't matter how
+many times any one task suspends internally, or in what order they finish.
+
+**Every task runs to completion — successfully or not — before any
+exception is allowed to surface.** A failing task doesn't abort the others
+still in flight; if one or more failed, the first failure (in `$tasks`
+order) is rethrown only once everything has finished:
+
+```{code-block} php
+try {
+    concurrently([
+        fn () => $slowButSuccessful(),
+        fn () => throw new RuntimeException('this one fails'),
+    ]);
+} catch (RuntimeException $e) {
+    // $slowButSuccessful() still ran to completion — it just wasn't
+    // allowed to abort the other task's own error from surfacing.
+}
+```
+
+Three 50ms `Timer::delay()` calls run through `concurrently()` complete in
+well under 100ms total, not the ~150ms+ a sequential fallback would take —
+because they genuinely overlap rather than merely appearing to.
+
+```{warning}
+**`concurrently()` cannot be called from inside a task that's already
+running through another `concurrently()` call.** It works by calling a
+blanket `Revolt\EventLoop::run()` once all of its Fibers are created, and
+Revolt's own loop cannot be entered a second time while it's already
+running — attempting to do so throws "the event loop is already running."
+This isn't specific to `Kinetis\Async` — it applies to *any* code reachable
+from inside a `concurrently()` task that itself tries to drive the loop,
+including a second, nested `concurrently()` call. If you need to run
+something concurrently from inside an already-concurrent task, restructure
+so both sets of work are passed to the same, single `concurrently()` call
+instead of nesting one inside the other.
+```
+
+## Composing with AMPHP
+
+`Kinetis\Async`'s database and Redis clients (see {doc}`persistence`) come
+from the AMPHP ecosystem — `amphp/mysql`, `amphp/postgres`, `amphp/redis` —
+chosen specifically because they're Revolt-native, needing no bridging
+between two different event loops. They use `Amp\Future`/coroutines
+internally, a different API shape than `Kinetis\Async`'s own raw
+`Fiber::suspend()`/`EventLoop::onX()` primitives, but both run on the same
+underlying Revolt loop, so a `concurrently()` call can freely mix tasks
+built on either shape and still run every one of them genuinely in
+parallel: a MySQL query, a Postgres query, and a Redis command issued
+together complete in roughly the time the slowest one alone takes, not the
+sum of all three.
+
+## See also
+
+- {doc}`persistence` — the AMPHP-based database/Redis clients described
+  above, and `TransactionGuard`, the request-lifecycle safety net built
+  specifically because AMPHP's connection pools have no concept of
+  Kinetis's `RequestScope`.

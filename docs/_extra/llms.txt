@@ -1,0 +1,54 @@
+# Kinetis
+
+> A PHP framework built for persistent-worker runtimes (FrankenPHP), not
+> the traditional PHP-FPM "boot and die" model. Attribute-driven routing,
+> validation, and OpenAPI; a request-scoped container; Fiber-based
+> concurrency over Revolt; a native Model Context Protocol server.
+
+Kinetis core ships as a single package, `kinetis/kinetis`, requiring PHP 8.4+.
+A few narrower or optional pieces ship as separate packages instead — see
+Satellite Packages below.
+
+## Getting Started
+
+- [Getting Started](https://docs.kinetis.dev/getting-started.html): Install Kinetis, write your first controller, and run it under FrankenPHP.
+- [Tutorial](https://docs.kinetis.dev/tutorial.html): Build a real-time application from scratch — a database, a queue, a scheduled command, and live updates over a WebSocket. kinetis/skeleton is the same application, already built, as a project starting point.
+- [Core Concepts](https://docs.kinetis.dev/core-concepts.html): The runtime-agnostic Kernel, the request lifecycle, and why persistent workers change the rules.
+
+## Core Framework
+
+- [Container](https://docs.kinetis.dev/container.html): AppScope and RequestScope, and why Kinetis bans static properties.
+- [Configuration](https://docs.kinetis.dev/config.html): .env loading and typed Config access.
+- [Routing & Validation](https://docs.kinetis.dev/routing-validation.html): Attribute-based routes, typed DTOs, constraint validation, and zero-config OpenAPI.
+- [Middleware](https://docs.kinetis.dev/middleware.html): The PSR-15 pipeline — global vs. route — plus the built-in ExceptionHandlerMiddleware, CorsMiddleware, and RateLimitMiddleware.
+- [Events](https://docs.kinetis.dev/events.html): A PSR-14 event dispatcher with attribute-driven listener registration, plus ShouldQueue for deferring a listener to a queue.
+- [Logging](https://docs.kinetis.dev/logging.html): PSR-3 logging, the default NullLogger, and where Kinetis logs on its own.
+- [Runtime Adapters](https://docs.kinetis.dev/runtime-adapters.html): FrankenPHP, PHP-FPM, and AWS Lambda adapters, and how RuntimeDetector picks one automatically.
+- [Concurrency](https://docs.kinetis.dev/concurrency.html): Fiber-based concurrency over Revolt — concurrently(), Async\Socket, Async\Timer.
+- [Persistence](https://docs.kinetis.dev/persistence.html): MySQL/Postgres/Redis clients over AMPHP, and TransactionGuard's commit/rollback protocol.
+- [Model Context Protocol](https://docs.kinetis.dev/mcp.html): The native MCP server — tools, resources, transports, and protocol-era handling.
+- [Caching](https://docs.kinetis.dev/caching.html): Production-only AOT caching of routes, MCP registrations, validation plans, and OpenAPI, plus APP_ENV.
+- [CLI](https://docs.kinetis.dev/cli.html): The `kinetis` command — `mcp:serve` and `build`.
+- [Testing](https://docs.kinetis.dev/testing.html): TestClient, for exercising a Kernel end-to-end in your own test suite.
+
+## Satellite Packages
+
+- [kinetis/auth](https://docs.kinetis.dev/auth.html): Opaque Bearer-token authentication middleware.
+- [kinetis/auth-jwt](https://docs.kinetis.dev/auth-jwt.html): Stateless JWT authentication (HS256/RS256), with optional per-token revocation.
+- [kinetis/migrations](https://docs.kinetis.dev/migrations.html): A thin database migration runner — raw SQL up()/down(), no schema-diffing.
+- [kinetis/query-builder](https://docs.kinetis.dev/query-builder.html): A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM.
+- [kinetis/queue](https://docs.kinetis.dev/queue.html): A backend-agnostic background job queue — Redis and SQL backends included.
+- [kinetis/queue-sqs](https://docs.kinetis.dev/queue-sqs.html): An Amazon SQS backend for kinetis/queue's QueueInterface.
+- [kinetis/queue-rabbitmq](https://docs.kinetis.dev/queue-rabbitmq.html): A RabbitMQ backend for kinetis/queue's QueueInterface.
+- [kinetis/storage](https://docs.kinetis.dev/storage.html): File storage on League\Flysystem — a genuinely non-blocking, Amp\File-backed local adapter.
+- [kinetis/storage-s3](https://docs.kinetis.dev/storage-s3.html): Amazon S3 (and S3-compatible) storage for kinetis/storage, non-blocking via kinetis/revolt-http-client.
+- [kinetis/mailer](https://docs.kinetis.dev/mailer.html): Mail sending via Symfony\Component\Mailer — API-based transports non-blocking via kinetis/revolt-http-client.
+- [kinetis/revolt-http-client](https://docs.kinetis.dev/revolt-http-client.html): A Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
+- kinetis/bref-adapter: AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs. See Runtime Adapters above.
+- kinetis/skeleton: A runnable ping-pong demo application — MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi. See Tutorial above.
+
+## Optional
+
+- [Appendix](https://docs.kinetis.dev/appendix.html): A dense, file-by-file reference across every namespace in core.
+- [Appendix: Satellite Packages](https://docs.kinetis.dev/appendix-packages.html): A dense, file-by-file reference across every satellite package.
+- [Appendix: Continuous Integration](https://docs.kinetis.dev/appendix-ci.html): What CI actually tests, how, and what's deliberately not covered.
