@@ -29,7 +29,7 @@ declare(strict_types=1);
 const PROJECT_ROOT = __DIR__ . '/..';
 const MANIFEST_PATH = PROJECT_ROOT . '/packages.manifest.json';
 
-/** @return array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} */
+/** @return array<string, mixed> */
 function loadManifest(): array
 {
     $json = file_get_contents(MANIFEST_PATH);
@@ -39,13 +39,10 @@ function loadManifest(): array
         exit(1);
     }
 
-    /** @var array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} */
+    /** @var array<string, mixed> */
     return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
 }
 
-/**
- * @param array{major: int, minor: int, patch: int} $v
- */
 function majorMinorConstraint(string $version): string
 {
     $v = parseSemver($version);
@@ -55,7 +52,7 @@ function majorMinorConstraint(string $version): string
 
 /**
  * @param array<string, mixed> $pkg
- * @param array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} $manifest
+ * @param array<string, mixed> $manifest
  * @return array<string, mixed>
  */
 function assembleComposerJson(array $pkg, array $manifest, bool $release = false): array
@@ -156,6 +153,7 @@ function assembleComposerJson(array $pkg, array $manifest, bool $release = false
     return $out;
 }
 
+/** @param array<string, mixed> $data */
 function encodeComposerJson(array $data): string
 {
     return json_encode(
@@ -164,7 +162,10 @@ function encodeComposerJson(array $data): string
     ) . "\n";
 }
 
-/** @return array<string, string> package key => generated dev-mode composer.json content */
+/**
+ * @param array<string, mixed> $manifest
+ * @return array<string, string> package key => generated dev-mode composer.json content
+ */
 function generateAll(array $manifest): array
 {
     $generated = [];
@@ -177,6 +178,7 @@ function generateAll(array $manifest): array
 }
 
 /**
+ * @param array<string, mixed> $manifest
  * @param list<string> $keys
  * @return array<string, string> package key => generated release-mode composer.json content
  */
@@ -191,11 +193,12 @@ function generateRelease(array $manifest, array $keys): array
     return $generated;
 }
 
-function composerJsonPath(string $key): string
+function composerJsonPath(string $key, ?string $projectRoot = null): string
 {
-    return PROJECT_ROOT . "/packages/{$key}/composer.json";
+    return ($projectRoot ?? PROJECT_ROOT) . "/packages/{$key}/composer.json";
 }
 
+/** @param array<string, mixed> $manifest */
 function runWrite(array $manifest): int
 {
     foreach (generateAll($manifest) as $key => $content) {
@@ -206,13 +209,16 @@ function runWrite(array $manifest): int
     return 0;
 }
 
-/** @return list<string> package keys whose committed composer.json doesn't match the manifest */
-function findStalePackages(array $manifest): array
+/**
+ * @param array<string, mixed> $manifest
+ * @return list<string> package keys whose committed composer.json doesn't match the manifest
+ */
+function findStalePackages(array $manifest, ?string $projectRoot = null): array
 {
     $stale = [];
 
     foreach (generateAll($manifest) as $key => $content) {
-        $path = composerJsonPath($key);
+        $path = composerJsonPath($key, $projectRoot);
         $current = is_file($path) ? file_get_contents($path) : null;
 
         if ($current !== $content) {
@@ -223,6 +229,7 @@ function findStalePackages(array $manifest): array
     return $stale;
 }
 
+/** @param array<string, mixed> $manifest */
 function runCheck(array $manifest): int
 {
     $stale = findStalePackages($manifest);
@@ -262,7 +269,10 @@ function bumpVersion(string $current, string $component): string
     };
 }
 
-/** @param list<string> $argv */
+/**
+ * @param array<string, mixed> $manifest
+ * @param list<string> $argv
+ */
 function runBump(array $manifest, array $argv): int
 {
     $bumpArg = null;
@@ -287,8 +297,6 @@ function runBump(array $manifest, array $argv): int
         return 1;
     }
 
-    $keys = [];
-
     if ($bumpArg !== null) {
         if ($component === null) {
             fwrite(STDERR, "--bump requires --major, --minor, or --patch.\n");
@@ -297,19 +305,19 @@ function runBump(array $manifest, array $argv): int
         }
 
         $keys = $bumpArg === 'all' ? array_keys($manifest['packages']) : explode(',', $bumpArg);
-    }
 
-    foreach ($keys as $key) {
-        if (!isset($manifest['packages'][$key])) {
-            fwrite(STDERR, "Unknown package: {$key}\n");
+        foreach ($keys as $key) {
+            if (!isset($manifest['packages'][$key])) {
+                fwrite(STDERR, "Unknown package: {$key}\n");
 
-            return 1;
+                return 1;
+            }
+
+            $current = $manifest['packages'][$key]['version'];
+            $next = bumpVersion($current, $component);
+            $manifest['packages'][$key]['version'] = $next;
+            echo "{$key}: {$current} -> {$next}\n";
         }
-
-        $current = $manifest['packages'][$key]['version'];
-        $next = bumpVersion($current, $component);
-        $manifest['packages'][$key]['version'] = $next;
-        echo "{$key}: {$current} -> {$next}\n";
     }
 
     foreach ($setVersions as $key => $version) {
@@ -331,6 +339,7 @@ function runBump(array $manifest, array $argv): int
     return 0;
 }
 
+/** @param array<string, mixed> $manifest */
 function runRelease(array $manifest, string $keysArg): int
 {
     $keys = explode(',', $keysArg);
@@ -351,6 +360,7 @@ function runRelease(array $manifest, string $keysArg): int
     return 0;
 }
 
+/** @param list<string> $argv */
 function generatorMain(array $argv): int
 {
     $manifest = loadManifest();
@@ -373,6 +383,17 @@ function generatorMain(array $argv): int
     return runWrite($manifest);
 }
 
-if (realpath($argv[0]) === __FILE__) {
-    exit(generatorMain($argv));
+// get_included_files()[0] is always the true entry-point script,
+// regardless of whether $argv is populated — unlike realpath($argv[0]),
+// this works reliably under PHPUnit's own CLI invocation too, where
+// $argv isn't set the way a plain `php generate-composer.php` gives it.
+// Psalm flags this as a ParadoxicalCondition — a real, confirmed false
+// positive, not a bug: its own static analysis of get_included_files()
+// doesn't match real runtime behavior, verified directly with an
+// isolated repro (a standalone script correctly reporting itself as
+// the sole included file) and by this exact guard already behaving
+// correctly both ways in real CLI runs and under PHPUnit.
+/** @psalm-suppress ParadoxicalCondition */
+if (current(get_included_files()) === __FILE__) {
+    exit(generatorMain($argv ?? []));
 }

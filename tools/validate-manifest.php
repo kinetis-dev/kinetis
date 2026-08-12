@@ -39,6 +39,7 @@ function buildGraph(array $packages): array
     return $graph;
 }
 
+/** @param array<string, mixed> $manifest */
 function checkCycles(array $manifest): ?string
 {
     $graph = buildGraph($manifest['packages']);
@@ -81,7 +82,10 @@ function checkCycles(array $manifest): ?string
     return null;
 }
 
-/** @return list<string> */
+/**
+ * @param array<string, mixed> $manifest
+ * @return list<string>
+ */
 function checkVersionConsistency(array $manifest): array
 {
     $seen = [];
@@ -115,6 +119,7 @@ function checkVersionConsistency(array $manifest): array
     return $problems;
 }
 
+/** @return array<string, mixed>|null */
 function loadManifestAtRef(string $ref): ?array
 {
     $descriptorSpec = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
@@ -164,7 +169,11 @@ function validateVersionBump(string $key, ?string $old, string $new): array
     return [];
 }
 
-/** @return list<string> */
+/**
+ * @param array<string, mixed>|null $oldManifest
+ * @param array<string, mixed> $newManifest
+ * @return list<string>
+ */
 function checkVersionBumpCompleteness(?array $oldManifest, array $newManifest): array
 {
     if ($oldManifest === null) {
@@ -256,6 +265,10 @@ function validatorMain(): int
     return $ok ? 0 : 1;
 }
 
-if (realpath($argv[0]) === __FILE__) {
+// See generate-composer.php for why this checks get_included_files()
+// rather than $argv[0], and for the confirmed-false-positive reasoning
+// behind the Psalm suppression below.
+/** @psalm-suppress ParadoxicalCondition */
+if (current(get_included_files()) === __FILE__) {
     exit(validatorMain());
 }

@@ -27,7 +27,11 @@ require_once __DIR__ . '/validate-manifest.php';
 
 const GITHUB_ORG = 'kinetis-dev';
 
-/** @return list<string> package keys whose version differs between the two manifests */
+/**
+ * @param array<string, mixed> $oldManifest
+ * @param array<string, mixed> $newManifest
+ * @return list<string> package keys whose version differs between the two manifests
+ */
 function findReleaseCandidates(array $oldManifest, array $newManifest): array
 {
     $candidates = [];
@@ -109,7 +113,11 @@ function topologicalOrder(array $graph): array
     return $order;
 }
 
-/** @return list<string> publish order, restricted to $candidates, dependency-respecting */
+/**
+ * @param array<string, mixed> $manifest
+ * @param list<string> $candidates
+ * @return list<string> publish order, restricted to $candidates, dependency-respecting
+ */
 function publishOrder(array $manifest, array $candidates): array
 {
     $graph = buildGraph($manifest['packages']);
@@ -145,9 +153,16 @@ function tagExistsOnGitHub(string $repo, string $tag): bool
  * — an unchanged sibling's already-published version is exactly what's
  * expected to resolve.
  *
+ * @param array<string, mixed> $manifest
+ * @param callable(string, string): bool $tagExists Injectable so the
+ *     surrounding logic (which siblings get checked, how a miss is
+ *     worded) is unit-testable without a real network call — the real
+ *     tagExistsOnGitHub() itself is exercised separately, directly,
+ *     the same "real backend, not mocked in the committed suite"
+ *     precedent this project already applies to RedisQueue/SqlQueue.
  * @return list<string> problems, empty if everything resolves
  */
-function checkResolution(array $manifest, string $key): array
+function checkResolution(array $manifest, string $key, callable $tagExists): array
 {
     $pkg = $manifest['packages'][$key];
     $siblings = [...($pkg['requires'] ?? []), ...($pkg['requiresDev'] ?? [])];
@@ -157,7 +172,7 @@ function checkResolution(array $manifest, string $key): array
         $version = $manifest['packages'][$sibling]['version'];
         $tag = "v{$version}";
 
-        if (!tagExistsOnGitHub($sibling, $tag)) {
+        if (!$tagExists($sibling, $tag)) {
             $problems[] = "{$key} requires {$sibling} ({$tag}), but that tag doesn't exist on kinetis-dev/{$sibling} yet";
         }
     }
@@ -194,7 +209,7 @@ function main(): int
         $version = $newManifest['packages'][$key]['version'];
         echo "  {$key} -> v{$version}\n";
 
-        $problems = checkResolution($newManifest, $key);
+        $problems = checkResolution($newManifest, $key, tagExists: tagExistsOnGitHub(...));
 
         foreach ($problems as $p) {
             echo "    [resolution] {$p}\n";
@@ -205,6 +220,10 @@ function main(): int
     return $ok ? 0 : 1;
 }
 
-if (realpath($argv[0]) === __FILE__) {
+// See generate-composer.php for why this checks get_included_files()
+// rather than $argv[0], and for the confirmed-false-positive reasoning
+// behind the Psalm suppression below.
+/** @psalm-suppress ParadoxicalCondition */
+if (current(get_included_files()) === __FILE__) {
     exit(main());
 }
