@@ -223,6 +223,12 @@ final readonly class KinetisDocsResource
         return $this->read('appendix-ci');
     }
 
+    #[McpResource(uri: 'kinetis://docs/appendix-contributing', name: 'appendix-contributing', description: 'Contributing to Kinetis: the monorepo layout, dev environment setup, testing, the manifest-driven release tooling, and branching/PR/CI workflow', mimeType: self::MIME_TYPE)]
+    public function appendixContributing(): string
+    {
+        return $this->read('appendix-contributing');
+    }
+
     #[McpResource(uri: 'kinetis://docs/revolt-http-client', name: 'revolt-http-client', description: 'kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required', mimeType: self::MIME_TYPE)]
     public function revoltHttpClient(): string
     {

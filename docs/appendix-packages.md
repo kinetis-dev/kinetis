@@ -173,6 +173,9 @@ Separate Composer package, not part of `kinetis/framework` core.
 - {doc}`appendix` — the same reference map for core (`kinetis/framework`).
 - {doc}`appendix-ci` — what actually runs in CI, including the
   real-backend integration checks for several packages listed above.
+- {doc}`appendix-contributing` — the monorepo layout, dev environment
+  setup, and the manifest-driven tooling for changing a package's
+  dependencies.
 - {doc}`migrations`, {doc}`query-builder`, {doc}`queue`, {doc}`queue-sqs`,
   {doc}`queue-rabbitmq`, {doc}`storage`, {doc}`storage-s3`,
   {doc}`revolt-http-client`, {doc}`aws-sigv4`, {doc}`mailer`,

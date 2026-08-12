@@ -189,5 +189,8 @@ against it before a human ever looks at it.
 - {doc}`appendix` — the same reference map for core, by namespace.
 - {doc}`appendix-packages` — the same reference map for every satellite
   package, by namespace.
+- {doc}`appendix-contributing` — how to run these checks locally before
+  pushing, and how the manifest-driven tooling `monorepo-validate.yml`
+  enforces actually works.
 - {doc}`testing` — `TestClient`, for exercising a `Kernel` end-to-end in
   a consumer's own test suite.

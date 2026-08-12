@@ -144,6 +144,7 @@ testing
 appendix
 appendix-packages
 appendix-ci
+appendix-contributing
 revolt-http-client
 ```
 

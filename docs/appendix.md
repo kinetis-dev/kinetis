@@ -140,4 +140,5 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 
 - {doc}`appendix-packages` — the same reference map for every optional satellite package.
 - {doc}`appendix-ci` — what actually runs in CI, and what's deliberately not covered.
+- {doc}`appendix-contributing` — the monorepo layout, dev environment setup, and how to actually make a change.
 - {doc}`core-concepts`, {doc}`container`, {doc}`config`, {doc}`routing-validation`, {doc}`middleware`, {doc}`logging`, {doc}`runtime-adapters`, {doc}`concurrency`, {doc}`persistence`, {doc}`mcp`, {doc}`caching`, {doc}`cli`, {doc}`testing` — the task-oriented page for each namespace above.

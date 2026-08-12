@@ -12,7 +12,7 @@ Satellite Packages below.
 ## Getting Started
 
 - [Getting Started](https://docs.kinetis.dev/getting-started.html): Install Kinetis, write your first controller, and run it under FrankenPHP.
-- [Tutorial](https://docs.kinetis.dev/tutorial.html): Build a real-time application from scratch — a database, a queue, a scheduled command, and live updates over a WebSocket. kinetis/skeleton is the same application, already built, as a project starting point.
+- [Tutorial](https://docs.kinetis.dev/tutorial.html): Build a real-time application from scratch — a database, a queue, a scheduled command, and live updates over a WebSocket. kinetis/pingpong is the same application, already built.
 - [Core Concepts](https://docs.kinetis.dev/core-concepts.html): The runtime-agnostic Kernel, the request lifecycle, and why persistent workers change the rules.
 
 ## Core Framework
@@ -43,12 +43,16 @@ Satellite Packages below.
 - [kinetis/storage](https://docs.kinetis.dev/storage.html): File storage on League\Flysystem — a genuinely non-blocking, Amp\File-backed local adapter.
 - [kinetis/storage-s3](https://docs.kinetis.dev/storage-s3.html): Amazon S3 (and S3-compatible) storage for kinetis/storage, non-blocking via kinetis/revolt-http-client.
 - [kinetis/mailer](https://docs.kinetis.dev/mailer.html): Mail sending via Symfony\Component\Mailer — API-based transports non-blocking via kinetis/revolt-http-client.
+- [kinetis/search-opensearch](https://docs.kinetis.dev/search-opensearch.html): Fiber-native non-blocking OpenSearch client construction, via kinetis/revolt-http-client.
+- [kinetis/aws-sigv4](https://docs.kinetis.dev/aws-sigv4.html): A PSR-18 client decorator signing requests with AWS Signature Version 4, non-blocking via kinetis/revolt-http-client — usable standalone.
 - [kinetis/revolt-http-client](https://docs.kinetis.dev/revolt-http-client.html): A Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
 - kinetis/bref-adapter: AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs. See Runtime Adapters above.
-- kinetis/skeleton: A runnable ping-pong demo application — MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi. See Tutorial above.
+- kinetis/pingpong: A runnable ping-pong demo application — MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi. See Tutorial above.
+- kinetis/skeleton: The smallest possible runnable Kinetis application — nginx + PHP-FPM, one controller, one route, a welcome page. A starting point for a new project.
 
 ## Optional
 
 - [Appendix](https://docs.kinetis.dev/appendix.html): A dense, file-by-file reference across every namespace in core.
 - [Appendix: Satellite Packages](https://docs.kinetis.dev/appendix-packages.html): A dense, file-by-file reference across every satellite package.
 - [Appendix: Continuous Integration](https://docs.kinetis.dev/appendix-ci.html): What CI actually tests, how, and what's deliberately not covered.
+- [Appendix: Contributing](https://docs.kinetis.dev/appendix-contributing.html): The monorepo layout, dev environment setup, testing, the manifest-driven release tooling, and branching/PR/CI workflow.
