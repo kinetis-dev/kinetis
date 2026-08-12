@@ -27,7 +27,7 @@ jobs:
         # bind-mounts, which git (invoked internally by Composer for
         # path-repo version resolution) refuses by default.
         run: |
-          for pkg in kinetis persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch skeleton storage storage-s3; do
+          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch skeleton storage storage-s3; do
             docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
             docker run --rm -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
               apk add --no-cache gcc g++ make autoconf pkgconf re2c
