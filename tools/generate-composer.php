@@ -167,7 +167,8 @@ function runWrite(array $manifest): int
     return 0;
 }
 
-function runCheck(array $manifest): int
+/** @return list<string> package keys whose committed composer.json doesn't match the manifest */
+function findStalePackages(array $manifest): array
 {
     $stale = [];
 
@@ -179,6 +180,13 @@ function runCheck(array $manifest): int
             $stale[] = $key;
         }
     }
+
+    return $stale;
+}
+
+function runCheck(array $manifest): int
+{
+    $stale = findStalePackages($manifest);
 
     if ($stale === []) {
         echo "All " . count($manifest['packages']) . " packages match the manifest.\n";
@@ -284,7 +292,7 @@ function runBump(array $manifest, array $argv): int
     return 0;
 }
 
-function main(array $argv): int
+function generatorMain(array $argv): int
 {
     $manifest = loadManifest();
     $args = array_slice($argv, 1);
@@ -301,5 +309,5 @@ function main(array $argv): int
 }
 
 if (realpath($argv[0]) === __FILE__) {
-    exit(main($argv));
+    exit(generatorMain($argv));
 }
