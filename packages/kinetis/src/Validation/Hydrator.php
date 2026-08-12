@@ -68,20 +68,21 @@ use ReflectionType;
  * actually shaped exactly like HydrationPlan itself at runtime; only the
  * static type is less precise at arbitrary nesting depth.
  *
+ * @phpstan-type HydrationPlanParameter array{
+ *     name: string,
+ *     scalarType: ?string,
+ *     dtoClass: ?class-string,
+ *     nestedPlan: ?array<string, mixed>,
+ *     listItemClass: ?class-string,
+ *     listItemPlan: ?array<string, mixed>,
+ *     hasDefault: bool,
+ *     defaultValue: mixed,
+ *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
+ * }
  * @phpstan-type HydrationPlan array{
  *     className: class-string,
  *     hasConstructor: bool,
- *     parameters: list<array{
- *         name: string,
- *         scalarType: ?string,
- *         dtoClass: ?class-string,
- *         nestedPlan: ?array<string, mixed>,
- *         listItemClass: ?class-string,
- *         listItemPlan: ?array<string, mixed>,
- *         hasDefault: bool,
- *         defaultValue: mixed,
- *         constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
- *     }>,
+ *     parameters: list<HydrationPlanParameter>,
  * }
  */
 final class Hydrator
@@ -312,96 +313,17 @@ final class Hydrator
      * the caller merges those into its own $errors and skips both the
      * constraints loop and assigning $arguments[$name] for it.
      *
-     * @param array{
-     *     name: string,
-     *     scalarType: ?string,
-     *     dtoClass: ?class-string,
-     *     nestedPlan: ?array<string, mixed>,
-     *     listItemClass: ?class-string,
-     *     listItemPlan: ?array<string, mixed>,
-     *     hasDefault: bool,
-     *     defaultValue: mixed,
-     *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
-     * } $parameter
+     * @param HydrationPlanParameter $parameter
      * @return array{0: mixed, 1: array<string, list<string>>}
      */
     private static function resolveParameterValue(string $name, mixed $value, array $parameter): array
     {
         if ($parameter['dtoClass'] !== null) {
-            if (is_array($value)) {
-                if ($parameter['nestedPlan'] === null) {
-                    // Self-referencing DTO guard (see class docblock): no
-                    // plan to hydrate against, so the raw array passes
-                    // through unhydrated.
-                    return [$value, []];
-                }
-
-                /** @var HydrationPlan $nestedPlan */
-                $nestedPlan = $parameter['nestedPlan'];
-
-                try {
-                    return [self::hydrateFromPlan($nestedPlan, $value), []];
-                } catch (ValidationException $e) {
-                    $errors = [];
-
-                    foreach ($e->errors as $nestedField => $messages) {
-                        $errors["{$name}.{$nestedField}"] = $messages;
-                    }
-
-                    return [null, $errors];
-                }
-            }
-
-            if (is_scalar($value)) {
-                return [null, [$name => ['must be an object, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
-            }
-
-            // null, or already an object (e.g. an UploadedFileInterface
-            // Dispatcher merged in directly for a multipart field) — pass
-            // through unchanged, exactly as before.
-            return [$value, []];
+            return self::resolveNestedDtoValue($name, $value, $parameter);
         }
 
         if ($parameter['listItemClass'] !== null) {
-            if (is_array($value)) {
-                if ($parameter['listItemPlan'] === null) {
-                    // Self-referencing list guard: same reasoning as above.
-                    return [$value, []];
-                }
-
-                /** @var HydrationPlan $listItemPlan */
-                $listItemPlan = $parameter['listItemPlan'];
-                $items = [];
-                $errors = [];
-
-                foreach ($value as $index => $item) {
-                    if (!is_array($item)) {
-                        $items[$index] = $item;
-                        continue;
-                    }
-
-                    try {
-                        $items[$index] = self::hydrateFromPlan($listItemPlan, $item);
-                    } catch (ValidationException $e) {
-                        foreach ($e->errors as $nestedField => $messages) {
-                            $errors["{$name}.{$index}.{$nestedField}"] = $messages;
-                        }
-                    }
-                }
-
-                if ($errors !== []) {
-                    return [null, $errors];
-                }
-
-                return [array_values($items), []];
-            }
-
-            if (is_scalar($value)) {
-                return [null, [$name => ['must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
-            }
-
-            // null, or already an array-like object — pass through unchanged.
-            return [$value, []];
+            return self::resolveListValue($name, $value, $parameter);
         }
 
         if ($parameter['scalarType'] !== null) {
@@ -413,6 +335,102 @@ final class Hydrator
         }
 
         return [self::castScalar($value, $parameter['scalarType']), []];
+    }
+
+    /**
+     * The dtoClass branch of resolveParameterValue(), split out on its own
+     * once this whole method's cognitive complexity grew past the linter's
+     * threshold as list-of-DTO support was added alongside it — a pure move,
+     * no behavior change (see the class docblock for what this branch does
+     * and why a scalar value here is a validation error, not a pass-through).
+     *
+     * @param HydrationPlanParameter $parameter
+     * @return array{0: mixed, 1: array<string, list<string>>}
+     */
+    private static function resolveNestedDtoValue(string $name, mixed $value, array $parameter): array
+    {
+        if (is_array($value)) {
+            if ($parameter['nestedPlan'] === null) {
+                // Self-referencing DTO guard (see class docblock): no
+                // plan to hydrate against, so the raw array passes
+                // through unhydrated.
+                return [$value, []];
+            }
+
+            /** @var HydrationPlan $nestedPlan */
+            $nestedPlan = $parameter['nestedPlan'];
+
+            try {
+                return [self::hydrateFromPlan($nestedPlan, $value), []];
+            } catch (ValidationException $e) {
+                $errors = [];
+
+                foreach ($e->errors as $nestedField => $messages) {
+                    $errors["{$name}.{$nestedField}"] = $messages;
+                }
+
+                return [null, $errors];
+            }
+        }
+
+        if (is_scalar($value)) {
+            return [null, [$name => ['must be an object, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
+        }
+
+        // null, or already an object (e.g. an UploadedFileInterface
+        // Dispatcher merged in directly for a multipart field) — pass
+        // through unchanged, exactly as before.
+        return [$value, []];
+    }
+
+    /**
+     * The listItemClass branch of resolveParameterValue() — same extraction
+     * reasoning as resolveNestedDtoValue() above, split out alongside it.
+     *
+     * @param HydrationPlanParameter $parameter
+     * @return array{0: mixed, 1: array<string, list<string>>}
+     */
+    private static function resolveListValue(string $name, mixed $value, array $parameter): array
+    {
+        if (is_array($value)) {
+            if ($parameter['listItemPlan'] === null) {
+                // Self-referencing list guard: same reasoning as above.
+                return [$value, []];
+            }
+
+            /** @var HydrationPlan $listItemPlan */
+            $listItemPlan = $parameter['listItemPlan'];
+            $items = [];
+            $errors = [];
+
+            foreach ($value as $index => $item) {
+                if (!is_array($item)) {
+                    $items[$index] = $item;
+                    continue;
+                }
+
+                try {
+                    $items[$index] = self::hydrateFromPlan($listItemPlan, $item);
+                } catch (ValidationException $e) {
+                    foreach ($e->errors as $nestedField => $messages) {
+                        $errors["{$name}.{$index}.{$nestedField}"] = $messages;
+                    }
+                }
+            }
+
+            if ($errors !== []) {
+                return [null, $errors];
+            }
+
+            return [array_values($items), []];
+        }
+
+        if (is_scalar($value)) {
+            return [null, [$name => ['must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
+        }
+
+        // null, or already an array-like object — pass through unchanged.
+        return [$value, []];
     }
 
     /**

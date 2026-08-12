@@ -225,10 +225,8 @@ final class Route
             return null;
         }
 
-        /** @var PathSegment $placeholderSegment */
-        $placeholderSegment = ['type' => 'placeholder', 'name' => $name, 'pattern' => $colonPos === false ? null : substr($inner, $colonPos + 1)];
-
-        return $placeholderSegment;
+        /** @var PathSegment */
+        return ['type' => 'placeholder', 'name' => $name, 'pattern' => $colonPos === false ? null : substr($inner, $colonPos + 1)];
     }
 
     /**
