@@ -1,0 +1,50 @@
+name: Monorepo Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate:
+    name: Manifest + composer.json validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Check 4 (version-bump completeness) diffs the manifest at
+          # HEAD against HEAD^ — needs at least two commits of history,
+          # not the default single-commit shallow clone.
+          fetch-depth: 2
+
+      - name: Validate packages.manifest.json (cycles, version consistency, generated-file drift, version-bump completeness)
+        # php:*-cli-alpine has no git binary, and validate-manifest.php's
+        # own version-bump check needs it (git show HEAD^:packages.manifest.json)
+        # — same gotcha already documented in the redis-cluster job above.
+        # GIT_CONFIG_* works around "detected dubious ownership": the
+        # container runs as a different UID than the host checkout it
+        # bind-mounts.
+        run: |
+          docker run --rm \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
+
+      - name: composer validate --strict (every package)
+        # Not matrixed — each check is near-instant and there's no build
+        # step to parallelize, so one job looping over all 19 is simpler
+        # than spinning up 19 separate runner jobs for it. Collects every
+        # failure before exiting, matching validate-manifest.php's own
+        # "report everything, not just the first problem" behavior.
+        run: |
+          failed=""
+          for pkg in kinetis persistence cache-redis bref-adapter query-builder auth auth-jwt migrations queue storage revolt-http-client storage-s3 queue-sqs queue-rabbitmq mailer search-opensearch aws-sigv4 pingpong skeleton; do
+            echo "=== $pkg ==="
+            if ! docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/packages/$pkg composer:2 validate --strict; then
+              failed="$failed $pkg"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::composer validate --strict failed for:$failed"
+            exit 1
+          fi
