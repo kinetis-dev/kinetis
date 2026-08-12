@@ -10,10 +10,8 @@
     ],
     "require": {
         "php": "^8.4",
-        "nikic/php-parser": "^5.0",
         "nyholm/psr7": "^1.8",
         "nyholm/psr7-server": "^1.1",
-        "phpstan/phpstan": "^2.2",
         "psr/container": "^2.0",
         "psr/event-dispatcher": "^1.0",
         "psr/http-message": "^2.0",
@@ -25,6 +23,8 @@
     },
     "require-dev": {
         "infection/infection": "^0.34.2",
+        "nikic/php-parser": "^5.0",
+        "phpstan/phpstan": "^2.2",
         "phpunit/phpunit": "^11.0",
         "vimeo/psalm": "^6.16"
     },
