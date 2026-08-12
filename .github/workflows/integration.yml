@@ -154,7 +154,7 @@ jobs:
 
   persistence-and-cache-redis:
     # Renamed from the original "core" job: TransactionGuard/
-    # RedisSimpleCache both moved out of kinetis/kinetis into their own
+    # RedisSimpleCache both moved out of kinetis/framework into their own
     # satellite packages (kinetis/persistence, kinetis/cache-redis), so
     # core itself has no remaining real-backend-dependent code at all.
     name: persistence + cache-redis (TransactionGuard on ${{ matrix.mysql.name }} + RedisSimpleCache, PHP ${{ matrix.php-version }})

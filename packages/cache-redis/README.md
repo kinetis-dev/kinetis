@@ -13,7 +13,7 @@
 `Psr\SimpleCache\CacheInterface`, backed by `Amp\Redis\RedisClient` —
 non-blocking, Revolt-native, single-node or Cluster, with TLS support.
 This is the concrete Redis implementation `Kinetis\SimpleCache` (in
-`kinetis/kinetis` itself) leaves as an optional add-on: `NullSimpleCache`
+`kinetis/framework` itself) leaves as an optional add-on: `NullSimpleCache`
 ships in core so the interface always has *something* bound, and this
 package supplies the real thing once you actually want it.
 
@@ -39,7 +39,7 @@ error naming the package to install, not a silent fallback to
 composer require kinetis/cache-redis
 ```
 
-Requires PHP 8.4+ and `kinetis/kinetis`. Full documentation:
+Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
 [docs.kinetis.dev/caching.html](https://docs.kinetis.dev/caching.html)
 and [docs.kinetis.dev/persistence.html](https://docs.kinetis.dev/persistence.html)
 (the Redis Cluster/TLS section).

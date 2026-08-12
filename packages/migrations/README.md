@@ -55,7 +55,7 @@ vendor/bin/migrate make <description>
 composer require kinetis/migrations
 ```
 
-Requires PHP 8.4+ and `kinetis/kinetis`. Full documentation:
+Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
 [docs.kinetis.dev/migrations.html](https://docs.kinetis.dev/migrations.html).
 
 ## License

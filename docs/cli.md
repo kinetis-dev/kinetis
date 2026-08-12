@@ -1,7 +1,7 @@
 # CLI
 
 Kinetis ships one binary, `bin/kinetis`, installed as `vendor/bin/kinetis`
-once you `composer require kinetis/kinetis`. Running it with no
+once you `composer require kinetis/framework`. Running it with no
 arguments, or an unrecognized one, lists every available command:
 
 ```{code-block} bash

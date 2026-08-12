@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
         "async-aws/s3": "^3.4",
         "league/flysystem": "^3.35",
@@ -35,7 +35,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         },
         {
             "type": "path",

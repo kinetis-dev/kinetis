@@ -34,7 +34,7 @@ installation, runs inside the containers.
 ## Using this as a starting point
 
 Copy `packages/skeleton/` out into a new project, point its
-`composer.json` at a real `kinetis/kinetis` install instead of the `path`
+`composer.json` at a real `kinetis/framework` install instead of the `path`
 repository this monorepo uses internally, and build from there. The
 whole app is `src/Http/WelcomeController.php` (one route) and
 `public/index.php` (the standard Kinetis entry point) — read both end to

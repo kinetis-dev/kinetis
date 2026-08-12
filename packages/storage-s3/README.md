@@ -47,7 +47,7 @@ MinIO and most other non-AWS S3-compatible services).
 composer require kinetis/storage-s3
 ```
 
-Requires PHP 8.4+, `kinetis/kinetis`, and `kinetis/revolt-http-client`.
+Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
 Full documentation:
 [docs.kinetis.dev/storage-s3.html](https://docs.kinetis.dev/storage-s3.html).
 

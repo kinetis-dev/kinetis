@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "league/flysystem": "^3.35",
         "league/mime-type-detection": "^1.0",
         "amphp/file": "^3.0",
@@ -35,7 +35,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         }
     ],
     "config": {

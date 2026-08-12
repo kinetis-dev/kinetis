@@ -34,7 +34,7 @@ $storage->delete('avatars/user-42.png');
 composer require kinetis/storage
 ```
 
-Requires PHP 8.4+ and `kinetis/kinetis`. Full documentation:
+Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
 [docs.kinetis.dev/storage.html](https://docs.kinetis.dev/storage.html).
 
 ## License

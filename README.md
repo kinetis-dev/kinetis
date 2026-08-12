@@ -13,8 +13,8 @@ This repository is the development monorepo for
 API-first applications. It hosts the shared CI/CD pipeline and the
 documentation site for every package in the ecosystem.
 
-- **Core framework**: [`packages/kinetis`](packages/kinetis) —
-  `kinetis/kinetis`, the framework itself.
+- **Core framework**: [`packages/framework`](packages/framework) —
+  `kinetis/framework`, the framework itself.
 - **Satellite packages**: everything else under
   [`packages/`](packages) — `kinetis/auth`, `kinetis/queue`,
   `kinetis/query-builder`, and the rest of the ecosystem, each its own

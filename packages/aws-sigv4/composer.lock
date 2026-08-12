@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "3e0a232d8ec40f644ae772686f1280e0",
+    "content-hash": "74aa177901e7fddfa19f0d7ecb192f18",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1154,7 +1154,7 @@
             "dist": {
                 "type": "path",
                 "url": "../revolt-http-client",
-                "reference": "69129693878b4c08b2b2e0e7a70c8ebb475c9965"
+                "reference": "657a751d371632aaec7acc2ac329f5dd4505e1e1"
             },
             "require": {
                 "amphp/http-client": "^5.3",
@@ -1164,7 +1164,7 @@
             },
             "require-dev": {
                 "infection/infection": "^0.34.2",
-                "kinetis/kinetis": "dev-main",
+                "kinetis/framework": "dev-main",
                 "phpstan/phpstan": "^2.2",
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
@@ -3336,19 +3336,17 @@
             "time": "2026-06-16T20:50:26+00:00"
         },
         {
-            "name": "kinetis/kinetis",
+            "name": "kinetis/framework",
             "version": "dev-main",
             "dist": {
                 "type": "path",
-                "url": "../kinetis",
-                "reference": "dcbbe485dd45f1c76e3a2fe9a6746eb4e822cac8"
+                "url": "../framework",
+                "reference": "c22a002f7f06f637bb92ba6488d78eb91cd1c33a"
             },
             "require": {
-                "nikic/php-parser": "^5.0",
                 "nyholm/psr7": "^1.8",
                 "nyholm/psr7-server": "^1.1",
                 "php": "^8.4",
-                "phpstan/phpstan": "^2.2",
                 "psr/container": "^2.0",
                 "psr/event-dispatcher": "^1.0",
                 "psr/http-message": "^2.0",
@@ -3360,6 +3358,8 @@
             },
             "require-dev": {
                 "infection/infection": "^0.34.2",
+                "nikic/php-parser": "^5.0",
+                "phpstan/phpstan": "^2.2",
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },
@@ -7857,7 +7857,7 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
-        "kinetis/kinetis": 20,
+        "kinetis/framework": 20,
         "kinetis/revolt-http-client": 20
     },
     "prefer-stable": true,

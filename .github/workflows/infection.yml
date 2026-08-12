@@ -29,7 +29,7 @@ jobs:
         # discipline) — their thresholds reflect that scope honestly
         # rather than being padded to look stronger than they are.
         package:
-          - { name: core, dir: packages/kinetis, minMsi: 75, minCoveredMsi: 75 }
+          - { name: core, dir: packages/framework, minMsi: 75, minCoveredMsi: 75 }
           - { name: persistence, dir: packages/persistence, minMsi: 85, minCoveredMsi: 85 }
           - { name: cache-redis, dir: packages/cache-redis, minMsi: 75, minCoveredMsi: 75 }
           - { name: auth, dir: packages/auth, minMsi: 70, minCoveredMsi: 70 }

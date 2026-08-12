@@ -22,7 +22,7 @@ jobs:
         # 8.5, which no CI job previously exercised at all.
         php-version: ['8.4', '8.5']
         package:
-          - { name: core, dir: packages/kinetis, phpunit: true }
+          - { name: core, dir: packages/framework, phpunit: true }
           - { name: persistence, dir: packages/persistence, phpunit: true }
           - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
           - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }

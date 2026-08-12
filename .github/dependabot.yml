@@ -2,7 +2,7 @@ version: 2
 
 updates:
   - package-ecosystem: "composer"
-    directory: "/packages/kinetis"
+    directory: "/packages/framework"
     schedule:
       interval: "weekly"
 

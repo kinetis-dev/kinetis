@@ -31,7 +31,7 @@ use Throwable;
  * is more surface for a framework that's supposed to stay runtime-agnostic
  * at its core.
  *
- * Lives in its own package, not kinetis/kinetis core, specifically because of
+ * Lives in its own package, not kinetis/framework core, specifically because of
  * the multipart/form-data handling below: a Lambda event's body arrives as
  * one in-memory string with no live php://input stream behind it, so PHP
  * 8.4's request_parse_body() (what FrankenPhpAdapter/FpmAdapter use for the

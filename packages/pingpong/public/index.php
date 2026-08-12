@@ -43,7 +43,7 @@ RoutesFile::loadBootstrap($projectRoot)($app, $config);
 $httpCache = null;
 $cacheStore = null;
 
-// Same APP_ENV-gated cache-or-discover split as kinetis/kinetis's own
+// Same APP_ENV-gated cache-or-discover split as kinetis/framework's own
 // reference public/index.php — mirrored here rather than diverging from
 // it, so this app's routes/middleware/MCP tools actually benefit from
 // `bin/kinetis build` the way the caching docs describe.

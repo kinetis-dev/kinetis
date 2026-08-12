@@ -24,7 +24,7 @@ use Kinetis\Mcp\Exception\DocsResourceException;
  * resolves correctly when developing Kinetis itself, inside this
  * monorepo — `docs/` covers every package, not just core, so it lives
  * at the monorepo root rather than shipping inside any one installed
- * package. A real `vendor/kinetis/kinetis` install has no `docs/`
+ * package. A real `vendor/kinetis/framework` install has no `docs/`
  * directory to find at all; this class is not currently usable outside
  * this monorepo.
  *

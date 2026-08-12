@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
         "opensearch-project/opensearch-php": "^2.6",
         "symfony/http-client": "^8.0"
@@ -34,7 +34,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         },
         {
             "type": "path",

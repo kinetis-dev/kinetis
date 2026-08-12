@@ -75,7 +75,7 @@ Kinetis talks to, not an assumption baked into the framework itself.
 ## Installation
 
 ```sh
-composer require kinetis/kinetis
+composer require kinetis/framework
 ```
 
 Requires PHP 8.4 or later. See [Getting Started](https://docs.kinetis.dev/getting-started.html)
@@ -83,7 +83,7 @@ for a complete walkthrough, including running under FrankenPHP.
 
 ## Packages
 
-Kinetis core (`kinetis/kinetis`) ships as a single package. A few optional pieces live as separate packages, each with its own
+Kinetis core (`kinetis/framework`) ships as a single package. A few optional pieces live as separate packages, each with its own
 dependencies:
 
 | Package | What it adds |

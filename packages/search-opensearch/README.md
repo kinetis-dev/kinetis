@@ -50,7 +50,7 @@ Named connections read a distinct set of variables via
 composer require kinetis/search-opensearch
 ```
 
-Requires PHP 8.4+, `kinetis/kinetis`, and `kinetis/revolt-http-client`.
+Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
 Full documentation:
 [docs.kinetis.dev/search-opensearch.html](https://docs.kinetis.dev/search-opensearch.html).
 

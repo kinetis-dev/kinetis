@@ -30,7 +30,7 @@ your application while it waits on the network.
 
 This package depends on nothing beyond `symfony/http-client` (and its
 `symfony/http-client-contracts`) and `amphp/http-client` — no
-`kinetis/kinetis`, no Kinetis-specific class
+`kinetis/framework`, no Kinetis-specific class
 anywhere in it. `AmpHttpClientFactory::create()` returns a plain
 `Symfony\Contracts\HttpClient\HttpClientInterface`, which is exactly what
 gets accepted by:

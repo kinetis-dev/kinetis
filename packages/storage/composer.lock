@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9cca66c366753cd28724e44129209f1b",
+    "content-hash": "f58ebd58d63e4de80ccd3b65b0d1b207",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1073,12 +1073,12 @@
             "time": "2023-02-03T21:26:53+00:00"
         },
         {
-            "name": "kinetis/kinetis",
+            "name": "kinetis/framework",
             "version": "dev-main",
             "dist": {
                 "type": "path",
-                "url": "../kinetis",
-                "reference": "9937ec73fa72ff428e67251059e27ba748fa55a5"
+                "url": "../framework",
+                "reference": "c22a002f7f06f637bb92ba6488d78eb91cd1c33a"
             },
             "require": {
                 "nyholm/psr7": "^1.8",
@@ -7414,7 +7414,7 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
-        "kinetis/kinetis": 20
+        "kinetis/framework": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

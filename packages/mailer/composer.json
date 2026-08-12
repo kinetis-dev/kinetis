@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
         "symfony/mailer": "^7.2|^8.0"
     },
@@ -33,7 +33,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         },
         {
             "type": "path",

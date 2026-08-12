@@ -40,7 +40,7 @@ somewhere to write a row.
 ```{code-block} bash
 mkdir ping-pong && cd ping-pong
 composer init --name=you/ping-pong --type=project --no-interaction
-composer require kinetis/kinetis
+composer require kinetis/framework
 ```
 
 Add a PSR-4 mapping for your own code to `composer.json`:
@@ -50,7 +50,7 @@ Add a PSR-4 mapping for your own code to `composer.json`:
 
 {
     "require": {
-        "kinetis/kinetis": "^1.0"
+        "kinetis/framework": "^1.0"
     },
     "autoload": {
         "psr-4": {

@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "nyholm/psr7": "^1.8",
         "psr/http-message": "^2.0",
         "psr/http-server-middleware": "^1.0"
@@ -34,7 +34,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         }
     ],
     "config": {

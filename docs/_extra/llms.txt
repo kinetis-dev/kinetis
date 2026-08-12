@@ -5,7 +5,7 @@
 > validation, and OpenAPI; a request-scoped container; Fiber-based
 > concurrency over Revolt; a native Model Context Protocol server.
 
-Kinetis core ships as a single package, `kinetis/kinetis`, requiring PHP 8.4+.
+Kinetis core ships as a single package, `kinetis/framework`, requiring PHP 8.4+.
 A few narrower or optional pieces ship as separate packages instead — see
 Satellite Packages below.
 

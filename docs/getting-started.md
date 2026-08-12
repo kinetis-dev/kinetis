@@ -21,10 +21,10 @@ create-project kinetis/skeleton my-app` gives you exactly that.
 ## Installation
 
 ```{code-block} bash
-composer require kinetis/kinetis
+composer require kinetis/framework
 ```
 
-Kinetis ships as a single package (`kinetis/kinetis`) — there's no
+Kinetis ships as a single package (`kinetis/framework`) — there's no
 `kinetis/http`, `kinetis/di`, `kinetis/routing` to assemble separately.
 
 ### Add a PSR-4 mapping for your own code
@@ -41,7 +41,7 @@ an existing app), add one now, `App\` and `src/` in this guide's examples:
 
 {
     "require": {
-        "kinetis/kinetis": "*"
+        "kinetis/framework": "*"
     },
     "autoload": {
         "psr-4": {

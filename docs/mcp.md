@@ -255,7 +255,7 @@ $registry->register(KinetisDocsResource::class);
 ```
 
 Each resource returns the actual `docs/*.md` source as `text/markdown`,
-read directly from wherever `kinetis/kinetis` is installed, so there's
+read directly from wherever `kinetis/framework` is installed, so there's
 nothing to keep in sync as pages change.
 
 ## See also

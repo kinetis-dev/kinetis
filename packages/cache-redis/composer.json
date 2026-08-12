@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main",
+        "kinetis/framework": "dev-main",
         "amphp/redis": "^2.0",
         "amphp/socket": "^2.3",
         "amphp/serialization": "^1.0"
@@ -34,7 +34,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         }
     ],
     "config": {

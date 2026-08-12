@@ -1,5 +1,5 @@
 {
-    "name": "kinetis/kinetis",
+    "name": "kinetis/framework",
     "description": "The Runtime-Aware PHP Framework",
     "type": "library",
     "license": "MIT",

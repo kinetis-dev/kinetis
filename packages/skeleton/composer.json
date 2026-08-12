@@ -10,7 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/kinetis": "dev-main"
+        "kinetis/framework": "dev-main"
     },
     "require-dev": {
         "infection/infection": "^0.34.2",
@@ -31,7 +31,7 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../kinetis"
+            "url": "../framework"
         }
     ],
     "config": {

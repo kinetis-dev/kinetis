@@ -55,7 +55,7 @@ running on nginx + PHP-FPM for exactly that reason.
 ## Using this as a starting point
 
 Copy `packages/pingpong/` out into a new project, point its
-`composer.json` at a real `kinetis/kinetis` install instead of the `path`
+`composer.json` at a real `kinetis/framework` install instead of the `path`
 repository this monorepo uses internally, and modify from there — every
 piece (`bootstrap.php`, the migration, the repository, the job, the
 scheduled command, the events, the Soketi publisher,

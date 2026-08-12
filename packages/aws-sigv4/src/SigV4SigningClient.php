@@ -39,7 +39,7 @@ use Psr\Http\Message\ResponseInterface;
  * to keep the actual signed request non-blocking, the same mechanism
  * already proven for kinetis/storage-s3's S3Client and kinetis/queue-sqs's
  * SqsClient. Usable standalone, not only with Kinetis — this package has
- * no dependency on kinetis/kinetis itself.
+ * no dependency on kinetis/framework itself.
  */
 final class SigV4SigningClient implements ClientInterface
 {
