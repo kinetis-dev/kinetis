@@ -101,7 +101,7 @@ final class CompilerTest extends TestCase
 
     public function test_compile_carries_an_explicitly_passed_global_middleware_list_verbatim(): void
     {
-        $compiled = (new Compiler())->compile(new Router(), new McpRegistry(), null, ['App\\RequestIdMiddleware']);
+        $compiled = (new Compiler())->compile(new Router(), new McpRegistry(), middleware: ['global' => ['App\\RequestIdMiddleware']]);
 
         self::assertSame(['App\\RequestIdMiddleware'], $compiled->http->globalMiddleware);
     }
@@ -124,7 +124,7 @@ final class CompilerTest extends TestCase
         $compiled = (new Compiler())->compile(
             new Router(),
             new McpRegistry(),
-            middlewareGroups: ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
+            middleware: ['groups' => ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']]],
         );
 
         $directory = sys_get_temp_dir() . '/kinetis_group_cache_' . bin2hex(random_bytes(8));

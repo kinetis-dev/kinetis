@@ -48,31 +48,25 @@ use ReflectionMethod;
  * anywhere by a nested DTO's class name for this discovery pass to feed.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
+ * @phpstan-import-type DiscoveredMiddleware from GlobalMiddlewareDiscovery
  */
 final class Compiler
 {
     /**
-     * @param list<class-string> $globalMiddleware Already sorted, e.g. by
-     *     GlobalMiddlewareDiscovery::discoverAll()['global'] — compile()
-     *     itself doesn't reflect #[AsGlobalMiddleware]/#[AsMcpMiddleware]/
-     *     #[AsOpenApiMiddleware] or apply any ordering.
-     * @param list<class-string> $mcpMiddleware Already sorted, e.g. by
-     *     GlobalMiddlewareDiscovery::discoverAll()['mcp'].
-     * @param list<class-string> $openApiMiddleware Already sorted, e.g. by
-     *     GlobalMiddlewareDiscovery::discoverAll()['openApi'].
-     * @param array<string, list<class-string>> $middlewareGroups Each group's
-     *     members already sorted, e.g. by
-     *     GlobalMiddlewareDiscovery::discoverAll()['groups'].
+     * $middleware is GlobalMiddlewareDiscovery::discoverAll()'s own return
+     * shape, passed through whole rather than as one parameter per bucket —
+     * every entry is expected already sorted, since compile() reflects no
+     * middleware attribute and applies no ordering of its own. Any missing
+     * key is treated as empty.
+     *
+     * @param DiscoveredMiddleware $middleware
      */
     public function compile(
         Router $router,
         McpRegistry $registry,
         ?CommandRegistry $commands = null,
-        array $globalMiddleware = [],
         ?EventListenerRegistry $listeners = null,
-        array $mcpMiddleware = [],
-        array $openApiMiddleware = [],
-        array $middlewareGroups = [],
+        array $middleware = [],
     ): CompiledCache {
         $compiledAt = (new DateTimeImmutable())->format(DATE_ATOM);
 
@@ -111,11 +105,11 @@ final class Compiler
             routes: $router->toArray(),
             httpBindingPlans: $httpBindingPlans,
             hydrationPlans: $this->hydrationPlansFor($httpDtoClasses),
-            globalMiddleware: $globalMiddleware,
-            mcpMiddleware: $mcpMiddleware,
-            openApiMiddleware: $openApiMiddleware,
+            globalMiddleware: $middleware['global'] ?? [],
+            mcpMiddleware: $middleware['mcp'] ?? [],
+            openApiMiddleware: $middleware['openApi'] ?? [],
             compiledAt: $compiledAt,
-            middlewareGroups: $middlewareGroups,
+            middlewareGroups: $middleware['groups'] ?? [],
         );
 
         $mcpToArray = $registry->toArray();
@@ -175,7 +169,8 @@ final class Compiler
      * namespace — see
      * RouteDiscovery/McpDiscovery/CommandDiscovery/GlobalMiddlewareDiscovery/EventListenerDiscovery.
      * GlobalMiddlewareDiscovery::discoverAll() performs exactly one scan
-     * for all four middleware attributes rather than four.
+     * for all four middleware attributes rather than four, and its result
+     * is handed to compile() whole rather than destructured per bucket.
      */
     public function compileProject(string $projectRoot): CompiledCache
     {
@@ -185,15 +180,6 @@ final class Compiler
         $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
         $listeners = EventListenerDiscovery::discover($projectRoot);
 
-        return $this->compile(
-            $router,
-            $registry,
-            $commands,
-            $middleware['global'],
-            $listeners,
-            $middleware['mcp'],
-            $middleware['openApi'],
-            $middleware['groups'],
-        );
+        return $this->compile($router, $registry, $commands, $listeners, $middleware);
     }
 }

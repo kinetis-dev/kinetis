@@ -51,6 +51,17 @@ use ReflectionClass;
  * variable (comma-separated) when not passed explicitly, so a project
  * can commit this restriction without every call site needing to know
  * about it.
+ *
+ * Every key of DiscoveredMiddleware is optional so a caller holding only
+ * part of the picture (a test, a bench script) can pass what it has;
+ * discoverAll() itself always returns all four.
+ *
+ * @phpstan-type DiscoveredMiddleware array{
+ *     global?: list<class-string>,
+ *     mcp?: list<class-string>,
+ *     openApi?: list<class-string>,
+ *     groups?: array<string, list<class-string>>,
+ * }
  */
 final class GlobalMiddlewareDiscovery
 {
