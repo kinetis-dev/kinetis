@@ -408,9 +408,10 @@ final class Kernel
      * 2025-03-26 clients never send these headers, and the spec's own
      * backward-compatibility carve-out allows a server to treat a request
      * missing `MCP-Protocol-Version` as that earlier version rather than
-     * rejecting it. Deliberately does NOT validate `Mcp-Name` or mirror
-     * `x-mcp-header` tool-parameter headers — a deliberately narrower
-     * scope than the full spec, not an oversight.
+     * rejecting it. Deliberately does NOT mirror `x-mcp-header`
+     * tool-parameter headers — optional for servers per the spec, and a
+     * materially bigger addition (a new JsonSchema-level annotation) than
+     * the header validation this method performs.
      *
      * @param array<string, mixed> $decoded
      * @return string|null a human-readable mismatch description, or null if the headers are valid
@@ -433,7 +434,64 @@ final class Kernel
             return "Header mismatch: Mcp-Method header value \"{$headerMethod}\" does not match body value \"{$bodyMethod}\".";
         }
 
+        return $this->nameHeaderMismatch($request, $decoded, $method);
+    }
+
+    /**
+     * `Mcp-Name` mirrors `params.name` (`tools/call`) or `params.uri`
+     * (`resources/read`) — the spec's third method needing it,
+     * `prompts/get`, has no equivalent here, since this server never
+     * implements prompts. Required only for these two methods; every
+     * other method is untouched, matching the spec's own scoping.
+     *
+     * @param array<string, mixed> $decoded
+     */
+    private function nameHeaderMismatch(ServerRequestInterface $request, array $decoded, mixed $method): ?string
+    {
+        /** @var array<string, mixed> $params */
+        $params = is_array($decoded['params'] ?? null) ? $decoded['params'] : [];
+
+        $bodyName = match ($method) {
+            'tools/call' => $params['name'] ?? null,
+            'resources/read' => $params['uri'] ?? null,
+            default => null,
+        };
+
+        if ($bodyName === null) {
+            // No name/uri in the body at all — callTool()/readResource()
+            // reject that themselves with a more specific error; nothing
+            // for this header check to validate against.
+            return null;
+        }
+
+        $bodyName = is_string($bodyName) ? $bodyName : (string) $bodyName;
+        $headerName = $request->getHeaderLine('Mcp-Name');
+        $decodedHeaderName = self::decodeHeaderValue($headerName);
+
+        if ($headerName === '' || $decodedHeaderName === null || $decodedHeaderName !== $bodyName) {
+            return "Header mismatch: Mcp-Name header value \"{$headerName}\" does not match body value \"{$bodyName}\".";
+        }
+
         return null;
+    }
+
+    /**
+     * Decodes a header value per the transport's Base64 sentinel format
+     * (`=?base64?{...}?=`), used by a conforming client when a value can't
+     * be safely represented as plain ASCII. A value not wrapped in the
+     * sentinel is returned as-is; one that is but fails to decode returns
+     * null, so the caller's comparison against the body value fails
+     * closed rather than silently treating a malformed header as a match.
+     */
+    private static function decodeHeaderValue(string $value): ?string
+    {
+        if (!str_starts_with($value, '=?base64?') || !str_ends_with($value, '?=')) {
+            return $value;
+        }
+
+        $decoded = base64_decode(substr($value, 9, -2), strict: true);
+
+        return $decoded === false ? null : $decoded;
     }
 
     /**

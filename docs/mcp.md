@@ -164,6 +164,38 @@ A modern request's result is wrapped in the spec's envelope automatically:
 {"jsonrpc": "2.0", "id": 1, "result": {"resultType": "complete", "tools": [/* ... */]}}
 ```
 
+### Request headers
+
+A modern request over HTTP mirrors three body fields into headers, so an
+intermediary (a load balancer, a gateway) can route or inspect a request
+without parsing the body — required on every modern-era request:
+
+```{code-block} text
+POST /mcp HTTP/1.1
+Content-Type: application/json
+MCP-Protocol-Version: 2026-07-28
+Mcp-Method: tools/call
+Mcp-Name: get_weather
+
+{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_weather", ...}}
+```
+
+`MCP-Protocol-Version` mirrors `_meta`'s own protocol version;
+`Mcp-Method` mirrors `method`; `Mcp-Name` mirrors `params.name` on
+`tools/call` or `params.uri` on `resources/read` (required for those two
+methods only — every other method has no `name`/`uri` to mirror). A
+value that isn't safe as a plain header (non-ASCII characters, control
+characters) is sent Base64-encoded, wrapped as `=?base64?{...}?=`:
+
+```{code-block} text
+Mcp-Name: =?base64?SGVsbG8sIOS4lueVjA==?=
+```
+
+A header that's missing, or that doesn't match the corresponding body
+value once decoded, is rejected with `400` and a JSON-RPC `-32020`
+`HeaderMismatch` error — this check only runs for modern-era requests;
+a legacy `2025-03-26` client never sends these headers at all.
+
 ### Caching hints and server instructions
 
 `server/discover`, `tools/list`, and `resources/list` results carry

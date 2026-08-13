@@ -533,6 +533,244 @@ final class KernelTest extends TestCase
         self::assertSame(-32022, $body['error']['code']);
     }
 
+    public function test_modern_tools_call_with_a_matching_mcp_name_header_succeeds(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => ['userId' => 7],
+                '_meta' => $this->modernMcpMeta(),
+            ],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'tools/call')
+            ->withHeader('Mcp-Name', 'get_user_status');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function test_modern_tools_call_with_a_mismatched_mcp_name_header_is_rejected(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => ['userId' => 7],
+                '_meta' => $this->modernMcpMeta(),
+            ],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'tools/call')
+            ->withHeader('Mcp-Name', 'create_user');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(400, $response->getStatusCode());
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(-32020, $body['error']['code']);
+    }
+
+    public function test_modern_tools_call_with_a_missing_mcp_name_header_is_rejected(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => ['userId' => 7],
+                '_meta' => $this->modernMcpMeta(),
+            ],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'tools/call');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(400, $response->getStatusCode());
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(-32020, $body['error']['code']);
+    }
+
+    public function test_modern_resources_read_with_a_matching_mcp_name_header_succeeds(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'resources/read',
+            'params' => ['uri' => 'kinetis://status', '_meta' => $this->modernMcpMeta()],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'resources/read')
+            ->withHeader('Mcp-Name', 'kinetis://status');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function test_modern_resources_read_with_a_mismatched_mcp_name_header_is_rejected(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'resources/read',
+            'params' => ['uri' => 'kinetis://status', '_meta' => $this->modernMcpMeta()],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'resources/read')
+            ->withHeader('Mcp-Name', 'kinetis://something-else');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(400, $response->getStatusCode());
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(-32020, $body['error']['code']);
+    }
+
+    public function test_a_base64_sentinel_encoded_mcp_name_header_is_decoded_before_comparing(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $encoded = '=?base64?' . base64_encode('get_user_status') . '?=';
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => ['userId' => 7],
+                '_meta' => $this->modernMcpMeta(),
+            ],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'tools/call')
+            ->withHeader('Mcp-Name', $encoded);
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function test_a_malformed_base64_sentinel_mcp_name_header_fails_closed(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => ['userId' => 7],
+                '_meta' => $this->modernMcpMeta(),
+            ],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'tools/call')
+            ->withHeader('Mcp-Name', '=?base64?not valid base64!!!?=');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(400, $response->getStatusCode());
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(-32020, $body['error']['code']);
+    }
+
+    public function test_modern_server_discover_does_not_require_an_mcp_name_header(): void
+    {
+        // server/discover has no name/uri in its body at all — the one
+        // method already covered by the matching-headers test above, but
+        // worth a dedicated assertion that this specific header isn't
+        // demanded where the spec doesn't require it.
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
+        $kernel = new Kernel($app, $router, mcp: $mcp);
+
+        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'server/discover',
+            'params' => ['_meta' => $this->modernMcpMeta()],
+        ])))
+            ->withHeader('MCP-Protocol-Version', '2026-07-28')
+            ->withHeader('Mcp-Method', 'server/discover');
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
     public function test_legacy_mcp_request_ignores_missing_headers(): void
     {
         $app = new AppScope();
