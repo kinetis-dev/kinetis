@@ -34,18 +34,23 @@ or builds a fresh one each time.
 `bind()`/`instance()` again throws — this isn't a style preference, it's
 what makes "the route table and service definitions are fixed at server
 startup" an enforced invariant instead of a convention someone could
-quietly violate three files away from where it matters. This covers
-every way *you* add a binding; it doesn't extend to `AppScope`'s own
-internal bookkeeping for an id you never registered at all —
-`get()`/`resolve()` autowiring an unregistered class still caches that
-one instance for next time (so a shared, unregistered class resolved
-twice returns the same object), which is a real difference from "the
-binding set literally never changes after boot()," just not one reachable
-through the public API.
+quietly violate three files away from where it matters.
 
-`boot()` itself registers five bindings for you, each only if you haven't
-already registered your own: `Psr\Log\LoggerInterface` →
-`Psr\Log\NullLogger` (see {doc}`logging`); `Kinetis\Config\Config` →
+**Only an explicit registration creates a singleton.** `get()` on a class
+you never registered still works — it autowires the class through its
+constructor — but returns a fresh instance every call, never cached. This
+is the same "never promoted" guarantee `RequestScope` makes, applied to
+`AppScope`'s own public API: a stray `get()` on a class holding
+per-request state can't quietly become one shared object every request
+the worker ever serves. A service that should be one shared instance is
+registered with `bind()`/`instance()` before `boot()`.
+
+`boot()` itself registers six bindings for you, each only if you haven't
+already registered your own: `Kinetis\Runtime\AppEnvironment` → the
+detected environment (`APP_ENV`, defaulting to production);
+`Psr\Log\LoggerInterface` → an `error_log()`-backed logger in
+development, `Psr\Log\NullLogger` in production (see {doc}`logging`);
+`Kinetis\Config\Config` →
 `Config::fromEnvironment()` (see {doc}`config`);
 `Psr\SimpleCache\CacheInterface` → a Redis-backed cache when one's
 configured, else a null one that always misses (see {doc}`persistence`);

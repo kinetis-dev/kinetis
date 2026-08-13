@@ -10,6 +10,8 @@ use Kinetis\Container\Exception\ContainerException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Events\ListenerInvokerInterface;
 use Kinetis\Events\SynchronousListenerInvoker;
+use Kinetis\Logging\ErrorLogLogger;
+use Kinetis\Runtime\AppEnvironment;
 use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Closure;
@@ -173,8 +175,22 @@ final class AppScope implements ContainerInterface
      */
     public function boot(): void
     {
+        if (!$this->has(AppEnvironment::class)) {
+            $this->instance(AppEnvironment::class, AppEnvironment::detect());
+        }
+
+        /** @var AppEnvironment $environment */
+        $environment = $this->get(AppEnvironment::class);
+
+        // Development gets a real trail by default — an exception during
+        // local development lands in the SAPI's error log with zero
+        // logging setup. Production keeps the silent default; a
+        // consumer-registered logger wins in both.
         if (!$this->has(LoggerInterface::class)) {
-            $this->instance(LoggerInterface::class, new NullLogger());
+            $this->instance(
+                LoggerInterface::class,
+                $environment->isProduction() ? new NullLogger() : new ErrorLogLogger(),
+            );
         }
 
         if (!$this->has(Config::class)) {
@@ -308,17 +324,16 @@ final class AppScope implements ContainerInterface
             unset($this->resolving[$id]);
         }
 
-        // $binding is genuinely nullable here (reached when the id had no
-        // explicit binding but class_exists($id) was true), even though
-        // PHPStan's flow analysis misreports the nullsafe as redundant for
-        // this "guard on `A === null && !B`" shape — verified in isolation.
-        // @phpstan-ignore-next-line nullsafe.neverNull
-        $shared = $binding?->shared ?? true;
-
-        if ($shared) {
-            $binding ??= new Binding(static fn (): object => $instance);
+        // An explicit shared binding remembers its instance for next time —
+        // the registered-singleton contract. An id with no binding at all,
+        // autowired purely because the class exists, deliberately does not:
+        // an unregistered class is never promoted to a hidden
+        // worker-lifetime singleton, the same "never promoted" guarantee
+        // RequestScope makes, applied to the parent scope's own public API.
+        // Anything genuinely needing one shared instance registers it
+        // explicitly before boot().
+        if ($binding !== null && $binding->shared) {
             $binding->remember($instance);
-            $this->bindings[$id] = $binding;
         }
 
         return $instance;

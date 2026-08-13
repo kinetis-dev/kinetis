@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -37,6 +37,7 @@
                 "nikic/php-parser": "^5.0"
             },
             "require": {
+                "ext-fileinfo": "*",
                 "nyholm/psr7": "^1.8",
                 "nyholm/psr7-server": "^1.1",
                 "psr/container": "^2.0",
@@ -75,11 +76,12 @@
             "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework"
             ],
             "require": {
+                "amphp/amp": "^3.1",
                 "amphp/redis": "^2.0",
                 "amphp/socket": "^2.3",
                 "amphp/serialization": "^1.0"
@@ -137,7 +139,7 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.1.0",
             "requires": [
                 "framework"
             ],
@@ -244,35 +246,39 @@
             "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueSqs\\",
             "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework",
                 "queue",
-                "persistence",
-                "cache-redis",
                 "revolt-http-client"
             ],
             "require": {
                 "async-aws/sqs": "^2.9"
-            }
+            },
+            "requiresDev": [
+                "persistence",
+                "cache-redis"
+            ]
         },
         "queue-rabbitmq": {
             "name": "kinetis/queue-rabbitmq",
             "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueRabbitMq\\",
             "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework",
-                "queue",
-                "persistence",
-                "cache-redis"
+                "queue"
             ],
             "require": {
                 "amphp/amp": "^3.1",
                 "thesis/amqp": "^1.0",
                 "thesis/time-span": "^0.2"
-            }
+            },
+            "requiresDev": [
+                "persistence",
+                "cache-redis"
+            ]
         },
         "mailer": {
             "name": "kinetis/mailer",

@@ -319,9 +319,25 @@ always on rather than something you opt into.
 }
 ```
 
+In development (`APP_ENV=development`), the same `500` carries the
+exception's class, message, and location, so a mistake is diagnosable
+straight from the response:
+
+```{code-block} json
+:caption: The same failure, in development
+{
+    "error": "Internal server error.",
+    "exception": "RuntimeException",
+    "message": "boom",
+    "location": "/app/src/Http/OrderController.php:24"
+}
+```
+
 ```{note}
-This also logs the exception through whatever `Psr\Log\LoggerInterface`
-you've registered — see {doc}`logging`.
+Either way, the exception is also logged through whatever
+`Psr\Log\LoggerInterface` is bound — in development that's an
+`error_log()`-backed logger by default, so the trail exists even where
+the response body isn't visible. See {doc}`logging`.
 ```
 
 Middleware registration is a flat class-string list at both levels — a

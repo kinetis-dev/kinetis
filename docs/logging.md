@@ -19,12 +19,15 @@ $app->boot();
 Register it before `boot()`, the same discipline as every other
 `AppScope` binding — see {doc}`container`.
 
-If you never register one, `AppScope::boot()` binds
-`Psr\Log\NullLogger` for you automatically. Framework internals resolve
-`LoggerInterface` through the container, so something must always be
-bound by the time they run — a consumer who never configures a real
-logger sees log output silently discarded, not an exception the first
-time something tries to log.
+If you never register one, `AppScope::boot()` binds a default that
+depends on the environment: in development
+(`APP_ENV=development`), `Kinetis\Logging\ErrorLogLogger`, a minimal
+PSR-3 logger writing through `error_log()` — so an exception during
+local development always leaves a trail in the server log with zero
+setup; in production, `Psr\Log\NullLogger`, which silently discards
+everything. Framework internals resolve `LoggerInterface` through the
+container, so something is always bound by the time they run, and your
+own registration wins in both environments.
 
 ## Where Kinetis logs, and why
 

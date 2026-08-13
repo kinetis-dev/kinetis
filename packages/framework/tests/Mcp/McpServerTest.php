@@ -12,6 +12,7 @@ use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Mcp\Fixtures\AccountController;
 use Kinetis\Tests\Mcp\Fixtures\ProgressReportingController;
 use Kinetis\Tests\Mcp\Fixtures\ThrowingResourceController;
+use Kinetis\Tests\Mcp\Fixtures\ThrowingToolController;
 use PHPUnit\Framework\TestCase;
 
 final class McpServerTest extends TestCase
@@ -379,5 +380,35 @@ final class McpServerTest extends TestCase
         self::assertCount(1, $logger->records);
         self::assertSame('error', $logger->records[0]['level']);
         self::assertSame('resources/read', $logger->records[0]['context']['method']);
+    }
+
+    public function test_a_throwing_tool_reports_a_generic_failure_and_logs_the_real_exception(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(ThrowingToolController::class);
+
+        $app = new AppScope();
+        $app->boot();
+
+        $logger = new InMemoryLogger();
+        $server = new McpServer($registry, new McpDispatcher($app), logger: $logger);
+
+        $response = $server->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => ['name' => 'explode', 'arguments' => []],
+        ]);
+
+        // Still the "tool ran but failed" convention — never a JSON-RPC
+        // error — but the content is a fixed string, not the exception's
+        // own message.
+        self::assertArrayNotHasKey('error', $response);
+        self::assertTrue($response['result']['isError']);
+        self::assertSame('Tool execution failed.', $response['result']['content'][0]['text']);
+
+        self::assertCount(1, $logger->records);
+        self::assertSame('error', $logger->records[0]['level']);
+        self::assertStringContainsString('SQLSTATE[42S02]', $logger->records[0]['context']['message']);
     }
 }

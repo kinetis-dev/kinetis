@@ -10,6 +10,8 @@ use Kinetis\Container\Exception\CircularDependencyException;
 use Kinetis\Container\Exception\ContainerException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Container\RequestScope;
+use Kinetis\Logging\ErrorLogLogger;
+use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Container\Fixtures\CircularA;
 use Kinetis\Tests\Container\Fixtures\Counter;
 use Kinetis\Tests\Container\Fixtures\ServiceA;
@@ -36,6 +38,18 @@ final class AppScopeTest extends TestCase
         $counter = $app->get(Counter::class);
 
         self::assertInstanceOf(Counter::class, $counter);
+    }
+
+    public function test_an_unregistered_class_is_never_promoted_to_a_shared_singleton(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        // Autowired because the class exists, but a fresh instance every
+        // call — only an explicit registration creates a shared singleton,
+        // so per-request state can't leak across requests through a stray
+        // get() on the app scope.
+        self::assertNotSame($app->get(Counter::class), $app->get(Counter::class));
     }
 
     public function test_shared_binding_returns_the_same_instance(): void
@@ -215,6 +229,34 @@ final class AppScopeTest extends TestCase
     {
         $app = new AppScope();
         $logger = new NullLogger();
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        self::assertSame($logger, $app->get(LoggerInterface::class));
+    }
+
+    public function test_boot_registers_the_detected_app_environment(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        self::assertInstanceOf(AppEnvironment::class, $app->get(AppEnvironment::class));
+    }
+
+    public function test_boot_defaults_the_logger_to_error_log_in_development(): void
+    {
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Development);
+        $app->boot();
+
+        self::assertInstanceOf(ErrorLogLogger::class, $app->get(LoggerInterface::class));
+    }
+
+    public function test_a_consumer_registered_logger_wins_over_the_development_default(): void
+    {
+        $app = new AppScope();
+        $logger = new NullLogger();
+        $app->instance(AppEnvironment::class, AppEnvironment::Development);
         $app->instance(LoggerInterface::class, $logger);
         $app->boot();
 

@@ -350,8 +350,21 @@ final class McpServer
                 'isError' => true,
             ];
         } catch (Throwable $e) {
+            // Validation feedback above carries its real messages — that's
+            // the argument feedback an agent needs to retry correctly. An
+            // unexpected failure does not: its message can carry SQL error
+            // text, file paths, or anything else internal, so the client
+            // gets a fixed string and the real exception goes to the
+            // logger — the same client-facing/logged split
+            // ExceptionHandlerMiddleware applies to an HTTP 500.
+            $this->logger->error('Tool "{tool}" threw: {message}', [
+                'tool' => $name,
+                'message' => $e->getMessage(),
+                'exception' => $e,
+            ]);
+
             return [
-                'content' => [['type' => 'text', 'text' => $e->getMessage()]],
+                'content' => [['type' => 'text', 'text' => 'Tool execution failed.']],
                 'isError' => true,
             ];
         }

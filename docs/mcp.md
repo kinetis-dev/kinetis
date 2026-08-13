@@ -226,6 +226,14 @@ distinguish from a broken connection. Only genuine protocol-level problems
 — an unknown method, an unknown tool name, a malformed request — become a
 real JSON-RPC `error` response.
 
+What the content carries depends on the failure. A failed validation
+carries its real `errors` map, as above — that's the argument feedback an
+agent needs to retry correctly. Any other exception carries the fixed
+string `Tool execution failed.`, with the real exception going to the
+logger instead — an unexpected failure's message can hold SQL error text,
+file paths, or anything else internal, none of which belongs in a
+response to whatever agent happens to be connected.
+
 A resource method throwing is different: `readResource()` has no inner
 try/catch of its own the way a tool call does, so the exception
 propagates to `McpServer::handle()`'s own top-level catch and becomes a

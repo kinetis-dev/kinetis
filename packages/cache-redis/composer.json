@@ -11,6 +11,7 @@
     "require": {
         "php": "^8.4",
         "kinetis/framework": "dev-main",
+        "amphp/amp": "^3.1",
         "amphp/redis": "^2.0",
         "amphp/socket": "^2.3",
         "amphp/serialization": "^1.0"

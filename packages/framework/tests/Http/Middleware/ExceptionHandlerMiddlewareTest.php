@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Http\Middleware;
 
 use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Middleware\ExceptionHandlerMiddleware;
+use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
@@ -54,5 +55,35 @@ final class ExceptionHandlerMiddlewareTest extends TestCase
         self::assertSame('POST', $logger->records[0]['context']['method']);
         self::assertSame('/users', $logger->records[0]['context']['path']);
         self::assertInstanceOf(RuntimeException::class, $logger->records[0]['context']['exception']);
+    }
+
+    public function test_the_development_500_body_carries_the_exception_details(): void
+    {
+        $middleware = new ExceptionHandlerMiddleware(new NullLogger(), AppEnvironment::Development);
+        $handler = new CallableRequestHandler(static function () {
+            throw new RuntimeException('boom');
+        });
+
+        $response = $middleware->process(new ServerRequest('GET', '/'), $handler);
+
+        self::assertSame(500, $response->getStatusCode());
+        /** @var array{error: string, exception: string, message: string, location: string} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame('Internal server error.', $body['error']);
+        self::assertSame(RuntimeException::class, $body['exception']);
+        self::assertSame('boom', $body['message']);
+        self::assertStringContainsString(basename(__FILE__), $body['location']);
+    }
+
+    public function test_the_production_500_body_stays_generic_even_when_passed_explicitly(): void
+    {
+        $middleware = new ExceptionHandlerMiddleware(new NullLogger(), AppEnvironment::Production);
+        $handler = new CallableRequestHandler(static function () {
+            throw new RuntimeException('boom');
+        });
+
+        $response = $middleware->process(new ServerRequest('GET', '/'), $handler);
+
+        self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true));
     }
 }
