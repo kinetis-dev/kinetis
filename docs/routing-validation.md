@@ -317,6 +317,7 @@ for the common cases:
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Responses\FileResponse;
 use Kinetis\Http\Responses\HtmlResponse;
+use Kinetis\Http\Responses\PlainTextResponse;
 use Kinetis\Http\Responses\RedirectResponse;
 use Psr\Http\Message\ResponseInterface;
 
@@ -339,11 +340,19 @@ final readonly class PagesController
     {
         return RedirectResponse::to('/new-url', 301);
     }
+
+    #[Get('/robots.txt')]
+    public function robots(): ResponseInterface
+    {
+        return PlainTextResponse::create("User-agent: *\nDisallow:\n");
+    }
 }
 ```
 
 - `HtmlResponse::create(string $html, int $status = 200)` sets
   `Content-Type: text/html`.
+- `PlainTextResponse::create(string $text, int $status = 200)` sets
+  `Content-Type: text/plain`.
 - `FileResponse::fromPath(string $path, int $status = 200, ?string $contentType = null, ?string $downloadFilename = null)`
   reads a file from disk and detects its content type automatically when
   `$contentType` is omitted. `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
