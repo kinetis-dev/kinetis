@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    name: Split and publish release candidates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # release-plan.php's candidate detection needs GITHUB_EVENT_BEFORE
+          # to be reachable, which can land arbitrarily far back for a
+          # multi-commit push (this project's own normal workflow) — same
+          # reasoning as monorepo-validate.yml's own fetch-depth: 0.
+          fetch-depth: 0
+
+      - name: Compute this round's release plan
+        id: plan
+        run: |
+          docker run --rm \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -e GITHUB_EVENT_BEFORE="${{ github.event.before }}" \
+            -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/release-plan.php --json" | tee plan.json
+          echo "count=$(jq '.candidates | length' plan.json)" >> "$GITHUB_OUTPUT"
+          echo "ok=$(jq -r '.ok' plan.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to release
+        if: steps.plan.outputs.count == '0'
+        run: echo "No version changes since the last commit — nothing to release."
+
+      - name: Fail — a candidate's sibling requirement isn't published yet
+        # A real, legitimate failure mode even once Phase 6 is fully live:
+        # two packages bumped together in one commit, but their sibling
+        # ordering doesn't actually resolve (e.g. a version was bumped
+        # without the dependent's own constraint catching up). Distinct
+        # from the "prerequisites not provisioned" case below — this one
+        # can happen on a correctly-provisioned pipeline too.
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok != 'true'
+        run: |
+          echo "::error::One or more release candidates have an unresolved sibling requirement:"
+          jq -r '.candidates[].problems[]' plan.json | while IFS= read -r line; do echo "::error::${line}"; done
+          exit 1
+
+      - name: Check that publish credentials are configured
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
+        id: creds
+        run: |
+          if [ -z "${{ secrets.RELEASE_DEPLOY_TOKEN }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prerequisites not yet provisioned
+        # Phase 6's own real prerequisites — the 19 kinetis-dev/<name>
+        # split repos and this token — are deliberately not created by
+        # this workflow; see CLAUDE.md's own record of why each needs its
+        # own explicit go-ahead. Fails loudly rather than silently
+        # succeeding: this workflow isn't a required status check (only
+        # monorepo-validate.yml is), so nothing blocks on this failing,
+        # but a version bump with nowhere to go should never look green.
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'false'
+        run: |
+          echo "::warning::$(jq '.candidates | length' plan.json) candidate(s) are ready to release, but Phase 6's prerequisites (the kinetis-dev/<name> split repos, and the RELEASE_DEPLOY_TOKEN secret) haven't been provisioned yet:"
+          jq -r '.candidates[] | "  \(.key) -> v\(.version)"' plan.json
+          exit 1
+
+      - name: Install splitsh-lite
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'true'
+        run: |
+          # v1.0.1 is the last release with a real prebuilt Linux binary —
+          # v2.0.0 dropped precompiled binaries entirely, needing a Go +
+          # libgit2 build from source instead, real added complexity and
+          # build time for a CI step with nothing to gain from it here.
+          # Verified directly against this repo (not assumed from the
+          # README alone): splitting packages/aws-sigv4 with this exact
+          # binary produces a subtree whose content matches HEAD's
+          # packages/aws-sigv4/ byte-for-byte.
+          curl -sL https://github.com/splitsh/lite/releases/download/v1.0.1/lite_linux_amd64.tar.gz | tar xz
+          chmod +x splitsh-lite
+          sudo mv splitsh-lite /usr/local/bin/splitsh-lite
+
+      - name: Split and publish each candidate, in order
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'true'
+        # A for-loop over an array populated via process substitution,
+        # not `jq ... | while read` — the loop body's own git push calls
+        # would otherwise share the same piped stdin `read` is consuming
+        # from, a real footgun if a push ever prompts (a misconfigured
+        # credential, for instance) rather than failing cleanly. Verified
+        # separately that GitHub Actions' actual default shell (bash -e,
+        # confirmed from this repo's own real run logs — no -o pipefail)
+        # does still propagate a mid-loop failure correctly either way,
+        # but this avoids the whole class of concern rather than leaning
+        # on that specific verified-safe edge case.
+        #
+        # Force-pushing main and pushing the tag are two separate git
+        # push calls; a failure between them (main updated, tag not yet
+        # pushed) stops the whole job right there rather than continuing
+        # to later candidates — a disclosed, bounded limitation, not
+        # silently risky: splitsh-lite's own caching plus force-push
+        # both make a re-run of this same workflow safe and idempotent,
+        # the same "accept a real, bounded gap rather than build rollback
+        # machinery for it" precedent kinetis/migrations' own
+        # no-transaction-wrapping already established.
+        run: |
+          mapfile -t candidates < <(jq -c '.candidates[]' plan.json)
+
+          for candidate in "${candidates[@]}"; do
+            key=$(echo "$candidate" | jq -r '.key')
+            version=$(echo "$candidate" | jq -r '.version')
+            echo "=== ${key} -> v${version} ==="
+
+            sha1=$(splitsh-lite --prefix="packages/${key}" --origin=HEAD --quiet)
+            echo "split SHA1: ${sha1}"
+
+            target="https://x-access-token:${{ secrets.RELEASE_DEPLOY_TOKEN }}@github.com/kinetis-dev/${key}.git"
+            git push "$target" "${sha1}:refs/heads/main" --force
+            git push "$target" "${sha1}:refs/tags/v${version}"
+          done
