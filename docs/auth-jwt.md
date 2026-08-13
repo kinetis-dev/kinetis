@@ -306,3 +306,6 @@ its own secret/key pair instead.
   request to hit your own storage regardless.
 - {doc}`middleware` — `CurrentUserInterface`, the global-vs-route
   middleware distinction, and `RequestScope` self-injection.
+- {doc}`auth`'s "Preventing brute-force login attempts" section —
+  `AttemptThrottle`, usable ahead of a login endpoint issuing a JWT the
+  same way it's used ahead of one issuing an opaque token.

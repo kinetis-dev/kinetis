@@ -113,6 +113,61 @@ place directly in an `Authorization` header with no escaping. Generation
 only — issuing a token to a user (verifying a password, calling this,
 storing the hash) is your own login endpoint's job.
 
+## Preventing brute-force login attempts
+
+`Kinetis\Security\AttemptThrottle` locks an identifier out after too many
+failures, backed by `Psr\SimpleCache\CacheInterface`:
+
+```{code-block} php
+use Kinetis\Security\AttemptThrottle;
+use Kinetis\Http\Responses\ErrorResponse;
+
+final readonly class LoginController
+{
+    public function __construct(
+        private AttemptThrottle $throttle,
+        private UserProviderInterface $users,
+    ) {}
+
+    #[Post('/login')]
+    public function attempt(#[Body] LoginRequest $data): ResponseInterface|array
+    {
+        if ($this->throttle->tooManyAttempts($data->email)) {
+            return ErrorResponse::create(429, 'Too many attempts.', headers: [
+                'Retry-After' => (string) $this->throttle->availableInSeconds($data->email),
+            ]);
+        }
+
+        $user = $this->users->verify($data->email, $data->password);
+
+        if ($user === null) {
+            $this->throttle->recordFailure($data->email);
+            return ErrorResponse::create(401, 'Invalid credentials.');
+        }
+
+        $this->throttle->clear($data->email);
+
+        return ['token' => TokenGenerator::generate()];
+    }
+}
+```
+
+The default is 5 failures within a rolling 15-minute window, adjustable
+through the constructor:
+
+```{code-block} php
+new AttemptThrottle($cache, maxAttempts: 3, decaySeconds: 600);
+```
+
+Each failure resets the window to a fresh `decaySeconds` from that
+failure, so repeated attempts keep extending the lockout; `clear()` on a
+successful attempt removes it immediately. Identifiers aren't limited to
+emails — anything failure-prone and identifier-keyed works the same way,
+a 2FA code or an invite redemption included. `AttemptThrottle` requires a
+real cache the same way `RateLimitMiddleware` does — see
+{doc}`middleware`'s rate-limiting section for the `REDIS_URL`/
+`REDIS_HOST` configuration this reads.
+
 ## See also
 
 - {doc}`middleware` — `CurrentUserInterface`, the global-vs-route
