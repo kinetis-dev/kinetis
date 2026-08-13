@@ -100,12 +100,35 @@ jobs:
         # caching plus force-push both make a repeated run of this same
         # workflow idempotent.
         run: |
+          git config user.name "kinetis-release"
+          git config user.email "noreply@kinetis.dev"
+
           mapfile -t candidates < <(jq -c '.candidates[]' plan.json)
 
           for candidate in "${candidates[@]}"; do
             key=$(echo "$candidate" | jq -r '.key')
             version=$(echo "$candidate" | jq -r '.version')
             echo "=== ${key} -> v${version} ==="
+
+            # splitsh-lite reads committed git objects, not the working
+            # directory, so the release-mode composer.json (real ^X.Y
+            # sibling constraints, no repositories key) has to exist in a
+            # real commit before splitting — the checked-out monorepo's
+            # own composer.json is always dev-mode (path repos,
+            # dev-main), meant for local development only. This commit
+            # only ever exists in this runner's own disposable checkout;
+            # it's never pushed to kinetis-dev/kinetis itself.
+            #
+            # composer.lock is removed, not regenerated: Composer never
+            # reads a dependency's own lock file once it's required
+            # transitively, and leaving the dev-mode lock (dev-main
+            # entries) in place fails composer validate --strict against
+            # the now-^X.Y composer.json for anyone who clones the split
+            # repo directly.
+            docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php --release-write="${key}"
+            git add "packages/${key}/composer.json"
+            git rm --quiet "packages/${key}/composer.lock"
+            git commit --quiet -m "release: ${key} v${version}"
 
             sha1=$(splitsh-lite --prefix="packages/${key}" --origin=HEAD --quiet)
             echo "split SHA1: ${sha1}"

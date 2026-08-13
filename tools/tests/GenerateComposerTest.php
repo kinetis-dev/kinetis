@@ -233,6 +233,57 @@ final class GenerateComposerTest extends TestCase
         exec('rm -rf ' . escapeshellarg($dir));
     }
 
+    public function test_release_write_writes_release_mode_content_to_disk(): void
+    {
+        $dir = sys_get_temp_dir() . '/kinetis-tools-test-' . uniqid();
+        mkdir("{$dir}/packages/leaf", recursive: true);
+        mkdir("{$dir}/packages/root", recursive: true);
+
+        $manifest = [
+            'defaults' => $this->defaults(),
+            'packages' => [
+                'root' => ['name' => 'kinetis/root', 'description' => 'x', 'namespace' => 'App\\', 'require' => [], 'version' => '2.1.0'],
+                'leaf' => ['name' => 'kinetis/leaf', 'description' => 'x', 'namespace' => 'App\\', 'requires' => ['root'], 'require' => [], 'version' => '1.0.0'],
+            ],
+        ];
+
+        $exitCode = runReleaseWrite($manifest, 'leaf', $dir);
+        $written = json_decode(
+            (string) file_get_contents("{$dir}/packages/leaf/composer.json"),
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+
+        self::assertSame(0, $exitCode);
+        self::assertArrayNotHasKey('repositories', $written);
+        self::assertSame('^2.1', $written['require']['kinetis/root']);
+        // root itself was never named, so it must not have been touched
+        // — release-write only ever writes the keys it was given.
+        self::assertFileDoesNotExist("{$dir}/packages/root/composer.json");
+
+        exec('rm -rf ' . escapeshellarg($dir));
+    }
+
+    public function test_release_write_rejects_an_unknown_package_and_writes_nothing(): void
+    {
+        $dir = sys_get_temp_dir() . '/kinetis-tools-test-' . uniqid();
+        mkdir("{$dir}/packages/leaf", recursive: true);
+
+        $manifest = [
+            'defaults' => $this->defaults(),
+            'packages' => [
+                'leaf' => ['name' => 'kinetis/leaf', 'description' => 'x', 'namespace' => 'App\\', 'require' => [], 'version' => '1.0.0'],
+            ],
+        ];
+
+        $exitCode = runReleaseWrite($manifest, 'leaf,does-not-exist', $dir);
+
+        self::assertSame(1, $exitCode);
+        self::assertFileDoesNotExist("{$dir}/packages/leaf/composer.json");
+
+        exec('rm -rf ' . escapeshellarg($dir));
+    }
+
     /** @return array<string, mixed> */
     private function defaults(): array
     {

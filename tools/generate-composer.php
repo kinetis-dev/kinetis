@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Generates each packages/<name>/composer.json from the one canonical
  * packages.manifest.json — see CLAUDE.md and the monorepo packaging plan
- * for the full design. Three usages:
+ * for the full design. Usages:
  *
  *   php tools/generate-composer.php            Write every package's
  *                                               composer.json (dev-mode:
@@ -21,6 +21,18 @@ declare(strict_types=1);
  *                                               packages' version field
  *                                               only — nothing else in
  *                                               the manifest changes.
+ *   php tools/generate-composer.php --release=<key>[,<key>,...]
+ *                                               Print each package's
+ *                                               release-mode composer.json
+ *                                               (real sibling ^X.Y
+ *                                               constraints, no
+ *                                               repositories key) to
+ *                                               stdout — never writes.
+ *   php tools/generate-composer.php --release-write=<key>[,<key>,...]
+ *                                               Same content as
+ *                                               --release, written to
+ *                                               packages/<key>/composer.json
+ *                                               instead of printed.
  *
  * Never runs `composer` itself — see tools/README.md for the full
  * edit-manifest -> regenerate -> composer update -> commit flow.
@@ -211,6 +223,49 @@ function runWrite(array $manifest): int
 
 /**
  * @param array<string, mixed> $manifest
+ * @return list<string>
+ */
+function parseKeys(array $manifest, string $keysArg): array
+{
+    $keys = explode(',', $keysArg);
+
+    foreach ($keys as $key) {
+        if (!isset($manifest['packages'][$key])) {
+            fwrite(STDERR, "Unknown package: {$key}\n");
+
+            return [];
+        }
+    }
+
+    return $keys;
+}
+
+/**
+ * Writes each given package's release-mode composer.json to disk —
+ * real ^X.Y sibling constraints, no repositories key — the counterpart
+ * to runRelease()'s stdout preview. $projectRoot is injectable for
+ * testing against a temp directory rather than this repo's own tree.
+ *
+ * @param array<string, mixed> $manifest
+ */
+function runReleaseWrite(array $manifest, string $keysArg, ?string $projectRoot = null): int
+{
+    $keys = parseKeys($manifest, $keysArg);
+
+    if ($keys === []) {
+        return 1;
+    }
+
+    foreach (generateRelease($manifest, $keys) as $key => $content) {
+        file_put_contents(composerJsonPath($key, $projectRoot), $content);
+        echo "wrote release-mode packages/{$key}/composer.json\n";
+    }
+
+    return 0;
+}
+
+/**
+ * @param array<string, mixed> $manifest
  * @return list<string> package keys whose committed composer.json doesn't match the manifest
  */
 function findStalePackages(array $manifest, ?string $projectRoot = null): array
@@ -342,14 +397,10 @@ function runBump(array $manifest, array $argv): int
 /** @param array<string, mixed> $manifest */
 function runRelease(array $manifest, string $keysArg): int
 {
-    $keys = explode(',', $keysArg);
+    $keys = parseKeys($manifest, $keysArg);
 
-    foreach ($keys as $key) {
-        if (!isset($manifest['packages'][$key])) {
-            fwrite(STDERR, "Unknown package: {$key}\n");
-
-            return 1;
-        }
+    if ($keys === []) {
+        return 1;
     }
 
     foreach (generateRelease($manifest, $keys) as $key => $content) {
@@ -371,6 +422,10 @@ function generatorMain(array $argv): int
     }
 
     foreach ($args as $arg) {
+        if (str_starts_with($arg, '--release-write=')) {
+            return runReleaseWrite($manifest, substr($arg, strlen('--release-write=')));
+        }
+
         if (str_starts_with($arg, '--release=')) {
             return runRelease($manifest, substr($arg, strlen('--release=')));
         }
