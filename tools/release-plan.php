@@ -7,8 +7,10 @@ declare(strict_types=1);
  * packaging plan (Phase 5) for the full design. Read-only: never writes
  * anything, never tags, never pushes. Phase 6 (splitsh-lite itself) is
  * what would actually act on this plan's output, and is deliberately
- * gated behind real prerequisites that don't exist yet (the 18 satellite
- * repos, a deploy key, Packagist submissions).
+ * gated behind real prerequisites that don't exist yet (all 19 split
+ * repos under kinetis-dev — kinetis-dev/kinetis is the monorepo itself,
+ * not a split target, so every manifest package including "framework"
+ * needs its own new repo — a deploy key, Packagist submissions).
  *
  * Usage: php tools/release-plan.php
  *
