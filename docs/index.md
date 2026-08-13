@@ -55,6 +55,13 @@ application code also runs correctly under classic PHP-FPM and AWS Lambda
 (via Bref), because the runtime is an adapter Kinetis talks to, not an
 assumption baked into the framework itself.
 
+Every change runs through GitHub Actions before it merges — PHPUnit,
+PHPStan, and Psalm for static and taint analysis, mutation testing via
+Infection, and integration tests against real MySQL, Postgres, Redis,
+and RabbitMQ rather than mocks. SonarQube Cloud rates the project A for
+security, reliability, and maintainability, with test coverage above
+85%.
+
 ## Start here
 
 ````{grid} 1 2 2 2
