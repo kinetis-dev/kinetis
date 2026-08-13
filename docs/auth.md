@@ -113,6 +113,32 @@ place directly in an `Authorization` header with no escaping. Generation
 only — issuing a token to a user (verifying a password, calling this,
 storing the hash) is your own login endpoint's job.
 
+## `PasswordHasher`
+
+```{code-block} php
+use Kinetis\Auth\PasswordHasher;
+
+$hash = PasswordHasher::hash($request->password); // at registration
+```
+
+```{code-block} php
+if (!PasswordHasher::verify($request->password, $user->passwordHash)) {
+    return ErrorResponse::create(401, 'Invalid credentials.');
+}
+
+if (PasswordHasher::needsRehash($user->passwordHash)) {
+    $this->users->updatePasswordHash($user->id, PasswordHasher::hash($request->password));
+}
+```
+
+`hash()`/`verify()`/`needsRehash()` wrap PHP's own
+`password_hash()`/`password_verify()`/`password_needs_rehash()`, always
+with `PASSWORD_DEFAULT` — so a hash produced under an older PHP version
+still verifies correctly, and `needsRehash()` tells you when it's worth
+upgrading to whatever PHP now recommends. Storage — where the hash lives,
+when to call `needsRehash()` — is your own concern; this covers only the
+three primitives.
+
 ## Preventing brute-force login attempts
 
 `Kinetis\Security\AttemptThrottle` locks an identifier out after too many
