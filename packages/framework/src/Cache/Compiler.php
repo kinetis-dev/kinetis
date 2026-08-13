@@ -60,6 +60,9 @@ final class Compiler
      *     GlobalMiddlewareDiscovery::discoverAll()['mcp'].
      * @param list<class-string> $openApiMiddleware Already sorted, e.g. by
      *     GlobalMiddlewareDiscovery::discoverAll()['openApi'].
+     * @param array<string, list<class-string>> $middlewareGroups Each group's
+     *     members already sorted, e.g. by
+     *     GlobalMiddlewareDiscovery::discoverAll()['groups'].
      */
     public function compile(
         Router $router,
@@ -69,6 +72,7 @@ final class Compiler
         ?EventListenerRegistry $listeners = null,
         array $mcpMiddleware = [],
         array $openApiMiddleware = [],
+        array $middlewareGroups = [],
     ): CompiledCache {
         $compiledAt = (new DateTimeImmutable())->format(DATE_ATOM);
 
@@ -111,6 +115,7 @@ final class Compiler
             mcpMiddleware: $mcpMiddleware,
             openApiMiddleware: $openApiMiddleware,
             compiledAt: $compiledAt,
+            middlewareGroups: $middlewareGroups,
         );
 
         $mcpToArray = $registry->toArray();
@@ -165,11 +170,12 @@ final class Compiler
      * The one entry point every lazy-first-run/build path calls — "compile
      * everything" doesn't exist twice, they all just call this. Routes,
      * MCP tools/resources, commands, #[AsGlobalMiddleware]/
-     * #[AsMcpMiddleware]/#[AsOpenApiMiddleware]-attributed classes, and
-     * #[Listener]-attributed methods are all discovered by namespace — see
+     * #[AsMcpMiddleware]/#[AsOpenApiMiddleware]/#[AsMiddlewareGroup]-attributed
+     * classes, and #[Listener]-attributed methods are all discovered by
+     * namespace — see
      * RouteDiscovery/McpDiscovery/CommandDiscovery/GlobalMiddlewareDiscovery/EventListenerDiscovery.
      * GlobalMiddlewareDiscovery::discoverAll() performs exactly one scan
-     * for all three middleware attributes rather than three.
+     * for all four middleware attributes rather than four.
      */
     public function compileProject(string $projectRoot): CompiledCache
     {
@@ -187,6 +193,7 @@ final class Compiler
             $listeners,
             $middleware['mcp'],
             $middleware['openApi'],
+            $middleware['groups'],
         );
     }
 }

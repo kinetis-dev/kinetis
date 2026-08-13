@@ -106,6 +106,48 @@ final class CompilerTest extends TestCase
         self::assertSame(['App\\RequestIdMiddleware'], $compiled->http->globalMiddleware);
     }
 
+    public function test_compile_project_discovers_named_middleware_groups(): void
+    {
+        $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures');
+
+        self::assertSame(
+            [
+                'Kinetis\Tests\Cache\Fixtures\Http\GroupedAuthMiddleware',
+                'Kinetis\Tests\Cache\Fixtures\Http\GroupedAdminMiddleware',
+            ],
+            $compiled->http->middlewareGroups['admin'],
+        );
+    }
+
+    public function test_middleware_groups_survive_a_real_var_export_cache_file_round_trip(): void
+    {
+        $compiled = (new Compiler())->compile(
+            new Router(),
+            new McpRegistry(),
+            middlewareGroups: ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
+        );
+
+        $directory = sys_get_temp_dir() . '/kinetis_group_cache_' . bin2hex(random_bytes(8));
+        $store = new CacheStore($directory);
+
+        try {
+            $store->writeAll($compiled);
+            $reloaded = $store->loadHttp();
+
+            self::assertNotNull($reloaded);
+            self::assertSame(
+                ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
+                $reloaded->middlewareGroups,
+            );
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+
+            @rmdir($directory);
+        }
+    }
+
     public function test_route_middleware_survives_the_full_compile_and_reload_round_trip(): void
     {
         $router = new Router();

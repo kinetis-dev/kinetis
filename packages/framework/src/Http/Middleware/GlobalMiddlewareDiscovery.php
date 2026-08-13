@@ -7,24 +7,29 @@ namespace Kinetis\Http\Middleware;
 use Kinetis\Cache\NamespaceScanner;
 use Kinetis\Http\Attributes\AsGlobalMiddleware;
 use Kinetis\Http\Attributes\AsMcpMiddleware;
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
 use Kinetis\Http\Attributes\AsOpenApiMiddleware;
 use ReflectionClass;
 
 /**
  * Finds every class anywhere under a project's own PSR-4 root(s) — plus
  * Kinetis\Http itself, for symmetry with RouteDiscovery/CommandDiscovery/
- * McpDiscovery — carrying #[AsGlobalMiddleware], #[AsMcpMiddleware], or
- * #[AsOpenApiMiddleware], returning each as its own class-string list,
- * already sorted: priority descending, ties broken alphabetically by
- * fully-qualified class name so the result never depends on filesystem/
- * scan order. discoverAll() performs exactly one project-wide scan and
- * buckets by attribute — added once a security review surfaced a real
- * need for the narrower two (a way to protect /mcp or /openapi.json/
- * /docs specifically, without middleware also running on every other
- * route), so a class can be discovered as any combination of the three
- * without tripling the filesystem walk. discover() is the pre-existing,
- * single-purpose entry point kept for any caller that only ever wanted
- * the global list — still exactly one scan when called alone.
+ * McpDiscovery — carrying #[AsGlobalMiddleware], #[AsMcpMiddleware],
+ * #[AsOpenApiMiddleware], or #[AsMiddlewareGroup], returning each as its
+ * own already-sorted result: priority descending, ties broken
+ * alphabetically by fully-qualified class name so nothing depends on
+ * filesystem/scan order. discoverAll() performs exactly one project-wide
+ * scan and buckets by attribute — so a class can be discovered as any
+ * combination of the four without multiplying the filesystem walk, which
+ * matters most under a boot-and-die runtime where discovery reruns on
+ * every request. discover() is the single-purpose entry point for any
+ * caller that only ever wanted the global list — still exactly one scan
+ * when called alone.
+ *
+ * The first three buckets are flat class-string lists (each is one
+ * pipeline). `groups` is a map of group name to its own sorted member
+ * list, since a project can declare any number of independent groups —
+ * see #[AsMiddlewareGroup] and #[Middleware]'s `@name` references.
  *
  * Route middleware (#[Middleware], Http\Attributes\Middleware) has no
  * equivalent priority/tiebreak scheme, deliberately: it's read straight
@@ -60,7 +65,7 @@ final class GlobalMiddlewareDiscovery
 
     /**
      * @param list<string>|null $paths
-     * @return array{global: list<class-string>, mcp: list<class-string>, openApi: list<class-string>}
+     * @return array{global: list<class-string>, mcp: list<class-string>, openApi: list<class-string>, groups: array<string, list<class-string>>}
      */
     public static function discoverAll(string $projectRoot, ?array $paths = null): array
     {
@@ -75,6 +80,8 @@ final class GlobalMiddlewareDiscovery
         $mcp = [];
         /** @var array<class-string, int> $openApi */
         $openApi = [];
+        /** @var array<string, array<class-string, int>> $groups */
+        $groups = [];
 
         foreach ($candidates as $class) {
             $reflection = new ReflectionClass($class);
@@ -93,12 +100,21 @@ final class GlobalMiddlewareDiscovery
             if ($openApiAttributes !== []) {
                 $openApi[$class] = $openApiAttributes[0]->newInstance()->priority;
             }
+
+            // Repeatable, unlike the three above — every occurrence is its
+            // own membership, so all of them are read rather than just
+            // getAttributes()[0].
+            foreach ($reflection->getAttributes(AsMiddlewareGroup::class) as $attribute) {
+                $group = $attribute->newInstance();
+                $groups[$group->name][$class] = $group->priority;
+            }
         }
 
         return [
             'global' => self::sortedByPriority($global),
             'mcp' => self::sortedByPriority($mcp),
             'openApi' => self::sortedByPriority($openApi),
+            'groups' => array_map(self::sortedByPriority(...), $groups),
         ];
     }
 

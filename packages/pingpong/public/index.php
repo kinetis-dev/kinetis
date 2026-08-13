@@ -66,6 +66,7 @@ if ($env->isProduction()) {
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
     $discoveredMcpMiddleware = $httpCache->mcpMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
+    $middlewareGroups = $httpCache->middlewareGroups;
     $listenerRegistry = EventListenerRegistry::fromArray($eventCache !== null ? $eventCache->listeners : []);
     $mcpRegistry = $mcpCache !== null
         ? McpRegistry::fromArray(['tools' => $mcpCache->mcpTools, 'resources' => $mcpCache->mcpResources])
@@ -85,6 +86,7 @@ if ($env->isProduction()) {
     $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
     $discoveredMcpMiddleware = $discoveredMiddleware['mcp'];
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
+    $middlewareGroups = $discoveredMiddleware['groups'];
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
     $mcpRegistry = McpDiscovery::discover($projectRoot);
     $mcpBindingPlans = [];
@@ -114,6 +116,7 @@ $kernel = new Kernel(
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
     discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,
+    middlewareGroups: $middlewareGroups,
 );
 
 $adapter->run($kernel->handle(...));

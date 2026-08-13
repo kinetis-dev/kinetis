@@ -9,6 +9,10 @@ use Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredMcpMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredOpenApiAndMcpMiddleware;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAdminMiddleware;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAuditMiddleware;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAuthMiddleware;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedTracingMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\HighPriorityMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\LowPriorityMiddleware;
 use PHPUnit\Framework\TestCase;
@@ -112,5 +116,58 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
             GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['global'],
             GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures'),
         );
+    }
+
+    // --- discoverAll()['groups']: #[AsMiddlewareGroup] membership.
+
+    public function test_discovers_a_named_group_and_its_members(): void
+    {
+        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+
+        self::assertSame([GroupedAuthMiddleware::class], $groups['auth']);
+    }
+
+    public function test_orders_a_groups_members_by_priority_descending(): void
+    {
+        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+
+        // GroupedAuthMiddleware declares priority 90 in 'admin',
+        // GroupedAdminMiddleware 50 — auth runs more outer.
+        self::assertSame(
+            [GroupedAuthMiddleware::class, GroupedAdminMiddleware::class],
+            $groups['admin'],
+        );
+    }
+
+    public function test_members_sharing_a_priority_are_ordered_alphabetically(): void
+    {
+        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+
+        self::assertSame(
+            [GroupedAuditMiddleware::class, GroupedTracingMiddleware::class],
+            $groups['audited'],
+        );
+    }
+
+    public function test_one_class_can_belong_to_several_groups(): void
+    {
+        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+
+        self::assertContains(GroupedAuthMiddleware::class, $groups['auth']);
+        self::assertContains(GroupedAuthMiddleware::class, $groups['admin']);
+    }
+
+    public function test_group_membership_does_not_make_a_class_global_middleware(): void
+    {
+        $middleware = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures');
+
+        self::assertNotContains(GroupedAuthMiddleware::class, $middleware['global']);
+        self::assertNotContains(GroupedAuthMiddleware::class, $middleware['mcp']);
+        self::assertNotContains(GroupedAuthMiddleware::class, $middleware['openApi']);
+    }
+
+    public function test_no_groups_are_discovered_when_the_project_root_does_not_exist(): void
+    {
+        self::assertSame([], GlobalMiddlewareDiscovery::discoverAll(__DIR__ . '/does-not-exist')['groups']);
     }
 }

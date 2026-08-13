@@ -25,7 +25,7 @@ root, or {doc}`config` for loading it from a `.env` file automatically.
 
 ## What gets cached
 
-Nine things get precomputed:
+Ten things get precomputed:
 
 - The route table.
 - MCP tool/resource definitions.
@@ -35,6 +35,8 @@ Nine things get precomputed:
   already priority-sorted.
 - The `#[AsOpenApiMiddleware]`-discovered class list, scoped to
   `/openapi.json`/`/docs` only, already priority-sorted.
+- The `#[AsMiddlewareGroup]`-declared groups, each group's own members
+  already priority-sorted.
 - The `#[Listener]`-discovered event listener list, grouped by event class,
   already priority-sorted.
 - HTTP and MCP parameter-binding plans (how each request's data maps onto
@@ -42,8 +44,8 @@ Nine things get precomputed:
 - DTO validation plans.
 
 `GlobalMiddlewareDiscovery::discoverAll()` performs exactly one
-project-wide scan for all three middleware-attribute lists, not three —
-see {doc}`middleware`.
+project-wide scan for all four middleware attributes, not four — see
+{doc}`middleware`.
 
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
@@ -52,9 +54,9 @@ The on-disk result is five independent files:
 
 ```{code-block} text
 .kinetis-cache/
-├── http.php       routes + global/mcp/openapi middleware + HTTP binding
-│                  plans + validation plans for DTOs reachable from HTTP
-│                  routes
+├── http.php       routes + global/mcp/openapi middleware + named
+│                  middleware groups + HTTP binding plans + validation
+│                  plans for DTOs reachable from HTTP routes
 ├── mcp.php        tool/resource definitions + MCP binding plans +
 │                  validation plans for DTOs reachable from MCP tools
 ├── commands.php   command definitions

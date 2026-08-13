@@ -86,7 +86,7 @@ final class Router
      * once each.
      *
      * @param ReflectionClass<object>|ReflectionMethod $reflector
-     * @return list<class-string>
+     * @return list<string> class-strings and/or `@name` group references
      */
     private static function middlewareClassesFor(ReflectionClass|ReflectionMethod $reflector): array
     {
@@ -110,7 +110,7 @@ final class Router
      * those regardless of provenance. Used by Kinetis\Cache\Compiler to
      * produce a var_export()-able artifact with no live objects in it.
      *
-     * @return list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<class-string>}>
+     * @return list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}>
      */
     public function toArray(): array
     {
@@ -131,7 +131,7 @@ final class Router
      * Reconstructs a Router from toArray()'s output with zero reflection —
      * the compiled-cache load path's counterpart to register().
      *
-     * @param list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<class-string>}> $routes
+     * @param list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}> $routes
      */
     public static function fromArray(array $routes): self
     {

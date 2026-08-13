@@ -7,6 +7,8 @@ namespace Kinetis\Http;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Container\AppScope;
+use Kinetis\Http\Attributes\Middleware;
+use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
 use Kinetis\Http\Middleware\GlobalMiddlewareOrder;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
@@ -113,8 +115,12 @@ final class Kernel
         private readonly array $discoveredOpenApiMiddleware = [],
         /** @var list<string> exact Origin values allowed to reach /mcp; empty means "reject any request that sends an Origin header at all" — a request with no Origin (a non-browser client) is unaffected either way. */
         private readonly array $mcpAllowedOrigins = [],
+        /** @var array<string, list<class-string>> #[AsMiddlewareGroup]-declared groups, each already priority-sorted — see GlobalMiddlewareDiscovery::discoverAll()'s `groups` bucket. */
+        private readonly array $middlewareGroups = [],
     ) {
         $this->openApi = new OpenApiGenerator($router);
+
+        $this->assertMiddlewareGroupsExist();
 
         // Resolved from AppScope, not RequestScope — global middleware
         // wraps the entire request, including before any RequestScope
@@ -149,6 +155,69 @@ final class Kernel
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
         return $this->globalPipeline->handle($request);
+    }
+
+    /**
+     * Every `@name` group reference across every registered route is
+     * checked once here, at construction, rather than when a request
+     * happens to hit the route carrying it — a typo'd group name stops
+     * the worker from starting instead of turning into a 500 for whoever
+     * hits that one endpoint first.
+     */
+    private function assertMiddlewareGroupsExist(): void
+    {
+        foreach ($this->router->routes() as $route) {
+            foreach ($route->middleware as $reference) {
+                if (!str_starts_with($reference, Middleware::GROUP_PREFIX)) {
+                    continue;
+                }
+
+                $group = substr($reference, strlen(Middleware::GROUP_PREFIX));
+
+                if (!isset($this->middlewareGroups[$group])) {
+                    throw UnknownMiddlewareGroupException::forRoute(
+                        $group,
+                        $route->controllerClass,
+                        $route->controllerMethod,
+                        array_keys($this->middlewareGroups),
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Expands a route's declared middleware list, replacing each `@name`
+     * group reference with that group's own members in place — so a
+     * group's position in the running pipeline is exactly where the
+     * reference was declared, keeping route middleware's
+     * declaration-order rule intact whether an entry is one class or a
+     * whole group.
+     *
+     * @param list<class-string|string> $references
+     * @return list<class-string>
+     */
+    private function expandMiddlewareGroups(array $references): array
+    {
+        $expanded = [];
+
+        foreach ($references as $reference) {
+            if (!str_starts_with($reference, Middleware::GROUP_PREFIX)) {
+                /** @var class-string $reference */
+                $expanded[] = $reference;
+
+                continue;
+            }
+
+            // Guaranteed present by assertMiddlewareGroupsExist().
+            $group = substr($reference, strlen(Middleware::GROUP_PREFIX));
+
+            foreach ($this->middlewareGroups[$group] as $middlewareClass) {
+                $expanded[] = $middlewareClass;
+            }
+        }
+
+        return $expanded;
     }
 
     private function dispatchCore(ServerRequestInterface $request): ResponseInterface
@@ -199,7 +268,7 @@ final class Kernel
             // the kind likely to need a per-request dependency (a resolved
             // "current user", TransactionGuard, ...), so it gets the same
             // fresh-per-request container a controller would.
-            $routeMiddleware = array_map($scope->get(...), $match->route->middleware);
+            $routeMiddleware = array_map($scope->get(...), $this->expandMiddlewareGroups($match->route->middleware));
             $routePipeline = new MiddlewarePipeline(
                 $routeMiddleware,
                 new CallableRequestHandler(

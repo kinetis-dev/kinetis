@@ -30,10 +30,15 @@ use Kinetis\Tests\Http\Fixtures\EventLog;
 use Kinetis\Tests\Http\Fixtures\GlobalMiddleware;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\McpScopedMiddleware;
+use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAdminMiddleware;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAuthMiddleware;
+use Kinetis\Tests\Http\Fixtures\MiddlewareGroupController;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\OpenApiScopedMiddleware;
 use Kinetis\Tests\Http\Fixtures\RecordingMiddleware;
 use Kinetis\Tests\Http\Fixtures\SendOrderConfirmationListener;
+use Kinetis\Tests\Http\Fixtures\UnknownMiddlewareGroupController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Mcp\Fixtures\AccountController;
 use Kinetis\Tests\Mcp\Fixtures\ProgressReportingController;
@@ -1149,5 +1154,103 @@ final class KernelTest extends TestCase
 
         self::assertSame(201, $response->getStatusCode());
         self::assertSame([42], $log->orderIds);
+    }
+
+    /**
+     * @return array<string, list<class-string>>
+     */
+    private function middlewareGroups(): array
+    {
+        return ['admin' => [GroupedAuthMiddleware::class, GroupedAdminMiddleware::class]];
+    }
+
+    public function test_a_group_reference_runs_every_member_in_the_groups_own_order(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareGroupController::class);
+
+        $kernel = new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+        $response = $kernel->handle(new ServerRequest('GET', '/groups/admin'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            [GroupedAuthMiddleware::class, GroupedAdminMiddleware::class],
+            RecordingMiddleware::$log,
+        );
+    }
+
+    public function test_a_group_expands_in_place_preserving_declaration_order_around_it(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareGroupController::class);
+
+        $kernel = new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+        $kernel->handle(new ServerRequest('GET', '/groups/mixed'));
+
+        // #[Middleware(MethodLevelMiddleware::class)] is declared before
+        // #[Middleware('@admin')], so it runs first and the group's own
+        // members follow, in the group's order.
+        self::assertSame(
+            [MethodLevelMiddleware::class, GroupedAuthMiddleware::class, GroupedAdminMiddleware::class],
+            RecordingMiddleware::$log,
+        );
+    }
+
+    public function test_a_reference_to_an_undeclared_group_fails_when_the_kernel_is_constructed(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UnknownMiddlewareGroupController::class);
+
+        // Thrown at construction, not on the request that happens to hit
+        // the offending route — the whole point of validating up front.
+        $this->expectException(UnknownMiddlewareGroupException::class);
+
+        new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+    }
+
+    public function test_the_unknown_group_error_names_the_group_and_the_route_that_referenced_it(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UnknownMiddlewareGroupController::class);
+
+        try {
+            new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+            self::fail('Expected an UnknownMiddlewareGroupException.');
+        } catch (UnknownMiddlewareGroupException $e) {
+            self::assertStringContainsString('does-not-exist', $e->getMessage());
+            self::assertStringContainsString('UnknownMiddlewareGroupController', $e->getMessage());
+            self::assertStringContainsString('unknown', $e->getMessage());
+        }
+    }
+
+    public function test_routes_with_no_group_references_need_no_groups_configured_at_all(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        // No middlewareGroups argument — plain class-string references
+        // are unaffected by the feature existing.
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            [ClassLevelMiddleware::class, MethodLevelMiddleware::class],
+            RecordingMiddleware::$log,
+        );
     }
 }

@@ -72,6 +72,7 @@ if ($env->isProduction()) {
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
     $discoveredMcpMiddleware = $httpCache->mcpMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
+    $middlewareGroups = $httpCache->middlewareGroups;
     // Another confirmed nullsafe.neverNull false positive (see
     // AppScope::resolve()/RequestScope's own documented case, and this
     // file's twin in bin/kinetis) — $eventCache is genuinely nullable
@@ -95,6 +96,7 @@ if ($env->isProduction()) {
     $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
     $discoveredMcpMiddleware = $discoveredMiddleware['mcp'];
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
+    $middlewareGroups = $discoveredMiddleware['groups'];
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
 }
 
@@ -114,6 +116,7 @@ $kernel = new Kernel(
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
     discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,
+    middlewareGroups: $middlewareGroups,
 );
 
 $adapter->run($kernel->handle(...));

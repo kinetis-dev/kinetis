@@ -157,6 +157,17 @@ per line — every line but the last ends with `->` to mark it continues on
 the next, so a route stacking several classes never forces one
 unreasonably wide line. A route with none shows `—`.
 
+A `@name` middleware-group reference (see {doc}`middleware`) is shown
+already expanded into the classes that actually run, each annotated with
+the group it came from:
+
+```{code-block} text
+Method  Path                    Status  Controller                        Middleware
+------  ----------------------  ------  --------------------------------  ------------------------------------------------
+GET     /orders/{id}/refund     200     App\Http\OrderController::refund  App\Http\Middleware\AuthMiddleware (@admin) ->
+                                                                         App\Http\Middleware\RequireAdminMiddleware (@admin)
+```
+
 ## Development vs. production
 
 In development, commands are discovered fresh on every invocation, so a

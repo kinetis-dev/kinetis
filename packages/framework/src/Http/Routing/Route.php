@@ -41,7 +41,7 @@ final class Route
         public readonly string $controllerClass,
         public readonly string $controllerMethod,
         public readonly int $status,
-        /** @var list<class-string> */
+        /** @var list<string> each entry is either a middleware class-string or a `@name` group reference — see Kinetis\Http\Attributes\Middleware */
         public readonly array $middleware = [],
     ) {
         $segments = self::parse($pathTemplate);

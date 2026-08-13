@@ -11,9 +11,10 @@ use Kinetis\Validation\Hydrator;
  * Everything a normal HTTP request needs: the route table, each route's
  * parameter-binding plan, the validation plan for every DTO reachable
  * from an HTTP route specifically (not every DTO in the app — see
- * Compiler), and every #[AsGlobalMiddleware]/#[AsMcpMiddleware]/
- * #[AsOpenApiMiddleware]-discovered class (see
- * Kinetis\Http\Middleware\GlobalMiddlewareDiscovery), each already sorted
+ * Compiler), every #[AsGlobalMiddleware]/#[AsMcpMiddleware]/
+ * #[AsOpenApiMiddleware]-discovered class, and every
+ * #[AsMiddlewareGroup]-declared group keyed by name (see
+ * Kinetis\Http\Middleware\GlobalMiddlewareDiscovery), all already sorted
  * by priority. Kept separate from McpCache/OpenApiCache so a plain API
  * request never has to load MCP tool definitions or the OpenAPI document
  * just to dispatch — those are unrelated concerns with their own,
@@ -27,7 +28,7 @@ final readonly class HttpCache
 {
     public function __construct(
         public int $formatVersion,
-        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<class-string>}> */
+        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}> */
         public array $routes,
         /** @var array<string, list<HttpBindingPlan>> */
         public array $httpBindingPlans,
@@ -40,6 +41,8 @@ final readonly class HttpCache
         /** @var list<class-string> */
         public array $openApiMiddleware,
         public string $compiledAt,
+        /** @var array<string, list<class-string>> */
+        public array $middlewareGroups = [],
     ) {}
 
     /**
@@ -55,6 +58,7 @@ final readonly class HttpCache
             'globalMiddleware' => $this->globalMiddleware,
             'mcpMiddleware' => $this->mcpMiddleware,
             'openApiMiddleware' => $this->openApiMiddleware,
+            'middlewareGroups' => $this->middlewareGroups,
             'compiledAt' => $this->compiledAt,
         ];
     }
@@ -64,7 +68,7 @@ final readonly class HttpCache
      */
     public static function fromArray(array $data): self
     {
-        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<class-string>}> $routes */
+        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}> $routes */
         $routes = $data['routes'];
         /** @var array<string, list<HttpBindingPlan>> $httpBindingPlans */
         $httpBindingPlans = $data['httpBindingPlans'];
@@ -76,6 +80,8 @@ final readonly class HttpCache
         $mcpMiddleware = $data['mcpMiddleware'];
         /** @var list<class-string> $openApiMiddleware */
         $openApiMiddleware = $data['openApiMiddleware'];
+        /** @var array<string, list<class-string>> $middlewareGroups */
+        $middlewareGroups = $data['middlewareGroups'];
 
         return new self(
             formatVersion: (int) $data['formatVersion'],
@@ -86,6 +92,7 @@ final readonly class HttpCache
             mcpMiddleware: $mcpMiddleware,
             openApiMiddleware: $openApiMiddleware,
             compiledAt: (string) $data['compiledAt'],
+            middlewareGroups: $middlewareGroups,
         );
     }
 }

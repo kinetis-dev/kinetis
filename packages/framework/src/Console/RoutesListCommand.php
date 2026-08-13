@@ -8,6 +8,7 @@ use Kinetis\Cache\RoutesFile;
 use Kinetis\Config\Config;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Container\AppScope;
+use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Middleware\GlobalMiddlewareOrder;
 use Kinetis\Http\Routing\Route;
@@ -54,11 +55,11 @@ final readonly class RoutesListCommand
         $app->boot();
 
         $router = RouteDiscovery::discover($projectRoot);
-        $discovered = GlobalMiddlewareDiscovery::discover($projectRoot);
-        $globalMiddleware = GlobalMiddlewareOrder::resolve($app->middlewares(), $discovered);
+        $discovered = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+        $globalMiddleware = GlobalMiddlewareOrder::resolve($app->middlewares(), $discovered['global']);
 
         $this->printGlobalMiddleware($globalMiddleware);
-        $this->printRoutes($router->routes());
+        $this->printRoutes($router->routes(), $discovered['groups']);
 
         return 0;
     }
@@ -79,8 +80,9 @@ final readonly class RoutesListCommand
 
     /**
      * @param list<Route> $routes
+     * @param array<string, list<class-string>> $groups
      */
-    private function printRoutes(array $routes): void
+    private function printRoutes(array $routes, array $groups): void
     {
         if ($routes === []) {
             $this->write("No routes discovered.\n");
@@ -107,7 +109,7 @@ final readonly class RoutesListCommand
                 $route->pathTemplate,
                 (string) $route->status,
                 "{$route->controllerClass}::{$route->controllerMethod}",
-                self::middlewareLines($route->middleware),
+                self::middlewareLines($route->middleware, $groups),
             ],
             $routes,
         );
@@ -116,20 +118,50 @@ final readonly class RoutesListCommand
     }
 
     /**
-     * @param list<class-string> $middleware
+     * A `@name` group reference is expanded into the classes that actually
+     * run, each annotated with the group it came from — what a route
+     * really executes is the useful thing to display here, without losing
+     * where each entry originated. A reference to an undeclared group is
+     * shown as-is (Kernel rejects that at startup; this command is
+     * read-only and never throws on it).
+     *
+     * @param list<class-string|string> $middleware
+     * @param array<string, list<class-string>> $groups
      * @return list<string>
      */
-    private static function middlewareLines(array $middleware): array
+    private static function middlewareLines(array $middleware, array $groups): array
     {
-        if ($middleware === []) {
+        $entries = [];
+
+        foreach ($middleware as $reference) {
+            if (!str_starts_with($reference, Middleware::GROUP_PREFIX)) {
+                $entries[] = $reference;
+
+                continue;
+            }
+
+            $group = substr($reference, strlen(Middleware::GROUP_PREFIX));
+
+            if (!isset($groups[$group])) {
+                $entries[] = "{$reference} (undeclared)";
+
+                continue;
+            }
+
+            foreach ($groups[$group] as $class) {
+                $entries[] = "{$class} ({$reference})";
+            }
+        }
+
+        if ($entries === []) {
             return ['—'];
         }
 
-        $lastIndex = array_key_last($middleware);
+        $lastIndex = array_key_last($entries);
         $lines = [];
 
-        foreach ($middleware as $index => $class) {
-            $lines[] = $index === $lastIndex ? $class : "{$class} ->";
+        foreach ($entries as $index => $entry) {
+            $lines[] = $index === $lastIndex ? $entry : "{$entry} ->";
         }
 
         return $lines;

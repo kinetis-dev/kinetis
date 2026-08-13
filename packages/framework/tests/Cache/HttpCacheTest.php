@@ -37,6 +37,7 @@ final class HttpCacheTest extends TestCase
             mcpMiddleware: ['App\\McpAuthMiddleware'],
             openApiMiddleware: ['App\\OpenApiAuthMiddleware'],
             compiledAt: '2026-01-01T00:00:00+00:00',
+            middlewareGroups: ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
         );
 
         $reconstructed = HttpCache::fromArray($cache->toArray());
@@ -48,6 +49,10 @@ final class HttpCacheTest extends TestCase
         self::assertSame(['App\\RequestIdMiddleware'], $reconstructed->globalMiddleware);
         self::assertSame(['App\\McpAuthMiddleware'], $reconstructed->mcpMiddleware);
         self::assertSame(['App\\OpenApiAuthMiddleware'], $reconstructed->openApiMiddleware);
+        self::assertSame(
+            ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
+            $reconstructed->middlewareGroups,
+        );
     }
 
     public function test_var_export_round_trip_via_a_real_generated_file_preserves_shape(): void

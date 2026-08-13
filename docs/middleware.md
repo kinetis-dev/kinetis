@@ -65,6 +65,7 @@ no per-request state as an instance property, that's exactly as safe as
 any other `AppScope`-resolved service; if it needs something that varies
 per request, reach for route middleware instead.
 
+(discoverable-global-middleware)=
 ### Discoverable global middleware — no `AppScope::middleware()` call needed
 
 `#[AsGlobalMiddleware]` registers a global middleware class by attribute
@@ -116,14 +117,16 @@ fully-qualified class name instead, so the result never depends on
 filesystem/scan order.
 
 ```{note}
-This priority/alphabetical-tiebreak scheme is specific to *discovered*
-global middleware — it exists because nothing else establishes a relative
-order between two independently-discovered classes. `#[Middleware]`
-(class/method-level route middleware, above) has no priority concept at
-all: multiple `#[Middleware(...)]` attributes always run in the exact
-order they're declared in your source, since a controller's own
-attribute order is already an explicit, unambiguous ordering with nothing
-left to break a tie on.
+This priority/alphabetical-tiebreak scheme belongs to *discovered*
+middleware — this attribute, and `#[AsMiddlewareGroup]`
+[below](#naming-a-stack-middleware-groups) for ordering within a group.
+It exists because nothing else establishes a relative order between two
+independently-discovered classes. `#[Middleware]` (class/method-level
+route middleware, above) has no priority concept at all: multiple
+`#[Middleware(...)]` attributes always run in the exact order they're
+declared in your source — group references included — since a
+controller's own attribute order is already an explicit, unambiguous
+ordering with nothing left to break a tie on.
 ```
 
 ```{note}
@@ -230,6 +233,79 @@ Unlike global middleware, route middleware is resolved from the request's
 own `RequestScope`, wrapping only `Dispatcher::dispatch()` — deliberately
 the opposite resolution source from global middleware, since this is
 exactly the kind likely to need a per-request dependency.
+
+(naming-a-stack-middleware-groups)=
+### Naming a stack: middleware groups
+
+When several routes need the same few middleware in the same order,
+`#[AsMiddlewareGroup]` names that stack once, on the middleware classes
+themselves:
+
+```{code-block} php
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
+
+#[AsMiddlewareGroup('auth')]
+#[AsMiddlewareGroup('admin', priority: 90)]
+final class AuthMiddleware implements MiddlewareInterface { /* ... */ }
+```
+
+```{code-block} php
+#[AsMiddlewareGroup('admin', priority: 50)]
+final class RequireAdminMiddleware implements MiddlewareInterface { /* ... */ }
+```
+
+A route or controller then references the whole group with a `@`-prefixed
+name instead of listing every class:
+
+```{code-block} php
+final readonly class OrderController
+{
+    #[Get('/orders')]
+    #[Middleware('@auth')]
+    public function index(): array { /* ... */ }
+
+    #[Get('/orders/{id}/refund')]
+    #[Middleware('@admin')]
+    public function refund(int $id): array { /* ... */ }
+}
+```
+
+`GET /orders/{id}/refund` runs `AuthMiddleware` then
+`RequireAdminMiddleware` — the `admin` group's own order, from the
+priorities declared above: higher runs more outer, `0`-`100`, defaulting
+to `50`, with members sharing a priority ordered alphabetically by class
+name. The attribute is repeatable, so one class can belong to several
+groups and hold a different position in each.
+
+Nothing needs registering. Any class anywhere under one of your own PSR-4
+roots carrying `#[AsMiddlewareGroup]` is found automatically, the same
+scan that finds `#[AsGlobalMiddleware]` classes (see
+[above](#discoverable-global-middleware),
+including how to restrict it on a large application).
+
+A group expands where its reference sits, so declaration order still
+governs the whole list — mix group references and plain class-strings
+freely:
+
+```{code-block} php
+#[Get('/orders/export')]
+#[Middleware(RateLimitMiddleware::class)]
+#[Middleware('@admin')]
+public function export(): array { /* ... */ }
+```
+
+That runs `RateLimitMiddleware`, then the `admin` group's two members, then
+the controller.
+
+Group membership alone never makes a middleware run anywhere — a group
+only runs where a route or controller references it. Referencing a group
+no class declares fails when the application starts, naming the group and
+the route that referenced it, rather than at the moment someone hits that
+endpoint.
+
+`kinetis routes:list` prints each route's group references already
+expanded into the classes that actually run, annotated with the group they
+came from — see {doc}`cli`.
 
 ## Registering a value the controller reads later
 
