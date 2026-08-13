@@ -231,9 +231,13 @@ final class Dispatcher
     {
         $contentType = $request->getHeaderLine('Content-Type');
 
+        // getContents(), not a (string) cast: MaxBodySizeMiddleware's
+        // SizeLimitedStream enforces its cap by throwing, and
+        // StreamInterface::__toString() is required to never throw —
+        // only getContents() can actually surface an oversized body here.
         $decoded = self::isFormEncoded($contentType)
             ? $this->parsedBodyAsArray($request)
-            : json_decode((string) $request->getBody(), associative: true);
+            : json_decode($request->getBody()->getContents(), associative: true);
 
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];

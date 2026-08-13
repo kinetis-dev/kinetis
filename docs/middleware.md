@@ -362,13 +362,23 @@ unset.
 ```{code-block} json
 :caption: What an oversized request produces (413)
 {
-    "error": "Request body of 5000000 bytes exceeds the maximum allowed size of 2097152 bytes."
+    "error": "Request body exceeds the maximum allowed size of 2097152 bytes."
 }
 ```
 
-Only the declared `Content-Length` header is checked, not the actual
-bytes read as they arrive — a request with no `Content-Length`, or one
-that under-reports its real size, passes through this check untouched.
+Two checks, not one. A declared `Content-Length` over the limit is
+rejected immediately, before the body is touched at all. Underneath
+that, the body itself is capped as it's actually read — so a request
+with no `Content-Length` header, or one that under-reports its real
+size, is still rejected once a `#[Body]` route actually reads past the
+limit. A route that never reads the body (a `GET`, or one using only
+`#[Query]`/path parameters) is unaffected either way, since nothing tries
+to read past the limit in the first place.
+
+Only the raw JSON `#[Body]` path is capped this way — a
+`multipart/form-data` or `application/x-www-form-urlencoded` body is
+parsed before Kinetis code reads it, bounded by PHP's own
+`upload_max_filesize`/`post_max_size` instead.
 
 ## Built in: `CorsMiddleware`
 

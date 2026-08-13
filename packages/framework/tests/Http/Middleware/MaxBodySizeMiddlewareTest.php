@@ -13,6 +13,7 @@ use Kinetis\Http\Routing\Router;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\ServerRequestInterface;
 
 final class MaxBodySizeMiddlewareTest extends TestCase
 {
@@ -59,13 +60,53 @@ final class MaxBodySizeMiddlewareTest extends TestCase
         self::assertSame(0, $calls);
     }
 
-    public function test_a_request_with_no_content_length_header_passes_through(): void
+    public function test_a_small_request_with_no_content_length_header_passes_through(): void
     {
-        // Out of scope by design: only the declared Content-Length is
-        // checked, not the actual bytes read — an absent or inaccurate
-        // header isn't caught here.
         $middleware = new MaxBodySizeMiddleware(new Config(['MAX_BODY_SIZE' => '1000']));
-        $request = new ServerRequest('POST', '/');
+        $request = new ServerRequest('POST', '/', body: 'small body');
+
+        $response = $middleware->process($request, $this->handler());
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function test_an_oversized_body_with_no_content_length_header_is_still_rejected(): void
+    {
+        // The declared-header check alone can't catch this — a missing
+        // Content-Length skips it entirely. The wrapped body stream is
+        // the backstop: rejected once the handler actually reads past
+        // the limit, not before.
+        $middleware = new MaxBodySizeMiddleware(new Config(['MAX_BODY_SIZE' => '1000']));
+        $request = new ServerRequest('POST', '/', body: str_repeat('x', 1500));
+        $handler = new CallableRequestHandler(static fn (ServerRequestInterface $r) => new Response(200, body: $r->getBody()->getContents()));
+
+        $response = $middleware->process($request, $handler);
+
+        self::assertSame(413, $response->getStatusCode());
+        self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
+    }
+
+    public function test_an_oversized_body_with_an_inaccurate_content_length_header_is_still_rejected(): void
+    {
+        // A dishonest header claiming a small size skips the fast-path
+        // check; the actual bytes read still trip the backstop.
+        $middleware = new MaxBodySizeMiddleware(new Config(['MAX_BODY_SIZE' => '1000']));
+        $request = new ServerRequest('POST', '/', headers: ['Content-Length' => '10'], body: str_repeat('x', 1500));
+        $handler = new CallableRequestHandler(static fn (ServerRequestInterface $r) => new Response(200, body: $r->getBody()->getContents()));
+
+        $response = $middleware->process($request, $handler);
+
+        self::assertSame(413, $response->getStatusCode());
+    }
+
+    public function test_a_handler_that_never_reads_the_body_is_unaffected_by_the_backstop(): void
+    {
+        // The backstop only fires once something actually reads past
+        // the limit — a route that never touches the body (a GET, or a
+        // #[Query]-only route) is never affected by an oversized body
+        // it was never going to read anyway.
+        $middleware = new MaxBodySizeMiddleware(new Config(['MAX_BODY_SIZE' => '1000']));
+        $request = new ServerRequest('POST', '/', body: str_repeat('x', 1500));
 
         $response = $middleware->process($request, $this->handler());
 
