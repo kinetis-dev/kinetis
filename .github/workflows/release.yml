@@ -16,21 +16,16 @@ jobs:
           # multi-commit push (this project's own normal workflow) — same
           # reasoning as monorepo-validate.yml's own fetch-depth: 0.
           fetch-depth: 0
-          # A real, found-by-running-it bug: actions/checkout's default
-          # (persist-credentials: true) writes the ephemeral per-job
-          # GITHUB_TOKEN into the local git config as a credential
-          # override for every https://github.com/ URL — which then took
-          # precedence over the RELEASE_DEPLOY_TOKEN embedded directly in
-          # the publish loop's own push URLs, authenticating every push as
-          # github-actions[bot] instead. That bot identity has no access
-          # outside this one checked-out repo, so the very first push (to
-          # kinetis-dev/framework, a completely different repository)
-          # failed with a real 403 — confirmed harmless: git rejects a
-          # push outright on auth failure before writing anything, and
-          # the repo was confirmed still genuinely empty afterward.
-          # false stops checkout from persisting any credential at all,
-          # so the only auth the publish loop ever uses is the one it
-          # explicitly provides.
+          # actions/checkout's default (persist-credentials: true) writes
+          # the ephemeral per-job GITHUB_TOKEN into the local git config
+          # as a credential override for every https://github.com/ URL,
+          # taking precedence over RELEASE_DEPLOY_TOKEN embedded directly
+          # in the publish loop's own push URLs and authenticating every
+          # push as github-actions[bot] instead — a bot identity with no
+          # access outside this one checked-out repo. false stops
+          # checkout from persisting any credential at all, so the only
+          # auth the publish loop ever uses is the one it explicitly
+          # provides.
           persist-credentials: false
 
       - name: Compute this round's release plan
@@ -48,12 +43,11 @@ jobs:
         run: echo "No version changes since the last commit — nothing to release."
 
       - name: Fail — a candidate's sibling requirement isn't published yet
-        # A real, legitimate failure mode even once Phase 6 is fully live:
-        # two packages bumped together in one commit, but their sibling
+        # Two packages bumped together in one commit, but their sibling
         # ordering doesn't actually resolve (e.g. a version was bumped
         # without the dependent's own constraint catching up). Distinct
         # from the "RELEASE_DEPLOY_TOKEN not yet provisioned" case below
-        # — this one can happen on a correctly-provisioned pipeline too.
+        # — this one can happen on a fully working pipeline too.
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok != 'true'
         run: |
           echo "::error::One or more release candidates have an unresolved sibling requirement:"
@@ -71,14 +65,10 @@ jobs:
           fi
 
       - name: RELEASE_DEPLOY_TOKEN not yet provisioned
-        # The 19 kinetis-dev/<name> split repos exist now (public, empty,
-        # Code Security on) — this token is the one remaining real
-        # prerequisite, deliberately not created by this workflow; see
-        # CLAUDE.md's own record of why it needs its own explicit
-        # go-ahead. Fails loudly rather than silently succeeding: this
-        # workflow isn't a required status check (only
-        # monorepo-validate.yml is), so nothing blocks on this failing,
-        # but a version bump with nowhere to go should never look green.
+        # Fails loudly rather than silently succeeding: this workflow
+        # isn't a required status check (only monorepo-validate.yml is),
+        # so nothing blocks on this failing, but a version bump with
+        # nowhere to go should never look green.
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'false'
         run: |
           echo "::warning::$(jq '.candidates | length' plan.json) candidate(s) are ready to release, but the RELEASE_DEPLOY_TOKEN secret hasn't been provisioned yet:"
@@ -90,12 +80,7 @@ jobs:
         run: |
           # v1.0.1 is the last release with a real prebuilt Linux binary —
           # v2.0.0 dropped precompiled binaries entirely, needing a Go +
-          # libgit2 build from source instead, real added complexity and
-          # build time for a CI step with nothing to gain from it here.
-          # Verified directly against this repo (not assumed from the
-          # README alone): splitting packages/aws-sigv4 with this exact
-          # binary produces a subtree whose content matches HEAD's
-          # packages/aws-sigv4/ byte-for-byte.
+          # libgit2 build from source instead, for nothing gained here.
           curl -sL https://github.com/splitsh/lite/releases/download/v1.0.1/lite_linux_amd64.tar.gz | tar xz
           chmod +x splitsh-lite
           sudo mv splitsh-lite /usr/local/bin/splitsh-lite
@@ -105,23 +90,15 @@ jobs:
         # A for-loop over an array populated via process substitution,
         # not `jq ... | while read` — the loop body's own git push calls
         # would otherwise share the same piped stdin `read` is consuming
-        # from, a real footgun if a push ever prompts (a misconfigured
-        # credential, for instance) rather than failing cleanly. Verified
-        # separately that GitHub Actions' actual default shell (bash -e,
-        # confirmed from this repo's own real run logs — no -o pipefail)
-        # does still propagate a mid-loop failure correctly either way,
-        # but this avoids the whole class of concern rather than leaning
-        # on that specific verified-safe edge case.
+        # from, corrupting the loop if a push ever prompts instead of
+        # failing cleanly (a misconfigured credential, for instance).
         #
         # Force-pushing main and pushing the tag are two separate git
         # push calls; a failure between them (main updated, tag not yet
         # pushed) stops the whole job right there rather than continuing
-        # to later candidates — a disclosed, bounded limitation, not
-        # silently risky: splitsh-lite's own caching plus force-push
-        # both make a re-run of this same workflow safe and idempotent,
-        # the same "accept a real, bounded gap rather than build rollback
-        # machinery for it" precedent kinetis/migrations' own
-        # no-transaction-wrapping already established.
+        # to later candidates. Safe to just re-run: splitsh-lite's own
+        # caching plus force-push both make a repeated run of this same
+        # workflow idempotent.
         run: |
           mapfile -t candidates < <(jq -c '.candidates[]' plan.json)
 

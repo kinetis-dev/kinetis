@@ -5,38 +5,29 @@ declare(strict_types=1);
 /**
  * Computes this round's release plan — see CLAUDE.md and the monorepo
  * packaging plan (Phase 5) for the full design. Read-only: never writes
- * anything, never tags, never pushes. Phase 6 (splitsh-lite itself,
- * .github/workflows/release.yml) is what actually acts on this plan's
- * output. All 19 kinetis-dev/<name> split repos exist now (public,
- * empty, Code Security on) — kinetis-dev/kinetis is the monorepo
- * itself, not a split target, so "framework" still needed its own new
- * repo alongside every other package. Still gated on a real prerequisite
- * that doesn't exist yet: the RELEASE_DEPLOY_TOKEN secret release.yml
- * needs to actually push to any of them.
+ * anything, never tags, never pushes; .github/workflows/release.yml
+ * (splitsh-lite) is what acts on this plan's output.
  *
  * Usage: php tools/release-plan.php [--json]
  *
- * A package is a release candidate for either of two independent
- * reasons — see findReleaseCandidates()/findUntaggedCandidates() for
- * the full reasoning behind each: its version field differs from
- * packages.manifest.json's state at oldManifestRef() (see
- * validate-manifest.php — GITHUB_EVENT_BEFORE when set, HEAD^
- * otherwise) — the ordinary case, something actually changed this push
- * — or its current version has no matching tag on its own split repo
- * yet, regardless of whether anything changed this push — the "first
- * release" case, where the target version was already committed before
- * this pipeline existed to act on it, so a pure diff can never trigger
- * on its own. Reports the union in publish-order (topological,
- * restricted to candidates — the same ordering rule as
+ * A package is a release candidate for either of two reasons: its
+ * version field differs from packages.manifest.json's state at
+ * oldManifestRef() (see validate-manifest.php — GITHUB_EVENT_BEFORE
+ * when set, HEAD^ otherwise), or its current version has no matching
+ * tag on its own split repo yet, regardless of whether anything changed
+ * this push — see findUntaggedCandidates(), which covers a version that
+ * predates this pipeline and so has nothing for a manifest diff alone
+ * to catch. Reports the union in publish-order (topological, restricted
+ * to candidates — the same ordering rule as
  * tools/validate-manifest.php's cycle check, just filtered down), each
- * with whether its sibling requirements actually resolve against a real
- * tag on the sibling's own split repo. No-ops cleanly (reports zero
+ * with whether its sibling requirements resolve against a real tag on
+ * the sibling's own split repo. No-ops cleanly (reports zero
  * candidates, exits 0) only when neither source finds anything; exits 1
  * if any candidate has an unresolved sibling.
  *
  * --json emits {candidates: [{key, version, problems}], ok} instead of
- * the human-readable report — what release.yml actually consumes to
- * drive publishing, one candidate at a time, in the given order.
+ * the human-readable report — what release.yml consumes to drive
+ * publishing, one candidate at a time, in the given order.
  */
 
 require_once __DIR__ . '/generate-composer.php';
@@ -66,23 +57,19 @@ function findReleaseCandidates(array $oldManifest, array $newManifest): array
 }
 
 /**
- * A package is also a candidate — even with zero manifest diff at all —
- * when its current version has never actually been tagged on its own
- * split repo. This is a real gap a pure manifest diff can't see on its
- * own: a version committed to the manifest before this pipeline existed
- * to act on it (this project's own first release, all 19 packages
- * already sitting at their target 1.0.0 the moment release.yml was
- * built) has nothing to diff against, ever — findReleaseCandidates()
- * alone would report zero candidates on every future push forever, no
- * matter how many times main pushes, since the manifest value itself
- * never changes again.
+ * A package is also a candidate, independent of any manifest diff, when
+ * its current version has no matching tag on its own split repo yet —
+ * covers a version that predates this pipeline, which
+ * findReleaseCandidates() alone can never detect: the manifest value
+ * itself never changes again once committed, so a pure diff has nothing
+ * left to compare against.
  *
- * Runs unconditionally on every check, not gated behind "only if the
- * diff found nothing" — a package sitting alongside a real diff-based
- * candidate can independently still be untagged from an earlier failed
- * run, and this catches that for free with no extra bookkeeping. Once a
- * version genuinely gets tagged, it stops matching here on its own —
- * nothing has to "remember" a package was already released.
+ * Runs unconditionally, not gated behind "only if the diff found
+ * nothing" — a package can independently be untagged from an earlier
+ * failed run alongside a real diff-based candidate elsewhere in the
+ * same round, and this catches that with no extra bookkeeping. A
+ * version that's genuinely tagged simply stops matching here on its
+ * own; nothing has to track that a package was already released.
  *
  * @param array<string, mixed> $manifest
  * @param callable(string, string): bool $tagExists Same injectable-callable
@@ -105,9 +92,7 @@ function findUntaggedCandidates(array $manifest, callable $tagExists): array
 
 /**
  * Kahn's algorithm over the full requires graph, foundational packages
- * first — the same ordering direction already proven against this
- * manifest earlier in this project's own history (kinetis and
- * revolt-http-client first, pingpong last).
+ * first — e.g. framework and revolt-http-client before pingpong.
  *
  * @param array<string, list<string>> $graph
  * @return list<string>
@@ -206,25 +191,17 @@ function tagExistsOnGitHub(string $repo, string $tag): bool
  * either require or require-dev) either already has a matching tag on
  * its own split repo, or is itself a candidate this same round.
  *
- * The second case matters structurally, not just as an optimization: for
- * an ordinary release round (one or two packages, everything else
- * already tagged from a prior round) a sibling never being a same-round
- * candidate is the common case. But for a release round where several
- * interdependent packages publish together — this project's own first
- * release, all 19 at once, being the concrete case this was built
- * for — every non-root candidate requires a sibling with no tag yet,
- * because that sibling is *also* going to be published, earlier, in this
- * exact same run. Checking only tagExists() would report every one of
- * those as unresolved forever, regardless of how correctly the
- * prerequisites get provisioned, permanently blocking the one release
- * this pipeline exists to enable. A same-round sibling is safe to treat
- * as resolved without a live tag check: publishOrder()'s topological
- * sort already guarantees it appears earlier in the sequential publish
- * loop, and that loop's fail-fast design (any push failure aborts the
- * whole run immediately, see release.yml) means a later candidate can
- * never actually be attempted against a sibling whose push silently
- * failed — by the time $key's own turn comes, $sibling's tag either
- * genuinely exists or the run already stopped.
+ * A same-round sibling is safe to treat as resolved without a live tag
+ * check: publishOrder()'s topological sort already guarantees it
+ * appears earlier in the sequential publish loop, and that loop's
+ * fail-fast design (any push failure aborts the whole run immediately,
+ * see release.yml) means a later candidate can never actually be
+ * attempted against a sibling whose push silently failed — by the time
+ * $key's own turn comes, $sibling's tag either genuinely exists or the
+ * run already stopped. Checking only tagExists() without this exception
+ * would block any round where several interdependent packages release
+ * together, since every non-root candidate's sibling has no tag yet
+ * until its own, earlier turn in the same run.
  *
  * @param array<string, mixed> $manifest
  * @param array<string, true> $candidateSet Every package key that's a
@@ -232,10 +209,8 @@ function tagExistsOnGitHub(string $repo, string $tag): bool
  *     siblings, the full round.
  * @param callable(string, string): bool $tagExists Injectable so the
  *     surrounding logic (which siblings get checked, how a miss is
- *     worded) is unit-testable without a real network call — the real
- *     tagExistsOnGitHub() itself is exercised separately, directly,
- *     the same "real backend, not mocked in the committed suite"
- *     precedent this project already applies to RedisQueue/SqlQueue.
+ *     worded) is unit-testable without a real network call —
+ *     tagExistsOnGitHub() itself is exercised separately, directly.
  * @return list<string> problems, empty if everything resolves
  */
 function checkResolution(array $manifest, string $key, array $candidateSet, callable $tagExists): array
