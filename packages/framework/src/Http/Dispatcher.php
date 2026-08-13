@@ -57,6 +57,7 @@ use ReflectionType;
  *     scalarType: ?string,
  *     hasDefault: bool,
  *     defaultValue: mixed,
+ *     allowsNull: bool,
  *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
  * }
  */
@@ -134,6 +135,8 @@ final class Dispatcher
                 'scalarType' => $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null,
                 'hasDefault' => $parameter->isDefaultValueAvailable(),
                 'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
+                // An untyped parameter accepts anything, null included.
+                'allowsNull' => $type === null || $type->allowsNull(),
                 // Only meaningful for 'query'/'path' — a #[Body] DTO's own
                 // constraints are Hydrator's concern, not this method's.
                 'constraints' => Hydrator::collectConstraints($parameter),
@@ -195,8 +198,7 @@ final class Dispatcher
             try {
                 $arguments[$name] = match ($param['source']) {
                     'request' => $request,
-                    'uploadedFile' => $request->getUploadedFiles()[$name]
-                        ?? ($param['hasDefault'] ? $param['defaultValue'] : throw UnresolvableParameterException::forParameter($name)),
+                    'uploadedFile' => $this->resolveUploadedFileFromPlan($request->getUploadedFiles()[$name] ?? null, $name, $param),
                     'body' => $this->resolveBodyFromPlan($param, $request),
                     'query' => $this->resolveScalarFromPlan($request->getQueryParams()[$name] ?? null, $name, $param),
                     'path' => $this->resolveScalarFromPlan($match->pathParams[$name], $name, $param),
@@ -264,6 +266,32 @@ final class Dispatcher
     }
 
     /**
+     * A request without the expected file resolves like a missing #[Query]
+     * value: the default if one exists, null if the parameter accepts it,
+     * and an "is required." entry in the route's 422 otherwise — a client
+     * forgetting a file field is malformed input, not a server error.
+     *
+     * @param HttpBindingPlan $param
+     * @throws ValidationException
+     */
+    private function resolveUploadedFileFromPlan(mixed $file, string $name, array $param): mixed
+    {
+        if ($file !== null) {
+            return $file;
+        }
+
+        if ($param['hasDefault']) {
+            return $param['defaultValue'];
+        }
+
+        if ($param['allowsNull']) {
+            return null;
+        }
+
+        throw ValidationException::forErrors([$name => ['is required.']]);
+    }
+
+    /**
      * Flat, single-level only — matches Hydrator's own DTO-discovery
      * scanning discipline elsewhere. A nested (array-style, `photos[]`)
      * file input isn't merged here.
@@ -300,7 +328,19 @@ final class Dispatcher
     private function resolveScalarFromPlan(mixed $raw, string $name, array $param): mixed
     {
         if ($raw === null) {
-            return $param['hasDefault'] ? $param['defaultValue'] : null;
+            if ($param['hasDefault']) {
+                return $param['defaultValue'];
+            }
+
+            // A missing value can only legally become null if the parameter
+            // actually accepts null — otherwise it would explode as a raw
+            // TypeError at controller invocation instead of joining the
+            // route's other binding errors in one 422.
+            if (!$param['allowsNull']) {
+                throw ValidationException::forErrors([$name => ['is required.']]);
+            }
+
+            return null;
         }
 
         $scalarType = $param['scalarType'];

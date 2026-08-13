@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt\Tests;
 
+use Kinetis\AuthJwt\Exception\RevocationUnavailableException;
 use Kinetis\AuthJwt\JwtUser;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
+use Kinetis\SimpleCache\NullSimpleCache;
 use PHPUnit\Framework\TestCase;
 
 final class RevocationStoreTest extends TestCase
@@ -139,5 +141,12 @@ final class RevocationStoreTest extends TestCase
         $store->revokeAllForUser(42, 60);
 
         self::assertTrue($store->isRevokedForUser(42, $issuedAt));
+    }
+
+    public function test_construction_over_a_null_cache_throws_instead_of_silently_not_revoking(): void
+    {
+        $this->expectException(RevocationUnavailableException::class);
+
+        new RevocationStore(new NullSimpleCache());
     }
 }

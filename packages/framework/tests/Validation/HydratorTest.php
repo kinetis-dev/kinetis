@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Validation;
 
+use Kinetis\Tests\Http\Fixtures\CreateNoteRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Http\Fixtures\CreateProductRequest;
 use Kinetis\Tests\Http\Fixtures\CreateUserRequest;
@@ -606,6 +607,36 @@ final class HydratorTest extends TestCase
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
             self::assertArrayHasKey('items', $e->errors);
+        }
+    }
+
+    public function test_an_explicit_null_for_a_non_nullable_field_is_a_validation_error_not_a_type_error(): void
+    {
+        try {
+            Hydrator::hydrate(CreateNoteRequest::class, ['title' => null, 'subtitle' => null]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['title' => ['must not be null.']], $e->errors);
+        }
+    }
+
+    public function test_an_explicit_null_for_a_nullable_field_hydrates_as_null(): void
+    {
+        $dto = Hydrator::hydrate(CreateNoteRequest::class, ['title' => 'hello', 'subtitle' => null]);
+
+        self::assertSame('hello', $dto->title);
+        self::assertNull($dto->subtitle);
+    }
+
+    public function test_the_explicit_null_check_applies_identically_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(CreateNoteRequest::class);
+
+        try {
+            Hydrator::hydrate(CreateNoteRequest::class, ['title' => null, 'subtitle' => null], $plan);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['title' => ['must not be null.']], $e->errors);
         }
     }
 }

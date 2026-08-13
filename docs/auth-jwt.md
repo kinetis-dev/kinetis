@@ -128,7 +128,15 @@ A verified signature alone can't express "this specific token shouldn't
 work anymore" — that's the one thing a stateless JWT structurally can't
 do on its own. `RevocationStore` closes that gap with a cache-backed
 denylist, keyed by the `jti` claim every `JwtIssuer`-issued token already
-carries:
+carries.
+
+The denylist needs a real cache. Configure Redis (`REDIS_URL` or
+`REDIS_HOST` — see {doc}`persistence`) so the `CacheInterface` binding is
+`RedisSimpleCache`, or pass any other real PSR-16 implementation directly.
+`RevocationStore` refuses to construct over `NullSimpleCache` — the
+default binding when no Redis is configured — since a denylist that never
+stores anything would let every revoked token stay valid until it expires
+on its own.
 
 ```{code-block} php
 use Kinetis\AuthJwt\RevocationStore;

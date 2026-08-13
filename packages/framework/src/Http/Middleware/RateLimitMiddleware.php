@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Middleware;
 
+use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
+use Kinetis\SimpleCache\NullSimpleCache;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -13,8 +15,12 @@ use Psr\SimpleCache\CacheInterface;
 
 /**
  * A fixed-window request counter backed by Psr\SimpleCache\CacheInterface
- * (see Kinetis\SimpleCache) — works with any PSR-16 implementation,
- * including a no-op NullSimpleCache, since it only ever calls get()/set().
+ * (see Kinetis\SimpleCache) — works with any real PSR-16 implementation.
+ * NullSimpleCache specifically is rejected at construction: a counter that
+ * never stores anything enforces no limit at all while still emitting
+ * healthy-looking X-RateLimit-* headers, so an app that registered this
+ * middleware without configuring a real cache fails loudly instead of
+ * silently serving unlimited traffic.
  *
  * Keyed by client IP by default, sha256-hashed (PSR-16 forbids `{}()/\@:`
  * in a key, and IPv6 addresses are full of colons). Holds no per-request
@@ -48,7 +54,11 @@ class RateLimitMiddleware implements MiddlewareInterface
         private readonly int $maxAttempts = 60,
         private readonly int $windowSeconds = 60,
         private readonly array $trustedProxies = [],
-    ) {}
+    ) {
+        if ($cache instanceof NullSimpleCache) {
+            throw RateLimitUnavailableException::nullCache();
+        }
+    }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface

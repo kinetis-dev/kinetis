@@ -15,5 +15,6 @@ final class CacheFormat
     // 2: HttpCache gained globalMiddleware.
     // 3: EventCache/events.php introduced.
     // 4: HttpCache gained mcpMiddleware/openApiMiddleware.
-    public const int VERSION = 4;
+    // 5: binding/hydration plan parameters gained allowsNull.
+    public const int VERSION = 5;
 }

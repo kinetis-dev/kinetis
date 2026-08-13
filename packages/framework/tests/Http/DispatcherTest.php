@@ -8,6 +8,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
+use Kinetis\Tests\Http\Fixtures\NoteController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\RawRequestController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
@@ -389,7 +390,7 @@ final class DispatcherTest extends TestCase
 
         $plan = [
             'Kinetis\Tests\Http\Fixtures\UserController::show' => [
-                ['name' => 'id', 'source' => 'path', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'constraints' => []],
+                ['name' => 'id', 'source' => 'path', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
             ],
         ];
 
@@ -412,5 +413,73 @@ final class DispatcherTest extends TestCase
         $response = $dispatcher->dispatch($match, new ServerRequest('GET', '/users/42'));
 
         self::assertSame(['id' => 42], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_an_explicitly_null_body_field_for_a_non_nullable_parameter_returns_422(): void
+    {
+        $router = new Router();
+        $router->register(NoteController::class);
+        $match = $router->match('POST', '/notes');
+        $request = new ServerRequest('POST', '/notes', body: json_encode(['title' => null, 'subtitle' => null]));
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['must not be null.'], $body['errors']['title']);
+    }
+
+    public function test_an_explicitly_null_body_field_for_a_nullable_parameter_dispatches_normally(): void
+    {
+        $router = new Router();
+        $router->register(NoteController::class);
+        $match = $router->match('POST', '/notes');
+        $request = new ServerRequest('POST', '/notes', body: json_encode(['title' => 'hello', 'subtitle' => null]));
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(['title' => 'hello', 'subtitle' => null], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_missing_required_query_parameter_returns_422(): void
+    {
+        $router = new Router();
+        $router->register(NoteController::class);
+        $match = $router->match('GET', '/notes/search');
+
+        $response = $this->dispatcher()->dispatch($match, new ServerRequest('GET', '/notes/search'));
+
+        self::assertSame(422, $response->getStatusCode());
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['is required.'], $body['errors']['term']);
+    }
+
+    public function test_a_missing_nullable_query_parameter_resolves_to_null(): void
+    {
+        $router = new Router();
+        $router->register(NoteController::class);
+        $match = $router->match('GET', '/notes/filter');
+
+        $response = $this->dispatcher()->dispatch($match, new ServerRequest('GET', '/notes/filter'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['term' => null], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_missing_uploaded_file_for_a_non_nullable_parameter_returns_422(): void
+    {
+        $router = new Router();
+        $router->register(UploadController::class);
+        $match = $router->match('POST', '/files');
+
+        $response = $this->dispatcher()->dispatch($match, new ServerRequest('POST', '/files'));
+
+        self::assertSame(422, $response->getStatusCode());
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['is required.'], $body['errors']['file']);
     }
 }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt;
 
+use Kinetis\AuthJwt\Exception\RevocationUnavailableException;
+use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
 
 /**
@@ -37,13 +39,21 @@ use Psr\SimpleCache\CacheInterface;
  *
  * Built against plain Psr\SimpleCache\CacheInterface, the same "don't
  * hard-couple to Redis specifically" reasoning
- * Kinetis\Http\Middleware\RateLimitMiddleware already applies.
+ * Kinetis\Http\Middleware\RateLimitMiddleware already applies — with one
+ * exception, enforced at construction: NullSimpleCache is rejected
+ * outright. A denylist that never stores anything would let every
+ * revoked token stay valid until natural expiry while revoke() calls
+ * appear to succeed — a security control that silently doesn't run.
  */
 final readonly class RevocationStore
 {
     public function __construct(
         private CacheInterface $cache,
-    ) {}
+    ) {
+        if ($cache instanceof NullSimpleCache) {
+            throw RevocationUnavailableException::nullCache();
+        }
+    }
 
     public function revoke(string $jti, int $ttlSeconds): void
     {

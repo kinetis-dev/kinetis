@@ -9,8 +9,10 @@ use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Kernel;
+use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
 use Kinetis\Http\Middleware\RateLimitMiddleware;
 use Kinetis\Http\Routing\Router;
+use Kinetis\SimpleCache\NullSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Http\Fixtures\RateLimitedFixtureController;
 use Nyholm\Psr7\Response;
@@ -302,5 +304,19 @@ final class RateLimitMiddlewareTest extends TestCase
         // REMOTE_ADDR — also a fresh bucket, not colliding with 1.1.1.1's.
         self::assertSame(200, $trusted->getStatusCode());
         self::assertSame(200, $untrusted->getStatusCode());
+    }
+
+    public function test_construction_over_a_null_cache_throws_instead_of_silently_not_enforcing(): void
+    {
+        $this->expectException(RateLimitUnavailableException::class);
+
+        new RateLimitMiddleware(new NullSimpleCache());
+    }
+
+    public function test_construction_over_a_real_cache_succeeds(): void
+    {
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache());
+
+        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
     }
 }

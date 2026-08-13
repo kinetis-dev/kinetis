@@ -49,7 +49,11 @@ use ReflectionType;
  * a real number or a numeric string but rejects a non-numeric string,
  * array, object, or bool; a `bool` field accepts only `true`, `false`,
  * `1`, `0`, `"1"`, `"0"`. `null` is exempt from this check — a missing or
- * explicitly-null value is a separate concern from a wrong-shaped one.
+ * explicitly-null value is a separate concern from a wrong-shaped one:
+ * a missing key on a defaultless parameter is "is required.", and an
+ * explicitly-null value for a parameter whose declared type doesn't allow
+ * null is "must not be null." — both 422 validation errors, never a raw
+ * `TypeError` escaping from the constructor.
  * `array`/`mixed`/any other builtin type is untouched, since nothing casts
  * those today either. This check applies identically to `#[Query]`/path
  * parameters via `Dispatcher`, not just `#[Body]` DTO fields — the same
@@ -77,6 +81,7 @@ use ReflectionType;
  *     listItemPlan: ?array<string, mixed>,
  *     hasDefault: bool,
  *     defaultValue: mixed,
+ *     allowsNull: bool,
  *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
  * }
  * @phpstan-type HydrationPlan array{
@@ -167,6 +172,7 @@ final class Hydrator
      *     listItemPlan: ?array<string, mixed>,
      *     hasDefault: bool,
      *     defaultValue: mixed,
+     *     allowsNull: bool,
      *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
      * }
      */
@@ -184,6 +190,8 @@ final class Hydrator
             'listItemPlan' => $listItemPlan,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
             'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
+            // An untyped parameter accepts anything, null included.
+            'allowsNull' => $type === null || $type->allowsNull(),
             'constraints' => self::collectConstraints($parameter),
         ];
     }
@@ -270,6 +278,17 @@ final class Hydrator
                 } else {
                     $errors[$name][] = 'is required.';
                 }
+
+                continue;
+            }
+
+            // An explicitly-null value for a parameter whose declared type
+            // doesn't allow null would otherwise slip between the "is
+            // required" check above (the key exists) and the type-mismatch
+            // check (which exempts null) and reach the constructor as a raw
+            // TypeError.
+            if ($data[$name] === null && !$parameter['allowsNull']) {
+                $errors[$name][] = 'must not be null.';
 
                 continue;
             }
@@ -467,8 +486,9 @@ final class Hydrator
      * The declared-type-mismatch check that runs before castScalar() casts
      * anything — see the class docblock for the policy this implements and
      * why. `null` is exempt (unchanged from before this check existed); a
-     * missing/explicitly-null value is a separate concern handled by
-     * hydrateFromPlan()'s own "is required" check.
+     * missing value is handled by hydrateFromPlan()'s own "is required"
+     * check, and an explicitly-null value for a non-nullable parameter by
+     * its "must not be null." check.
      *
      * Public specifically so Kinetis\Http\Dispatcher can apply the identical
      * policy to #[Query]/path parameters — Decision 1 of the fix pass this

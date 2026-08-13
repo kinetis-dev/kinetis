@@ -113,9 +113,11 @@ public function store(#[Body] CreateUserRequest $data): UserResponse
 
 A parameter attributed `#[Query]` is bound to a query-string value of the
 same name, cast to the parameter's declared scalar type. A missing value
-falls back to the parameter's default, or `null` if it has none — never an
-error. A value whose shape doesn't match the declared type (an array where
-a scalar is expected, a non-numeric string for `int`/`float`) is a `422`,
+falls back to the parameter's default; without one, a nullable parameter
+receives `null`, and a non-nullable one is a `422` (`is required.`),
+joining the route's other binding errors in the same response. A value
+whose shape doesn't match the declared type (an array where a scalar is
+expected, a non-numeric string for `int`/`float`) is also a `422`,
 not a silently wrong cast — see [Scalar type checking](#scalar-type-checking)
 below.
 
@@ -173,6 +175,10 @@ use Psr\Http\Message\UploadedFileInterface;
 #[Post('/files')]
 public function receiveFile(UploadedFileInterface $file): array
 ```
+
+A request without the expected file resolves like a missing `#[Query]`
+value: the parameter's default if it has one, `null` if its type allows
+null, and a `422` (`is required.`) otherwise.
 
 A parameter matching none of the above falls back to its default value, if
 it has one; if it doesn't, the request fails with a clear "unresolvable
@@ -423,6 +429,13 @@ A mismatch is a `422` with a message under that field's key, in the same
 `errors` structure a failed constraint produces — not a value silently
 coerced into something that happens to look plausible (an array becoming
 the literal string `"Array"`, a non-numeric string becoming `0`).
+
+Missing and explicitly-null values get the same treatment, whether or not
+the field carries any constraint attributes: a `#[Body]` DTO field whose
+key is absent from the request is `is required.` unless the constructor
+parameter has a default, and a field sent as JSON `null` whose declared
+type doesn't allow null is `must not be null.` — both under the field's
+key in the same `422`, never a raw `TypeError` from the constructor.
 
 ### Asymmetric-visibility properties
 

@@ -269,9 +269,13 @@ final readonly class RateLimiter
 
 **Optional — Redis is never touched unless configured.** If you set
 `REDIS_URL` or `REDIS_HOST`, this connects to Redis automatically with no
-further setup. If you set neither, `CacheInterface` still resolves to
-something — it just always misses and never stores, so anything built
-against it degrades gracefully instead of throwing.
+further setup. If you set neither, `CacheInterface` resolves to
+`NullSimpleCache` — it always misses and never stores, fine for anything
+where a cache miss just means recomputing. Features where a silent no-op
+would mean silently not enforcing anything reject it at construction
+instead: `RateLimitMiddleware` (see {doc}`middleware`) and
+`kinetis/auth-jwt`'s `RevocationStore` (see {doc}`auth-jwt`) both require
+a real cache.
 
 ```{code-block} sh
 REDIS_URL=redis://:password@localhost:6379/0

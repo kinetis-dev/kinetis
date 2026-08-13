@@ -444,10 +444,15 @@ a per-tenant allow-list, for example — write your own middleware using
 ## Built in: `RateLimitMiddleware`
 
 `Kinetis\Http\Middleware\RateLimitMiddleware` — a fixed-window request
-counter backed by `Psr\SimpleCache\CacheInterface` (see {doc}`persistence`
-for `RedisSimpleCache`/`NullSimpleCache`, the two implementations
-`AppScope::boot()` chooses between automatically). Not registered by
-default — opt in as global or route middleware, whichever fits:
+counter backed by `Psr\SimpleCache\CacheInterface`. It needs a real
+cache: configure Redis (`REDIS_URL` or `REDIS_HOST` — see
+{doc}`persistence`) so `AppScope::boot()` binds `RedisSimpleCache`, or
+pass any other real PSR-16 implementation. Construction over
+`NullSimpleCache` — the default binding when no Redis is configured —
+throws, since a counter that never stores anything enforces no limit at
+all while still emitting healthy-looking `X-RateLimit-*` headers. Not
+registered by default — opt in as global or route middleware, whichever
+fits:
 
 ```{code-block} php
 use Kinetis\Http\Middleware\RateLimitMiddleware;
