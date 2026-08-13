@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Http\Routing;
 
+use Kinetis\Http\Routing\Exception\DuplicateRouteException;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
+use Kinetis\Tests\Http\Fixtures\ConstrainedDuplicateRouteController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
+use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerA;
+use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerB;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\UserController;
@@ -159,5 +163,30 @@ final class RouterTest extends TestCase
             [ClassLevelMiddleware::class, MethodLevelMiddleware::class],
             $reconstructedMatch->route->middleware,
         );
+    }
+
+    public function test_registering_a_route_claiming_the_same_requests_throws(): void
+    {
+        $router = new Router();
+        $router->register(DuplicateRouteControllerA::class);
+
+        // A different placeholder name doesn't change which paths match —
+        // /dup/{key} claims exactly the requests /dup/{id} already owns.
+        $this->expectException(DuplicateRouteException::class);
+
+        $router->register(DuplicateRouteControllerB::class);
+    }
+
+    public function test_a_constrained_variant_of_the_same_path_is_a_different_match_set_and_stays_registrable(): void
+    {
+        $router = new Router();
+        $router->register(ConstrainedDuplicateRouteController::class);
+        $router->register(DuplicateRouteControllerA::class);
+
+        // First-match-wins ordering between the two genuinely different
+        // match sets: the constrained route takes numeric segments, the
+        // unconstrained one everything else.
+        self::assertSame('showNumeric', $router->match('GET', '/dup/42')->route->controllerMethod);
+        self::assertSame('show', $router->match('GET', '/dup/abc')->route->controllerMethod);
     }
 }

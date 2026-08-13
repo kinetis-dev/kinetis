@@ -96,7 +96,20 @@ final readonly class CorsMiddleware implements MiddlewareInterface
         $origin = $request->getHeaderLine('Origin');
 
         if ($origin === '' || !$this->originAllowed($origin)) {
-            return $handler->handle($request);
+            $response = $handler->handle($request);
+
+            // A disallowed (or absent) origin gets no CORS headers — but
+            // when the configuration echoes specific origins, responses
+            // still vary by Origin, and a shared cache that stored this
+            // header-less response could otherwise serve it to an allowed
+            // origin. Vary: Origin marks the variance regardless of the
+            // verdict; a static-"*" configuration answers identically for
+            // every origin, so it stays unmarked.
+            if (!$this->staticWildcard()) {
+                $response = $response->withAddedHeader('Vary', 'Origin');
+            }
+
+            return $response;
         }
 
         if ($this->isPreflight($request)) {
@@ -109,6 +122,17 @@ final readonly class CorsMiddleware implements MiddlewareInterface
     private function isPreflight(ServerRequestInterface $request): bool
     {
         return $request->getMethod() === 'OPTIONS' && $request->hasHeader('Access-Control-Request-Method');
+    }
+
+    /**
+     * True when every response this middleware produces is identical
+     * regardless of the request's Origin: a literal "*" allow-list with
+     * no credentials. Everything else echoes (or withholds) headers per
+     * origin and must carry Vary: Origin.
+     */
+    private function staticWildcard(): bool
+    {
+        return in_array('*', $this->allowedOrigins, true) && !$this->allowCredentials;
     }
 
     private function originAllowed(string $origin): bool
@@ -155,7 +179,7 @@ final readonly class CorsMiddleware implements MiddlewareInterface
      */
     private function withCorsHeaders(ResponseInterface $response, string $origin): ResponseInterface
     {
-        $wildcard = in_array('*', $this->allowedOrigins, true) && !$this->allowCredentials;
+        $wildcard = $this->staticWildcard();
 
         $response = $response->withHeader('Access-Control-Allow-Origin', $wildcard ? '*' : $origin);
 

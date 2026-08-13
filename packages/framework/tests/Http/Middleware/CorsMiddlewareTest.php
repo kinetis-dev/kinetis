@@ -52,6 +52,25 @@ final class CorsMiddlewareTest extends TestCase
         self::assertFalse($response->hasHeader('Access-Control-Allow-Origin'));
     }
 
+    public function test_a_disallowed_origin_still_gets_vary_origin_so_a_shared_cache_cannot_poison_an_allowed_one(): void
+    {
+        $middleware = new CorsMiddleware(allowedOrigins: ['https://example.com']);
+        $request = new ServerRequest('GET', '/', ['Origin' => 'https://evil.example']);
+
+        $response = $middleware->process($request, $this->handler());
+
+        self::assertSame('Origin', $response->getHeaderLine('Vary'));
+    }
+
+    public function test_a_request_without_an_origin_stays_unmarked_under_a_static_wildcard(): void
+    {
+        $middleware = new CorsMiddleware(allowedOrigins: ['*']);
+
+        $response = $middleware->process(new ServerRequest('GET', '/'), $this->handler());
+
+        self::assertFalse($response->hasHeader('Vary'));
+    }
+
     public function test_a_wildcard_origin_is_echoed_back_literally_without_credentials(): void
     {
         $middleware = new CorsMiddleware(allowedOrigins: ['*']);

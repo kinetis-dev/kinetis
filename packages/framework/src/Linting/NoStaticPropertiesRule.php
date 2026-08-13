@@ -24,6 +24,16 @@ use PHPStan\Rules\RuleErrorBuilder;
  * Ships under the main autoload (not a dev-only tool) because it's meant
  * to run against a *consumer's* application code — add it to their own
  * `phpstan.neon` `rules:` list, not just this repo's own toolchain.
+ * `autoload-dev` can't serve that: Composer never installs a dependency's
+ * own autoload-dev section, so a consumer's phpstan.neon could never
+ * reach the class at all.
+ *
+ * The PHPStan/php-parser imports above are require-dev-only packages —
+ * deliberate, not an undeclared dependency: this class is only ever
+ * *loaded* by a PHPStan run, and a PHPStan run has both packages present
+ * by definition (they're PHPStan itself and its own parser). Nothing at
+ * runtime references this class, so a production install where neither
+ * package exists never attempts the autoload.
  *
  * @implements Rule<Property>
  */

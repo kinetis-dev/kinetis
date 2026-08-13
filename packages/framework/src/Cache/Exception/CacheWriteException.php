@@ -22,4 +22,14 @@ final class CacheWriteException extends RuntimeException
     {
         return new self("Could not publish compiled cache to \"{$path}\".");
     }
+
+    public static function unexportableObject(string $file, string $keyPath, string $class): self
+    {
+        return new self(
+            "Cannot compile \"{$file}\": an instance of {$class} at \"{$keyPath}\" has no var_export() "
+            . 'representation that can be required back. Most commonly this is a constructor default '
+            . 'value that constructs an object — replace it with a plain scalar/array default, or make '
+            . 'the parameter nullable and construct the object in the constructor body.',
+        );
+    }
 }

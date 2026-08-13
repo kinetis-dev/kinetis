@@ -95,6 +95,29 @@ final class Route
     }
 
     /**
+     * Identifies the set of request paths this route claims: the HTTP
+     * method plus the template with placeholder *names* normalized away
+     * (constraint patterns kept, since they change what matches). Two
+     * routes with the same key match exactly the same requests —
+     * `GET /users/{id}` and `GET /users/{userId}` collide, while
+     * `GET /users/{id:\d+}` and `GET /users/{id}` don't — which is what
+     * Router::register() checks to reject a silent first-match-wins
+     * conflict at registration time.
+     */
+    public function conflictKey(): string
+    {
+        $shape = '';
+
+        foreach (self::parse($this->pathTemplate) as $segment) {
+            $shape .= $segment['type'] === 'placeholder'
+                ? '{' . ($segment['pattern'] ?? '') . '}'
+                : $segment['value'];
+        }
+
+        return $this->httpMethod . ' ' . $shape;
+    }
+
+    /**
      * @return array<string,string>|null
      */
     public function matchPath(string $path): ?array

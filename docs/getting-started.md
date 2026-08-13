@@ -220,8 +220,10 @@ $adapter->run($kernel->handle(...));
 `RouteDiscovery::discover()` finds `UserController` on its own — any class
 anywhere under one of your own PSR-4 roots is picked up automatically,
 with no required directory or namespace convention and nothing to
-register by hand (see {doc}`cli` for restricting the scan on a large
-application). `RuntimeDetector::detect()`
+register by hand. Discovery reaches a class through its PSR-4 file path,
+so keep the standard autoloading layout: one class per file, the file
+named for the class (see {doc}`cli` for how discovery works and how to
+restrict the scan on a large application). `RuntimeDetector::detect()`
 figures out which runtime it's running under — FrankenPHP, AWS Lambda, or
 plain PHP-FPM — and returns the matching adapter, with zero configuration
 on your part. The exact same `public/index.php` runs unmodified in all

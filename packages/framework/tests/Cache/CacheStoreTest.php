@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Cache;
 
 use Kinetis\Cache\CacheFormat;
 use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\Exception\CacheWriteException;
 use Kinetis\Cache\CommandCache;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\EventCache;
@@ -141,5 +142,47 @@ final class CacheStoreTest extends TestCase
         sort($expected);
 
         self::assertSame($expected, $files);
+    }
+
+    public function test_an_object_in_an_artifact_fails_the_write_with_the_path_to_it(): void
+    {
+        // A constructor default like `new DateTimeImmutable()` captured
+        // into a hydration plan is the real way an object reaches a cache
+        // artifact — var_export() would render it as a ::__set_state()
+        // call the reload can't replay.
+        $http = new HttpCache(
+            formatVersion: CacheFormat::VERSION,
+            routes: [],
+            httpBindingPlans: [],
+            hydrationPlans: [
+                'App\\Dto' => [
+                    'className' => 'App\\Dto',
+                    'hasConstructor' => true,
+                    'parameters' => [
+                        ['name' => 'since', 'defaultValue' => new \DateTimeImmutable()],
+                    ],
+                ],
+            ],
+            globalMiddleware: [],
+            mcpMiddleware: [],
+            openApiMiddleware: [],
+            compiledAt: '2026-01-01T00:00:00+00:00',
+        );
+
+        $store = new CacheStore($this->directory);
+
+        try {
+            $store->writeAll(new CompiledCache(
+                $http,
+                $this->compiledCache()->mcp,
+                $this->compiledCache()->openApi,
+                $this->compiledCache()->commands,
+                $this->compiledCache()->events,
+            ));
+            self::fail('Expected a CacheWriteException.');
+        } catch (CacheWriteException $e) {
+            self::assertStringContainsString('DateTimeImmutable', $e->getMessage());
+            self::assertStringContainsString('defaultValue', $e->getMessage());
+        }
     }
 }

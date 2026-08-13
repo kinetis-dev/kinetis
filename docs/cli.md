@@ -60,7 +60,11 @@ Any class anywhere under one of your own PSR-4 roots is picked up
 automatically — `App\Console\...`, `App\Domain\Orders\...`, wherever you
 keep it. There's no required directory or namespace convention to follow;
 organize commands however the rest of your application is organized.
-There's nothing to register. Run a command by name:
+Discovery reaches a class through its PSR-4 file path, so the standard
+autoloading layout is what makes a class findable: one class per file,
+the file named for the class. A second class declared inside an existing
+file isn't PSR-4-autoloadable, so discovery never sees it. There's
+nothing to register. Run a command by name:
 
 ```{code-block} sh
 vendor/bin/kinetis app:cleanup-sessions

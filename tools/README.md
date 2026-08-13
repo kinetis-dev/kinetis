@@ -113,3 +113,19 @@ external dependency declares the same constraint for it — the whole
 point of the check is to catch the case where two packages drift apart
 silently, since neither one failing to install on its own would ever
 reveal it.
+
+## Running the tools test suite
+
+The suite shells out to `git` (the version-bump check compares the
+manifest against `HEAD^`), which `php:8.4-cli-alpine` doesn't ship —
+install it in the container first, the same step the
+`validate-manifest.php` invocation above already uses:
+
+```sh
+docker run --rm -v "$PWD":/app -w /app/tools composer:2 install
+docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
+  "apk add --no-cache git >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
+```
+
+Without `git`, the affected tests still pass but each emits a
+`proc_open(): posix_spawn() failed` warning.

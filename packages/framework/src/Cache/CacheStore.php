@@ -169,6 +169,8 @@ final class CacheStore
             throw CacheWriteException::couldNotCreateDirectory($this->directory);
         }
 
+        self::assertExportable($data, basename($path));
+
         $contents = "<?php\n\nreturn " . var_export($data, true) . ";\n";
         $tmpPath = $path . '.' . bin2hex(random_bytes(8)) . '.tmp';
 
@@ -180,6 +182,32 @@ final class CacheStore
             @unlink($tmpPath);
 
             throw CacheWriteException::couldNotPublish($path);
+        }
+    }
+
+    /**
+     * var_export() renders an object as a `\SomeClass::__set_state(...)`
+     * call most classes can't actually replay, so an object anywhere in a
+     * cache artifact — in practice, a constructor default value like
+     * `new DateTimeImmutable()` captured into a binding/hydration plan —
+     * would produce a file that can't be required back. Caught here, at
+     * build time, as a clear error naming where the object sits, instead
+     * of a corrupt artifact discovered on the first request that loads it.
+     *
+     * @param array<array-key, mixed> $data
+     */
+    private static function assertExportable(array $data, string $file, string $keyPath = ''): void
+    {
+        foreach ($data as $key => $value) {
+            $valuePath = $keyPath === '' ? (string) $key : "{$keyPath}.{$key}";
+
+            if (is_object($value)) {
+                throw CacheWriteException::unexportableObject($file, $valuePath, $value::class);
+            }
+
+            if (is_array($value)) {
+                self::assertExportable($value, $file, $valuePath);
+            }
         }
     }
 }

@@ -56,6 +56,14 @@ automatically, with no required directory or namespace convention — see
 {doc}`getting-started` and {doc}`cli` (including how to restrict the scan
 for a large application).
 
+Matching is first-match-wins in registration order, so two routes may
+overlap — `/users/{id:\d+}` alongside `/users/{id}`, or `/users/self`
+alongside `/users/{id}` — and the earlier registration takes the requests
+both match. A second route claiming *exactly* the same requests (the same
+method and path shape — placeholder names don't count, so `/users/{id}`
+and `/users/{userId}` collide) is rejected at registration with a
+`DuplicateRouteException`, since it could never run at all.
+
 ### Constraining a placeholder's shape
 
 A plain `{id}` matches any run of characters up to the next `/`. Add an

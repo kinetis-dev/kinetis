@@ -6,6 +6,7 @@ namespace Kinetis\Http\Routing;
 
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Attributes\RouteAttribute;
+use Kinetis\Http\Routing\Exception\DuplicateRouteException;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use ReflectionAttribute;
@@ -16,6 +17,16 @@ final class Router
 {
     /** @var list<Route> */
     private array $routes = [];
+
+    /**
+     * Maintained by register() only — fromArray() loads a compiled cache
+     * whose routes already went through register()'s own conflict check
+     * when the cache was built, so re-checking there would just re-pay
+     * the cost the cache exists to remove.
+     *
+     * @var array<string, Route>
+     */
+    private array $routesByConflictKey = [];
 
     /**
      * Reflects every public method on the controller for a RouteAttribute
@@ -39,7 +50,7 @@ final class Router
 
             $routeAttribute = $attributes[0]->newInstance();
 
-            $this->routes[] = new Route(
+            $route = new Route(
                 httpMethod: $routeAttribute->httpMethod(),
                 pathTemplate: $routeAttribute->path(),
                 controllerClass: $controllerClass,
@@ -47,6 +58,23 @@ final class Router
                 status: $routeAttribute->status(),
                 middleware: [...$classMiddleware, ...self::middlewareClassesFor($method)],
             );
+
+            // Matching is first-match-wins, so a second route claiming
+            // exactly the same requests (see Route::conflictKey()) would
+            // silently never run — rejected here instead, the same
+            // fail-fast-at-registration discipline CommandRegistry applies
+            // to a duplicate command name. Routes that merely overlap
+            // (`/users/{id}` vs. `/users/self`) stay legal; ordering is
+            // the feature there.
+            $key = $route->conflictKey();
+            $existing = $this->routesByConflictKey[$key] ?? null;
+
+            if ($existing !== null) {
+                throw DuplicateRouteException::forConflict($existing, $route);
+            }
+
+            $this->routesByConflictKey[$key] = $route;
+            $this->routes[] = $route;
         }
     }
 
