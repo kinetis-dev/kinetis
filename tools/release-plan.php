@@ -5,12 +5,14 @@ declare(strict_types=1);
 /**
  * Computes this round's release plan — see CLAUDE.md and the monorepo
  * packaging plan (Phase 5) for the full design. Read-only: never writes
- * anything, never tags, never pushes. Phase 6 (splitsh-lite itself) is
- * what would actually act on this plan's output, and is deliberately
- * gated behind real prerequisites that don't exist yet (all 19 split
- * repos under kinetis-dev — kinetis-dev/kinetis is the monorepo itself,
- * not a split target, so every manifest package including "framework"
- * needs its own new repo — a deploy key, Packagist submissions).
+ * anything, never tags, never pushes. Phase 6 (splitsh-lite itself,
+ * .github/workflows/release.yml) is what actually acts on this plan's
+ * output. All 19 kinetis-dev/<name> split repos exist now (public,
+ * empty, Code Security on) — kinetis-dev/kinetis is the monorepo
+ * itself, not a split target, so "framework" still needed its own new
+ * repo alongside every other package. Still gated on a real prerequisite
+ * that doesn't exist yet: the RELEASE_DEPLOY_TOKEN secret release.yml
+ * needs to actually push to any of them.
  *
  * Usage: php tools/release-plan.php [--json]
  *

@@ -36,8 +36,8 @@ jobs:
         # two packages bumped together in one commit, but their sibling
         # ordering doesn't actually resolve (e.g. a version was bumped
         # without the dependent's own constraint catching up). Distinct
-        # from the "prerequisites not provisioned" case below — this one
-        # can happen on a correctly-provisioned pipeline too.
+        # from the "RELEASE_DEPLOY_TOKEN not yet provisioned" case below
+        # — this one can happen on a correctly-provisioned pipeline too.
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok != 'true'
         run: |
           echo "::error::One or more release candidates have an unresolved sibling requirement:"
@@ -54,17 +54,18 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Prerequisites not yet provisioned
-        # Phase 6's own real prerequisites — the 19 kinetis-dev/<name>
-        # split repos and this token — are deliberately not created by
-        # this workflow; see CLAUDE.md's own record of why each needs its
-        # own explicit go-ahead. Fails loudly rather than silently
-        # succeeding: this workflow isn't a required status check (only
+      - name: RELEASE_DEPLOY_TOKEN not yet provisioned
+        # The 19 kinetis-dev/<name> split repos exist now (public, empty,
+        # Code Security on) — this token is the one remaining real
+        # prerequisite, deliberately not created by this workflow; see
+        # CLAUDE.md's own record of why it needs its own explicit
+        # go-ahead. Fails loudly rather than silently succeeding: this
+        # workflow isn't a required status check (only
         # monorepo-validate.yml is), so nothing blocks on this failing,
         # but a version bump with nowhere to go should never look green.
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'false'
         run: |
-          echo "::warning::$(jq '.candidates | length' plan.json) candidate(s) are ready to release, but Phase 6's prerequisites (the kinetis-dev/<name> split repos, and the RELEASE_DEPLOY_TOKEN secret) haven't been provisioned yet:"
+          echo "::warning::$(jq '.candidates | length' plan.json) candidate(s) are ready to release, but the RELEASE_DEPLOY_TOKEN secret hasn't been provisioned yet:"
           jq -r '.candidates[] | "  \(.key) -> v\(.version)"' plan.json
           exit 1
 
