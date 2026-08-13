@@ -16,6 +16,22 @@ jobs:
           # multi-commit push (this project's own normal workflow) — same
           # reasoning as monorepo-validate.yml's own fetch-depth: 0.
           fetch-depth: 0
+          # A real, found-by-running-it bug: actions/checkout's default
+          # (persist-credentials: true) writes the ephemeral per-job
+          # GITHUB_TOKEN into the local git config as a credential
+          # override for every https://github.com/ URL — which then took
+          # precedence over the RELEASE_DEPLOY_TOKEN embedded directly in
+          # the publish loop's own push URLs, authenticating every push as
+          # github-actions[bot] instead. That bot identity has no access
+          # outside this one checked-out repo, so the very first push (to
+          # kinetis-dev/framework, a completely different repository)
+          # failed with a real 403 — confirmed harmless: git rejects a
+          # push outright on auth failure before writing anything, and
+          # the repo was confirmed still genuinely empty afterward.
+          # false stops checkout from persisting any credential at all,
+          # so the only auth the publish loop ever uses is the one it
+          # explicitly provides.
+          persist-credentials: false
 
       - name: Compute this round's release plan
         id: plan
