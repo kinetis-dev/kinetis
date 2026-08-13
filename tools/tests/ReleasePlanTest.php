@@ -44,6 +44,73 @@ final class ReleasePlanTest extends TestCase
         self::assertSame([], findReleaseCandidates($manifest, $manifest));
     }
 
+    public function test_finds_untagged_candidates_even_with_zero_manifest_diff(): void
+    {
+        // The scenario this exists for: a version already sitting in the
+        // manifest, unchanged for many commits, that has genuinely never
+        // been tagged — findReleaseCandidates() alone would never catch
+        // this, since there's nothing to diff.
+        $manifest = ['packages' => [
+            'a' => ['version' => '1.0.0'],
+            'b' => ['version' => '1.0.0'],
+        ]];
+
+        $candidates = findUntaggedCandidates(
+            $manifest,
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        );
+
+        self::assertSame(['a', 'b'], $candidates);
+    }
+
+    public function test_excludes_a_package_whose_current_version_is_already_tagged(): void
+    {
+        $manifest = ['packages' => [
+            'a' => ['version' => '1.0.0'],
+            'b' => ['version' => '1.0.0'],
+        ]];
+
+        $candidates = findUntaggedCandidates(
+            $manifest,
+            tagExists: static fn (string $repo, string $tag): bool => $repo === 'a',
+        );
+
+        self::assertSame(['b'], $candidates);
+    }
+
+    public function test_untagged_check_asks_for_the_exact_v_prefixed_tag(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '2.3.1']]];
+
+        $seen = [];
+        findUntaggedCandidates($manifest, tagExists: function (string $repo, string $tag) use (&$seen): bool {
+            $seen[] = [$repo, $tag];
+
+            return true;
+        });
+
+        self::assertSame([['a', 'v2.3.1']], $seen);
+    }
+
+    public function test_a_version_that_genuinely_has_no_matching_tag_stops_being_untagged_once_it_does(): void
+    {
+        // Confirms the "self-healing, no bookkeeping needed" claim in
+        // findUntaggedCandidates()'s own doc comment directly: the exact
+        // same package/version, checked twice, comes back candidate then
+        // clean purely because the injected tagExists() answer changed —
+        // nothing about the package itself had to be told it's released.
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        self::assertSame(
+            ['a'],
+            findUntaggedCandidates($manifest, tagExists: static fn (string $r, string $t): bool => false),
+        );
+        self::assertSame(
+            [],
+            findUntaggedCandidates($manifest, tagExists: static fn (string $r, string $t): bool => true),
+        );
+    }
+
     public function test_publish_order_respects_dependency_order_between_two_candidates(): void
     {
         $manifest = ['packages' => [
@@ -318,6 +385,7 @@ final class ReleasePlanTest extends TestCase
         $output = ob_get_clean();
         self::assertIsString($output);
 
-        self::assertStringContainsString('nothing to release', $output);
+        self::assertStringContainsString('Nothing to release', $output);
+        self::assertStringContainsString('already tagged', $output);
     }
 }

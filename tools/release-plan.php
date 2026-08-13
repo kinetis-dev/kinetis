@@ -16,16 +16,23 @@ declare(strict_types=1);
  *
  * Usage: php tools/release-plan.php [--json]
  *
- * Diffs packages.manifest.json against its state at oldManifestRef()
- * (see validate-manifest.php — GITHUB_EVENT_BEFORE when set, HEAD^
- * otherwise); any package whose version field differs is a release
- * candidate. Reports them in publish-order (topological, restricted to
- * candidates — the same ordering rule as tools/validate-manifest.php's
- * cycle check, just filtered down), each with whether its sibling
- * requirements actually resolve against a real tag on the sibling's own
- * split repo. No-ops cleanly (reports zero candidates, exits 0) if
- * nothing's changed version-wise; exits 1 if any candidate has an
- * unresolved sibling.
+ * A package is a release candidate for either of two independent
+ * reasons — see findReleaseCandidates()/findUntaggedCandidates() for
+ * the full reasoning behind each: its version field differs from
+ * packages.manifest.json's state at oldManifestRef() (see
+ * validate-manifest.php — GITHUB_EVENT_BEFORE when set, HEAD^
+ * otherwise) — the ordinary case, something actually changed this push
+ * — or its current version has no matching tag on its own split repo
+ * yet, regardless of whether anything changed this push — the "first
+ * release" case, where the target version was already committed before
+ * this pipeline existed to act on it, so a pure diff can never trigger
+ * on its own. Reports the union in publish-order (topological,
+ * restricted to candidates — the same ordering rule as
+ * tools/validate-manifest.php's cycle check, just filtered down), each
+ * with whether its sibling requirements actually resolve against a real
+ * tag on the sibling's own split repo. No-ops cleanly (reports zero
+ * candidates, exits 0) only when neither source finds anything; exits 1
+ * if any candidate has an unresolved sibling.
  *
  * --json emits {candidates: [{key, version, problems}], ok} instead of
  * the human-readable report — what release.yml actually consumes to
@@ -51,6 +58,44 @@ function findReleaseCandidates(array $oldManifest, array $newManifest): array
         $oldVersion = $oldPkg['version'] ?? null;
 
         if ($oldVersion !== $newPkg['version']) {
+            $candidates[] = $key;
+        }
+    }
+
+    return $candidates;
+}
+
+/**
+ * A package is also a candidate — even with zero manifest diff at all —
+ * when its current version has never actually been tagged on its own
+ * split repo. This is a real gap a pure manifest diff can't see on its
+ * own: a version committed to the manifest before this pipeline existed
+ * to act on it (this project's own first release, all 19 packages
+ * already sitting at their target 1.0.0 the moment release.yml was
+ * built) has nothing to diff against, ever — findReleaseCandidates()
+ * alone would report zero candidates on every future push forever, no
+ * matter how many times main pushes, since the manifest value itself
+ * never changes again.
+ *
+ * Runs unconditionally on every check, not gated behind "only if the
+ * diff found nothing" — a package sitting alongside a real diff-based
+ * candidate can independently still be untagged from an earlier failed
+ * run, and this catches that for free with no extra bookkeeping. Once a
+ * version genuinely gets tagged, it stops matching here on its own —
+ * nothing has to "remember" a package was already released.
+ *
+ * @param array<string, mixed> $manifest
+ * @param callable(string, string): bool $tagExists Same injectable-callable
+ *     shape as checkResolution() — testable without a real network call;
+ *     tagExistsOnGitHub() itself is exercised separately, directly.
+ * @return list<string> package keys whose current version has no tag yet
+ */
+function findUntaggedCandidates(array $manifest, callable $tagExists): array
+{
+    $candidates = [];
+
+    foreach ($manifest['packages'] as $key => $pkg) {
+        if (!$tagExists($key, "v{$pkg['version']}")) {
             $candidates[] = $key;
         }
     }
@@ -227,7 +272,7 @@ function printHumanReadable(array $plan, ?string $note): void
     }
 
     if ($plan === []) {
-        echo "No version changes since the last commit — nothing to release.\n";
+        echo "Nothing to release — no version changes since the last commit, and every current version is already tagged.\n";
 
         return;
     }
@@ -262,14 +307,15 @@ function main(array $argv = []): int
     $newManifest = loadManifest();
     $oldManifest = loadManifestAtRef(oldManifestRef());
 
-    if ($oldManifest === null) {
-        $note = "No previous commit's manifest available — nothing to compare, no candidates.";
-        $json ? printJson([]) : printHumanReadable([], $note);
-
-        return 0;
-    }
-
-    $candidates = findReleaseCandidates($oldManifest, $newManifest);
+    // Two independent sources, unioned — a diff-based candidate (the
+    // ordinary case: something's version field actually changed this
+    // push) and an untagged one (see findUntaggedCandidates() — the
+    // "first release" case a pure diff can never detect on its own).
+    // $oldManifest being unavailable (no prior commit to diff against
+    // at all) only removes the first source; the second still runs.
+    $diffCandidates = $oldManifest !== null ? findReleaseCandidates($oldManifest, $newManifest) : [];
+    $untaggedCandidates = findUntaggedCandidates($newManifest, tagExists: tagExistsOnGitHub(...));
+    $candidates = array_keys(array_fill_keys($diffCandidates, true) + array_fill_keys($untaggedCandidates, true));
 
     if ($candidates === []) {
         $json ? printJson([]) : printHumanReadable([], note: null);
