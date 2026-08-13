@@ -14,8 +14,10 @@ declare(strict_types=1);
  *
  * Usage: php tools/release-plan.php
  *
- * Diffs packages.manifest.json at HEAD against HEAD^; any package whose
- * version field differs is a release candidate. Prints them in
+ * Diffs packages.manifest.json against its state at oldManifestRef()
+ * (see validate-manifest.php — GITHUB_EVENT_BEFORE when set, HEAD^
+ * otherwise); any package whose version field differs is a release
+ * candidate. Prints them in
  * publish-order (topological, restricted to candidates — the same
  * ordering rule as tools/validate-manifest.php's cycle check, just
  * filtered down), then checks whether each candidate's sibling
@@ -185,7 +187,7 @@ function checkResolution(array $manifest, string $key, callable $tagExists): arr
 function main(): int
 {
     $newManifest = loadManifest();
-    $oldManifest = loadManifestAtRef('HEAD^');
+    $oldManifest = loadManifestAtRef(oldManifestRef());
 
     if ($oldManifest === null) {
         echo "No previous commit's manifest available — nothing to compare, no candidates.\n";
