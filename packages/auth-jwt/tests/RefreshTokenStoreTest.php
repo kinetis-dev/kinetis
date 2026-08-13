@@ -1,0 +1,103 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kinetis\AuthJwt\Tests;
+
+use Kinetis\AuthJwt\Exception\RefreshTokenUnavailableException;
+use Kinetis\AuthJwt\RefreshTokenStore;
+use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
+use Kinetis\SimpleCache\NullSimpleCache;
+use PHPUnit\Framework\TestCase;
+
+final class RefreshTokenStoreTest extends TestCase
+{
+    public function test_a_freshly_issued_token_redeems_to_its_own_subject_and_claims(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue(42, ['role' => 'admin']);
+        $result = $store->redeem($token);
+
+        self::assertSame(['subject' => 42, 'claims' => ['role' => 'admin']], $result);
+    }
+
+    public function test_redeeming_an_unknown_token_returns_null(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        self::assertNull($store->redeem('not-a-real-token'));
+    }
+
+    public function test_a_token_is_single_use_a_second_redeem_returns_null(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue(42);
+        $store->redeem($token);
+
+        self::assertNull($store->redeem($token));
+    }
+
+    public function test_revoke_makes_a_token_unredeemable_without_ever_redeeming_it(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue(42);
+        $store->revoke($token);
+
+        self::assertNull($store->redeem($token));
+    }
+
+    public function test_two_issued_tokens_are_independently_redeemable(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $tokenA = $store->issue(1);
+        $tokenB = $store->issue(2);
+
+        self::assertSame(['subject' => 1, 'claims' => []], $store->redeem($tokenA));
+        self::assertSame(['subject' => 2, 'claims' => []], $store->redeem($tokenB));
+    }
+
+    public function test_revoke_all_for_user_invalidates_a_token_issued_before_the_call(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue(42);
+        $store->revokeAllForUser(42, 60);
+
+        self::assertNull($store->redeem($token));
+    }
+
+    public function test_revoke_all_for_user_does_not_affect_a_token_issued_after_the_call(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $store->revokeAllForUser(42, 60);
+        // A real second elapsed to guarantee this token's issuedAt is
+        // strictly after the cutoff above, not tied to it — avoids
+        // depending on two real time() calls landing in the same second.
+        sleep(1);
+        $token = $store->issue(42);
+
+        self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
+    }
+
+    public function test_revoke_all_for_user_does_not_affect_a_different_user(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue(42);
+        $store->revokeAllForUser(99, 60);
+
+        self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
+    }
+
+    public function test_construction_over_a_null_cache_throws_instead_of_silently_issuing_unredeemable_tokens(): void
+    {
+        $this->expectException(RefreshTokenUnavailableException::class);
+
+        new RefreshTokenStore(new NullSimpleCache());
+    }
+}

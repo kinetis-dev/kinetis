@@ -235,6 +235,106 @@ longest-lived token can stay valid (matching whatever `ttlSeconds` you
 pass to `JwtIssuer::issue()`); anything shorter risks the cutoff itself
 expiring while an old token is technically still unexpired.
 
+## Refresh tokens
+
+An access token's short expiry is what keeps a leaked one from being
+useful for long — but that only works if a client can get a new one
+without the user logging in again every hour. `Kinetis\AuthJwt\
+RefreshTokenStore` issues a longer-lived, opaque, cache-backed token for
+exactly that:
+
+```{code-block} php
+use Kinetis\AuthJwt\JwtIssuer;
+use Kinetis\AuthJwt\RefreshTokenStore;
+use Kinetis\Http\Attributes\Post;
+
+final readonly class LoginController
+{
+    public function __construct(
+        private JwtIssuer $issuer,
+        private RefreshTokenStore $refreshTokens,
+    ) {}
+
+    #[Post('/login')]
+    public function attempt(#[Body] LoginRequest $data): array
+    {
+        // verify $data->email/$data->password against your own storage
+
+        return [
+            'accessToken' => $this->issuer->issue($user->id()),
+            'refreshToken' => $this->refreshTokens->issue($user->id()),
+        ];
+    }
+}
+```
+
+A refresh endpoint redeems the refresh token and issues both a fresh
+access token and a fresh refresh token together:
+
+```{code-block} php
+use Kinetis\AuthJwt\JwtIssuer;
+use Kinetis\AuthJwt\RefreshTokenStore;
+use Kinetis\Http\Attributes\Post;
+use Kinetis\Http\Responses\ErrorResponse;
+
+final readonly class RefreshController
+{
+    public function __construct(
+        private JwtIssuer $issuer,
+        private RefreshTokenStore $refreshTokens,
+    ) {}
+
+    #[Post('/token/refresh')]
+    public function refresh(#[Body] RefreshRequest $data): ResponseInterface|array
+    {
+        $redeemed = $this->refreshTokens->redeem($data->refreshToken);
+
+        if ($redeemed === null) {
+            return ErrorResponse::create(401, 'Invalid or expired refresh token.');
+        }
+
+        return [
+            'accessToken' => $this->issuer->issue($redeemed['subject'], $redeemed['claims']),
+            'refreshToken' => $this->refreshTokens->issue($redeemed['subject'], $redeemed['claims']),
+        ];
+    }
+}
+```
+
+A refresh token is single-use: `redeem()` deletes it the moment it's
+looked up, valid or not, so the same refresh token can never be
+redeemed twice. `revoke()` invalidates one
+token directly — a "log out this device" action — without needing to
+redeem it first:
+
+```{code-block} php
+$this->refreshTokens->revoke($data->refreshToken);
+```
+
+`RefreshTokenStore` has its own `revokeAllForUser()`, independent of
+`RevocationStore`'s: revoking every access token a user holds doesn't
+stop a still-valid refresh token from minting new ones, so a complete
+"log out everywhere" calls both together:
+
+```{code-block} php
+#[Post('/logout-everywhere')]
+public function invoke(): array
+{
+    $this->revocationStore->revokeAllForUser($this->user->id(), ttlSeconds: 3600);
+    $this->refreshTokens->revokeAllForUser($this->user->id(), ttlSeconds: 3600 * 24 * 14);
+
+    return ['loggedOut' => true];
+}
+```
+
+Each `ttlSeconds` covers that store's own longest-lived outstanding
+token — an access token's is typically much shorter than a refresh
+token's, so the two calls above commonly pass different values.
+
+Defaults to a 14-day expiry (`issue(..., ttlSeconds: 1_209_600)`),
+adjustable per call. `RefreshTokenStore` requires a real cache the same
+way `RevocationStore` does.
+
 ## Failure, expiry, and revocation
 
 An expired, badly signed, malformed, subject-less, or revoked token all
