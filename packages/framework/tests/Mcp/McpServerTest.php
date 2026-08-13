@@ -188,6 +188,94 @@ final class McpServerTest extends TestCase
             json_encode($response['result']['capabilities'], JSON_THROW_ON_ERROR),
         );
         self::assertSame('Kinetis', $response['result']['_meta']['io.modelcontextprotocol/serverInfo']['name']);
+        self::assertSame(3_600_000, $response['result']['ttlMs']);
+        self::assertSame('public', $response['result']['cacheScope']);
+    }
+
+    public function test_server_discover_omits_instructions_when_none_given(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'server/discover',
+            'params' => ['_meta' => $this->modernMeta()],
+        ]);
+
+        self::assertArrayNotHasKey('instructions', $response['result']);
+    }
+
+    public function test_server_discover_reports_a_given_instructions_string(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(AccountController::class);
+        $app = new AppScope();
+        $app->boot();
+        $server = new McpServer($registry, new McpDispatcher($app), instructions: 'This server manages user accounts.');
+
+        $response = $server->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'server/discover',
+            'params' => ['_meta' => $this->modernMeta()],
+        ]);
+
+        self::assertSame('This server manages user accounts.', $response['result']['instructions']);
+    }
+
+    public function test_modern_tools_list_carries_a_public_caching_hint(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/list',
+            'params' => ['_meta' => $this->modernMeta()],
+        ]);
+
+        self::assertSame(3_600_000, $response['result']['ttlMs']);
+        self::assertSame('public', $response['result']['cacheScope']);
+    }
+
+    public function test_modern_resources_list_carries_a_public_caching_hint(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'resources/list',
+            'params' => ['_meta' => $this->modernMeta()],
+        ]);
+
+        self::assertSame(3_600_000, $response['result']['ttlMs']);
+        self::assertSame('public', $response['result']['cacheScope']);
+    }
+
+    public function test_modern_resources_read_carries_a_private_caching_hint(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'resources/read',
+            'params' => ['uri' => 'kinetis://status', '_meta' => $this->modernMeta()],
+        ]);
+
+        self::assertSame(3_600_000, $response['result']['ttlMs']);
+        self::assertSame('private', $response['result']['cacheScope']);
+    }
+
+    public function test_modern_tools_call_never_carries_a_caching_hint(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => ['userId' => 7],
+                '_meta' => $this->modernMeta(),
+            ],
+        ]);
+
+        self::assertArrayNotHasKey('ttlMs', $response['result']);
+        self::assertArrayNotHasKey('cacheScope', $response['result']);
     }
 
     public function test_modern_tools_call_wraps_the_result_in_a_complete_envelope(): void

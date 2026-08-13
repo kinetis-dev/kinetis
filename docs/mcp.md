@@ -164,6 +164,31 @@ A modern request's result is wrapped in the spec's envelope automatically:
 {"jsonrpc": "2.0", "id": 1, "result": {"resultType": "complete", "tools": [/* ... */]}}
 ```
 
+### Caching hints and server instructions
+
+`server/discover`, `tools/list`, and `resources/list` results carry
+`ttlMs` (how long a client may consider the result fresh, in
+milliseconds) and `cacheScope` (`"public"`, since these describe the
+server's own registered tools/resources — identical for every caller).
+`resources/read` carries the same `ttlMs`, but `cacheScope: "private"` by
+default, since a resource's own content can be caller-specific in a way
+this server has no way to know about in general. `tools/call` never
+carries either — it's an action, not a cacheable read.
+
+```{code-block} json
+{"jsonrpc": "2.0", "id": 1, "result": {"resultType": "complete", "tools": [/* ... */], "ttlMs": 3600000, "cacheScope": "public"}}
+```
+
+`server/discover`'s own result can also carry `instructions` — a short,
+natural-language description of what this server's tools are for, shown
+to an agent alongside its capabilities:
+
+```{code-block} php
+$server = new McpServer($registry, $dispatcher, instructions: 'This server manages orders and inventory.');
+```
+
+Omitted entirely when not given, rather than sent as an empty string.
+
 ## Progress notifications
 
 A long-running tool can report progress on its own call — over **any**

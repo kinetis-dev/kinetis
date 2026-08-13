@@ -61,12 +61,42 @@ final class McpServer
     private const META_CLIENT_CAPABILITIES_KEY = 'io.modelcontextprotocol/clientCapabilities';
     private const META_SERVER_INFO_KEY = 'io.modelcontextprotocol/serverInfo';
 
+    /**
+     * A freshness hint, not a guarantee — servers may change the underlying
+     * data before this elapses; it only tells a client how long it can
+     * reasonably avoid re-fetching. One hour is a plain, reasonable
+     * default for data that changes at the pace of a deployment (which
+     * tools/resources exist), not the pace of a single request.
+     */
+    private const int CACHE_TTL_MS = 3_600_000;
+
+    /**
+     * Per the spec's own "Cacheable Results" list, caching hints are
+     * required on server/discover, tools/list, and resources/read (this
+     * server never implements prompts/list or resources/templates/list) —
+     * and only those; tools/call is an action, not a cacheable read, and
+     * must not carry one. tools/list and resources/list reflect this
+     * server's own registered #[McpTool]/#[McpResource] methods, identical
+     * for every caller, so "public" is accurate; resources/read defaults
+     * to "private" since a consumer's own resource method could return
+     * caller-specific content this server has no way to know about.
+     *
+     * @var array<string, string>
+     */
+    private const array CACHEABLE_METHOD_SCOPES = [
+        'server/discover' => 'public',
+        'tools/list' => 'public',
+        'resources/list' => 'public',
+        'resources/read' => 'private',
+    ];
+
     public function __construct(
         private readonly McpRegistry $registry,
         private readonly McpDispatcher $dispatcher,
         private readonly string $serverName = 'Kinetis',
         private readonly string $serverVersion = '1.0.0',
         private readonly LoggerInterface $logger = new NullLogger(),
+        private readonly ?string $instructions = null,
     ) {}
 
     /**
@@ -163,7 +193,7 @@ final class McpServer
                     'resources/read' => $this->readResource($params),
                     default => throw JsonRpcException::methodNotFound($method),
                 };
-                $result = $this->wrapModernResult($result);
+                $result = $this->wrapModernResult($result, $method);
             } else {
                 $result = match ($method) {
                     'initialize' => $this->initialize(),
@@ -241,6 +271,7 @@ final class McpServer
                 'tools' => (object) [],
                 'resources' => (object) [],
             ],
+            ...($this->instructions !== null ? ['instructions' => $this->instructions] : []),
         ];
     }
 
@@ -249,17 +280,24 @@ final class McpServer
      * requires: `resultType` (Kinetis only ever returns "complete" — there's
      * no multi-round-trip flow to produce "input_required") and a
      * `_meta.serverInfo` echoing the server's identity, mirroring what
-     * initialize() reports for legacy clients. Both keys are appended
+     * initialize() reports for legacy clients. All three are appended
      * after the spread so they always win over anything a handler result
      * might (incorrectly) already contain under those names.
+     *
+     * `$method` decides whether `ttlMs`/`cacheScope` are added at all —
+     * see CACHEABLE_METHOD_SCOPES's own docblock for which methods are
+     * cacheable and why `tools/call` deliberately never carries one.
      *
      * @param array<string, mixed> $result
      * @return array<string, mixed>
      */
-    private function wrapModernResult(array $result): array
+    private function wrapModernResult(array $result, string $method): array
     {
+        $cacheScope = self::CACHEABLE_METHOD_SCOPES[$method] ?? null;
+
         return [
             ...$result,
+            ...($cacheScope !== null ? ['ttlMs' => self::CACHE_TTL_MS, 'cacheScope' => $cacheScope] : []),
             'resultType' => 'complete',
             '_meta' => [
                 self::META_SERVER_INFO_KEY => [
