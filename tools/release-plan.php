@@ -12,18 +12,22 @@ declare(strict_types=1);
  * not a split target, so every manifest package including "framework"
  * needs its own new repo — a deploy key, Packagist submissions).
  *
- * Usage: php tools/release-plan.php
+ * Usage: php tools/release-plan.php [--json]
  *
  * Diffs packages.manifest.json against its state at oldManifestRef()
  * (see validate-manifest.php — GITHUB_EVENT_BEFORE when set, HEAD^
  * otherwise); any package whose version field differs is a release
- * candidate. Prints them in
- * publish-order (topological, restricted to candidates — the same
- * ordering rule as tools/validate-manifest.php's cycle check, just
- * filtered down), then checks whether each candidate's sibling
+ * candidate. Reports them in publish-order (topological, restricted to
+ * candidates — the same ordering rule as tools/validate-manifest.php's
+ * cycle check, just filtered down), each with whether its sibling
  * requirements actually resolve against a real tag on the sibling's own
- * split repo. No-ops cleanly (prints "no candidates", exits 0) if
- * nothing's changed version-wise.
+ * split repo. No-ops cleanly (reports zero candidates, exits 0) if
+ * nothing's changed version-wise; exits 1 if any candidate has an
+ * unresolved sibling.
+ *
+ * --json emits {candidates: [{key, version, problems}], ok} instead of
+ * the human-readable report — what release.yml actually consumes to
+ * drive publishing, one candidate at a time, in the given order.
  */
 
 require_once __DIR__ . '/generate-composer.php';
@@ -184,13 +188,56 @@ function checkResolution(array $manifest, string $key, callable $tagExists): arr
     return $problems;
 }
 
-function main(): int
+/**
+ * @param list<array{key: string, version: string, problems: list<string>}> $plan
+ */
+function printHumanReadable(array $plan, ?string $note): void
 {
+    if ($note !== null) {
+        echo "{$note}\n";
+
+        return;
+    }
+
+    if ($plan === []) {
+        echo "No version changes since the last commit — nothing to release.\n";
+
+        return;
+    }
+
+    echo "Release candidates, in publish order:\n";
+
+    foreach ($plan as $entry) {
+        echo "  {$entry['key']} -> v{$entry['version']}\n";
+
+        foreach ($entry['problems'] as $p) {
+            echo "    [resolution] {$p}\n";
+        }
+    }
+}
+
+/**
+ * @param list<array{key: string, version: string, problems: list<string>}> $plan
+ */
+function printJson(array $plan): void
+{
+    $ok = array_all($plan, static fn (array $entry): bool => $entry['problems'] === []);
+
+    echo json_encode(['candidates' => $plan, 'ok' => $ok], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR) . "\n";
+}
+
+/**
+ * @param list<string> $argv
+ */
+function main(array $argv = []): int
+{
+    $json = in_array('--json', $argv, true);
     $newManifest = loadManifest();
     $oldManifest = loadManifestAtRef(oldManifestRef());
 
     if ($oldManifest === null) {
-        echo "No previous commit's manifest available — nothing to compare, no candidates.\n";
+        $note = "No previous commit's manifest available — nothing to compare, no candidates.";
+        $json ? printJson([]) : printHumanReadable([], $note);
 
         return 0;
     }
@@ -198,30 +245,25 @@ function main(): int
     $candidates = findReleaseCandidates($oldManifest, $newManifest);
 
     if ($candidates === []) {
-        echo "No version changes since the last commit — nothing to release.\n";
+        $json ? printJson([]) : printHumanReadable([], note: null);
 
         return 0;
     }
 
     $order = publishOrder($newManifest, $candidates);
-
-    echo "Release candidates, in publish order:\n";
-
-    $ok = true;
+    $plan = [];
 
     foreach ($order as $key) {
-        $version = $newManifest['packages'][$key]['version'];
-        echo "  {$key} -> v{$version}\n";
-
-        $problems = checkResolution($newManifest, $key, tagExists: tagExistsOnGitHub(...));
-
-        foreach ($problems as $p) {
-            echo "    [resolution] {$p}\n";
-            $ok = false;
-        }
+        $plan[] = [
+            'key' => $key,
+            'version' => $newManifest['packages'][$key]['version'],
+            'problems' => checkResolution($newManifest, $key, tagExists: tagExistsOnGitHub(...)),
+        ];
     }
 
-    return $ok ? 0 : 1;
+    $json ? printJson($plan) : printHumanReadable($plan, note: null);
+
+    return array_all($plan, static fn (array $entry): bool => $entry['problems'] === []) ? 0 : 1;
 }
 
 // See generate-composer.php for why this checks get_included_files()
@@ -229,5 +271,5 @@ function main(): int
 // behind the Psalm suppression below.
 /** @psalm-suppress ParadoxicalCondition */
 if (current(get_included_files()) === __FILE__) {
-    exit(main());
+    exit(main($argv ?? []));
 }

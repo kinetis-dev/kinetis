@@ -158,4 +158,90 @@ final class ReleasePlanTest extends TestCase
     {
         self::assertFalse(tagExistsOnGitHub('kinetis', 'v999.999.999'));
     }
+
+    public function test_print_json_reports_ok_true_and_the_full_plan_when_every_candidate_resolves(): void
+    {
+        $plan = [
+            ['key' => 'persistence', 'version' => '1.0.0', 'problems' => []],
+            ['key' => 'queue', 'version' => '1.0.0', 'problems' => []],
+        ];
+
+        ob_start();
+        printJson($plan);
+        $output = ob_get_clean();
+        self::assertIsString($output);
+        $decoded = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertTrue($decoded['ok']);
+        self::assertSame($plan, $decoded['candidates']);
+    }
+
+    public function test_print_json_reports_ok_false_when_any_candidate_has_a_problem(): void
+    {
+        $plan = [
+            ['key' => 'persistence', 'version' => '1.0.0', 'problems' => []],
+            ['key' => 'queue', 'version' => '1.0.0', 'problems' => ['queue requires persistence (v1.0.0), but that tag doesn\'t exist on kinetis-dev/persistence yet']],
+        ];
+
+        ob_start();
+        printJson($plan);
+        $output = ob_get_clean();
+        self::assertIsString($output);
+        $decoded = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertFalse($decoded['ok']);
+    }
+
+    public function test_print_json_with_no_candidates_reports_an_empty_list_and_ok_true(): void
+    {
+        ob_start();
+        printJson([]);
+        $output = ob_get_clean();
+        self::assertIsString($output);
+        $decoded = json_decode($output, true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertSame([], $decoded['candidates']);
+        self::assertTrue($decoded['ok']);
+    }
+
+    public function test_print_human_readable_lists_each_candidate_with_its_own_problems(): void
+    {
+        $plan = [
+            ['key' => 'persistence', 'version' => '1.0.0', 'problems' => []],
+            ['key' => 'queue', 'version' => '1.0.0', 'problems' => ['queue requires persistence (v1.0.0), but that tag doesn\'t exist on kinetis-dev/persistence yet']],
+        ];
+
+        ob_start();
+        printHumanReadable($plan, note: null);
+        $output = ob_get_clean();
+        self::assertIsString($output);
+
+        self::assertStringContainsString('persistence -> v1.0.0', $output);
+        self::assertStringContainsString('queue -> v1.0.0', $output);
+        self::assertStringContainsString('[resolution] queue requires persistence', $output);
+        // persistence has no problems, so its own line carries no
+        // [resolution] entry — confirming problems are grouped under the
+        // candidate they actually belong to, not lumped together.
+        self::assertStringNotContainsString("persistence -> v1.0.0\n    [resolution]", $output);
+    }
+
+    public function test_print_human_readable_prints_the_given_note_instead_of_a_plan(): void
+    {
+        ob_start();
+        printHumanReadable([['key' => 'x', 'version' => '1.0.0', 'problems' => []]], note: 'Nothing to compare.');
+        $output = ob_get_clean();
+        self::assertIsString($output);
+
+        self::assertSame("Nothing to compare.\n", $output);
+    }
+
+    public function test_print_human_readable_with_no_candidates_and_no_note_reports_nothing_to_release(): void
+    {
+        ob_start();
+        printHumanReadable([], note: null);
+        $output = ob_get_clean();
+        self::assertIsString($output);
+
+        self::assertStringContainsString('nothing to release', $output);
+    }
 }
