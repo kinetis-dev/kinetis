@@ -96,7 +96,7 @@ final class ReleasePlanTest extends TestCase
             'kinetis' => ['version' => '2.0.0'],
         ]];
 
-        $problems = checkResolution($manifest, 'queue', tagExists: static fn (string $repo, string $tag): bool => false);
+        $problems = checkResolution($manifest, 'queue', candidateSet: [], tagExists: static fn (string $repo, string $tag): bool => false);
 
         self::assertCount(2, $problems);
         self::assertStringContainsString('persistence (v1.4.0)', $problems[0]);
@@ -110,7 +110,7 @@ final class ReleasePlanTest extends TestCase
             'persistence' => ['version' => '1.4.0'],
         ]];
 
-        $problems = checkResolution($manifest, 'queue', tagExists: static fn (string $repo, string $tag): bool => true);
+        $problems = checkResolution($manifest, 'queue', candidateSet: [], tagExists: static fn (string $repo, string $tag): bool => true);
 
         self::assertSame([], $problems);
     }
@@ -123,13 +123,89 @@ final class ReleasePlanTest extends TestCase
         ]];
 
         $seen = [];
-        checkResolution($manifest, 'queue', tagExists: function (string $repo, string $tag) use (&$seen): bool {
+        checkResolution($manifest, 'queue', candidateSet: [], tagExists: function (string $repo, string $tag) use (&$seen): bool {
             $seen[] = [$repo, $tag];
 
             return true;
         });
 
         self::assertSame([['persistence', 'v1.4.0']], $seen);
+    }
+
+    public function test_a_sibling_that_is_also_a_candidate_this_round_is_not_flagged_as_unresolved(): void
+    {
+        // The scenario this fix exists for: an interdependent first
+        // release, where a sibling genuinely has no tag yet because it's
+        // being published earlier in this exact same run — a real
+        // callback reporting false for it (as it honestly would, since
+        // no tag exists) must not turn into a resolution problem.
+        $manifest = ['packages' => [
+            'queue' => ['requires' => ['persistence'], 'requiresDev' => []],
+            'persistence' => ['version' => '1.4.0'],
+        ]];
+
+        $problems = checkResolution(
+            $manifest,
+            'queue',
+            candidateSet: ['persistence' => true],
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        );
+
+        self::assertSame([], $problems);
+    }
+
+    public function test_a_same_round_candidate_sibling_never_reaches_the_tag_exists_callback(): void
+    {
+        // Not just "the result is empty" — confirms the live-tag check
+        // is skipped entirely for a same-round sibling, not performed
+        // and then discarded. Matters in practice: the real callback is
+        // a network call, and every candidate in a from-scratch release
+        // has only same-round siblings, so this is the common case, not
+        // the exception.
+        $manifest = ['packages' => [
+            'queue' => ['requires' => ['persistence'], 'requiresDev' => []],
+            'persistence' => ['version' => '1.4.0'],
+        ]];
+
+        $called = false;
+        checkResolution(
+            $manifest,
+            'queue',
+            candidateSet: ['persistence' => true],
+            tagExists: function (string $repo, string $tag) use (&$called): bool {
+                $called = true;
+
+                return false;
+            },
+        );
+
+        self::assertFalse($called);
+    }
+
+    public function test_a_mix_of_same_round_and_already_published_siblings_checks_only_the_latter(): void
+    {
+        $manifest = ['packages' => [
+            'queue' => ['requires' => ['persistence', 'kinetis'], 'requiresDev' => []],
+            'persistence' => ['version' => '1.4.0'],
+            'kinetis' => ['version' => '2.0.0'],
+        ]];
+
+        $seen = [];
+        $problems = checkResolution(
+            $manifest,
+            'queue',
+            // persistence is a same-round candidate (skipped); kinetis
+            // is not (still genuinely checked).
+            candidateSet: ['queue' => true, 'persistence' => true],
+            tagExists: function (string $repo, string $tag) use (&$seen): bool {
+                $seen[] = [$repo, $tag];
+
+                return true;
+            },
+        );
+
+        self::assertSame([['kinetis', 'v2.0.0']], $seen);
+        self::assertSame([], $problems);
     }
 
     public function test_topological_order_places_foundational_packages_first(): void

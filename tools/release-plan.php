@@ -156,12 +156,33 @@ function tagExistsOnGitHub(string $repo, string $tag): bool
 
 /**
  * For a release candidate, checks that every sibling it requires (in
- * either require or require-dev) already has a matching tag on its own
- * split repo. Doesn't require the sibling to be a candidate this round
- * — an unchanged sibling's already-published version is exactly what's
- * expected to resolve.
+ * either require or require-dev) either already has a matching tag on
+ * its own split repo, or is itself a candidate this same round.
+ *
+ * The second case matters structurally, not just as an optimization: for
+ * an ordinary release round (one or two packages, everything else
+ * already tagged from a prior round) a sibling never being a same-round
+ * candidate is the common case. But for a release round where several
+ * interdependent packages publish together — this project's own first
+ * release, all 19 at once, being the concrete case this was built
+ * for — every non-root candidate requires a sibling with no tag yet,
+ * because that sibling is *also* going to be published, earlier, in this
+ * exact same run. Checking only tagExists() would report every one of
+ * those as unresolved forever, regardless of how correctly the
+ * prerequisites get provisioned, permanently blocking the one release
+ * this pipeline exists to enable. A same-round sibling is safe to treat
+ * as resolved without a live tag check: publishOrder()'s topological
+ * sort already guarantees it appears earlier in the sequential publish
+ * loop, and that loop's fail-fast design (any push failure aborts the
+ * whole run immediately, see release.yml) means a later candidate can
+ * never actually be attempted against a sibling whose push silently
+ * failed — by the time $key's own turn comes, $sibling's tag either
+ * genuinely exists or the run already stopped.
  *
  * @param array<string, mixed> $manifest
+ * @param array<string, true> $candidateSet Every package key that's a
+ *     candidate this round, keyed for O(1) lookup — not just $key's own
+ *     siblings, the full round.
  * @param callable(string, string): bool $tagExists Injectable so the
  *     surrounding logic (which siblings get checked, how a miss is
  *     worded) is unit-testable without a real network call — the real
@@ -170,13 +191,17 @@ function tagExistsOnGitHub(string $repo, string $tag): bool
  *     precedent this project already applies to RedisQueue/SqlQueue.
  * @return list<string> problems, empty if everything resolves
  */
-function checkResolution(array $manifest, string $key, callable $tagExists): array
+function checkResolution(array $manifest, string $key, array $candidateSet, callable $tagExists): array
 {
     $pkg = $manifest['packages'][$key];
     $siblings = [...($pkg['requires'] ?? []), ...($pkg['requiresDev'] ?? [])];
     $problems = [];
 
     foreach ($siblings as $sibling) {
+        if (isset($candidateSet[$sibling])) {
+            continue;
+        }
+
         $version = $manifest['packages'][$sibling]['version'];
         $tag = "v{$version}";
 
@@ -251,13 +276,14 @@ function main(array $argv = []): int
     }
 
     $order = publishOrder($newManifest, $candidates);
+    $candidateSet = array_fill_keys($candidates, true);
     $plan = [];
 
     foreach ($order as $key) {
         $plan[] = [
             'key' => $key,
             'version' => $newManifest['packages'][$key]['version'],
-            'problems' => checkResolution($newManifest, $key, tagExists: tagExistsOnGitHub(...)),
+            'problems' => checkResolution($newManifest, $key, $candidateSet, tagExists: tagExistsOnGitHub(...)),
         ];
     }
 
