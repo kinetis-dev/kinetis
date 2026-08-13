@@ -52,7 +52,7 @@
         },
         "persistence": {
             "name": "kinetis/persistence",
-            "description": "Request-scoped SQL transaction safety net and connection-pool factory for Kinetis \u2014 MySQL and Postgres via amphp/mysql and amphp/postgres.",
+            "description": "Request-scoped SQL transaction safety net and connection-pool factory for Kinetis — MySQL and Postgres via amphp/mysql and amphp/postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
             "version": "1.0.0",
@@ -68,12 +68,12 @@
                 "nyholm/psr7": "^1.8"
             },
             "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect \u2014 amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
             }
         },
         "cache-redis": {
             "name": "kinetis/cache-redis",
-            "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis \u2014 non-blocking, Revolt-native, with TLS support.",
+            "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
             "version": "1.0.0",
@@ -89,7 +89,7 @@
         },
         "bref-adapter": {
             "name": "kinetis/bref-adapter",
-            "description": "AWS Lambda (Bref) runtime adapter for Kinetis \u2014 polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
+            "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
             "version": "1.0.0",
@@ -104,7 +104,7 @@
         },
         "query-builder": {
             "name": "kinetis/query-builder",
-            "description": "A thin, parameterized SQL query builder for Kinetis \u2014 MySQL and Postgres via amphp, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
+            "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via amphp, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
             "version": "1.0.0",
@@ -116,7 +116,7 @@
                 "amphp/postgres": "^2.2"
             },
             "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect \u2014 amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
             }
         },
         "auth": {
@@ -154,7 +154,7 @@
         },
         "migrations": {
             "name": "kinetis/migrations",
-            "description": "A thin database migration runner for Kinetis \u2014 raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+            "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
             "version": "1.0.0",
@@ -171,12 +171,12 @@
                 "amphp/sql": "^2"
             },
             "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect \u2014 amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
             }
         },
         "queue": {
             "name": "kinetis/queue",
-            "description": "A backend-agnostic background job queue for Kinetis \u2014 Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
+            "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
             "version": "1.0.0",
@@ -197,7 +197,7 @@
         },
         "storage": {
             "name": "kinetis/storage",
-            "description": "File storage for Kinetis, built on League\\Flysystem \u2014 local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
+            "description": "File storage for Kinetis, built on League\\Flysystem — local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "namespace": "Kinetis\\Storage\\",
             "testNamespace": "Kinetis\\Storage\\Tests\\",
             "version": "1.0.0",
@@ -213,7 +213,7 @@
         },
         "revolt-http-client": {
             "name": "kinetis/revolt-http-client",
-            "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface \u2014 usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
+            "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
             "namespace": "Kinetis\\RevoltHttpClient\\",
             "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
             "version": "1.0.0",
@@ -283,7 +283,7 @@
         },
         "mailer": {
             "name": "kinetis/mailer",
-            "description": "Non-blocking mail sending for Kinetis \u2014 Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
+            "description": "Non-blocking mail sending for Kinetis — Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
             "namespace": "Kinetis\\Mailer\\",
             "testNamespace": "Kinetis\\Mailer\\Tests\\",
             "version": "1.0.0",
@@ -312,7 +312,7 @@
         },
         "aws-sigv4": {
             "name": "kinetis/aws-sigv4",
-            "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) \u2014 reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
+            "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
             "version": "1.0.0",
