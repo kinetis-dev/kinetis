@@ -419,6 +419,18 @@ encounter:
 A failed validation short-circuits straight to a `422` — the controller
 method is never invoked at all.
 
+An empty body is treated as no data at all, so a DTO with only optional
+fields hydrates from its own defaults. A body that isn't valid JSON, or
+that decodes to something other than a JSON object (`null`, a bare
+string, a number, a boolean), is a `400` instead, before any field-level
+validation runs:
+
+```{code-block} json
+{
+    "error": "Request body is not valid JSON."
+}
+```
+
 ### Scalar type checking
 
 Before a value is cast to a `#[Body]` field's, `#[Query]` parameter's, or

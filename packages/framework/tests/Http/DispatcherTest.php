@@ -16,6 +16,7 @@ use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 use Nyholm\Psr7\Stream;
 use Nyholm\Psr7\UploadedFile;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class DispatcherTest extends TestCase
@@ -226,6 +227,81 @@ final class DispatcherTest extends TestCase
         $body = json_decode((string) $response->getBody(), true);
         self::assertArrayHasKey('name', $body['errors']);
         self::assertArrayHasKey('email', $body['errors']);
+    }
+
+    // --- A syntactically invalid or non-object JSON body is a 400,
+    // distinct from a 422 field-validation failure — never silently
+    // treated as an empty/default body. ---
+
+    public function test_malformed_json_body_returns_400(): void
+    {
+        $router = $this->router();
+        $match = $router->match('POST', '/users');
+        $request = new ServerRequest('POST', '/users', body: '{"name": "unterminated');
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(
+            ['error' => 'Request body is not valid JSON.'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    /**
+     * @return iterable<string, list<string>>
+     */
+    public static function nonObjectJsonBodies(): iterable
+    {
+        yield 'JSON null' => ['null'];
+        yield 'a JSON string' => ['"just a string"'];
+        yield 'a JSON number' => ['42'];
+        yield 'a JSON boolean' => ['true'];
+    }
+
+    #[DataProvider('nonObjectJsonBodies')]
+    public function test_a_syntactically_valid_but_non_object_json_body_returns_400(string $body): void
+    {
+        $router = $this->router();
+        $match = $router->match('POST', '/users');
+        $request = new ServerRequest('POST', '/users', body: $body);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(
+            ['error' => 'Request body must be a JSON object.'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    public function test_an_empty_body_is_treated_as_no_data_not_a_malformed_body_error(): void
+    {
+        $router = $this->router();
+        $match = $router->match('PATCH', '/users/42/preferences');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', body: '');
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        // An all-optional #[Body] DTO with no data at all is exactly what
+        // an empty body should produce — the fields fall back to their
+        // own defaults, the same as a plain `{}` body already does.
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            ['id' => 42, 'theme' => null, 'notificationsEnabled' => true],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    public function test_a_malformed_body_is_rejected_even_when_every_field_is_optional(): void
+    {
+        $router = $this->router();
+        $match = $router->match('PATCH', '/users/42/preferences');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', body: 'null');
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(400, $response->getStatusCode());
     }
 
     // --- A #[Query]/path value with the wrong shape is a 422, not a

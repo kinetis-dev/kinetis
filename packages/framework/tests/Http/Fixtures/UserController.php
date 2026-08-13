@@ -57,4 +57,10 @@ final readonly class UserController
     {
         return ['id' => $id, 'status' => $data->status];
     }
+
+    #[Patch('/users/{id}/preferences')]
+    public function updatePreferences(int $id, #[Body] UserPreferencesRequest $data): array
+    {
+        return ['id' => $id, 'theme' => $data->theme, 'notificationsEnabled' => $data->notificationsEnabled];
+    }
 }

@@ -6,7 +6,9 @@ namespace Kinetis\Http;
 
 use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Query;
+use Kinetis\Http\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Exception\UnresolvableParameterException;
+use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Validation\Constraint;
@@ -81,6 +83,8 @@ final class Dispatcher
 
         try {
             $arguments = $this->resolveFromPlan($plan, $match, $request);
+        } catch (MalformedRequestBodyException $e) {
+            return ErrorResponse::create(400, $e->getMessage());
         } catch (ValidationException $e) {
             return $this->json(['errors' => $e->errors], 422);
         }
@@ -186,6 +190,7 @@ final class Dispatcher
      * @param list<HttpBindingPlan> $plan
      * @return array<string, mixed>
      * @throws ValidationException
+     * @throws MalformedRequestBodyException
      */
     private function resolveFromPlan(array $plan, RouteMatch $match, ServerRequestInterface $request): array
     {
@@ -226,6 +231,7 @@ final class Dispatcher
     /**
      * @param HttpBindingPlan $param
      * @throws ValidationException
+     * @throws MalformedRequestBodyException
      */
     private function resolveBodyFromPlan(array $param, ServerRequestInterface $request): object
     {
@@ -237,7 +243,7 @@ final class Dispatcher
         // only getContents() can actually surface an oversized body here.
         $decoded = self::isFormEncoded($contentType)
             ? $this->parsedBodyAsArray($request)
-            : json_decode($request->getBody()->getContents(), associative: true);
+            : $this->decodeJsonBody($request->getBody()->getContents());
 
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];
@@ -248,7 +254,7 @@ final class Dispatcher
         // bag in here is sufficient — Hydrator never needs to know files
         // exist at all. Left-wins union: a same-named regular field, if
         // one somehow exists, isn't silently overwritten by a file.
-        $data = (is_array($decoded) ? $decoded : []) + $this->uploadedFilesByFieldName($request);
+        $data = $decoded + $this->uploadedFilesByFieldName($request);
 
         return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null);
     }
@@ -257,6 +263,36 @@ final class Dispatcher
     {
         return str_starts_with($contentType, 'multipart/form-data')
             || str_starts_with($contentType, 'application/x-www-form-urlencoded');
+    }
+
+    /**
+     * An empty body is treated as "no fields" — the same outcome a plain
+     * `{}` body already produces — rather than an error, since a route
+     * with an all-optional #[Body] DTO commonly expects exactly that. A
+     * non-empty body that fails to parse, or parses to something other
+     * than a JSON object/array (null, a bare string, a bare number, a
+     * bare bool), throws instead of silently becoming "no fields" too.
+     *
+     * @return array<string, mixed>
+     * @throws MalformedRequestBodyException
+     */
+    private function decodeJsonBody(string $body): array
+    {
+        if (trim($body) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($body, associative: true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw MalformedRequestBodyException::invalidJson();
+        }
+
+        if (!is_array($decoded)) {
+            throw MalformedRequestBodyException::notAnObject();
+        }
+
+        return $decoded;
     }
 
     /**
