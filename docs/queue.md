@@ -16,6 +16,10 @@ one is running underneath. Amazon SQS ({doc}`queue-sqs`) and RabbitMQ
 ({doc}`queue-rabbitmq`) are two more, equally `QueueInterface`-conforming
 backends, each in its own separate package.
 
+`push()` and `pop()` never block the worker while waiting on the backend,
+so a push can run alongside other work through {doc}`concurrency`'s
+`concurrently()` instead of stalling the request until it completes.
+
 ## Writing a job
 
 A job is a plain class implementing `Kinetis\Queue\Job`, constructed the

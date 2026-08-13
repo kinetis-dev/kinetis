@@ -14,6 +14,10 @@ A thin, parameterized SQL query builder over `amphp/mysql`/`amphp/postgres`
 typed DTOs via {doc}`routing-validation`'s `Hydrator` — the same mechanism
 that hydrates a `#[Body]` request DTO.
 
+A query never blocks the worker while waiting on the database, so several
+independent ones can run side by side through {doc}`concurrency`'s
+`concurrently()` instead of one after another.
+
 ```{code-block} php
 use Kinetis\QueryBuilder\Query;
 

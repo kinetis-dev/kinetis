@@ -21,6 +21,23 @@ bugs that used to be impossible — because the process died before they
 could matter — becomes possible for the first time: **state leaking from
 one request into the next.**
 
+## Staying warm isn't the same as staying busy
+
+A persistent worker removes the cost of re-parsing your autoloader and
+rebuilding your container on every request, but that alone doesn't change
+what happens while a request is waiting on something slow. A synchronous
+database query or HTTP call occupies the worker for exactly as long as
+the response takes to arrive — warm process or not — and nothing else
+that worker could be doing gets a turn in the meantime.
+
+`Kinetis\Async` is the other half of the picture: PHP Fibers, scheduled
+by a Revolt event loop, let a request that's waiting on one slow
+operation hand control back so the worker makes progress on something
+else instead of sitting idle. `concurrently()` uses this to run several
+independent operations — a database query, an HTTP call, a cache read —
+side by side, completing in roughly the time of the slowest one rather
+than their sum. See {doc}`concurrency` for the full picture.
+
 ## The `Kernel` — runtime-agnostic by design
 
 Everything in Kinetis's request-handling path converges on one class:
@@ -131,6 +148,9 @@ the `NoStaticPropertiesRule` in {doc}`container` exists to catch.
 
 - {doc}`container` — `AppScope`, `RequestScope`, and the enforcement
   mechanism behind everything above.
+- {doc}`concurrency` — `concurrently()`, `Async\Socket`, and the
+  non-blocking database/Redis clients that make a warm process pay off
+  during I/O, not just at boot.
 - {doc}`middleware` — the two PSR-15 pipelines wrapping every request
   through this lifecycle, and the built-in `ExceptionHandlerMiddleware`
   that guarantees an uncaught exception still becomes a response.

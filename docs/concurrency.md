@@ -78,14 +78,37 @@ as hard, only less visibly, defeating `concurrently()`'s whole purpose.
 ## `concurrently()` — running tasks side by side
 
 ```{code-block} php
+use Amp\Mysql\MysqlConnectionPool;
+use Amp\Redis\RedisClient;
+use Kinetis\Http\Attributes\Get;
+use Kinetis\QueryBuilder\Query;
+
 use function Kinetis\Async\concurrently;
 
-[$user, $orders, $inventory] = concurrently([
-    fn () => $userClient->fetch($userId),
-    fn () => $ordersClient->fetch($userId),
-    fn () => $inventoryClient->checkStock($sku),
-]);
+final readonly class OrderController
+{
+    public function __construct(
+        private MysqlConnectionPool $db,
+        private RedisClient $redis,
+    ) {}
+
+    #[Get('/orders/{id}/summary')]
+    public function summary(int $id): array
+    {
+        [$order, $itemCount, $views] = concurrently([
+            fn () => new Query($this->db)->table('orders')->where('id', '=', $id)->first(),
+            fn () => new Query($this->db)->table('order_items')->where('order_id', '=', $id)->count(),
+            fn () => $this->redis->get("order:{$id}:views"),
+        ]);
+
+        return ['order' => $order, 'itemCount' => $itemCount, 'views' => (int) $views];
+    }
+}
 ```
+
+A database row, a database count, and a Redis read — three independent
+round trips that would otherwise run one after another — complete
+together, in roughly the time the slowest one alone takes.
 
 Each task becomes its own `Fiber`. A single `EventLoop::run()` call
 afterwards drives all of them to completion — Revolt's own run loop

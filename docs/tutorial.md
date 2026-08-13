@@ -1209,20 +1209,29 @@ final readonly class ScenarioCounts
 
 use App\Dto\ScenarioCounts;
 
+use function Kinetis\Async\concurrently;
+
 private const array SCENARIOS = ['direct', 'queued', 'cron'];
 
 public function countByScenario(): ScenarioCounts
 {
-    $total = new Query($this->db)->table('ping_messages')->count();
-    $counts = [];
+    $tasks = [fn () => new Query($this->db)->table('ping_messages')->count()];
 
     foreach (self::SCENARIOS as $scenario) {
-        $counts[$scenario] = new Query($this->db)->table('ping_messages')->where('scenario', '=', $scenario)->count();
+        $tasks[] = fn () => new Query($this->db)->table('ping_messages')->where('scenario', '=', $scenario)->count();
     }
 
-    return new ScenarioCounts($total, $counts);
+    $results = concurrently($tasks);
+    $total = array_shift($results);
+
+    return new ScenarioCounts($total, array_combine(self::SCENARIOS, $results));
 }
 ```
+
+The total and each scenario's count are four independent queries — none
+needs another's result — so they run through `concurrently()` instead of
+one after another, completing in roughly the time the slowest single
+query takes rather than their sum.
 
 `countByScenario()` builds `ScenarioCounts` with a plain `new`, not
 `Hydrator::hydrate()`. `Hydrator` casts and validates data crossing an
@@ -1442,6 +1451,8 @@ for FrankenPHP.
 - {doc}`config` — `.env` loading, typed `Config` access, and
   `bootstrap.php` in full.
 - {doc}`persistence` — connecting to MySQL, Postgres, and Redis directly.
+- {doc}`concurrency` — `concurrently()` in full, including what happens
+  when one of several concurrent tasks fails.
 - {doc}`migrations` — the migration runner used above, in full.
 - {doc}`query-builder` — the query builder used above, in full.
 - {doc}`queue` — the job queue used above, including multiple workers,

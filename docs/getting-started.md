@@ -304,6 +304,8 @@ beyond the attributes already on `UserController` needed. More on that in
   keeps it an enforced guarantee instead of a convention.
 - {doc}`routing-validation` — the full attribute vocabulary, validation
   constraints, and the OpenAPI generator.
+- {doc}`concurrency` — running several slow operations side by side
+  inside one request, instead of one after another.
 - {doc}`auth` — opaque Bearer-token authentication middleware, for when
   you want your own token storage (and revocation).
 - {doc}`auth-jwt` — stateless JWT authentication instead, verifying a

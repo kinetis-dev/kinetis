@@ -102,8 +102,8 @@ OpenAPI.
 :link: concurrency
 :link-type: doc
 
-Fiber-based concurrency over Revolt: `concurrently()`, `Async\Socket`, and
-`Async\Timer`.
+Run a database query, an HTTP call, and a cache read side by side inside
+one request, instead of one after another.
 ```
 ````
 
