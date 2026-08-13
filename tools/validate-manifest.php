@@ -10,10 +10,14 @@ declare(strict_types=1);
  *   2. Cross-manifest version consistency for shared external deps.
  *   3. Generated-file drift (reuses tools/generate-composer.php).
  *   4. Version-bump completeness — the release trigger's own integrity
- *      check, comparing the manifest at HEAD against HEAD^. Requires the
- *      checkout to have at least two commits of history (fetch-depth: 2
- *      or 0) — if HEAD^ isn't available, this check is skipped, not
- *      failed, since there's nothing to diff against.
+ *      check, comparing the current manifest against its state at
+ *      GITHUB_EVENT_BEFORE (what main pointed to before this push,
+ *      when running as the push trigger) or HEAD^ otherwise — see
+ *      oldManifestRef(). Requires the checkout to have that ref's
+ *      history available (fetch-depth: 2 or 0, or deeper if
+ *      GITHUB_EVENT_BEFORE is more than one commit back) — if it isn't,
+ *      this check is skipped, not failed, since there's nothing to diff
+ *      against.
  *
  * A separate, fifth check — does each package's committed composer.lock
  * still match its composer.json — is just `composer validate --strict`,
@@ -117,6 +121,32 @@ function checkVersionConsistency(array $manifest): array
     }
 
     return $problems;
+}
+
+/**
+ * The ref check 4 diffs the current manifest against. HEAD^ only ever
+ * looks one commit back — correct for a single-commit push, but wrong
+ * for a direct multi-commit push to main (this project's own normal
+ * workflow, not an edge case): HEAD^ then lands on some commit *within*
+ * that same push, not on whatever main pointed to before it, silently
+ * hiding a downgrade introduced earlier in the same push. GITHUB_EVENT_BEFORE
+ * — set by the workflow only for the push trigger, from github.event.before
+ * — is the actual answer to "what did main point to before this push,"
+ * used when it's present and not the all-zero SHA GitHub sends for a
+ * branch's very first push. Absent (a local run, or the pull_request
+ * trigger, where actions/checkout's default merge-commit checkout
+ * already makes HEAD^ resolve to the PR's base branch tip regardless of
+ * commit count) falls back to HEAD^ unchanged.
+ */
+function oldManifestRef(): string
+{
+    $before = getenv('GITHUB_EVENT_BEFORE');
+
+    if ($before === false || $before === '' || $before === str_repeat('0', 40)) {
+        return 'HEAD^';
+    }
+
+    return $before;
 }
 
 /** @return array<string, mixed>|null */
@@ -244,7 +274,7 @@ function validatorMain(): int
         echo "[generated-drift] OK.\n";
     }
 
-    $oldManifest = loadManifestAtRef('HEAD^');
+    $oldManifest = loadManifestAtRef(oldManifestRef());
 
     if ($oldManifest === null) {
         echo "[version-bump] Skipped — no previous commit's manifest available (shallow checkout or first commit).\n";

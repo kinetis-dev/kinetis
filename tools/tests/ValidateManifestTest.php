@@ -150,4 +150,40 @@ final class ValidateManifestTest extends TestCase
 
         self::assertSame([], checkVersionBumpCompleteness($old, $new));
     }
+
+    protected function tearDown(): void
+    {
+        putenv('GITHUB_EVENT_BEFORE');
+    }
+
+    public function test_old_manifest_ref_falls_back_to_head_caret_when_the_env_var_is_unset(): void
+    {
+        putenv('GITHUB_EVENT_BEFORE');
+
+        self::assertSame('HEAD^', oldManifestRef());
+    }
+
+    public function test_old_manifest_ref_falls_back_to_head_caret_when_the_env_var_is_empty(): void
+    {
+        putenv('GITHUB_EVENT_BEFORE=');
+
+        self::assertSame('HEAD^', oldManifestRef());
+    }
+
+    public function test_old_manifest_ref_falls_back_to_head_caret_for_a_branchs_first_ever_push(): void
+    {
+        // GitHub sends the all-zero SHA as "before" when a branch (or the
+        // repository) had no prior commit for this push to follow.
+        putenv('GITHUB_EVENT_BEFORE=' . str_repeat('0', 40));
+
+        self::assertSame('HEAD^', oldManifestRef());
+    }
+
+    public function test_old_manifest_ref_uses_the_real_sha_when_the_env_var_is_set(): void
+    {
+        $sha = str_repeat('a', 40);
+        putenv("GITHUB_EVENT_BEFORE={$sha}");
+
+        self::assertSame($sha, oldManifestRef());
+    }
 }
