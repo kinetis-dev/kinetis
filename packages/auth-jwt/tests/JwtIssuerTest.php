@@ -98,4 +98,27 @@ final class JwtIssuerTest extends TestCase
 
         self::assertNotSame('attacker-supplied', $claims->jti);
     }
+
+    public function test_a_given_kid_is_written_into_the_token_header(): void
+    {
+        $token = new JwtIssuer(self::SECRET, kid: 'key-2026')->issue('user-42');
+
+        // JWT::decode() only writes back into $headers when it's already
+        // non-null going in — a placeholder value, overwritten with the
+        // real header on return.
+        $headers = new \stdClass();
+        JWT::decode($token, new Key(self::SECRET, 'HS256'), $headers);
+
+        self::assertSame('key-2026', $headers->kid);
+    }
+
+    public function test_no_kid_by_default(): void
+    {
+        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+
+        $headers = new \stdClass();
+        JWT::decode($token, new Key(self::SECRET, 'HS256'), $headers);
+
+        self::assertFalse(property_exists($headers, 'kid'));
+    }
 }

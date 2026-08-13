@@ -11,6 +11,7 @@
     "require": {
         "php": "^8.4",
         "kinetis/framework": "dev-main",
+        "ext-openssl": "*",
         "firebase/php-jwt": "^7.1",
         "nyholm/psr7": "^1.8",
         "psr/http-message": "^2.0",

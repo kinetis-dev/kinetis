@@ -7,9 +7,7 @@
 docs/_templates/page.html
 
 # A synthetic RSA key pair generated solely to test RS256 JWT
-# verification — not a real credential, and declared right alongside
-# an explicitly-labeled
-# `test-secret-key-do-not-use-in-production` constant. Semgrep's
+# verification and JWKS publishing — not a real credential. Semgrep's
 # generic-secret heuristic can't tell that apart from a real leaked key
 # just from the PEM structure.
-packages/auth-jwt/tests/JwtAuthMiddlewareTest.php
+packages/auth-jwt/tests/Fixtures/RsaKeyPair.php

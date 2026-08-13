@@ -49,6 +49,14 @@ use UnexpectedValueException;
  * up the other way) means the private key needed to stay secret is
  * sitting in code that only ever needs to verify tokens.
  *
+ * $key also accepts an array<string, Key> — one or more keys, each
+ * under its own kid — for rolling a signing key over without
+ * invalidating every token issued under the previous one: a token's own
+ * (unverified) kid header selects which entry to verify against. A
+ * plain string keeps working exactly as before; $algorithm only applies
+ * to that single-key form, since each Key in the array carries its own
+ * algorithm already.
+ *
  * A decode failure (expired, bad signature, malformed, wrong key), a
  * structurally valid but subject-less token, and a revoked token are all
  * treated identically — 401 with WWW-Authenticate: Bearer, matching
@@ -92,8 +100,11 @@ use UnexpectedValueException;
  */
 class JwtAuthMiddleware implements MiddlewareInterface
 {
+    /**
+     * @param string|array<string, Key> $key
+     */
     public function __construct(
-        private string $key,
+        private string|array $key,
         private RequestScope $scope,
         private string $algorithm = 'HS256',
         private ?RevocationStore $revocationStore = null,
@@ -114,8 +125,10 @@ class JwtAuthMiddleware implements MiddlewareInterface
             return $this->unauthorized();
         }
 
+        $keyOrKeyArray = is_string($this->key) ? new Key($this->key, $this->algorithm) : $this->key;
+
         try {
-            $claims = JWT::decode($token, new Key($this->key, $this->algorithm));
+            $claims = JWT::decode($token, $keyOrKeyArray);
         } catch (UnexpectedValueException|DomainException) {
             return $this->unauthorized();
         }

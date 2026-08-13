@@ -399,6 +399,76 @@ there's nothing here to stop it. Pass your own `iss`/`aud` through
 its own secret/key pair instead.
 ```
 
+## Rotating keys
+
+Swapping a signing key outright invalidates every token issued under
+the old one at once. A `kid` (key ID) lets both the old and new key
+verify at the same time, during an overlap window:
+
+```{code-block} php
+use Kinetis\AuthJwt\JwtIssuer;
+
+// Sign new tokens under the new key, labeled with its own kid.
+$issuer = new JwtIssuer(
+    file_get_contents('/path/to/2026-private.pem'),
+    algorithm: 'RS256',
+    kid: '2026-key',
+);
+```
+
+```{code-block} php
+use Firebase\JWT\Key;
+use Kinetis\AuthJwt\JwtAuthMiddleware;
+
+final class AppJwtAuthMiddleware extends JwtAuthMiddleware
+{
+    public function __construct(RequestScope $scope)
+    {
+        parent::__construct([
+            '2025-key' => new Key(file_get_contents('/path/to/2025-public.pem'), 'RS256'),
+            '2026-key' => new Key(file_get_contents('/path/to/2026-public.pem'), 'RS256'),
+        ], $scope);
+    }
+}
+```
+
+`$key` accepts a `kid => Key` map in place of a single string — a
+token's own `kid` header (written by whichever `JwtIssuer` signed it)
+selects which entry verifies it, so tokens signed under either key keep
+working throughout the overlap. Retire an old key once its longest-lived
+outstanding token has expired: sign everything new under the new `kid`,
+wait out the old key's own token lifetime, then drop it from the map.
+
+### Publishing public keys as a JWKS
+
+For `RS256`/`RS384`/`RS512`, `Kinetis\AuthJwt\JwkSet` builds a standard
+JWK Set from one or more RSA public keys — the format clients and
+API gateways expect at a `.well-known/jwks.json`-style URL:
+
+```{code-block} php
+use Kinetis\AuthJwt\JwkSet;
+use Kinetis\Http\Attributes\Get;
+use Kinetis\Http\Attributes\Hidden;
+
+final readonly class JwksController
+{
+    #[Get('/.well-known/jwks.json')]
+    #[Hidden]
+    public function jwks(): array
+    {
+        return JwkSet::fromRsaPublicKeys([
+            '2025-key' => file_get_contents('/path/to/2025-public.pem'),
+            '2026-key' => file_get_contents('/path/to/2026-public.pem'),
+        ]);
+    }
+}
+```
+
+A plain array return, JSON-encoded automatically like any other route —
+nothing registers this endpoint for you, the same way nothing registers
+a login or refresh endpoint either. An `HS256` key is symmetric and is
+never published; this only applies to the asymmetric algorithms.
+
 ## See also
 
 - {doc}`auth` — opaque Bearer tokens against your own storage instead, if

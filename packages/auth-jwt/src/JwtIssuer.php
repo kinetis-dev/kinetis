@@ -23,12 +23,19 @@ use Firebase\JWT\JWT;
  * own `iss`/`aud` values through $claims and verify them in your own
  * application code (or give each service its own secret/key pair
  * instead) if that's not what you want.
+ *
+ * $kid, when given, is written into the token's own header — pair it
+ * with JwtAuthMiddleware's own multi-key `$key` support to roll a
+ * signing key over without invalidating every token issued under the
+ * previous one: publish both keys, each under its own kid, during the
+ * overlap window.
  */
 final readonly class JwtIssuer
 {
     public function __construct(
         private string $key,
         private string $algorithm = 'HS256',
+        private ?string $kid = null,
     ) {}
 
     /**
@@ -43,6 +50,6 @@ final readonly class JwtIssuer
             $payload['exp'] = $now + $ttlSeconds;
         }
 
-        return JWT::encode($payload, $this->key, $this->algorithm);
+        return JWT::encode($payload, $this->key, $this->algorithm, $this->kid);
     }
 }
