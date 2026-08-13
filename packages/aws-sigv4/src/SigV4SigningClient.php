@@ -58,6 +58,10 @@ final class SigV4SigningClient implements ClientInterface
      * there's nowhere else to thread a fixed clock through — real usage
      * always leaves this `null`, giving each signed request its own
      * genuine current time.
+     *
+     * $baseUri fills in scheme/host/port on a request whose own URI
+     * carries none — appended last, after $now. Leave null when the
+     * request already carries an absolute URI.
      */
     public function __construct(
         private readonly ClientInterface $client,
@@ -65,6 +69,7 @@ final class SigV4SigningClient implements ClientInterface
         string $service,
         ?CredentialProvider $credentialProvider = null,
         private readonly ?\DateTimeImmutable $now = null,
+        private readonly ?string $baseUri = null,
     ) {
         $this->signer = new SignerV4($service, $region);
         $this->configuration = Configuration::create([]);
@@ -80,6 +85,8 @@ final class SigV4SigningClient implements ClientInterface
     #[\Override]
     public function sendRequest(RequestInterface $request): ResponseInterface
     {
+        $request = $this->resolveUri($request);
+
         $credentials = $this->credentialProvider->getCredentials($this->configuration)
             ?? throw SigningException::noCredentialsResolved();
 
@@ -92,6 +99,38 @@ final class SigV4SigningClient implements ClientInterface
         $this->signer->sign($awsRequest, $credentials, new RequestContext(['currentDate' => $this->now]));
 
         return $this->client->sendRequest($this->applySignedHeaders($request, $awsRequest));
+    }
+
+    /**
+     * Fills in scheme/host/port from $baseUri when the request's own URI
+     * carries none. Left as-is when the request already has a host, or
+     * when $baseUri itself is null.
+     */
+    private function resolveUri(RequestInterface $request): RequestInterface
+    {
+        if ($this->baseUri === null || $request->getUri()->getHost() !== '') {
+            return $request;
+        }
+
+        $parts = parse_url($this->baseUri);
+
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
+            throw SigningException::invalidBaseUri($this->baseUri);
+        }
+
+        $uri = $request->getUri()
+            ->withScheme($parts['scheme'])
+            ->withHost($parts['host']);
+
+        if (isset($parts['port'])) {
+            $uri = $uri->withPort($parts['port']);
+        }
+
+        if (isset($parts['path']) && $parts['path'] !== '') {
+            $uri = $uri->withPath(rtrim($parts['path'], '/') . $uri->getPath());
+        }
+
+        return $request->withUri($uri);
     }
 
     private function toAwsRequest(RequestInterface $request): AwsRequest

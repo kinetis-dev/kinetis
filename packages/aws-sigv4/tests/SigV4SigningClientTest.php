@@ -118,6 +118,86 @@ final class SigV4SigningClientTest extends TestCase
         self::assertSame('{"query":{"match_all":{}}}', $recordingClient->captured?->getBody()->getContents());
     }
 
+    public function test_a_relative_request_uri_is_resolved_against_base_uri_before_signing(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+
+        $client = new SigV4SigningClient(
+            $recordingClient,
+            'us-east-1',
+            'es',
+            $credentialProvider,
+            baseUri: 'https://search-my-domain.us-east-1.es.amazonaws.com',
+        );
+        $client->sendRequest(new Request('GET', '/_cluster/health'));
+
+        self::assertSame(
+            'search-my-domain.us-east-1.es.amazonaws.com',
+            $recordingClient->captured?->getUri()->getHost(),
+        );
+        self::assertSame('https', $recordingClient->captured?->getUri()->getScheme());
+        self::assertSame('/_cluster/health', $recordingClient->captured?->getUri()->getPath());
+        self::assertSame(
+            'search-my-domain.us-east-1.es.amazonaws.com',
+            $recordingClient->captured?->getHeaderLine('Host'),
+        );
+    }
+
+    public function test_base_uri_with_a_path_prefix_is_prepended_onto_the_request_path(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+
+        $client = new SigV4SigningClient(
+            $recordingClient,
+            'us-east-1',
+            'execute-api',
+            $credentialProvider,
+            baseUri: 'https://api.example.com/prod',
+        );
+        $client->sendRequest(new Request('GET', '/users'));
+
+        self::assertSame('/prod/users', $recordingClient->captured?->getUri()->getPath());
+    }
+
+    public function test_a_request_that_already_has_a_host_is_left_untouched_even_with_base_uri_set(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+
+        $client = new SigV4SigningClient(
+            $recordingClient,
+            'us-east-1',
+            'service',
+            $credentialProvider,
+            baseUri: 'https://should-not-be-used.example.com',
+        );
+        $client->sendRequest(new Request('GET', 'https://example.amazonaws.com/'));
+
+        self::assertSame('example.amazonaws.com', $recordingClient->captured?->getUri()->getHost());
+    }
+
+    public function test_an_invalid_base_uri_throws_a_clear_error(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+
+        $client = new SigV4SigningClient(
+            $recordingClient,
+            'us-east-1',
+            'service',
+            $credentialProvider,
+            baseUri: 'not-a-valid-uri',
+        );
+
+        $this->expectException(SigningException::class);
+        $this->expectExceptionMessage(
+            'baseUri "not-a-valid-uri" is not a valid absolute URI (must include a scheme and host).',
+        );
+        $client->sendRequest(new Request('GET', '/'));
+    }
+
     public function test_no_resolvable_credentials_throws_a_clear_error(): void
     {
         $recordingClient = new RecordingClient();

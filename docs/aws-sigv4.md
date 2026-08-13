@@ -65,14 +65,27 @@ use OpenSearch\EndpointFactory;
 use OpenSearch\TransportFactory;
 use Symfony\Component\HttpClient\Psr18Client;
 
+// OpenSearch requires an explicit JSON Content-Type on every request.
 $httpClient = new Psr18Client(AmpHttpClientFactory::create([
-    'base_uri' => 'https://search-my-domain.us-east-1.es.amazonaws.com',
+    'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json'],
 ]));
-$signedClient = new SigV4SigningClient($httpClient, 'us-east-1', 'es');
+$signedClient = new SigV4SigningClient(
+    client: $httpClient,
+    region: 'us-east-1',
+    service: 'es',
+    baseUri: 'https://search-my-domain.us-east-1.es.amazonaws.com',
+);
 
 $transport = (new TransportFactory())->setHttpClient($signedClient)->create();
 $client = new Client($transport, new EndpointFactory());
 ```
+
+Set `baseUri` on `SigV4SigningClient` itself, not on the wrapped
+`Psr18Client` — the OpenSearch client builds requests carrying only a
+path, and `baseUri` is what supplies the scheme and host for those.
+Leave it unset when the request you're signing already carries a full
+URI of its own (e.g. a plain `RequestInterface` you built directly for
+API Gateway).
 
 `OpenSearchClientFactory::fromConfig()` itself only ever builds the plain
 Basic-auth path — construct the client directly, as above, to use IAM/

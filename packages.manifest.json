@@ -315,7 +315,7 @@
             "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "requires": [
                 "revolt-http-client"
             ],

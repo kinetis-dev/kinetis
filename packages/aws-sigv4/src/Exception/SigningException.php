@@ -15,4 +15,9 @@ final class SigningException extends \RuntimeException
             . 'CredentialProvider directly.',
         );
     }
+
+    public static function invalidBaseUri(string $baseUri): self
+    {
+        return new self("baseUri \"{$baseUri}\" is not a valid absolute URI (must include a scheme and host).");
+    }
 }
