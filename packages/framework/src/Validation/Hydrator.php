@@ -60,10 +60,15 @@ use ReflectionType;
  * rules apply regardless of whether a value came from a query string or a
  * JSON body.
  *
- * Stays fully static with zero instance/static state (a static property
- * here would violate the NoStaticPropertiesRule PHPStan rule this
- * codebase enforces) — $compiledPlan is an optional argument the caller
- * threads through, not anything Hydrator itself remembers between calls.
+ * Holds exactly one piece of static state: a memoization cache of
+ * compilePlan() output, keyed by DTO class. This is a deliberate,
+ * documented exemption from the NoStaticPropertiesRule this codebase
+ * enforces (see phpstan.neon): a plan is pure derived data, identical on
+ * every request for the process's lifetime, so persisting it across
+ * requests cannot bleed request state — it only avoids re-running the
+ * same reflection for every hydrated row. $compiledPlan remains an
+ * optional argument so ahead-of-time compiled plans (Kinetis\Cache) keep
+ * skipping even the first live compile.
  *
  * HydrationPlan can't self-reference `nestedPlan` in its own type alias —
  * PHPStan (at least this version) rejects that as a circular definition
@@ -95,6 +100,14 @@ final class Hydrator
     private const string GIVEN_SUFFIX = ' given.';
 
     /**
+     * Memoized compilePlan() output — see the class docblock for why this
+     * static property is exempt from NoStaticPropertiesRule.
+     *
+     * @var array<class-string, HydrationPlan>
+     */
+    private static array $planCache = [];
+
+    /**
      * @template T of object
      * @param class-string<T> $class
      * @param array<string, mixed> $data
@@ -105,7 +118,10 @@ final class Hydrator
     public static function hydrate(string $class, array $data, ?array $compiledPlan = null): object
     {
         /** @var T */
-        return self::hydrateFromPlan($compiledPlan ?? self::compilePlan($class), $data);
+        return self::hydrateFromPlan(
+            $compiledPlan ?? self::$planCache[$class] ??= self::compilePlan($class),
+            $data,
+        );
     }
 
     /**
