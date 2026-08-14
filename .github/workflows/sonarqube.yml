@@ -18,6 +18,35 @@ jobs:
   sonarqube:
     name: SonarQube Cloud scan
     runs-on: ubuntu-latest
+    # The databases exist for one reason: persistence's env-gated
+    # tests/Integration suite must run *under pcov here* so the native
+    # drivers' real-backend exercise counts as measured coverage —
+    # without them those tests skip and the driver code reads as
+    # uncovered.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=5s --health-timeout=5s --health-retries=10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,9 +65,15 @@ jobs:
         # path-repo version resolution) refuses by default.
         run: |
           for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch skeleton storage storage-s3; do
+            # persistence's env-gated tests/Integration suite talks to the
+            # job's MySQL/Postgres services and needs the driver
+            # extensions; every other package needs none.
+            EXTRA_EXTS=""
+            if [ "$pkg" = "persistence" ]; then EXTRA_EXTS="mysqli pdo_mysql pgsql pdo_pgsql"; fi
             docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
-            docker run --rm -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
+            docker run --rm --network host -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 -e EXTRA_EXTS="$EXTRA_EXTS" -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
               apk add --no-cache gcc g++ make autoconf pkgconf re2c
+              if [ -n \"\$EXTRA_EXTS\" ]; then apk add --no-cache postgresql-dev && docker-php-ext-install \$EXTRA_EXTS; fi
               pecl install pcov
               echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
               php vendor/bin/phpunit --coverage-clover=coverage.xml

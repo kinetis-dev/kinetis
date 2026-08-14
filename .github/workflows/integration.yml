@@ -215,9 +215,14 @@ jobs:
         working-directory: packages/persistence
         run: composer install --no-interaction --prefer-dist
 
-      - name: TransactionGuard integration checks
+      - name: Driver + TransactionGuard integration tests
+        # The real-backend tests live in the normal phpunit suite under
+        # tests/Integration/, environment-gated: they skip without
+        # MYSQL_HOST/POSTGRES_HOST set, so plain unit runs everywhere
+        # else stay database-free. Same files run under coverage in the
+        # SonarQube workflow.
         working-directory: packages/persistence
-        run: php tests-integration/transaction-guard.php
+        run: vendor/bin/phpunit
         env:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1
