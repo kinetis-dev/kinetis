@@ -84,6 +84,38 @@ each pool's `maxConnections` can exhaust your database's own connection
 limit — see {doc}`persistence`'s "Sizing `maxConnections` under worker
 mode" section.
 
+### The default event-loop driver's file descriptor limit
+
+Kinetis's concurrency primitives (see {doc}`concurrency`) run on
+Revolt's event loop. Without a faster driver extension installed,
+Revolt falls back to a driver backed by the C `select()` system call,
+which can only track file descriptors numbered up to 1024 — a fixed
+ceiling, not something raised by configuration.
+
+Every worker thread shares one process-wide file descriptor table, so
+file descriptors from client connections, database connections, and
+anything else open across *all* worker threads combined count toward
+that same limit. A worker pool of any meaningful size under real
+sustained concurrency can reach it.
+
+Installing one of Revolt's supported extensions — `ext-uv`, `ext-ev`,
+or `ext-event` — removes the limit entirely; each uses an OS-native
+mechanism (epoll on Linux) with no fixed file-descriptor ceiling.
+Revolt selects whichever one is available automatically, with no
+application code to change. `ext-uv` is the most commonly available:
+
+```{code-block} dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends libuv1-dev $PHPIZE_DEPS \
+    && pecl install uv-0.3.0 \
+    && docker-php-ext-enable uv \
+    && apt-get purge -y --auto-remove $PHPIZE_DEPS \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+`uv-0.3.0` is currently the only released version of the extension, and
+PECL refuses a non-stable package by default — pin it explicitly rather
+than running a bare `pecl install uv`.
+
 ## Running under PHP-FPM
 
 Nothing to configure — Kinetis detects a plain PHP-FPM environment

@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -48,6 +48,9 @@
                 "psr/simple-cache": "^3.0",
                 "revolt/event-loop": "^1.0",
                 "vlucas/phpdotenv": "^5.6"
+            },
+            "suggest": {
+                "ext-uv": "Lets Revolt's event loop use libuv instead of a select()-backed driver limited to 1024 file descriptors."
             }
         },
         "persistence": {
