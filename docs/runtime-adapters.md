@@ -75,6 +75,15 @@ routes finish quickly with little I/O, the default is probably fine as a
 starting point — measure under realistic load rather than guessing
 either way.
 
+The same "each worker thread is its own independent execution context"
+fact has a second, sharper consequence if you're using
+`kinetis/persistence`'s `SqlConnectionFactory`: `bootstrap.php` runs once
+*per worker thread*, so each one builds its own separate database
+connection pool. Oversizing `num` without correspondingly *undersizing*
+each pool's `maxConnections` can exhaust your database's own connection
+limit — see {doc}`persistence`'s "Sizing `maxConnections` under worker
+mode" section.
+
 ## Running under PHP-FPM
 
 Nothing to configure — Kinetis detects a plain PHP-FPM environment

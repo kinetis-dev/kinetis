@@ -184,13 +184,41 @@ other's throws PHP's own "Unknown named parameter" error at construction
 — not a Kinetis-specific validation, just PHP's normal named-argument
 enforcement.
 
-Sizing `maxConnections` matters more than it might look: it defaults to
-amphp's own `100`, which is a *shared* ceiling across every concurrent
-request a persistent worker (FrankenPHP) is handling at once — including
-any fan-out a single request makes via `concurrently()`. Under real
-sustained concurrency, a too-small pool queues requests behind it exactly
-the way an undersized PHP-FPM worker pool does; size it to your actual
-expected concurrent load, not the default.
+`maxConnections` defaults to amphp's own `100` if you don't set it. What
+that `100` actually limits depends entirely on which runtime adapter is
+running `bootstrap.php`.
+
+### Sizing `maxConnections` under worker mode
+
+Under `FpmAdapter`, each request gets a fresh process running
+`bootstrap.php` from scratch, so `maxConnections` really is "per
+request" — including any fan-out a single request makes via
+`concurrently()`. A too-small pool there queues that request's own
+queries behind it, the same way an undersized PHP-FPM worker pool
+queues requests generally.
+
+Under `FrankenPhpAdapter`'s worker mode it's a genuinely different
+shape, not just a bigger version of the same thing: `bootstrap.php` runs
+once *per worker thread* (see {doc}`runtime-adapters`'s "Sizing
+FrankenPHP's worker threads" section), so **every worker thread builds
+its own separate pool** — there is no single, process-wide shared pool
+the phrase "a persistent worker" might suggest. The real ceiling on
+simultaneous database connections is `num_workers × maxConnections`, not
+`maxConnections` alone: 128 worker threads each configured with
+`maxConnections: 256` can open up to 32,768 real connections, not 256 —
+almost certainly far more than your database allows. Once the database
+starts rejecting connections under that pressure, a worker thread's pool
+generally does not recover on its own; it keeps failing for the rest of
+that thread's life, not just for the one request that tipped it over.
+
+Size `maxConnections` so `num_workers × maxConnections` stays
+comfortably under your database's own `max_connections` — not so that
+`maxConnections` alone matches your expected total concurrency. If a
+single request's `concurrently()` fan-out needs more connections than
+that per-worker budget allows, the excess queries queue *inside* the
+pool instead, adding latency to that one request — a far softer failure
+mode than a rejected connection that can take the whole worker thread
+down for good.
 
 ## `TransactionGuard` — the piece AMPHP genuinely can't provide
 
