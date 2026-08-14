@@ -54,26 +54,37 @@ outbound HTTP requests) most real applications actually spend most of
 their time on.
 
 **This number matters more than it might look, and it's easy to
-undertune.** Each worker thread processes exactly one HTTP request at a
-time, start to finish — `frankenphp_handle_request()` is a blocking call
-that only returns once that request's response has been fully sent, then
-picks up the next one. Kinetis's own `Kinetis\Async`/`concurrently()`
-layer (see {doc}`concurrency`) provides real, genuine concurrency *within*
-one request's own work — but it doesn't change this: a thread that's
-mid-request, even one suspended on a Fiber waiting for a database
-response, isn't available to pick up a second, unrelated incoming
-request. Cross-request concurrency is bounded by thread count here, the
-same way it's bounded by PHP-FPM's own worker-process count under that
-adapter — not something Kinetis's async layer can substitute for.
+mistune in both directions.** Each worker thread processes exactly one
+HTTP request at a time, start to finish — `frankenphp_handle_request()`
+is a blocking call that only returns once that request's response has
+been fully sent, then picks up the next one. Kinetis's own
+`Kinetis\Async`/`concurrently()` layer (see {doc}`concurrency`) provides
+real, genuine concurrency *within* one request's own work — but it
+doesn't change this: a thread that's mid-request, even one suspended on
+a Fiber waiting for a database response, isn't available to pick up a
+second, unrelated incoming request. Cross-request concurrency is bounded
+by thread count here, the same way it's bounded by PHP-FPM's own
+worker-process count under that adapter — not something Kinetis's async
+layer can substitute for.
 
-Concretely: an application doing real database/API work per request
-should size `num` well above the CPU-based default — closer to your
-expected concurrent request volume than to your core count. Undersizing
-it doesn't produce errors; it produces queueing that looks, from the
-outside, exactly like the application itself being slow. If most of your
-routes finish quickly with little I/O, the default is probably fine as a
-starting point — measure under realistic load rather than guessing
-either way.
+Which direction to tune depends on what your requests actually wait on:
+
+- **Requests dominated by genuine waiting** — slow queries, remote APIs,
+  anything where the thread sits idle for tens of milliseconds — want
+  `num` well above the core count, closer to expected concurrent request
+  volume. Undersizing here doesn't produce errors; it produces queueing
+  that looks, from the outside, exactly like the application being slow.
+- **Requests dominated by CPU** — the common case with
+  `kinetis/persistence`'s native drivers, where sub-millisecond queries
+  leave little genuine wait time per request — want `num` **at or near
+  the core count**, and oversubscription measurably hurts: on a 2-CPU
+  host under saturating load, 1/2/4/8 threads measured 305/306/199/206
+  req/s on a 20-query fan-out route. Every thread beyond the core count
+  is pure context-switch overhead once threads are CPU-bound.
+
+Either way: measure under realistic load rather than guessing — the two
+regimes want opposite corrections, and which one you're in is a property
+of your routes, not of the framework.
 
 The same "each worker thread is its own independent execution context"
 fact has a second, sharper consequence if you're using
