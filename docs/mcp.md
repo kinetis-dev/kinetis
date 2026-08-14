@@ -335,7 +335,7 @@ curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setu
 
 Requires PHP 8.4+, Composer, a running Docker daemon, and the `claude`
 CLI already on your machine — nothing else, and no `sudo`: everything it
-does runs as your own user, writing only to `~/.kinetis-docs-mcp` and
+does runs as your own user, writing only to `~/.kinetis-mcp` and
 your own Claude Code configuration. Start a new Claude Code session
 afterward to use it.
 

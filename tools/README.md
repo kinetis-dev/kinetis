@@ -123,8 +123,8 @@ reveal it.
 working in *any* project can read Kinetis's own docs directly instead
 of relying on training data. It never touches this monorepo — it
 installs `kinetis/framework` from Packagist into its own directory
-(`~/.kinetis-docs-mcp` by default, override with
-`KINETIS_DOCS_MCP_DIR`), which is exactly what makes it work: with no
+(`~/.kinetis-mcp` by default, override with
+`KINETIS_MCP_DIR`), which is exactly what makes it work: with no
 local `docs/` present, `KinetisDocsResource` falls back to fetching
 each page live from `kinetis-dev/kinetis`'s `main` branch on GitHub.
 
@@ -143,8 +143,8 @@ curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setu
 This downloads the script's current `main` content and pipes it
 straight into `bash` — identical to running the local copy above, just
 without cloning the repo first. It needs no `sudo`: every step runs as
-the invoking user, writing only inside `$HOME/.kinetis-docs-mcp` (or
-`$KINETIS_DOCS_MCP_DIR`) and to Claude Code's own user-level config —
+the invoking user, writing only inside `$HOME/.kinetis-mcp` (or
+`$KINETIS_MCP_DIR`) and to Claude Code's own user-level config —
 never a system directory. Docker itself still has to be reachable by
 that user account (the same "docker: running" check either form does
 first), but the script never elevates privileges to get there.
@@ -162,7 +162,7 @@ version match on the host beyond what the setup step itself required.
 Re-running the script is safe — it reuses the existing install
 directory and re-registers the server. It won't pick up a newer
 `kinetis/framework` release on its own once a `composer.lock` exists
-there; delete `~/.kinetis-docs-mcp/composer.lock` (or the whole
+there; delete `~/.kinetis-mcp/composer.lock` (or the whole
 directory) first if you want the latest version.
 
 ## Running the tools test suite

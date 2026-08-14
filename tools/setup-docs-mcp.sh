@@ -8,7 +8,7 @@
 # checkout of kinetis-dev/kinetis at all.
 set -euo pipefail
 
-INSTALL_DIR="${KINETIS_DOCS_MCP_DIR:-$HOME/.kinetis-docs-mcp}"
+INSTALL_DIR="${KINETIS_MCP_DIR:-$HOME/.kinetis-mcp}"
 SERVER_NAME="kinetis"
 
 echo "Checking prerequisites..."
