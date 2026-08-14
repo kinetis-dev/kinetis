@@ -323,6 +323,22 @@ Each resource returns the actual `docs/*.md` source as `text/markdown`,
 read directly from wherever `kinetis/framework` is installed, so there's
 nothing to keep in sync as pages change.
 
+### A standalone docs server for Claude Code
+
+No Kinetis project needed for this — one command installs
+`kinetis/framework` into its own directory and registers Kinetis's docs
+as an MCP server in Claude Code directly:
+
+```{code-block} bash
+curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setup-docs-mcp.sh | bash
+```
+
+Requires PHP 8.4+, Composer, a running Docker daemon, and the `claude`
+CLI already on your machine — nothing else, and no `sudo`: everything it
+does runs as your own user, writing only to `~/.kinetis-docs-mcp` and
+your own Claude Code configuration. Start a new Claude Code session
+afterward to use it.
+
 ## See also
 
 - {doc}`routing-validation` — `Hydrator`/`JsonSchema`, the validation
