@@ -149,21 +149,26 @@ never a system directory. Docker itself still has to be reachable by
 that user account (the same "docker: running" check either form does
 first), but the script never elevates privileges to get there.
 
-Checks PHP 8.4+, Composer, a running Docker daemon, and the `claude`
-CLI are all available before doing anything; installs
-`kinetis/framework` via the host's own PHP/Composer; registers the
-server (user scope, so it's available in every project, not just this
-one — replacing any existing registration under the same name); then
-runs a real `initialize` handshake against it to confirm it actually
-responds before declaring success. The registered server itself always
-runs through `docker run php:8.4-cli-alpine`, so it needs no PHP
-version match on the host beyond what the setup step itself required.
+Only a running Docker daemon and the `claude` CLI need to already be on
+the host — no PHP or Composer of your own, since both the install step
+and the registered server run through the `composer:2` image (which
+bundles a recent-enough PHP itself). The script installs
+`kinetis/framework` this way, then registers the server (user scope, so
+it's available in every project, not just this one — replacing any
+existing registration under the same name), then runs a real
+`initialize` handshake against it to confirm it actually responds
+before declaring success.
 
-Re-running the script is safe — it reuses the existing install
-directory and re-registers the server. It won't pick up a newer
-`kinetis/framework` release on its own once a `composer.lock` exists
-there; delete `~/.kinetis-mcp/composer.lock` (or the whole
-directory) first if you want the latest version.
+The registered server checks for a newer `kinetis/framework` release
+itself, at most once every 24 hours, right before it starts — a spawn
+inside that window skips the check and starts immediately, so this
+costs nothing on most Claude Code session starts. A failed check (no
+network, for instance) is silently skipped rather than blocking the
+server from starting, and doesn't count as a check — the next spawn
+tries again rather than waiting out the rest of the window.
+
+Re-running the script is also safe at any time — it reuses the
+existing install directory and re-registers the server.
 
 ## Running the tools test suite
 

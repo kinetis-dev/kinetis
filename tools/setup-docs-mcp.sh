@@ -13,25 +13,8 @@ SERVER_NAME="kinetis"
 
 echo "Checking prerequisites..."
 
-if ! command -v php >/dev/null 2>&1; then
-    echo "  php: not found on PATH. Install PHP 8.4+ first." >&2
-    exit 1
-fi
-
-if ! php -r 'exit(version_compare(PHP_VERSION, "8.4.0", ">=") ? 0 : 1);'; then
-    echo "  php: $(php -r 'echo PHP_VERSION;') found, but Kinetis needs 8.4 or newer." >&2
-    exit 1
-fi
-echo "  php: $(php -r 'echo PHP_VERSION;') - OK"
-
-if ! command -v composer >/dev/null 2>&1; then
-    echo "  composer: not found on PATH. Install it from https://getcomposer.org" >&2
-    exit 1
-fi
-echo "  composer: found - OK"
-
 if ! docker info >/dev/null 2>&1; then
-    echo "  docker: not running (or not installed) - the registered server needs it to run php:8.4-cli-alpine." >&2
+    echo "  docker: not running (or not installed) - both the install step and the registered server run through it." >&2
     exit 1
 fi
 echo "  docker: running - OK"
@@ -65,12 +48,11 @@ EOF
 # its own, but declaring the entry stops that warning from firing on
 # every server start.
 #
-# Composer's own output is captured, not streamed — it's a Composer
-# PHAR built years before PHP 8.4/8.5 existed, so it emits a wall of
-# "Deprecation Notice" lines under a current PHP that have nothing to
-# do with this install succeeding or failing. Shown in full only if the
-# install actually fails.
-if ! COMPOSER_LOG=$(composer install --no-interaction --prefer-dist --working-dir="$INSTALL_DIR" 2>&1); then
+# Runs through the composer:2 image rather than a host-installed PHP/
+# Composer — nothing here needs either on the host at all. Output is
+# captured, not streamed, and shown in full only if the install
+# actually fails.
+if ! COMPOSER_LOG=$(docker run --rm -v "${INSTALL_DIR}:/app" -w /app composer:2 install --no-interaction --prefer-dist 2>&1); then
     echo "composer install failed:" >&2
     echo "$COMPOSER_LOG" >&2
     exit 1
@@ -79,18 +61,36 @@ fi
 echo
 echo "Registering \"${SERVER_NAME}\" with Claude Code (user scope, every project)..."
 claude mcp remove "$SERVER_NAME" -s user >/dev/null 2>&1 || true
+
+# The registered command runs on every Claude Code session start, in
+# every project, whether or not that session ever actually calls into
+# it — so it stays on composer:2 (which already bundles PHP new enough
+# to run Kinetis directly) rather than a second, different image, and
+# the version-freshness check only runs at most once every 24h (a
+# .last-update-check timestamp inside INSTALL_DIR, not the host), not
+# on every single spawn: a `composer update` check costs a couple of
+# seconds even when nothing changed, not worth paying on every session
+# start for something that's rarely actually stale. Update output is
+# redirected to stderr — anything on stdout past this point has to be
+# valid MCP JSON-RPC, and Composer knows nothing about that protocol.
+# A failed update check (e.g. no network) is silently skipped, not
+# fatal, and the timestamp is only advanced on success, so the next
+# spawn retries rather than waiting out the rest of the 24h window.
+# shellcheck disable=SC2016 # single-quoted on purpose: this is a script
+# for the container's own sh, not this outer script — $now/$last must
+# NOT expand here, only when sh -c actually runs it inside the container.
 claude mcp add "$SERVER_NAME" -s user -- docker run --rm -i \
     -v "${INSTALL_DIR}:/app" \
     -w /app \
     -e APP_ENV=development \
-    php:8.4-cli-alpine php vendor/bin/kinetis mcp:serve
+    composer:2 sh -c 'now=$(date +%s); last=$(cat .last-update-check 2>/dev/null || echo 0); if [ $((now - last)) -gt 86400 ]; then composer update kinetis/framework --no-interaction --prefer-dist 1>&2 && echo "$now" > .last-update-check; fi; exec php vendor/bin/kinetis mcp:serve'
 
 echo
 echo "Verifying the server actually responds..."
 RESPONSE=$(printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"setup-docs-mcp","version":"1.0"}}}' \
     | docker run --rm -i -v "${INSTALL_DIR}:/app" -w /app -e APP_ENV=development \
-        php:8.4-cli-alpine php vendor/bin/kinetis mcp:serve)
+        composer:2 php vendor/bin/kinetis mcp:serve)
 
 if [[ "$RESPONSE" != *'"serverInfo"'* ]]; then
     echo "Registered, but the verification handshake didn't return the expected result:" >&2

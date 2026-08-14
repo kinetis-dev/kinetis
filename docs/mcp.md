@@ -333,11 +333,15 @@ as an MCP server in Claude Code directly:
 curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setup-docs-mcp.sh | bash
 ```
 
-Requires PHP 8.4+, Composer, a running Docker daemon, and the `claude`
-CLI already on your machine — nothing else, and no `sudo`: everything it
-does runs as your own user, writing only to `~/.kinetis-mcp` and
-your own Claude Code configuration. Start a new Claude Code session
-afterward to use it.
+Requires a running Docker daemon and the `claude` CLI already on your
+machine — nothing else, no PHP or Composer of your own, and no `sudo`:
+everything it does runs as your own user, writing only to
+`~/.kinetis-mcp` and your own Claude Code configuration. Start a new
+Claude Code session afterward to use it.
+
+The registered server checks for a newer `kinetis/framework` release on
+its own, at most once a day, so it stays current without needing to be
+set up again.
 
 ## See also
 
