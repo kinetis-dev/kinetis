@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use Amp\Mysql\MysqlLink;
-use Amp\Postgres\PostgresLink;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Migrations\Migration;
 
 return new class implements Migration
