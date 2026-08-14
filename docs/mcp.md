@@ -31,10 +31,10 @@ final readonly class AccountController
 }
 ```
 
-```{code-block} php
-$registry = new Kinetis\Mcp\McpRegistry();
-$registry->register(AccountController::class);
-```
+Nothing to register by hand — any class anywhere under one of your own
+PSR-4 roots is discovered automatically the moment `#[McpTool]`/
+`#[McpResource]` appears on one of its methods (more on how that works
+under [Transports](#transports) below).
 
 A tool call's arguments always arrive as one flat named JSON object, so
 there's no `#[Body]`/`#[Query]` distinction to make the way HTTP routing

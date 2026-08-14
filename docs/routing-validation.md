@@ -33,28 +33,15 @@ All five implement a shared `RouteAttribute` interface (`httpMethod()`,
 `path()`, `status()`) — so adding a sixth verb, if you ever needed one,
 is a matter of implementing that interface, not touching `Router` itself.
 
-`Router::register()` reflects every **public** method on the class once,
-at boot: methods without a route attribute are silently skipped, so a
-controller can freely mix routed actions with plain helper methods. Each
-`{placeholder}` in a path template is compiled to a named regex capture
-group exactly once, at registration — not on every request.
-
-```{code-block} php
-use Kinetis\Http\Routing\Router;
-
-$router = new Router();
-$router->register(UserController::class);
-
-$match = $router->match('GET', '/users/42');
-// $match->route->controllerMethod === 'show'
-// $match->pathParams === ['id' => '42']
-```
-
-In a real application, `register()` is called for you: any class anywhere
-under one of your own PSR-4 roots is discovered and registered
-automatically, with no required directory or namespace convention — see
-{doc}`getting-started` and {doc}`cli` (including how to restrict the scan
-for a large application).
+Routes are discovered automatically: any class anywhere under one of your
+own PSR-4 roots is registered the moment a route attribute appears on one
+of its methods, with no required directory or namespace convention and
+nothing to register by hand — see {doc}`getting-started` and {doc}`cli`
+(including how to restrict the scan for a large application). Methods
+without a route attribute are silently skipped, so a controller can
+freely mix routed actions with plain helper methods. Each `{placeholder}`
+in a path template is compiled to a named regex capture group once, when
+the route is registered — not on every request.
 
 Matching is first-match-wins in registration order, so two routes may
 overlap — `/users/{id:\d+}` alongside `/users/{id}`, or `/users/self`
