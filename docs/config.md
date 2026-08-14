@@ -150,13 +150,13 @@ needs before that lock happens:
 
 declare(strict_types=1);
 
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Persistence\SqlConnectionFactory;
 
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlConnectionPool::class, SqlConnectionFactory::fromConfig($config));
+    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 };
 ```
 

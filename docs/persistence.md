@@ -12,16 +12,18 @@ anyway and PDO's native protocol handling costs a fraction of the CPU.
 
 You never pick this per call site: `SqlConnectionFactory` selects the
 driver from the runtime (see "Driver selection" below), every driver
-implements the same `Amp\Sql`/`MysqlLink`/`PostgresLink` interfaces, and
+implements the same Kinetis-owned `Kinetis\Persistence\Contract\SqlLink`/
+`MysqlLink`/`PostgresLink` contracts, and
 application code, `TransactionGuard`, and the query builder are identical
 under all of them. Don't construct `PDO`/`mysqli`/pgsql handles yourself,
 though — hand-rolled blocking calls in a persistent worker still block
 that whole worker thread; going through the factory is what keeps the
 blocking/non-blocking decision where the runtime knowledge lives.
 
-MariaDB works too, everywhere this page says MySQL — `amphp/mysql`
-speaks the wire protocol both databases share. The one place a specific
-minimum version matters is `kinetis/queue`'s SQL backend; see {doc}`queue`.
+MariaDB works too, everywhere this page says MySQL — mysqli and
+PDO-MySQL speak the wire protocol both databases share. The one place a
+specific minimum version matters is `kinetis/queue`'s SQL backend; see
+{doc}`queue`.
 
 ```{note}
 Core itself has no MySQL/Postgres/Redis dependency of its own —
@@ -34,72 +36,68 @@ introduced with its own installation note below at first use.
 
 ## Connecting
 
-Register a pool once, in your own bootstrap (`public/index.php`), before
-`AppScope::boot()`:
+Register a client once, in your own bootstrap (`public/index.php`),
+before `AppScope::boot()` — under the contract interface, so the factory
+stays free to pick the right driver per runtime:
 
 ```{code-block} php
-use Amp\Mysql\MysqlConfig;
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\SqlConnectionFactory;
 
 $app = new AppScope();
 
-$app->instance(MysqlConnectionPool::class, new MysqlConnectionPool(
-    MysqlConfig::fromString(
-        "host={$config->string('DB_HOST', '127.0.0.1')} " .
-        "dbname={$config->string('DB_NAME', 'app')} " .
-        "user={$config->string('DB_USER', 'app')} " .
-        "password={$config->required('DB_PASSWORD')}",
-    ),
-));
+$app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 
 $app->boot();
 ```
 
 `$config` is typed `Kinetis\Config\Config` — see {doc}`config` for the full
-typed-accessor API. Postgres is the identical pattern with
-`PostgresConnectionPool`/`PostgresConfig`.
+typed-accessor API and the `DB_*` keys the factory reads. Postgres is the
+identical pattern with `Contract\PostgresLink` and `DB_CONNECTION=pgsql`.
 
-A controller or service then gets the pool by constructor injection, like
-anything else registered on `AppScope`:
+A controller or service then gets the client by constructor injection,
+like anything else registered on `AppScope`:
 
 ```{code-block} php
+use Kinetis\Persistence\Contract\MysqlLink;
+
 final readonly class OrderController
 {
     public function __construct(
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
     ) {}
 
     #[Get('/orders')]
     public function index(): array
     {
-        return $this->db->query('SELECT * FROM orders WHERE customer_id = ?', [$customerId]);
+        return iterator_to_array($this->db->execute('SELECT * FROM orders WHERE customer_id = ?', [$customerId]));
     }
 }
 ```
 
 `RequestScope` delegates to `AppScope` only for explicitly registered ids
-(see {doc}`container`) — since `MysqlConnectionPool::class` was registered
-via `instance()` above, every request resolves back to that same shared
-pool, not a fresh one per request.
+(see {doc}`container`) — since `MysqlLink::class` was registered via
+`instance()` above, every request resolves back to that same shared
+client, not a fresh one per request.
 
-`MysqlConnectionPool`/`PostgresConnectionPool` are themselves full
-connection pools — `Amp\Sql\Common\SqlCommonConnectionPool` already handles
-idle-connection eviction and dead-socket recycling internally. Kinetis's own
-`Kinetis\Persistence\Pool` is not used by this integration — wrapping an
-already-pooled client in another pool would be pooling a pool. `Pool`
-stays available as generic infrastructure for a protocol client that
-doesn't already pool itself.
+The async drivers are themselves connection pools — lazily opened
+connections up to `maxConnections`, reused across requests under a
+persistent worker, with dead connections discarded (and a dispatch-phase
+failure on a stale pooled connection retried once on a fresh one, which
+is safe because the statement never reached the server). Kinetis's own
+`Kinetis\Persistence\Pool` is not used by this integration — it stays
+available as generic infrastructure for protocol clients that don't pool
+themselves.
 
 ```{note}
-`amphp/postgres` is not pure-PHP the way `amphp/mysql` is — it wraps a real
-Postgres client library and needs `ext-pgsql` or `pecl-pq` installed to
-connect at all. `amphp/mysql` needs no extension. Neither is a hard
-Composer requirement; `ext-pgsql` is listed under Kinetis's `suggest`
-instead, so installing Kinetis doesn't force a Postgres-specific extension
-onto a MySQL-only or Redis-only deployment.
+Each driver needs its extension: `ext-mysqli` or `ext-pgsql` for the
+native async drivers, `ext-pdo_mysql`/`ext-pdo_pgsql` for the PDO
+fallbacks. None is a hard Composer requirement — they're listed under
+`suggest`, so installing Kinetis doesn't force a MySQL-specific extension
+onto a Postgres-only deployment or vice versa.
 ```
 
-{doc}`query-builder` builds on this same registered pool — pass it to
+{doc}`query-builder` builds on this same registered client — pass it to
 `new Query($db)` instead of calling `->query()` directly.
 
 ### Multiple databases: named connections
@@ -108,10 +106,8 @@ onto a MySQL-only or Redis-only deployment.
 composer require kinetis/persistence
 ```
 
-`Kinetis\Persistence\SqlConnectionFactory` builds a
-`MysqlConnectionPool`/`PostgresConnectionPool` straight from `Config` —
-the same connection-string assembly the example above writes by hand,
-available as a one-line call, and aware of {doc}`config`'s named-connection
+`Kinetis\Persistence\SqlConnectionFactory` builds a driver client
+straight from `Config`, aware of {doc}`config`'s named-connection
 convention:
 
 ```{code-block} php
@@ -131,11 +127,11 @@ DB_DB2_HOST=reporting.internal
 DB_DB2_PASSWORD=secret
 ```
 
-Register each pool under its own id if you want both reachable through
+Register each client under its own id if you want both reachable through
 the container:
 
 ```{code-block} php
-$app->instance(MysqlConnectionPool::class, SqlConnectionFactory::fromConfig($config));
+$app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 $app->instance('db.reporting', SqlConnectionFactory::fromConfig($config, 'db2'));
 ```
 
@@ -153,14 +149,21 @@ non-default connection is always retrieved explicitly
 | `auto` (default) | FrankenPHP worker mode → `native`; PHP-FPM → `pdo`. |
 | `native` | mysqli's `MYSQLI_ASYNC` (`Driver\MysqliAsyncClient`) or ext-pgsql's `pg_send_query` (`Driver\PgsqlAsyncClient`): the wire protocol runs at C speed inside the extension, queries overlap across connections, and each waits by suspending only its own Fiber — full `concurrently()` support. |
 | `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
-| `amphp` | The original pure-PHP `amphp/mysql`/`amphp/postgres` pools. The only driver offering server-side prepared-statement objects (`prepare()`) and row streaming — the native and PDO drivers buffer each result fully and their `prepare()` throws (parameterized calls go through `execute()`, which the native MySQL driver realizes as escaped client-side interpolation and the native Postgres driver as real server-side binding via `pg_send_query_params`). |
+
+Every driver returns fully-buffered results (part of the `SqlResult`
+contract — stop iterating whenever you like, nothing is left to drain),
+and parameterized calls go through `execute()`: real server-side binding
+on Postgres (`pg_send_query_params`) and PDO, escaped client-side
+interpolation on native MySQL (whose async mode has no bind step; the
+client pins the connection charset explicitly so escaping is always
+performed against a known charset).
 
 The `auto` split is measured, not aesthetic: under boot-and-die PHP-FPM,
 per-request connection handshakes and per-query client CPU dominate, and
 an async client's I/O overlap cannot pay for them (sub-millisecond
 queries leave nothing to overlap); under a persistent worker, connections
-amortize across requests and native async fan-out keeps its benefits
-without amphp's userland protocol cost.
+amortize across requests and native async fan-out keeps its benefits at
+native protocol cost.
 
 Two runtime notes for `native`: mysqli cannot expose its socket to the
 event loop, so while its queries are in flight the client polls with a
@@ -170,66 +173,73 @@ and at worst a 1 ms delay per turn for anything else scheduled
 concurrently. ext-pgsql *does* expose its socket (`pg_socket()`), so the
 Postgres native driver is fully event-driven with no polling at all.
 
-### Extra connection-string and pool options
+### Connection options
 
-Two independent, deliberately separate extension points — they apply at
-two different layers of amphp's own API, so they can't be merged into
-one mechanism:
-
-**`DB_OPTIONS`** (connection-scoped like every other `DB_*` key) is
-appended verbatim to the connection string handed to
-`MysqlConfig::fromString()`/`PostgresConfig::fromString()`:
+One canonical, driver-neutral option set — discrete, connection-scoped
+keys, each translated by whichever driver gets built:
 
 ```{code-block} text
-DB_OPTIONS=charset=latin1 collate=latin1_swedish_ci
+DB_CHARSET=utf8mb4
+DB_COLLATION=utf8mb4_unicode_ci
+DB_SSLMODE=require
+DB_CONNECT_TIMEOUT=5
+DB_APP_NAME=myapp
+DB_COMPRESSION=false
 ```
 
-for MySQL, or
+| canonical key | native mysqli | PDO mysql | native pgsql | PDO pgsql |
+|---|---|---|---|---|
+| `DB_CHARSET` | `set_charset()` | DSN `charset=` | `client_encoding` | `client_encoding` |
+| `DB_COLLATION` | `SET NAMES ... COLLATE` | `SET NAMES ... COLLATE` | — | — |
+| `DB_SSLMODE` | — | — | `sslmode` | `sslmode` |
+| `DB_CONNECT_TIMEOUT` | `MYSQLI_OPT_CONNECT_TIMEOUT` | `PDO::ATTR_TIMEOUT` | `connect_timeout` | `connect_timeout` |
+| `DB_APP_NAME` | — | — | `application_name` | `application_name` |
+| `DB_COMPRESSION` | `MYSQLI_CLIENT_COMPRESS` | `MYSQL_ATTR_COMPRESS` | — | — |
 
-```{code-block} text
-DB_OPTIONS=sslmode=require applicationName=myapp
-```
+A "—" is not a silent ignore: setting an option the selected driver
+cannot honor throws at construction, naming both the option and the
+driver — a config that works on one runtime never silently *means
+something different* on another. (MySQL TLS is a "—" for now because the
+drivers don't yet model certificate plumbing; it fails loudly rather
+than pretending.)
 
-for Postgres. This is genuinely dialect-specific — each config class's
-own key map only recognizes its own keys and silently ignores anything
-it doesn't, so a key meant for the other dialect just does nothing
-rather than erroring. It's the caller's own responsibility to set
-options appropriate to whichever dialect `DB_CONNECTION` actually
-selects.
+MySQL charset defaults to `utf8mb4` on every driver when `DB_CHARSET`
+is unset — never the server's own default, since the native driver's
+client-side escaping is charset-dependent and must run against a known
+charset.
 
-**`$poolOptions`**, a third, optional `fromConfig()` argument, is spread
-as named arguments straight into whichever pool constructor gets used:
+The legacy `DB_OPTIONS` string is still accepted as a migration path:
+key=value pairs whose keys have canonical equivalents (`charset`,
+`collate`, `sslmode`, `connect_timeout`, `applicationName`, `compress`,
+...) are translated automatically, with a discrete key winning over a
+`DB_OPTIONS` spelling of the same option. Untranslatable keys pass
+through raw **only** to the Postgres drivers (libpq natively accepts
+free-form connection-string keys and validates them itself at connect
+time) and are rejected loudly by the MySQL drivers, which have no
+free-form surface to pass them to.
+
+**`$poolOptions`**, an optional `fromConfig()` argument, carries the one
+pool-level knob:
 
 ```{code-block} php
 $db = SqlConnectionFactory::fromConfig($config, poolOptions: [
-    'maxConnections' => 256,
-    'idleTimeout' => 30,
+    'maxConnections' => 6,
 ]);
 ```
 
-This reaches a genuinely different layer than `DB_OPTIONS` —
-`maxConnections`/`idleTimeout`/`transactionIsolation`/`connector` (and,
-Postgres only, `resetConnections`) are properties of the *pool wrapper*
-(`MysqlConnectionPool`/`PostgresConnectionPool`'s own constructor), never
-part of a connection string — `DB_OPTIONS` can't reach them no matter
-what's put in it, since neither config class's `fromString()` reads a
-pool-sizing key at all. A key valid for one dialect's pool but not the
-other's throws PHP's own "Unknown named parameter" error at construction
-— not a Kinetis-specific validation, just PHP's normal named-argument
-enforcement.
-
-`maxConnections` defaults to amphp's own `100` if you don't set it. What
-that `100` actually limits depends entirely on which runtime adapter is
-running `bootstrap.php`.
+`maxConnections` (default 8) bounds an async driver's fan-out width —
+connections open lazily up to the cap, and callers beyond it wait for a
+free connection inside the pool. The PDO drivers are a single lazy
+connection, trivially within any cap.
 
 ### Sizing `maxConnections` under worker mode
 
-Under `FpmAdapter`, each request gets a fresh process running
-`bootstrap.php` from scratch, so `maxConnections` really is "per
-request" — including any fan-out a single request makes via
-`concurrently()`. A too-small pool there queues that request's own
-queries behind it, the same way an undersized PHP-FPM worker pool
-queues requests generally.
+Under `FpmAdapter`, `auto` selects the PDO driver — one connection per
+worker process — so `maxConnections` doesn't apply at all there;
+`concurrently()` fan-outs run their queries sequentially on that one
+connection, which for typical sub-millisecond queries is the faster
+trade (measured, not assumed: per-request handshakes and per-query
+client CPU dominate under boot-and-die).
 
 Under `FrankenPhpAdapter`'s worker mode it's a genuinely different
 shape, not just a bigger version of the same thing: `bootstrap.php` runs
@@ -240,10 +250,9 @@ the phrase "a persistent worker" might suggest. The real ceiling on
 simultaneous database connections is `num_workers × maxConnections`, not
 `maxConnections` alone: 128 worker threads each configured with
 `maxConnections: 256` can open up to 32,768 real connections, not 256 —
-almost certainly far more than your database allows. Once the database
-starts rejecting connections under that pressure, a worker thread's pool
-generally does not recover on its own; it keeps failing for the rest of
-that thread's life, not just for the one request that tipped it over.
+almost certainly far more than your database allows, and every one of
+them costs the database real memory and setup work even when the client
+survives the rejection.
 
 Size `maxConnections` so `num_workers × maxConnections` stays
 comfortably under your database's own `max_connections` — not so that
@@ -254,18 +263,17 @@ pool instead, adding latency to that one request — a far softer failure
 mode than a rejected connection that can take the whole worker thread
 down for good.
 
-## `TransactionGuard` — the piece AMPHP genuinely can't provide
+## `TransactionGuard` — the request-scoped safety net
 
 `Kernel` degrades gracefully when `kinetis/persistence` isn't installed
 (no dispose hook registered, no error), so an application with no
 database at all can skip it entirely.
 
-Connection pooling is a solved problem once you're using AMPHP's clients
-directly. What they have no way to know about is Kinetis's `RequestScope`
-(see {doc}`container`): if application code begins a transaction and
-something throws before it's explicitly committed or rolled back, nothing
-closes it — and it leaks into whatever the next thing to borrow that pooled
-connection does.
+Connection pooling is the drivers' own job. What no driver can know
+about is Kinetis's `RequestScope` (see {doc}`container`): if application
+code begins a transaction and something throws before it's explicitly
+committed or rolled back, nothing closes it — and it leaks into whatever
+the next thing to borrow that pooled connection does.
 
 `Kinetis\Persistence\TransactionGuard` is the request-scoped safety net for
 exactly this. It's autowired fresh per request, like any other class you
@@ -277,14 +285,14 @@ it starts.
 ```{code-block} php
 use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Post;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\TransactionGuard;
-use Amp\Mysql\MysqlConnectionPool;
 
 final readonly class OrderController
 {
     public function __construct(
         private TransactionGuard $transactions,
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
     ) {}
 
     #[Post('/orders')]
@@ -329,7 +337,7 @@ a warning through whatever logger you've registered (see {doc}`logging`)
 somewhere it shouldn't have been.
 
 Both `beginTransaction()` and `transaction()` work identically for MySQL
-and Postgres: both drivers implement the same `Amp\Sql\SqlLink`/
+and Postgres: all drivers implement the same `Contract\SqlLink`/
 `SqlTransaction` abstraction, so `TransactionGuard` never needs to know
 which one it's actually talking to.
 
@@ -481,8 +489,8 @@ one Fiber-driven event loop run inside another isn't supported.
 
 ## See also
 
-- {doc}`concurrency` — `concurrently()`, and how AMPHP's `Amp\Future`-based
-  clients compose with `Kinetis\Async`'s own Fiber-suspension primitives on
+- {doc}`concurrency` — `concurrently()`, and how the persistence drivers'
+  Fiber-suspending calls compose with `Kinetis\Async`'s own primitives on
   the same Revolt loop.
 - {doc}`container` — how `TransactionGuard` (and any other class you
   haven't explicitly registered) actually gets resolved per request.

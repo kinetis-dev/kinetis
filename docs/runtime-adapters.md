@@ -98,34 +98,31 @@ mode" section.
 ### The default event-loop driver's file descriptor limit
 
 Kinetis's concurrency primitives (see {doc}`concurrency`) run on
-Revolt's event loop. Without a faster driver extension installed,
-Revolt falls back to a driver backed by the C `select()` system call,
-which can only track file descriptors numbered up to 1024 — a fixed
-ceiling, not something raised by configuration.
+Revolt's event loop. Without a driver extension installed, Revolt falls
+back to a driver backed by the C `select()` system call, which can only
+track file descriptors *numbered* up to 1024 — a fixed ceiling, not
+something raised by configuration.
 
-Every worker thread shares one process-wide file descriptor table, so
-file descriptors from client connections, database connections, and
-anything else open across *all* worker threads combined count toward
-that same limit. A worker pool of any meaningful size under real
-sustained concurrency can reach it.
+Whether that ceiling can bite depends on what the loop actually
+watches. The native MySQL driver watches no file descriptors at all
+(mysqli exposes none; it bridges via polling), so a MySQL-only
+deployment never hits this. The native Postgres driver, the Redis
+client, and the HTTP client all register real socket watchers — and
+under FrankenPHP the embedded Go server's client sockets share the same
+process-wide fd table, pushing fd *numbers* past 1024 under load even
+with few PHP worker threads. Any deployment in that second group should
+install one of Revolt's supported extensions — `ext-uv`, `ext-ev`, or
+`ext-event` — each backed by an OS-native mechanism (epoll on Linux)
+with no fd-number ceiling. Revolt selects whichever is available
+automatically, with no application code to change.
 
-Installing one of Revolt's supported extensions — `ext-uv`, `ext-ev`,
-or `ext-event` — removes the limit entirely; each uses an OS-native
-mechanism (epoll on Linux) with no fixed file-descriptor ceiling.
-Revolt selects whichever one is available automatically, with no
-application code to change. `ext-uv` is the most commonly available:
-
-```{code-block} dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends libuv1-dev $PHPIZE_DEPS \
-    && pecl install uv-0.3.0 \
-    && docker-php-ext-enable uv \
-    && apt-get purge -y --auto-remove $PHPIZE_DEPS \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-`uv-0.3.0` is currently the only released version of the extension, and
-PECL refuses a non-stable package by default — pin it explicitly rather
-than running a bare `pecl install uv`.
+This is a correctness concern, not a performance one — measured
+throughput is identical across drivers for typical workloads; what the
+extensions buy is not being at the mercy of fd numbering. `ext-event`
+has the smoothest install story on current PECL (`pecl install event`);
+`ext-uv` works too but its only release must be pinned explicitly
+(`pecl install uv-0.3.0` — PECL refuses non-stable packages by
+default).
 
 ## Running under PHP-FPM
 

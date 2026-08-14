@@ -35,8 +35,8 @@ final class MigrationRunnerTest extends TestCase
             $this->migrationsPath . "/{$name}.php",
             <<<'PHP'
                 <?php
-                use Amp\Mysql\MysqlLink;
-                use Amp\Postgres\PostgresLink;
+                use Kinetis\Persistence\Contract\MysqlLink;
+                use Kinetis\Persistence\Contract\PostgresLink;
                 use Kinetis\Migrations\Migration;
 
                 return new class implements Migration {

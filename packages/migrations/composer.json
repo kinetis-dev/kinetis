@@ -11,10 +11,7 @@
     "require": {
         "php": "^8.4",
         "kinetis/framework": "dev-main",
-        "kinetis/persistence": "dev-main",
-        "amphp/mysql": "^3.1",
-        "amphp/postgres": "^2.2",
-        "amphp/sql": "^2"
+        "kinetis/persistence": "dev-main"
     },
     "require-dev": {
         "infection/infection": "^0.34.2",

@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations;
 
-use Amp\Sql\SqlLink;
+use Kinetis\Persistence\Contract\SqlLink;
 use DateTimeImmutable;
 
 /**
- * Typed against the generic Amp\Sql\SqlLink, not MysqlLink|PostgresLink —
+ * Typed against the generic Kinetis\Persistence\Contract\SqlLink, not
+ * MysqlLink|PostgresLink —
  * unlike MigrationRunner (which forwards $db to a Migration's own
  * dialect-typed up()/down()), this class only ever issues its own
  * bookkeeping SQL, and every statement below (CREATE TABLE IF NOT EXISTS,
@@ -21,7 +22,7 @@ final class SqlMigrationRepository implements MigrationRepositoryInterface
     private const TABLE = 'kinetis_migrations';
 
     /**
-     * @param SqlLink<*, *, *> $db
+     * @param SqlLink $db
      */
     public function __construct(
         private readonly SqlLink $db,

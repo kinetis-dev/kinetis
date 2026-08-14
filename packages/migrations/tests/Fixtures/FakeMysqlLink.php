@@ -4,10 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations\Tests\Fixtures;
 
-use Amp\Mysql\MysqlLink;
-use Amp\Mysql\MysqlResult;
-use Amp\Mysql\MysqlStatement;
-use Amp\Mysql\MysqlTransaction;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\SqlResult;
+use Kinetis\Persistence\Contract\SqlTransaction;
 use LogicException;
 
 /**
@@ -20,22 +19,17 @@ use LogicException;
  */
 final class FakeMysqlLink implements MysqlLink
 {
-    public function query(string $sql): MysqlResult
+    public function query(string $sql): SqlResult
     {
         throw new LogicException('FakeMysqlLink does not execute queries.');
     }
 
-    public function prepare(string $sql): MysqlStatement
+    public function execute(string $sql, array $params = []): SqlResult
     {
         throw new LogicException('FakeMysqlLink does not execute queries.');
     }
 
-    public function execute(string $sql, array $params = []): MysqlResult
-    {
-        throw new LogicException('FakeMysqlLink does not execute queries.');
-    }
-
-    public function beginTransaction(): MysqlTransaction
+    public function beginTransaction(): SqlTransaction
     {
         throw new LogicException('FakeMysqlLink does not support transactions.');
     }
@@ -47,14 +41,5 @@ final class FakeMysqlLink implements MysqlLink
     public function isClosed(): bool
     {
         return false;
-    }
-
-    public function onClose(\Closure $onClose): void
-    {
-    }
-
-    public function getLastUsedAt(): int
-    {
-        return 0;
     }
 }
