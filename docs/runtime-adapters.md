@@ -34,6 +34,47 @@ script means every request silently keeps falling through to the classic
 fallback, never once reaching your worker, with no error to indicate why.
 ```
 
+### Sizing FrankenPHP's worker threads
+
+FrankenPHP's `worker` directive accepts an explicit thread count:
+
+```{code-block}
+:caption: Caddyfile
+
+worker {
+    file public/index.php
+    num 64
+}
+```
+
+or the shorthand form, `worker public/index.php 64`. Left unset, it
+defaults to roughly **2x your available CPU cores** — a number tuned for
+CPU-bound work, not for the kind of I/O-bound workload (database calls,
+outbound HTTP requests) most real applications actually spend most of
+their time on.
+
+**This number matters more than it might look, and it's easy to
+undertune.** Each worker thread processes exactly one HTTP request at a
+time, start to finish — `frankenphp_handle_request()` is a blocking call
+that only returns once that request's response has been fully sent, then
+picks up the next one. Kinetis's own `Kinetis\Async`/`concurrently()`
+layer (see {doc}`concurrency`) provides real, genuine concurrency *within*
+one request's own work — but it doesn't change this: a thread that's
+mid-request, even one suspended on a Fiber waiting for a database
+response, isn't available to pick up a second, unrelated incoming
+request. Cross-request concurrency is bounded by thread count here, the
+same way it's bounded by PHP-FPM's own worker-process count under that
+adapter — not something Kinetis's async layer can substitute for.
+
+Concretely: an application doing real database/API work per request
+should size `num` well above the CPU-based default — closer to your
+expected concurrent request volume than to your core count. Undersizing
+it doesn't produce errors; it produces queueing that looks, from the
+outside, exactly like the application itself being slow. If most of your
+routes finish quickly with little I/O, the default is probably fine as a
+starting point — measure under realistic load rather than guessing
+either way.
+
 ## Running under PHP-FPM
 
 Nothing to configure — Kinetis detects a plain PHP-FPM environment
@@ -95,6 +136,8 @@ $adapter = new Kinetis\Runtime\Adapters\FpmAdapter();
 
 - {doc}`core-concepts` — why your application code never needs to know
   which adapter is running it.
+- {doc}`concurrency` — what `Kinetis\Async`/`concurrently()` actually
+  provides, and what it doesn't.
 - {doc}`caching` — the production build step, and why it matters most
   under PHP-FPM.
 - {doc}`appendix` — the exact internals of each built-in adapter.

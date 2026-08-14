@@ -282,6 +282,15 @@ every single request instead, at the cost of paying discovery's cost
 every time rather than once. See {doc}`runtime-adapters`.
 ```
 
+```{note}
+The bare `worker public/index.php` above is fine for this quickstart, but
+leaves FrankenPHP's own default thread count in place (roughly 2x your
+CPU cores) — tuned for CPU-bound work, not for a real application doing
+database calls or outbound HTTP per request. Before deploying anything
+real, see {doc}`runtime-adapters`'s "Sizing FrankenPHP's worker threads"
+section.
+```
+
 ```{code-block} bash
 :caption: Try it
 
