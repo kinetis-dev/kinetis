@@ -110,7 +110,7 @@
             "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via amphp, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "framework"
             ],
