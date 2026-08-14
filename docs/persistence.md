@@ -1,16 +1,23 @@
 # Persistence
 
-Kinetis connects to MySQL, Postgres, and Redis through clients that never
-block the rest of your application while waiting on a query — a request
-that's waiting on the database doesn't stop a persistent worker from
-making progress on anything else in the meantime.
+Kinetis connects to MySQL, Postgres, and Redis through clients matched to
+the runtime actually serving your application. Under a persistent worker
+(FrankenPHP), queries suspend only their own request's Fiber — a request
+waiting on the database doesn't stop the worker's request from making
+progress on anything else it has in flight. Under PHP-FPM, where a worker
+serves exactly one request at a time from a fresh process, Kinetis uses a
+plain blocking PDO connection instead — measured to be the faster choice
+there by a wide margin, since nothing else could have used the wait time
+anyway and PDO's native protocol handling costs a fraction of the CPU.
 
-Because of that, connecting through `PDO`, `ext-mysqli`, or `ext-pgsql`
-directly isn't supported — the way those work, a query call only returns
-once the database has responded, and that blocks the entire worker
-process for as long as it takes, not just the one request. Kinetis's own
-clients avoid this by design; you don't need to think about it once
-you're using them.
+You never pick this per call site: `SqlConnectionFactory` selects the
+driver from the runtime (see "Driver selection" below), every driver
+implements the same `Amp\Sql`/`MysqlLink`/`PostgresLink` interfaces, and
+application code, `TransactionGuard`, and the query builder are identical
+under all of them. Don't construct `PDO`/`mysqli`/pgsql handles yourself,
+though — hand-rolled blocking calls in a persistent worker still block
+that whole worker thread; going through the factory is what keeps the
+blocking/non-blocking decision where the runtime knowledge lives.
 
 MariaDB works too, everywhere this page says MySQL — `amphp/mysql`
 speaks the wire protocol both databases share. The one place a specific
@@ -135,6 +142,33 @@ $app->instance('db.reporting', SqlConnectionFactory::fromConfig($config, 'db2'))
 Only the first is autowireable by constructor type-hinting — a named,
 non-default connection is always retrieved explicitly
 (`$app->get('db.reporting')`), never injected by type.
+
+### Driver selection: `DB_DRIVER`
+
+`SqlConnectionFactory::fromConfig()` picks the client implementation via
+`DB_DRIVER` (connection-scoped like every other `DB_*` key):
+
+| value | what you get |
+|---|---|
+| `auto` (default) | FrankenPHP worker mode → `native`; PHP-FPM → `pdo`. |
+| `native` | mysqli's `MYSQLI_ASYNC` (`Driver\MysqliAsyncClient`) or ext-pgsql's `pg_send_query` (`Driver\PgsqlAsyncClient`): the wire protocol runs at C speed inside the extension, queries overlap across connections, and each waits by suspending only its own Fiber — full `concurrently()` support. |
+| `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
+| `amphp` | The original pure-PHP `amphp/mysql`/`amphp/postgres` pools. The only driver offering server-side prepared-statement objects (`prepare()`) and row streaming — the native and PDO drivers buffer each result fully and their `prepare()` throws (parameterized calls go through `execute()`, which the native MySQL driver realizes as escaped client-side interpolation and the native Postgres driver as real server-side binding via `pg_send_query_params`). |
+
+The `auto` split is measured, not aesthetic: under boot-and-die PHP-FPM,
+per-request connection handshakes and per-query client CPU dominate, and
+an async client's I/O overlap cannot pay for them (sub-millisecond
+queries leave nothing to overlap); under a persistent worker, connections
+amortize across requests and native async fan-out keeps its benefits
+without amphp's userland protocol cost.
+
+Two runtime notes for `native`: mysqli cannot expose its socket to the
+event loop, so while its queries are in flight the client polls with a
+short (1 ms) blocking window per loop turn — indistinguishable from a
+blocking wait when the request's only outstanding work is the database,
+and at worst a 1 ms delay per turn for anything else scheduled
+concurrently. ext-pgsql *does* expose its socket (`pg_socket()`), so the
+Postgres native driver is fully event-driven with no polling at all.
 
 ### Extra connection-string and pool options
 
