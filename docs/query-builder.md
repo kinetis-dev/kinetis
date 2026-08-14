@@ -255,6 +255,42 @@ Construct a fresh `new Query($link)` per query; reusing one instance
 across separate queries merges their `where()`s together.
 ```
 
+## How a value reaches the database: literal or bound parameter
+
+A prepared statement only pays for itself when it's reused — one `Query`
+is built and run exactly once, so a value it binds never gets the chance
+to amortize the extra round trip a real `PREPARE` costs. Because of that,
+`Query` writes a value directly into the SQL text as a literal instead of
+binding it, whenever doing so is provably safe:
+
+- Every `int` and `bool` value — always, on both dialects.
+- Every `string` value on Postgres — via `PostgresExecutor::quoteLiteral()`,
+  the driver's own real escaping call.
+- Every `string` value on MySQL, but only when the connection's configured
+  charset is `utf8mb4`, `utf8mb3`, `utf8`, `ascii`, `latin1`, or `binary`
+  (Kinetis's own default is `utf8mb4`). Outside that list, the value is
+  bound as a real parameter instead.
+
+`null` and `float` values are always bound, never written as a literal —
+this also applies to the whole query the moment any single value in it
+needs binding: a query is either fully inlined or fully parameterized,
+never a mix. The same is true for `whereRaw()`/`selectRaw()`/
+`orderByRaw()`: using any of them anywhere in a query disables inlining
+for the entire query, since raw SQL text may contain a `?` that was never
+meant as a placeholder.
+
+None of this changes what a query returns or which rows it matches —
+only how the value physically reaches the database. `where()`'s value
+still ends up compared exactly the way it always did.
+
+```{warning}
+On MySQL, the literal form assumes the connection's SQL mode has
+`NO_BACKSLASH_ESCAPES` disabled, which is MySQL's default. A server
+explicitly configured with `NO_BACKSLASH_ESCAPES` makes this unsafe —
+not silently, though: a value containing a quote character fails with a
+SQL syntax error on that server rather than matching the wrong rows.
+```
+
 ## Operators, directions, and join types are allow-listed
 
 `where()`'s `$operator`, `orderBy()`'s `$direction`, and `join()`'s
