@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use App\Services\SoketiPublisher;
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Persistence\SqlConnectionFactory;
@@ -22,7 +22,7 @@ use function Amp\Redis\createRedisClient;
  * worker, and the cron container.
  */
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlConnectionPool::class, SqlConnectionFactory::fromConfig($config));
+    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 
     $redisConfig = RedisSimpleCache::buildRedisConfig($config);
 

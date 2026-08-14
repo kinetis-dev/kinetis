@@ -16,7 +16,6 @@
         "kinetis/cache-redis": "dev-main",
         "kinetis/query-builder": "dev-main",
         "kinetis/queue": "dev-main",
-        "amphp/mysql": "^3.1",
         "league/plates": "^3.6",
         "monolog/monolog": "^3.0",
         "psr/http-message": "^2.0",
