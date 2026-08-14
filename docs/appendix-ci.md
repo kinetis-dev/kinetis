@@ -10,8 +10,9 @@ framework's own code. Five workflow files, `.github/workflows/`:
 ## `ci.yml` — static checks and unit tests, per package
 
 One job per package (core plus every satellite package, 14 in total),
-each running against the exact same Docker images used for local
-development:
+matrixed across PHP 8.4 and 8.5 — every check below runs against both,
+not just one — each running against the exact same Docker images used
+for local development:
 
 - `composer validate --strict`
 - `composer install`
@@ -113,6 +114,11 @@ the service
 container's image and health-check command (`mysqladmin` vs.
 `mariadb-admin`) differ between the two matrix entries.
 
+Every job above except `pingpong` (which exercises a real multi-container
+stack, not a bare per-package PHP matrix) also runs across PHP 8.4 and
+8.5, the same matrix `ci.yml` uses — real-backend correctness is checked
+against both, not just one.
+
 `redis-cluster` is the one job that runs the job itself inside a
 `container:` rather than on the bare runner — a real multi-node Redis
 Cluster advertises each node's own container-internal address for both
@@ -134,7 +140,8 @@ One matrix job per package, core plus every satellite package except
 `kinetis/pingpong` (no PHPUnit tests, nothing to mutate against). Each:
 `composer install`, then Infection with PCOV as the coverage driver,
 gated on `--min-msi`/`--min-covered-msi`, a real, non-zero threshold per
-package, set with a margin below each package's own score:
+package, set with a margin below each package's own score. Runs on PHP
+8.4 only — not matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`:
 
 | Package | min-msi / min-covered-msi | Score at the time it was set |
 |---|---|---|
@@ -169,9 +176,10 @@ core's `src/` plus every satellite package's own `src/`).
 
 Runs PHPUnit with PCOV coverage for core and every satellite package
 with a PHPUnit suite, feeding the resulting Clover reports into the
-scan via `sonar.php.coverage.reportPaths`. `RedisQueue`, `SqlQueue`,
-`SqsQueue` (and its `SqsQueueException`), and `RabbitMqQueue` are
-excluded from the coverage calculation via `sonar.coverage.exclusions`,
+scan via `sonar.php.coverage.reportPaths` — on PHP 8.4 only, not
+matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`. `RedisQueue`,
+`SqlQueue`, `SqsQueue` (and its `SqsQueueException`), and `RabbitMqQueue`
+are excluded from the coverage calculation via `sonar.coverage.exclusions`,
 matching their real-backend-only testing in `integration.yml`.
 
 Requires a `SONAR_TOKEN` repository secret from the project's own

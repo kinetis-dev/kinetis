@@ -18,6 +18,19 @@ create-project kinetis/skeleton my-app` gives you exactly that.
   under classic PHP-FPM, which Kinetis detects and falls back to
   automatically. See {doc}`runtime-adapters` for the full detection story.
 
+```{note}
+**PHP version support policy.** Kinetis targets PHP's own currently
+*actively supported* minor versions — the ones still receiving both bug
+fixes and security fixes upstream, not just the older security-only
+tail. Right now that's PHP 8.4 and 8.5; every package's own `composer.json`
+floor (`^8.4`) and the CI matrix both track this directly (see
+{doc}`appendix-ci`). As new PHP minor versions enter active support and
+older ones age out of it, Kinetis's own floor and CI coverage move
+forward to match — this isn't a one-time commitment to 8.4/8.5
+specifically, it's an ongoing policy of following PHP's own release
+lifecycle.
+```
+
 ## Installation
 
 ```{code-block} bash

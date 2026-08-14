@@ -268,6 +268,9 @@ change:
   These run automatically on every PR; there's no equivalent one-line
   local invocation for most of them (they need live service containers)
   — trust CI for these rather than trying to reproduce them locally.
+  `integration.yml` is matrixed across PHP 8.4 and 8.5 too, the same as
+  `ci.yml`; `infection.yml`/`sonarqube.yml` run on 8.4 only. See
+  {doc}`appendix-ci` for the exact breakdown per workflow.
 
 `monorepo-validate.yml`'s check is registered as a GitHub branch
 protection **required status check** on `main` — a manifest/composer.json
