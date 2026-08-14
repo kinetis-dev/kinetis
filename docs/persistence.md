@@ -136,6 +136,62 @@ Only the first is autowireable by constructor type-hinting — a named,
 non-default connection is always retrieved explicitly
 (`$app->get('db.reporting')`), never injected by type.
 
+### Extra connection-string and pool options
+
+Two independent, deliberately separate extension points — they apply at
+two different layers of amphp's own API, so they can't be merged into
+one mechanism:
+
+**`DB_OPTIONS`** (connection-scoped like every other `DB_*` key) is
+appended verbatim to the connection string handed to
+`MysqlConfig::fromString()`/`PostgresConfig::fromString()`:
+
+```{code-block} text
+DB_OPTIONS=charset=latin1 collate=latin1_swedish_ci
+```
+
+for MySQL, or
+
+```{code-block} text
+DB_OPTIONS=sslmode=require applicationName=myapp
+```
+
+for Postgres. This is genuinely dialect-specific — each config class's
+own key map only recognizes its own keys and silently ignores anything
+it doesn't, so a key meant for the other dialect just does nothing
+rather than erroring. It's the caller's own responsibility to set
+options appropriate to whichever dialect `DB_CONNECTION` actually
+selects.
+
+**`$poolOptions`**, a third, optional `fromConfig()` argument, is spread
+as named arguments straight into whichever pool constructor gets used:
+
+```{code-block} php
+$db = SqlConnectionFactory::fromConfig($config, poolOptions: [
+    'maxConnections' => 256,
+    'idleTimeout' => 30,
+]);
+```
+
+This reaches a genuinely different layer than `DB_OPTIONS` —
+`maxConnections`/`idleTimeout`/`transactionIsolation`/`connector` (and,
+Postgres only, `resetConnections`) are properties of the *pool wrapper*
+(`MysqlConnectionPool`/`PostgresConnectionPool`'s own constructor), never
+part of a connection string — `DB_OPTIONS` can't reach them no matter
+what's put in it, since neither config class's `fromString()` reads a
+pool-sizing key at all. A key valid for one dialect's pool but not the
+other's throws PHP's own "Unknown named parameter" error at construction
+— not a Kinetis-specific validation, just PHP's normal named-argument
+enforcement.
+
+Sizing `maxConnections` matters more than it might look: it defaults to
+amphp's own `100`, which is a *shared* ceiling across every concurrent
+request a persistent worker (FrankenPHP) is handling at once — including
+any fan-out a single request makes via `concurrently()`. Under real
+sustained concurrency, a too-small pool queues requests behind it exactly
+the way an undersized PHP-FPM worker pool does; size it to your actual
+expected concurrent load, not the default.
+
 ## `TransactionGuard` — the piece AMPHP genuinely can't provide
 
 `Kernel` degrades gracefully when `kinetis/persistence` isn't installed
