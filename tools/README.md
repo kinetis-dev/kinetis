@@ -1,7 +1,8 @@
 # Monorepo tooling
 
-Two scripts, driven by `packages.manifest.json` (repo root) — the
-canonical source of truth for every `packages/*/composer.json`.
+Three scripts. The first two are driven by `packages.manifest.json`
+(repo root) — the canonical source of truth for every
+`packages/*/composer.json`; the third is unrelated, standalone.
 
 - `generate-composer.php` — generates each package's `composer.json`
   from the manifest. Three usages: default (writes every package),
@@ -11,6 +12,7 @@ canonical source of truth for every `packages/*/composer.json`.
 - `validate-manifest.php` — the four checks CI runs on every PR and
   push to `main`: cycle detection, cross-manifest version consistency,
   generated-file drift, and version-bump completeness.
+- `setup-docs-mcp.sh` — see "Setting up the docs MCP server" below.
 
 Never hand-edit a `packages/*/composer.json` directly for anything the
 manifest controls (`require`, `require-dev`, `autoload`, `bin`, ...) —
@@ -113,6 +115,55 @@ external dependency declares the same constraint for it — the whole
 point of the check is to catch the case where two packages drift apart
 silently, since neither one failing to install on its own would ever
 reveal it.
+
+## Setting up the docs MCP server
+
+`setup-docs-mcp.sh` registers `kinetis/framework`'s built-in
+`KinetisDocsResource` as an MCP server in Claude Code, so an agent
+working in *any* project can read Kinetis's own docs directly instead
+of relying on training data. It never touches this monorepo — it
+installs `kinetis/framework` from Packagist into its own directory
+(`~/.kinetis-docs-mcp` by default, override with
+`KINETIS_DOCS_MCP_DIR`), which is exactly what makes it work: with no
+local `docs/` present, `KinetisDocsResource` falls back to fetching
+each page live from `kinetis-dev/kinetis`'s `main` branch on GitHub.
+
+```sh
+./tools/setup-docs-mcp.sh
+```
+
+No local checkout needed either — the script is fully self-contained
+(no reference to any other file in this repo, no interactive prompts),
+so it can be fetched and run directly from GitHub:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setup-docs-mcp.sh | bash
+```
+
+This downloads the script's current `main` content and pipes it
+straight into `bash` — identical to running the local copy above, just
+without cloning the repo first. It needs no `sudo`: every step runs as
+the invoking user, writing only inside `$HOME/.kinetis-docs-mcp` (or
+`$KINETIS_DOCS_MCP_DIR`) and to Claude Code's own user-level config —
+never a system directory. Docker itself still has to be reachable by
+that user account (the same "docker: running" check either form does
+first), but the script never elevates privileges to get there.
+
+Checks PHP 8.4+, Composer, a running Docker daemon, and the `claude`
+CLI are all available before doing anything; installs
+`kinetis/framework` via the host's own PHP/Composer; registers the
+server (user scope, so it's available in every project, not just this
+one — replacing any existing registration under the same name); then
+runs a real `initialize` handshake against it to confirm it actually
+responds before declaring success. The registered server itself always
+runs through `docker run php:8.4-cli-alpine`, so it needs no PHP
+version match on the host beyond what the setup step itself required.
+
+Re-running the script is safe — it reuses the existing install
+directory and re-registers the server. It won't pick up a newer
+`kinetis/framework` release on its own once a `composer.lock` exists
+there; delete `~/.kinetis-docs-mcp/composer.lock` (or the whole
+directory) first if you want the latest version.
 
 ## Running the tools test suite
 
