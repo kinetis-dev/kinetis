@@ -16,6 +16,33 @@ use ReflectionClass;
 
 final class KinetisDocsResourceTest extends TestCase
 {
+    private const string FIXTURE_HOST = '127.0.0.1:8097';
+
+    /** @var resource */
+    private static $fixtureServerProcess;
+
+    public static function setUpBeforeClass(): void
+    {
+        $fixture = __DIR__ . '/Fixtures/docs-server.php';
+
+        self::$fixtureServerProcess = proc_open(
+            ['php', '-S', self::FIXTURE_HOST, $fixture],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+
+        // No fixed readiness signal from `php -S` other than "give it a
+        // moment" — the same discipline AmpHttpClientFactoryTest's own
+        // fixture server already uses.
+        usleep(300_000);
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        proc_terminate(self::$fixtureServerProcess);
+        proc_close(self::$fixtureServerProcess);
+    }
+
     private function server(): McpServer
     {
         $registry = new McpRegistry();
@@ -130,20 +157,62 @@ final class KinetisDocsResourceTest extends TestCase
      * real, always-present slug, so the missing-page branch has no path
      * through the real public API at all — invoked directly via reflection
      * instead, the same technique this class's own first test already uses,
-     * rather than deleting a real docs file mid-test.
+     * rather than deleting a real docs file mid-test. Both localDocsRoot
+     * and remoteBaseUrl are overridden here (a nonexistent local directory,
+     * the fixture server for the remote leg) so this stays a fast, local
+     * test rather than making a real call to raw.githubusercontent.com.
      */
     public function test_reading_a_missing_page_throws_a_clear_error(): void
     {
-        $resource = new KinetisDocsResource();
+        $resource = new KinetisDocsResource(
+            localDocsRoot: '/nonexistent-directory',
+            remoteBaseUrl: 'http://' . self::FIXTURE_HOST . '/',
+        );
         $method = (new ReflectionClass($resource))->getMethod('read');
 
         $this->expectException(DocsResourceException::class);
         $this->expectExceptionMessage('Kinetis docs page "does-not-exist" is missing');
 
-        // file_get_contents() on a nonexistent path emits a real PHP
-        // warning before returning false — exactly the signal read()'s own
-        // check is designed to catch. Expected here, not suppressed in
-        // production code, just at this one deliberate call site.
+        // Both attempts emit a real PHP warning before returning false —
+        // exactly the signal read()'s own check is designed to catch.
+        // Expected here, not suppressed in production code, just at this
+        // one deliberate call site.
         @$method->invoke($resource, 'does-not-exist');
+    }
+
+    /**
+     * The actual gap this class was built to close: a real
+     * `vendor/kinetis/framework` install has no docs/ directory at all, so
+     * read() must fall back to fetching the same file remotely instead of
+     * failing outright — verified against a real HTTP server (the fixture),
+     * not just that the method signature accepts a URL.
+     */
+    public function test_falls_back_to_a_remote_fetch_when_the_local_path_is_missing(): void
+    {
+        $resource = new KinetisDocsResource(
+            localDocsRoot: '/nonexistent-directory',
+            remoteBaseUrl: 'http://' . self::FIXTURE_HOST . '/',
+        );
+        $method = (new ReflectionClass($resource))->getMethod('read');
+
+        self::assertSame(
+            "# Remote Fixture\n\nThis came from the remote fallback.\n",
+            $method->invoke($resource, 'known-remote-page'),
+        );
+    }
+
+    /**
+     * The default, zero-argument construction (how the container actually
+     * autowires this class) must still prefer the real local docs/ files
+     * over the network — confirmed by pointing remoteBaseUrl at a host that
+     * refuses connections outright; if read() reached for it at all for a
+     * page that exists locally, this would hang/fail instead of returning
+     * instantly.
+     */
+    public function test_prefers_local_content_over_the_network_by_default(): void
+    {
+        $resource = new KinetisDocsResource(remoteBaseUrl: 'http://127.0.0.1:1/');
+
+        self::assertStringContainsString('# Getting Started', $resource->gettingStarted());
     }
 }

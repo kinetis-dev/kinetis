@@ -18,15 +18,18 @@ use Kinetis\Mcp\Exception\DocsResourceException;
  *
  *     $registry->register(KinetisDocsResource::class);
  *
- * Reads the actual `docs/*.md` sources directly from the monorepo root
- * (`dirname(__DIR__, 4)` from `src/Mcp/`), not a separately maintained
- * copy, so there's nothing to keep in sync as pages change. This only
- * resolves correctly when developing Kinetis itself, inside this
- * monorepo — `docs/` covers every package, not just core, so it lives
+ * Prefers the actual `docs/*.md` sources on disk (`dirname(__DIR__, 4)`
+ * from `src/Mcp/`) when present — true when developing Kinetis itself,
+ * inside this monorepo, including any local, not-yet-pushed edit to a
+ * page. A real `vendor/kinetis/framework` install has no `docs/`
+ * directory at all (it covers every package, not just core, so it lives
  * at the monorepo root rather than shipping inside any one installed
- * package. A real `vendor/kinetis/framework` install has no `docs/`
- * directory to find at all; this class is not currently usable outside
- * this monorepo.
+ * package) — that case falls back to fetching the same file straight
+ * from `kinetis-dev/kinetis`'s own `main` branch on GitHub, so this
+ * class works either way with no configuration. The one disclosed
+ * tradeoff of the fallback: it always reads `main`, so it can describe a
+ * slightly newer framework than an older pinned install — the monorepo
+ * itself carries no version tags to fetch an exact match against.
  *
  * Content is served as-is: real MyST/Sphinx source, not rendered HTML or
  * a stripped-down summary — still highly readable markdown, and "exactly
@@ -36,6 +39,13 @@ use Kinetis\Mcp\Exception\DocsResourceException;
 final readonly class KinetisDocsResource
 {
     private const string MIME_TYPE = 'text/markdown';
+    private const string GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/kinetis-dev/kinetis/main/docs/';
+    private const int TIMEOUT_SECONDS = 5;
+
+    public function __construct(
+        private ?string $localDocsRoot = null,
+        private string $remoteBaseUrl = self::GITHUB_RAW_BASE,
+    ) {}
 
     #[McpResource(uri: 'kinetis://docs/index', name: 'index', description: 'Framework overview and feature highlights', mimeType: self::MIME_TYPE)]
     public function index(): string
@@ -243,13 +253,28 @@ final readonly class KinetisDocsResource
 
     private function read(string $slug): string
     {
-        $path = dirname(__DIR__, 4) . "/docs/{$slug}.md";
-        $content = file_get_contents($path);
+        $localPath = ($this->localDocsRoot ?? dirname(__DIR__, 4) . '/docs') . "/{$slug}.md";
+        $localContent = @file_get_contents($localPath);
 
-        if ($content === false) {
-            throw DocsResourceException::missingPage($slug, $path);
+        if ($localContent !== false) {
+            return $localContent;
         }
 
-        return $content;
+        $remoteUrl = $this->remoteBaseUrl . "{$slug}.md";
+
+        // No ignore_errors context option: PHP's http:// stream wrapper
+        // already returns false (not the response body) for a non-2xx
+        // status, the identical signal a missing local file already gives
+        // — confirmed directly against a real server, not assumed from
+        // the docs, so a 404 page can never be mistaken for real content.
+        $remoteContent = @file_get_contents($remoteUrl, false, stream_context_create([
+            'http' => ['timeout' => self::TIMEOUT_SECONDS],
+        ]));
+
+        if ($remoteContent === false) {
+            throw DocsResourceException::missingPage($slug, $localPath, $remoteUrl);
+        }
+
+        return $remoteContent;
     }
 }
