@@ -27,10 +27,15 @@ services:
       MYSQL_PASSWORD: pingpong
       MYSQL_ROOT_PASSWORD: root
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      # -h 127.0.0.1 (TCP), NOT -h localhost (socket): the official mysql
+      # image's init phase runs a temporary, skip-networking server that
+      # answers the socket ping before the real server listens on TCP —
+      # a socket-based healthcheck releases dependents into "connection
+      # refused". Observed for real in CI, not hypothetical.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   redis:
     image: redis:7-alpine

@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.2.1",
+            "version": "1.3.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -50,28 +50,29 @@
                 "vlucas/phpdotenv": "^5.6"
             },
             "suggest": {
-                "ext-uv": "Lets Revolt's event loop use libuv instead of a select()-backed driver limited to 1024 file descriptors."
+                "ext-event": "An OS-native Revolt event-loop backend (epoll), removing select()'s 1024 fd-number ceiling. Needed when the loop watches real sockets (native Postgres driver, Redis, HTTP client) in a FrankenPHP worker process; a MySQL-only deployment does not need it. ext-uv/ext-ev work equally."
             }
         },
         "persistence": {
             "name": "kinetis/persistence",
-            "description": "Request-scoped SQL transaction safety net and connection-pool factory for Kinetis — MySQL and Postgres via amphp/mysql and amphp/postgres.",
+            "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "requires": [
                 "framework"
             ],
             "require": {
-                "amphp/sql": "^2",
-                "amphp/mysql": "^3.1",
-                "amphp/postgres": "^2.2"
+                "revolt/event-loop": "^1.0"
             },
             "requireDevExtra": {
                 "nyholm/psr7": "^1.8"
             },
             "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
+                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the default under PHP-FPM via DB_DRIVER=auto."
             }
         },
         "cache-redis": {
@@ -107,20 +108,14 @@
         },
         "query-builder": {
             "name": "kinetis/query-builder",
-            "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via amphp, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
+            "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via kinetis/persistence's drivers, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "requires": [
-                "framework"
-            ],
-            "require": {
-                "amphp/mysql": "^3.1",
-                "amphp/postgres": "^2.2"
-            },
-            "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
-            }
+                "framework",
+                "persistence"
+            ]
         },
         "auth": {
             "name": "kinetis/auth",
@@ -160,29 +155,21 @@
             "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "bin": [
                 "bin/migrate"
             ],
             "requires": [
                 "framework",
                 "persistence"
-            ],
-            "require": {
-                "amphp/mysql": "^3.1",
-                "amphp/postgres": "^2.2",
-                "amphp/sql": "^2"
-            },
-            "suggest": {
-                "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
-            }
+            ]
         },
         "queue": {
             "name": "kinetis/queue",
             "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "bin": [
                 "bin/queue"
             ],
@@ -193,7 +180,6 @@
             ],
             "require": {
                 "amphp/redis": "^2.0",
-                "amphp/sql": "^2",
                 "psr/container": "^2.0",
                 "psr/log": "^3.0"
             }
@@ -339,7 +325,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
             "namespace": "App\\",
             "testNamespace": null,
-            "version": "1.0.0",
+            "version": "1.1.0",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2",
@@ -354,7 +340,6 @@
                 "queue"
             ],
             "require": {
-                "amphp/mysql": "^3.1",
                 "league/plates": "^3.6",
                 "monolog/monolog": "^3.0",
                 "psr/http-message": "^2.0",

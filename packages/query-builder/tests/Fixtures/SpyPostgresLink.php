@@ -4,68 +4,38 @@ declare(strict_types=1);
 
 namespace Kinetis\QueryBuilder\Tests\Fixtures;
 
-use Amp\Postgres\PostgresLink;
-use Amp\Postgres\PostgresResult;
-use Amp\Postgres\PostgresStatement;
-use Amp\Postgres\PostgresTransaction;
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Persistence\Contract\SqlResult;
+use Kinetis\Persistence\Contract\SqlTransaction;
 use LogicException;
 
 /**
- * The Postgres counterpart of SpyMysqlConnection — see its docblock.
- * quoteLiteral() uses the same plain doubling as
- * FakePostgresLinkWithQuoting, since Query's dispatch tests only need it
- * to behave consistently, not to be the real amphp implementation.
+ * Records every query()/execute() call it receives — exists specifically
+ * to observe *which* of the two Query::run() actually chose, and with
+ * what final SQL, not just to satisfy the constructor's type.
  */
 final class SpyPostgresLink implements PostgresLink
 {
     /** @var list<RecordedCall> */
     public array $calls = [];
 
-    public function quoteLiteral(string $data): string
-    {
-        return "'" . str_replace("'", "''", $data) . "'";
-    }
-
-    public function query(string $sql): PostgresResult
+    public function query(string $sql): SqlResult
     {
         $this->calls[] = new RecordedCall('query', $sql, []);
 
-        return new EmptyPostgresResult();
+        return new EmptySqlResult();
     }
 
-    /**
-     * @param list<mixed> $params
-     */
-    public function execute(string $sql, array $params = []): PostgresResult
+    public function execute(string $sql, array $params = []): SqlResult
     {
-        $this->calls[] = new RecordedCall('execute', $sql, $params);
+        $this->calls[] = new RecordedCall('execute', $sql, \array_values($params));
 
-        return new EmptyPostgresResult();
+        return new EmptySqlResult();
     }
 
-    public function prepare(string $sql): PostgresStatement
-    {
-        throw new LogicException('SpyPostgresLink does not support prepare().');
-    }
-
-    public function beginTransaction(): PostgresTransaction
+    public function beginTransaction(): SqlTransaction
     {
         throw new LogicException('SpyPostgresLink does not support transactions.');
-    }
-
-    public function notify(string $channel, string $payload = ''): PostgresResult
-    {
-        throw new LogicException('SpyPostgresLink does not support notify().');
-    }
-
-    public function quoteIdentifier(string $name): string
-    {
-        throw new LogicException('SpyPostgresLink does not quote identifiers.');
-    }
-
-    public function escapeByteA(string $data): string
-    {
-        throw new LogicException('SpyPostgresLink does not escape byte arrays.');
     }
 
     public function close(): void
@@ -75,14 +45,5 @@ final class SpyPostgresLink implements PostgresLink
     public function isClosed(): bool
     {
         return false;
-    }
-
-    public function onClose(\Closure $onClose): void
-    {
-    }
-
-    public function getLastUsedAt(): int
-    {
-        return 0;
     }
 }

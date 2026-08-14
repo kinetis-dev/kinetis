@@ -47,7 +47,7 @@ use Kinetis\Http\CurrentUserInterface;
 final readonly class DatabaseUserProvider implements UserProviderInterface
 {
     public function __construct(
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
     ) {}
 
     public function findByToken(string $token): ?CurrentUserInterface

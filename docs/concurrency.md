@@ -92,9 +92,9 @@ as hard, only less visibly, defeating `concurrently()`'s whole purpose.
 ## `concurrently()` — running tasks side by side
 
 ```{code-block} php
-use Amp\Mysql\MysqlConnectionPool;
 use Amp\Redis\RedisClient;
 use Kinetis\Http\Attributes\Get;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\QueryBuilder\Query;
 
 use function Kinetis\Async\concurrently;
@@ -102,7 +102,7 @@ use function Kinetis\Async\concurrently;
 final readonly class OrderController
 {
     public function __construct(
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
         private RedisClient $redis,
     ) {}
 
@@ -164,23 +164,21 @@ so both sets of work are passed to the same, single `concurrently()` call
 instead of nesting one inside the other.
 ```
 
-## Composing with AMPHP
+## Composing across clients
 
-`Kinetis\Async`'s database and Redis clients (see {doc}`persistence`) come
-from the AMPHP ecosystem — `amphp/mysql`, `amphp/postgres`, `amphp/redis` —
-chosen specifically because they're Revolt-native, needing no bridging
-between two different event loops. They use `Amp\Future`/coroutines
-internally, a different API shape than `Kinetis\Async`'s own raw
-`Fiber::suspend()`/`EventLoop::onX()` primitives, but both run on the same
-underlying Revolt loop, so a `concurrently()` call can freely mix tasks
-built on either shape and still run every one of them genuinely in
-parallel: a MySQL query, a Postgres query, and a Redis command issued
-together complete in roughly the time the slowest one alone takes, not the
-sum of all three.
+Kinetis's database drivers (see {doc}`persistence`) and the Redis client
+(`amphp/redis`, chosen because it's Revolt-native) all wait by suspending
+the calling Fiber on the same underlying Revolt loop — the native
+Postgres driver through a real socket watcher, the native MySQL driver
+through its poll bridge, Redis through `Amp\Future` internally. Different
+API shapes, one loop: a `concurrently()` call can freely mix tasks built
+on any of them and still run every one genuinely in parallel — a MySQL
+query, a Postgres query, and a Redis command issued together complete in
+roughly the time the slowest one alone takes, not the sum of all three.
 
 ## See also
 
-- {doc}`persistence` — the AMPHP-based database/Redis clients described
+- {doc}`persistence` — the database drivers and Redis client described
   above, and `TransactionGuard`, the request-lifecycle safety net built
-  specifically because AMPHP's connection pools have no concept of
+  specifically because connection pools have no concept of
   Kinetis's `RequestScope`.

@@ -73,7 +73,7 @@ namespace with a real MySQL/Postgres dependency.
 
 - `Pool` — generic connection-pool infrastructure, not used by
   `kinetis/persistence`'s own MySQL/Postgres/Redis integration
-  (`amphp/mysql`, `amphp/postgres`, `amphp/redis` already pool
+  (the persistence drivers and `amphp/redis` already pool
   internally); kept here in case a future hand-rolled protocol client
   needs it.
 - `Exception\PoolExhaustedException`.

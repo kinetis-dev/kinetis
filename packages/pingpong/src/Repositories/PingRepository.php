@@ -6,7 +6,7 @@ namespace App\Repositories;
 
 use App\Dto\ScenarioCounts;
 use App\Events\ActionEvent;
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\QueryBuilder\Query;
 
@@ -15,7 +15,7 @@ final readonly class PingRepository
     private const array SCENARIOS = ['direct', 'queued', 'cron'];
 
     public function __construct(
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
         private EventDispatcher $events,
     ) {}
 

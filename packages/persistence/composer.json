@@ -1,6 +1,6 @@
 {
     "name": "kinetis/persistence",
-    "description": "Request-scoped SQL transaction safety net and connection-pool factory for Kinetis — MySQL and Postgres via amphp/mysql and amphp/postgres.",
+    "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -11,9 +11,7 @@
     "require": {
         "php": "^8.4",
         "kinetis/framework": "dev-main",
-        "amphp/sql": "^2",
-        "amphp/mysql": "^3.1",
-        "amphp/postgres": "^2.2"
+        "revolt/event-loop": "^1.0"
     },
     "require-dev": {
         "infection/infection": "^0.34.2",
@@ -23,7 +21,10 @@
         "vimeo/psalm": "^6.16"
     },
     "suggest": {
-        "ext-pgsql": "Needed by amphp/postgres to actually connect — amphp/mysql is a pure-PHP wire-protocol client and needs no extension, but amphp/postgres wraps a real Postgres client library. pecl-pq is the alternative. Not hard-required here for the same reason amphp/postgres itself doesn't hard-require it: forcing this on MySQL-only or Postgres-less deployments would be overly restrictive."
+        "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+        "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+        "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
+        "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the default under PHP-FPM via DB_DRIVER=auto."
     },
     "autoload": {
         "psr-4": {

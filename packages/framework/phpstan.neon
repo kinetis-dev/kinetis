@@ -4,6 +4,14 @@ parameters:
         - src
         - bin/kinetis
         - public
+    ignoreErrors:
+        # Hydrator's plan cache is memoized *pure derived data* — identical
+        # for a given DTO class on every request for the process lifetime —
+        # so it cannot bleed request state, which is what the rule below
+        # exists to prevent. See Hydrator's class docblock.
+        -
+            identifier: kinetis.noStaticProperties
+            path: src/Validation/Hydrator.php
 
 services:
     -

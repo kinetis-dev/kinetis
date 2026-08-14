@@ -54,26 +54,37 @@ outbound HTTP requests) most real applications actually spend most of
 their time on.
 
 **This number matters more than it might look, and it's easy to
-undertune.** Each worker thread processes exactly one HTTP request at a
-time, start to finish — `frankenphp_handle_request()` is a blocking call
-that only returns once that request's response has been fully sent, then
-picks up the next one. Kinetis's own `Kinetis\Async`/`concurrently()`
-layer (see {doc}`concurrency`) provides real, genuine concurrency *within*
-one request's own work — but it doesn't change this: a thread that's
-mid-request, even one suspended on a Fiber waiting for a database
-response, isn't available to pick up a second, unrelated incoming
-request. Cross-request concurrency is bounded by thread count here, the
-same way it's bounded by PHP-FPM's own worker-process count under that
-adapter — not something Kinetis's async layer can substitute for.
+mistune in both directions.** Each worker thread processes exactly one
+HTTP request at a time, start to finish — `frankenphp_handle_request()`
+is a blocking call that only returns once that request's response has
+been fully sent, then picks up the next one. Kinetis's own
+`Kinetis\Async`/`concurrently()` layer (see {doc}`concurrency`) provides
+real, genuine concurrency *within* one request's own work — but it
+doesn't change this: a thread that's mid-request, even one suspended on
+a Fiber waiting for a database response, isn't available to pick up a
+second, unrelated incoming request. Cross-request concurrency is bounded
+by thread count here, the same way it's bounded by PHP-FPM's own
+worker-process count under that adapter — not something Kinetis's async
+layer can substitute for.
 
-Concretely: an application doing real database/API work per request
-should size `num` well above the CPU-based default — closer to your
-expected concurrent request volume than to your core count. Undersizing
-it doesn't produce errors; it produces queueing that looks, from the
-outside, exactly like the application itself being slow. If most of your
-routes finish quickly with little I/O, the default is probably fine as a
-starting point — measure under realistic load rather than guessing
-either way.
+Which direction to tune depends on what your requests actually wait on:
+
+- **Requests dominated by genuine waiting** — slow queries, remote APIs,
+  anything where the thread sits idle for tens of milliseconds — want
+  `num` well above the core count, closer to expected concurrent request
+  volume. Undersizing here doesn't produce errors; it produces queueing
+  that looks, from the outside, exactly like the application being slow.
+- **Requests dominated by CPU** — the common case with
+  `kinetis/persistence`'s native drivers, where sub-millisecond queries
+  leave little genuine wait time per request — want `num` **at or near
+  the core count**, and oversubscription measurably hurts: on a 2-CPU
+  host under saturating load, 1/2/4/8 threads measured 305/306/199/206
+  req/s on a 20-query fan-out route. Every thread beyond the core count
+  is pure context-switch overhead once threads are CPU-bound.
+
+Either way: measure under realistic load rather than guessing — the two
+regimes want opposite corrections, and which one you're in is a property
+of your routes, not of the framework.
 
 The same "each worker thread is its own independent execution context"
 fact has a second, sharper consequence if you're using
@@ -87,34 +98,31 @@ mode" section.
 ### The default event-loop driver's file descriptor limit
 
 Kinetis's concurrency primitives (see {doc}`concurrency`) run on
-Revolt's event loop. Without a faster driver extension installed,
-Revolt falls back to a driver backed by the C `select()` system call,
-which can only track file descriptors numbered up to 1024 — a fixed
-ceiling, not something raised by configuration.
+Revolt's event loop. Without a driver extension installed, Revolt falls
+back to a driver backed by the C `select()` system call, which can only
+track file descriptors *numbered* up to 1024 — a fixed ceiling, not
+something raised by configuration.
 
-Every worker thread shares one process-wide file descriptor table, so
-file descriptors from client connections, database connections, and
-anything else open across *all* worker threads combined count toward
-that same limit. A worker pool of any meaningful size under real
-sustained concurrency can reach it.
+Whether that ceiling can bite depends on what the loop actually
+watches. The native MySQL driver watches no file descriptors at all
+(mysqli exposes none; it bridges via polling), so a MySQL-only
+deployment never hits this. The native Postgres driver, the Redis
+client, and the HTTP client all register real socket watchers — and
+under FrankenPHP the embedded Go server's client sockets share the same
+process-wide fd table, pushing fd *numbers* past 1024 under load even
+with few PHP worker threads. Any deployment in that second group should
+install one of Revolt's supported extensions — `ext-uv`, `ext-ev`, or
+`ext-event` — each backed by an OS-native mechanism (epoll on Linux)
+with no fd-number ceiling. Revolt selects whichever is available
+automatically, with no application code to change.
 
-Installing one of Revolt's supported extensions — `ext-uv`, `ext-ev`,
-or `ext-event` — removes the limit entirely; each uses an OS-native
-mechanism (epoll on Linux) with no fixed file-descriptor ceiling.
-Revolt selects whichever one is available automatically, with no
-application code to change. `ext-uv` is the most commonly available:
-
-```{code-block} dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends libuv1-dev $PHPIZE_DEPS \
-    && pecl install uv-0.3.0 \
-    && docker-php-ext-enable uv \
-    && apt-get purge -y --auto-remove $PHPIZE_DEPS \
-    && rm -rf /var/lib/apt/lists/*
-```
-
-`uv-0.3.0` is currently the only released version of the extension, and
-PECL refuses a non-stable package by default — pin it explicitly rather
-than running a bare `pecl install uv`.
+This is a correctness concern, not a performance one — measured
+throughput is identical across drivers for typical workloads; what the
+extensions buy is not being at the mercy of fd numbering. `ext-event`
+has the smoothest install story on current PECL (`pecl install event`);
+`ext-uv` works too but its only release must be pinned explicitly
+(`pecl install uv-0.3.0` — PECL refuses non-stable packages by
+default).
 
 ## Running under PHP-FPM
 

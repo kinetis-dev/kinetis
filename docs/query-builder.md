@@ -8,8 +8,8 @@ composer require kinetis/query-builder
 ```
 ````
 
-A thin, parameterized SQL query builder over `amphp/mysql`/`amphp/postgres`
-— not an ORM. No relationships, no migrations, no change-tracking, no
+A thin, parameterized SQL query builder over {doc}`persistence`'s
+MySQL/Postgres drivers — not an ORM. No relationships, no migrations, no change-tracking, no
 `save()`-on-a-model. It builds parameterized SQL and maps result rows into
 typed DTOs via {doc}`routing-validation`'s `Hydrator` — the same mechanism
 that hydrates a `#[Body]` request DTO.
@@ -32,7 +32,7 @@ $orders = new Query($db)
 
 ## MySQL and Postgres
 
-`Query` works with either backend through the same shared `Amp\Sql\SqlLink`
+`Query` works with either backend through the same shared `Kinetis\Persistence\Contract\SqlLink`
 family both drivers implement, auto-detected from the concrete connection
 you pass in:
 
@@ -68,7 +68,7 @@ identifier containing a dot.
 ## Works inside `TransactionGuard`
 
 `Query` accepts a plain connection pool or an in-flight
-`Amp\Sql\SqlTransaction` — both satisfy the same interface:
+`Kinetis\Persistence\Contract\SqlTransaction` — both satisfy the same interface:
 
 ```{code-block} php
 $transactions->transaction($db, function ($db) use ($data) {

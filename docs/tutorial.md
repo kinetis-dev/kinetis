@@ -270,8 +270,8 @@ A migration for the table every scenario writes to:
 
 declare(strict_types=1);
 
-use Amp\Mysql\MysqlLink;
-use Amp\Postgres\PostgresLink;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Migrations\Migration;
 
 return new class implements Migration
@@ -307,13 +307,13 @@ declare(strict_types=1);
 
 namespace App\Repositories;
 
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\QueryBuilder\Query;
 
 final readonly class PingRepository
 {
     public function __construct(
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
     ) {}
 
     public function create(string $scenario): int
@@ -337,7 +337,7 @@ final readonly class PingRepository
 }
 ```
 
-`PingRepository` needs a real `MysqlConnectionPool` — something has to
+`PingRepository` needs a real `MysqlLink` client — something has to
 build one and register it before the container locks its bindings. An
 optional `bootstrap.php` at the project root is the place for that:
 
@@ -348,13 +348,13 @@ optional `bootstrap.php` at the project root is the place for that:
 
 declare(strict_types=1);
 
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Persistence\SqlConnectionFactory;
 
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlConnectionPool::class, SqlConnectionFactory::fromConfig($config));
+    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 };
 ```
 
@@ -545,7 +545,7 @@ Register the queue in `bootstrap.php`:
 
 declare(strict_types=1);
 
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Persistence\SqlConnectionFactory;
@@ -556,7 +556,7 @@ use Kinetis\SimpleCache\RedisSimpleCache;
 use function Amp\Redis\createRedisClient;
 
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlConnectionPool::class, SqlConnectionFactory::fromConfig($config));
+    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 
     $redisConfig = RedisSimpleCache::buildRedisConfig($config);
 
@@ -867,7 +867,7 @@ above:
 declare(strict_types=1);
 
 use App\Services\SoketiPublisher;
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Persistence\SqlConnectionFactory;
@@ -878,7 +878,7 @@ use Kinetis\SimpleCache\RedisSimpleCache;
 use function Amp\Redis\createRedisClient;
 
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlConnectionPool::class, SqlConnectionFactory::fromConfig($config));
+    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
 
     $redisConfig = RedisSimpleCache::buildRedisConfig($config);
 
@@ -929,14 +929,14 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\Events\ActionEvent;
-use Amp\Mysql\MysqlConnectionPool;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\QueryBuilder\Query;
 
 final readonly class PingRepository
 {
     public function __construct(
-        private MysqlConnectionPool $db,
+        private MysqlLink $db,
         private EventDispatcher $events,
     ) {}
 

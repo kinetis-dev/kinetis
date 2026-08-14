@@ -1,0 +1,49 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kinetis\QueryBuilder\Tests\Fixtures;
+
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\SqlResult;
+use Kinetis\Persistence\Contract\SqlTransaction;
+use LogicException;
+
+/**
+ * Records every query()/execute() call it receives — exists specifically
+ * to observe *which* of the two Query::run() actually chose, and with
+ * what final SQL, not just to satisfy the constructor's type.
+ */
+final class SpyMysqlLink implements MysqlLink
+{
+    /** @var list<RecordedCall> */
+    public array $calls = [];
+
+    public function query(string $sql): SqlResult
+    {
+        $this->calls[] = new RecordedCall('query', $sql, []);
+
+        return new EmptySqlResult();
+    }
+
+    public function execute(string $sql, array $params = []): SqlResult
+    {
+        $this->calls[] = new RecordedCall('execute', $sql, \array_values($params));
+
+        return new EmptySqlResult();
+    }
+
+    public function beginTransaction(): SqlTransaction
+    {
+        throw new LogicException('SpyMysqlLink does not support transactions.');
+    }
+
+    public function close(): void
+    {
+    }
+
+    public function isClosed(): bool
+    {
+        return false;
+    }
+}

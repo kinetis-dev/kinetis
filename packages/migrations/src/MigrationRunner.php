@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations;
 
-use Amp\Mysql\MysqlLink;
-use Amp\Postgres\PostgresLink;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Migrations\Exception\MigrationFileMissingException;
 
 /**
