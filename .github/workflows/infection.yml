@@ -3,7 +3,13 @@ name: Infection
 on:
   push:
     branches: [main]
+    paths:
+      - 'packages/**'
+      - '.github/workflows/infection.yml'
   pull_request:
+    paths:
+      - 'packages/**'
+      - '.github/workflows/infection.yml'
 
 jobs:
   mutation-test:

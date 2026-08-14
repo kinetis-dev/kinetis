@@ -11,7 +11,38 @@ permissions:
   actions: read
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.filter.outputs.packages }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      # dorny/paths-filter needs a real checkout for a push trigger (it
+      # diffs against the previous commit on the branch via plain git
+      # commands there, unlike pull_request, which uses the GitHub API
+      # instead) — fetch-depth: 0 so that previous commit is always
+      # present, even for a multi-commit push.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            packages:
+              - 'packages/**'
+              - 'tools/**'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - '.github/workflows/ci.yml'
+
   test:
+    needs: changes
+    if: needs.changes.outputs.packages == 'true'
     name: ${{ matrix.package.name }} (PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -84,6 +115,8 @@ jobs:
           category: psalm-${{ matrix.package.name }}
 
   docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
     name: docs build
     runs-on: ubuntu-latest
     steps:

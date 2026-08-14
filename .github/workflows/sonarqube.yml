@@ -3,8 +3,16 @@ name: SonarQube Cloud
 on:
   push:
     branches: [main]
+    paths:
+      - 'packages/**'
+      - 'sonar-project.properties'
+      - '.github/workflows/sonarqube.yml'
   pull_request:
     types: [opened, synchronize, reopened]
+    paths:
+      - 'packages/**'
+      - 'sonar-project.properties'
+      - '.github/workflows/sonarqube.yml'
 
 jobs:
   sonarqube:

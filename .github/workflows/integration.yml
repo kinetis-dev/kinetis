@@ -3,7 +3,13 @@ name: Integration
 on:
   push:
     branches: [main]
+    paths:
+      - 'packages/**'
+      - '.github/workflows/integration.yml'
   pull_request:
+    paths:
+      - 'packages/**'
+      - '.github/workflows/integration.yml'
 
 jobs:
   query-builder:
