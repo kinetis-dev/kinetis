@@ -9,7 +9,7 @@
 set -euo pipefail
 
 INSTALL_DIR="${KINETIS_DOCS_MCP_DIR:-$HOME/.kinetis-docs-mcp}"
-SERVER_NAME="kinetis-docs"
+SERVER_NAME="kinetis"
 
 echo "Checking prerequisites..."
 
