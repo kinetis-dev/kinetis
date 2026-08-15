@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/storage-s3"><img src="https://img.shields.io/packagist/v/kinetis/storage-s3" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/storage-s3"><img src="https://img.shields.io/packagist/v/kinetis/storage-s3?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/storage-s3"><img src="https://img.shields.io/packagist/dt/kinetis/storage-s3" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/storage-s3"><img src="https://img.shields.io/packagist/php-v/kinetis/storage-s3" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/storage-s3"><img src="https://img.shields.io/packagist/l/kinetis/storage-s3" alt="License"></a>

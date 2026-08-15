@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/v/kinetis/bref-adapter" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/v/kinetis/bref-adapter?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/dt/kinetis/bref-adapter" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/php-v/kinetis/bref-adapter" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/l/kinetis/bref-adapter" alt="License"></a>

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/v/kinetis/aws-sigv4" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/v/kinetis/aws-sigv4?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/dt/kinetis/aws-sigv4" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/php-v/kinetis/aws-sigv4" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/l/kinetis/aws-sigv4" alt="License"></a>

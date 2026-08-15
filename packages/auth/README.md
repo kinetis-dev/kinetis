@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/v/kinetis/auth" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/v/kinetis/auth?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/dt/kinetis/auth" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/php-v/kinetis/auth" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/l/kinetis/auth" alt="License"></a>

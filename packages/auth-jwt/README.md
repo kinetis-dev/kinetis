@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/v/kinetis/auth-jwt" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/v/kinetis/auth-jwt?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/dt/kinetis/auth-jwt" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/php-v/kinetis/auth-jwt" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/l/kinetis/auth-jwt" alt="License"></a>

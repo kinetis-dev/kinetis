@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/v/kinetis/pingpong" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/v/kinetis/pingpong?label=version" alt="Packagist Version"></a>
   <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/dt/kinetis/pingpong" alt="Packagist Downloads"></a>
   <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/php-v/kinetis/pingpong" alt="PHP Version"></a>
   <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/l/kinetis/pingpong" alt="License"></a>
