@@ -193,3 +193,5 @@ $adapter = new Kinetis\Runtime\Adapters\FpmAdapter();
 - {doc}`caching` — the production build step, and why it matters most
   under PHP-FPM.
 - {doc}`appendix` — the exact internals of each built-in adapter.
+- {doc}`performance-tuning` — the worker-threads x connections
+  budget, what to observe under load, and tuning by workload shape.

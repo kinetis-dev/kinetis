@@ -283,6 +283,19 @@ pool instead, adding latency to that one request — a far softer failure
 mode than a rejected connection that can take the whole worker thread
 down for good.
 
+```{warning}
+**During an open transaction, run every statement through the
+transaction object — never through the client.** The two driver
+families give client-level calls opposite semantics there: a PDO
+driver is a single connection, so a client `execute()` while a
+transaction is open silently *joins* it (and rolls back with it),
+while an async driver runs the same call on a *different* pooled
+connection, entirely outside the transaction. Code that mixes the two
+behaves differently between runtimes under `DB_DRIVER=auto`. The
+transaction object pins one connection and is the only portable way to
+address it.
+```
+
 ## `TransactionGuard` — the request-scoped safety net
 
 `Kernel` degrades gracefully when `kinetis/persistence` isn't installed
@@ -525,3 +538,5 @@ one Fiber-driven event loop run inside another isn't supported.
 - {doc}`query-builder` — a thin, parameterized SQL builder on top of the
   same MySQL/Postgres clients, composing directly with `TransactionGuard`.
   A separate `kinetis/query-builder` package, not core.
+- {doc}`performance-tuning` — the worker-threads x connections
+  budget, what to observe under load, and tuning by workload shape.

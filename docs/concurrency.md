@@ -190,3 +190,5 @@ roughly the time the slowest one alone takes, not the sum of all three.
   above, and `TransactionGuard`, the request-lifecycle safety net built
   specifically because connection pools have no concept of
   Kinetis's `RequestScope`.
+- {doc}`performance-tuning` — the worker-threads x connections
+  budget, what to observe under load, and tuning by workload shape.
