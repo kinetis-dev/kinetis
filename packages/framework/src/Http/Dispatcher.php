@@ -48,8 +48,8 @@ use ReflectionType;
  * A #[Query]/path parameter's own Constraint attributes (#[GreaterThan],
  * #[In], ...) are captured in the plan and evaluated in
  * resolveScalarFromPlan(), after the declared-type-mismatch check and
- * cast — the same two-stage shape Hydrator already uses for a #[Body]
- * DTO field. Previously silently ignored entirely outside #[Body].
+ * cast — the same two-stage shape Hydrator uses for a #[Body] DTO
+ * field, applied uniformly to every parameter source.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
  * @phpstan-type HttpBindingPlan array{
@@ -355,12 +355,11 @@ final class Dispatcher
      * Applies the identical declared-type-mismatch check
      * Hydrator::typeMismatchMessage() runs for #[Body] DTO fields, before
      * casting — a #[Query]/path value with the wrong shape (an array for a
-     * scalar param, a non-numeric string for an int/float one, ...) is now
-     * a 422 instead of a silently wrong cast (e.g. "not-a-number" -> 0).
-     * Once cast, the parameter's own Constraint attributes run against the
+     * scalar param, a non-numeric string for an int/float one, ...) is a
+     * 422, never a silently wrong cast (e.g. "not-a-number" -> 0). Once
+     * cast, the parameter's own Constraint attributes run against the
      * cast value — the same #[GreaterThan]/#[In]/etc. attributes that
-     * already work on a #[Body] DTO field, previously a silent no-op
-     * anywhere else.
+     * work on a #[Body] DTO field, honored identically here.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException

@@ -652,7 +652,7 @@ schema too — `UserResponse` (or `?UserResponse`, or a union like
 `ResponseInterface|array` where `UserResponse` is one member) produces a
 `content` entry describing it; a bare `array`/`ResponseInterface`-only
 return, with no shape reflection can recover, leaves the response
-description-only, exactly as before this existed.
+description-only.
 
 A [`#[ListOf]` field](#collections-of-nested-dtos) becomes a `{"type":
 "array", "items": ...}` schema, with `items` describing the element class

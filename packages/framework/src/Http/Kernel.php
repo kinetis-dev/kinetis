@@ -291,9 +291,9 @@ final class Kernel
     }
 
     /**
-     * The terminal handler at the end of $openApiPipeline — the exact
-     * /openapi.json and /docs logic that used to live directly in
-     * dispatchCore(), moved here unchanged so #[AsOpenApiMiddleware]/
+     * The terminal handler at the end of $openApiPipeline — the
+     * /openapi.json and /docs logic lives here, rather than directly in
+     * dispatchCore(), so #[AsOpenApiMiddleware]/
      * AppScope::openApiMiddleware() can wrap it.
      */
     private function serveOpenApi(ServerRequestInterface $request): ResponseInterface

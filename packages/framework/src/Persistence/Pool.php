@@ -19,9 +19,8 @@ use Closure;
  * Redis client. Kept as generic infrastructure for a future hand-rolled
  * protocol client that doesn't already pool itself; the real MySQL/
  * Postgres/Redis integrations (`kinetis/persistence`, `kinetis/cache-redis`)
- * don't use it, since their underlying AMPHP clients already pool
- * internally — wrapping an already-pooled client in another pool would
- * be pooling a pool.
+ * don't use it, since their clients pool internally — wrapping an
+ * already-pooled client in another pool would be pooling a pool.
  *
  * @template T of object
  */

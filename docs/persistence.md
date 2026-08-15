@@ -167,11 +167,10 @@ native protocol cost.
 
 The PDO drivers run with *native* (non-emulated) prepares, where every
 `prepare()` is its own server round trip — so `execute()` memoizes
-prepared statements per SQL string for the connection's lifetime (since
-persistence 1.3.0). A loop issuing the same parameterized statement N
-times costs N+1 round trips instead of 2N; against a sub-millisecond
-database that's the difference between paying the network once or twice
-per query. The cache holds at most 256 statements (workloads that
+prepared statements per SQL string for the connection's lifetime. A
+loop issuing the same parameterized statement N times costs N+1 round
+trips instead of 2N; against a sub-millisecond database that's the
+difference between paying the network once or twice per query. The cache holds at most 256 statements (workloads that
 interpolate values into their SQL text instead of binding reset it on
 overflow rather than growing it forever) and is dropped with the
 connection on `close()`.

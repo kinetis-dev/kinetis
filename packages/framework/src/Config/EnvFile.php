@@ -9,9 +9,8 @@ use Dotenv\Dotenv;
 /**
  * Loads a `.env` file at the project root into the real process
  * environment — `putenv()`/`$_ENV`/`$_SERVER`, via `vlucas/phpdotenv`
- * rather than a hand-rolled parser (correctly handling quoting, comments,
- * multiline values, and variable interpolation is a solved problem, the
- * same reasoning behind adopting AMPHP over a hand-rolled wire protocol).
+ * rather than a hand-rolled parser — correctly handling quoting, comments,
+ * multiline values, and variable interpolation is a solved problem.
  *
  * Unconditional and environment-agnostic on purpose — no `AppEnvironment`
  * check gates this. Real deployment environment variables (Docker,

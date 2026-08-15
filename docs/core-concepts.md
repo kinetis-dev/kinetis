@@ -17,9 +17,9 @@ high-throughput services, it adds up.
 **Persistent workers — FrankenPHP's worker mode, Swoole, RoadRunner — trade
 that cost away by keeping one PHP process alive across many requests.**
 Bootstrap happens once. The interpreter stays warm. And a whole category of
-bugs that used to be impossible — because the process died before they
-could matter — becomes possible for the first time: **state leaking from
-one request into the next.**
+bugs impossible under boot-and-die — where the process died before they
+could matter — becomes possible: **state leaking from one request into
+the next.**
 
 ## Staying warm isn't the same as staying busy
 

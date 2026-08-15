@@ -207,7 +207,7 @@ final class AppScope implements ContainerInterface
             $this->instance(ListenerInvokerInterface::class, new SynchronousListenerInvoker());
         }
 
-        // Closes a real, previously-documented-but-unfixed trap: without
+        // Closes a real trap: without
         // this, resolving AppScope::class through itself doesn't fail
         // loudly — it silently autowires a brand-new, disconnected, unbooted
         // AppScope instead (class_exists('Kinetis\Container\AppScope') is

@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.4.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -58,7 +58,7 @@
             "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework"
             ],
@@ -111,7 +111,7 @@
             "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via kinetis/persistence's drivers, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "requires": [
                 "framework",
                 "persistence"
@@ -169,7 +169,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "bin": [
                 "bin/queue"
             ],

@@ -113,13 +113,19 @@ final readonly class KinetisDocsResource
         return $this->read('runtime-adapters');
     }
 
+    #[McpResource(uri: 'kinetis://docs/performance-tuning', name: 'performance-tuning', description: 'Capacity tuning: the worker-threads x maxConnections budget, what to observe under load, and tuning by workload shape', mimeType: self::MIME_TYPE)]
+    public function performanceTuning(): string
+    {
+        return $this->read('performance-tuning');
+    }
+
     #[McpResource(uri: 'kinetis://docs/concurrency', name: 'concurrency', description: 'Fiber-based concurrency over Revolt: concurrently(), Async\Socket, and Async\Timer', mimeType: self::MIME_TYPE)]
     public function concurrency(): string
     {
         return $this->read('concurrency');
     }
 
-    #[McpResource(uri: 'kinetis://docs/persistence', name: 'persistence', description: 'MySQL/Postgres/Redis clients over AMPHP, and TransactionGuard\'s commit/rollback protocol', mimeType: self::MIME_TYPE)]
+    #[McpResource(uri: 'kinetis://docs/persistence', name: 'persistence', description: 'The native MySQL/Postgres drivers, the Redis client, and TransactionGuard\'s commit/rollback protocol', mimeType: self::MIME_TYPE)]
     public function persistence(): string
     {
         return $this->read('persistence');

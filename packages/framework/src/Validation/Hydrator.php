@@ -40,8 +40,7 @@ use ReflectionType;
  * parameter already gives a non-array value — but the field's own value
  * being a scalar instead of an array at all is a validation error for the
  * same reason a scalar is rejected for a single nested DTO above. `array`
- * alone (no #[ListOf]) is untouched — it still passes through as a raw
- * array, exactly as before this existed.
+ * alone (no #[ListOf]) passes through as a raw array.
  *
  * Every builtin-typed constructor parameter (`string`/`int`/`float`/`bool`)
  * is type-checked *before* it's cast, not after: a `string` field rejects
@@ -501,10 +500,9 @@ final class Hydrator
     /**
      * The declared-type-mismatch check that runs before castScalar() casts
      * anything — see the class docblock for the policy this implements and
-     * why. `null` is exempt (unchanged from before this check existed); a
-     * missing value is handled by hydrateFromPlan()'s own "is required"
-     * check, and an explicitly-null value for a non-nullable parameter by
-     * its "must not be null." check.
+     * why. `null` is exempt: a missing value is handled by
+     * hydrateFromPlan()'s own "is required" check, and an explicitly-null
+     * value for a non-nullable parameter by its "must not be null." check.
      *
      * Public specifically so Kinetis\Http\Dispatcher can apply the identical
      * policy to #[Query]/path parameters — Decision 1 of the fix pass this

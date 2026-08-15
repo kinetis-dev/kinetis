@@ -235,8 +235,8 @@ final class OpenApiGenerator
      * schema-producing class, since a raw ResponseInterface passthrough or
      * a bare array return has no shape reflection alone can recover. A
      * method with no declared return type, or one that resolves to nothing
-     * schema-producing, gets no `content` key at all — exactly today's
-     * behavior before this existed.
+     * schema-producing, gets no `content` key at all — the response stays
+     * description-only.
      *
      * @return array<string, mixed>|null
      */
@@ -299,9 +299,8 @@ final class OpenApiGenerator
      * routes' different item types into one. Only the item class goes
      * through schemaRefFor(), so it's still deduped/$ref'd normally.
      * Returns null when the method carries no #[PaginatedItem] at all —
-     * the caller then falls back to schemaRefFor()'s existing bare
-     * {type: object} behavior for `data`, unchanged from before this
-     * attribute existed.
+     * the caller then falls back to schemaRefFor()'s bare {type: object}
+     * behavior for `data`.
      *
      * @param class-string $paginatorClass
      * @return array<string, mixed>|null

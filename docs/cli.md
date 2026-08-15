@@ -179,7 +179,7 @@ one automatically on the first invocation if none exists yet.
 ## Restricting discovery
 
 Once you're relying on the compiled cache in production, scanning the
-whole application on every request is no longer the relevant cost — the
+whole application on every request is not the relevant cost — the
 scan only ever runs live in development, or once to build the cache.
 Even so, for a large enough codebase, that development-time scan can be
 worth bounding. `COMMAND_DISCOVERY_PATHS` (and its siblings

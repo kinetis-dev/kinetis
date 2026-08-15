@@ -130,11 +130,11 @@ terminating. That reuse isn't a micro-optimization: constructing a
 `Fiber` allocates a whole C stack and destroying it frees one, and under
 FrankenPHP's threaded worker mode those `mmap`/`munmap` cycles serialize
 every worker thread in the process against the kernel's address-space
-lock. On an 8-vCPU host, a 20-query fan-out route was measured at
-roughly *3× higher throughput* from this one change — with identical
-task code. The pool is per PHP thread, holds only idle Fibers (a task
-suspended on I/O keeps its Fiber to itself until it finishes), and none
-of it is visible in the API: you write plain closures, exactly as above.
+lock — on an 8-vCPU host, resident reuse measures roughly *3× the
+throughput* of per-task construction on a 20-query fan-out route. The
+pool is per PHP thread, holds only idle Fibers (a task suspended on I/O
+keeps its Fiber to itself until it finishes), and none of it is visible
+in the API: you write plain closures, exactly as above.
 
 While tasks are in flight, the caller waits on a Revolt suspension that
 the last task to finish resumes — the event loop drives every suspended
@@ -165,14 +165,11 @@ because they genuinely overlap rather than merely appearing to.
 ```{note}
 **Nesting is supported.** A task may itself call `concurrently()` — the
 inner call suspends only its own task's Fiber while the inner tasks run,
-and everything else keeps making progress. (Before framework 1.4.0 this
-threw "the event loop is already running": the old implementation drove
-its tasks with a blanket `EventLoop::run()`, which Revolt refuses to
-re-enter. The suspension-based wait removed that restriction.) Prefer a
-single flat `concurrently()` call when the work is naturally one batch —
-a flat list is easier to reason about and slightly cheaper — but
-nesting that falls out of composition, such as a helper that fans out
-internally being called from a task, is correct and safe.
+and everything else keeps making progress. Prefer a single flat
+`concurrently()` call when the work is naturally one batch — a flat
+list is easier to reason about and slightly cheaper — but nesting that
+falls out of composition, such as a helper that fans out internally
+being called from a task, is correct and safe.
 ```
 
 ## Composing across clients

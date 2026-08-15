@@ -77,13 +77,13 @@ Which direction to tune depends on what your requests actually wait on:
 - **Requests mixing CPU with fast queries** — the common case with
   `kinetis/persistence`'s native drivers, where each query is
   sub-millisecond but a request still spends real wall time suspended
-  across its fan-out — want `num` **moderately above the core count**;
-  around 2–3× is where measurement has landed. On an 8-vCPU host
-  against a sub-millisecond database, moving from 8 to 20 threads
-  improved *every* database-touching route (a 20-query fan-out by
-  ~10%, single-query routes by ~9%) with no loss on CPU-pure routes.
-  Go far beyond that and two costs take over: context-switch overhead,
-  and — usually first — the per-thread database pool budget below.
+  across its fan-out — want `num` **moderately above the core count**,
+  around 2–3×. On an 8-vCPU host against a sub-millisecond database,
+  20 threads outperform 8 on every database-touching route (a
+  20-query fan-out by ~10%, single-query routes by ~9%) with no loss
+  on CPU-pure routes. Go far beyond that and two costs take over:
+  context-switch overhead, and — usually first — the per-thread
+  database pool budget below.
 
 Either way: measure under realistic load rather than guessing — the two
 regimes want opposite corrections, and which one you're in is a property
