@@ -256,6 +256,18 @@ connection, trivially within any cap. The connection-scoped
 deployment tunes pool sizing without editing bootstrap code — with an
 explicit `$poolOptions` value winning over the key when both are set.
 
+`warmConnections` opens that many connections at construction instead
+of on first use (clamped to `maxConnections`); the connection-scoped
+`DB_WARM_CONNECTIONS` key does the same from the environment, with the
+same explicit-value-wins precedence. Every driver also exposes the
+underlying call directly — `warmUp(?int $connections = null)`, where
+`null` warms the whole pool. Warming makes a wrong database
+configuration fail at boot instead of on the first query, and under
+FrankenPHP worker mode it is **load-bearing for the native MySQL
+driver**, not just a latency optimization — see
+{doc}`performance-tuning`'s "mysqli's poll limit" for why boot-time
+connecting is what keeps that driver's sockets pollable at all.
+
 ### Sizing `maxConnections` under worker mode
 
 Under `FpmAdapter`, `auto` selects the PDO driver — one connection per

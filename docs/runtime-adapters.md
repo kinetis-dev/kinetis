@@ -109,7 +109,10 @@ something raised by configuration.
 Whether that ceiling can bite depends on what the loop actually
 watches. The native MySQL driver watches no file descriptors at all
 (mysqli exposes none; it bridges via polling), so a MySQL-only
-deployment never hits this. The native Postgres driver, the Redis
+deployment never hits *this* ceiling — though mysqli's own polling
+carries a separate select()-based limit that no loop extension lifts;
+see {doc}`performance-tuning`'s "mysqli's poll limit" for the
+constraint and the boot-time pool warming that addresses it. The native Postgres driver, the Redis
 client, and the HTTP client all register real socket watchers — and
 under FrankenPHP the embedded Go server's client sockets share the same
 process-wide fd table, pushing fd *numbers* past 1024 under load even

@@ -47,8 +47,18 @@ Two subtler ceilings sit below `max_connections`:
   1024. This is separate from — and not fixed by — the Revolt
   event-loop driver extensions described in {doc}`runtime-adapters`;
   it binds on the process-wide fd table, which under FrankenPHP also
-  holds the Go server's own client sockets. Keeping the connection
-  product in the low hundreds keeps you clear of it.
+  holds the Go server's own client sockets. What decides whether a
+  connection is pollable is its descriptor *number at connect time*: a
+  pool connecting lazily under load opens sockets numbered after every
+  client socket the server already holds, so even a within-budget pool
+  can land past the ceiling mid-burst — the failure arrives as
+  `mysqli_poll()` warnings and failed queries under concurrency, never
+  at low load. Warm the pool at worker boot instead
+  (`DB_WARM_CONNECTIONS`, or `warmConnections` in `$poolOptions` — see
+  {doc}`persistence`): connections opened before traffic exists claim
+  low numbers and keep them for the process's lifetime. Keep
+  `worker threads × maxConnections` under ~1000 so a fully warmed pool
+  fits below the ceiling at all.
 - **Prepared-statement count (MySQL).** The PDO drivers cache
   prepared statements per connection (see {doc}`persistence`), and
   MySQL caps server-side statements globally via

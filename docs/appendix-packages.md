@@ -16,7 +16,7 @@ Separate Composer package, not part of `kinetis/framework` core — extracted
 from it so core itself has no direct MySQL/Postgres dependency.
 
 - `Kinetis\Persistence\TransactionGuard` — request-scoped SQL transaction safety net. `transaction()` (commit on success, rollback on throw) and `beginTransaction()`/`rollbackDangling()` for the manual case. `Kinetis\Http\Kernel` and `bin/kinetis` both register `rollbackDangling()` as a dispose hook whenever this class is available (`class_exists()`-gated), not unconditionally — an application with no database can skip this package entirely.
-- `Kinetis\Persistence\SqlConnectionFactory::fromConfig(Config $config, string $connection = 'default'): Contract\MysqlLink|Contract\PostgresLink` — builds a runtime-matched driver client from `DB_*` (or `DB_{NAME}_*` for a named connection); shared by `kinetis/migrations`' `bin/migrate` and `kinetis/queue`'s `bin/queue`.
+- `Kinetis\Persistence\SqlConnectionFactory::fromConfig(Config $config, string $connection = 'default'): Contract\MysqlLink|Contract\PostgresLink` — builds a runtime-matched driver client from `DB_*` (or `DB_{NAME}_*` for a named connection); shared by `kinetis/migrations`' `bin/migrate` and `kinetis/queue`'s `bin/queue`. `$poolOptions['warmConnections']`/`DB_WARM_CONNECTIONS` opens connections at construction via each driver's `warmUp(?int $connections = null)` — load-bearing for the mysqli driver under worker mode (see {doc}`performance-tuning`).
 - Depends on `kinetis/framework` (via a `path` repository to this monorepo's root) and `revolt/event-loop`; the drivers use `ext-mysqli`/`ext-pgsql`/PDO, suggested rather than required. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
 ## `packages/cache-redis` (`kinetis/cache-redis`)
