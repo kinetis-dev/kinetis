@@ -6,6 +6,8 @@ namespace Kinetis\Tests\Console;
 
 use Kinetis\Console\CommandRegistry;
 use Kinetis\Console\Exception\InvalidCommandException;
+use Kinetis\Console\BuildCommand;
+use Kinetis\Tests\Console\Fixtures\CacheWarmupController;
 use Kinetis\Tests\Console\Fixtures\DuplicateCommandNameA;
 use Kinetis\Tests\Console\Fixtures\DuplicateCommandNameB;
 use Kinetis\Tests\Console\Fixtures\InvalidCommandTooManyParams;
@@ -92,5 +94,41 @@ final class CommandRegistryTest extends TestCase
         $reloaded = CommandRegistry::fromArray($registry->toArray());
 
         self::assertEquals($registry->commands(), $reloaded->commands());
+    }
+
+    public function test_commands_boot_the_application_by_default(): void
+    {
+        $registry = new CommandRegistry();
+        $registry->register(MaintenanceController::class);
+
+        self::assertTrue($registry->findCommand('app:no-args')?->bootstrap);
+    }
+
+    public function test_a_command_can_opt_out_of_application_bootstrap(): void
+    {
+        $registry = new CommandRegistry();
+        $registry->register(CacheWarmupController::class);
+
+        self::assertFalse($registry->findCommand('app:warmup')?->bootstrap);
+    }
+
+    public function test_bootstrap_opt_out_survives_the_cache_round_trip(): void
+    {
+        $registry = new CommandRegistry();
+        $registry->register(CacheWarmupController::class);
+        $registry->register(MaintenanceController::class);
+
+        $reloaded = CommandRegistry::fromArray($registry->toArray());
+
+        self::assertFalse($reloaded->findCommand('app:warmup')?->bootstrap);
+        self::assertTrue($reloaded->findCommand('app:no-args')?->bootstrap);
+    }
+
+    public function test_build_runs_without_application_bootstrap(): void
+    {
+        $registry = new CommandRegistry();
+        $registry->register(BuildCommand::class);
+
+        self::assertFalse($registry->findCommand('build')?->bootstrap);
     }
 }

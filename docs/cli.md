@@ -102,7 +102,18 @@ to pre-warm the cache before real traffic arrives — see {doc}`caching`
 for exactly what gets written.
 
 Always runs, regardless of `APP_ENV` — safe to run from a CI runner, a
-laptop, or any machine that hasn't set that variable.
+laptop, or any machine that hasn't set that variable. It also runs
+**without the application's own configuration**: `build` never executes
+`bootstrap.php`, so nothing your bootstrap registers — a database
+connection factory demanding `DB_PASSWORD`, a client demanding API keys
+— can make it fail. A CI pipeline pre-warms the cache with no
+production secrets present.
+
+Your own commands get the same choice: `#[Command]` accepts
+`bootstrap: false` for any command that only operates on the project's
+static shape and shouldn't require the configuration the application's
+services demand. The default (`true`) executes `bootstrap.php` before
+dispatch, exactly what a command that talks to real services wants.
 
 Pass `--destroy` to remove `.kinetis-cache/` without rebuilding it:
 

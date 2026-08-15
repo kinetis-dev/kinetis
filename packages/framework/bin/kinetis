@@ -107,10 +107,18 @@ if ($definition === null) {
 $app = new AppScope();
 $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
+
 // Consumer applications register anything a discovered command needs (a
 // database connection pool, ...) in bootstrap.php — see public/index.php
-// for the identical convention on the HTTP side.
-RoutesFile::loadBootstrap($projectRoot)($app, $config);
+// for the identical convention on the HTTP side. A command declaring
+// `bootstrap: false` on its #[Command] attribute runs without any of it:
+// it only operates on the project's static shape, so it must not require
+// the configuration the application's own services demand (`kinetis
+// build` in a CI pipeline has no database credentials, and needs none).
+if ($definition->bootstrap) {
+    RoutesFile::loadBootstrap($projectRoot)($app, $config);
+}
+
 $app->instance(EventListenerRegistry::class, $listenerRegistry);
 $app->boot();
 
@@ -120,7 +128,9 @@ $scope = $app->createRequestScope();
 // kinetis/persistence package, not core; a command opening a DB
 // transaction and not closing it on every failure branch is exactly the
 // scenario this exists for, when that package is actually installed.
-if (class_exists('Kinetis\Persistence\TransactionGuard')) {
+// Skipped alongside bootstrap: without the application's bindings there
+// is no database link for the guard to resolve, and nothing to guard.
+if ($definition->bootstrap && class_exists('Kinetis\Persistence\TransactionGuard')) {
     $transactionGuard = $scope->get('Kinetis\Persistence\TransactionGuard');
     $scope->onDispose($transactionGuard->rollbackDangling(...));
 }

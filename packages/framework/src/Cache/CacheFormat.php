@@ -17,5 +17,6 @@ final class CacheFormat
     // 4: HttpCache gained mcpMiddleware/openApiMiddleware.
     // 5: binding/hydration plan parameters gained allowsNull.
     // 6: HttpCache gained middlewareGroups.
-    public const int VERSION = 6;
+    // 7: CommandCache commands gained bootstrap.
+    public const int VERSION = 7;
 }

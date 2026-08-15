@@ -37,7 +37,7 @@ final readonly class BuildCommand
         private ?string $projectRootOverride = null,
     ) {}
 
-    #[Command('build', description: 'Compiles routes, MCP tools/resources, commands, and OpenAPI data ahead of time')]
+    #[Command('build', description: 'Compiles routes, MCP tools/resources, commands, and OpenAPI data ahead of time', bootstrap: false)]
     public function run(CommandArguments $arguments): int
     {
         // dirname(__DIR__): this file lives one level deeper than

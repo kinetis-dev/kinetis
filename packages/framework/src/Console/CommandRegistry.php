@@ -48,6 +48,7 @@ final class CommandRegistry
                     controllerClass: $class,
                     controllerMethod: $method->getName(),
                     takesArguments: $takesArguments,
+                    bootstrap: $command->bootstrap,
                 );
             }
         }
@@ -77,7 +78,7 @@ final class CommandRegistry
      * plain scalars, so nothing here needs reflection to reverse. Used by
      * Kinetis\Cache\Compiler.
      *
-     * @return list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool}>
+     * @return list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}>
      */
     public function toArray(): array
     {
@@ -88,6 +89,7 @@ final class CommandRegistry
                 'controllerClass' => $command->controllerClass,
                 'controllerMethod' => $command->controllerMethod,
                 'takesArguments' => $command->takesArguments,
+                'bootstrap' => $command->bootstrap,
             ],
             $this->commands,
         );
@@ -99,7 +101,7 @@ final class CommandRegistry
      * register(). Duplicate-name checking doesn't need to run again here:
      * toArray() only ever dumps a registry that already passed it once.
      *
-     * @param list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool}> $data
+     * @param list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $data
      */
     public static function fromArray(array $data): self
     {
@@ -112,6 +114,7 @@ final class CommandRegistry
                 controllerClass: $command['controllerClass'],
                 controllerMethod: $command['controllerMethod'],
                 takesArguments: $command['takesArguments'],
+                bootstrap: $command['bootstrap'],
             );
         }
 

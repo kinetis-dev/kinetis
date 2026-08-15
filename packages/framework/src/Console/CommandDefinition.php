@@ -12,5 +12,7 @@ final class CommandDefinition
         public readonly string $controllerClass,
         public readonly string $controllerMethod,
         public readonly bool $takesArguments,
+        /** @see \Kinetis\Console\Attributes\Command::$bootstrap */
+        public readonly bool $bootstrap = true,
     ) {}
 }

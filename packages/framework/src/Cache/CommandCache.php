@@ -16,7 +16,7 @@ final readonly class CommandCache
 {
     public function __construct(
         public int $formatVersion,
-        /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool}> */
+        /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> */
         public array $commands,
         public string $compiledAt,
     ) {}
@@ -38,7 +38,7 @@ final readonly class CommandCache
      */
     public static function fromArray(array $data): self
     {
-        /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool}> $commands */
+        /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $commands */
         $commands = $data['commands'];
 
         return new self(
