@@ -35,10 +35,15 @@ they aren't repeated here.
 
 ## Versions tested
 
+The kinetis versions below are re-validated against the same rig with
+a follow-up measurement run reproducing the table's results within
+run-to-run noise. The benchmark repository tracks current releases, so
+a fresh clone installs the latest kinetis packages.
+
 | Target | Package | Version | PHP |
 |---|---|---|---|
-| `kinetis` | kinetis/framework | 1.5.1 | 8.5.9 (FrankenPHP, ZTS) |
-| `kinetis-fpm` | kinetis/framework | 1.5.1 | 8.4.24 |
+| `kinetis` | kinetis/framework | 1.5.4 | 8.5.9 (FrankenPHP, ZTS) |
+| `kinetis-fpm` | kinetis/framework | 1.5.4 | 8.4.24 |
 | `slim` | slim/slim | 4.15.2 | 8.4.24 |
 | `yii2` | yiisoft/yii2 | 2.0.55 | 8.4.24 |
 | `symfony` | symfony/framework-bundle | 7.4.16 | 8.4.24 |
@@ -47,8 +52,8 @@ they aren't repeated here.
 | `laravel` | laravel/framework | 13.25.0 | 8.4.24 |
 | `laravel-octane` | laravel/framework + laravel/octane | 13.25.0 + 2.19.0 | 8.5.9 (FrankenPHP, ZTS) |
 
-`kinetis`/`kinetis-fpm` also used kinetis/persistence 1.3.1 and
-kinetis/query-builder 1.2.1. FrankenPHP-based targets run a newer PHP
+`kinetis`/`kinetis-fpm` also ran kinetis/persistence 1.5.0 and
+kinetis/query-builder 1.2.3. FrankenPHP-based targets run a newer PHP
 than the PHP-FPM targets because that's what the `dunglas/frankenphp`
 image ships — see {doc}`runtime-adapters` for how Kinetis picks a
 runtime.
