@@ -100,6 +100,12 @@ jobs:
       - name: PHPStan
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
+      # Two Psalm passes, deliberately: --taint-analysis reports taint
+      # issues only, suppressing every ordinary issue type — a plain run
+      # is what catches those.
+      - name: Psalm
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/psalm --no-progress
+
       - name: Psalm (taint analysis)
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress --report=psalm.sarif --report-show-info=false
 
