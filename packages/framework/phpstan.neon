@@ -12,6 +12,16 @@ parameters:
         -
             identifier: kinetis.noStaticProperties
             path: src/Validation/Hydrator.php
+        # FiberPool's residents are worker-lifetime *infrastructure*, not
+        # request state: the pool exists precisely so Fiber stacks outlive
+        # a single request (per-task Fiber churn serializes ZTS threads on
+        # the kernel address-space lock — see the class docblock), and a
+        # static on a ZTS build is per-thread, matching the one-loop-per-
+        # thread model. Jobs never park mid-task, so no request data can
+        # ride along in an idle Fiber.
+        -
+            identifier: kinetis.noStaticProperties
+            path: src/Async/FiberPool.php
 
 services:
     -
