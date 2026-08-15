@@ -7,6 +7,7 @@ namespace Kinetis\Tests\Console;
 use Kinetis\Console\CommandRegistry;
 use Kinetis\Console\Exception\InvalidCommandException;
 use Kinetis\Console\BuildCommand;
+use Kinetis\Console\RoutesListCommand;
 use Kinetis\Tests\Console\Fixtures\CacheWarmupController;
 use Kinetis\Tests\Console\Fixtures\DuplicateCommandNameA;
 use Kinetis\Tests\Console\Fixtures\DuplicateCommandNameB;
@@ -130,5 +131,13 @@ final class CommandRegistryTest extends TestCase
         $registry->register(BuildCommand::class);
 
         self::assertFalse($registry->findCommand('build')?->bootstrap);
+    }
+
+    public function test_routes_list_runs_without_application_bootstrap(): void
+    {
+        $registry = new CommandRegistry();
+        $registry->register(RoutesListCommand::class);
+
+        self::assertFalse($registry->findCommand('routes:list')?->bootstrap);
     }
 }

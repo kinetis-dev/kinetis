@@ -21,10 +21,12 @@ use Kinetis\Runtime\ProjectRoot;
  * GlobalMiddlewareOrder::resolve()) via a fresh, live scan — never reads
  * or writes .kinetis-cache/.
  *
- * Constructs its own AppScope and re-runs bootstrap.php to read
+ * Constructs its own AppScope and runs bootstrap.php to read
  * AppScope::middlewares(): AppScope is never registered onto the
  * RequestScope a command is dispatched through, so there's no way to
- * reach the real one from here.
+ * reach the real one from here. The command declares bootstrap: false —
+ * this internal run is the only one, so listing routes never executes
+ * the application's bootstrap twice.
  *
  * $output is injectable (defaulting to STDOUT) for testability against
  * php://memory — a #[Command] method must take zero parameters or
@@ -41,7 +43,7 @@ final readonly class RoutesListCommand
         private mixed $output = STDOUT,
     ) {}
 
-    #[Command('routes:list', description: 'Displays every discovered route and the full global middleware pipeline')]
+    #[Command('routes:list', description: 'Displays every discovered route and the full global middleware pipeline', bootstrap: false)]
     public function run(): int
     {
         // dirname(__DIR__) — see BuildCommand's own doc comment for why:
