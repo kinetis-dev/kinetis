@@ -9,7 +9,7 @@
 ---
 
 This repository is the development monorepo for
-[Kinetis](https://docs.kinetis.dev/), a non-blocking PHP framework for
+[Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications. It hosts the shared CI/CD pipeline and the
 documentation site for every package in the ecosystem.
 
