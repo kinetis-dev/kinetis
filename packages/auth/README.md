@@ -8,6 +8,14 @@
   <strong>Bearer/opaque-token authentication middleware for Kinetis</strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/v/kinetis/auth" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/dt/kinetis/auth" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/php-v/kinetis/auth" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/auth"><img src="https://img.shields.io/packagist/l/kinetis/auth" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 A PSR-15 route middleware that validates an `Authorization: Bearer <token>`

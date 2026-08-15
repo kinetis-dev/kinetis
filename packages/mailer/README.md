@@ -8,6 +8,14 @@
   <strong>Mail sending for Kinetis, via <a href="https://symfony.com/doc/current/mailer.html"><code>Symfony\Component\Mailer</code></a></strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/mailer"><img src="https://img.shields.io/packagist/v/kinetis/mailer" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/mailer"><img src="https://img.shields.io/packagist/dt/kinetis/mailer" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/mailer"><img src="https://img.shields.io/packagist/php-v/kinetis/mailer" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/mailer"><img src="https://img.shields.io/packagist/l/kinetis/mailer" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 A single DSN selects the transport — SMTP, or any of Symfony's own

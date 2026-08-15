@@ -8,6 +8,14 @@
   <strong>Non-blocking OpenSearch client construction for Kinetis</strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/search-opensearch"><img src="https://img.shields.io/packagist/v/kinetis/search-opensearch" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/search-opensearch"><img src="https://img.shields.io/packagist/dt/kinetis/search-opensearch" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/search-opensearch"><img src="https://img.shields.io/packagist/php-v/kinetis/search-opensearch" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/search-opensearch"><img src="https://img.shields.io/packagist/l/kinetis/search-opensearch" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 Builds a real `OpenSearch\Client` (from `opensearch-project/opensearch-php`)

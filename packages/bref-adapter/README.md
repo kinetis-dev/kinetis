@@ -8,6 +8,14 @@
   <strong>AWS Lambda (Bref) runtime adapter for Kinetis</strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/v/kinetis/bref-adapter" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/dt/kinetis/bref-adapter" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/php-v/kinetis/bref-adapter" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/bref-adapter"><img src="https://img.shields.io/packagist/l/kinetis/bref-adapter" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 Polls the Lambda Runtime API and converts API Gateway v2 payloads to/from

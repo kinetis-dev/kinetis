@@ -8,6 +8,14 @@
   <strong>A runnable ping-pong demo application for Kinetis</strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/v/kinetis/pingpong" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/dt/kinetis/pingpong" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/php-v/kinetis/pingpong" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/pingpong"><img src="https://img.shields.io/packagist/l/kinetis/pingpong" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 A small, working application showing most of Kinetis at once:

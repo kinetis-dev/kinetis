@@ -8,6 +8,14 @@
   <strong>File storage for Kinetis, built on <code>League\Flysystem</code></strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/storage"><img src="https://img.shields.io/packagist/v/kinetis/storage" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/storage"><img src="https://img.shields.io/packagist/dt/kinetis/storage" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/storage"><img src="https://img.shields.io/packagist/php-v/kinetis/storage" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/storage"><img src="https://img.shields.io/packagist/l/kinetis/storage" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 Read, write, delete, and list files against `League\Flysystem`'s

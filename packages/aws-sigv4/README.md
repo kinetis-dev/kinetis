@@ -8,6 +8,14 @@
   <strong>A PSR-18 client decorator that signs requests with AWS Signature Version 4</strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/v/kinetis/aws-sigv4" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/dt/kinetis/aws-sigv4" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/php-v/kinetis/aws-sigv4" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/aws-sigv4"><img src="https://img.shields.io/packagist/l/kinetis/aws-sigv4" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 Wraps any PSR-18 HTTP client and signs every outgoing request with AWS

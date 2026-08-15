@@ -8,6 +8,14 @@
   <strong>Stateless JWT authentication middleware for Kinetis</strong>
 </p>
 
+<p align="center">
+  <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/v/kinetis/auth-jwt" alt="Packagist Version"></a>
+  <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/dt/kinetis/auth-jwt" alt="Packagist Downloads"></a>
+  <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/php-v/kinetis/auth-jwt" alt="PHP Version"></a>
+  <a href="https://packagist.org/packages/kinetis/auth-jwt"><img src="https://img.shields.io/packagist/l/kinetis/auth-jwt" alt="License"></a>
+  <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 A PSR-15 route middleware that verifies an `Authorization: Bearer <token>`
