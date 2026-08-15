@@ -124,10 +124,22 @@ A database row, a database count, and a Redis read — three independent
 round trips that would otherwise run one after another — complete
 together, in roughly the time the slowest one alone takes.
 
-Each task becomes its own `Fiber`. A single `EventLoop::run()` call
-afterwards drives all of them to completion — Revolt's own run loop
-doesn't return until nothing is left to wait on, so it doesn't matter how
-many times any one task suspends internally, or in what order they finish.
+Each task runs in its own `Fiber`, drawn from a pool of *resident
+workers* (`Kinetis\Async\FiberPool`) that park between tasks instead of
+terminating. That reuse isn't a micro-optimization: constructing a
+`Fiber` allocates a whole C stack and destroying it frees one, and under
+FrankenPHP's threaded worker mode those `mmap`/`munmap` cycles serialize
+every worker thread in the process against the kernel's address-space
+lock. On an 8-vCPU host, a 20-query fan-out route was measured at
+roughly *3× higher throughput* from this one change — with identical
+task code. The pool is per PHP thread, holds only idle Fibers (a task
+suspended on I/O keeps its Fiber to itself until it finishes), and none
+of it is visible in the API: you write plain closures, exactly as above.
+
+While tasks are in flight, the caller waits on a Revolt suspension that
+the last task to finish resumes — the event loop drives every suspended
+task no matter how many times each one suspends internally, or in what
+order they finish.
 
 **Every task runs to completion — successfully or not — before any
 exception is allowed to surface.** A failing task doesn't abort the others
@@ -150,18 +162,17 @@ Three 50ms `Timer::delay()` calls run through `concurrently()` complete in
 well under 100ms total, not the ~150ms+ a sequential fallback would take —
 because they genuinely overlap rather than merely appearing to.
 
-```{warning}
-**`concurrently()` cannot be called from inside a task that's already
-running through another `concurrently()` call.** It works by calling a
-blanket `Revolt\EventLoop::run()` once all of its Fibers are created, and
-Revolt's own loop cannot be entered a second time while it's already
-running — attempting to do so throws "the event loop is already running."
-This isn't specific to `Kinetis\Async` — it applies to *any* code reachable
-from inside a `concurrently()` task that itself tries to drive the loop,
-including a second, nested `concurrently()` call. If you need to run
-something concurrently from inside an already-concurrent task, restructure
-so both sets of work are passed to the same, single `concurrently()` call
-instead of nesting one inside the other.
+```{note}
+**Nesting is supported.** A task may itself call `concurrently()` — the
+inner call suspends only its own task's Fiber while the inner tasks run,
+and everything else keeps making progress. (Before framework 1.4.0 this
+threw "the event loop is already running": the old implementation drove
+its tasks with a blanket `EventLoop::run()`, which Revolt refuses to
+re-enter. The suspension-based wait removed that restriction.) Prefer a
+single flat `concurrently()` call when the work is naturally one batch —
+a flat list is easier to reason about and slightly cheaper — but
+nesting that falls out of composition, such as a helper that fans out
+internally being called from a task, is correct and safe.
 ```
 
 ## Composing across clients

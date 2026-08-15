@@ -74,13 +74,16 @@ Which direction to tune depends on what your requests actually wait on:
   `num` well above the core count, closer to expected concurrent request
   volume. Undersizing here doesn't produce errors; it produces queueing
   that looks, from the outside, exactly like the application being slow.
-- **Requests dominated by CPU** — the common case with
-  `kinetis/persistence`'s native drivers, where sub-millisecond queries
-  leave little genuine wait time per request — want `num` **at or near
-  the core count**, and oversubscription measurably hurts: on a 2-CPU
-  host under saturating load, 1/2/4/8 threads measured 305/306/199/206
-  req/s on a 20-query fan-out route. Every thread beyond the core count
-  is pure context-switch overhead once threads are CPU-bound.
+- **Requests mixing CPU with fast queries** — the common case with
+  `kinetis/persistence`'s native drivers, where each query is
+  sub-millisecond but a request still spends real wall time suspended
+  across its fan-out — want `num` **moderately above the core count**;
+  around 2–3× is where measurement has landed. On an 8-vCPU host
+  against a sub-millisecond database, moving from 8 to 20 threads
+  improved *every* database-touching route (a 20-query fan-out by
+  ~10%, single-query routes by ~9%) with no loss on CPU-pure routes.
+  Go far beyond that and two costs take over: context-switch overhead,
+  and — usually first — the per-thread database pool budget below.
 
 Either way: measure under realistic load rather than guessing — the two
 regimes want opposite corrections, and which one you're in is a property

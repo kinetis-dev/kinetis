@@ -165,6 +165,27 @@ queries leave nothing to overlap); under a persistent worker, connections
 amortize across requests and native async fan-out keeps its benefits at
 native protocol cost.
 
+The PDO drivers run with *native* (non-emulated) prepares, where every
+`prepare()` is its own server round trip — so `execute()` memoizes
+prepared statements per SQL string for the connection's lifetime (since
+persistence 1.3.0). A loop issuing the same parameterized statement N
+times costs N+1 round trips instead of 2N; against a sub-millisecond
+database that's the difference between paying the network once or twice
+per query. The cache holds at most 256 statements (workloads that
+interpolate values into their SQL text instead of binding reset it on
+overflow rather than growing it forever) and is dropped with the
+connection on `close()`.
+
+```{warning}
+Server-side prepared statements are scoped to a **database connection**
+— which is exactly the cache's lifetime, so direct connections are
+always safe. But a proxy that multiplexes one client connection across
+several server connections (PgBouncer in transaction pooling mode being
+the classic case) breaks that assumption for *any* client using native
+prepares, this one included. Behind such a proxy, use session pooling
+mode, or a proxy version that tracks prepared statements itself.
+```
+
 Two runtime notes for `native`: mysqli cannot expose its socket to the
 event loop, so while its queries are in flight the client polls with a
 short (1 ms) blocking window per loop turn — indistinguishable from a
