@@ -121,6 +121,7 @@ one request, instead of one after another.
 
 Home <self>
 getting-started
+benchmarks
 tutorial
 core-concepts
 container

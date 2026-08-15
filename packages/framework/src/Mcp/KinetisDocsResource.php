@@ -59,6 +59,12 @@ final readonly class KinetisDocsResource
         return $this->read('getting-started');
     }
 
+    #[McpResource(uri: 'kinetis://docs/benchmarks', name: 'benchmarks', description: 'TechEmpower-style benchmark results against seven other PHP frameworks, versions tested, and results', mimeType: self::MIME_TYPE)]
+    public function benchmarks(): string
+    {
+        return $this->read('benchmarks');
+    }
+
     #[McpResource(uri: 'kinetis://docs/tutorial', name: 'tutorial', description: 'Build a real-time application from scratch: a database, a queue, a scheduled command, and live updates over a WebSocket', mimeType: self::MIME_TYPE)]
     public function tutorial(): string
     {

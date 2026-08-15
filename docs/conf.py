@@ -10,6 +10,8 @@ extensions = [
     "myst_parser",
     "sphinx_copybutton",
     "sphinx_design",
+    "sphinxext.opengraph",
+    "sphinx_sitemap",
 ]
 
 myst_enable_extensions = [
@@ -59,6 +61,30 @@ html_css_files = ["custom.css"]
 html_logo = "_static/logo.svg"
 html_favicon = "_static/favicon.svg"
 html_title = "Kinetis"
+
+# The real, deployed URL — required by sphinx-sitemap to build sitemap.xml
+# and consulted by sphinxext-opengraph for canonical/OG URLs below. Sphinx
+# itself uses it to emit a <link rel="canonical"> on every page.
+html_baseurl = "https://docs.kinetis.dev/"
+
+# -- Open Graph / social previews --------------------------------------------
+# sphinxext-opengraph auto-generates <meta name="description"> plus
+# og:*/twitter:* tags per page from each page's own first paragraph — no
+# per-page front matter needed. ogp_social_cards (matplotlib-rendered
+# per-page preview images) is left unset: the real logo below is enough,
+# and pulling in matplotlib for this alone isn't worth the weight.
+ogp_site_url = html_baseurl
+ogp_site_name = "Kinetis"
+ogp_image = "_static/og-image.png"
+# A real PNG rendered from the actual logo.svg (rsvg-convert -w 800 -h 840),
+# not a fabricated banner — matches the source SVG's own 400x420 viewBox.
+# twitter:card defaults to "summary" (a square-ish preview) rather than
+# "summary_large_image", which expects a 1200x630 banner this image isn't.
+
+# -- Sitemap ------------------------------------------------------------------
+# Written to sitemap.xml at the build root; html_baseurl above is all it
+# needs. robots.txt (docs/_extra/robots.txt) points crawlers at it.
+sitemap_url_scheme = "{link}"
 
 html_theme_options = {
     # The logo's own secondary-title color (.brand-sub, "FRAMEWORK" in

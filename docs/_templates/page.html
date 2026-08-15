@@ -35,15 +35,13 @@
   <div class="left-details">
     {%- if show_copyright %}
     <div class="copyright">
-      {%- if hasdoc('copyright') %}
-        {% trans path=pathto('copyright'), copyright=copyright|e -%}
-          <a href="{{ path }}">Copyright</a> &#169; {{ copyright }}
-        {%- endtrans %}
-      {%- else %}
-        {% trans copyright=copyright|e -%}
-          Copyright &#169; {{ copyright }}
-        {%- endtrans %}
-      {%- endif %}
+      {#- Hardcoded rather than driven by conf.py's `copyright` value:
+         the site footer names the project's brand, not (only) its legal
+         copyright holder, and the "Kinetis" text links to the marketing
+         site — {{ copyright|e }} can't carry a real link through Sphinx's
+         own escaping. LICENSE and conf.py's copyright/author values are
+         the actual legal record and are untouched. #}
+      Copyright &#169; 2026 <a href="https://kinetis.dev/">Kinetis</a>
     </div>
     {%- endif %}
     {%- if last_updated -%}
