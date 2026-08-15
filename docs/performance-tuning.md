@@ -24,6 +24,11 @@ single number:
 worker_threads × maxConnections  ≤  comfortably under the DB's max_connections
 ```
 
+Pool width comes from `DB_MAX_CONNECTIONS` (connection-scoped, like
+every `DB_*` key) or the `$poolOptions` argument to
+`SqlConnectionFactory::fromConfig()`; worker thread count from your
+runtime's own worker setting.
+
 "Comfortably" is doing real work in that sentence: leave room for
 migrations, monitoring agents, a second app instance, and anything
 else that connects. A concrete working point: on 8 vCPUs, **20 worker

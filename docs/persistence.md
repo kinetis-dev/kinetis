@@ -205,6 +205,7 @@ DB_SSLMODE=require
 DB_CONNECT_TIMEOUT=5
 DB_APP_NAME=myapp
 DB_COMPRESSION=false
+DB_MAX_CONNECTIONS=12
 ```
 
 | canonical key | native mysqli | PDO mysql | native pgsql | PDO pgsql |
@@ -250,7 +251,10 @@ $db = SqlConnectionFactory::fromConfig($config, poolOptions: [
 `maxConnections` (default 8) bounds an async driver's fan-out width —
 connections open lazily up to the cap, and callers beyond it wait for a
 free connection inside the pool. The PDO drivers are a single lazy
-connection, trivially within any cap.
+connection, trivially within any cap. The connection-scoped
+`DB_MAX_CONNECTIONS` key sets the same width from the environment — a
+deployment tunes pool sizing without editing bootstrap code — with an
+explicit `$poolOptions` value winning over the key when both are set.
 
 ### Sizing `maxConnections` under worker mode
 
