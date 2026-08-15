@@ -1,7 +1,8 @@
 # Getting Started
 
 This page gets a minimal Kinetis application running under FrankenPHP,
-end to end. If you just want to see what Kinetis code looks like, skip to
+end to end, in under five minutes. If you just want to see what Kinetis
+code looks like, skip to
 [Your first controller](#your-first-controller). If you'd rather start
 from something already running than build one up by hand, `composer
 create-project kinetis/skeleton my-app` gives you exactly that.
