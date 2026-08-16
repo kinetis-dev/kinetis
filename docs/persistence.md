@@ -87,12 +87,25 @@ client, not a fresh one per request.
 
 The async drivers are themselves connection pools — lazily opened
 connections up to `maxConnections`, reused across requests under a
-persistent worker, with dead connections discarded (and a dispatch-phase
-failure on a stale pooled connection retried once on a fresh one, which
-is safe because the statement never reached the server). Kinetis's own
-`Kinetis\Persistence\Pool` is not used by this integration — it stays
-available as generic infrastructure for protocol clients that don't pool
-themselves.
+persistent worker, with dead connections discarded and replaced.
+Kinetis's own `Kinetis\Persistence\Pool` is not used by this
+integration — it stays available as generic infrastructure for protocol
+clients that don't pool themselves.
+
+```{note}
+A pooled connection the server closes (an idle socket past
+`wait_timeout`, an administrative `KILL`, a network drop) costs exactly
+one query. Writing to a socket whose peer is already gone is buffered
+locally rather than failing, so the first query on a newly-dead
+connection dispatches successfully and only discovers the death while
+reading the result — surfacing as a `QueryException` the caller has to
+handle. Retrying it automatically is not an option: at that point the
+statement may already have executed, and replaying a non-idempotent one
+silently is worse than an error. The next query's dispatch does fail
+immediately, and *that* is retried transparently on a fresh connection.
+Long-lived workers issuing queries after an idle stretch should expect
+this and retry at the application level, or keep connections warm.
+```
 
 ```{note}
 Each driver needs its extension: `ext-mysqli` or `ext-pgsql` for the
