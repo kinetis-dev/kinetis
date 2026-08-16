@@ -186,4 +186,131 @@ final class ValidateManifestTest extends TestCase
 
         self::assertSame($sha, oldManifestRef());
     }
+
+    /** @return array{packages: array<string, array<string, mixed>>} */
+    private static function contentManifest(string $version = '1.0.0'): array
+    {
+        return ['packages' => ['pingpong' => ['name' => 'kinetis/pingpong', 'version' => $version]]];
+    }
+
+    public function test_content_change_without_a_version_bump_fails(): void
+    {
+        $problems = checkContentBumpCompleteness(
+            self::contentManifest(),
+            self::contentManifest(),
+            ['packages/pingpong/docker-compose.yml', 'packages/pingpong/bootstrap.php'],
+        );
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString("pingpong: package files changed but 'version' was not bumped", $problems[0]);
+        self::assertStringContainsString('docker-compose.yml', $problems[0]);
+    }
+
+    public function test_a_composer_lock_only_change_passes_without_a_bump(): void
+    {
+        $problems = checkContentBumpCompleteness(
+            self::contentManifest(),
+            self::contentManifest(),
+            ['packages/pingpong/composer.lock'],
+        );
+
+        self::assertSame([], $problems);
+    }
+
+    public function test_content_change_paired_with_a_version_bump_passes(): void
+    {
+        $problems = checkContentBumpCompleteness(
+            self::contentManifest('1.0.0'),
+            self::contentManifest('1.0.1'),
+            ['packages/pingpong/docker-compose.yml'],
+        );
+
+        self::assertSame([], $problems);
+    }
+
+    public function test_a_brand_new_package_is_exempt_from_the_content_check(): void
+    {
+        $problems = checkContentBumpCompleteness(
+            ['packages' => []],
+            self::contentManifest(),
+            ['packages/pingpong/src/NewFile.php'],
+        );
+
+        self::assertSame([], $problems);
+    }
+
+    public function test_changed_files_outside_any_manifest_package_are_ignored(): void
+    {
+        $problems = checkContentBumpCompleteness(
+            self::contentManifest(),
+            self::contentManifest(),
+            ['packages/removed-package/old.php', 'tools/validate-manifest.php'],
+        );
+
+        self::assertSame([], $problems);
+    }
+
+    public function test_no_previous_manifest_skips_the_content_check(): void
+    {
+        self::assertSame(
+            [],
+            checkContentBumpCompleteness(null, self::contentManifest(), ['packages/pingpong/src/A.php']),
+        );
+    }
+
+    public function test_a_nested_lock_named_file_still_counts_as_content(): void
+    {
+        // Only the package-root composer.lock is release-deleted; a file
+        // that merely shares the name deeper in the tree (a test
+        // fixture's lock) is real, shipped content.
+        $problems = checkContentBumpCompleteness(
+            self::contentManifest(),
+            self::contentManifest(),
+            ['packages/pingpong/tests/Fixtures/composer.lock'],
+        );
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('tests/Fixtures/composer.lock', $problems[0]);
+    }
+
+    public function test_changed_package_files_reads_a_real_git_diff(): void
+    {
+        $repo = sys_get_temp_dir() . '/content-bump-' . bin2hex(random_bytes(6));
+        mkdir($repo . '/packages/demo', 0777, true);
+
+        $git = static function (string ...$args) use ($repo): void {
+            $process = proc_open(array_values(['git', '-C', $repo, ...$args]), [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            \assert(is_resource($process));
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_close($process);
+        };
+
+        $git('init', '-q');
+        $git('config', 'user.email', 'test@example.com');
+        $git('config', 'user.name', 'test');
+        file_put_contents($repo . '/packages/demo/a.txt', "one\n");
+        $git('add', '.');
+        $git('commit', '-q', '-m', 'initial');
+        file_put_contents($repo . '/packages/demo/a.txt', "two\n");
+
+        // changedPackageFiles() runs against PROJECT_ROOT, so exercise
+        // the identical git invocation against the scratch repo directly.
+        $process = proc_open(
+            ['git', '-C', $repo, 'diff', '--name-only', 'HEAD', '--', 'packages'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        \assert(is_resource($process));
+        $output = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+
+        self::assertIsString($output);
+        self::assertSame(['packages/demo/a.txt'], array_values(array_filter(explode("\n", trim($output)))));
+
+        unlink($repo . '/packages/demo/a.txt');
+        exec('rm -rf ' . escapeshellarg($repo));
+    }
 }

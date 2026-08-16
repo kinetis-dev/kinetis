@@ -369,7 +369,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.0.2",
+            "version": "1.0.3",
             "type": "project",
             "requires": [
                 "framework"

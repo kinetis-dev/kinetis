@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Four checks against packages.manifest.json — see CLAUDE.md and the
+ * Five checks against packages.manifest.json — see CLAUDE.md and the
  * monorepo packaging plan for the full design:
  *
  *   1. Cycle detection over the requires graph.
@@ -18,8 +18,21 @@ declare(strict_types=1);
  *      GITHUB_EVENT_BEFORE is more than one commit back) — if it isn't,
  *      this check is skipped, not failed, since there's nothing to diff
  *      against.
+ *   5. Content-bump completeness — the counterpart check 4 can't see:
+ *      check 4 only compares manifest *entries*, so a change to a
+ *      package's own files with no manifest change (a compose file, a
+ *      bootstrap, a README) is invisible to it — and an unbumped
+ *      version means the release pipeline never tags the new content
+ *      at all, so the split repo silently stays on the old tag. This
+ *      check diffs each package's tracked files against the same old
+ *      ref and requires a version change whenever anything besides
+ *      composer.lock changed (the lock is deleted from release commits
+ *      and refreshes constantly without semantic change). Same
+ *      skip-when-no-history behavior as check 4. Uncommitted brand-new
+ *      files are invisible to a local run (git diff only sees tracked
+ *      paths); the post-push CI run sees everything.
  *
- * A separate, fifth check — does each package's committed composer.lock
+ * A separate check — does each package's committed composer.lock
  * still match its composer.json — is just `composer validate --strict`,
  * run directly, no new code needed for it.
  *
@@ -239,6 +252,93 @@ function checkVersionBumpCompleteness(?array $oldManifest, array $newManifest): 
     return $problems;
 }
 
+/**
+ * Tracked files under packages/ that differ between $ref and the
+ * working tree. Null when git can't produce the diff (missing history,
+ * no git available) — the caller skips the check rather than failing.
+ *
+ * @return list<string>|null
+ */
+function changedPackageFiles(string $ref): ?array
+{
+    $descriptorSpec = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $process = proc_open(
+        ['git', 'diff', '--name-only', $ref, '--', 'packages'],
+        $descriptorSpec,
+        $pipes,
+        PROJECT_ROOT,
+    );
+
+    if (!is_resource($process)) {
+        return null;
+    }
+
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    if ($exitCode !== 0 || $output === false) {
+        return null;
+    }
+
+    return array_values(array_filter(explode("\n", trim($output)), static fn (string $line): bool => $line !== ''));
+}
+
+/**
+ * Check 5: a package whose own files changed needs a version bump,
+ * whether or not its manifest entry moved. composer.lock is the one
+ * exclusion — deleted from release commits, refreshed constantly
+ * without semantic change. A package with no old manifest entry is
+ * brand new and exempt, matching check 4's own rule.
+ *
+ * @param array<string, mixed>|null $oldManifest
+ * @param array<string, mixed> $newManifest
+ * @param list<string> $changedFiles repo-relative paths
+ * @return list<string>
+ */
+function checkContentBumpCompleteness(?array $oldManifest, array $newManifest, array $changedFiles): array
+{
+    if ($oldManifest === null) {
+        return [];
+    }
+
+    $changedByPackage = [];
+
+    foreach ($changedFiles as $file) {
+        if (preg_match('#^packages/([^/]+)/(.+)$#', $file, $m) !== 1) {
+            continue;
+        }
+
+        // Only the package-root lock is release-deleted; a nested file
+        // that shares the name (a test fixture's lock) is real content.
+        if ($m[2] === 'composer.lock') {
+            continue;
+        }
+
+        $changedByPackage[$m[1]][] = $m[2];
+    }
+
+    $problems = [];
+
+    foreach ($newManifest['packages'] as $key => $newPkg) {
+        $oldPkg = $oldManifest['packages'][$key] ?? null;
+        $changed = $changedByPackage[$key] ?? [];
+
+        if ($oldPkg === null || $changed === []) {
+            continue;
+        }
+
+        if (($oldPkg['version'] ?? null) === ($newPkg['version'] ?? null)) {
+            $shown = implode(', ', array_slice($changed, 0, 3));
+            $more = count($changed) > 3 ? ', …' : '';
+            $problems[] = "{$key}: package files changed but 'version' was not bumped ({$shown}{$more})";
+        }
+    }
+
+    return $problems;
+}
+
 function validatorMain(): int
 {
     $manifest = loadManifest();
@@ -289,6 +389,24 @@ function validatorMain(): int
             $ok = false;
         } else {
             echo "[version-bump] OK.\n";
+        }
+
+        $changedFiles = changedPackageFiles(oldManifestRef());
+
+        if ($changedFiles === null) {
+            echo "[content-bump] Skipped — git couldn't diff against the previous ref.\n";
+        } else {
+            $contentProblems = checkContentBumpCompleteness($oldManifest, $manifest, $changedFiles);
+
+            if ($contentProblems !== []) {
+                foreach ($contentProblems as $p) {
+                    fwrite(STDERR, "[content-bump] {$p}\n");
+                }
+
+                $ok = false;
+            } else {
+                echo "[content-bump] OK.\n";
+            }
         }
     }
 
