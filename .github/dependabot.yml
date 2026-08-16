@@ -87,6 +87,11 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
+    directory: "/packages/telemetry"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
     directory: "/packages/pingpong"
     schedule:
       interval: "weekly"

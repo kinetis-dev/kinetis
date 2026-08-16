@@ -64,7 +64,7 @@ jobs:
         # bind-mounts, which git (invoked internally by Composer for
         # path-repo version resolution) refuses by default.
         run: |
-          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch skeleton storage storage-s3; do
+          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch skeleton storage storage-s3 telemetry; do
             # persistence's env-gated tests/Integration suite talks to the
             # job's MySQL/Postgres services and needs the driver
             # extensions; every other package needs none.

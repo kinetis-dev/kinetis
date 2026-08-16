@@ -263,6 +263,12 @@ final readonly class KinetisDocsResource
         return $this->read('aws-sigv4');
     }
 
+    #[McpResource(uri: 'kinetis://docs/telemetry', name: 'telemetry', description: 'kinetis/telemetry: OpenTelemetry tracing — request spans, SQL/queue decorators, a traced HTTP transport, OTLP export over the Revolt-backed client', mimeType: self::MIME_TYPE)]
+    public function telemetry(): string
+    {
+        return $this->read('telemetry');
+    }
+
     private function read(string $slug): string
     {
         $localPath = ($this->localDocsRoot ?? dirname(__DIR__, 4) . '/docs') . "/{$slug}.md";

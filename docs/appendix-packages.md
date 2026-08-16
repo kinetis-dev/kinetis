@@ -156,6 +156,77 @@ Separate Composer package, not part of `kinetis/framework` core.
 - `SEARCH_OPENSEARCH_HOST` is a single base URI; `SEARCH_OPENSEARCH_USERNAME`/`SEARCH_OPENSEARCH_PASSWORD` (Basic auth) and `SEARCH_OPENSEARCH_VERIFY_PEER` (default `true`) are optional, all via `Config::scopedKey()` for named connections.
 - Depends on `kinetis/framework` and `kinetis/revolt-http-client` (both via `path` repositories), `opensearch-project/opensearch-php`, `symfony/http-client`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
+## `packages/telemetry` (`kinetis/telemetry`)
+
+Separate Composer package, not part of `kinetis/framework` core.
+Participates in `extra.kinetis`: a scan root covering
+`Kinetis\Telemetry\Middleware\` (so `RequestSpanMiddleware` is
+discovered as global middleware on install) and a `PackageBootstrap`.
+
+- `Kinetis\Telemetry\PackageBootstrap` — binds
+  `OpenTelemetry\API\Trace\TracerProviderInterface` on `AppScope`: the
+  OTLP-exporting provider when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, a
+  `NoopTracerProvider` otherwise. Also replaces OTel's fiber-bound
+  default context storage with the shared `ContextStorage` — Kinetis
+  Fibers are scheduling units within one request, not independent
+  execution contexts, and the swap is what lets a span begun by the
+  middleware parent spans created inside `concurrently()` tasks.
+  Registers the provider's `shutdown()` via
+  `register_shutdown_function` — request end under boot-and-die,
+  worker exit under a persistent runtime, so both shapes flush.
+- `Kinetis\Telemetry\TracerFactory::fromConfig(Config): ?TracerProvider` —
+  a `BatchSpanProcessor` over the OTLP/HTTP exporter, whose transport
+  is `Symfony\Component\HttpClient\Psr18Client` wrapping
+  `AmpHttpClientFactory::create()`, so span export suspends rather
+  than blocks. `null` when no endpoint is configured.
+- `Kinetis\Telemetry\Middleware\RequestSpanMiddleware` —
+  `#[AsGlobalMiddleware(priority: 90)]`, a server span per request:
+  method as the span name (route templates aren't visible to global
+  middleware and raw paths would explode name cardinality), `url.path`,
+  `http.response.status_code`, `php.memory.usage`, error status on 5xx
+  or an exception, `traceparent` extraction for distributed traces. The
+  span is active while the handler runs — the parent for everything
+  below.
+- `Kinetis\Telemetry\Persistence\TracingMysqlLink`/`TracingPostgresLink`
+  (and the `TracingMysqlTransaction`/`TracingPostgresTransaction` their
+  `beginTransaction()` hands back, plus the `TracingSqlLinkBase`/
+  `TracingSqlTransactionBase` abstract bases) — a client span per
+  `query()`/`execute()` named by the SQL's first keyword, `db.system.name`
+  and `db.query.text` attributes, bound parameter values deliberately
+  never recorded. `COMMIT`/`ROLLBACK` spanned too. Each decorator
+  implements its dialect marker, so query-builder dialect detection is
+  unaffected. Query spans are never activated — they read the current
+  context as parent and end immediately, so concurrent queries can't
+  interleave anyone's scope stack.
+- `Kinetis\Telemetry\Queue\TracingQueue` — wraps any `QueueInterface`.
+  `push()` gets a producer span; a consumer span opens at `pop()` and
+  closes at `ack()`/`release()`/`fail()` (tracked via a
+  `WeakMap<QueuedJob, ...>`), carrying `kinetis.job.class`/`attempt`/
+  `outcome`, error status on `fail()`. Active while the job runs, so
+  the job's own spans nest under it. Producer and consumer spans are
+  separate traces — linking them needs context in the payload, which a
+  decorator can't reach; a disclosed gap.
+- `Kinetis\Telemetry\HttpClient\TracingHttpClient`/`TracingResponse` —
+  a client span per outgoing request with `traceparent` injection
+  (appended in Symfony's `"Name: value"` string form, coexisting with
+  any existing header shape). The span ends when the response is
+  consumed — `getContent()`/`toArray()`, an error, `cancel()`, or
+  destruct as the safety net — never when `request()` returns, since
+  requests through this transport complete later by design.
+  `stream()` unwraps to the inner client's own responses (Symfony
+  clients only stream responses they created), so stream consumers get
+  destruct-time span timing.
+- `Kinetis\Telemetry\Logging\TraceAwareLogger` — PSR-3 decorator adding
+  `trace_id`/`span_id` to entry context when a span is recording;
+  caller-supplied keys win.
+- Depends on `kinetis/framework`, `kinetis/revolt-http-client`,
+  `open-telemetry/sdk`, `open-telemetry/exporter-otlp`,
+  `symfony/http-client`, `nyholm/psr7`, `psr/log`;
+  `kinetis/persistence`/`kinetis/queue` only in `require-dev` — the
+  decorators' classes load lazily, so neither is forced on an install
+  that only wants request spans. Own
+  `composer.json`/`phpunit.xml`/`phpstan.neon`.
+
 ## `packages/auth` (`kinetis/auth`)
 
 Separate Composer package, not part of `kinetis/framework` core.

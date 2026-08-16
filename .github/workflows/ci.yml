@@ -70,6 +70,7 @@ jobs:
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, phpunit: true }
           - { name: mailer, dir: packages/mailer, phpunit: true }
           - { name: search-opensearch, dir: packages/search-opensearch, phpunit: true }
+          - { name: telemetry, dir: packages/telemetry, phpunit: true }
           - { name: pingpong, dir: packages/pingpong, phpunit: false }
           - { name: skeleton, dir: packages/skeleton, phpunit: true }
           - { name: tools, dir: tools, phpunit: true, needsGit: true }

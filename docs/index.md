@@ -146,6 +146,7 @@ mailer
 revolt-http-client
 aws-sigv4
 search-opensearch
+telemetry
 auth
 auth-jwt
 mcp
