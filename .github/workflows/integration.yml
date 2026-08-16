@@ -542,6 +542,14 @@ jobs:
           echo "App never became reachable on :8080" >&2
           exit 1
 
+      - name: The application's own PHPUnit suite, inside the stack
+        # Runs where the database actually is — ApplicationTestCase boots
+        # the real app and DatabaseTransactions rolls each test back, so
+        # this leaves ping_messages exactly as it found it. Not part of
+        # ci.yml's per-package matrix, which has no database.
+        working-directory: packages/pingpong
+        run: docker compose exec -T app php vendor/bin/phpunit
+
       - name: GET / serves the dashboard
         run: |
           code=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:8080/)

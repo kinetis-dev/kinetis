@@ -23,11 +23,17 @@
     },
     "require-dev": {
         "phpstan/phpstan": "^2.2",
+        "phpunit/phpunit": "^11.0",
         "vimeo/psalm": "^6.16"
     },
     "autoload": {
         "psr-4": {
             "App\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "App\\Tests\\": "tests/"
         }
     },
     "repositories": [

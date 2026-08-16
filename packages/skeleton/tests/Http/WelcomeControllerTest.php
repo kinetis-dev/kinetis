@@ -4,33 +4,29 @@ declare(strict_types=1);
 
 namespace App\Tests\Http;
 
-use App\Http\WelcomeController;
-use Kinetis\Container\AppScope;
-use Kinetis\Http\Kernel;
-use Kinetis\Http\Routing\Router;
-use Kinetis\Testing\TestClient;
-use PHPUnit\Framework\TestCase;
+use Kinetis\Testing\ApplicationTestCase;
 
-final class WelcomeControllerTest extends TestCase
+final class WelcomeControllerTest extends ApplicationTestCase
 {
+    protected function projectRoot(): string
+    {
+        return dirname(__DIR__, 2);
+    }
+
     public function test_the_welcome_page_renders_successfully(): void
     {
-        $app = new AppScope();
-        $app->boot();
+        // The route is discovered, not registered here — the same way a
+        // real request finds it.
+        $this->client->get('/')
+            ->assertOk()
+            ->assertHeader('Content-Type', 'text/html; charset=utf-8')
+            ->assertBodyContains('Kinetis')
+            ->assertBodyContains('Zero configuration')
+            ->assertBodyContains('docs.kinetis.dev');
+    }
 
-        $router = new Router();
-        $router->register(WelcomeController::class);
-
-        $client = new TestClient(new Kernel($app, $router));
-
-        $response = $client->get('/');
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertStringContainsString('text/html', $response->getHeaderLine('Content-Type'));
-
-        $body = (string) $response->getBody();
-        self::assertStringContainsString('Kinetis', $body);
-        self::assertStringContainsString('Zero configuration', $body);
-        self::assertStringContainsString('docs.kinetis.dev', $body);
+    public function test_an_unknown_path_is_a_404(): void
+    {
+        $this->client->get('/nope')->assertNotFound();
     }
 }
