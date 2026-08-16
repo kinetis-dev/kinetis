@@ -23,7 +23,9 @@ use Kinetis\Tests\Container\Fixtures\WithOptionalUnresolvableDependency;
 use Kinetis\Tests\Container\Fixtures\WithRequiredUnresolvableDependency;
 use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
 use Kinetis\SimpleCache\NullSimpleCache;
+use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Kinetis\Tests\Http\Fixtures\GlobalMiddleware;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -290,30 +292,72 @@ final class AppScopeTest extends TestCase
         self::assertInstanceOf(NullSimpleCache::class, $app->get(CacheInterface::class));
     }
 
-    public function test_boot_throws_a_clear_error_when_redis_is_configured_but_the_driver_package_is_not_installed(): void
+    public function test_boot_succeeds_when_redis_is_configured_but_the_driver_package_is_not_installed(): void
     {
         // RedisSimpleCache/ClusteredRedisSimpleCache live in the separate
         // kinetis/cache-redis package, never installed for core's own test
         // suite — this is the real, always-true "not installed" branch,
-        // not a simulated one. The same class_exists()-gated,
-        // clear-error-not-silent-fallback pattern kinetis/storage's own
-        // FILESYSTEM_DRIVER=s3 gate already establishes.
+        // not a simulated one. Booting must survive it: a leftover
+        // REDIS_HOST in a .env nothing reads anymore is common, and an
+        // application that never touches the cache has nothing to fail
+        // about.
         $app = new AppScope();
         $app->instance(Config::class, new Config(['REDIS_HOST' => 'localhost']));
-
-        $this->expectException(SimpleCacheUnavailableException::class);
-        $this->expectExceptionMessage('kinetis/cache-redis');
         $app->boot();
+
+        self::assertInstanceOf(UnavailableSimpleCache::class, $app->get(CacheInterface::class));
     }
 
-    public function test_boot_throws_a_clear_error_when_redis_cluster_is_configured_but_the_driver_package_is_not_installed(): void
+    public function test_boot_succeeds_when_redis_cluster_is_configured_but_the_driver_package_is_not_installed(): void
     {
         $app = new AppScope();
         $app->instance(Config::class, new Config(['REDIS_CLUSTER' => 'true', 'REDIS_CLUSTER_SEEDS' => 'node1:7001']));
+        $app->boot();
+
+        self::assertInstanceOf(UnavailableSimpleCache::class, $app->get(CacheInterface::class));
+    }
+
+    public function test_using_the_cache_without_the_driver_package_throws_naming_the_package(): void
+    {
+        // The other half: deferring the failure must not mean losing it.
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(['REDIS_HOST' => 'localhost']));
+        $app->boot();
+
+        $cache = $app->get(CacheInterface::class);
+        self::assertInstanceOf(CacheInterface::class, $cache);
 
         $this->expectException(SimpleCacheUnavailableException::class);
         $this->expectExceptionMessage('kinetis/cache-redis');
-        $app->boot();
+        $cache->get('anything');
+    }
+
+    /**
+     * Every operation throws — a partially-working cache would be worse
+     * than either failing outright or not existing.
+     *
+     * @return iterable<string, array{callable(CacheInterface): mixed}>
+     */
+    public static function cacheOperations(): iterable
+    {
+        yield 'get' => [static fn (CacheInterface $c): mixed => $c->get('k')];
+        yield 'set' => [static fn (CacheInterface $c): mixed => $c->set('k', 'v')];
+        yield 'delete' => [static fn (CacheInterface $c): mixed => $c->delete('k')];
+        yield 'clear' => [static fn (CacheInterface $c): mixed => $c->clear()];
+        yield 'has' => [static fn (CacheInterface $c): mixed => $c->has('k')];
+        yield 'getMultiple' => [static fn (CacheInterface $c): mixed => $c->getMultiple(['k'])];
+        yield 'setMultiple' => [static fn (CacheInterface $c): mixed => $c->setMultiple(['k' => 'v'])];
+        yield 'deleteMultiple' => [static fn (CacheInterface $c): mixed => $c->deleteMultiple(['k'])];
+    }
+
+    /**
+     * @param callable(CacheInterface): mixed $operation
+     */
+    #[DataProvider('cacheOperations')]
+    public function test_every_unavailable_cache_operation_throws(callable $operation): void
+    {
+        $this->expectException(SimpleCacheUnavailableException::class);
+        $operation(new UnavailableSimpleCache());
     }
 
     public function test_boot_does_not_override_a_consumer_registered_cache(): void

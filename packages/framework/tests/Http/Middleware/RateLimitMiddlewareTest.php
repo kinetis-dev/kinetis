@@ -13,6 +13,8 @@ use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
 use Kinetis\Http\Middleware\RateLimitMiddleware;
 use Kinetis\Http\Routing\Router;
 use Kinetis\SimpleCache\NullSimpleCache;
+use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
+use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Http\Fixtures\RateLimitedFixtureController;
 use Nyholm\Psr7\Response;
@@ -318,5 +320,22 @@ final class RateLimitMiddlewareTest extends TestCase
         $middleware = new RateLimitMiddleware(new InMemorySimpleCache());
 
         self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
+    }
+
+    /**
+     * Redis configured but kinetis/cache-redis missing binds
+     * UnavailableSimpleCache (see AppScope::boot()), which is not a
+     * NullSimpleCache and so passes this constructor's guard — the
+     * request must still fail loudly rather than serve unlimited
+     * traffic, and the error names the missing package rather than the
+     * symptom.
+     */
+    public function test_an_unavailable_cache_fails_the_request_instead_of_not_enforcing(): void
+    {
+        $middleware = new RateLimitMiddleware(new UnavailableSimpleCache());
+
+        $this->expectException(SimpleCacheUnavailableException::class);
+        $this->expectExceptionMessage('kinetis/cache-redis');
+        $middleware->process($this->request(), $this->handler());
     }
 }

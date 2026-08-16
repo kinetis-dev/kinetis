@@ -12,8 +12,8 @@ use Kinetis\Events\ListenerInvokerInterface;
 use Kinetis\Events\SynchronousListenerInvoker;
 use Kinetis\Logging\ErrorLogLogger;
 use Kinetis\Runtime\AppEnvironment;
-use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
 use Kinetis\SimpleCache\NullSimpleCache;
+use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -164,11 +164,15 @@ final class AppScope implements ContainerInterface
      *   `class_exists()`-gated the same way `RuntimeDetector` gates
      *   `BrefLambdaAdapter`, so core itself has no amphp/redis dependency.
      *   Redis being *configured* (any of the three env vars above) with
-     *   neither class installed is a clear `SimpleCacheUnavailableException`
-     *   naming `kinetis/cache-redis`, not a silent `NullSimpleCache`
-     *   fallback — the same "explicit intent, missing package is an error"
-     *   precedent `kinetis/storage`'s own `FILESYSTEM_DRIVER=s3` gate
-     *   already establishes.
+     *   neither class installed binds
+     *   `Kinetis\SimpleCache\UnavailableSimpleCache`, whose every
+     *   operation throws `SimpleCacheUnavailableException` naming
+     *   `kinetis/cache-redis` — never a silent `NullSimpleCache`
+     *   fallback, but not a boot-time failure either: a leftover
+     *   `REDIS_*` in a `.env` nothing reads anymore must not crash an
+     *   application that never touches the cache. See that class for
+     *   why the failure lands at usage rather than configuration
+     *   time.
      * - `Kinetis\Events\ListenerInvokerInterface` →
      *   `SynchronousListenerInvoker` — a `ShouldQueue` listener with no
      *   real queue package installed still runs, just inline.
@@ -242,7 +246,13 @@ final class AppScope implements ContainerInterface
         }
 
         if (!class_exists(self::REDIS_CLUSTER_CACHE_CLASS) && !class_exists(self::REDIS_SIMPLE_CACHE_CLASS)) {
-            throw SimpleCacheUnavailableException::missingDriverPackage('kinetis/cache-redis');
+            // Deferred, not thrown here: a leftover REDIS_* in a .env
+            // nothing reads anymore must not crash an application that
+            // never touches the cache. Every operation on this binding
+            // throws, so an app that does use it still fails loudly at
+            // the first real call — and never silently degrades to
+            // NullSimpleCache.
+            return new UnavailableSimpleCache();
         }
 
         $clusterClass = self::REDIS_CLUSTER_CACHE_CLASS;

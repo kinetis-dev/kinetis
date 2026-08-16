@@ -483,9 +483,12 @@ live in this separate package — core ships only `NullSimpleCache` and the
 `CacheInterface` binding itself, so an application with no Redis at all
 can skip this entirely; `AppScope::boot()` falls back to `NullSimpleCache`
 automatically. Configuring Redis (`REDIS_HOST`/`REDIS_URL`/
-`REDIS_CLUSTER`) without this package installed is a clear
-`SimpleCacheUnavailableException` naming it at boot time, not a silent
-fallback.
+`REDIS_CLUSTER`) without this package installed binds a cache whose every
+operation throws `SimpleCacheUnavailableException` naming the package —
+so an application that never touches the cache still boots and runs (a
+leftover `REDIS_*` in a `.env` is not a fatal condition), while one that
+does use it fails loudly at the first call rather than silently degrading
+to `NullSimpleCache`.
 
 A general-purpose PSR-16 cache — not the raw Redis client above, and not
 {doc}`caching`'s AOT compilation artifacts, a completely different kind of
