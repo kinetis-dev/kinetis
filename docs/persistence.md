@@ -221,6 +221,8 @@ DB_CHARSET=utf8mb4
 DB_COLLATION=utf8mb4_unicode_ci
 DB_SSLMODE=verify-full
 DB_SSL_CA=/etc/ssl/certs/db-ca.pem
+DB_SSL_CERT=/etc/ssl/certs/db-client.pem
+DB_SSL_KEY=/etc/ssl/private/db-client.key
 DB_CONNECT_TIMEOUT=5
 DB_APP_NAME=myapp
 DB_COMPRESSION=false
@@ -233,6 +235,8 @@ DB_MAX_CONNECTIONS=12
 | `DB_COLLATION` | `SET NAMES ... COLLATE` | `SET NAMES ... COLLATE` | — | — |
 | `DB_SSLMODE` | `MYSQLI_CLIENT_SSL` + verify flag | `MYSQL_ATTR_SSL_*` | `sslmode` | `sslmode` |
 | `DB_SSL_CA` | `ssl_set()` | `MYSQL_ATTR_SSL_CA` | `sslrootcert` | `sslrootcert` |
+| `DB_SSL_CERT` | `ssl_set()` | `MYSQL_ATTR_SSL_CERT` | `sslcert` | `sslcert` |
+| `DB_SSL_KEY` | `ssl_set()` | `MYSQL_ATTR_SSL_KEY` | `sslkey` | `sslkey` |
 | `DB_CONNECT_TIMEOUT` | `MYSQLI_OPT_CONNECT_TIMEOUT` | `PDO::ATTR_TIMEOUT` | `connect_timeout` | `connect_timeout` |
 | `DB_APP_NAME` | — | — | `application_name` | `application_name` |
 | `DB_COMPRESSION` | `MYSQLI_CLIENT_COMPRESS` | `MYSQL_ATTR_COMPRESS` | — | — |
@@ -252,8 +256,38 @@ silently weakened connections: a verify mode without `DB_SSL_CA` (there
 is nothing to verify against), a `DB_SSL_CA` without a verify mode (it
 would be silently ignored), and — a mysqlnd behavior, not a choice —
 `verify-ca` verifies the hostname too, so it acts as `verify-full`:
-stricter than asked, never looser. Client certificates (mutual TLS)
-are not modeled.
+stricter than asked, never looser.
+
+#### Mutual TLS: client certificates
+
+Where the server authenticates the client too — MySQL's
+`REQUIRE X509`, Postgres's `clientcert=verify-ca` in `pg_hba.conf` —
+point `DB_SSL_CERT` and `DB_SSL_KEY` at the client certificate and its
+private key. Every driver supports this:
+
+```{code-block} text
+DB_SSLMODE=verify-full
+DB_SSL_CA=/etc/ssl/certs/db-ca.pem
+DB_SSL_CERT=/etc/ssl/certs/db-client.pem
+DB_SSL_KEY=/etc/ssl/private/db-client.key
+```
+
+Presenting a client certificate is independent of *server*
+verification, so it is valid under any mode that performs a handshake,
+`require` included. Two rules are construction-time errors rather than
+a connection that quietly means something else: the certificate and the
+key must be set together (one without the other is unusable), and
+either one requires TLS — under `disable`, or with `DB_SSLMODE` unset,
+a client certificate would never be presented at all.
+
+```{warning}
+Postgres refuses a client key that is readable beyond its owner: it
+must be `0600` (or `0640` when owned by root). The message names the
+file, but it comes from libpq at connect time, so it surfaces as a
+connection failure rather than a configuration error. MySQL imposes no
+such requirement — a deployment that works against MySQL can fail
+against Postgres for this reason alone.
+```
 
 MySQL charset defaults to `utf8mb4` on every driver when `DB_CHARSET`
 is unset — never the server's own default, since the native driver's
