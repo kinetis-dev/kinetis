@@ -133,7 +133,10 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 
 ## `Kinetis\Testing`
 
-- `TestClient` — wraps a `Kernel`. `get()`/`post()`/`put()`/`patch()`/`delete()` build a PSR-7 request and dispatch it; a `body` array is JSON-encoded with `Content-Type: application/json` set unless already provided. `request()` is the general form all five call.
+- `TestClient` — wraps a `Kernel`. `get()`/`post()`/`put()`/`patch()`/`delete()` build a PSR-7 request and dispatch it; a `body` array is JSON-encoded with `Content-Type: application/json` set unless already provided. `request()` is the general form all five call. Every method returns a `TestResponse`.
+- `TestResponse` — the response with assertions attached (`assertStatus`/`assertOk`/`assertJson`/`assertJsonPath`/`assertValidationError`, ...), each returning `$this` for chaining. Implements `ResponseInterface` itself and delegates, so it passes anywhere plain PSR-7 is expected. Failure messages include the response body; `body()` rewinds before reading, so the body can be read repeatedly.
+- `TestApplication` — boots a real application from a project root: live discovery (routes, middleware, listeners), the package-then-app bootstrap chain, a booted `AppScope`, a real `Kernel`. `boot(string $projectRoot, array $configOverrides = [])` merges overrides over the environment — including `APP_ENV`, registered as the container's `AppEnvironment` from the merged config, since `AppScope::boot()`'s own default reads `getenv()` and would never see the override. `withRouter()` builds from an explicit route table instead of discovery. No PHPUnit dependency.
+- `ApplicationTestCase` — the PHPUnit base class over `TestApplication`: boots per test via `#[Before]` (so it runs ahead of any trait-declared hook in the concrete class, `kinetis/persistence`'s isolation traits included), exposing `$client`/`$app`/`$application`. Override `projectRoot()` (required) and `configOverrides()`.
 
 ## Request lifecycle, in order
 
