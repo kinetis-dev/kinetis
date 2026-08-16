@@ -522,6 +522,42 @@ just keys this cache wrote. Correct when, as recommended above,
 `REDIS_DATABASE` points at a database dedicated to Kinetis's cache; one
 shared with unrelated data loses it too.
 
+### Fetch keys in batches, not one at a time
+
+`getMultiple()`/`setMultiple()`/`deleteMultiple()` are worth reaching for
+whenever you need several keys. On a single-node cache `getMultiple()`
+issues one `MGET`, which costs roughly a tenth of the client CPU per key
+that the same keys fetched one `get()` at a time do — one round trip and
+one reply parsed, instead of N of each. It is the single largest
+performance lever this cache has.
+
+```{code-block} php
+// One round trip.
+$rows = $this->cache->getMultiple(['user.1', 'user.2', 'user.3']);
+
+// N round trips, each with its own protocol overhead.
+foreach ([1, 2, 3] as $id) {
+    $rows[] = $this->cache->get("user.{$id}");
+}
+```
+
+```{note}
+The Redis client is `amphp/redis` — a pure-PHP implementation of the
+protocol on the Revolt event loop, so its overhead is paid per event-loop
+wakeup rather than per command, and amortizes as more commands are in
+flight at once. Under a persistent worker that is the normal state: with
+around eight or more concurrent requests holding an outstanding Redis
+command, per-operation client CPU is at or below what a blocking native
+extension costs, and no request blocks the worker thread while it waits.
+
+Under PHP-FPM, where a process handles exactly one request at a time,
+there is nothing to amortize against and a single cache operation costs
+roughly three times the client CPU a blocking client would — measured,
+not estimated. It is a small absolute number, and batching as above
+shrinks it far more than any client swap would, but it is worth knowing
+if you run a cache-heavy application on PHP-FPM specifically.
+```
+
 ## Connecting over TLS
 
 Add `REDIS_TLS=true` to any of the connections above — single-node or
