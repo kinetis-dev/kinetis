@@ -234,11 +234,7 @@ final class Kernel
         // real 2026-07-28 spec text, which states plainly that a server
         // implementing only this revision "SHOULD respond as follows"
         // to old-transport traffic — "HTTP GET or DELETE to the MCP
-        // endpoint: respond with 405 Method Not Allowed." A prior version
-        // of this comment described DELETE /mcp as falling through to a
-        // 404 like any other unmatched route instead — that was never
-        // checked against the spec text directly and turned out to be
-        // wrong once it was.
+        // endpoint: respond with 405 Method Not Allowed."
         if ($this->mcp !== null && $path === '/mcp' && in_array($request->getMethod(), ['POST', 'GET', 'DELETE'], true)) {
             return $this->mcpPipeline->handle($request);
         }

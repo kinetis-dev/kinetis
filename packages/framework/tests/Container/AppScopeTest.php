@@ -297,10 +297,8 @@ final class AppScopeTest extends TestCase
         // RedisSimpleCache/ClusteredRedisSimpleCache live in the separate
         // kinetis/cache-redis package, never installed for core's own test
         // suite — this is the real, always-true "not installed" branch,
-        // not a simulated one. Booting must survive it: a leftover
-        // REDIS_HOST in a .env nothing reads anymore is common, and an
-        // application that never touches the cache has nothing to fail
-        // about.
+        // not a simulated one. Booting survives it: an application that
+        // never touches the cache runs unaffected by a stale REDIS_HOST.
         $app = new AppScope();
         $app->instance(Config::class, new Config(['REDIS_HOST' => 'localhost']));
         $app->boot();

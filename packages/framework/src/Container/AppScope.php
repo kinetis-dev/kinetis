@@ -246,12 +246,11 @@ final class AppScope implements ContainerInterface
         }
 
         if (!class_exists(self::REDIS_CLUSTER_CACHE_CLASS) && !class_exists(self::REDIS_SIMPLE_CACHE_CLASS)) {
-            // Deferred, not thrown here: a leftover REDIS_* in a .env
-            // nothing reads anymore must not crash an application that
-            // never touches the cache. Every operation on this binding
-            // throws, so an app that does use it still fails loudly at
-            // the first real call — and never silently degrades to
-            // NullSimpleCache.
+            // Every operation on this binding throws, so the failure
+            // reaches whoever uses the cache while an application that
+            // never touches it runs unaffected by a stale REDIS_* key.
+            // Never NullSimpleCache here: silently discarding writes
+            // would leave rate limits unenforced with no signal.
             return new UnavailableSimpleCache();
         }
 

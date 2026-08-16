@@ -13,20 +13,18 @@ use Psr\SimpleCache\CacheInterface;
  * package is installed: every operation throws, nothing is silently
  * discarded.
  *
- * This exists so the failure lands where the cache is actually used
- * rather than at AppScope::boot(). A leftover REDIS_HOST in a .env
- * nothing reads anymore is common enough that crashing the whole
- * application over it is the wrong trade — an app that never touches
- * CacheInterface has nothing to fail about. An app that does still
- * fails, loudly, at the first real call, and never degrades to
+ * The failure lands where the cache is used rather than at
+ * AppScope::boot(), so a stale REDIS_HOST in a .env costs an
+ * application that never touches CacheInterface nothing. One that does
+ * use it fails at the first call, and never degrades to
  * {@see NullSimpleCache}, which would enforce no rate limit and revoke
- * no token while looking perfectly healthy.
+ * no token while looking healthy.
  *
- * The same usage-time-over-configuration-time choice
+ * This is the same usage-time-over-configuration-time choice
  * {@see \Kinetis\Http\Middleware\RateLimitMiddleware} and
- * `Kinetis\AuthJwt\RevocationStore` already make by rejecting
- * NullSimpleCache at construction rather than having the container
- * refuse to boot without Redis.
+ * `Kinetis\AuthJwt\RevocationStore` make by rejecting NullSimpleCache
+ * at construction rather than having the container refuse to boot
+ * without Redis.
  */
 final class UnavailableSimpleCache implements CacheInterface
 {

@@ -579,20 +579,18 @@ foreach ([1, 2, 3] as $id) {
 ```
 
 ```{note}
-The Redis client is `amphp/redis` — a pure-PHP implementation of the
-protocol on the Revolt event loop, so its overhead is paid per event-loop
-wakeup rather than per command, and amortizes as more commands are in
-flight at once. Under a persistent worker that is the normal state: with
-around eight or more concurrent requests holding an outstanding Redis
-command, per-operation client CPU is at or below what a blocking native
-extension costs, and no request blocks the worker thread while it waits.
+The Redis client is `amphp/redis`, a pure-PHP implementation of the
+protocol on the Revolt event loop. Its overhead is paid per event-loop
+wakeup rather than per command, so it amortizes across whatever else is
+in flight at the same time. Under a persistent worker that is the normal
+state: once around eight concurrent requests hold an outstanding Redis
+command, per-operation client CPU settles to roughly a quarter of what a
+single isolated command costs, and no request blocks the worker thread
+while it waits.
 
-Under PHP-FPM, where a process handles exactly one request at a time,
-there is nothing to amortize against and a single cache operation costs
-roughly three times the client CPU a blocking client would — measured,
-not estimated. It is a small absolute number, and batching as above
-shrinks it far more than any client swap would, but it is worth knowing
-if you run a cache-heavy application on PHP-FPM specifically.
+Under PHP-FPM a process handles exactly one request at a time, so there
+is nothing to amortize against and every cache operation pays the full
+per-wakeup cost. Batching, as above, is the lever that matters there.
 ```
 
 ## Connecting over TLS

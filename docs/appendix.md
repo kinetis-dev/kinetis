@@ -87,7 +87,7 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 
 - `NullSimpleCache` — the default when Redis isn't configured, or when `kinetis/cache-redis` isn't installed at all. Always misses, never stores.
 - `Exception\CacheException` / `Exception\InvalidArgumentException` — implement the matching `Psr\SimpleCache\*` exception interfaces; reused by `kinetis/cache-redis`'s own classes, not redeclared there.
-- `UnavailableSimpleCache` — bound when Redis is configured (`REDIS_HOST`/`REDIS_URL`/`REDIS_CLUSTER`) but `kinetis/cache-redis` isn't installed. Every operation throws `Exception\SimpleCacheUnavailableException` naming the package; nothing is silently discarded, and nothing fails until the cache is actually used — a leftover `REDIS_*` in a `.env` no longer crashes an application that never touches it. The same usage-time-over-configuration-time trade `RateLimitMiddleware`/`RevocationStore` already make by rejecting `NullSimpleCache` at construction rather than at boot.
+- `UnavailableSimpleCache` — bound when Redis is configured (`REDIS_HOST`/`REDIS_URL`/`REDIS_CLUSTER`) but `kinetis/cache-redis` isn't installed. Every operation throws `Exception\SimpleCacheUnavailableException` naming the package; nothing is silently discarded, and nothing fails until the cache is actually used, so a leftover `REDIS_*` in a `.env` leaves an application that never touches the cache unaffected. The same usage-time-over-configuration-time trade `RateLimitMiddleware`/`RevocationStore` make by rejecting `NullSimpleCache` at construction rather than at boot.
 - `Exception\SimpleCacheUnavailableException` — thrown by every `UnavailableSimpleCache` operation, naming `kinetis/cache-redis`.
 
 ## `Kinetis\Mcp`
