@@ -45,7 +45,9 @@ final class RoutesFile
         $path = $projectRoot . '/bootstrap.php';
         $appBootstrap = is_file($path)
             ? require $path
-            : static function (AppScope $app, Config $config): void {};
+            : static function (): void {
+                // No bootstrap.php at the project root — nothing to register.
+            };
 
         /** @var callable(AppScope, Config): void $appBootstrap */
         return static function (AppScope $app, Config $config) use ($bootstrapClasses, $appBootstrap): void {

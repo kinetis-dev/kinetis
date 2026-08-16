@@ -177,28 +177,40 @@ final class PackageDiscovery
         $normalized = rtrim($prefix, '\\') . '\\';
 
         foreach ($package['autoload'] as $registeredPrefix => $directories) {
-            if (!is_string($registeredPrefix)) {
+            if (!is_string($registeredPrefix) || !str_starts_with($normalized, $registeredPrefix)) {
                 continue;
             }
 
-            if (!str_starts_with($normalized, $registeredPrefix)) {
+            $remainder = substr($normalized, strlen($registeredPrefix));
+            $resolved = self::resolveAgainstDirectories($package['path'], $directories, $remainder);
+
+            if ($resolved !== null) {
+                return ['prefix' => $normalized, 'directory' => $resolved];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The remainder of a declared prefix beyond the registered one maps
+     * onto a subdirectory of each registered base directory; the first
+     * one that exists on disk wins.
+     */
+    private static function resolveAgainstDirectories(string $packagePath, mixed $directories, string $remainder): ?string
+    {
+        $subPath = str_replace('\\', '/', rtrim($remainder, '\\'));
+
+        foreach ((is_array($directories) ? $directories : [$directories]) as $directory) {
+            if (!is_string($directory)) {
                 continue;
             }
 
-            foreach ((is_array($directories) ? $directories : [$directories]) as $directory) {
-                if (!is_string($directory)) {
-                    continue;
-                }
+            $base = rtrim($packagePath . '/' . trim($directory, '/'), '/');
+            $resolved = $subPath === '' ? $base : $base . '/' . $subPath;
 
-                $remainder = substr($normalized, strlen($registeredPrefix));
-                $subPath = str_replace('\\', '/', rtrim($remainder, '\\'));
-                $base = rtrim($package['path'] . '/' . trim($directory, '/'), '/');
-
-                $resolved = $subPath === '' ? $base : $base . '/' . $subPath;
-
-                if (is_dir($resolved)) {
-                    return ['prefix' => $normalized, 'directory' => $resolved];
-                }
+            if (is_dir($resolved)) {
+                return $resolved;
             }
         }
 
