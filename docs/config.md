@@ -286,7 +286,7 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate. |
+| `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate; the `--connection=<name>` flag wins over it. |
 
 ### File storage (`kinetis/storage` + `kinetis/storage-s3`) — all scoped
 

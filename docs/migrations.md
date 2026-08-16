@@ -87,8 +87,13 @@ DB_PORT=3306           # optional
 migrations against the wrong database with no warning at all.
 
 To run migrations against a database other than the default connection
-(see {doc}`config`'s named-connection convention), set
-`MIGRATE_CONNECTION_NAME`:
+(see {doc}`config`'s named-connection convention), pass
+`--connection=<name>` to any command, or set `MIGRATE_CONNECTION_NAME`
+in the environment — the explicit flag wins when both are given:
+
+```{code-block} sh
+vendor/bin/migrate migrate --connection=db2
+```
 
 ```{code-block} text
 MIGRATE_CONNECTION_NAME=db2

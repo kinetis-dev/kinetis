@@ -155,7 +155,7 @@
             "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.2.0",
             "bin": [
                 "bin/migrate"
             ],

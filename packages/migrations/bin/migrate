@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
+use Kinetis\Console\CommandArguments;
 use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Migrations\MigrationScaffolder;
 use Kinetis\Migrations\SqlMigrationRepository;
@@ -29,10 +30,11 @@ $projectRoot = ProjectRoot::detect(__DIR__);
 EnvFile::safeLoad($projectRoot);
 $migrationsPath = $projectRoot . '/migrations';
 
-$command = $argv[1] ?? null;
+$arguments = CommandArguments::parse(array_slice($argv ?? [], 1));
+$command = $arguments->get(0);
 
 if ($command === 'make') {
-    $description = $argv[2] ?? null;
+    $description = $arguments->get(1);
 
     if ($description === null) {
         fwrite(STDERR, "Usage: migrate make <description>\n");
@@ -45,15 +47,18 @@ if ($command === 'make') {
 }
 
 if (!in_array($command, ['migrate', 'rollback', 'status'], true)) {
-    fwrite(STDERR, "Usage: migrate migrate|rollback|status|make <description>\n");
+    fwrite(STDERR, "Usage: migrate [--connection=<name>] migrate|rollback|status|make <description>\n");
     exit(1);
 }
 
 $config = Config::fromEnvironment();
 
-// MIGRATE_CONNECTION_NAME selects a named DB_* connection block (see
-// Kinetis\Config\Config::scopedKey()) — 'default' reads plain DB_* keys.
-$connectionName = $config->string('MIGRATE_CONNECTION_NAME', 'default');
+// --connection selects a named DB_* connection block (see
+// Kinetis\Config\Config::scopedKey()); the MIGRATE_CONNECTION_NAME key
+// is the environment-level way to say the same thing, with the explicit
+// flag winning when both are given — 'default' reads plain DB_* keys.
+$connectionName = $arguments->option('connection')
+    ?? $config->string('MIGRATE_CONNECTION_NAME', 'default');
 $db = SqlConnectionFactory::fromConfig($config, $connectionName);
 
 $runner = new MigrationRunner($db, new SqlMigrationRepository($db), $migrationsPath);

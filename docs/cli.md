@@ -179,6 +179,39 @@ GET     /orders/{id}/refund     200     App\Http\OrderController::refund  App\Ht
                                                                          App\Http\Middleware\RequireAdminMiddleware (@admin)
 ```
 
+## Satellite package binaries
+
+Two packages ship their own binaries, fully independent of
+`bin/kinetis`:
+
+**`vendor/bin/migrate`** (`kinetis/migrations` — full docs in
+{doc}`migrations`):
+
+```{code-block} sh
+vendor/bin/migrate migrate                      # apply pending migrations
+vendor/bin/migrate rollback                     # roll back the last one
+vendor/bin/migrate status                       # applied/pending listing
+vendor/bin/migrate make "create users table"    # scaffold a migration file
+```
+
+Connects through the same `DB_*` keys as {doc}`persistence`.
+`--connection=<name>` targets a named `DB_{NAME}_*` connection block for
+any of the four commands, winning over the `MIGRATE_CONNECTION_NAME`
+environment key when both are given:
+
+```{code-block} sh
+vendor/bin/migrate migrate --connection=reporting
+```
+
+**`vendor/bin/queue`** (`kinetis/queue` — full docs in {doc}`queue`):
+
+```{code-block} sh
+vendor/bin/queue work --queue=high,default
+```
+
+Runs the queue worker loop against the backend `QUEUE_CONNECTION`
+selects, checking queues in the given priority order.
+
 ## Development vs. production
 
 In development, commands are discovered fresh on every invocation, so a
