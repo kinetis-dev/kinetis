@@ -9,9 +9,9 @@ composer require kinetis/migrations
 ````
 
 A thin runner for versioned schema changes: raw SQL `up()`/`down()`
-migrations, tracked in a `kinetis_migrations` table, run through a
-standalone `vendor/bin/migrate` binary. No fluent DDL builder, no
-schema-diffing.
+migrations, tracked in a `kinetis_migrations` table, run through
+`migrate*` commands the package registers on `vendor/bin/kinetis` (see
+{doc}`cli`). No fluent DDL builder, no schema-diffing.
 
 ## Writing a migration
 
@@ -58,19 +58,19 @@ regardless of which branch created the file, and doubles as the name
 Scaffold one instead of writing the boilerplate by hand:
 
 ```{code-block} sh
-vendor/bin/migrate make "create orders table"
+vendor/bin/kinetis migrate:make "create orders table"
 # Created migrations/20260810143000_create_orders_table.php
 ```
 
 ## Running migrations
 
 ```{code-block} sh
-vendor/bin/migrate migrate    # runs every pending migration, in filename order
-vendor/bin/migrate rollback   # rolls back the single most recently applied migration
-vendor/bin/migrate status     # lists every migration with its applied/pending state
+vendor/bin/kinetis migrate           # runs every pending migration, in filename order
+vendor/bin/kinetis migrate:rollback  # rolls back the single most recently applied migration
+vendor/bin/kinetis migrate:status    # lists every migration with its applied/pending state
 ```
 
-`migrate`/`rollback`/`status` connect using the same `.env`/environment
+`migrate`/`migrate:rollback`/`migrate:status` connect using the same `.env`/environment
 convention {doc}`config` describes, plus two variables specific to this
 package:
 
@@ -92,7 +92,7 @@ To run migrations against a database other than the default connection
 in the environment — the explicit flag wins when both are given:
 
 ```{code-block} sh
-vendor/bin/migrate migrate --connection=db2
+vendor/bin/kinetis migrate --connection=db2
 ```
 
 ```{code-block} text
@@ -103,8 +103,7 @@ DB_DB2_HOST=reporting.internal
 DB_DB2_PASSWORD=secret
 ```
 
-Omit it and `vendor/bin/migrate` reads the plain `DB_*` keys, exactly as
-above.
+Omit it and the commands read the plain `DB_*` keys, exactly as above.
 
 ## Transactions are not automatic
 
@@ -140,7 +139,7 @@ instead of continuing past a failure.
 
 - {doc}`query-builder` — a fluent builder for querying the tables these
   migrations create, on the same MySQL/Postgres connections.
-- {doc}`persistence` — the connection pool shape `vendor/bin/migrate`
-  builds internally.
+- {doc}`persistence` — the connection pool shape the `migrate*`
+  commands build internally.
 - {doc}`config` — the `.env`/environment convention `migrate` reads its
   connection details from.

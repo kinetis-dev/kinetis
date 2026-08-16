@@ -1,0 +1,38 @@
+{
+    "packages": [
+        {
+            "name": "acme/plain",
+            "install-path": "../acme/plain"
+        },
+        {
+            "name": "acme/fixture",
+            "install-path": "../../../AcmePackage",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\": ""
+                }
+            },
+            "extra": {
+                "kinetis": {
+                    "scan": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\Console\\",
+                    "bootstrap": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeFixtureBootstrap"
+                }
+            }
+        },
+        {
+            "name": "acme/bad-prefix",
+            "install-path": "../../../AcmePackage",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\": ""
+                }
+            },
+            "extra": {
+                "kinetis": {
+                    "scan": "Totally\\Unrelated\\Namespace\\"
+                }
+            }
+        }
+    ],
+    "dev": true
+}

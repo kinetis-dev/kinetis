@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Http\Middleware;
 
 use Kinetis\Cache\NamespaceScanner;
+use Kinetis\Cache\PackageDiscovery;
 use Kinetis\Http\Attributes\AsGlobalMiddleware;
 use Kinetis\Http\Attributes\AsMcpMiddleware;
 use Kinetis\Http\Attributes\AsMiddlewareGroup;
@@ -83,6 +84,7 @@ final class GlobalMiddlewareDiscovery
         $candidates = [
             ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
             ...NamespaceScanner::classesUnderFrameworkSegment('Http'),
+            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
         ];
 
         /** @var array<class-string, int> $global */

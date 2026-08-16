@@ -19,7 +19,7 @@ QUEUE_RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 ```
 
 ```{code-block} sh
-vendor/bin/queue work --queue=high,default
+vendor/bin/kinetis queue:work --queue=high,default
 ```
 
 Every AMQP call this backend makes, including a worker checking for the
@@ -88,7 +88,7 @@ something you asked for), and `concurrently()` waits for every pending
 operation in the process to settle before it returns — which never
 happens while that connection stays open.
 
-This never affects the `vendor/bin/queue work` loop itself. It does
+This never affects the `kinetis queue:work` loop itself. It does
 affect two other things:
 
 - **A job's own `handle()`** reaching for `concurrently()` for its own

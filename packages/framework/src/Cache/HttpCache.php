@@ -43,6 +43,8 @@ final readonly class HttpCache
         public string $compiledAt,
         /** @var array<string, list<class-string>> */
         public array $middlewareGroups = [],
+        /** @var list<class-string> */
+        public array $packageBootstraps = [],
     ) {}
 
     /**
@@ -59,6 +61,7 @@ final readonly class HttpCache
             'mcpMiddleware' => $this->mcpMiddleware,
             'openApiMiddleware' => $this->openApiMiddleware,
             'middlewareGroups' => $this->middlewareGroups,
+            'packageBootstraps' => $this->packageBootstraps,
             'compiledAt' => $this->compiledAt,
         ];
     }
@@ -82,6 +85,8 @@ final readonly class HttpCache
         $openApiMiddleware = $data['openApiMiddleware'];
         /** @var array<string, list<class-string>> $middlewareGroups */
         $middlewareGroups = $data['middlewareGroups'];
+        /** @var list<class-string> $packageBootstraps */
+        $packageBootstraps = $data['packageBootstraps'];
 
         return new self(
             formatVersion: (int) $data['formatVersion'],
@@ -93,6 +98,7 @@ final readonly class HttpCache
             openApiMiddleware: $openApiMiddleware,
             compiledAt: (string) $data['compiledAt'],
             middlewareGroups: $middlewareGroups,
+            packageBootstraps: $packageBootstraps,
         );
     }
 }

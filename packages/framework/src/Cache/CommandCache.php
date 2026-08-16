@@ -19,6 +19,8 @@ final readonly class CommandCache
         /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> */
         public array $commands,
         public string $compiledAt,
+        /** @var list<class-string> */
+        public array $packageBootstraps = [],
     ) {}
 
     /**
@@ -29,6 +31,7 @@ final readonly class CommandCache
         return [
             'formatVersion' => $this->formatVersion,
             'commands' => $this->commands,
+            'packageBootstraps' => $this->packageBootstraps,
             'compiledAt' => $this->compiledAt,
         ];
     }
@@ -41,10 +44,14 @@ final readonly class CommandCache
         /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $commands */
         $commands = $data['commands'];
 
+        /** @var list<class-string> $packageBootstraps */
+        $packageBootstraps = $data['packageBootstraps'];
+
         return new self(
             formatVersion: (int) $data['formatVersion'],
             commands: $commands,
             compiledAt: (string) $data['compiledAt'],
+            packageBootstraps: $packageBootstraps,
         );
     }
 }

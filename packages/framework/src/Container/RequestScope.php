@@ -119,6 +119,19 @@ final class RequestScope implements ContainerInterface
         }
     }
 
+    /**
+     * The application scope this request scope belongs to — for the
+     * consumer that mints further per-unit-of-work scopes itself (a
+     * queue worker creating a fresh scope per job, via
+     * AppScope::createRequestScope()). Not a bypass for ordinary
+     * resolution: get() with its explicit-delegation rule remains the
+     * way to resolve services here.
+     */
+    public function appScope(): AppScope
+    {
+        return $this->parent;
+    }
+
     public function isDisposed(): bool
     {
         return $this->disposed;

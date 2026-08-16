@@ -92,7 +92,8 @@ final readonly class RequestIdMiddleware implements MiddlewareInterface
 
 Any class anywhere under one of your own PSR-4 roots carrying this
 attribute joins the global pipeline automatically, with no
-`$app->middleware(...)` call at all. It runs *inward* of every explicitly
+`$app->middleware(...)` call at all — and so does a class an installed
+package offers through its `extra.kinetis` scan roots (see {doc}`cli`). It runs *inward* of every explicitly
 registered middleware, as a group — explicit registration always wins.
 
 **Ordering among multiple discovered classes** is `priority`, an integer

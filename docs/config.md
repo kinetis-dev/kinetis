@@ -137,11 +137,15 @@ service you never explicitly registered on `RequestScope` itself.
 
 ## Registering services before boot: `bootstrap.php`
 
-`public/index.php`, `bin/kinetis`, and `kinetis/queue`'s `bin/queue` each
-construct a plain `AppScope` and call `boot()` on it — with no bindings of
-your own registered yet. An optional `bootstrap.php` at your project root
-is the place to register anything a controller, command, or job actually
-needs before that lock happens:
+`public/index.php` and `bin/kinetis` each construct a plain `AppScope`
+and call `boot()` on it — with no bindings of your own registered yet.
+Two things run before that lock: any installed package's own bootstrap
+class (declared via `extra.kinetis` — see {doc}`cli` — the way
+`kinetis/persistence` and `kinetis/queue` bind a configured connection
+and queue backend with no wiring of yours), then an optional
+`bootstrap.php` at your project root, the place to register anything a
+controller, command, or job actually needs — and to override any binding
+a package made, since your registration runs last:
 
 ```{code-block} php
 :caption: bootstrap.php
@@ -261,7 +265,8 @@ simply off and `CacheInterface` binds to `NullSimpleCache`.
 
 ### Queue (`kinetis/queue` + backend packages)
 
-Read by `vendor/bin/queue`; the backend-specific keys are scoped.
+Read by `kinetis queue:work` and `kinetis/queue`'s package bootstrap;
+the backend-specific keys are scoped.
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -281,7 +286,7 @@ AWS credentials are deliberately never read from `Config` — the SQS
 
 ### Migrations (`kinetis/migrations`)
 
-Read by `vendor/bin/migrate`, which connects through the same `DB_*`
+Read by the `migrate*` commands, which connect through the same `DB_*`
 keys as persistence.
 
 | Key | Default | Purpose |

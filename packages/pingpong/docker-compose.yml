@@ -61,7 +61,7 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-    command: ["php", "vendor/bin/migrate", "migrate"]
+    command: ["php", "vendor/bin/kinetis", "migrate"]
     healthcheck:
       disable: true
 
@@ -80,7 +80,7 @@ services:
       migrate:
         condition: service_completed_successfully
     entrypoint: []
-    command: ["php", "vendor/bin/queue", "work"]
+    command: ["php", "vendor/bin/kinetis", "queue:work"]
     healthcheck:
       disable: true
 

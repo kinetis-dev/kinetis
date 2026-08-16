@@ -32,6 +32,9 @@
             "Kinetis\\Storage\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "kinetis": {}
+    },
     "repositories": [
         {
             "type": "path",

@@ -38,7 +38,6 @@ $store = new CacheStore($projectRoot . '/.kinetis-cache');
 $app = new AppScope();
 $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
-RoutesFile::loadBootstrap($projectRoot)($app, $config);
 
 $httpCache = null;
 $cacheStore = null;
@@ -73,6 +72,7 @@ if ($env->isProduction()) {
         : McpDiscovery::discover($projectRoot);
     $mcpBindingPlans = $mcpCache !== null ? $mcpCache->mcpBindingPlans : [];
     $mcpHydrationPlans = $mcpCache !== null ? $mcpCache->hydrationPlans : [];
+    $packageBootstraps = $httpCache->packageBootstraps;
 } else {
     // Any class anywhere under one of your own PSR-4 roots is picked up
     // automatically — nothing to register.
@@ -91,7 +91,15 @@ if ($env->isProduction()) {
     $mcpRegistry = McpDiscovery::discover($projectRoot);
     $mcpBindingPlans = [];
     $mcpHydrationPlans = [];
+    // null = discover the package bootstrap list live, alongside the rest.
+    $packageBootstraps = null;
 }
+
+// The bootstrap chain: every installed package's declared
+// PackageBootstrapInterface first (kinetis/persistence binding MysqlLink,
+// kinetis/queue binding QueueInterface), then this application's own
+// bootstrap.php — which therefore always wins on a shared binding.
+RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
 
 $app->instance(EventListenerRegistry::class, $listenerRegistry);
 $app->boot();

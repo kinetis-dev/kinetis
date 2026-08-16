@@ -60,6 +60,7 @@ final class Compiler
      * key is treated as empty.
      *
      * @param DiscoveredMiddleware $middleware
+     * @param list<class-string> $packageBootstraps
      */
     public function compile(
         Router $router,
@@ -67,6 +68,7 @@ final class Compiler
         ?CommandRegistry $commands = null,
         ?EventListenerRegistry $listeners = null,
         array $middleware = [],
+        array $packageBootstraps = [],
     ): CompiledCache {
         $compiledAt = (new DateTimeImmutable())->format(DATE_ATOM);
 
@@ -110,6 +112,7 @@ final class Compiler
             openApiMiddleware: $middleware['openApi'] ?? [],
             compiledAt: $compiledAt,
             middlewareGroups: $middleware['groups'] ?? [],
+            packageBootstraps: $packageBootstraps,
         );
 
         $mcpToArray = $registry->toArray();
@@ -133,6 +136,7 @@ final class Compiler
             formatVersion: CacheFormat::VERSION,
             commands: ($commands ?? new CommandRegistry())->toArray(),
             compiledAt: $compiledAt,
+            packageBootstraps: $packageBootstraps,
         );
 
         $eventsCache = new EventCache(
@@ -179,7 +183,8 @@ final class Compiler
         $commands = CommandDiscovery::discover($projectRoot);
         $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
         $listeners = EventListenerDiscovery::discover($projectRoot);
+        $packageBootstraps = PackageDiscovery::bootstrapClasses($projectRoot);
 
-        return $this->compile($router, $registry, $commands, $listeners, $middleware);
+        return $this->compile($router, $registry, $commands, $listeners, $middleware, $packageBootstraps);
     }
 }

@@ -1318,7 +1318,7 @@
             "dist": {
                 "type": "path",
                 "url": "../cache-redis",
-                "reference": "0b8b487283be8a1c192fb6cd387c7b7d9e710a77"
+                "reference": "7220604af80245a011077c90b83b4daffccb0055"
             },
             "require": {
                 "amphp/amp": "^3.1",
@@ -1335,6 +1335,9 @@
                 "vimeo/psalm": "^6.16"
             },
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\SimpleCache\\": "src/"
@@ -1364,7 +1367,7 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "4948a3e9e7f40441def7ed4a1280c6f622857191"
+                "reference": "0de7f8938cf33a41a31bb8d347a7a95cfe8fd535"
             },
             "require": {
                 "ext-fileinfo": "*",
@@ -1394,6 +1397,9 @@
                 "bin/kinetis"
             ],
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\": "src/"
@@ -1426,7 +1432,7 @@
             "dist": {
                 "type": "path",
                 "url": "../migrations",
-                "reference": "a3a2e1cf7b340f5a8b1f8070ff1d2917961e5b8d"
+                "reference": "aa2adc3ac4db6cfca2b0c85f1f696a6382cf1d4c"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1439,10 +1445,12 @@
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },
-            "bin": [
-                "bin/migrate"
-            ],
             "type": "library",
+            "extra": {
+                "kinetis": {
+                    "scan": "Kinetis\\Migrations\\Console\\"
+                }
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\Migrations\\": "src/"
@@ -1472,7 +1480,7 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "807a8951c21e3d2aa51b90e79807b5cbd9652050"
+                "reference": "211618fd0a388b935cc726d8a363b415c8b761cb"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1493,6 +1501,11 @@
                 "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto."
             },
             "type": "library",
+            "extra": {
+                "kinetis": {
+                    "bootstrap": "Kinetis\\Persistence\\PackageBootstrap"
+                }
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\Persistence\\": "src/"
@@ -1522,7 +1535,7 @@
             "dist": {
                 "type": "path",
                 "url": "../query-builder",
-                "reference": "1111c22600edb7f694856e64d069bdd450046c93"
+                "reference": "3eb652512bbec285b90d6a6d068ab52054665290"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1536,6 +1549,9 @@
                 "vimeo/psalm": "^6.16"
             },
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\QueryBuilder\\": "src/"
@@ -1565,7 +1581,7 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "cf2f8353f85d343a2546ce4ea184d83cd739773c"
+                "reference": "759b963c42fb69937f359ee3bcb9d578dbd35e1a"
             },
             "require": {
                 "amphp/redis": "^2.0",
@@ -1582,10 +1598,13 @@
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },
-            "bin": [
-                "bin/queue"
-            ],
             "type": "library",
+            "extra": {
+                "kinetis": {
+                    "scan": "Kinetis\\Queue\\Console\\",
+                    "bootstrap": "Kinetis\\Queue\\PackageBootstrap"
+                }
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\Queue\\": "src/"
@@ -5240,10 +5259,10 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
+        "kinetis/cache-redis": 20,
         "kinetis/framework": 20,
         "kinetis/migrations": 20,
         "kinetis/persistence": 20,
-        "kinetis/cache-redis": 20,
         "kinetis/query-builder": 20,
         "kinetis/queue": 20
     },
@@ -5252,6 +5271,6 @@
     "platform": {
         "php": "^8.4"
     },
-    "platform-dev": [],
-    "plugin-api-version": "2.6.0"
+    "platform-dev": {},
+    "plugin-api-version": "2.9.0"
 }

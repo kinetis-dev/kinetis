@@ -337,30 +337,15 @@ final readonly class PingRepository
 }
 ```
 
-`PingRepository` needs a real `MysqlLink` client — something has to
-build one and register it before the container locks its bindings. An
-optional `bootstrap.php` at the project root is the place for that:
-
-```{code-block} php
-:caption: bootstrap.php
-
-<?php
-
-declare(strict_types=1);
-
-use Kinetis\Persistence\Contract\MysqlLink;
-use Kinetis\Config\Config;
-use Kinetis\Container\AppScope;
-use Kinetis\Persistence\SqlConnectionFactory;
-
-return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
-};
-```
-
-`public/index.php` needs to load `.env`, build a `Config`, and run
-`bootstrap.php` before it boots the container. Replace everything up to
-(and including) `$app->boot();` with:
+`PingRepository` needs a real `MysqlLink` client registered before the
+container locks its bindings — and `kinetis/persistence` does that
+itself: its package bootstrap (see {doc}`cli`) reads the `DB_*` keys you
+just put in `.env` and binds the connection under `MysqlLink`, with no
+wiring of your own. What `public/index.php` does need is to load `.env`,
+build a `Config`, and run the bootstrap chain — every installed
+package's bootstrap, then your own optional `bootstrap.php` — before it
+boots the container. Replace everything up to (and including)
+`$app->boot();` with:
 
 ```{code-block} php
 :caption: public/index.php
@@ -470,7 +455,7 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-    command: ["php", "vendor/bin/migrate", "migrate"]
+    command: ["php", "vendor/bin/kinetis", "migrate"]
     healthcheck:
       disable: true
 
@@ -536,35 +521,10 @@ final readonly class PongJob implements Job
 }
 ```
 
-Register the queue in `bootstrap.php`:
-
-```{code-block} php
-:caption: bootstrap.php
-
-<?php
-
-declare(strict_types=1);
-
-use Kinetis\Persistence\Contract\MysqlLink;
-use Kinetis\Config\Config;
-use Kinetis\Container\AppScope;
-use Kinetis\Persistence\SqlConnectionFactory;
-use Kinetis\Queue\QueueInterface;
-use Kinetis\Queue\RedisQueue;
-use Kinetis\SimpleCache\RedisSimpleCache;
-
-use function Amp\Redis\createRedisClient;
-
-return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
-
-    $redisConfig = RedisSimpleCache::buildRedisConfig($config);
-
-    if ($redisConfig !== null) {
-        $app->instance(QueueInterface::class, new RedisQueue(createRedisClient($redisConfig)));
-    }
-};
-```
+Nothing to register: `QUEUE_CONNECTION=redis` in `.env` is the whole
+wiring — `kinetis/queue`'s package bootstrap binds `QueueInterface` to a
+Redis-backed queue from it, the same way `kinetis/persistence` already
+bound `MysqlLink`.
 
 Add a second method that pushes a job instead of ponging inline:
 
@@ -631,7 +591,7 @@ Add Redis and a worker process to run the job:
       migrate:
         condition: service_completed_successfully
     entrypoint: []
-    command: ["php", "vendor/bin/queue", "work"]
+    command: ["php", "vendor/bin/kinetis", "queue:work"]
     healthcheck:
       disable: true
 ```
@@ -856,8 +816,10 @@ final readonly class ActionEventListener
 
 `ActionEventListener` needs nothing registered for it — any class anywhere
 under your own PSR-4 root carrying a `#[Listener]` method is found
-automatically. `bootstrap.php` only needs the services from the sections
-above:
+automatically. `SoketiPublisher` is the first service that genuinely
+needs app-side wiring — the database and queue bindings come from their
+packages' own bootstraps — so create the optional `bootstrap.php` at the
+project root for it:
 
 ```{code-block} php
 :caption: bootstrap.php
@@ -867,25 +829,10 @@ above:
 declare(strict_types=1);
 
 use App\Services\SoketiPublisher;
-use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
-use Kinetis\Persistence\SqlConnectionFactory;
-use Kinetis\Queue\QueueInterface;
-use Kinetis\Queue\RedisQueue;
-use Kinetis\SimpleCache\RedisSimpleCache;
-
-use function Amp\Redis\createRedisClient;
 
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
-
-    $redisConfig = RedisSimpleCache::buildRedisConfig($config);
-
-    if ($redisConfig !== null) {
-        $app->instance(QueueInterface::class, new RedisQueue(createRedisClient($redisConfig)));
-    }
-
     $app->instance(SoketiPublisher::class, SoketiPublisher::fromConfig($config));
 };
 ```

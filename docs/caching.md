@@ -25,7 +25,7 @@ root, or {doc}`config` for loading it from a `.env` file automatically.
 
 ## What gets cached
 
-Ten things get precomputed:
+Eleven things get precomputed:
 
 - The route table.
 - MCP tool/resource definitions.
@@ -42,6 +42,9 @@ Ten things get precomputed:
 - HTTP and MCP parameter-binding plans (how each request's data maps onto
   your controller/tool method's parameters).
 - DTO validation plans.
+- The installed packages' bootstrap-class list (declared via
+  `extra.kinetis` — see {doc}`cli`), so production never re-reads
+  `vendor/composer/installed.json` per request.
 
 `GlobalMiddlewareDiscovery::discoverAll()` performs exactly one
 project-wide scan for all four middleware attributes, not four — see
@@ -56,10 +59,12 @@ The on-disk result is five independent files:
 .kinetis-cache/
 ├── http.php       routes + global/mcp/openapi middleware + named
 │                  middleware groups + HTTP binding plans + validation
-│                  plans for DTOs reachable from HTTP routes
+│                  plans for DTOs reachable from HTTP routes + the
+│                  package bootstrap-class list
 ├── mcp.php        tool/resource definitions + MCP binding plans +
 │                  validation plans for DTOs reachable from MCP tools
-├── commands.php   command definitions
+├── commands.php   command definitions + the package bootstrap-class
+│                  list (repeated so `bin/kinetis` loads one file)
 ├── events.php     event listeners, grouped by event class
 └── openapi.php    the generated OpenAPI document
 ```

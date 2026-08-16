@@ -179,38 +179,59 @@ GET     /orders/{id}/refund     200     App\Http\OrderController::refund  App\Ht
                                                                          App\Http\Middleware\RequireAdminMiddleware (@admin)
 ```
 
-## Satellite package binaries
+## Package-provided commands and services
 
-Two packages ship their own binaries, fully independent of
-`bin/kinetis`:
+Installed packages plug into the same discovery your own application
+uses. A package declares its participation in its `composer.json` under
+`extra.kinetis`:
 
-**`vendor/bin/migrate`** (`kinetis/migrations` — full docs in
-{doc}`migrations`):
+```{code-block} json
+:caption: A package's composer.json
 
-```{code-block} sh
-vendor/bin/migrate migrate                      # apply pending migrations
-vendor/bin/migrate rollback                     # roll back the last one
-vendor/bin/migrate status                       # applied/pending listing
-vendor/bin/migrate make "create users table"    # scaffold a migration file
+{
+    "extra": {
+        "kinetis": {
+            "scan": "Acme\\Reports\\Console\\",
+            "bootstrap": "Acme\\Reports\\PackageBootstrap"
+        }
+    }
+}
 ```
 
-Connects through the same `DB_*` keys as {doc}`persistence`.
-`--connection=<name>` targets a named `DB_{NAME}_*` connection block for
-any of the four commands, winning over the `MIGRATE_CONNECTION_NAME`
-environment key when both are given:
+Both keys are optional. `scan` is a comma-separated list of PSR-4
+namespace prefixes (each must sit at or below one of the package's own
+declared PSR-4 roots); every class under them joins the same
+attribute-driven discovery as your application's own code — `#[Command]`
+methods become `kinetis` commands, and `#[Get]`/`#[McpTool]`/
+`#[Listener]`/`#[AsGlobalMiddleware]` classes register the same way.
+`bootstrap` names a class implementing
+`Kinetis\Container\PackageBootstrapInterface`; its `register(AppScope
+$app, Config $config)` runs before your application's own
+`bootstrap.php`, so a package can bind its services from configuration
+alone, and anything your `bootstrap.php` registers afterward wins over a
+package's binding for the same id. A package bootstrap should stay inert
+when its configuration is absent — wiring, not side effects.
+
+Installing a package is what opts it in — there is no separate
+allow-list. If you install a package, you trust what it registers, the
+same trust already extended to any code Composer autoloads.
+
+`kinetis/migrations` and `kinetis/queue` ship their commands this way:
 
 ```{code-block} sh
-vendor/bin/migrate migrate --connection=reporting
+vendor/bin/kinetis migrate                        # apply pending migrations
+vendor/bin/kinetis migrate:rollback               # roll back the last one
+vendor/bin/kinetis migrate:status                 # applied/pending listing
+vendor/bin/kinetis migrate:make "create users"    # scaffold a migration file
+vendor/bin/kinetis queue:work --queue=high,default
 ```
 
-**`vendor/bin/queue`** (`kinetis/queue` — full docs in {doc}`queue`):
-
-```{code-block} sh
-vendor/bin/queue work --queue=high,default
-```
-
-Runs the queue worker loop against the backend `QUEUE_CONNECTION`
-selects, checking queues in the given priority order.
+The `migrate*` commands connect through the same `DB_*` keys as
+{doc}`persistence`; `--connection=<name>` targets a named `DB_{NAME}_*`
+connection block, winning over the `MIGRATE_CONNECTION_NAME` environment
+key when both are given. `queue:work` runs the worker loop against the
+backend `QUEUE_CONNECTION` selects, checking queues in the given
+priority order. Full docs in {doc}`migrations` and {doc}`queue`.
 
 ## Development vs. production
 
@@ -248,4 +269,7 @@ developer to remember one. Kinetis's own built-in commands, tools,
 resources, middleware, and listeners (under `Kinetis\Console`/`Kinetis\Mcp`/
 `Kinetis\Http`/`Kinetis\Events`) are unaffected by any of these five
 variables either way — they're always found in their own fixed location,
-never subject to your application's own discovery scope.
+never subject to your application's own discovery scope. The same goes
+for anything an installed package registers through `extra.kinetis` (see
+above): a package's own declared scan roots are read as given, outside
+these variables' reach.

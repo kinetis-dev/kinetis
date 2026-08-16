@@ -29,9 +29,11 @@
             "Kinetis\\Migrations\\Tests\\": "tests/"
         }
     },
-    "bin": [
-        "bin/migrate"
-    ],
+    "extra": {
+        "kinetis": {
+            "scan": "Kinetis\\Migrations\\Console\\"
+        }
+    },
     "repositories": [
         {
             "type": "path",

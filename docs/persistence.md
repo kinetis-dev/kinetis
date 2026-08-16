@@ -36,24 +36,29 @@ introduced with its own installation note below at first use.
 
 ## Connecting
 
-Register a client once, in your own bootstrap (`public/index.php`),
-before `AppScope::boot()` — under the contract interface, so the factory
-stays free to pick the right driver per runtime:
+Setting `DB_CONNECTION` (plus the other `DB_*` keys — see {doc}`config`)
+is the whole wiring: this package's bootstrap class (declared via
+`extra.kinetis`, see {doc}`cli`) builds the default connection and binds
+it under its dialect contract — `Contract\MysqlLink` for
+`DB_CONNECTION=mysql`, `Contract\PostgresLink` for `pgsql` — before
+`AppScope::boot()` locks bindings. The contract interface, not a
+concrete class, so the factory stays free to pick the right driver per
+runtime.
+
+To choose your own pool options instead, register the binding yourself
+in `bootstrap.php` — an application registration wins over the
+package's:
 
 ```{code-block} php
+:caption: bootstrap.php
+
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\SqlConnectionFactory;
 
-$app = new AppScope();
-
-$app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
-
-$app->boot();
+return static function (AppScope $app, Config $config): void {
+    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config, poolOptions: ['maxConnections' => 12]));
+};
 ```
-
-`$config` is typed `Kinetis\Config\Config` — see {doc}`config` for the full
-typed-accessor API and the `DB_*` keys the factory reads. Postgres is the
-identical pattern with `Contract\PostgresLink` and `DB_CONNECTION=pgsql`.
 
 A controller or service then gets the client by constructor injection,
 like anything else registered on `AppScope`:
@@ -291,7 +296,8 @@ trade (measured, not assumed: per-request handshakes and per-query
 client CPU dominate under boot-and-die).
 
 Under `FrankenPhpAdapter`'s worker mode it's a genuinely different
-shape, not just a bigger version of the same thing: `bootstrap.php` runs
+shape, not just a bigger version of the same thing: the bootstrap chain
+(package bootstraps and `bootstrap.php` alike) runs
 once *per worker thread* (see {doc}`runtime-adapters`'s "Sizing
 FrankenPHP's worker threads" section), so **every worker thread builds
 its own separate pool** — there is no single, process-wide shared pool

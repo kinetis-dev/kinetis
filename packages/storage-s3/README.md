@@ -34,7 +34,7 @@ $contents = $storage->read('avatars/user-42.png');
 $storage->delete('avatars/user-42.png');
 ```
 
-## Configuring
+## Configuration
 
 ```
 FILESYSTEM_DRIVER=s3
@@ -42,12 +42,21 @@ FILESYSTEM_S3_BUCKET=my-app-bucket
 FILESYSTEM_S3_REGION=us-east-1
 ```
 
+| Key | Default | Purpose |
+|---|---|---|
+| `FILESYSTEM_S3_BUCKET` | *(required)* | Bucket name. |
+| `FILESYSTEM_S3_REGION` | *(required)* | AWS region. |
+| `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
+| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint instead of real AWS (e.g. MinIO). |
+| `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing — `true` for MinIO and most other non-AWS S3-compatible services. |
+
+Every key is scoped — `FILESYSTEM_S3_BUCKET` + `backups` →
+`FILESYSTEM_BACKUPS_S3_BUCKET`. Full reference:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+
 Credentials are never read from Kinetis config — `AsyncAws\Core\Configuration`
 resolves them on its own, from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
-or an IAM role, the standard AWS SDK convention. Optional:
-`FILESYSTEM_S3_PREFIX`, `FILESYSTEM_S3_ENDPOINT` (an S3-compatible
-service instead of real AWS), `FILESYSTEM_S3_PATH_STYLE` (`true` for
-MinIO and most other non-AWS S3-compatible services).
+or an IAM role, the standard AWS SDK convention.
 
 ## Installation
 

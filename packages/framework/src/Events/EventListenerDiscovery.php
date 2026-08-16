@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Events;
 
 use Kinetis\Cache\NamespaceScanner;
+use Kinetis\Cache\PackageDiscovery;
 
 /**
  * Builds an EventListenerRegistry from every class found anywhere under a
@@ -44,6 +45,7 @@ final class EventListenerDiscovery
         foreach ([
             ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
             ...NamespaceScanner::classesUnderFrameworkSegment('Events'),
+            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
         ] as $class) {
             if (isset($seen[$class])) {
                 continue;

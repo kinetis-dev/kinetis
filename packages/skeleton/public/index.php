@@ -33,14 +33,6 @@ $store = new CacheStore($projectRoot . '/.kinetis-cache');
 $app = new AppScope();
 $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
-// Consumer applications register anything a discovered command or a
-// queued job needs (a database connection pool, ...) in bootstrap.php,
-// e.g.:
-// return static function (Kinetis\Container\AppScope $app, Config $config): void {
-//     $app->instance(SomeConnectionPool::class, SomeConnectionPool::fromConfig($config));
-// };
-RoutesFile::loadBootstrap($projectRoot)($app, $config);
-
 $httpCache = null;
 $cacheStore = null;
 
@@ -83,6 +75,7 @@ if ($env->isProduction()) {
     // exact branch before trusting PHPStan's "always non-null" claim —
     // removing the `?->` here would be a real, reachable fatal error.
     $listenerRegistry = EventListenerRegistry::fromArray($eventCache?->listeners ?? []); // @phpstan-ignore nullsafe.neverNull
+    $packageBootstraps = $httpCache->packageBootstraps;
 } else {
     // Any class anywhere under one of your own PSR-4 roots is picked up
     // automatically — nothing to register.
@@ -98,7 +91,18 @@ if ($env->isProduction()) {
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
     $middlewareGroups = $discoveredMiddleware['groups'];
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
+    // null = discover the package bootstrap list live, alongside the rest.
+    $packageBootstraps = null;
 }
+
+// The bootstrap chain: every installed package's declared
+// PackageBootstrapInterface first, then this application's own
+// bootstrap.php — which therefore always wins on a shared binding.
+// bootstrap.php registers anything package bootstraps don't cover, e.g.:
+// return static function (Kinetis\Container\AppScope $app, Config $config): void {
+//     $app->instance(SomeConnectionPool::class, SomeConnectionPool::fromConfig($config));
+// };
+RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
 
 $app->instance(EventListenerRegistry::class, $listenerRegistry);
 $app->boot();

@@ -19,7 +19,7 @@ QUEUE_SQS_REGION=us-east-1
 ```
 
 ```{code-block} sh
-vendor/bin/queue work --queue=high,default
+vendor/bin/kinetis queue:work --queue=high,default
 ```
 
 Every SQS call this backend makes, including a worker waiting for the

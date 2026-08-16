@@ -19,7 +19,8 @@
 ---
 
 Raw SQL `up()`/`down()` migrations, tracked in a `kinetis_migrations`
-table, run through a standalone `vendor/bin/migrate` binary. No fluent
+table, run through `migrate*` commands registered on
+`vendor/bin/kinetis`. No fluent
 DDL builder, no schema-diffing — the same "thin, not an ORM" shape as
 [`kinetis/query-builder`](../query-builder).
 
@@ -51,11 +52,41 @@ return new class implements Migration
 ```
 
 ```sh
-vendor/bin/migrate migrate    # runs every pending migration
-vendor/bin/migrate rollback   # rolls back the most recently applied one
-vendor/bin/migrate status     # lists applied/pending migrations
-vendor/bin/migrate make <description>
+vendor/bin/kinetis migrate                     # runs every pending migration
+vendor/bin/kinetis migrate:rollback            # rolls back the most recently applied one
+vendor/bin/kinetis migrate:status              # lists applied/pending migrations
+vendor/bin/kinetis migrate:make <description>
 ```
+
+## Provides
+
+Installing this package is what opts it in — it registers the
+following automatically, through the `extra.kinetis` declaration in its
+`composer.json` (see
+[docs.kinetis.dev/cli.html](https://docs.kinetis.dev/cli.html)):
+
+- **Commands**: `migrate`, `migrate:rollback`, `migrate:status`, and
+  `migrate:make` on `vendor/bin/kinetis`. All four run without the
+  application's bootstrap (`bootstrap: false`) — they read `DB_*`
+  directly, so they work in bare contexts (CI, an init container) with
+  nothing but environment variables.
+
+Nothing else — no service bindings, routes, middleware, event
+listeners, or MCP tools.
+
+## Configuration
+
+The `migrate*` commands read the same `DB_*` keys `kinetis/persistence`
+documents (`DB_CONNECTION`/`DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`/
+`DB_PORT`, ...) from the environment or `.env`, plus one key of this
+package's own:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate; the `--connection=<name>` flag wins over it. |
+
+Full reference across every package:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
 
 ## Installation
 

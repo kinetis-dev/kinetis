@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Http\Routing;
 
 use Kinetis\Cache\NamespaceScanner;
+use Kinetis\Cache\PackageDiscovery;
 
 /**
  * Builds a Router from every class found in a project — no namespace/
@@ -44,6 +45,7 @@ final class RouteDiscovery
         foreach ([
             ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
             ...NamespaceScanner::classesUnderFrameworkSegment('Http'),
+            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
         ] as $class) {
             if (isset($seen[$class])) {
                 continue;

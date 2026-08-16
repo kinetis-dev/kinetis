@@ -37,7 +37,9 @@ Routes are discovered automatically: any class anywhere under one of your
 own PSR-4 roots is registered the moment a route attribute appears on one
 of its methods, with no required directory or namespace convention and
 nothing to register by hand — see {doc}`getting-started` and {doc}`cli`
-(including how to restrict the scan for a large application). Methods
+(including how to restrict the scan for a large application, and how
+installed packages contribute discovered classes through their own
+`extra.kinetis` scan roots). Methods
 without a route attribute are silently skipped, so a controller can
 freely mix routed actions with plain helper methods. Each `{placeholder}`
 in a path template is compiled to a named regex capture group once, when

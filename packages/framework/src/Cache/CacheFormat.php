@@ -18,5 +18,5 @@ final class CacheFormat
     // 5: binding/hydration plan parameters gained allowsNull.
     // 6: HttpCache gained middlewareGroups.
     // 7: CommandCache commands gained bootstrap.
-    public const int VERSION = 7;
+    public const int VERSION = 8;
 }

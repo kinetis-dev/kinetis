@@ -89,6 +89,25 @@ composer require kinetis/framework
 Requires PHP 8.4 or later. See [Getting Started](https://docs.kinetis.dev/getting-started.html)
 for a complete walkthrough, including running under FrankenPHP.
 
+## Configuration
+
+Core reads from the environment (or a `.env` file at the project root)
+via `Kinetis\Config`:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache. Anything unrecognized means `production`. |
+| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read. |
+| `ROUTE_DISCOVERY_PATHS` | — | Restricts the HTTP-controller scan to comma-separated sub-paths, relative to each PSR-4 base directory. |
+| `COMMAND_DISCOVERY_PATHS` | — | The same, for CLI commands. |
+| `MCP_DISCOVERY_PATHS` | — | The same, for MCP tools and resources. |
+| `MIDDLEWARE_DISCOVERY_PATHS` | — | The same, for global middleware and middleware groups. |
+| `LISTENER_DISCOVERY_PATHS` | — | The same, for event listeners. |
+
+Each package documents its own keys (`DB_*`, `REDIS_*`, `QUEUE_*`, ...)
+in its own README; the full reference across every package is at
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+
 ## Packages
 
 Kinetis core (`kinetis/framework`) ships as a single package. A few optional pieces live as separate packages, each with its own

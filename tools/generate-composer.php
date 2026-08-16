@@ -137,6 +137,14 @@ function assembleComposerJson(array $pkg, array $manifest, bool $release = false
         $out['bin'] = $pkg['bin'];
     }
 
+    // Every library package carries extra.kinetis — the marker (and,
+    // where declared, scan roots / bootstrap class) the framework's
+    // PackageDiscovery reads from installed.json. An empty object means
+    // "member of the ecosystem, nothing to register yet".
+    if (\array_key_exists('kinetis', $pkg)) {
+        $out['extra'] = ['kinetis' => (object) $pkg['kinetis']];
+    }
+
     if (!$release) {
         // repositories: requiresDev siblings first, then requires
         // siblings — confirmed against every real composer.json,

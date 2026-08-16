@@ -38,11 +38,18 @@ $email = (new Email())
 $mailer->send($email);
 ```
 
-## Configuring
+## Configuration
 
 ```
 MAILER_DSN=smtp://user:pass@smtp.example.com:587
 ```
+
+| Key | Default | Purpose |
+|---|---|---|
+| `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN. |
+
+Scoped — `MAILER_DSN` + `alerts` → `MAILER_ALERTS_DSN`. Full reference:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
 
 Or an API-based transport instead — install the matching Symfony bridge
 package too (`symfony/sendgrid-mailer`, `symfony/mailgun-mailer`, ...):

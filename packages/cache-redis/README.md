@@ -41,6 +41,31 @@ application code required either way. Configuring Redis (`REDIS_HOST`/
 error naming the package to install, not a silent fallback to
 `NullSimpleCache`.
 
+## Configuration
+
+Read from the environment (or `.env`) via `Kinetis\Config`. Every key
+is scoped. With none of `REDIS_URL`/`REDIS_HOST`/`REDIS_CLUSTER` set,
+Redis is simply off and `CacheInterface` binds to `NullSimpleCache`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `REDIS_URL` | — | Full `redis://` URI; wins over the discrete keys. |
+| `REDIS_HOST` | — | Server host. |
+| `REDIS_PORT` | `6379` | Port. |
+| `REDIS_PASSWORD` | — | Password. |
+| `REDIS_DATABASE` | `0` | Database index (single-node only; Cluster has no `SELECT`). |
+| `REDIS_TIMEOUT` | `5` | Connect timeout, seconds. |
+| `REDIS_TLS` | `false` | Connect over TLS. |
+| `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
+| `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
+| `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
+| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap. |
+
+Scoped keys follow the named-connection convention — the connection
+name inserts after the first segment: `REDIS_HOST` + `cache2` → `REDIS_CACHE2_HOST`.
+Full reference across every package:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+
 ## Installation
 
 ```sh

@@ -32,6 +32,9 @@
             "Kinetis\\SimpleCache\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "kinetis": {}
+    },
     "repositories": [
         {
             "type": "path",

@@ -34,6 +34,9 @@
             "Kinetis\\AuthJwt\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "kinetis": {}
+    },
     "repositories": [
         {
             "type": "path",

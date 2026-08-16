@@ -74,9 +74,12 @@ if ($env->isProduction()) {
     // an isolated repro) — $eventCache is genuinely nullable via the
     // `else` branch above (CacheStore::loadEvents(): ?EventCache).
     $listenerRegistry = EventListenerRegistry::fromArray($eventCache?->listeners ?? []); // @phpstan-ignore nullsafe.neverNull
+    $packageBootstraps = $commandCache->packageBootstraps;
 } else {
     $registry = CommandDiscovery::discover($projectRoot);
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
+    // null = discover the package bootstrap list live, alongside the rest.
+    $packageBootstraps = null;
 }
 
 $commandName = $argv[1] ?? null;
@@ -116,7 +119,7 @@ $app->instance(Config::class, $config);
 // the configuration the application's own services demand (`kinetis
 // build` in a CI pipeline has no database credentials, and needs none).
 if ($definition->bootstrap) {
-    RoutesFile::loadBootstrap($projectRoot)($app, $config);
+    RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
 }
 
 $app->instance(EventListenerRegistry::class, $listenerRegistry);

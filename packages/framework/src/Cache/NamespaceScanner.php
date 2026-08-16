@@ -112,6 +112,22 @@ final class NamespaceScanner
     }
 
     /**
+     * Walks the prefix/directory pairs installed packages offer for
+     * discovery (see {@see PackageDiscovery::scanRoots()}) — the third
+     * class source next to the project scan and the framework segment,
+     * with the same attribute pre-filter applied per file.
+     *
+     * @param list<array{prefix: string, directory: string}> $roots
+     * @return iterable<class-string>
+     */
+    public static function classesUnderPackageRoots(array $roots): iterable
+    {
+        foreach ($roots as $root) {
+            yield from self::classesInDirectory(rtrim($root['prefix'], '\\') . '\\', $root['directory']);
+        }
+    }
+
+    /**
      * Kinetis's own package root — src/ under a "Kinetis\\" prefix,
      * regardless of whether that's this monorepo (developing Kinetis
      * itself) or vendor/kinetis/framework (installed as a dependency). Same

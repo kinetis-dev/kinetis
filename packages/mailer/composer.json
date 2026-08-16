@@ -30,6 +30,9 @@
             "Kinetis\\Mailer\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "kinetis": {}
+    },
     "repositories": [
         {
             "type": "path",

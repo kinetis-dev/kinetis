@@ -34,23 +34,26 @@ $client->index(['index' => 'articles', 'id' => '1', 'body' => ['title' => 'Kinet
 $results = $client->search(['index' => 'articles', 'body' => ['query' => ['match' => ['title' => 'Kinetis']]]]);
 ```
 
-## Configuring
+## Configuration
 
 ```
 SEARCH_OPENSEARCH_HOST=http://localhost:9200
 ```
 
-Optional: `SEARCH_OPENSEARCH_USERNAME`/`SEARCH_OPENSEARCH_PASSWORD` for
-Basic auth, `SEARCH_OPENSEARCH_VERIFY_PEER` (default `true`) to accept a
-self-signed certificate on a security-enabled cluster.
+| Key | Default | Purpose |
+|---|---|---|
+| `SEARCH_OPENSEARCH_HOST` | *(required)* | Base URI of the node. |
+| `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
+| `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
+| `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate — `false` accepts a self-signed one on a security-enabled cluster. |
+
+Every key is scoped — `SEARCH_OPENSEARCH_HOST` + `logs` →
+`SEARCH_LOGS_OPENSEARCH_HOST`. Full reference:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
 
 `SEARCH_OPENSEARCH_HOST` is a single base URI, not a list — this
 construction path has no multi-node selector/failover; put a load
 balancer in front of a multi-node cluster instead.
-
-Named connections read a distinct set of variables via
-`Config::scopedKey()` — `SEARCH_OPENSEARCH_HOST` + `logs` becomes
-`SEARCH_LOGS_OPENSEARCH_HOST`.
 
 ## Installation
 

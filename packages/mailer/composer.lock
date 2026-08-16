@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "74703d42b92605126decc3491df4f36f",
+    "content-hash": "ad17e3a5bd3c62d100a157e33aa7064b",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1288,9 +1288,10 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "c22a002f7f06f637bb92ba6488d78eb91cd1c33a"
+                "reference": "0de7f8938cf33a41a31bb8d347a7a95cfe8fd535"
             },
             "require": {
+                "ext-fileinfo": "*",
                 "nyholm/psr7": "^1.8",
                 "nyholm/psr7-server": "^1.1",
                 "php": "^8.4",
@@ -1310,10 +1311,16 @@
                 "phpunit/phpunit": "^11.0",
                 "vimeo/psalm": "^6.16"
             },
+            "suggest": {
+                "ext-event": "An OS-native Revolt event-loop backend (epoll), removing select()'s 1024 fd-number ceiling. Needed when the loop watches real sockets (native Postgres driver, Redis, HTTP client) in a FrankenPHP worker process; a MySQL-only deployment does not need it. ext-uv/ext-ev work equally."
+            },
             "bin": [
                 "bin/kinetis"
             ],
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\": "src/"
@@ -1346,7 +1353,7 @@
             "dist": {
                 "type": "path",
                 "url": "../revolt-http-client",
-                "reference": "657a751d371632aaec7acc2ac329f5dd4505e1e1"
+                "reference": "53fce2c596e0f94f3402ca6409308cc6bab259da"
             },
             "require": {
                 "amphp/http-client": "^5.3",
@@ -1362,6 +1369,9 @@
                 "vimeo/psalm": "^6.16"
             },
             "type": "library",
+            "extra": {
+                "kinetis": []
+            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\RevoltHttpClient\\": "src/"

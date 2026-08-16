@@ -44,7 +44,9 @@ the same way a controller can carry multiple routed methods.
 
 Nothing to register — any class anywhere under one of your own PSR-4
 roots carrying a `#[Listener]` method is found automatically, with no
-directory or namespace convention required. A controller constructor-injects the concrete `EventDispatcher` class —
+directory or namespace convention required; an installed package's
+`extra.kinetis` scan roots contribute listeners the same way (see
+{doc}`cli`). A controller constructor-injects the concrete `EventDispatcher` class —
 not `Psr\EventDispatcher\EventDispatcherInterface` — and calls it
 directly:
 

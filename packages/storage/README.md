@@ -36,6 +36,21 @@ $contents = $storage->read('avatars/user-42.png');
 $storage->delete('avatars/user-42.png');
 ```
 
+## Configuration
+
+Read from the environment (or `.env`) via `Kinetis\Config`. Every key
+is scoped.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `FILESYSTEM_DRIVER` | `local` | `local`, or `s3` (needs `kinetis/storage-s3`). |
+| `FILESYSTEM_ROOT` | *(required for local)* | Local disk root path. |
+
+Scoped keys follow the named-connection convention — the connection
+name inserts after the first segment: `FILESYSTEM_ROOT` + `uploads` → `FILESYSTEM_UPLOADS_ROOT`.
+Full reference across every package:
+[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+
 ## Installation
 
 ```sh

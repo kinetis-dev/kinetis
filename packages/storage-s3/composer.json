@@ -32,6 +32,9 @@
             "Kinetis\\StorageS3\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "kinetis": {}
+    },
     "repositories": [
         {
             "type": "path",

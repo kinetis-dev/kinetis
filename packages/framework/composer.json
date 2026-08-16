@@ -48,6 +48,9 @@
     "bin": [
         "bin/kinetis"
     ],
+    "extra": {
+        "kinetis": {}
+    },
     "config": {
         "sort-packages": true,
         "allow-plugins": {

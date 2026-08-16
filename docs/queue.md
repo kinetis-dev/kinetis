@@ -9,7 +9,7 @@ composer require kinetis/queue
 ````
 
 A backend-agnostic background job queue: push a job from application code,
-a separate `vendor/bin/queue` worker process pops and runs it. `Redis` and
+a separate `kinetis queue:work` worker process pops and runs it. `Redis` and
 `SQL` (MySQL/Postgres) backends are both included, behind one
 `Kinetis\Queue\QueueInterface` contract — application code never sees which
 one is running underneath. Amazon SQS ({doc}`queue-sqs`) and RabbitMQ
@@ -70,7 +70,7 @@ final readonly class RegistrationController
 ```
 
 ```{code-block} sh
-vendor/bin/queue work
+vendor/bin/kinetis queue:work
 ```
 
 The worker runs forever, one job at a time: pop, resolve `handle()`'s
@@ -90,7 +90,7 @@ $this->queue->push(new SendPasswordReset($data->email), queue: 'high');
 A worker watches one or more queue names, in priority order:
 
 ```{code-block} sh
-vendor/bin/queue work --queue=high,default
+vendor/bin/kinetis queue:work --queue=high,default
 ```
 
 Priority is expressed by list order, not a numeric per-job score: the
@@ -134,6 +134,15 @@ The Redis variables are the same ones {doc}`persistence`'s
 installed — see {doc}`queue-sqs` for its own configuration. `rabbitmq`
 needs `kinetis/queue-rabbitmq` — see {doc}`queue-rabbitmq`.
 
+Setting `QUEUE_CONNECTION` is also all the container wiring there is:
+this package's bootstrap class (declared via `extra.kinetis`, see
+{doc}`cli`) binds `QueueInterface` to the selected backend before
+`AppScope::boot()` locks bindings, so the controller above
+constructor-injects it with no `bootstrap.php` code. An application
+registering its own `QueueInterface` binding in `bootstrap.php` wins
+over the package's — see "Multiple backends" below for when you'd want
+to.
+
 `QUEUE_CONNECTION_NAME` picks which named connection of that backend this
 worker uses (see {doc}`config`'s named-connection convention) — 'default'
 when unset:
@@ -146,7 +155,7 @@ REDIS_CACHE2_HOST=127.0.0.1
 
 ## Scaling out: multiple workers
 
-`vendor/bin/queue work` is safe to run as any number of separate,
+`kinetis queue:work` is safe to run as any number of separate,
 concurrent processes against the same backend — a plain horizontal-scaling
 lever, not something that needs coordinating by hand. Every backend
 guarantees a job is handed to exactly one worker, so two workers running
@@ -179,7 +188,7 @@ final readonly class RegistrationController
 }
 ```
 
-Each backend gets its own `vendor/bin/queue work` process, run with the
+Each backend gets its own `kinetis queue:work` process, run with the
 `QUEUE_CONNECTION`/backend-specific environment variables and `--queue`
 flag matching the queue names pushed to it — one process per
 backend-and-queue-set combination, same as scaling a single backend out.
@@ -195,7 +204,7 @@ if ($appEnv->isDevelopment()) {
 ```
 
 `push()` runs the job's `handle()` immediately, inline, rather than
-storing it anywhere — no separate `vendor/bin/queue work` process needed
+storing it anywhere — no separate `kinetis queue:work` process needed
 while developing locally. Every `push()` call still gets its own fresh
 scope, exactly like a real worker gives each job — job code that happens
 to depend on request-scoped state reachable only by accident would fail
@@ -207,8 +216,8 @@ synchronously (seeing the real error immediately) still holds.
 
 Not selectable via `QUEUE_CONNECTION` — there's nothing for a worker
 process to do against a backend that never stores anything, so
-`SyncQueue` is constructed directly in application bootstrap code instead
-of through `bin/queue`. It accepts a `queue` argument on `push()` for
+`SyncQueue` is constructed directly in application bootstrap code
+instead. It accepts a `queue` argument on `push()` for
 signature compatibility with the other backends, but ignores it — there's
 only ever one "queue" (immediate execution), so a queue name has nothing
 to select between.
@@ -225,7 +234,7 @@ vendor/kinetis/queue/resources/migrations/create_kinetis_queue_jobs_table.pgsql.
 ```
 
 Copy whichever matches your database into your own `migrations/`
-directory with a timestamp prefix, then run `vendor/bin/migrate migrate`.
+directory with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
 
 `SqlQueue`'s `pop()` relies on `SELECT ... FOR UPDATE SKIP LOCKED` to
 guarantee two workers never receive the same job — that's this backend's
@@ -256,7 +265,7 @@ eventually gives up on a job whose worker keeps crashing rather than
 retrying it forever. `null` (the default) preserves the original
 forever-stranded behavior exactly, unchanged.
 
-`vendor/bin/queue work` reads this from the optional
+`kinetis queue:work` reads this from the optional
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` environment variable (via
 `Config::scopedKey()`, so it respects `QUEUE_CONNECTION_NAME` the same as
 every other queue setting) — absent means `null`, the same as constructing
@@ -307,7 +316,7 @@ $this->queue->push(new SendWelcomeEmail($data->email, $data->name), maxAttempts:
 it's set. Once a job's attempt count reaches it, that attempt's failure is
 final: the job is removed instead of being retried again.
 
-A job pushed without `maxAttempts` falls back to `vendor/bin/queue work`'s
+A job pushed without `maxAttempts` falls back to `kinetis queue:work`'s
 own default instead, `QUEUE_MAX_ATTEMPTS` in `.env` — **0 when unset,
 meaning no retries at all: a job that fails once is given up on
 immediately.**

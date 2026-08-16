@@ -8,10 +8,9 @@ namespace Kinetis\Console;
  * Injected into a command method by type — the console analogue of
  * ProgressReporter/ServerRequestInterface's own by-type special-casing.
  * parse() splits a command's own $argv slice into positional values and
- * `--key=value`/bare-`--flag` options — the same `--key=value` syntax
- * bin/queue's own hand-rolled `--queue=high,default` parsing already
- * uses, generalized rather than replaced. No space-separated `--key
- * value` form and no short flags (`-v`) — both are ambiguous or
+ * `--key=value`/bare-`--flag` options — the syntax kinetis/queue's own
+ * `queue:work --queue=high,default` flag uses. No space-separated
+ * `--key value` form and no short flags (`-v`) — both are ambiguous or
  * unprecedented without a real need to justify the extra complexity.
  */
 final readonly class CommandArguments

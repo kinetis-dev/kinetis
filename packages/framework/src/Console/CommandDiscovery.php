@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Console;
 
 use Kinetis\Cache\NamespaceScanner;
+use Kinetis\Cache\PackageDiscovery;
 
 /**
  * Builds a CommandRegistry from every class found in a project — no
@@ -42,6 +43,7 @@ final class CommandDiscovery
         foreach ([
             ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
             ...NamespaceScanner::classesUnderFrameworkSegment('Console'),
+            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
         ] as $class) {
             if (isset($seen[$class])) {
                 continue;
