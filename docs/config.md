@@ -188,6 +188,133 @@ values injected into them. Baking `.env` into a compiled cache file would
 mean a changed value silently does nothing until someone remembers to
 rebuild the cache.
 
+## Reference: every key in one place
+
+Everything Kinetis and its packages read from the environment, grouped
+by subsystem. Keys marked *scoped* follow the named-connection
+convention above — `DB_HOST` becomes `DB_REPORTING_HOST` for a
+connection named `reporting`. Application-defined keys (a `JWT_SECRET`
+your own bootstrap reads via `Config::required()`, for instance) are
+yours to invent and aren't listed here.
+
+### Application (core)
+
+| Key | Default | Purpose |
+|---|---|---|
+| `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache (see {doc}`caching`). Anything unrecognized means `production`. |
+| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read (see {doc}`middleware`). |
+
+### Discovery restriction (core)
+
+All optional; comma-separated sub-paths relative to each PSR-4 base
+directory, for large applications that want a bounded scan (see
+{doc}`cli`).
+
+| Key | Restricts the scan for |
+|---|---|
+| `ROUTE_DISCOVERY_PATHS` | HTTP controllers (`#[Get]`/`#[Post]`/...) |
+| `COMMAND_DISCOVERY_PATHS` | CLI commands (`#[Command]`) |
+| `MCP_DISCOVERY_PATHS` | MCP tools and resources (`#[McpTool]`/`#[McpResource]`) |
+| `MIDDLEWARE_DISCOVERY_PATHS` | Global middleware (`#[AsGlobalMiddleware]`) and middleware groups (`#[AsMiddlewareGroup]`) |
+| `LISTENER_DISCOVERY_PATHS` | Event listeners (`#[Listener]`) |
+
+### Database (`kinetis/persistence`) — all scoped
+
+| Key | Default | Purpose |
+|---|---|---|
+| `DB_CONNECTION` | *(required)* | `mysql` or `pgsql`. |
+| `DB_HOST` | `127.0.0.1` | Server host. |
+| `DB_PORT` | `3306` / `5432` | Per dialect. |
+| `DB_NAME` | `app` | Database name. |
+| `DB_USER` | `app` | User. |
+| `DB_PASSWORD` | *(required)* | Password. |
+| `DB_DRIVER` | `auto` | `auto` (native under FrankenPHP worker mode, PDO otherwise), `native`, or `pdo`. |
+| `DB_CHARSET` | `utf8mb4` (MySQL) | Connection charset. |
+| `DB_COLLATION` | — | MySQL collation (`SET NAMES ... COLLATE`). |
+| `DB_SSLMODE` | — | `disable`/`require`/`verify-ca`/`verify-full` on every driver; libpq additionally accepts `allow`/`prefer`. |
+| `DB_SSL_CA` | — | CA bundle path for the verify modes. |
+| `DB_CONNECT_TIMEOUT` | — | Seconds. |
+| `DB_APP_NAME` | — | Postgres `application_name`. |
+| `DB_COMPRESSION` | — | MySQL protocol compression. |
+| `DB_MAX_CONNECTIONS` | `8` | Async drivers' pool width — per worker thread under FrankenPHP (see {doc}`performance-tuning`). |
+| `DB_WARM_CONNECTIONS` | `0` | Connections opened at boot instead of first use — load-bearing for the mysqli driver under worker mode. |
+| `DB_OPTIONS` | — | Legacy key=value string, translated where canonical equivalents exist. |
+
+### Redis (`kinetis/cache-redis`) — all scoped
+
+With none of `REDIS_URL`/`REDIS_HOST`/`REDIS_CLUSTER` set, Redis is
+simply off and `CacheInterface` binds to `NullSimpleCache`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `REDIS_URL` | — | Full `redis://` URI; wins over the discrete keys. |
+| `REDIS_HOST` | — | Server host. |
+| `REDIS_PORT` | `6379` | Port. |
+| `REDIS_PASSWORD` | — | Password. |
+| `REDIS_DATABASE` | `0` | Database index (single-node only; Cluster has no `SELECT`). |
+| `REDIS_TIMEOUT` | `5` | Connect timeout, seconds. |
+| `REDIS_TLS` | `false` | Connect over TLS. |
+| `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
+| `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
+| `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
+| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap. |
+
+### Queue (`kinetis/queue` + backend packages)
+
+Read by `vendor/bin/queue`; the backend-specific keys are scoped.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `QUEUE_CONNECTION` | *(required)* | `redis`, `sql`, `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). |
+| `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
+| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries); a job's own `push(maxAttempts: ...)` wins. |
+| `QUEUE_POLL_TIMEOUT` | `5` | Seconds per `pop()` wait. |
+| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | SQL backend only: reclaim a crashed worker's reserved job after this long; unset means never. |
+| `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
+| `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). |
+| `QUEUE_SQS_QUEUE_PREFIX` | — | Queue-name prefix for shared AWS accounts. |
+| `QUEUE_RABBITMQ_URL` | *(required for rabbitmq)* | `amqp://` URI. |
+| `QUEUE_RABBITMQ_QUEUE_PREFIX` | — | Queue-name prefix. |
+
+AWS credentials are deliberately never read from `Config` — the SQS
+(and S3) clients use AWS's own default credential provider chain.
+
+### Migrations (`kinetis/migrations`)
+
+Read by `vendor/bin/migrate`, which connects through the same `DB_*`
+keys as persistence.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate. |
+
+### File storage (`kinetis/storage` + `kinetis/storage-s3`) — all scoped
+
+| Key | Default | Purpose |
+|---|---|---|
+| `FILESYSTEM_DRIVER` | `local` | `local`, or `s3` (needs `kinetis/storage-s3`). |
+| `FILESYSTEM_ROOT` | *(required for local)* | Local disk root path. |
+| `FILESYSTEM_S3_BUCKET` | *(required for s3)* | Bucket name. |
+| `FILESYSTEM_S3_REGION` | *(required for s3)* | AWS region. |
+| `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
+| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO). |
+| `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing, needed by most non-AWS S3 services. |
+
+### Mail (`kinetis/mailer`) — scoped
+
+| Key | Default | Purpose |
+|---|---|---|
+| `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
+
+### Search (`kinetis/search-opensearch`) — all scoped
+
+| Key | Default | Purpose |
+|---|---|---|
+| `SEARCH_OPENSEARCH_HOST` | *(required)* | Base URI of the node. |
+| `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
+| `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
+| `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate. |
+
 ## See also
 
 - {doc}`container` — `AppScope`'s registration-lock discipline, and how

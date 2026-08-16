@@ -19,3 +19,12 @@ article[role="main"] h5,
 article[role="main"] h6 {
     color: #F59E0B;
 }
+
+/* Content tables: full width and left-aligned. Furo centers a table at
+   its natural width, which makes narrow tables (few or short columns)
+   float mid-page while wide ones happen to fill it. */
+article table.docutils {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+}
