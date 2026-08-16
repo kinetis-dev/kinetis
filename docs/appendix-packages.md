@@ -219,6 +219,16 @@ discovered as global middleware on install) and a `PackageBootstrap`.
 - `Kinetis\Telemetry\Logging\TraceAwareLogger` — PSR-3 decorator adding
   `trace_id`/`span_id` to entry context when a span is recording;
   caller-supplied keys win.
+- `Kinetis\Telemetry\Instrumentation\OtelTelemetry` — implements core's
+  `Kinetis\Instrumentation\TelemetryInterface`, turning the framework's
+  hooks into spans; `PackageBootstrap` swaps it into
+  `Telemetry::global()` whenever the OTLP endpoint is configured. Which
+  hooks *activate* their span (parenting whatever starts next) is the
+  load-bearing choice: only strictly-nested single-fiber pairs do —
+  middleware, controller, event/listener, the `concurrently()` batch,
+  MCP tool calls, worker jobs. Query and per-task spans never activate:
+  they can overlap across fibers on the shared context, and activating
+  them would interleave the scope stack.
 - Depends on `kinetis/framework`, `kinetis/revolt-http-client`,
   `open-telemetry/sdk`, `open-telemetry/exporter-otlp`,
   `symfony/http-client`, `nyholm/psr7`, `psr/log`;

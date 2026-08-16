@@ -10,6 +10,8 @@ use Kinetis\Container\Exception\ContainerException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Events\ListenerInvokerInterface;
 use Kinetis\Events\SynchronousListenerInvoker;
+use Kinetis\Instrumentation\Telemetry;
+use Kinetis\Instrumentation\TelemetryInterface;
 use Kinetis\Logging\ErrorLogLogger;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\SimpleCache\NullSimpleCache;
@@ -181,6 +183,14 @@ final class AppScope implements ContainerInterface
     {
         if (!$this->has(AppEnvironment::class)) {
             $this->instance(AppEnvironment::class, AppEnvironment::detect());
+        }
+
+        // The process-wide holder, so app code can constructor-inject
+        // TelemetryInterface. Hooks fire through the same holder, so a
+        // backend swapped in by kinetis/telemetry's bootstrap is seen
+        // everywhere at once.
+        if (!$this->has(TelemetryInterface::class)) {
+            $this->instance(TelemetryInterface::class, Telemetry::global());
         }
 
         /** @var AppEnvironment $environment */

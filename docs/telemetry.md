@@ -142,6 +142,49 @@ use Psr\Log\LoggerInterface;
 $app->instance(LoggerInterface::class, new TraceAwareLogger($realLogger));
 ```
 
+## Framework hooks: spans from inside the framework
+
+The decorators above measure at boundaries the framework exposes; the
+hooks measure from *inside* them. Core (and the persistence and queue
+packages) report named moments through
+`Kinetis\Instrumentation\TelemetryInterface` — a no-op until this
+package's bootstrap swaps in its OTel backend, at which point every
+report becomes a span with zero configuration beyond the same
+`OTEL_EXPORTER_OTLP_ENDPOINT`:
+
+- **Boot phases** — `bootstrap.env`, `bootstrap.discovery`,
+  `bootstrap.services`, measured by the entry point with plain
+  timestamps and reported once a backend exists. Under boot-and-die
+  runtimes these appear per request; under a worker, once per boot.
+- **The request pipeline, opened up** — a span per middleware layer,
+  `route.match` (carrying the matched template as `http.route`),
+  hydration per DTO, `Controller::method`, and `response.encode`. The
+  previously unattributed gap between a request span and its query
+  spans now has names.
+- **Queries, split at the pool boundary** — a span per query from
+  inside the drivers, with a `server.started` event marking the moment
+  it actually went to the server: everything before that event is time
+  spent waiting for a free pooled connection, the number that is
+  invisible from outside.
+- **Transactions** — begin to `COMMIT`/`ROLLBACK`, with the outcome as
+  an attribute.
+- **`concurrently()`** — a span for the batch and one per task, so
+  overlap is visible even for tasks that aren't queries or HTTP calls.
+- **Events and listeners, MCP tool calls and resource reads, queue
+  push and worker jobs** — each a named span pair.
+
+The hook set is deliberately broad while under evaluation, and will be
+thinned by measurement — see the interface's own docblock. Measured
+cost with no backend installed: a hook pair costs about 90ns, and a
+fully hooked dispatch adds one to two microseconds. The interface is not a consumer
+extension point — an application *reads* this data from its tracing
+backend rather than implementing the interface.
+
+Note the overlap with the decorators: with hooks active, the SQL and
+queue decorators report the same operations a second time. Prefer the
+hooks (they see more); keep the decorators for selective tracing with
+no OTLP endpoint configured elsewhere, or drop them.
+
 ## What stays out of scope
 
 The OTel *metrics* signal — counters and gauges exported on their own

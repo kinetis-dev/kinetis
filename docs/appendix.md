@@ -127,6 +127,28 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 - `RoutesListCommand` — `#[Command('routes:list')]`. A read-only introspection tool, not a caching mechanism: runs `RouteDiscovery`/`GlobalMiddlewareDiscovery` live (regardless of `APP_ENV`) and prints the result — never touches `.kinetis-cache/`. Declares `bootstrap: false` and constructs its own throwaway `AppScope` running `bootstrap.php` once to read `AppScope::middlewares()`, since `AppScope` itself is never registered onto the `RequestScope` a command is dispatched through. `$output` (a `resource`, defaulting to `STDOUT`) is an appended constructor parameter for testability against `php://memory` — the same reason `StdioTransport`'s input/output streams are injectable — since a `#[Command]` method itself must stay parameter-free or take exactly one `CommandArguments`.
 - `bin/kinetis` — has no hardcoded verbs at all. In production, loads `CommandCache` (auto-generating it, via a full `Compiler::compileProject()`, on the first invocation that finds none); in development, builds the registry live via `CommandDiscovery::discover()`. Every name — including `build`/`mcp:serve` — is looked up in that same registry. One fresh `RequestScope` per invocation, with `Kinetis\Persistence\TransactionGuard::rollbackDangling()` registered as a dispose hook whenever that class is available — the same `class_exists()`-gated safety net `Kernel` gives every HTTP request, since `TransactionGuard` lives in the optional `kinetis/persistence` package, not core. An uncaught exception is logged through the container's `LoggerInterface` and produces exit code `1`; a missing or unknown command name lists every available command, one per line, and also exits `1`.
 
+## `Kinetis\Instrumentation`
+
+- `TelemetryInterface` — the framework's instrumentation vocabulary:
+  started/ended hook pairs joined by an opaque token (route match,
+  middleware, hydration, controller, response encoding, queries with a
+  server-started pool boundary, transactions, `concurrently()` batches
+  and tasks, events/listeners, MCP calls, queue push and jobs), plus
+  `phase()` for pre-container lifecycle phases reported with explicit
+  timestamps. Deliberately broad while under evaluation, and not a
+  consumer extension point — its implementors are `NullTelemetry` and
+  kinetis/telemetry's backend only, so the hook set can be thinned by
+  measurement without a breaking change to anyone else.
+- `NullTelemetry` — the no-op default backend.
+- `Telemetry` — the swappable holder every call site talks to, with a
+  per-process `global()` accessor (a documented
+  `NoStaticPropertiesRule` exemption, the FiberPool class of
+  worker-lifetime infrastructure). `AppScope::boot()` binds it as the
+  `TelemetryInterface` default so app code can inject it;
+  kinetis/telemetry's package bootstrap `swap()`s in the OTel backend.
+  Measured no-op cost: ~90ns per hook pair, one to two microseconds per
+  fully hooked dispatch.
+
 ## `Kinetis\Linting`
 
 - `NoStaticPropertiesRule` — a PHPStan rule flagging `static` property declarations, shipped under the main autoload for consumer projects to add to their own `phpstan.neon`.

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Kinetis\Http;
 
+use Kinetis\Instrumentation\Telemetry;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Throwable;
 
 /**
  * The standard PSR-15 "onion": each middleware wraps the next handler in
@@ -36,6 +38,18 @@ final readonly class MiddlewarePipeline implements RequestHandlerInterface
             return $this->core->handle($request);
         }
 
-        return $next->process($request, new self($remaining, $this->core));
+        $telemetry = Telemetry::global();
+        $token = $telemetry->middlewareEntered($next::class);
+
+        try {
+            $response = $next->process($request, new self($remaining, $this->core));
+            $telemetry->middlewareExited($token, null);
+
+            return $response;
+        } catch (Throwable $e) {
+            $telemetry->middlewareExited($token, $e);
+
+            throw $e;
+        }
     }
 }

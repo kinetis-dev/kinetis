@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Async;
 
+use Kinetis\Instrumentation\Telemetry;
+
 /**
  * Runs $tasks concurrently: each runs in its own Fiber, and whenever one
  * suspends waiting on I/O (via Socket, Timer, or anything else built the
@@ -35,12 +37,18 @@ function concurrently(array $tasks): array
 
     $pool = FiberPool::instance();
     $batch = new ConcurrentBatch(\count($tasks));
+    $telemetry = Telemetry::global();
+    $batchToken = $telemetry->taskBatchStarted(\count($tasks));
 
     foreach ($tasks as $index => $task) {
         $pool->submit($batch->jobFor($index, $task));
     }
 
-    $batch->await();
+    try {
+        $batch->await();
+    } finally {
+        $telemetry->taskBatchEnded($batchToken);
+    }
 
     /** @var list<T> */
     return $batch->results();

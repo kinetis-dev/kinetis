@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Kinetis\Mcp;
 
+use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Mcp\Exception\UnresolvableParameterException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
 use Psr\Container\ContainerInterface;
 use ReflectionMethod;
+use Throwable;
 use ReflectionNamedType;
 
 /**
@@ -50,9 +52,21 @@ final class McpDispatcher
 
         $resolved = $this->resolveFromPlan($plan, $arguments, $progress);
 
-        // McpRegistry only ever registers public methods, same
-        // reflection-free-invocation guarantee Dispatcher relies on.
-        return $controller->{$tool->controllerMethod}(...$resolved);
+        $telemetry = Telemetry::global();
+        $token = $telemetry->toolCallStarted($tool->name);
+
+        try {
+            // McpRegistry only ever registers public methods, same
+            // reflection-free-invocation guarantee Dispatcher relies on.
+            $result = $controller->{$tool->controllerMethod}(...$resolved);
+            $telemetry->toolCallEnded($token, null);
+
+            return $result;
+        } catch (Throwable $e) {
+            $telemetry->toolCallEnded($token, $e);
+
+            throw $e;
+        }
     }
 
     public function readResource(ResourceDefinition $resource): mixed
@@ -64,7 +78,13 @@ final class McpDispatcher
 
         $resolved = $this->resolveFromPlan($plan, [], null);
 
-        return $controller->{$resource->controllerMethod}(...$resolved);
+        $token = Telemetry::global()->resourceReadStarted($resource->uri);
+
+        try {
+            return $controller->{$resource->controllerMethod}(...$resolved);
+        } finally {
+            Telemetry::global()->resourceReadEnded($token);
+        }
     }
 
     /**

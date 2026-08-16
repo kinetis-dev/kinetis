@@ -6,6 +6,7 @@ namespace Kinetis\Async;
 
 use Kinetis\Async\Exception\DeadlockException;
 use Closure;
+use Kinetis\Instrumentation\Telemetry;
 use Revolt\EventLoop;
 use Revolt\EventLoop\Suspension;
 use Throwable;
@@ -52,10 +53,15 @@ final class ConcurrentBatch
     public function jobFor(int $index, callable $task): Closure
     {
         return function () use ($index, $task): void {
+            $telemetry = Telemetry::global();
+            $token = $telemetry->taskStarted($index);
+
             try {
                 $this->results[$index] = $task();
+                $telemetry->taskEnded($token, null);
             } catch (Throwable $e) {
                 $this->failures[$index] = $e;
+                $telemetry->taskEnded($token, $e);
             }
 
             // Only resume a caller that actually parked: a task that

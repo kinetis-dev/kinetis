@@ -9,6 +9,7 @@ use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Exception\UnresolvableParameterException;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Validation\Constraint;
@@ -16,6 +17,7 @@ use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
 use Nyholm\Psr7\Response;
 use Psr\Container\ContainerInterface;
+use Throwable;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UploadedFileInterface;
@@ -94,7 +96,17 @@ final class Dispatcher
         // unlike ReflectionMethod::invokeArgs(), needs zero Reflection at
         // invocation time either, on top of the plan already avoiding it
         // for parameter derivation.
-        $result = $controller->{$route->controllerMethod}(...$arguments);
+        $telemetry = Telemetry::global();
+        $invokeToken = $telemetry->controllerInvoked($route->controllerClass, $route->controllerMethod);
+
+        try {
+            $result = $controller->{$route->controllerMethod}(...$arguments);
+            $telemetry->controllerReturned($invokeToken, null);
+        } catch (Throwable $e) {
+            $telemetry->controllerReturned($invokeToken, $e);
+
+            throw $e;
+        }
 
         // A controller returning a ResponseInterface directly (a 404 when
         // a fetched entity doesn't exist, a 3xx redirect with a Location
@@ -106,7 +118,13 @@ final class Dispatcher
             return $result;
         }
 
-        return $this->json($result, $route->status);
+        $encodeToken = $telemetry->responseEncodingStarted();
+
+        try {
+            return $this->json($result, $route->status);
+        } finally {
+            $telemetry->responseEncodingEnded($encodeToken);
+        }
     }
 
     /**
@@ -256,7 +274,13 @@ final class Dispatcher
         // one somehow exists, isn't silently overwritten by a file.
         $data = $decoded + $this->uploadedFilesByFieldName($request);
 
-        return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null);
+        $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
+
+        try {
+            return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null);
+        } finally {
+            Telemetry::global()->hydrationEnded($hydrationToken);
+        }
     }
 
     private static function isFormEncoded(string $contentType): bool

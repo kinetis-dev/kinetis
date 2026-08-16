@@ -22,6 +22,15 @@ parameters:
         -
             identifier: kinetis.noStaticProperties
             path: src/Async/FiberPool.php
+        # Telemetry::global() is the same worker-lifetime-infrastructure
+        # class of static as FiberPool's instance: the backend reference
+        # is boot-time configuration, never request state, and it exists
+        # because plain functions (concurrently()) and pre-container
+        # lifecycle phases have no injection point at all. See the class
+        # docblock.
+        -
+            identifier: kinetis.noStaticProperties
+            path: src/Instrumentation/Telemetry.php
 
 services:
     -

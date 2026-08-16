@@ -11,6 +11,7 @@ use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
 use Kinetis\Http\Middleware\GlobalMiddlewareOrder;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
+use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Routing\Router;
@@ -21,6 +22,7 @@ use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Throwable;
 
 /**
  * The runtime-agnostic core every Kinetis\Runtime adapter drives. Consumes
@@ -248,7 +250,17 @@ final class Kernel
         }
 
         try {
-            $match = $this->router->match($request->getMethod(), $request->getUri()->getPath());
+            $telemetry = Telemetry::global();
+            $matchToken = $telemetry->routeMatchStarted($request->getMethod(), $request->getUri()->getPath());
+
+            try {
+                $match = $this->router->match($request->getMethod(), $request->getUri()->getPath());
+                $telemetry->routeMatchEnded($matchToken, $match->route->pathTemplate);
+            } catch (Throwable $e) {
+                $telemetry->routeMatchEnded($matchToken, null);
+
+                throw $e;
+            }
 
             // Same known nullsafe.neverNull false positive as the
             // /openapi.json branch above — $this->httpCache is genuinely

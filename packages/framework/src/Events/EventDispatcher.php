@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Events;
 
 use Kinetis\Container\RequestScope;
+use Kinetis\Instrumentation\Telemetry;
 use Psr\EventDispatcher\EventDispatcherInterface;
+use Throwable;
 use Psr\EventDispatcher\StoppableEventInterface;
 
 /**
@@ -43,18 +45,34 @@ final readonly class EventDispatcher implements EventDispatcherInterface
     #[\Override]
     public function dispatch(object $event): object
     {
-        foreach ($this->listeners->listenersFor($event::class) as $listener) {
-            if ($event instanceof StoppableEventInterface && $event->isPropagationStopped()) {
-                break;
-            }
+        $telemetry = Telemetry::global();
+        $eventToken = $telemetry->eventDispatched($event::class);
 
-            $instance = $this->scope->get($listener['class']);
+        try {
+            foreach ($this->listeners->listenersFor($event::class) as $listener) {
+                if ($event instanceof StoppableEventInterface && $event->isPropagationStopped()) {
+                    break;
+                }
 
-            if ($instance instanceof ShouldQueue) {
-                $this->listenerInvoker->invoke($instance, $listener['method'], $event);
-            } else {
-                $instance->{$listener['method']}($event);
+                $instance = $this->scope->get($listener['class']);
+                $listenerToken = $telemetry->listenerInvoked($listener['class'], $listener['method']);
+
+                try {
+                    if ($instance instanceof ShouldQueue) {
+                        $this->listenerInvoker->invoke($instance, $listener['method'], $event);
+                    } else {
+                        $instance->{$listener['method']}($event);
+                    }
+
+                    $telemetry->listenerReturned($listenerToken, null);
+                } catch (Throwable $e) {
+                    $telemetry->listenerReturned($listenerToken, $e);
+
+                    throw $e;
+                }
             }
+        } finally {
+            $telemetry->eventSettled($eventToken);
         }
 
         return $event;

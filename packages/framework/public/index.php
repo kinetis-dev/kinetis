@@ -12,6 +12,7 @@ use Kinetis\Events\EventListenerDiscovery;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
+use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
@@ -25,7 +26,10 @@ $projectRoot = ProjectRoot::detect(__DIR__);
 // Loaded before AppEnvironment::detect(): APP_ENV itself might be defined
 // for the first time in .env, not already set in the real process
 // environment.
+$phases = [];
+$phaseStart = microtime(true);
 EnvFile::safeLoad($projectRoot);
+$phases['bootstrap.env'] = [$phaseStart, microtime(true)];
 
 $env = AppEnvironment::detect();
 $store = new CacheStore($projectRoot . '/.kinetis-cache');
@@ -78,6 +82,7 @@ if ($env->isProduction()) {
     $listenerRegistry = EventListenerRegistry::fromArray($eventCache?->listeners ?? []); // @phpstan-ignore nullsafe.neverNull
     $packageBootstraps = $httpCache->packageBootstraps;
 } else {
+    $phaseStart = microtime(true);
     // Any class anywhere under one of your own PSR-4 roots is picked up
     // automatically — nothing to register.
     $router = RouteDiscovery::discover($projectRoot);
@@ -95,6 +100,7 @@ if ($env->isProduction()) {
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
     // null = discover the package bootstrap list live, alongside the rest.
     $packageBootstraps = null;
+    $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
 }
 
 // The bootstrap chain: every installed package's declared
@@ -104,10 +110,21 @@ if ($env->isProduction()) {
 // return static function (Kinetis\Container\AppScope $app, Config $config): void {
 //     $app->instance(SomeConnectionPool::class, SomeConnectionPool::fromConfig($config));
 // };
+$phaseStart = microtime(true);
 RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
+$phases['bootstrap.services'] = [$phaseStart, microtime(true)];
 
 $app->instance(EventListenerRegistry::class, $listenerRegistry);
 $app->boot();
+
+// Reported only now: these phases ran before any telemetry backend
+// could exist, so they were measured with plain timestamps and are
+// handed to whatever backend the bootstrap chain just swapped in.
+$telemetry = Telemetry::global();
+
+foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
+    $telemetry->phase($phaseName, $phaseStartedAt, $phaseEndedAt);
+}
 
 // Detected before constructing Kernel, not after, so its isPersistent()
 // can be passed straight into the constructor rather than patched in.
