@@ -99,9 +99,25 @@ interface TelemetryInterface
 
     public function jobPushStarted(string $jobClass, string $queue): mixed;
 
+    /**
+     * Opaque string metadata for the backend to store alongside the job
+     * being pushed — the propagation channel that lets a consumer span
+     * on a worker, seconds later and in another process, join the
+     * producer's trace. A backend stores whatever this returns verbatim
+     * and hands it back through jobStarted()'s $metadata; nothing in the
+     * queue layer ever interprets it.
+     *
+     * @return array<string, string>
+     */
+    public function jobPushMetadata(mixed $token): array;
+
     public function jobPushEnded(mixed $token, ?Throwable $failure): void;
 
-    public function jobStarted(string $jobClass, string $queue, int $attempt): mixed;
+    /**
+     * @param array<string, string> $metadata what jobPushMetadata()
+     *     returned at push time, carried through the backend's payload
+     */
+    public function jobStarted(string $jobClass, string $queue, int $attempt, array $metadata = []): mixed;
 
     /** $outcome is 'ack', 'release', or 'fail'. */
     public function jobFinished(mixed $token, string $outcome, ?Throwable $failure): void;

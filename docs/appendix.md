@@ -135,7 +135,10 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
   server-started pool boundary, transactions, `concurrently()` batches
   and tasks, events/listeners, MCP calls, queue push and jobs), plus
   `phase()` for pre-container lifecycle phases reported with explicit
-  timestamps. Deliberately broad while under evaluation, and not a
+  timestamps; `jobPushMetadata()` returns opaque string metadata a queue
+  backend stores with the job and hands back through `jobStarted()` —
+  the propagation channel that joins producer and consumer spans into
+  one trace across processes. Deliberately broad while under evaluation, and not a
   consumer extension point — its implementors are `NullTelemetry` and
   kinetis/telemetry's backend only, so the hook set can be thinned by
   measurement without a breaking change to anyone else.

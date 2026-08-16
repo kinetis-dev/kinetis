@@ -142,11 +142,23 @@ final class NullTelemetry implements TelemetryInterface
         return null;
     }
 
+    /**
+     * @return array<string, string>
+     */
+    #[\Override]
+    public function jobPushMetadata(mixed $token): array
+    {
+        return [];
+    }
+
     #[\Override]
     public function jobPushEnded(mixed $token, ?Throwable $failure): void {}
 
+    /**
+     * @param array<string, string> $metadata
+     */
     #[\Override]
-    public function jobStarted(string $jobClass, string $queue, int $attempt): mixed
+    public function jobStarted(string $jobClass, string $queue, int $attempt, array $metadata = []): mixed
     {
         return null;
     }

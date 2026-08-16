@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.10.0",
+            "version": "1.11.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -178,7 +178,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.5.0",
             "requires": [
                 "framework",
                 "persistence",
@@ -252,7 +252,7 @@
             "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueSqs\\",
             "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "requires": [
                 "framework",
                 "queue",
@@ -272,7 +272,7 @@
             "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueRabbitMq\\",
             "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "requires": [
                 "framework",
                 "queue"
@@ -384,7 +384,7 @@
             "description": "OpenTelemetry tracing for Kinetis — request spans, SQL and queue decorators, a traced HTTP transport, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "requires": [
                 "framework",
                 "revolt-http-client"

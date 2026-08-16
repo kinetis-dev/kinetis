@@ -285,6 +285,12 @@ to select between.
 dialect, since the auto-incrementing primary key syntax itself isn't
 portable between MySQL and Postgres:
 
+The table includes a nullable `metadata` column — the instrumentation propagation channel (see {doc}`telemetry`). A table created from an earlier stub needs it added:
+
+```{code-block} sql
+ALTER TABLE kinetis_queue_jobs ADD COLUMN metadata TEXT NULL;
+```
+
 ```{code-block} text
 vendor/kinetis/queue/resources/migrations/create_kinetis_queue_jobs_table.mysql.php.stub
 vendor/kinetis/queue/resources/migrations/create_kinetis_queue_jobs_table.pgsql.php.stub

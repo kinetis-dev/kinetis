@@ -76,6 +76,12 @@ and the log entry written when a job is finally given up on works
 identically here — nothing about retry behavior changes by switching to
 this backend.
 
+Instrumentation propagation metadata (see {doc}`telemetry`) travels as
+one JSON-encoded `metadata` message attribute — stored at `push()`,
+read back at `pop()` — so a worker's consumer span joins the
+producer's trace. `release()` is a visibility change, so the message
+and its metadata survive it unchanged.
+
 ## Named connections
 
 ```{code-block} text

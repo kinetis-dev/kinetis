@@ -222,16 +222,28 @@ final class Telemetry implements TelemetryInterface
         return $this->backend->jobPushStarted($jobClass, $queue);
     }
 
+    /**
+     * @return array<string, string>
+     */
+    #[\Override]
+    public function jobPushMetadata(mixed $token): array
+    {
+        return $this->backend->jobPushMetadata($token);
+    }
+
     #[\Override]
     public function jobPushEnded(mixed $token, ?Throwable $failure): void
     {
         $this->backend->jobPushEnded($token, $failure);
     }
 
+    /**
+     * @param array<string, string> $metadata
+     */
     #[\Override]
-    public function jobStarted(string $jobClass, string $queue, int $attempt): mixed
+    public function jobStarted(string $jobClass, string $queue, int $attempt, array $metadata = []): mixed
     {
-        return $this->backend->jobStarted($jobClass, $queue, $attempt);
+        return $this->backend->jobStarted($jobClass, $queue, $attempt, $metadata);
     }
 
     #[\Override]

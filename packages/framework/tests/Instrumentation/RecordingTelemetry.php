@@ -231,16 +231,30 @@ final class RecordingTelemetry implements TelemetryInterface
         return $this->nextToken++;
     }
 
+    /**
+     * @return array<string, string>
+     */
+    #[\Override]
+    public function jobPushMetadata(mixed $token): array
+    {
+        $this->calls[] = ['jobPushMetadata', [$token]];
+
+        return ['traceparent' => 'recorded-' . var_export($token, true)];
+    }
+
     #[\Override]
     public function jobPushEnded(mixed $token, ?Throwable $failure): void
     {
         $this->calls[] = ['jobPushEnded', [$token, $failure]];
     }
 
+    /**
+     * @param array<string, string> $metadata
+     */
     #[\Override]
-    public function jobStarted(string $jobClass, string $queue, int $attempt): mixed
+    public function jobStarted(string $jobClass, string $queue, int $attempt, array $metadata = []): mixed
     {
-        $this->calls[] = ['jobStarted', [$jobClass, $queue, $attempt]];
+        $this->calls[] = ['jobStarted', [$jobClass, $queue, $attempt, $metadata]];
 
         return $this->nextToken++;
     }

@@ -99,9 +99,18 @@ carries the outcome and attempt number. The consumer span is active
 while the job runs, so queries and HTTP calls inside `handle()` nest
 under it.
 
-One disclosed gap: producer and consumer spans are separate traces.
-Linking them needs trace context inside the job payload, which a
-decorator has no way to reach.
+With the framework hooks active (the section below), producer and
+consumer spans join **one trace across processes**: the hooks store a
+`traceparent` in the job's payload metadata at `push()` and the worker's
+consumer span parents to it, however many seconds and processes apart
+the two are. This decorator honors that metadata on `pop()`; its own
+`push()` cannot inject it (a decorator has no way to reach the payload),
+so producer-side propagation is hook-only.
+
+One operational note: a worker killed without graceful shutdown (see
+{doc}`queue` on `ext-pcntl`) loses whatever span batch it had not yet
+exported — the flush runs on shutdown, and a hard kill never reaches
+it.
 
 ## Outgoing HTTP spans
 
