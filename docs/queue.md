@@ -73,9 +73,10 @@ final readonly class RegistrationController
 vendor/bin/kinetis queue:work
 ```
 
-The worker runs forever, one job at a time: pop, resolve `handle()`'s
-dependencies through a fresh container scope, invoke it, then pop the
-next one.
+The worker runs one job at a time: pop, resolve `handle()`'s dependencies
+through a fresh container scope, invoke it, then pop the next one. It
+keeps going until a shutdown signal arrives — see "Stopping a worker"
+below.
 
 ## Named and prioritized queues
 
@@ -162,6 +163,62 @@ guarantees a job is handed to exactly one worker, so two workers running
 at once never both pick up the same job. Workers don't need to agree on
 anything beyond which queue names they watch — start as many as you want,
 on as many machines as you want, pointed at the same backend.
+
+## Stopping a worker: deploys and restarts
+
+`SIGTERM` and `SIGINT` stop the loop after the job in flight finishes.
+The worker acks (or releases) that job, returns, and exits 0 — nothing is
+left half-done, and nothing stays reserved for the backend to reclaim
+later.
+
+That is exactly the signal Docker, systemd, and Kubernetes already send
+before they resort to `SIGKILL`, so a rolling deploy, `docker compose
+restart`, or `systemctl restart` is graceful with no extra command and no
+coordination between workers. Give the supervisor a grace period at least
+as long as your slowest job: Docker's default is 10 seconds
+(`--stop-timeout`, or `stop_grace_period` in Compose), Kubernetes'
+`terminationGracePeriodSeconds` is 30.
+
+```{warning}
+Graceful shutdown needs `ext-pcntl`, which is a CLI-only extension and is
+**not** loaded in the official PHP Docker images — add
+`docker-php-ext-install pcntl` to your image. Without it there is no way
+to observe `SIGTERM` at all, and a deploy interrupts whatever job is
+running. `queue:work` prints a warning at startup when it is missing,
+rather than leaving you to discover it during a deploy.
+```
+
+## Inspecting and clearing a queue
+
+`queue:stats` reports how many jobs are waiting:
+
+```{code-block} sh
+vendor/bin/kinetis queue:stats --queue=high,default
+```
+
+```{code-block} text
+QUEUE    WAITING
+high     12
+default  3
+----------------
+total    15
+```
+
+The count covers jobs waiting to be popped, including ones still inside
+their `push()` delay. Jobs a worker currently holds are excluded — those
+are being worked, not waiting. Amazon SQS reports these numbers as
+estimates rather than exact figures (see {doc}`queue-sqs`), which is fine
+for the question this answers: whether a queue is draining or backing up.
+
+`queue:clear` discards waiting jobs, and requires `--force` because there
+is no dead-letter copy to restore from:
+
+```{code-block} sh
+vendor/bin/kinetis queue:clear --queue=default --force
+```
+
+Jobs a worker has already reserved are untouched — they belong to that
+worker until it finishes with them.
 
 ## Multiple backends
 

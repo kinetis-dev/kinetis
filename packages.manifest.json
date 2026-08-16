@@ -178,7 +178,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.2.0",
+            "version": "1.3.0",
             "requires": [
                 "framework",
                 "persistence",
@@ -188,6 +188,9 @@
                 "amphp/redis": "^2.0",
                 "psr/container": "^2.0",
                 "psr/log": "^3.0"
+            },
+            "suggest": {
+                "ext-pcntl": "Lets `kinetis queue:work` stop gracefully on SIGTERM, finishing the job in flight instead of being killed mid-job. Not loaded by default in the official PHP Docker images."
             },
             "kinetis": {
                 "scan": "Kinetis\\Queue\\Console\\",
@@ -249,7 +252,7 @@
             "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueSqs\\",
             "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
-            "version": "1.0.3",
+            "version": "1.1.0",
             "requires": [
                 "framework",
                 "queue",
@@ -269,7 +272,7 @@
             "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueRabbitMq\\",
             "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
-            "version": "1.0.3",
+            "version": "1.1.0",
             "requires": [
                 "framework",
                 "queue"

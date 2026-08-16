@@ -224,6 +224,8 @@ vendor/bin/kinetis migrate:rollback               # roll back the last one
 vendor/bin/kinetis migrate:status                 # applied/pending listing
 vendor/bin/kinetis migrate:make "create users"    # scaffold a migration file
 vendor/bin/kinetis queue:work --queue=high,default
+vendor/bin/kinetis queue:stats --queue=high,default
+vendor/bin/kinetis queue:clear --queue=default --force
 ```
 
 The `migrate*` commands connect through the same `DB_*` keys as
