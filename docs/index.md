@@ -58,9 +58,10 @@ assumption baked into the framework itself.
 Every change runs through [GitHub](https://github.com/kinetis-dev/kinetis) Actions before it merges — PHPUnit,
 PHPStan, and Psalm for static and taint analysis, mutation testing via
 Infection, and integration tests against real MySQL, Postgres, Redis,
-and RabbitMQ rather than mocks. SonarQube Cloud rates the project A for
-security, reliability, and maintainability, with test coverage above
-85%.
+and RabbitMQ rather than mocks.
+[SonarQube Cloud](https://sonarcloud.io/project/overview?id=kinetis-dev_kinetis)
+rates the project A for security, reliability, and maintainability, with
+test coverage above 85%.
 
 ## Start here
 
