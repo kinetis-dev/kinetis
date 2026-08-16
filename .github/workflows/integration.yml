@@ -215,17 +215,56 @@ jobs:
         working-directory: packages/persistence
         run: composer install --no-interaction --prefer-dist
 
+      - name: Start TLS-configured MySQL and Postgres
+        # TlsTest needs servers presenting certificates the runner also
+        # holds the CA for, plus a wrong CA for the fail-closed checks —
+        # service containers can't mount runner files at job start, so
+        # these two run as plain containers after generating the PKI.
+        run: |
+          mkdir -p /tmp/tls-certs && cd /tmp/tls-certs
+          openssl genrsa -out ca.key 2048
+          openssl req -x509 -new -key ca.key -sha256 -days 2 -subj "/CN=CI Test CA" -out ca.pem
+          openssl genrsa -out wrong-ca.key 2048
+          openssl req -x509 -new -key wrong-ca.key -sha256 -days 2 -subj "/CN=Wrong CA" -out wrong-ca.pem
+          openssl genrsa -out server.key 2048
+          openssl req -new -key server.key -subj "/CN=127.0.0.1" -out server.csr
+          printf "subjectAltName=DNS:localhost,IP:127.0.0.1\n" > san.ext
+          openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 -sha256 -extfile san.ext -out server.pem
+          chmod 644 server.key ca.pem server.pem wrong-ca.pem
+          docker run -d --name mysql-tls -p 3307:3306 -v /tmp/tls-certs:/certs:ro \
+            -e MYSQL_DATABASE=testdb -e MYSQL_USER=testuser -e MYSQL_PASSWORD=testpass -e MYSQL_ROOT_PASSWORD=root \
+            ${{ matrix.mysql.image }} --ssl-ca=/certs/ca.pem --ssl-cert=/certs/server.pem --ssl-key=/certs/server.key
+          docker run -d --name pg-tls -p 5433:5432 -v /tmp/tls-certs:/certs-src:ro \
+            -e POSTGRES_DB=testdb -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpass \
+            --entrypoint bash postgres:16 -c 'cp /certs-src/server.pem /certs-src/server.key /tmp/ && chown postgres /tmp/server.* && chmod 600 /tmp/server.key && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key'
+          for i in $(seq 1 40); do
+            docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb-admin' || 'mysqladmin' }} ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null && break
+            sleep 2
+          done
+          docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb' || 'mysql' }} -uroot -proot -e "ALTER USER 'testuser'@'%' REQUIRE SSL; FLUSH PRIVILEGES;"
+          for i in $(seq 1 20); do
+            docker exec pg-tls pg_isready -U testuser -d testdb -q 2>/dev/null && break
+            sleep 1
+          done
+
       - name: Driver + TransactionGuard integration tests
         # The real-backend tests live in the normal phpunit suite under
         # tests/Integration/, environment-gated: they skip without
         # MYSQL_HOST/POSTGRES_HOST set, so plain unit runs everywhere
         # else stay database-free. Same files run under coverage in the
-        # SonarQube workflow.
+        # SonarQube workflow. The *_TLS_* variables point TlsTest at the
+        # certificate-configured servers started above.
         working-directory: packages/persistence
         run: vendor/bin/phpunit
         env:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1
+          MYSQL_TLS_HOST: 127.0.0.1
+          MYSQL_TLS_PORT: 3307
+          POSTGRES_TLS_HOST: 127.0.0.1
+          POSTGRES_TLS_PORT: 5433
+          TLS_CA: /tmp/tls-certs/ca.pem
+          TLS_WRONG_CA: /tmp/tls-certs/wrong-ca.pem
 
       - name: Install cache-redis dependencies
         working-directory: packages/cache-redis

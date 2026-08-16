@@ -201,7 +201,8 @@ keys, each translated by whichever driver gets built:
 ```{code-block} text
 DB_CHARSET=utf8mb4
 DB_COLLATION=utf8mb4_unicode_ci
-DB_SSLMODE=require
+DB_SSLMODE=verify-full
+DB_SSL_CA=/etc/ssl/certs/db-ca.pem
 DB_CONNECT_TIMEOUT=5
 DB_APP_NAME=myapp
 DB_COMPRESSION=false
@@ -212,7 +213,8 @@ DB_MAX_CONNECTIONS=12
 |---|---|---|---|---|
 | `DB_CHARSET` | `set_charset()` | DSN `charset=` | `client_encoding` | `client_encoding` |
 | `DB_COLLATION` | `SET NAMES ... COLLATE` | `SET NAMES ... COLLATE` | — | — |
-| `DB_SSLMODE` | — | — | `sslmode` | `sslmode` |
+| `DB_SSLMODE` | `MYSQLI_CLIENT_SSL` + verify flag | `MYSQL_ATTR_SSL_*` | `sslmode` | `sslmode` |
+| `DB_SSL_CA` | `ssl_set()` | `MYSQL_ATTR_SSL_CA` | `sslrootcert` | `sslrootcert` |
 | `DB_CONNECT_TIMEOUT` | `MYSQLI_OPT_CONNECT_TIMEOUT` | `PDO::ATTR_TIMEOUT` | `connect_timeout` | `connect_timeout` |
 | `DB_APP_NAME` | — | — | `application_name` | `application_name` |
 | `DB_COMPRESSION` | `MYSQLI_CLIENT_COMPRESS` | `MYSQL_ATTR_COMPRESS` | — | — |
@@ -220,9 +222,20 @@ DB_MAX_CONNECTIONS=12
 A "—" is not a silent ignore: setting an option the selected driver
 cannot honor throws at construction, naming both the option and the
 driver — a config that works on one runtime never silently *means
-something different* on another. (MySQL TLS is a "—" for now because the
-drivers don't yet model certificate plumbing; it fails loudly rather
-than pretending.)
+something different* on another.
+
+`DB_SSLMODE` takes libpq's vocabulary on every driver: `disable`,
+`require` (encrypt, don't verify the peer), `verify-ca`, and
+`verify-full` (verify against `DB_SSL_CA`). The opportunistic `allow`/
+`prefer` modes are libpq-only — MySQL clients have no opportunistic
+TLS, so those two values throw at construction on the MySQL drivers.
+Three more MySQL-side rules, all loud construction errors rather than
+silently weakened connections: a verify mode without `DB_SSL_CA` (there
+is nothing to verify against), a `DB_SSL_CA` without a verify mode (it
+would be silently ignored), and — a mysqlnd behavior, not a choice —
+`verify-ca` verifies the hostname too, so it acts as `verify-full`:
+stricter than asked, never looser. Client certificates (mutual TLS)
+are not modeled.
 
 MySQL charset defaults to `utf8mb4` on every driver when `DB_CHARSET`
 is unset — never the server's own default, since the native driver's
@@ -231,8 +244,8 @@ charset.
 
 The legacy `DB_OPTIONS` string is still accepted as a migration path:
 key=value pairs whose keys have canonical equivalents (`charset`,
-`collate`, `sslmode`, `connect_timeout`, `applicationName`, `compress`,
-...) are translated automatically, with a discrete key winning over a
+`collate`, `sslmode`, `sslrootcert`, `connect_timeout`,
+`applicationName`, `compress`, ...) are translated automatically, with a discrete key winning over a
 `DB_OPTIONS` spelling of the same option. Untranslatable keys pass
 through raw **only** to the Postgres drivers (libpq natively accepts
 free-form connection-string keys and validates them itself at connect
