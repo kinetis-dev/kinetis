@@ -143,6 +143,7 @@ queue-rabbitmq
 storage
 storage-s3
 mailer
+revolt-http-client
 aws-sigv4
 search-opensearch
 auth
@@ -155,7 +156,6 @@ appendix
 appendix-packages
 appendix-ci
 appendix-contributing
-revolt-http-client
 ```
 
 ## Why Kinetis exists

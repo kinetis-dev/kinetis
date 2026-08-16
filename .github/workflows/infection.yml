@@ -48,12 +48,12 @@ jobs:
           - { name: queue, dir: packages/queue, minMsi: 60, minCoveredMsi: 60 }
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, minMsi: 90, minCoveredMsi: 90 }
           - { name: queue-sqs, dir: packages/queue-sqs, minMsi: 55, minCoveredMsi: 55 }
-          # Measured at 20% MSI, not 70% — this package's own committed
-          # suite is deliberately thin (construction, a type check, one
-          # real HTTP round trip, one default-options round trip), so 70
-          # was a stale/copy-pasted threshold this package never actually
-          # hit.
-          - { name: revolt-http-client, dir: packages/revolt-http-client, minMsi: 15, minCoveredMsi: 15 }
+          # 85% measured once the Http client's own suite landed, up from
+          # the 15 the package's earlier four-test surface justified. The
+          # run takes ~6 minutes because those tests drive a real HTTP
+          # server; the matrix is parallel and core is slower still, so it
+          # doesn't extend the critical path.
+          - { name: revolt-http-client, dir: packages/revolt-http-client, minMsi: 75, minCoveredMsi: 75 }
           - { name: aws-sigv4, dir: packages/aws-sigv4, minMsi: 90, minCoveredMsi: 90 }
           - { name: skeleton, dir: packages/skeleton, minMsi: 90, minCoveredMsi: 90 }
           - { name: storage, dir: packages/storage, minMsi: 90, minCoveredMsi: 90 }

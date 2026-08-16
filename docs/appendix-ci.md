@@ -155,7 +155,7 @@ package, set with a margin below each package's own score. Runs on PHP
 | queue | 60% | 70% |
 | queue-rabbitmq | 90% | 100% |
 | queue-sqs | 55% | 66% |
-| revolt-http-client | 70% | 80% |
+| revolt-http-client | 75% | 85% |
 | search-opensearch | 70% | 77% |
 | skeleton | 90% | 100% |
 | storage | 90% | 100% |
