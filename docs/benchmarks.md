@@ -3,10 +3,12 @@
 According to our own benchmark suite, Kinetis wins five of six
 TechEmpower-style benchmark tests against seven other PHP frameworks —
 Laravel, Laravel Octane, Symfony, CodeIgniter, Yii2, CakePHP, and Slim —
-measured on isolated AWS hardware on August 15, 2026. The full
-methodology and every framework's implementation are public in the
-[benchmark repository](https://github.com/aln-1/kinetis-benchmarks),
-so the numbers below are reproducible, not just reported; this page
+measured on isolated AWS hardware on August 15, 2026. TechEmpower
+sunset its own benchmark project in March 2026, so no neutral third
+party runs this kind of comparison anymore — which is exactly why the
+full methodology and every framework's implementation are public in
+the [benchmark repository](https://github.com/aln-1/kinetis-benchmarks):
+the numbers below are reproducible, not just reported. This page
 covers what was tested and what came out, not how the rig is built.
 
 ## What was tested
@@ -21,7 +23,8 @@ a tracing JIT, timestamps disabled, access logging off) and its own
 ahead-of-time caching mechanism where it has one. Three separate EC2
 instances — application, database, load generator — provide real
 machine isolation, the same methodology TechEmpower's own benchmark
-uses.
+used; its test types remain the de facto standard for comparing web
+frameworks.
 
 Kinetis appears twice: `kinetis` runs on FrankenPHP worker mode, its
 primary deployment target; `kinetis-fpm` is the identical, unmodified
@@ -35,10 +38,10 @@ they aren't repeated here.
 
 ## Versions tested
 
-The kinetis versions below are re-validated against the same rig with
-a follow-up measurement run reproducing the table's results within
-run-to-run noise. The benchmark repository tracks current releases, so
-a fresh clone installs the latest kinetis packages.
+A follow-up run on the same rig confirmed that the kinetis versions
+below reproduce the results within run-to-run noise. The benchmark
+repository tracks current releases, so a fresh clone installs the
+latest kinetis packages.
 
 | Target | Package | Version | PHP |
 |---|---|---|---|
@@ -66,8 +69,8 @@ Requests per second at concurrency 256; `/queries` and `/updates` run
 | Target | `/json` | `/plaintext` | `/db` | `/fortunes` | `/queries` (20) | `/updates` (20) |
 |---|---|---|---|---|---|---|
 | `kinetis` | **27,878** | **27,830** | **19,797** | **16,489** | **4,304** | 1,495 |
-| `kinetis-fpm` | 10,596 | 10,659 | 6,257 | 5,555 | 2,104 | 1,105 |
 | `slim` | 13,443 | 13,409 | 7,714 | 7,181 | 4,301 | **1,801** |
+| `kinetis-fpm` | 10,596 | 10,659 | 6,257 | 5,555 | 2,104 | 1,105 |
 | `yii2` | 9,865 | 10,255 | 6,016 | 5,597 | 2,887 | 1,579 |
 | `codeigniter` | 6,250 | 6,256 | 2,188 | 2,038 | 1,588 | 1,207 |
 | `cakephp` | 5,927 | 5,990 | 3,065 | 2,896 | 1,406 | 969 |
