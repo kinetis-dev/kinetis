@@ -396,13 +396,14 @@ final readonly class RequireVerifiedEmailMiddleware implements MiddlewareInterfa
 
 ## Built in: `ExceptionHandlerMiddleware`
 
-Registered as the outermost global middleware automatically, on every
-`Kernel` — not something you opt into:
+Registered automatically on every `Kernel`, immediately inside
+`SecurityHeadersMiddleware` — not something you opt into:
 
 ```{code-block} text
 Kernel's global pipeline, outermost to innermost:
-  ExceptionHandlerMiddleware   ← always first, unconditionally
-  MaxBodySizeMiddleware        ← always second, unconditionally
+  SecurityHeadersMiddleware    ← always first, unconditionally
+  ExceptionHandlerMiddleware   ← always second, unconditionally
+  MaxBodySizeMiddleware        ← always third, unconditionally
   ...your own $app->middleware() registrations, in order...
   (routing, then a matched route's own middleware, then the controller)
 ```

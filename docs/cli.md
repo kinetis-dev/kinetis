@@ -5,17 +5,17 @@ once you `composer require kinetis/framework`. Running it with no
 arguments, or an unrecognized one, lists every available command:
 
 ```{code-block} bash
-php bin/kinetis
+php vendor/bin/kinetis
 ```
 
 ```{code-block} text
 Usage: kinetis <command>
 
 Available commands:
-  mcp:serve — Starts the MCP server over stdio
-  routes:list — Displays every discovered route and the full global middleware pipeline
-  build — Compiles routes, MCP tools/resources, commands, and OpenAPI data ahead of time
-  app:cleanup-sessions — Deletes sessions older than 30 days
+  mcp:serve              Starts the MCP server over stdio
+  routes:list            Displays every discovered route and the full global middleware pipeline
+  build                  Compiles routes, MCP tools/resources, commands, and OpenAPI data ahead of time
+  app:cleanup-sessions   Deletes sessions older than 30 days
 ```
 
 ## Writing your own commands
@@ -93,7 +93,7 @@ your own PSR-4 roots, with no directory convention required.
 ## `kinetis build`
 
 ```{code-block} bash
-php bin/kinetis build
+php vendor/bin/kinetis build
 ```
 
 Removes any existing `.kinetis-cache/` and compiles a fresh one — routing,
@@ -124,7 +124,7 @@ vendor/bin/kinetis build --destroy
 ## `kinetis mcp:serve`
 
 ```{code-block} bash
-php bin/kinetis mcp:serve
+php vendor/bin/kinetis mcp:serve
 ```
 
 Starts Kinetis's MCP server over stdio — one JSON-RPC message per line in,
@@ -137,13 +137,15 @@ documentation resources — see {doc}`mcp` for the protocol itself and
 ## `kinetis routes:list`
 
 ```{code-block} bash
-php bin/kinetis routes:list
+php vendor/bin/kinetis routes:list
 ```
 
 ```{code-block} text
 Global middleware (outermost to innermost):
-  1. Kinetis\Http\Middleware\ExceptionHandlerMiddleware
-  2. App\Http\Middleware\RequestIdMiddleware
+  1. Kinetis\Http\Middleware\SecurityHeadersMiddleware
+  2. Kinetis\Http\Middleware\ExceptionHandlerMiddleware
+  3. Kinetis\Http\Middleware\MaxBodySizeMiddleware
+  4. App\Http\Middleware\RequestIdMiddleware
 
 Method  Path     Status  Controller                       Middleware
 ------  -------  ------  -------------------------------  ---------------------------------------
@@ -159,7 +161,8 @@ exactly as it stands right now, not whatever a stale compiled cache
 happens to hold.
 
 The global middleware section lists the exact order requests run in —
-`ExceptionHandlerMiddleware` always first, then your own
+the three Kinetis always wires in first — `SecurityHeadersMiddleware`,
+`ExceptionHandlerMiddleware`, `MaxBodySizeMiddleware` — then your own
 explicitly-registered (`AppScope::middleware()`) and `#[AsGlobalMiddleware]`-discovered
 classes, deduplicated (see {doc}`middleware`). Each route's own
 `Middleware` column shows its `#[Middleware]` list in the same

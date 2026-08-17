@@ -39,7 +39,7 @@ anomaly signals, not routine chatter:
 
 ### `ExceptionHandlerMiddleware`
 
-The outermost global middleware every `Kernel` wires in unconditionally
+A global middleware every `Kernel` wires in unconditionally
 (see {doc}`middleware`). Resolved through the container, so its
 `LoggerInterface` autowires from whatever you registered:
 

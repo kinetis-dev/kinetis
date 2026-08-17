@@ -18,17 +18,24 @@ use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\ProjectRoot;
 use Psr\Log\LoggerInterface;
 
-// Once installed as a dependency, this script runs through Composer's
-// generated vendor/bin/kinetis proxy, which sets these globals before
-// including the real target script — dirname(__DIR__) alone only resolves
-// correctly when run directly against this repo's own root, not a real
-// consumer install. Pattern taken from the real, vendored
-// vendor/phpunit/phpunit/phpunit proxy script.
-if (isset($GLOBALS['_composer_autoload_path'])) {
-    $autoloadPath = $GLOBALS['_composer_autoload_path'];
-    unset($GLOBALS['_composer_autoload_path']);
-} else {
-    $autoloadPath = dirname(__DIR__) . '/vendor/autoload.php';
+// Composer's generated vendor/bin/kinetis proxy sets this global before
+// including this script, and that proxy is the entry point in any project
+// that installed kinetis/framework. The bare path below resolves only
+// inside this repository itself, where the CLI is developed — an
+// installed dependency has no vendor/ of its own. Pattern taken from the
+// real, vendored vendor/phpunit/phpunit/phpunit proxy script.
+$autoloadPath = $GLOBALS['_composer_autoload_path'] ?? dirname(__DIR__) . '/vendor/autoload.php';
+unset($GLOBALS['_composer_autoload_path']);
+
+// Reached by running this file directly instead of through the proxy.
+// Reported rather than left to require()'s own error, which names a path
+// that cannot exist in an installed project and says nothing about the
+// command to run instead.
+if (!is_file($autoloadPath)) {
+    fwrite(STDERR, "Cannot locate the Composer autoloader. Run vendor/bin/kinetis instead — "
+        . "this script is not meant to be invoked directly.\n");
+
+    exit(1);
 }
 
 require $autoloadPath;
@@ -94,12 +101,20 @@ if ($definition === null) {
 
     fwrite(STDERR, "Available commands:\n");
 
-    foreach ($registry->commands() as $command) {
-        $line = "  {$command->name}";
+    $commands = $registry->commands();
 
-        if ($command->description !== '') {
-            $line .= " — {$command->description}";
-        }
+    // Width of the name column, so the descriptions line up whatever
+    // commands the installed packages and the application contribute.
+    $width = 0;
+
+    foreach ($commands as $command) {
+        $width = max($width, strlen($command->name));
+    }
+
+    foreach ($commands as $command) {
+        $line = '  ' . ($command->description === ''
+            ? $command->name
+            : str_pad($command->name, $width) . '   ' . $command->description);
 
         fwrite(STDERR, $line . "\n");
     }

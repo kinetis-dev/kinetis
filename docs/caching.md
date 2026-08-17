@@ -76,7 +76,7 @@ A DTO used by both an HTTP route and an MCP tool appears in both files.
 ### `bin/kinetis build` — pre-warm ahead of deploy
 
 ```{code-block} bash
-php bin/kinetis build
+php vendor/bin/kinetis build
 # Compiled routes, MCP tools/resources, commands, event listeners, and
 # OpenAPI cache written to .kinetis-cache/
 ```

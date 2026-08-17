@@ -56,7 +56,7 @@ arguments exactly as precisely as they describe an HTTP request body.
 ### stdio — the primary transport
 
 ```{code-block} bash
-php bin/kinetis mcp:serve
+php vendor/bin/kinetis mcp:serve
 ```
 
 This is how Claude Desktop, Cursor, and most local MCP clients actually
