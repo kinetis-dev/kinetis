@@ -328,24 +328,19 @@ final class Kernel
      */
     private static function openApiAllowed(AppScope $app): bool
     {
-        if (!$app->has(Config::class)) {
-            return false;
-        }
-
-        $config = $app->get(Config::class);
+        $config = $app->has(Config::class) ? $app->get(Config::class) : null;
 
         if (!$config instanceof Config) {
             return false;
         }
 
+        // Unset, blank, or comma-only, every name filters out and leaves
+        // in_array() nothing to match — which is what blocks both paths
+        // until an application names an environment.
         $environments = \array_filter(\array_map(
             static fn (string $name): string => \strtolower(\trim($name)),
             \explode(',', $config->string('OPENAPI_ENVIRONMENTS', '')),
         ), static fn (string $name): bool => $name !== '');
-
-        if ($environments === []) {
-            return false;
-        }
 
         $current = \strtolower(\trim($config->string('APP_ENV', '')));
 
