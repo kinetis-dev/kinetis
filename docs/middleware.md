@@ -521,12 +521,14 @@ subresource opt in, and blocks each one that has not. It is what
 `crossOriginIsolated` needs, and the most disruptive of the three —
 introduce it last, after the other two are in place.
 
-```{warning}
-A `script-src`/`default-src` of `'self'` blocks the Swagger UI page
-Kinetis serves at `/docs`, which loads `swagger-ui-dist` from a CDN. If
-you expose `/docs` and set a policy, allow that origin — or leave the
-page off, which it is unless `OPENAPI_ENVIRONMENTS` names the running
-environment (see {doc}`routing-validation`).
+```{note}
+Your policy does not have to accommodate the Swagger UI page Kinetis
+serves at `/docs`. That page loads `swagger-ui-dist` from a CDN, which a
+`script-src` of `'self'` would block, so it sends its own policy —
+narrower than a typical application-wide one, with a per-response nonce
+for its inline script and `connect-src 'self'` so it can fetch its own
+document and nothing else. Because a header already on the response is
+never replaced, yours still governs every other route.
 ```
 
 A header the response already carries is never replaced, so one route

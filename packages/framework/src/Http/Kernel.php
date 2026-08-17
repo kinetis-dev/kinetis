@@ -373,7 +373,14 @@ final class Kernel
             return $this->json($openApi, 200);
         }
 
-        return $this->html(SwaggerUiPage::render());
+        $page = SwaggerUiPage::create();
+
+        // The page's own policy, not the application's: an application-wide
+        // `script-src 'self'` would block the CDN this viewer loads from,
+        // and SecurityHeadersMiddleware leaves a header a response already
+        // carries alone. See SwaggerUiPage.
+        return $this->html($page['html'])
+            ->withHeader('Content-Security-Policy', $page['csp']);
     }
 
     /**

@@ -713,7 +713,10 @@ build a complete OpenAPI 3.1 document, with no annotations beyond the
 attributes already shown on this page:
 
 - `GET /openapi.json` — the generated document.
-- `GET /docs` — a Swagger UI shell rendering it.
+- `GET /docs` — a Swagger UI shell rendering it. It loads Swagger UI
+  from a CDN and sends its own `Content-Security-Policy` permitting
+  exactly that, so it keeps working under an application-wide policy
+  that would otherwise block it — see {doc}`middleware`.
 
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,

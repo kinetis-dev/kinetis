@@ -164,6 +164,66 @@ final class KernelTest extends TestCase
         self::assertStringContainsString('swagger-ui', (string) $response->getBody());
     }
 
+    /**
+     * The page loads Swagger UI from a CDN, so an application-wide
+     * `script-src 'self'` would block it. It carries its own policy
+     * instead, and the nonce in that policy has to be the nonce on the
+     * inline script that starts the viewer — a mismatch is a page that
+     * silently does nothing.
+     */
+    public function test_the_docs_page_carries_a_policy_matching_its_own_inline_script(): void
+    {
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/docs'));
+        $csp = $response->getHeaderLine('Content-Security-Policy');
+        $body = (string) $response->getBody();
+
+        self::assertMatchesRegularExpression("/script-src 'nonce-[^']+' https:\/\/cdn\.jsdelivr\.net/", $csp);
+        self::assertStringContainsString('https://cdn.jsdelivr.net', $csp);
+        // The viewer fetches /openapi.json, and nothing else.
+        self::assertStringContainsString("connect-src 'self'", $csp);
+
+        preg_match("/script-src 'nonce-([^']+)'/", $csp, $m);
+        self::assertNotEmpty($m[1] ?? '');
+        self::assertStringContainsString('nonce="' . $m[1] . '"', $body);
+    }
+
+    public function test_each_docs_request_gets_a_fresh_nonce(): void
+    {
+        $kernel = $this->kernel(exposeOpenApi: true);
+
+        $first = $kernel->handle(new ServerRequest('GET', '/docs'))->getHeaderLine('Content-Security-Policy');
+        $second = $kernel->handle(new ServerRequest('GET', '/docs'))->getHeaderLine('Content-Security-Policy');
+
+        self::assertNotSame($first, $second);
+    }
+
+    /**
+     * The whole point: an application that sets a strict policy keeps it
+     * everywhere except this one page, which would otherwise be broken
+     * by the framework's own security guidance.
+     */
+    public function test_an_application_wide_policy_does_not_override_the_docs_page(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config([
+            'APP_ENV' => 'development',
+            'OPENAPI_ENVIRONMENTS' => 'development',
+            'SECURITY_CSP' => "default-src 'self'; script-src 'self'",
+        ]));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $kernel = new Kernel($app, $router);
+
+        $docs = $kernel->handle(new ServerRequest('GET', '/docs'));
+        self::assertStringContainsString('cdn.jsdelivr.net', $docs->getHeaderLine('Content-Security-Policy'));
+
+        // Every other route still gets the application's own policy.
+        $route = $kernel->handle(new ServerRequest('GET', '/users/1'));
+        self::assertSame("default-src 'self'; script-src 'self'", $route->getHeaderLine('Content-Security-Policy'));
+    }
+
     public function test_openapi_routes_can_be_disabled(): void
     {
         $app = new AppScope();
