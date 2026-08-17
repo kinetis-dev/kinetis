@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.13.1",
+            "version": "1.14.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -84,7 +84,7 @@
             "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
-            "version": "1.0.3",
+            "version": "1.0.4",
             "requires": [
                 "framework"
             ],
@@ -352,7 +352,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.1.5",
+            "version": "1.1.6",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2",

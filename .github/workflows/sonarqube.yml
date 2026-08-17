@@ -54,6 +54,35 @@ jobs:
           # not the default single-commit shallow clone.
           fetch-depth: 0
 
+      - name: Start Redis backends
+        # cache-redis's env-gated tests/Integration suite must run under
+        # pcov here for the same reason persistence's does. Both backends
+        # are started by hand rather than declared as services: a Redis
+        # Cluster node answers CLUSTER SHARDS and MOVED with its own
+        # container address, so the test process has to sit on the same
+        # Docker network to follow the redirect at all.
+        run: |
+          docker network create kinetis-redis
+          docker run -d --name kinetis-redis --network kinetis-redis redis:7-alpine
+          docker run -d --name kinetis-redis-cluster --network kinetis-redis grokzen/redis-cluster:7.0.10
+          # grokzen's entrypoint first creates six independent masters and
+          # only then attaches three of them as replicas, so cluster_state:ok
+          # arrives well before the topology settles. Wait for the split.
+          ready=""
+          for i in $(seq 1 40); do
+            roles=$(docker exec kinetis-redis-cluster redis-cli -p 7000 cluster nodes 2>/dev/null | sed 's/myself,//' | awk '{print $3}' | sort | uniq -c | tr -d ' \n')
+            case "$roles" in
+              *3master*3slave*) ready=yes; echo "Cluster ready: 3 masters, 3 replicas."; break ;;
+            esac
+            sleep 2
+          done
+          if [ -z "$ready" ]; then
+            echo "Cluster did not reach a stable 3-master/3-replica split in time." >&2
+            exit 1
+          fi
+          CLUSTER_IP=$(docker inspect kinetis-redis-cluster --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          echo "REDIS_CLUSTER_SEEDS=$CLUSTER_IP:7000,$CLUSTER_IP:7001,$CLUSTER_IP:7002" >> "$GITHUB_ENV"
+
       - name: Package coverage
         # Same Docker-based pattern every other workflow here uses
         # (php:8.4-cli-alpine via `docker run`, not a host-level PHP setup
@@ -70,8 +99,14 @@ jobs:
             # extensions; every other package needs none.
             EXTRA_EXTS=""
             if [ "$pkg" = "persistence" ]; then EXTRA_EXTS="mysqli pdo_mysql pgsql pdo_pgsql"; fi
+            # cache-redis joins the Redis network started above instead of
+            # the host one, so cluster redirects resolve; every other
+            # package reaches the database services over --network host.
+            NETWORK="host"
+            REDIS_HOST=""
+            if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_HOST="kinetis-redis"; fi
             docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
-            docker run --rm --network host -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 -e EXTRA_EXTS="$EXTRA_EXTS" -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
+            docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 -e REDIS_HOST="$REDIS_HOST" -e REDIS_CLUSTER_SEEDS -e EXTRA_EXTS="$EXTRA_EXTS" -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
               apk add --no-cache gcc g++ make autoconf pkgconf re2c
               if [ -n \"\$EXTRA_EXTS\" ]; then apk add --no-cache postgresql-dev && docker-php-ext-install \$EXTRA_EXTS; fi
               pecl install pcov

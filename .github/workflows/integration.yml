@@ -280,9 +280,13 @@ jobs:
         working-directory: packages/cache-redis
         run: composer install --no-interaction --prefer-dist
 
-      - name: RedisSimpleCache integration checks
+      - name: RedisSimpleCache integration tests
+        # Same shape as persistence above: env-gated tests under
+        # tests/Integration/ that skip without REDIS_HOST, so plain unit
+        # runs stay backend-free, and the same files run under coverage
+        # in the SonarQube workflow.
         working-directory: packages/cache-redis
-        run: php tests-integration/redis-simple-cache.php
+        run: vendor/bin/phpunit
         env:
           REDIS_HOST: 127.0.0.1
 
@@ -461,9 +465,12 @@ jobs:
         working-directory: packages/cache-redis
         run: composer install --no-interaction --prefer-dist
 
-      - name: Run integration checks
+      - name: Run integration tests
+        # REDIS_CLUSTER_SEEDS comes from the job-level env above. The
+        # single-node tests in the same suite skip here, since REDIS_HOST
+        # is deliberately unset.
         working-directory: packages/cache-redis
-        run: php tests-integration/redis-cluster.php
+        run: vendor/bin/phpunit
 
   localstack:
     name: queue-sqs + storage-s3 (LocalStack, PHP ${{ matrix.php-version }})

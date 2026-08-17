@@ -36,16 +36,24 @@ use Psr\Log\LoggerInterface;
 final readonly class McpServeCommand
 {
     /**
-     * $projectRootOverride is accepted as an optional, appended-last
-     * constructor parameter for the same testability reason
-     * BuildCommand's own override exists — a default of null costs
-     * nothing when the container autowires this normally, per
-     * Autowire::instantiate()'s existing tolerance for an unresolvable
-     * scalar parameter with a default value.
+     * $projectRootOverride, $input, and $output are optional,
+     * appended-last constructor parameters for the same testability
+     * reason BuildCommand's own override and RoutesListCommand's own
+     * $output exist — their defaults cost nothing when the container
+     * autowires this normally, per Autowire::instantiate()'s existing
+     * tolerance for an unresolvable parameter with a default value.
+     * Without injectable streams the command can only be run against the
+     * real process stdin, which is to say not run at all.
+     *
+     * $input/$output are typed mixed rather than resource because a
+     * readonly property needs a native type and PHP has none for a
+     * resource — the same reason RoutesListCommand types its own.
      */
     public function __construct(
         private RequestScope $scope,
         private ?string $projectRootOverride = null,
+        private mixed $input = STDIN,
+        private mixed $output = STDOUT,
     ) {}
 
     #[Command('mcp:serve', description: 'Starts the MCP server over stdio')]
@@ -77,7 +85,7 @@ final readonly class McpServeCommand
 
         $mcp = new McpServer($registry, $dispatcher, logger: $logger);
 
-        (new StdioTransport())->run($mcp, STDIN, STDOUT);
+        (new StdioTransport())->run($mcp, $this->input, $this->output);
 
         return 0;
     }
