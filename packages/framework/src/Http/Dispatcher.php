@@ -16,6 +16,9 @@ use Kinetis\Validation\Constraint;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
 use Nyholm\Psr7\Response;
+use Kinetis\Container\Exception\CircularDependencyException;
+use Kinetis\Container\RequestScope;
+use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 use Throwable;
 use Psr\Http\Message\ResponseInterface;
@@ -57,7 +60,7 @@ use ReflectionType;
  * @phpstan-type HttpBindingPlan array{
  *     name: string,
  *     source: string,
- *     dtoClass: ?string,
+ *     dtoClass: ?string, // the DTO for 'body', the service class for 'container'
  *     scalarType: ?string,
  *     hasDefault: bool,
  *     defaultValue: mixed,
@@ -198,6 +201,15 @@ final class Dispatcher
             return ['path', null];
         }
 
+        // Anything class-typed left over comes from the request
+        // container: a service, or — the case this exists for — a value
+        // an earlier route middleware registered on the request scope.
+        // Checked last, so it can never shadow #[Body], #[Query], or a
+        // path parameter.
+        if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+            return ['container', $type->getName()];
+        }
+
         return ['default', null];
     }
 
@@ -225,6 +237,7 @@ final class Dispatcher
                     'body' => $this->resolveBodyFromPlan($param, $request),
                     'query' => $this->resolveScalarFromPlan($request->getQueryParams()[$name] ?? null, $name, $param),
                     'path' => $this->resolveScalarFromPlan($match->pathParams[$name], $name, $param),
+                    'container' => $this->resolveFromContainer($param),
                     default => $param['hasDefault'] ? $param['defaultValue'] : throw UnresolvableParameterException::forParameter($name),
                 };
             } catch (ValidationException $e) {
@@ -373,6 +386,59 @@ final class Dispatcher
         }
 
         return $files;
+    }
+
+    /**
+     * A class-typed parameter, resolved from the request container.
+     *
+     * A default value makes the parameter optional, but only against
+     * genuine absence: nothing registered the id and nothing could be
+     * built for it. A service that *was* registered and then failed to
+     * construct, or a dependency cycle, is a defect rather than an
+     * absent value, so its own exception propagates — otherwise a
+     * misconfigured mailer or a circular graph would quietly arrive as
+     * null and be read as "not provided".
+     *
+     * Without a default, absence is reported against the parameter
+     * rather than against whatever the container failed to autowire:
+     * the useful fact is which route is missing which middleware, not
+     * that some constructor deep inside wanted a string.
+     *
+     * @param HttpBindingPlan $param
+     */
+    private function resolveFromContainer(array $param): mixed
+    {
+        $class = $param['dtoClass'];
+
+        if ($class === null) {
+            throw UnresolvableParameterException::forParameter($param['name']);
+        }
+
+        try {
+            return $this->container->get($class);
+        } catch (ContainerExceptionInterface $e) {
+            if ($this->isRegistered($class) || $e instanceof CircularDependencyException) {
+                throw $e;
+            }
+
+            if ($param['hasDefault']) {
+                return $param['defaultValue'];
+            }
+
+            throw UnresolvableParameterException::forContainerParameter($param['name'], $class, $e);
+        }
+    }
+
+    /**
+     * Explicit registrations only. RequestScope answers this precisely;
+     * any other PSR-11 container is asked the closest question it can
+     * answer, which for AppScope is exactly this one.
+     */
+    private function isRegistered(string $class): bool
+    {
+        return $this->container instanceof RequestScope
+            ? $this->container->isRegistered($class)
+            : $this->container->has($class);
     }
 
     /**

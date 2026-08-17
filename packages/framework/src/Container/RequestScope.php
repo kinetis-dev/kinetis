@@ -62,6 +62,21 @@ final class RequestScope implements ContainerInterface
         return isset($this->bindings[$id]) || $this->parent->has($id) || class_exists($id);
     }
 
+    /**
+     * Whether something actually registered this id — a local binding,
+     * or an explicit one on AppScope.
+     *
+     * has() cannot answer that question: it also reports true for any
+     * autowirable class, because get() would indeed return one. This
+     * distinguishes "a middleware registered this" from "this is merely
+     * a class that exists", which is what a caller needs when the
+     * difference between the two is a wiring mistake.
+     */
+    public function isRegistered(string $id): bool
+    {
+        return isset($this->bindings[$id]) || $this->parent->has($id);
+    }
+
     #[\Override]
     public function get(string $id): mixed
     {

@@ -91,7 +91,7 @@ concept of an inline regex.
 
 ## Parameter binding
 
-A controller method's parameters are resolved from five possible sources,
+A controller method's parameters are resolved from six possible sources,
 checked in this order:
 
 ### `#[Body]`
@@ -177,9 +177,75 @@ A request without the expected file resolves like a missing `#[Query]`
 value: the parameter's default if it has one, `null` if its type allows
 null, and a `422` (`is required.`) otherwise.
 
-A parameter matching none of the above falls back to its default value, if
-it has one; if it doesn't, the request fails with a clear "unresolvable
-parameter" error rather than passing `null` silently.
+### Class-typed parameters: services and request context
+
+A class-typed parameter matching none of the above is resolved from the
+request container — checked last, so it can never shadow `#[Body]`,
+`#[Query]`, or a path placeholder.
+
+This is what lets one controller serve both a public route and a guarded
+one. A constructor is shared by every route on its class, so naming a
+middleware-registered value there would demand it on routes that never
+run that middleware; a method signature is per route:
+
+```{code-block} php
+final readonly class ReportController
+{
+    #[Get('/reports/public')]
+    public function teaser(): array
+    {
+        return ['sample' => true];
+    }
+
+    #[Get('/reports/private')]
+    #[Middleware(BearerAuthMiddleware::class)]
+    public function full(CurrentUserInterface $user): array
+    {
+        return ['userId' => $user->id()];
+    }
+}
+```
+
+Anything the container can supply works the same way — a repository, a
+`MailerInterface`, whatever a package bootstrap bound — which also means
+a dependency only one route needs is only built for that route, instead
+of on every request to the class.
+
+If the container cannot supply it, the failure surfaces: a route that
+forgot the middleware meant to register the value fails loudly rather
+than handing the controller something disconnected. Give the parameter a
+default to say that absence is acceptable instead:
+
+```{code-block} php
+#[Get('/reports/maybe')]
+public function maybe(?CurrentUserInterface $user = null): array
+{
+    return ['signedIn' => $user !== null];
+}
+```
+
+A default has to be written out even when the type is nullable — unlike
+`#[Query]` and path parameters, where a nullable type alone is enough.
+Absence means something different here: for those, a missing value is
+ordinary input variation, while a value the container cannot supply is
+usually a route missing its middleware. Writing the default is how you
+say which of the two you meant.
+
+The default covers genuine absence only. A service that *was* registered
+and then failed to construct, or a dependency cycle, is a defect rather
+than an absent value, so it is reported rather than quietly arriving as
+`null`.
+
+```{note}
+This applies to HTTP controllers. An MCP tool's arguments arrive as one
+flat object, so a class-typed parameter there is a DTO hydrated from
+those arguments — see {doc}`mcp`.
+```
+
+A parameter matching none of the six — untyped, or scalar-typed with no
+attribute and no matching placeholder — falls back to its default value
+if it has one, and otherwise fails with an error naming every source it
+could have come from, rather than passing `null` silently.
 
 (multipart-form-data-file-uploads)=
 ## Multipart/form-data & file uploads

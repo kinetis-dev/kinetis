@@ -18,5 +18,9 @@ final class CacheFormat
     // 5: binding/hydration plan parameters gained allowsNull.
     // 6: HttpCache gained middlewareGroups.
     // 7: CommandCache commands gained bootstrap.
-    public const int VERSION = 8;
+    // 8: HttpCache/CommandCache gained packageBootstraps.
+    // 9: binding plans gained the 'container' parameter source — an old
+    //    plan records those parameters as 'default', which would keep
+    //    throwing instead of resolving them.
+    public const int VERSION = 9;
 }
