@@ -216,7 +216,8 @@ Installing a package is what opts it in — there is no separate
 allow-list. If you install a package, you trust what it registers, the
 same trust already extended to any code Composer autoloads.
 
-`kinetis/migrations` and `kinetis/queue` ship their commands this way:
+`kinetis/migrations`, `kinetis/queue`, and `kinetis/session` ship their
+commands this way:
 
 ```{code-block} sh
 vendor/bin/kinetis migrate                        # apply pending migrations
@@ -226,6 +227,7 @@ vendor/bin/kinetis migrate:make "create users"    # scaffold a migration file
 vendor/bin/kinetis queue:work --queue=high,default
 vendor/bin/kinetis queue:stats --queue=high,default
 vendor/bin/kinetis queue:clear --queue=default --force
+vendor/bin/kinetis session:gc                     # delete expired sessions
 ```
 
 The `migrate*` commands connect through the same `DB_*` keys as
@@ -233,7 +235,8 @@ The `migrate*` commands connect through the same `DB_*` keys as
 connection block, winning over the `MIGRATE_CONNECTION_NAME` environment
 key when both are given. `queue:work` runs the worker loop against the
 backend `QUEUE_CONNECTION` selects, checking queues in the given
-priority order. Full docs in {doc}`migrations` and {doc}`queue`.
+priority order. Full docs in {doc}`migrations`, {doc}`queue`, and
+{doc}`session`.
 
 ## Development vs. production
 

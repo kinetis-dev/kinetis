@@ -269,6 +269,12 @@ final readonly class KinetisDocsResource
         return $this->read('telemetry');
     }
 
+    #[McpResource(uri: 'kinetis://docs/session', name: 'session', description: 'kinetis/session: cookie-backed sessions and CSRF protection — file, PSR-16 cache (Redis), and SQL storage behind one store interface', mimeType: self::MIME_TYPE)]
+    public function session(): string
+    {
+        return $this->read('session');
+    }
+
     private function read(string $slug): string
     {
         $localPath = ($this->localDocsRoot ?? dirname(__DIR__, 4) . '/docs') . "/{$slug}.md";

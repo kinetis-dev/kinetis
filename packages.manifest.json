@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.11.0",
+            "version": "1.12.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -56,7 +56,7 @@
         },
         "persistence": {
             "name": "kinetis/persistence",
-            "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
+            "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis \u2014 MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
             "version": "1.10.1",
@@ -70,10 +70,10 @@
                 "nyholm/psr7": "^1.8"
             },
             "suggest": {
-                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
-                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
-                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
-                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the default under PHP-FPM via DB_DRIVER=auto."
+                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) \u2014 the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) \u2014 the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) \u2014 the default under PHP-FPM via DB_DRIVER=auto.",
+                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) \u2014 the default under PHP-FPM via DB_DRIVER=auto."
             },
             "kinetis": {
                 "bootstrap": "Kinetis\\Persistence\\PackageBootstrap"
@@ -81,7 +81,7 @@
         },
         "cache-redis": {
             "name": "kinetis/cache-redis",
-            "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
+            "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis \u2014 non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
             "version": "1.0.3",
@@ -98,7 +98,7 @@
         },
         "bref-adapter": {
             "name": "kinetis/bref-adapter",
-            "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
+            "description": "AWS Lambda (Bref) runtime adapter for Kinetis \u2014 polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
             "version": "1.0.3",
@@ -114,7 +114,7 @@
         },
         "query-builder": {
             "name": "kinetis/query-builder",
-            "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via kinetis/persistence's drivers, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
+            "description": "A thin, parameterized SQL query builder for Kinetis \u2014 MySQL and Postgres via kinetis/persistence's drivers, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
             "version": "1.2.4",
@@ -161,7 +161,7 @@
         },
         "migrations": {
             "name": "kinetis/migrations",
-            "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+            "description": "A thin database migration runner for Kinetis \u2014 raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
             "version": "1.3.0",
@@ -175,7 +175,7 @@
         },
         "queue": {
             "name": "kinetis/queue",
-            "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
+            "description": "A backend-agnostic background job queue for Kinetis \u2014 Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
             "version": "1.5.2",
@@ -199,7 +199,7 @@
         },
         "storage": {
             "name": "kinetis/storage",
-            "description": "File storage for Kinetis, built on League\\Flysystem — local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
+            "description": "File storage for Kinetis, built on League\\Flysystem \u2014 local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "namespace": "Kinetis\\Storage\\",
             "testNamespace": "Kinetis\\Storage\\Tests\\",
             "version": "1.0.3",
@@ -216,7 +216,7 @@
         },
         "revolt-http-client": {
             "name": "kinetis/revolt-http-client",
-            "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
+            "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface \u2014 usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
             "namespace": "Kinetis\\RevoltHttpClient\\",
             "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
             "version": "1.1.0",
@@ -290,7 +290,7 @@
         },
         "mailer": {
             "name": "kinetis/mailer",
-            "description": "Non-blocking mail sending for Kinetis — Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
+            "description": "Non-blocking mail sending for Kinetis \u2014 Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
             "namespace": "Kinetis\\Mailer\\",
             "testNamespace": "Kinetis\\Mailer\\Tests\\",
             "version": "1.0.3",
@@ -321,7 +321,7 @@
         },
         "aws-sigv4": {
             "name": "kinetis/aws-sigv4",
-            "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
+            "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) \u2014 reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
             "version": "1.1.3",
@@ -381,7 +381,7 @@
         },
         "telemetry": {
             "name": "kinetis/telemetry",
-            "description": "OpenTelemetry tracing for Kinetis — request spans, SQL and queue decorators, a traced HTTP transport, and OTLP export over the Revolt-backed client.",
+            "description": "OpenTelemetry tracing for Kinetis \u2014 request spans, SQL and queue decorators, a traced HTTP transport, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
             "version": "1.3.0",
@@ -404,11 +404,38 @@
             },
             "suggest": {
                 "kinetis/persistence": "Enables the TracingMysqlLink/TracingPostgresLink decorators, a span per SQL query.",
-                "kinetis/queue": "Enables the TracingQueue decorator — producer spans on push(), consumer spans from pop() to ack()."
+                "kinetis/queue": "Enables the TracingQueue decorator \u2014 producer spans on push(), consumer spans from pop() to ack()."
             },
             "kinetis": {
                 "scan": "Kinetis\\Telemetry\\Middleware\\",
                 "bootstrap": "Kinetis\\Telemetry\\PackageBootstrap"
+            }
+        },
+        "session": {
+            "name": "kinetis/session",
+            "description": "Cookie-backed sessions and CSRF protection for Kinetis \u2014 file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
+            "namespace": "Kinetis\\Session\\",
+            "testNamespace": "Kinetis\\Session\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework"
+            ],
+            "requiresDev": [
+                "persistence",
+                "cache-redis"
+            ],
+            "require": {
+                "psr/simple-cache": "^3.0",
+                "psr/http-message": "^2.0",
+                "psr/http-server-middleware": "^1.0"
+            },
+            "suggest": {
+                "kinetis/persistence": "Enables SqlSessionStore, sessions in a kinetis_sessions table over the SQL contracts.",
+                "kinetis/cache-redis": "Redis-backed sessions with no further code: SESSION_DRIVER=cache stores through the PSR-16 binding cache-redis provides, cluster and TLS included."
+            },
+            "kinetis": {
+                "scan": "Kinetis\\Session\\Console\\",
+                "bootstrap": "Kinetis\\Session\\PackageBootstrap"
             }
         }
     }

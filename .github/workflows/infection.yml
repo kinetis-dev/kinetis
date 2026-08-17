@@ -46,6 +46,7 @@ jobs:
           - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
           - { name: search-opensearch, dir: packages/search-opensearch, minMsi: 70, minCoveredMsi: 70 }
           - { name: telemetry, dir: packages/telemetry, minMsi: 70, minCoveredMsi: 70 }
+          - { name: session, dir: packages/session, minMsi: 65, minCoveredMsi: 65 }
           - { name: queue, dir: packages/queue, minMsi: 60, minCoveredMsi: 60 }
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, minMsi: 90, minCoveredMsi: 90 }
           - { name: queue-sqs, dir: packages/queue-sqs, minMsi: 55, minCoveredMsi: 55 }

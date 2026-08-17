@@ -149,6 +149,7 @@ search-opensearch
 telemetry
 auth
 auth-jwt
+session
 mcp
 caching
 cli
