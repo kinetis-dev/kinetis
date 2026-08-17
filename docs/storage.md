@@ -15,19 +15,40 @@ runs every operation without blocking the rest of your application. S3
 (and S3-compatible services) is a second, equally non-blocking backend —
 see {doc}`storage-s3`.
 
+With `FILESYSTEM_DRIVER` set, installing the package is the whole
+setup: it binds `FilesystemOperator`, so a controller, command, or
+queued job constructor-injects it with nothing to register.
+
+```{code-block} php
+use League\Flysystem\FilesystemOperator;
+use Psr\Http\Message\UploadedFileInterface;
+
+final readonly class AvatarController
+{
+    public function __construct(private FilesystemOperator $storage) {}
+
+    #[Post('/avatars')]
+    public function store(UploadedFileInterface $avatar): array
+    {
+        $this->storage->write('avatars/user-42.png', $avatar->getStream()->getContents());
+
+        return ['stored' => true];
+    }
+}
+```
+
+The injected value is a plain `League\Flysystem\FilesystemOperator` —
+any existing Flysystem knowledge or tooling applies directly; there's no
+Kinetis-specific interface wrapping it.
+
+Build one directly when you need a second, named connection, or when
+you are outside the container entirely:
+
 ```{code-block} php
 use Kinetis\Storage\FilesystemFactory;
 
 $storage = FilesystemFactory::fromConfig($config);
-
-$storage->write('avatars/user-42.png', $imageContents);
-$contents = $storage->read('avatars/user-42.png');
-$storage->delete('avatars/user-42.png');
 ```
-
-`$storage` is a plain `League\Flysystem\FilesystemOperator` — any
-existing Flysystem knowledge or tooling applies directly; there's no
-Kinetis-specific interface wrapping it.
 
 ## Configuring
 

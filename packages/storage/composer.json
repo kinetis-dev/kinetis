@@ -33,7 +33,9 @@
         }
     },
     "extra": {
-        "kinetis": {}
+        "kinetis": {
+            "bootstrap": "Kinetis\\Storage\\PackageBootstrap"
+        }
     },
     "repositories": [
         {

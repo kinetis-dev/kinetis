@@ -12,10 +12,14 @@ Builds a real `OpenSearch\Client` (from `opensearch-project/opensearch-php`)
 for searching and indexing documents. Every request it makes runs without
 blocking the rest of your application.
 
-```{code-block} php
-use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
+With `SEARCH_OPENSEARCH_HOST` set, installing the package binds
+`OpenSearch\Client`, so a controller, command, or queued job
+constructor-injects it with nothing to register. Build one directly
+with `OpenSearchClientFactory::fromConfig($config)` for a second, named
+connection, or outside the container.
 
-$client = OpenSearchClientFactory::fromConfig($config);
+```{code-block} php
+use OpenSearch\Client;
 
 $client->index([
     'index' => 'articles',

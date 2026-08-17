@@ -32,7 +32,9 @@
         }
     },
     "extra": {
-        "kinetis": {}
+        "kinetis": {
+            "bootstrap": "Kinetis\\SearchOpenSearch\\PackageBootstrap"
+        }
     },
     "repositories": [
         {

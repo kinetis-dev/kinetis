@@ -36,6 +36,17 @@ $contents = $storage->read('avatars/user-42.png');
 $storage->delete('avatars/user-42.png');
 ```
 
+## Provides
+
+Installing this package auto-registers, via `extra.kinetis`:
+
+- **A container binding** for `League\Flysystem\FilesystemOperator`,
+  built by `FilesystemFactory::fromConfig()` when `FILESYSTEM_DRIVER` is
+  set. Unset means the package binds nothing. The binding is lazy, so an
+  application that never injects a filesystem never builds one.
+
+Nothing else. Named connections stay explicit application wiring.
+
 ## Configuration
 
 Read from the environment (or `.env`) via `Kinetis\Config`. Every key

@@ -31,7 +31,9 @@
         }
     },
     "extra": {
-        "kinetis": {}
+        "kinetis": {
+            "bootstrap": "Kinetis\\Mailer\\PackageBootstrap"
+        }
     },
     "repositories": [
         {

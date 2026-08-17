@@ -34,6 +34,17 @@ $client->index(['index' => 'articles', 'id' => '1', 'body' => ['title' => 'Kinet
 $results = $client->search(['index' => 'articles', 'body' => ['query' => ['match' => ['title' => 'Kinetis']]]]);
 ```
 
+## Provides
+
+Installing this package auto-registers, via `extra.kinetis`:
+
+- **A container binding** for `OpenSearch\Client`, built by
+  `OpenSearchClientFactory::fromConfig()` when `SEARCH_OPENSEARCH_HOST`
+  is set. Unset means the package binds nothing. The binding is lazy, so
+  an application that never searches never builds a transport.
+
+Nothing else. Named connections stay explicit application wiring.
+
 ## Configuration
 
 ```

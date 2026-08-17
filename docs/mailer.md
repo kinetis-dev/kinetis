@@ -104,18 +104,10 @@ final readonly class SendWelcomeEmailJob implements Job
 $queue->push(new SendWelcomeEmailJob($user->email));
 ```
 
-Register `MailerInterface` once, in `bootstrap.php`, and any job's
-`handle()` method can depend on it exactly like `PingRepository` or any
-other service:
-
-```{code-block} php
-use Kinetis\Mailer\MailerFactory;
-use Symfony\Component\Mailer\MailerInterface;
-
-return static function (AppScope $app, Config $config): void {
-    $app->instance(MailerInterface::class, MailerFactory::fromConfig($config));
-};
-```
+With `MAILER_DSN` set, `MailerInterface` is already bound — installing
+the package registers it — so any job's `handle()` method can depend on
+it exactly like a repository or any other service, with nothing in
+`bootstrap.php` at all.
 
 Now a slow SMTP send only occupies one queue worker's own Fiber for one
 job, instead of the worker handling that HTTP request — the same

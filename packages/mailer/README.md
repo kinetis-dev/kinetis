@@ -38,6 +38,18 @@ $email = (new Email())
 $mailer->send($email);
 ```
 
+## Provides
+
+Installing this package auto-registers, via `extra.kinetis`:
+
+- **A container binding** for `Symfony\Component\Mailer\MailerInterface`,
+  built by `MailerFactory::fromConfig()` when `MAILER_DSN` is set. Unset
+  means the package binds nothing. The binding is lazy, so an
+  application that never sends mail never builds a transport — including
+  from a queued job, which resolves it in the worker process.
+
+Nothing else. Named connections stay explicit application wiring.
+
 ## Configuration
 
 ```
