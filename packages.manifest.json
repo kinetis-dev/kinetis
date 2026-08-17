@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.14.0",
+            "version": "1.15.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -352,7 +352,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.1.6",
+            "version": "1.1.7",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2",
@@ -379,7 +379,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.0.5",
+            "version": "1.0.6",
             "type": "project",
             "requires": [
                 "framework"
@@ -422,7 +422,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.1.0",
             "requires": [
                 "framework"
             ],

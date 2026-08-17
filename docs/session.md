@@ -22,7 +22,7 @@ it on:
 |---|---|---|
 | `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset means the package binds nothing. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable, counted from its last write. |
-| `SESSION_COOKIE` | `kinetis_session` | The cookie name. |
+| `SESSION_COOKIE` | `kinetis_session` | The cookie name. A `__Host-`/`__Secure-` prefix is honoured — see [below](#cookie-name-prefixes). |
 | `SESSION_SAMESITE` | `Lax` | The cookie's `SameSite` attribute. |
 | `SESSION_SECURE` | `true` | The cookie's `Secure` attribute — set `false` only for non-TLS local development. |
 | `SESSION_FILES_DIR` | system temp | The `file` driver's directory. |
@@ -53,6 +53,39 @@ The three drivers:
 
   An expired session is invisible to reads but its row stays in the
   table until `session:gc` deletes it (see below).
+
+### Cookie name prefixes
+
+Every session cookie is sent `HttpOnly`, `Path=/`, with no `Domain`, and
+`Secure` unless you turn `SESSION_SECURE` off. Those are attributes you
+*request*; a cookie name prefix is what makes the browser *enforce*
+them:
+
+```{code-block} text
+:caption: .env
+SESSION_COOKIE=__Host-kinetis_session
+```
+
+`__Secure-` tells the browser to refuse the cookie unless it is marked
+`Secure`. `__Host-` refuses it unless it is `Secure`, `Path=/`, and
+carries no `Domain` — which pins it to exactly one host, so a
+compromised sibling subdomain cannot overwrite your session cookie.
+Kinetis already writes cookies that satisfy both, so either prefix works
+as soon as `SESSION_SECURE` is on, with nothing else to change.
+
+Prefer `__Host-` unless you genuinely need the cookie shared across
+subdomains.
+
+```{note}
+The prefix has to reach the browser to mean anything, so a prefixed name
+with `SESSION_SECURE=false` is refused at startup rather than sent. A
+browser would drop such a cookie on every response, which presents as
+sessions that never persist and says nothing about why. For non-TLS
+local development, drop the prefix along with `Secure`.
+
+Matching is case-sensitive, as the specification defines it: `__host-`
+is an ordinary name that no browser enforces anything about.
+```
 
 ## Garbage collection
 

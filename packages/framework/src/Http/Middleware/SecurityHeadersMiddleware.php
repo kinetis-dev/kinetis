@@ -32,11 +32,26 @@ use Psr\Http\Server\RequestHandlerInterface;
  * secure default costs an application nothing and protects one that
  * never thought about it.
  *
- * A Content-Security-Policy, a Permissions-Policy, and HSTS are sent
- * only when configured. Each of the three breaks a working application
- * when it is wrong — a policy that omits a real dependency blocks it,
- * and HSTS on the wrong host is not quickly reversible — so guessing a
- * default for them would be worse than sending nothing.
+ * A Content-Security-Policy, a Permissions-Policy, HSTS, and the three
+ * cross-origin policies are sent only when configured. Each of them
+ * breaks a working application when it is wrong — a policy that omits a
+ * real dependency blocks it, HSTS on the wrong host is not quickly
+ * reversible, and the cross-origin three each sever something the web
+ * allows by default:
+ *
+ * - `Cross-Origin-Opener-Policy` cuts the `window.opener` link, which is
+ *   how an OAuth or payment popup reports back. `same-origin-allow-popups`
+ *   keeps popups this application opens; `same-origin` also severs the
+ *   link when one of its own pages *is* the popup, which is the identity
+ *   provider case.
+ * - `Cross-Origin-Resource-Policy: same-origin` stops other origins
+ *   embedding this application's responses — including images and fonts
+ *   they legitimately embed today. It does not affect a CORS request, so
+ *   an API consumed through {@see CorsMiddleware} is unaffected.
+ * - `Cross-Origin-Embedder-Policy: require-corp` demands that every
+ *   cross-origin subresource opt in, and blocks each one that has not.
+ *   It is the prerequisite for cross-origin isolation and the most
+ *   disruptive of the three.
  *
  * A header already present on the response is never replaced, so a
  * single route can set its own policy and keep it.
@@ -64,6 +79,9 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
             'Content-Security-Policy' => $config->string('SECURITY_CSP', ''),
             'Permissions-Policy' => $config->string('SECURITY_PERMISSIONS_POLICY', ''),
             'Strict-Transport-Security' => self::hsts($config),
+            'Cross-Origin-Opener-Policy' => $config->string('SECURITY_COOP', ''),
+            'Cross-Origin-Resource-Policy' => $config->string('SECURITY_CORP', ''),
+            'Cross-Origin-Embedder-Policy' => $config->string('SECURITY_COEP', ''),
         ];
 
         foreach ($optional as $name => $value) {

@@ -14,6 +14,8 @@ use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/Fixtures/global_namespace_dto.php';
+
 final class OpenApiGeneratorTest extends TestCase
 {
     private function generate(): array
@@ -31,6 +33,25 @@ final class OpenApiGeneratorTest extends TestCase
         $router->register(OrderController::class);
 
         return (new OpenApiGenerator($router))->generate();
+    }
+
+    /**
+     * A class in the global namespace has no separator to split on, and
+     * the naive offset arithmetic that finds one used to drop the first
+     * character — `GlobalNamespaceDto` became `lobalNamespaceDto`, a
+     * schema name silently unlike the class it describes.
+     */
+    public function test_a_dto_in_the_global_namespace_keeps_its_whole_name(): void
+    {
+        $router = new Router();
+        $router->register(\GlobalNamespaceController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        self::assertArrayHasKey('GlobalNamespaceDto', $spec['components']['schemas']);
+        self::assertSame(
+            ['$ref' => '#/components/schemas/GlobalNamespaceDto'],
+            $spec['paths']['/global-dto']['get']['responses']['200']['content']['application/json']['schema'],
+        );
     }
 
     public function test_generates_a_path_entry_for_every_registered_route(): void

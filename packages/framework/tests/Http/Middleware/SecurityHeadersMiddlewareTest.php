@@ -31,6 +31,34 @@ final class SecurityHeadersMiddlewareTest extends TestCase
         self::assertFalse($response->hasHeader('Content-Security-Policy'));
         self::assertFalse($response->hasHeader('Permissions-Policy'));
         self::assertFalse($response->hasHeader('Strict-Transport-Security'));
+        self::assertFalse($response->hasHeader('Cross-Origin-Opener-Policy'));
+        self::assertFalse($response->hasHeader('Cross-Origin-Resource-Policy'));
+        self::assertFalse($response->hasHeader('Cross-Origin-Embedder-Policy'));
+    }
+
+    /**
+     * Each of the three severs something the web allows by default —
+     * opener access, cross-origin embedding, un-opted-in subresources —
+     * so each is sent only on request, and verbatim.
+     */
+    public function test_the_cross_origin_policies_are_sent_when_configured(): void
+    {
+        $response = self::process([
+            'SECURITY_COOP' => 'same-origin-allow-popups',
+            'SECURITY_CORP' => 'same-origin',
+            'SECURITY_COEP' => 'require-corp',
+        ]);
+
+        self::assertSame('same-origin-allow-popups', $response->getHeaderLine('Cross-Origin-Opener-Policy'));
+        self::assertSame('same-origin', $response->getHeaderLine('Cross-Origin-Resource-Policy'));
+        self::assertSame('require-corp', $response->getHeaderLine('Cross-Origin-Embedder-Policy'));
+    }
+
+    public function test_a_cross_origin_policy_set_to_off_is_omitted(): void
+    {
+        $response = self::process(['SECURITY_COOP' => 'OFF']);
+
+        self::assertFalse($response->hasHeader('Cross-Origin-Opener-Policy'));
     }
 
     public function test_a_configured_policy_is_sent(): void

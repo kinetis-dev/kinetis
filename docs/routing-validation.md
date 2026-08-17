@@ -770,10 +770,34 @@ own default.
 
 Both are served **ahead of** the routing pipeline — they read `Router`'s
 already-registered routes, not application state, so they need no
-`RequestScope` at all. Turn them off entirely with:
+`RequestScope` at all.
+
+### Choosing where the documentation is reachable
+
+Both paths are **off until you name the environments they belong in**.
+Together they describe your whole route table, which is reconnaissance
+handed over for free rather than a vulnerability by itself, and there is
+no version of publishing it that you chose:
+
+```{code-block} text
+:caption: .env
+APP_ENV=development
+OPENAPI_ENVIRONMENTS=development,staging
+```
+
+`OPENAPI_ENVIRONMENTS` is a comma-separated list of `APP_ENV` values,
+compared ignoring case and surrounding space. It is matched against
+`APP_ENV` itself rather than against Kinetis's own `AppEnvironment`,
+which resolves every unfamiliar name to production — so a `staging`
+deployment can name itself and mean it. Unset, empty, or naming an
+environment you are not running in, both paths fall through to routing
+and 404 — nothing confirms that they would exist somewhere else.
+
+An explicit argument decides outright and ignores the variable, which is
+what a test or a deliberately documentation-only service wants:
 
 ```{code-block} php
-new Kinetis\Http\Kernel($app, $router, exposeOpenApi: false);
+new Kinetis\Http\Kernel($app, $router, exposeOpenApi: true);
 ```
 
 ### Hiding a route from the document

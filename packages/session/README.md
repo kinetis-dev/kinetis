@@ -73,7 +73,7 @@ form's `_token` field, with `hash_equals()` comparison.
 |---|---|---|
 | `SESSION_DRIVER` | — | `file`, `cache`, or `sql`; unset = inert. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write. |
-| `SESSION_COOKIE` | `kinetis_session` | Cookie name. |
+| `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
 | `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute. |
 | `SESSION_SECURE` | `true` | Cookie `Secure` attribute — `false` only for non-TLS local dev. |
 | `SESSION_FILES_DIR` | system temp | The `file` driver's directory. |

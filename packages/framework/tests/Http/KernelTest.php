@@ -13,6 +13,7 @@ use Kinetis\Cache\EventCache;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\McpCache;
 use Kinetis\Cache\OpenApiCache;
+use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
@@ -50,7 +51,7 @@ require_once __DIR__ . '/Fixtures/gc_collect_cycles_spy.php';
 
 final class KernelTest extends TestCase
 {
-    private function kernel(): Kernel
+    private function kernel(?bool $exposeOpenApi = null): Kernel
     {
         $app = new AppScope();
         $app->boot();
@@ -58,7 +59,7 @@ final class KernelTest extends TestCase
         $router = new Router();
         $router->register(UserController::class);
 
-        return new Kernel($app, $router);
+        return new Kernel($app, $router, exposeOpenApi: $exposeOpenApi);
     }
 
     public function test_handles_a_registered_route_end_to_end(): void
@@ -144,7 +145,7 @@ final class KernelTest extends TestCase
 
     public function test_serves_the_openapi_document_at_openapi_json(): void
     {
-        $response = $this->kernel()->handle(new ServerRequest('GET', '/openapi.json'));
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi.json'));
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
@@ -156,7 +157,7 @@ final class KernelTest extends TestCase
 
     public function test_serves_the_swagger_ui_page_at_docs(): void
     {
-        $response = $this->kernel()->handle(new ServerRequest('GET', '/docs'));
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/docs'));
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('text/html', $response->getHeaderLine('Content-Type'));
@@ -176,6 +177,105 @@ final class KernelTest extends TestCase
         $response = $kernel->handle(new ServerRequest('GET', '/openapi.json'));
 
         self::assertSame(404, $response->getStatusCode());
+    }
+
+    /**
+     * @param array<string, string> $config
+     */
+    private function kernelWithConfig(array $config): Kernel
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config($config));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        return new Kernel($app, $router);
+    }
+
+    public function test_openapi_routes_are_blocked_when_no_environments_are_configured(): void
+    {
+        foreach (['/openapi.json', '/docs'] as $path) {
+            $response = $this->kernelWithConfig(['APP_ENV' => 'development'])->handle(new ServerRequest('GET', $path));
+
+            // 404 rather than 403: a blocked path falls through to
+            // routing, so nothing confirms it would exist elsewhere.
+            self::assertSame(404, $response->getStatusCode(), $path);
+        }
+    }
+
+    public function test_openapi_routes_are_served_in_an_environment_the_configuration_names(): void
+    {
+        $kernel = $this->kernelWithConfig([
+            'APP_ENV' => 'staging',
+            'OPENAPI_ENVIRONMENTS' => 'development, staging',
+        ]);
+
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/docs'))->getStatusCode());
+    }
+
+    public function test_openapi_routes_stay_blocked_in_an_environment_the_configuration_omits(): void
+    {
+        $kernel = $this->kernelWithConfig([
+            'APP_ENV' => 'production',
+            'OPENAPI_ENVIRONMENTS' => 'development',
+        ]);
+
+        self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    /**
+     * AppEnvironment::detect() reads an absent APP_ENV as production, so
+     * naming production has to cover a deployment that sets nothing.
+     */
+    public function test_an_absent_app_env_counts_as_production(): void
+    {
+        $kernel = $this->kernelWithConfig(['OPENAPI_ENVIRONMENTS' => 'production']);
+
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    public function test_environment_names_are_matched_ignoring_case_and_surrounding_space(): void
+    {
+        $kernel = $this->kernelWithConfig([
+            'APP_ENV' => 'Staging',
+            'OPENAPI_ENVIRONMENTS' => "  STAGING ,\tdevelopment",
+        ]);
+
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    /**
+     * An empty or comma-only list names no environment, which must not
+     * collapse into "matches the one whose name is also empty".
+     */
+    public function test_a_list_that_names_nothing_blocks_everywhere(): void
+    {
+        foreach (['', '   ', ',', ' , '] as $list) {
+            $kernel = $this->kernelWithConfig(['APP_ENV' => 'production', 'OPENAPI_ENVIRONMENTS' => $list]);
+
+            self::assertSame(
+                404,
+                $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode(),
+                var_export($list, true),
+            );
+        }
+    }
+
+    public function test_an_explicit_argument_wins_over_the_configuration(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(['APP_ENV' => 'production', 'OPENAPI_ENVIRONMENTS' => 'production']));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: false);
+
+        self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
     }
 
     public function test_mcp_endpoint_is_absent_by_default(): void
@@ -311,7 +411,7 @@ final class KernelTest extends TestCase
         $mcpRegistry->register(AccountController::class);
         $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
 
-        $kernel = new Kernel($app, $router, mcp: $mcp, discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
+        $kernel = new Kernel($app, $router, exposeOpenApi: true, mcp: $mcp, discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
 
         RecordingMiddleware::$log = [];
         $kernel->handle(new ServerRequest('GET', '/openapi.json'));
@@ -922,7 +1022,7 @@ final class KernelTest extends TestCase
         ));
 
         try {
-            $kernel = new Kernel($app, $router, cacheStore: $store);
+            $kernel = new Kernel($app, $router, exposeOpenApi: true, cacheStore: $store);
             $response = $kernel->handle(new ServerRequest('GET', '/openapi.json'));
 
             self::assertSame($stubOpenApi, json_decode((string) $response->getBody(), true));

@@ -6,6 +6,7 @@ namespace Kinetis\Http;
 
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\HttpCache;
+use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
@@ -32,8 +33,11 @@ use Throwable;
  * Owns the per-request lifecycle: a fresh RequestScope is created before
  * routing/dispatch and disposed in a `finally` block. `/openapi.json` and
  * `/docs` are served directly ahead of that, since they read the Router's
- * registered routes rather than application state ($exposeOpenApi turns
- * both off). `$mcp` (opt-in, null by default) exposes `/mcp` implementing
+ * registered routes rather than application state. Both are off unless
+ * OPENAPI_ENVIRONMENTS names the running environment, or $exposeOpenApi
+ * decides outright — see openApiAllowed(). A blocked path falls through
+ * to routing and 404s rather than announcing that it exists.
+ * `$mcp` (opt-in, null by default) exposes `/mcp` implementing
  * MCP's Streamable HTTP transport across both eras McpServer supports —
  * see McpServer::isModernRequest()/Kernel::headerMismatch()/mcpHttpStatus()
  * for the per-era differences, and wantsProgressStream()/
@@ -95,6 +99,8 @@ final class Kernel
 
     private readonly OpenApiGenerator $openApi;
 
+    private readonly bool $exposeOpenApi;
+
     private readonly RequestHandlerInterface $globalPipeline;
 
     private readonly RequestHandlerInterface $mcpPipeline;
@@ -104,7 +110,8 @@ final class Kernel
     public function __construct(
         private readonly AppScope $app,
         private readonly Router $router,
-        private readonly bool $exposeOpenApi = true,
+        /** true or false decides outright; null defers to OPENAPI_ENVIRONMENTS — see {@see openApiAllowed()}. */
+        ?bool $exposeOpenApi = null,
         private readonly ?McpServer $mcp = null,
         private readonly bool $isPersistent = false,
         private readonly ?HttpCache $httpCache = null,
@@ -121,6 +128,7 @@ final class Kernel
         private readonly array $middlewareGroups = [],
     ) {
         $this->openApi = new OpenApiGenerator($router);
+        $this->exposeOpenApi = $exposeOpenApi ?? self::openApiAllowed($app);
 
         $this->assertMiddlewareGroupsExist();
 
@@ -296,6 +304,55 @@ final class Kernel
                 gc_collect_cycles();
             }
         }
+    }
+
+    /**
+     * Whether OPENAPI_ENVIRONMENTS — a comma-separated list of APP_ENV
+     * values — names the environment this process is running in.
+     *
+     * Unset means no environment, so `/openapi.json` and `/docs` are
+     * blocked everywhere until an application opts in. They describe the
+     * whole route table, which is reconnaissance rather than a
+     * vulnerability, but there is no version of "publish it by default"
+     * that an application chose.
+     *
+     * Matched against the raw APP_ENV string rather than
+     * {@see \Kinetis\Runtime\AppEnvironment}, which resolves every
+     * unrecognized name to Production — a deployment with a `staging`
+     * environment can name it here and have it mean staging.
+     *
+     * Config is read through the container rather than injected, since
+     * AppScope::boot() registers it; a Kernel built on a scope that was
+     * never booted has no configuration to consult and blocks both
+     * paths.
+     */
+    private static function openApiAllowed(AppScope $app): bool
+    {
+        if (!$app->has(Config::class)) {
+            return false;
+        }
+
+        $config = $app->get(Config::class);
+
+        if (!$config instanceof Config) {
+            return false;
+        }
+
+        $environments = \array_filter(\array_map(
+            static fn (string $name): string => \strtolower(\trim($name)),
+            \explode(',', $config->string('OPENAPI_ENVIRONMENTS', '')),
+        ), static fn (string $name): bool => $name !== '');
+
+        if ($environments === []) {
+            return false;
+        }
+
+        $current = \strtolower(\trim($config->string('APP_ENV', '')));
+
+        // Matching AppEnvironment::detect(): an absent APP_ENV is
+        // production, so a deployment that sets nothing is still
+        // addressable by name.
+        return \in_array($current === '' ? 'production' : $current, $environments, true);
     }
 
     /**

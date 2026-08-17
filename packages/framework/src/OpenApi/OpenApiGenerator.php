@@ -373,7 +373,11 @@ final class OpenApiGenerator
      */
     private function uniqueSchemaName(string $class): string
     {
-        $short = substr($class, (int) strrpos($class, '\\') + 1);
+        // A class in the global namespace has no separator to find, and
+        // casting that `false` to an offset would drop its first
+        // character.
+        $separator = strrpos($class, '\\');
+        $short = $separator === false ? $class : substr($class, $separator + 1);
 
         if (!in_array($short, $this->schemaNamesByClass, true)) {
             return $short;

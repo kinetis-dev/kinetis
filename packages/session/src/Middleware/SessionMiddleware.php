@@ -6,6 +6,7 @@ namespace Kinetis\Session\Middleware;
 
 use Kinetis\Config\Config;
 use Kinetis\Container\RequestScope;
+use Kinetis\Session\Exception\SessionException;
 use Kinetis\Session\Session;
 use Kinetis\Session\SessionStoreInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -33,22 +34,84 @@ use Psr\Http\Server\RequestHandlerInterface;
  * Cookie attributes: HttpOnly always (script access to a session id has
  * no legitimate use), SameSite and Secure from configuration —
  * `SESSION_SECURE=false` is for non-TLS local development only.
+ *
+ * `SESSION_COOKIE` may carry a cookie name prefix, which is what makes
+ * the attributes above enforceable by the browser rather than merely
+ * requested: a browser refuses to store a `__Secure-` cookie that is not
+ * marked Secure, and a `__Host-` cookie that is not Secure, not
+ * `Path=/`, or scoped to a Domain. Every cookie written here is
+ * `Path=/` with no Domain, so both prefixes work as soon as
+ * `SESSION_SECURE` is on:
+ *
+ *     SESSION_COOKIE=__Host-kinetis_session
+ *
+ * The prefix has to reach the browser to mean anything, so an
+ * unsatisfiable combination is refused at construction. The alternative
+ * is a cookie the browser silently drops on every response, which
+ * presents as sessions that never persist and says nothing about why.
  */
 final readonly class SessionMiddleware implements MiddlewareInterface
 {
     private const string ID_PATTERN = '/^[a-f0-9]{32}$/';
 
+    /**
+     * RFC 6265's own cookie-name grammar. Enforced because the name goes
+     * into a Set-Cookie header verbatim, where a separator or control
+     * character is a malformed cookie at best and a second header at
+     * worst.
+     */
+    private const string NAME_PATTERN = '/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+$/';
+
+    private string $cookieName;
+
+    private bool $secure;
+
     public function __construct(
         private RequestScope $scope,
         private SessionStoreInterface $store,
         private Config $config,
-    ) {}
+    ) {
+        $this->cookieName = $config->string('SESSION_COOKIE', 'kinetis_session');
+        $this->secure = $config->bool('SESSION_SECURE', true);
+
+        if (\preg_match(self::NAME_PATTERN, $this->cookieName) !== 1) {
+            throw new SessionException(
+                "SESSION_COOKIE \"{$this->cookieName}\" is not a valid cookie name. "
+                . 'Use only letters, digits, and !#$%&\'*+-.^_`|~ — no spaces, commas, semicolons, or quotes.',
+            );
+        }
+
+        $prefix = $this->cookiePrefix();
+
+        if ($prefix !== null && !$this->secure) {
+            throw new SessionException(
+                "SESSION_COOKIE \"{$this->cookieName}\" carries the {$prefix} prefix, which a browser only "
+                . 'accepts on a Secure cookie, but SESSION_SECURE is off. Turn SESSION_SECURE on, or drop the '
+                . 'prefix for non-TLS local development.',
+            );
+        }
+    }
+
+    /**
+     * Prefix matching is case-sensitive, as the specification defines it
+     * — `__host-` is an ordinary name carrying no guarantee at all, and
+     * treating it as one would promise something no browser enforces.
+     */
+    private function cookiePrefix(): ?string
+    {
+        foreach (['__Host-', '__Secure-'] as $prefix) {
+            if (\str_starts_with($this->cookieName, $prefix)) {
+                return $prefix;
+            }
+        }
+
+        return null;
+    }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $cookieName = $this->config->string('SESSION_COOKIE', 'kinetis_session');
-        $raw = $this->cookieValue($request, $cookieName);
+        $raw = $this->cookieValue($request, $this->cookieName);
         $cookieId = $raw !== null && \preg_match(self::ID_PATTERN, $raw) === 1 ? $raw : null;
 
         $session = new Session($this->store, $cookieId);
@@ -59,13 +122,13 @@ final readonly class SessionMiddleware implements MiddlewareInterface
         $lifetime = $this->config->int('SESSION_LIFETIME', 7200);
 
         if ($session->isDestroyed()) {
-            return $response->withAddedHeader('Set-Cookie', $this->cookie($cookieName, '', -1));
+            return $response->withAddedHeader('Set-Cookie', $this->cookie('', -1));
         }
 
         $needsCookie = $session->commit($lifetime);
 
         if ($needsCookie) {
-            return $response->withAddedHeader('Set-Cookie', $this->cookie($cookieName, $session->id(), $lifetime));
+            return $response->withAddedHeader('Set-Cookie', $this->cookie($session->id(), $lifetime));
         }
 
         return $response;
@@ -96,10 +159,10 @@ final readonly class SessionMiddleware implements MiddlewareInterface
         return null;
     }
 
-    private function cookie(string $name, string $value, int $lifetimeSeconds): string
+    private function cookie(string $value, int $lifetimeSeconds): string
     {
         $attributes = [
-            $name . '=' . $value,
+            $this->cookieName . '=' . $value,
             'Path=/',
             'HttpOnly',
             'SameSite=' . $this->config->string('SESSION_SAMESITE', 'Lax'),
@@ -113,7 +176,7 @@ final readonly class SessionMiddleware implements MiddlewareInterface
             $attributes[] = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT';
         }
 
-        if ($this->config->bool('SESSION_SECURE', true)) {
+        if ($this->secure) {
             $attributes[] = 'Secure';
         }
 

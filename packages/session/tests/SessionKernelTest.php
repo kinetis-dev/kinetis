@@ -7,6 +7,7 @@ namespace Kinetis\Session\Tests;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Session\SessionStoreInterface;
 use Kinetis\Session\Store\CacheSessionStore;
 use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
@@ -134,5 +135,105 @@ final class SessionKernelTest extends TestCase
         self::assertStringContainsString('Max-Age=0', $setCookie);
 
         $this->client->get('/recall', [], ['Cookie' => $cookie])->assertJsonPath('remembered', null);
+    }
+
+    /**
+     * @param array<string, string> $config
+     */
+    private function clientWith(array $config): TestClient
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config($config));
+        // AppScope::boot() detects the environment from the real process
+        // environment, which an array-built Config cannot reach — so an
+        // APP_ENV given here is registered directly, the same as
+        // TestApplication does for its own overrides.
+        $app->instance(AppEnvironment::class, AppEnvironment::detect($config['APP_ENV'] ?? null));
+        $app->instance(SessionStoreInterface::class, new CacheSessionStore(new InMemorySessionCache()));
+
+        $router = new Router();
+        $router->register(SessionFixtureController::class);
+
+        return TestApplication::withRouter($router, $app)->client();
+    }
+
+    /**
+     * A browser rejects a `__Host-` cookie that is not Secure, or is
+     * scoped by Path or Domain — so the assertion that matters is on the
+     * header as sent, not on the name alone.
+     */
+    public function test_a_host_prefixed_cookie_is_sent_with_the_attributes_the_prefix_requires(): void
+    {
+        $client = $this->clientWith(['SESSION_COOKIE' => '__Host-kinetis_session']);
+
+        $response = $client->get('/remember/dark');
+        $setCookie = $response->getHeaderLine('Set-Cookie');
+
+        self::assertStringContainsString('__Host-kinetis_session=', $setCookie);
+        self::assertStringContainsString('Secure', $setCookie);
+        self::assertStringContainsString('Path=/', $setCookie);
+        self::assertStringNotContainsString('Domain=', $setCookie);
+
+        // And it still round-trips, which the prefix must not disturb.
+        $client->get('/recall', [], ['Cookie' => self::cookieFrom($setCookie)])
+            ->assertJsonPath('remembered', 'dark');
+    }
+
+    public function test_a_secure_prefixed_cookie_is_sent_as_secure(): void
+    {
+        $setCookie = $this->clientWith(['SESSION_COOKIE' => '__Secure-kinetis_session'])
+            ->get('/remember/dark')
+            ->getHeaderLine('Set-Cookie');
+
+        self::assertStringContainsString('__Secure-kinetis_session=', $setCookie);
+        self::assertStringContainsString('Secure', $setCookie);
+    }
+
+    /**
+     * The combination a browser would silently drop on every response,
+     * refused where it can still be read as a configuration mistake.
+     */
+    public function test_a_prefixed_cookie_without_secure_is_refused(): void
+    {
+        foreach (['__Host-sid', '__Secure-sid'] as $name) {
+            // APP_ENV=development so the 500 carries the real message,
+            // which is the half worth asserting: whoever hits this needs
+            // to be told which setting to change.
+            $client = $this->clientWith([
+                'SESSION_COOKIE' => $name,
+                'SESSION_SECURE' => 'false',
+                'APP_ENV' => 'development',
+            ]);
+
+            $response = $client->get('/remember/dark');
+
+            $response->assertStatus(500);
+            self::assertStringContainsString('SESSION_SECURE', (string) $response->getBody(), $name);
+        }
+    }
+
+    /**
+     * Lower-cased, the prefix is an ordinary name that no browser
+     * enforces, so it must not be treated as carrying a guarantee.
+     */
+    public function test_a_lowercased_prefix_is_an_ordinary_cookie_name(): void
+    {
+        $setCookie = $this->clientWith(['SESSION_COOKIE' => '__host-sid', 'SESSION_SECURE' => 'false'])
+            ->get('/remember/dark')
+            ->getHeaderLine('Set-Cookie');
+
+        self::assertStringContainsString('__host-sid=', $setCookie);
+        self::assertStringNotContainsString('Secure', $setCookie);
+    }
+
+    public function test_a_cookie_name_that_cannot_be_sent_verbatim_is_refused(): void
+    {
+        foreach (['sid session', "sid\r\nX-Injected: 1", 'sid;Path=/evil', ''] as $name) {
+            $response = $this->clientWith(['SESSION_COOKIE' => $name, 'APP_ENV' => 'development'])
+                ->get('/remember/dark');
+
+            $response->assertStatus(500);
+            self::assertStringContainsString('valid cookie name', (string) $response->getBody(), var_export($name, true));
+        }
     }
 }

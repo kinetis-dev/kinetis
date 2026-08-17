@@ -206,6 +206,7 @@ yours to invent and aren't listed here.
 | Key | Default | Purpose |
 |---|---|---|
 | `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache (see {doc}`caching`). Anything unrecognized means `production`. |
+| `OPENAPI_ENVIRONMENTS` | — | Comma-separated `APP_ENV` values where `/openapi.json` and `/docs` are served. Unset means neither is reachable anywhere (see {doc}`routing-validation`). |
 | `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read (see {doc}`middleware`). |
 | `SECURITY_FRAME_OPTIONS` | `DENY` | `X-Frame-Options` value, or `off` to omit the header (see {doc}`middleware`). |
 | `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | `Referrer-Policy` value, or `off` to omit it. |
@@ -214,6 +215,9 @@ yours to invent and aren't listed here.
 | `SECURITY_HSTS_MAX_AGE` | `0` | HSTS max-age in seconds. `0` means the header is not sent. |
 | `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` when HSTS is sent. |
 | `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` when HSTS is sent. |
+| `SECURITY_COOP` | — | `Cross-Origin-Opener-Policy` value. Unset means the header is not sent. |
+| `SECURITY_CORP` | — | `Cross-Origin-Resource-Policy` value. Unset means the header is not sent. |
+| `SECURITY_COEP` | — | `Cross-Origin-Embedder-Policy` value. Unset means the header is not sent. |
 
 ### Discovery restriction (core)
 

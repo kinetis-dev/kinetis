@@ -476,11 +476,12 @@ SECURITY_FRAME_OPTIONS=SAMEORIGIN
 SECURITY_REFERRER_POLICY=no-referrer
 ```
 
-A Content-Security-Policy, a Permissions-Policy, and HSTS are sent
-**only when you configure them**. Each breaks a working application
-when it is wrong — a policy that omits a real dependency blocks it, and
-HSTS on the wrong host is not quickly reversible — so a guessed default
-would do more harm than sending nothing:
+A Content-Security-Policy, a Permissions-Policy, HSTS, and the three
+cross-origin policies are sent **only when you configure them**. Each
+breaks a working application when it is wrong — a policy that omits a
+real dependency blocks it, and HSTS on the wrong host is not quickly
+reversible — so a guessed default would do more harm than sending
+nothing:
 
 ```{code-block} text
 :caption: .env
@@ -489,6 +490,9 @@ SECURITY_PERMISSIONS_POLICY=geolocation=(), microphone=(), camera=()
 SECURITY_HSTS_MAX_AGE=31536000
 SECURITY_HSTS_INCLUDE_SUBDOMAINS=true
 SECURITY_HSTS_PRELOAD=false
+SECURITY_COOP=same-origin-allow-popups
+SECURITY_CORP=same-origin
+SECURITY_COEP=require-corp
 ```
 
 HSTS is sent whenever a max-age is configured, without checking the
@@ -497,11 +501,32 @@ not arrive over a secure transport, and a scheme check would suppress
 it behind a proxy that terminates TLS — where it is exactly what you
 want.
 
+The three cross-origin policies each sever something the web allows by
+default, which is the point of them and the reason to reach for one
+deliberately:
+
+`SECURITY_COOP` cuts the `window.opener` link between your pages and
+the windows around them. `same-origin-allow-popups` keeps popups your
+own pages open — which is how an OAuth or payment popup reports back —
+while `same-origin` also severs the link when one of your pages *is*
+the popup, so choose it only if you are not the one being opened.
+
+`SECURITY_CORP` set to `same-origin` stops other origins embedding your
+responses, including images and fonts they embed today. It does not
+apply to a CORS request, so an API consumed through `CorsMiddleware` is
+unaffected either way.
+
+`SECURITY_COEP` set to `require-corp` demands that every cross-origin
+subresource opt in, and blocks each one that has not. It is what
+`crossOriginIsolated` needs, and the most disruptive of the three —
+introduce it last, after the other two are in place.
+
 ```{warning}
 A `script-src`/`default-src` of `'self'` blocks the Swagger UI page
 Kinetis serves at `/docs`, which loads `swagger-ui-dist` from a CDN. If
-you expose `/docs` and set a policy, allow that origin — or turn the
-page off with `new Kernel($app, $router, exposeOpenApi: false)`.
+you expose `/docs` and set a policy, allow that origin — or leave the
+page off, which it is unless `OPENAPI_ENVIRONMENTS` names the running
+environment (see {doc}`routing-validation`).
 ```
 
 A header the response already carries is never replaced, so one route
