@@ -86,17 +86,23 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         $removed = 0;
 
         foreach (\glob($this->directory . '/sess_*') ?: [] as $path) {
-            $raw = @\file_get_contents($path);
-            $envelope = $raw === false ? null : \json_decode($raw, true);
-
-            if (!\is_array($envelope) || !\is_int($envelope['expiresAt'] ?? null) || $envelope['expiresAt'] < \time()) {
-                if (@\unlink($path)) {
-                    ++$removed;
-                }
+            if (self::isCollectable($path) && @\unlink($path)) {
+                ++$removed;
             }
         }
 
         return $removed;
+    }
+
+    /** Expired, or unreadable as a session envelope at all. */
+    private static function isCollectable(string $path): bool
+    {
+        $raw = @\file_get_contents($path);
+        $envelope = $raw === false ? null : \json_decode($raw, true);
+
+        return !\is_array($envelope)
+            || !\is_int($envelope['expiresAt'] ?? null)
+            || $envelope['expiresAt'] < \time();
     }
 
     private function pathFor(string $id): string
