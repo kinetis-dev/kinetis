@@ -11,7 +11,7 @@ use Kinetis\Validation\Hydrator;
  * consumer's own /mcp HTTP wiring) needs: tool/resource definitions, each
  * one's parameter-binding plan, and the validation plan for every DTO
  * reachable from an MCP tool specifically. Kept separate from
- * HttpCache/OpenApiCache for the same reason HttpCache is kept separate
+ * HttpCache for the same reason HttpCache is kept separate
  * from them — an HTTP request never needs to load this.
  *
  * @phpstan-import-type HydrationPlan from Hydrator

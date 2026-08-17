@@ -111,7 +111,7 @@ too (`Kernel`'s global pipeline covers its entire body, `/mcp` included):
    never sends one) is unaffected regardless.
 2. **`#[AsMcpMiddleware]`, for middleware scoped to just this endpoint.**
    See {doc}`middleware`'s "Scoping middleware to `/mcp` or
-   `/openapi.json`/`/docs` specifically" — a real authentication check
+   `/openapi.json`/`/openapi` specifically" — a real authentication check
    (a bearer token, an API key) belongs here rather than in global
    middleware, if it should apply to `/mcp` only and not every other route.
 

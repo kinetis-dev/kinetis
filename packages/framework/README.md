@@ -64,7 +64,7 @@ Kinetis talks to, not an assumption baked into the framework itself.
   by a PHPStan rule that bans stray `static` state.
 - **Attribute-based routing, validation, and OpenAPI** — typed DTOs
   validated before your controller ever runs, with a zero-config Swagger
-  UI at `/docs`.
+  UI at `/openapi`.
 - **Fiber-based concurrency** (`Kinetis\Async\concurrently()`) over Revolt,
   plus Revolt-native MySQL, Postgres, and Redis clients — no blocking
   drivers, no hand-rolled wire protocols.

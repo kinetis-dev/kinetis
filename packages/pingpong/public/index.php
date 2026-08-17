@@ -44,14 +44,12 @@ $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
 
 $httpCache = null;
-$cacheStore = null;
 
 // Same APP_ENV-gated cache-or-discover split as kinetis/framework's own
 // reference public/index.php — mirrored here rather than diverging from
 // it, so this app's routes/middleware/MCP tools actually benefit from
 // `bin/kinetis build` the way the caching docs describe.
 if ($env->isProduction()) {
-    $cacheStore = $store;
     $httpCache = $store->loadHttp();
 
     if ($httpCache === null) {
@@ -137,7 +135,6 @@ $kernel = new Kernel(
     isPersistent: $adapter->isPersistent(),
     mcp: $mcp,
     httpCache: $httpCache,
-    cacheStore: $cacheStore,
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
     discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,

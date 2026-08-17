@@ -66,6 +66,9 @@ use ReflectionClass;
  */
 final class GlobalMiddlewareDiscovery
 {
+    /** The group name DocumentationController references. */
+    public const string OPENAPI_GROUP = 'openapi';
+
     /**
      * @param list<string>|null $paths
      * @return list<class-string>
@@ -123,11 +126,21 @@ final class GlobalMiddlewareDiscovery
             }
         }
 
+        $resolvedGroups = array_map(self::sortedByPriority(...), $groups);
+
+        // #[AsOpenApiMiddleware] classes are also published as the
+        // built-in group Kinetis\Http\OpenApi\DocumentationController
+        // references, which is how they reach the two routes it serves
+        // and nothing else. Always present, empty included: a route
+        // referencing a group that does not exist is a startup error,
+        // and `routes:list` reads groups from here too.
+        $resolvedGroups[self::OPENAPI_GROUP] = self::sortedByPriority($openApi);
+
         return [
             'global' => self::sortedByPriority($global),
             'mcp' => self::sortedByPriority($mcp),
             'openApi' => self::sortedByPriority($openApi),
-            'groups' => array_map(self::sortedByPriority(...), $groups),
+            'groups' => $resolvedGroups,
         ];
     }
 

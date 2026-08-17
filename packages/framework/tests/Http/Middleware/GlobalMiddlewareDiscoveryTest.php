@@ -166,8 +166,16 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
         self::assertNotContains(GroupedAuthMiddleware::class, $middleware['openApi']);
     }
 
-    public function test_no_groups_are_discovered_when_the_project_root_does_not_exist(): void
+    /**
+     * The built-in `openapi` group is always published, empty included:
+     * DocumentationController references it unconditionally, and a route
+     * naming a group that does not exist is a startup error.
+     */
+    public function test_only_the_builtin_group_exists_when_the_project_root_does_not_exist(): void
     {
-        self::assertSame([], GlobalMiddlewareDiscovery::discoverAll(__DIR__ . '/does-not-exist')['groups']);
+        $groups = GlobalMiddlewareDiscovery::discoverAll(__DIR__ . '/does-not-exist')['groups'];
+
+        self::assertSame([GlobalMiddlewareDiscovery::OPENAPI_GROUP], array_keys($groups));
+        self::assertSame([], $groups[GlobalMiddlewareDiscovery::OPENAPI_GROUP]);
     }
 }

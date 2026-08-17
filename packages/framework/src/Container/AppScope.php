@@ -121,7 +121,7 @@ final class AppScope implements ContainerInterface
     }
 
     /**
-     * Registers middleware scoped to Kernel's `/openapi.json` and `/docs`
+     * Registers middleware scoped to the `/openapi.json` and `/openapi`
      * endpoints only — one registration point for both, since they're the
      * same "expose the API's own shape" concern. See mcpMiddleware()'s own
      * docblock for why this narrower-than-global scoping exists at all.

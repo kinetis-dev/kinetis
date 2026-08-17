@@ -45,10 +45,6 @@ final class CacheStore
         return $this->directory . '/mcp.php';
     }
 
-    public function openApiPath(): string
-    {
-        return $this->directory . '/openapi.php';
-    }
 
     public function commandsPath(): string
     {
@@ -69,7 +65,7 @@ final class CacheStore
      */
     public function exists(): bool
     {
-        return is_file($this->httpPath()) && is_file($this->mcpPath()) && is_file($this->openApiPath()) && is_file($this->commandsPath()) && is_file($this->eventsPath());
+        return is_file($this->httpPath()) && is_file($this->mcpPath()) && is_file($this->commandsPath()) && is_file($this->eventsPath());
     }
 
     public function loadHttp(): ?HttpCache
@@ -86,12 +82,6 @@ final class CacheStore
         return $data === null ? null : McpCache::fromArray($data);
     }
 
-    public function loadOpenApi(): ?OpenApiCache
-    {
-        $data = $this->loadSection($this->openApiPath());
-
-        return $data === null ? null : OpenApiCache::fromArray($data);
-    }
 
     public function loadCommands(): ?CommandCache
     {
@@ -125,7 +115,6 @@ final class CacheStore
     {
         $this->writeSection($this->httpPath(), $cache->http->toArray());
         $this->writeSection($this->mcpPath(), $cache->mcp->toArray());
-        $this->writeSection($this->openApiPath(), $cache->openApi->toArray());
         $this->writeSection($this->commandsPath(), $cache->commands->toArray());
         $this->writeSection($this->eventsPath(), $cache->events->toArray());
     }

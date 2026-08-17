@@ -38,6 +38,15 @@ final class InMemorySimpleCache implements CacheInterface
         return true;
     }
 
+    /**
+     * The stored expiry, for a test that cares whether something was
+     * written with a TTL at all — null means "kept until deleted".
+     */
+    public function expiresAt(string $key): ?int
+    {
+        return $this->entries[$key]['expiresAt'] ?? null;
+    }
+
     public function delete(string $key): bool
     {
         unset($this->entries[$key]);

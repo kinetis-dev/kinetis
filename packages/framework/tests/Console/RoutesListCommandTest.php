@@ -113,13 +113,26 @@ final class RoutesListCommandTest extends TestCase
         self::assertStringNotContainsString('/fixture-with-middleware', $lines[$firstLine + 1]);
     }
 
-    public function test_prints_a_message_when_no_routes_are_discovered(): void
+    /**
+     * A project with no controllers of its own still lists the two the
+     * framework serves: DocumentationController is discovered like any
+     * other, which is the point of it being a controller rather than
+     * something Kernel intercepts.
+     */
+    public function test_lists_the_frameworks_own_routes_for_a_project_with_none(): void
     {
         $emptyRoot = sys_get_temp_dir() . '/kinetis_routes_list_empty_' . bin2hex(random_bytes(8));
         mkdir($emptyRoot);
 
         try {
-            self::assertStringContainsString('No routes discovered.', $this->runCommand($emptyRoot));
+            $output = $this->runCommand($emptyRoot);
+
+            self::assertStringContainsString('/openapi.json', $output);
+            self::assertStringContainsString('/openapi', $output);
+            self::assertStringContainsString('DocumentationController', $output);
+            // The `openapi` group exists but has no members in a project
+            // declaring no #[AsOpenApiMiddleware], so it expands to nothing.
+            self::assertStringContainsString('—', $output);
         } finally {
             rmdir($emptyRoot);
         }

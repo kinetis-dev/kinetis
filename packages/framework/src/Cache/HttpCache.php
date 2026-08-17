@@ -15,7 +15,7 @@ use Kinetis\Validation\Hydrator;
  * #[AsOpenApiMiddleware]-discovered class, and every
  * #[AsMiddlewareGroup]-declared group keyed by name (see
  * Kinetis\Http\Middleware\GlobalMiddlewareDiscovery), all already sorted
- * by priority. Kept separate from McpCache/OpenApiCache so a plain API
+ * by priority. Kept separate from McpCache so a plain API
  * request never has to load MCP tool definitions or the OpenAPI document
  * just to dispatch — those are unrelated concerns with their own,
  * independent access patterns and their own bloat (verbose JSON-schema-

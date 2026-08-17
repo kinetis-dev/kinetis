@@ -9,7 +9,7 @@ use InvalidArgumentException;
 
 /**
  * Declares a PSR-15 middleware class as scoped to Kernel's `/openapi.json`
- * and `/docs` endpoints specifically — one attribute shared by both,
+ * and `/openapi` endpoints specifically — one attribute shared by both,
  * since they're the same "expose the API's own shape" concern, not two
  * independently protectable surfaces. Found by the same project-wide scan
  * Kinetis\Http\Middleware\GlobalMiddlewareDiscovery already performs for

@@ -38,7 +38,7 @@ final class GlobalMiddlewareOrder
 
     /**
      * The plain explicit-then-discovered merge, with no fixed prepended
-     * classes — factored out so Kernel's /mcp and /openapi.json/docs
+     * classes — factored out so Kernel's /mcp scoped
      * scoped pipelines can reuse the identical precedence rule
      * (explicit always wins, discovered fills in the rest) without
      * inheriting SecurityHeadersMiddleware/ExceptionHandlerMiddleware/

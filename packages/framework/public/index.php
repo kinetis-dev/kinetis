@@ -39,7 +39,6 @@ $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
 
 $httpCache = null;
-$cacheStore = null;
 
 // Computed before boot(): EventListenerRegistry has to be $app->instance()'d
 // below, and instance() is locked after boot() the same as bind()/
@@ -48,12 +47,9 @@ $cacheStore = null;
 // AppScope at all.
 if ($env->isProduction()) {
     // First request in this process to find no cache present compiles
-    // once and writes all five artifacts — safe under concurrent workers
+    // once and writes all four artifacts — safe under concurrent workers
     // racing to be "first" (see CacheStore::writeAll()'s atomic tmp+rename).
-    // Every request after that, on any worker, just loads http.php here;
-    // $cacheStore is handed to Kernel so it can *lazily* load openapi.php
-    // only if this specific request turns out to hit /openapi.json.
-    $cacheStore = $store;
+    // Every request after that, on any worker, just loads http.php here.
     $httpCache = $store->loadHttp();
 
     if ($httpCache === null) {
@@ -135,7 +131,6 @@ $kernel = new Kernel(
     $router,
     isPersistent: $adapter->isPersistent(),
     httpCache: $httpCache,
-    cacheStore: $cacheStore,
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
     discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,

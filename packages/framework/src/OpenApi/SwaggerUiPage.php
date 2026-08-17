@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\OpenApi;
 
 /**
- * The static HTML shell for the /docs page. Loads swagger-ui-dist from a
+ * The static HTML shell for the /openapi page. Loads swagger-ui-dist from a
  * CDN rather than vendoring it — this is a docs viewer, not part of the
  * request-handling hot path.
  *

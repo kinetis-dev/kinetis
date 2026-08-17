@@ -8,7 +8,6 @@ use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Mcp\McpRegistry;
-use Kinetis\OpenApi\OpenApiGenerator;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
@@ -73,15 +72,6 @@ final class CompilerTest extends TestCase
         self::assertArrayHasKey('Kinetis\Tests\Mcp\Fixtures\AccountController::createUser', $compiled->mcp->mcpBindingPlans);
     }
 
-    public function test_compile_embeds_the_full_openapi_document_matching_the_generator_directly(): void
-    {
-        $router = new Router();
-        $router->register(UserController::class);
-
-        $compiled = (new Compiler())->compile($router, new McpRegistry());
-
-        self::assertEquals((new OpenApiGenerator($router))->generate(), $compiled->openApi->openApi);
-    }
 
     public function test_compile_project_discovers_routes_mcp_tools_and_commands_by_namespace(): void
     {

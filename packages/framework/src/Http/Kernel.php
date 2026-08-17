@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Kinetis\Http;
 
-use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
+use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Middleware\GlobalMiddlewareOrder;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Instrumentation\Telemetry;
@@ -17,8 +17,7 @@ use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Mcp\McpServer;
-use Kinetis\OpenApi\OpenApiGenerator;
-use Kinetis\OpenApi\SwaggerUiPage;
+use Kinetis\OpenApi\OpenApiAccess;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -32,11 +31,11 @@ use Throwable;
  *
  * Owns the per-request lifecycle: a fresh RequestScope is created before
  * routing/dispatch and disposed in a `finally` block. `/openapi.json` and
- * `/docs` are served directly ahead of that, since they read the Router's
- * registered routes rather than application state. Both are off unless
- * OPENAPI_ENVIRONMENTS names the running environment, or $exposeOpenApi
- * decides outright — see openApiAllowed(). A blocked path falls through
- * to routing and 404s rather than announcing that it exists.
+ * `/openapi` are ordinary routes on a discovered controller
+ * ({@see \Kinetis\Http\OpenApi\DocumentationController}), not something
+ * this class intercepts — all it still owns is the access policy, which
+ * folds $exposeOpenApi over OPENAPI_ENVIRONMENTS and is handed to that
+ * controller through the request scope.
  * `$mcp` (opt-in, null by default) exposes `/mcp` implementing
  * MCP's Streamable HTTP transport across both eras McpServer supports —
  * see McpServer::isModernRequest()/Kernel::headerMismatch()/mcpHttpStatus()
@@ -68,26 +67,22 @@ use Throwable;
  * `Dispatcher::dispatch()`, resolved from the request's own RequestScope
  * rather than `AppScope`.
  *
- * `/mcp` and `/openapi.json`/`/docs` each additionally run a narrower
- * pipeline (`$mcpPipeline`/`$openApiPipeline`, from
- * `AppScope::mcpMiddleware()`/`openApiMiddleware()` plus
- * `$discoveredMcpMiddleware`/`$discoveredOpenApiMiddleware` —
- * `#[AsMcpMiddleware]`/`#[AsOpenApiMiddleware]` classes) *inside* the
- * global pipeline, for middleware scoped to just one of these endpoints
- * rather than every route. `$mcpAllowedOrigins` gates `/mcp`
+ * `/mcp` additionally runs a narrower pipeline (`$mcpPipeline`, from
+ * `AppScope::mcpMiddleware()` plus `$discoveredMcpMiddleware` —
+ * `#[AsMcpMiddleware]` classes) *inside* the global pipeline, for
+ * middleware scoped to that endpoint rather than every route. The
+ * `#[AsOpenApiMiddleware]` equivalent needs no pipeline of its own: those
+ * classes are published as the `openapi` middleware group, which
+ * DocumentationController references like any other route middleware.
+ * `$mcpAllowedOrigins` gates `/mcp`
  * specifically: a request carrying an `Origin` header not in this list
  * is rejected with `403` before anything else runs, per MCP's
  * DNS-rebinding-prevention requirement — a request with no `Origin` at
  * all is unaffected.
  *
- * `$httpCache`/`$cacheStore` are the optional, production-only AOT cache
- * (see `Kinetis\Cache`) — both null by default, meaning every request
- * behaves exactly as it always has (live reflection throughout). Split
- * rather than one object: `$httpCache` is loaded eagerly by the caller
- * since nearly every request needs some slice of it; `$cacheStore` is
- * only touched lazily, inside the `/openapi.json` branch, since that
- * document is often the bulkiest cached artifact and the least
- * frequently requested.
+ * `$httpCache` is the optional, production-only AOT cache (see
+ * `Kinetis\Cache`) — null by default, meaning every request behaves
+ * exactly as it always has, with live reflection throughout.
  */
 final class Kernel
 {
@@ -97,25 +92,23 @@ final class Kernel
     // way never triggers autoloading on its own.
     private const TRANSACTION_GUARD_CLASS = 'Kinetis\Persistence\TransactionGuard';
 
-    private readonly OpenApiGenerator $openApi;
+    private readonly OpenApiAccess $openApiAccess;
 
-    private readonly bool $exposeOpenApi;
+    /** @var array<string, list<class-string>> */
+    private readonly array $groups;
 
     private readonly RequestHandlerInterface $globalPipeline;
 
     private readonly RequestHandlerInterface $mcpPipeline;
 
-    private readonly RequestHandlerInterface $openApiPipeline;
-
     public function __construct(
         private readonly AppScope $app,
         private readonly Router $router,
-        /** true or false decides outright; null defers to OPENAPI_ENVIRONMENTS — see {@see openApiAllowed()}. */
+        /** true or false decides outright; null defers to OPENAPI_ENVIRONMENTS — see {@see OpenApiAccess}. */
         ?bool $exposeOpenApi = null,
         private readonly ?McpServer $mcp = null,
         private readonly bool $isPersistent = false,
         private readonly ?HttpCache $httpCache = null,
-        private readonly ?CacheStore $cacheStore = null,
         /** @var list<class-string> */
         private readonly array $discoveredGlobalMiddleware = [],
         /** @var list<class-string> */
@@ -127,8 +120,27 @@ final class Kernel
         /** @var array<string, list<class-string>> #[AsMiddlewareGroup]-declared groups, each already priority-sorted — see GlobalMiddlewareDiscovery::discoverAll()'s `groups` bucket. */
         private readonly array $middlewareGroups = [],
     ) {
-        $this->openApi = new OpenApiGenerator($router);
-        $this->exposeOpenApi = $exposeOpenApi ?? self::openApiAllowed($app);
+        $this->openApiAccess = match ($exposeOpenApi) {
+            true => OpenApiAccess::enabled(),
+            false => OpenApiAccess::disabled(),
+            null => $app->has(Config::class) && ($config = $app->get(Config::class)) instanceof Config
+                ? OpenApiAccess::fromConfig($config)
+                // No configuration to consult — a Kernel on a scope that
+                // was never booted — so both paths stay closed.
+                : OpenApiAccess::disabled(),
+        };
+
+        // The built-in `openapi` group: what discovery found, plus this
+        // application's own AppScope::openApiMiddleware() registrations,
+        // which discovery cannot see. Always defined even when empty —
+        // DocumentationController references it unconditionally.
+        $this->groups = [
+            ...$this->middlewareGroups,
+            GlobalMiddlewareDiscovery::OPENAPI_GROUP => GlobalMiddlewareOrder::merge(
+                $app->openApiMiddlewares(),
+                $this->discoveredOpenApiMiddleware,
+            ),
+        ];
 
         $this->assertMiddlewareGroupsExist();
 
@@ -143,23 +155,14 @@ final class Kernel
             new CallableRequestHandler($this->dispatchCore(...)),
         );
 
-        // Both scoped pipelines below are always built, even when $mcp is
-        // null or $exposeOpenApi is false — cheap when unconfigured (an
-        // empty middleware list resolves to nothing), and the alternative
-        // (deferring construction) would need the same lazy-loading
-        // machinery $cacheStore already has for a genuinely bulkier
-        // resource, for no real benefit here.
+        // Built even when $mcp is null: an empty middleware list resolves
+        // to nothing, so an unconfigured pipeline costs nothing to hold.
         $mcpOrder = GlobalMiddlewareOrder::merge($this->app->mcpMiddlewares(), $this->discoveredMcpMiddleware);
         $this->mcpPipeline = new MiddlewarePipeline(
             array_map($this->app->get(...), $mcpOrder),
             new CallableRequestHandler($this->serveMcp(...)),
         );
 
-        $openApiOrder = GlobalMiddlewareOrder::merge($this->app->openApiMiddlewares(), $this->discoveredOpenApiMiddleware);
-        $this->openApiPipeline = new MiddlewarePipeline(
-            array_map($this->app->get(...), $openApiOrder),
-            new CallableRequestHandler($this->serveOpenApi(...)),
-        );
     }
 
     public function handle(ServerRequestInterface $request): ResponseInterface
@@ -184,12 +187,12 @@ final class Kernel
 
                 $group = substr($reference, strlen(Middleware::GROUP_PREFIX));
 
-                if (!isset($this->middlewareGroups[$group])) {
+                if (!isset($this->groups[$group])) {
                     throw UnknownMiddlewareGroupException::forRoute(
                         $group,
                         $route->controllerClass,
                         $route->controllerMethod,
-                        array_keys($this->middlewareGroups),
+                        array_keys($this->groups),
                     );
                 }
             }
@@ -222,7 +225,7 @@ final class Kernel
             // Guaranteed present by assertMiddlewareGroupsExist().
             $group = substr($reference, strlen(Middleware::GROUP_PREFIX));
 
-            foreach ($this->middlewareGroups[$group] as $middlewareClass) {
+            foreach ($this->groups[$group] as $middlewareClass) {
                 $expanded[] = $middlewareClass;
             }
         }
@@ -233,10 +236,6 @@ final class Kernel
     private function dispatchCore(ServerRequestInterface $request): ResponseInterface
     {
         $path = $request->getUri()->getPath();
-
-        if ($this->exposeOpenApi && ($path === '/openapi.json' || $path === '/docs')) {
-            return $this->openApiPipeline->handle($request);
-        }
 
         // POST/GET/DELETE are all handled for /mcp (see serveMcp()) — any
         // other method falls through to normal routing. GET and DELETE
@@ -250,6 +249,15 @@ final class Kernel
         }
 
         $scope = $this->app->createRequestScope();
+
+        // Kinetis\Http\OpenApi\DocumentationController is discovered and
+        // dispatched like any other controller, so what it needs has to
+        // be resolvable — and neither of these can come from AppScope:
+        // the Router is built after boot() has locked it, and the access
+        // policy folds in $exposeOpenApi, which Kernel owns. Registering
+        // them here keeps every entry point unchanged.
+        $scope->instance(Router::class, $this->router);
+        $scope->instance(OpenApiAccess::class, $this->openApiAccess);
 
         if (class_exists(self::TRANSACTION_GUARD_CLASS)) {
             $transactionGuardClass = self::TRANSACTION_GUARD_CLASS;
@@ -306,82 +314,7 @@ final class Kernel
         }
     }
 
-    /**
-     * Whether OPENAPI_ENVIRONMENTS — a comma-separated list of APP_ENV
-     * values — names the environment this process is running in.
-     *
-     * Unset means no environment, so `/openapi.json` and `/docs` are
-     * blocked everywhere until an application opts in. They describe the
-     * whole route table, which is reconnaissance rather than a
-     * vulnerability, but there is no version of "publish it by default"
-     * that an application chose.
-     *
-     * Matched against the raw APP_ENV string rather than
-     * {@see \Kinetis\Runtime\AppEnvironment}, which resolves every
-     * unrecognized name to Production — a deployment with a `staging`
-     * environment can name it here and have it mean staging.
-     *
-     * Config is read through the container rather than injected, since
-     * AppScope::boot() registers it; a Kernel built on a scope that was
-     * never booted has no configuration to consult and blocks both
-     * paths.
-     */
-    private static function openApiAllowed(AppScope $app): bool
-    {
-        $config = $app->has(Config::class) ? $app->get(Config::class) : null;
 
-        if (!$config instanceof Config) {
-            return false;
-        }
-
-        // Unset, blank, or comma-only, every name filters out and leaves
-        // in_array() nothing to match — which is what blocks both paths
-        // until an application names an environment.
-        $environments = \array_filter(\array_map(
-            static fn (string $name): string => \strtolower(\trim($name)),
-            \explode(',', $config->string('OPENAPI_ENVIRONMENTS', '')),
-        ), static fn (string $name): bool => $name !== '');
-
-        $current = \strtolower(\trim($config->string('APP_ENV', '')));
-
-        // Matching AppEnvironment::detect(): an absent APP_ENV is
-        // production, so a deployment that sets nothing is still
-        // addressable by name.
-        return \in_array($current === '' ? 'production' : $current, $environments, true);
-    }
-
-    /**
-     * The terminal handler at the end of $openApiPipeline — the
-     * /openapi.json and /docs logic lives here, rather than directly in
-     * dispatchCore(), so #[AsOpenApiMiddleware]/
-     * AppScope::openApiMiddleware() can wrap it.
-     */
-    private function serveOpenApi(ServerRequestInterface $request): ResponseInterface
-    {
-        if ($request->getUri()->getPath() === '/openapi.json') {
-            // $this->cacheStore is genuinely nullable (null by default);
-            // PHPStan's flow analysis misreports the nullsafe as
-            // redundant here — the same known quirk documented on
-            // AppScope::resolve()/RequestScope::resolve(), reproduced in
-            // isolation with a minimal nullable-readonly-promoted-
-            // property repro before suppressing. Deliberately lazy: this
-            // is the only place openapi.php is ever read from disk, so a
-            // request for any other path never touches it.
-            // @phpstan-ignore-next-line nullsafe.neverNull
-            $openApi = $this->cacheStore?->loadOpenApi()?->openApi ?? $this->openApi->generate();
-
-            return $this->json($openApi, 200);
-        }
-
-        $page = SwaggerUiPage::create();
-
-        // The page's own policy, not the application's: an application-wide
-        // `script-src 'self'` would block the CDN this viewer loads from,
-        // and SecurityHeadersMiddleware leaves a header a response already
-        // carries alone. See SwaggerUiPage.
-        return $this->html($page['html'])
-            ->withHeader('Content-Security-Policy', $page['csp']);
-    }
 
     /**
      * The terminal handler at the end of $mcpPipeline. Validates the
@@ -668,12 +601,4 @@ final class Kernel
         );
     }
 
-    private function html(string $body): ResponseInterface
-    {
-        return new Response(
-            status: 200,
-            headers: ['Content-Type' => 'text/html'],
-            body: $body,
-        );
-    }
 }

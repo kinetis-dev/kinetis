@@ -144,9 +144,9 @@ comma-separated sub-paths relative to each PSR-4 base directory,
 committed in `.env`. See {doc}`caching` for how this is compiled ahead of
 time in production, alongside the route table itself.
 
-### Scoping middleware to `/mcp` or `/openapi.json`/`/docs` specifically
+### Scoping middleware to `/mcp` or `/openapi.json`/`/openapi` specifically
 
-Global middleware already wraps `/mcp` and `/openapi.json`/`/docs` — the
+Global middleware already wraps `/mcp` and `/openapi.json`/`/openapi` — the
 global pipeline covers `Kernel::handle()`'s entire body, these endpoints
 included. `#[AsMcpMiddleware]` and `#[AsOpenApiMiddleware]` exist for the
 narrower need: middleware that should run for *only* one of these
@@ -174,8 +174,13 @@ final readonly class McpAuthMiddleware implements MiddlewareInterface
 ```
 
 `#[AsOpenApiMiddleware]` is the identical attribute, shared by both
-`/openapi.json` and `/docs` — the same "expose the API's own shape"
-concern, not two independently protectable surfaces. Both attributes take
+`/openapi.json` and `/openapi` — the same "expose the API's own shape"
+concern, not two independently protectable surfaces. It reaches them by
+a different route, though: those two are ordinary discovered routes on a
+controller the framework ships, so the attribute publishes its classes
+as a built-in `openapi` middleware group that the controller references
+like any other route middleware. Nothing about using it changes; it is
+worth knowing only because `routes:list` shows the expansion. Both attributes take
 the exact same `priority` (bounded `0`-`100`, default `50`,
 alphabetical tiebreak) that `#[AsGlobalMiddleware]` does, discovered by
 the same project-wide scan, and both have an explicit-registration
@@ -523,7 +528,7 @@ introduce it last, after the other two are in place.
 
 ```{note}
 Your policy does not have to accommodate the Swagger UI page Kinetis
-serves at `/docs`. That page loads `swagger-ui-dist` from a CDN, which a
+serves at `/openapi`. That page loads `swagger-ui-dist` from a CDN, which a
 `script-src` of `'self'` would block, so it sends its own policy —
 narrower than a typical application-wide one, with a per-response nonce
 for its inline script and `connect-src 'self'` so it can fetch its own

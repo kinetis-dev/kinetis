@@ -37,7 +37,7 @@ final readonly class BuildCommand
         private ?string $projectRootOverride = null,
     ) {}
 
-    #[Command('build', description: 'Compiles routes, MCP tools/resources, commands, and OpenAPI data ahead of time', bootstrap: false)]
+    #[Command('build', description: 'Compiles routes, MCP tools/resources, commands, and event listeners ahead of time', bootstrap: false)]
     public function run(CommandArguments $arguments): int
     {
         // dirname(__DIR__): this file lives one level deeper than
@@ -62,7 +62,7 @@ final readonly class BuildCommand
         $compiled = (new Compiler())->compileProject($projectRoot);
         (new CacheStore($cacheDirectory))->writeAll($compiled);
 
-        fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, event listeners, and OpenAPI cache written to {$cacheDirectory}/\n");
+        fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, and event listeners written to {$cacheDirectory}/\n");
 
         return 0;
     }

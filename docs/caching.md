@@ -25,7 +25,7 @@ root, or {doc}`config` for loading it from a `.env` file automatically.
 
 ## What gets cached
 
-Eleven things get precomputed:
+Ten things get precomputed:
 
 - The route table.
 - MCP tool/resource definitions.
@@ -33,8 +33,8 @@ Eleven things get precomputed:
 - The `#[AsGlobalMiddleware]`-discovered class list, already priority-sorted.
 - The `#[AsMcpMiddleware]`-discovered class list, scoped to `/mcp` only,
   already priority-sorted.
-- The `#[AsOpenApiMiddleware]`-discovered class list, scoped to
-  `/openapi.json`/`/docs` only, already priority-sorted.
+- The `#[AsOpenApiMiddleware]`-discovered class list, published as the
+  built-in `openapi` middleware group, already priority-sorted.
 - The `#[AsMiddlewareGroup]`-declared groups, each group's own members
   already priority-sorted.
 - The `#[Listener]`-discovered event listener list, grouped by event class,
@@ -65,11 +65,16 @@ The on-disk result is five independent files:
 │                  validation plans for DTOs reachable from MCP tools
 ├── commands.php   command definitions + the package bootstrap-class
 │                  list (repeated so `bin/kinetis` loads one file)
-├── events.php     event listeners, grouped by event class
-└── openapi.php    the generated OpenAPI document
+└── events.php     event listeners, grouped by event class
 ```
 
 A DTO used by both an HTTP route and an MCP tool appears in both files.
+
+The OpenAPI document is deliberately not among these. It is generated
+per request in development and cached in whatever `CacheInterface` the
+application has bound in production, so a deployment that changes routes
+or DTOs runs `kinetis openapi:clear` alongside `kinetis build` — see
+{doc}`routing-validation`.
 
 ## Two ways to build it
 

@@ -315,7 +315,7 @@ curl -X POST http://localhost:8080/users \
 ```
 
 Every registered route also gets a free, zero-config OpenAPI document and
-Swagger UI — visit `http://localhost:8080/docs` right now, no annotations
+Swagger UI — visit `http://localhost:8080/openapi` right now, no annotations
 beyond the attributes already on `UserController` needed. More on that in
 {doc}`routing-validation`.
 

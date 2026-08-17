@@ -713,10 +713,15 @@ build a complete OpenAPI 3.1 document, with no annotations beyond the
 attributes already shown on this page:
 
 - `GET /openapi.json` — the generated document.
-- `GET /docs` — a Swagger UI shell rendering it. It loads Swagger UI
+- `GET /openapi` — a Swagger UI shell rendering it. It loads Swagger UI
   from a CDN and sends its own `Content-Security-Policy` permitting
   exactly that, so it keeps working under an application-wide policy
   that would otherwise block it — see {doc}`middleware`.
+
+Both are served by an ordinary controller the framework ships, found by
+the same route discovery that finds yours — so they appear in
+`kinetis routes:list` alongside your own routes, and any middleware you
+attach to them behaves like middleware anywhere else.
 
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,
@@ -810,9 +815,37 @@ what a test or a deliberately documentation-only service wants:
 new Kinetis\Http\Kernel($app, $router, exposeOpenApi: true);
 ```
 
+The check runs per request rather than when routes are registered. That
+is deliberate: registering the routes conditionally would push the
+decision into `kinetis build`, and a production image would then answer
+according to whichever environment compiled it rather than the one it is
+running in. The routes always exist — `routes:list` shows them either
+way — and a closed one answers exactly as an unregistered path does.
+
+### Clearing the cached document
+
+In development the document is generated per request, so an attribute
+you change is visible on the next reload. In production it is generated
+once and cached in whatever `CacheInterface` the application has bound,
+with no expiry: the route table cannot change without a deployment, and
+a document that expired on a timer would spend that window describing an
+API the deployment no longer serves.
+
+The consequence is that a deployment which changes routes, DTOs, or
+constraints has to drop it:
+
+```{code-block} sh
+php vendor/bin/kinetis openapi:clear
+```
+
+Run it alongside `kinetis build`. It is safe when nothing is cached, and
+in development, where nothing ever is. With no cache configured — the
+default `NullSimpleCache` — nothing is stored and every request
+regenerates, which is correct but slower for a large route table.
+
 ### Hiding a route from the document
 
-`#[Hidden]` excludes a route from `/openapi.json` and `/docs` — the route
+`#[Hidden]` excludes a route from `/openapi.json` and `/openapi` — the route
 itself keeps working exactly as before, only its documentation is
 suppressed. Useful for a route that isn't really part of the API surface,
 like an HTML page served alongside a JSON API:

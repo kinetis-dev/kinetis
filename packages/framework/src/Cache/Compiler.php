@@ -15,7 +15,6 @@ use Kinetis\Http\Routing\Router;
 use Kinetis\Mcp\McpDiscovery;
 use Kinetis\Mcp\McpDispatcher;
 use Kinetis\Mcp\McpRegistry;
-use Kinetis\OpenApi\OpenApiGenerator;
 use Kinetis\Validation\Hydrator;
 use DateTimeImmutable;
 use ReflectionMethod;
@@ -27,7 +26,7 @@ use ReflectionMethod;
  * document once, and carries the already-sorted list of
  * #[AsGlobalMiddleware]-discovered classes and #[Listener]-discovered
  * event listeners — producing five independent artifacts
- * (HttpCache/McpCache/OpenApiCache/CommandCache/EventCache, grouped for
+ * (HttpCache/McpCache/CommandCache/EventCache, grouped for
  * convenience as one CompiledCache) with zero live objects/closures
  * inside any of them.
  *
@@ -126,12 +125,6 @@ final class Compiler
             compiledAt: $compiledAt,
         );
 
-        $openApi = new OpenApiCache(
-            formatVersion: CacheFormat::VERSION,
-            openApi: (new OpenApiGenerator($router))->generate(),
-            compiledAt: $compiledAt,
-        );
-
         $commandsCache = new CommandCache(
             formatVersion: CacheFormat::VERSION,
             commands: ($commands ?? new CommandRegistry())->toArray(),
@@ -145,7 +138,7 @@ final class Compiler
             compiledAt: $compiledAt,
         );
 
-        return new CompiledCache($http, $mcp, $openApi, $commandsCache, $eventsCache);
+        return new CompiledCache($http, $mcp, $commandsCache, $eventsCache);
     }
 
     /**

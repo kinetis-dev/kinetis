@@ -23,7 +23,7 @@ final class BuildCommandTest extends TestCase
         $this->removeDirectory($this->projectRoot);
     }
 
-    public function test_writes_all_four_cache_files_and_returns_success(): void
+    public function test_writes_every_cache_file_and_returns_success(): void
     {
         $command = new BuildCommand(projectRootOverride: $this->projectRoot);
 
@@ -32,7 +32,6 @@ final class BuildCommandTest extends TestCase
         self::assertSame(0, $exitCode);
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/http.php');
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/mcp.php');
-        self::assertFileExists($this->projectRoot . '/.kinetis-cache/openapi.php');
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/commands.php');
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/events.php');
     }

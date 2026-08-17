@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Cache;
 
 /**
- * Shared by HttpCache/McpCache/OpenApiCache/CommandCache/EventCache — one
+ * Shared by HttpCache/McpCache/CommandCache/EventCache — one
  * version number for the five artifacts a single Compiler run always
  * produces together, so CacheStore can detect a stale shape regardless of
  * which file it's reading.
@@ -22,5 +22,5 @@ final class CacheFormat
     // 9: binding plans gained the 'container' parameter source — an old
     //    plan records those parameters as 'default', which would keep
     //    throwing instead of resolving them.
-    public const int VERSION = 9;
+    public const int VERSION = 10;
 }

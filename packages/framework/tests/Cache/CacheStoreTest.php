@@ -12,7 +12,6 @@ use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\EventCache;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\McpCache;
-use Kinetis\Cache\OpenApiCache;
 use PHPUnit\Framework\TestCase;
 
 final class CacheStoreTest extends TestCase
@@ -55,11 +54,6 @@ final class CacheStoreTest extends TestCase
             hydrationPlans: [],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
-        $openApi = new OpenApiCache(
-            formatVersion: CacheFormat::VERSION,
-            openApi: ['openapi' => '3.1.0'],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
         $commands = new CommandCache(
             formatVersion: CacheFormat::VERSION,
             commands: [['name' => 'app:x', 'description' => '', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'takesArguments' => false]],
@@ -71,7 +65,7 @@ final class CacheStoreTest extends TestCase
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
 
-        return new CompiledCache($http, $mcp, $openApi, $commands, $events);
+        return new CompiledCache($http, $mcp, $commands, $events);
     }
 
     public function test_exists_is_false_when_no_cache_files_exist(): void
@@ -87,7 +81,6 @@ final class CacheStoreTest extends TestCase
 
         self::assertNull($store->loadHttp());
         self::assertNull($store->loadMcp());
-        self::assertNull($store->loadOpenApi());
         self::assertNull($store->loadCommands());
         self::assertNull($store->loadEvents());
     }
@@ -102,7 +95,6 @@ final class CacheStoreTest extends TestCase
         self::assertTrue($store->exists());
         self::assertEquals($cache->http, $store->loadHttp());
         self::assertEquals($cache->mcp, $store->loadMcp());
-        self::assertEquals($cache->openApi, $store->loadOpenApi());
         self::assertEquals($cache->commands, $store->loadCommands());
         self::assertEquals($cache->events, $store->loadEvents());
     }
@@ -138,7 +130,7 @@ final class CacheStoreTest extends TestCase
         $files = glob($this->directory . '/*') ?: [];
         sort($files);
 
-        $expected = [$store->commandsPath(), $store->eventsPath(), $store->httpPath(), $store->mcpPath(), $store->openApiPath()];
+        $expected = [$store->commandsPath(), $store->eventsPath(), $store->httpPath(), $store->mcpPath()];
         sort($expected);
 
         self::assertSame($expected, $files);
@@ -175,7 +167,6 @@ final class CacheStoreTest extends TestCase
             $store->writeAll(new CompiledCache(
                 $http,
                 $this->compiledCache()->mcp,
-                $this->compiledCache()->openApi,
                 $this->compiledCache()->commands,
                 $this->compiledCache()->events,
             ));

@@ -17,6 +17,7 @@ use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
+use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Http\StreamedResponse;
 use Kinetis\Mcp\McpDispatcher;
@@ -58,6 +59,7 @@ final class KernelTest extends TestCase
 
         $router = new Router();
         $router->register(UserController::class);
+        $router->register(DocumentationController::class);
 
         return new Kernel($app, $router, exposeOpenApi: $exposeOpenApi);
     }
@@ -157,7 +159,7 @@ final class KernelTest extends TestCase
 
     public function test_serves_the_swagger_ui_page_at_docs(): void
     {
-        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/docs'));
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi'));
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('text/html', $response->getHeaderLine('Content-Type'));
@@ -173,7 +175,7 @@ final class KernelTest extends TestCase
      */
     public function test_the_docs_page_carries_a_policy_matching_its_own_inline_script(): void
     {
-        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/docs'));
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi'));
         $csp = $response->getHeaderLine('Content-Security-Policy');
         $body = (string) $response->getBody();
 
@@ -191,8 +193,8 @@ final class KernelTest extends TestCase
     {
         $kernel = $this->kernel(exposeOpenApi: true);
 
-        $first = $kernel->handle(new ServerRequest('GET', '/docs'))->getHeaderLine('Content-Security-Policy');
-        $second = $kernel->handle(new ServerRequest('GET', '/docs'))->getHeaderLine('Content-Security-Policy');
+        $first = $kernel->handle(new ServerRequest('GET', '/openapi'))->getHeaderLine('Content-Security-Policy');
+        $second = $kernel->handle(new ServerRequest('GET', '/openapi'))->getHeaderLine('Content-Security-Policy');
 
         self::assertNotSame($first, $second);
     }
@@ -214,9 +216,10 @@ final class KernelTest extends TestCase
 
         $router = new Router();
         $router->register(UserController::class);
+        $router->register(DocumentationController::class);
         $kernel = new Kernel($app, $router);
 
-        $docs = $kernel->handle(new ServerRequest('GET', '/docs'));
+        $docs = $kernel->handle(new ServerRequest('GET', '/openapi'));
         self::assertStringContainsString('cdn.jsdelivr.net', $docs->getHeaderLine('Content-Security-Policy'));
 
         // Every other route still gets the application's own policy.
@@ -250,13 +253,14 @@ final class KernelTest extends TestCase
 
         $router = new Router();
         $router->register(UserController::class);
+        $router->register(DocumentationController::class);
 
         return new Kernel($app, $router);
     }
 
     public function test_openapi_routes_are_blocked_when_no_environments_are_configured(): void
     {
-        foreach (['/openapi.json', '/docs'] as $path) {
+        foreach (['/openapi.json', '/openapi'] as $path) {
             $response = $this->kernelWithConfig(['APP_ENV' => 'development'])->handle(new ServerRequest('GET', $path));
 
             // 404 rather than 403: a blocked path falls through to
@@ -273,7 +277,7 @@ final class KernelTest extends TestCase
         ]);
 
         self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
-        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/docs'))->getStatusCode());
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi'))->getStatusCode());
     }
 
     public function test_openapi_routes_stay_blocked_in_an_environment_the_configuration_omits(): void
@@ -467,6 +471,7 @@ final class KernelTest extends TestCase
         $app->boot();
         $router = new Router();
         $router->register(UserController::class);
+        $router->register(DocumentationController::class);
         $mcpRegistry = new McpRegistry();
         $mcpRegistry->register(AccountController::class);
         $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
@@ -478,11 +483,40 @@ final class KernelTest extends TestCase
         self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
 
         RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/docs'));
+        $kernel->handle(new ServerRequest('GET', '/openapi'));
         self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
 
         RecordingMiddleware::$log = [];
         $kernel->handle($this->mcpToolsListRequest());
+        self::assertSame([], RecordingMiddleware::$log);
+    }
+
+    /**
+     * The explicit counterpart to the discovered case above.
+     * AppScope::openApiMiddleware() registrations are invisible to
+     * discovery, so Kernel folds them into the same `openapi` group the
+     * controller references — without that, an explicitly registered
+     * class would silently never run.
+     */
+    public function test_explicitly_registered_openapi_middleware_runs_on_the_documentation_routes(): void
+    {
+        $app = new AppScope();
+        $app->openApiMiddleware(OpenApiScopedMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: true);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        // And nowhere else.
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
         self::assertSame([], RecordingMiddleware::$log);
     }
 
@@ -1059,41 +1093,6 @@ final class KernelTest extends TestCase
         self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
     }
 
-    public function test_openapi_json_lazily_loads_and_serves_the_compiled_document_verbatim_when_a_cache_is_present(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $router->register(UserController::class);
-
-        // Deliberately a different document than OpenApiGenerator would
-        // ever produce live — proves the cached path is actually taken,
-        // not just that the output happens to match.
-        $stubOpenApi = ['openapi' => '3.1.0', 'paths' => ['stub' => true]];
-        $directory = sys_get_temp_dir() . '/kinetis_kernel_test_' . bin2hex(random_bytes(8));
-        $store = new CacheStore($directory);
-        $store->writeAll(new CompiledCache(
-            http: new HttpCache(formatVersion: CacheFormat::VERSION, routes: [], httpBindingPlans: [], hydrationPlans: [], globalMiddleware: [], mcpMiddleware: [], openApiMiddleware: [], compiledAt: '2026-01-01T00:00:00+00:00'),
-            mcp: new McpCache(formatVersion: CacheFormat::VERSION, mcpTools: [], mcpResources: [], mcpBindingPlans: [], hydrationPlans: [], compiledAt: '2026-01-01T00:00:00+00:00'),
-            openApi: new OpenApiCache(formatVersion: CacheFormat::VERSION, openApi: $stubOpenApi, compiledAt: '2026-01-01T00:00:00+00:00'),
-            commands: new CommandCache(formatVersion: CacheFormat::VERSION, commands: [], compiledAt: '2026-01-01T00:00:00+00:00'),
-            events: new EventCache(formatVersion: CacheFormat::VERSION, listeners: [], compiledAt: '2026-01-01T00:00:00+00:00'),
-        ));
-
-        try {
-            $kernel = new Kernel($app, $router, exposeOpenApi: true, cacheStore: $store);
-            $response = $kernel->handle(new ServerRequest('GET', '/openapi.json'));
-
-            self::assertSame($stubOpenApi, json_decode((string) $response->getBody(), true));
-        } finally {
-            foreach (glob($directory . '/*') ?: [] as $file) {
-                unlink($file);
-            }
-
-            rmdir($directory);
-        }
-    }
 
     public function test_dispatch_uses_the_compiled_binding_plan_end_to_end(): void
     {
