@@ -207,6 +207,13 @@ yours to invent and aren't listed here.
 |---|---|---|
 | `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache (see {doc}`caching`). Anything unrecognized means `production`. |
 | `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read (see {doc}`middleware`). |
+| `SECURITY_FRAME_OPTIONS` | `DENY` | `X-Frame-Options` value, or `off` to omit the header (see {doc}`middleware`). |
+| `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | `Referrer-Policy` value, or `off` to omit it. |
+| `SECURITY_CSP` | — | `Content-Security-Policy` value. Unset means the header is not sent. |
+| `SECURITY_PERMISSIONS_POLICY` | — | `Permissions-Policy` value. Unset means the header is not sent. |
+| `SECURITY_HSTS_MAX_AGE` | `0` | HSTS max-age in seconds. `0` means the header is not sent. |
+| `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` when HSTS is sent. |
+| `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` when HSTS is sent. |
 
 ### Discovery restriction (core)
 

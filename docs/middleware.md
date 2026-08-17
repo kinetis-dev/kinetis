@@ -369,6 +369,31 @@ implement it. Nothing implements or registers it by default: a controller
 constructor-injecting it without an auth middleware having run first gets
 a plain `NotFoundException`, not a null to check.
 
+The controller above can constructor-inject what the middleware
+registered because a controller is resolved *after* every middleware in
+front of it has run. A middleware cannot do the same for something an
+earlier middleware registers: **all of a route's middleware are
+constructed before the first one runs**, so at construction time none of
+them has executed yet. A middleware that depends on an earlier one's
+work resolves it inside `process()` instead, from an injected
+`RequestScope`:
+
+```{code-block} php
+final readonly class RequireVerifiedEmailMiddleware implements MiddlewareInterface
+{
+    // Injecting CurrentUserInterface here would fail: the auth
+    // middleware in front of this one has not run yet.
+    public function __construct(private RequestScope $scope) {}
+
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        $user = $this->scope->get(CurrentUserInterface::class);
+
+        // ...
+    }
+}
+```
+
 ## Built in: `ExceptionHandlerMiddleware`
 
 Registered as the outermost global middleware automatically, on every
@@ -420,6 +445,76 @@ the response body isn't visible. See {doc}`logging`.
 Middleware registration is a flat class-string list at both levels — a
 middleware needing a threshold or a config value takes it through the
 container via constructor injection, like anything else.
+
+## Built in: `SecurityHeadersMiddleware`
+
+Registered unconditionally as the **outermost** global middleware —
+outside `ExceptionHandlerMiddleware`, so its headers reach the `500`
+that handler produces as well as every ordinary response. It cannot
+throw at request time: configuration is read once at construction, so
+`process()` does nothing but set headers.
+
+Three headers are sent by default, with no configuration at all:
+
+```{code-block} text
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+Nothing legitimate depends on content sniffing, on being framed, or on
+leaking a full referrer to another origin, so these cost a working
+application nothing and protect one that never thought about them.
+`X-Frame-Options` and `Referrer-Policy` take any value, or `off` to
+send nothing; `X-Content-Type-Options` is not configurable, because
+there is no reason to turn sniffing back on.
+
+```{code-block} text
+:caption: .env
+SECURITY_FRAME_OPTIONS=SAMEORIGIN
+SECURITY_REFERRER_POLICY=no-referrer
+```
+
+A Content-Security-Policy, a Permissions-Policy, and HSTS are sent
+**only when you configure them**. Each breaks a working application
+when it is wrong — a policy that omits a real dependency blocks it, and
+HSTS on the wrong host is not quickly reversible — so a guessed default
+would do more harm than sending nothing:
+
+```{code-block} text
+:caption: .env
+SECURITY_CSP=default-src 'self'; object-src 'none'; frame-ancestors 'none'
+SECURITY_PERMISSIONS_POLICY=geolocation=(), microphone=(), camera=()
+SECURITY_HSTS_MAX_AGE=31536000
+SECURITY_HSTS_INCLUDE_SUBDOMAINS=true
+SECURITY_HSTS_PRELOAD=false
+```
+
+HSTS is sent whenever a max-age is configured, without checking the
+request's own scheme: a browser is required to ignore it when it did
+not arrive over a secure transport, and a scheme check would suppress
+it behind a proxy that terminates TLS — where it is exactly what you
+want.
+
+```{warning}
+A `script-src`/`default-src` of `'self'` blocks the Swagger UI page
+Kinetis serves at `/docs`, which loads `swagger-ui-dist` from a CDN. If
+you expose `/docs` and set a policy, allow that origin — or turn the
+page off with `new Kernel($app, $router, exposeOpenApi: false)`.
+```
+
+A header the response already carries is never replaced, so one route
+can set its own policy and keep it:
+
+```{code-block} php
+#[Get('/embed/widget')]
+public function widget(): ResponseInterface
+{
+    // Kept as-is; the global DENY does not overwrite it.
+    return HtmlResponse::create($markup)
+        ->withHeader('X-Frame-Options', 'SAMEORIGIN');
+}
+```
 
 ## Built in: `MaxBodySizeMiddleware`
 

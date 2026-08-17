@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Http\Middleware;
 
 /**
- * Computes the real global-middleware order: ExceptionHandlerMiddleware
- * first, then MaxBodySizeMiddleware, then $explicit
+ * Computes the real global-middleware order: SecurityHeadersMiddleware
+ * first, then ExceptionHandlerMiddleware, then MaxBodySizeMiddleware,
+ * then $explicit
  * (AppScope::middlewares()) as a group, then $discovered
  * (GlobalMiddlewareDiscovery) minus anything already in $explicit.
  *
@@ -24,6 +25,11 @@ final class GlobalMiddlewareOrder
     public static function resolve(array $explicit, array $discovered): array
     {
         return [
+            // Outermost, so the headers reach the 500 that
+            // ExceptionHandlerMiddleware itself produces. Safe there
+            // because it cannot throw at request time — see its own
+            // docblock.
+            SecurityHeadersMiddleware::class,
             ExceptionHandlerMiddleware::class,
             MaxBodySizeMiddleware::class,
             ...self::merge($explicit, $discovered),
@@ -35,9 +41,10 @@ final class GlobalMiddlewareOrder
      * classes — factored out so Kernel's /mcp and /openapi.json/docs
      * scoped pipelines can reuse the identical precedence rule
      * (explicit always wins, discovered fills in the rest) without
-     * inheriting ExceptionHandlerMiddleware/MaxBodySizeMiddleware, which
-     * neither scoped pipeline needs or wants a copy of — both already run
-     * inside the global pipeline that already includes those two.
+     * inheriting SecurityHeadersMiddleware/ExceptionHandlerMiddleware/
+     * MaxBodySizeMiddleware, which neither scoped pipeline needs or wants
+     * a copy of — both already run inside the global pipeline that
+     * already includes those three.
      *
      * @param list<class-string> $explicit
      * @param list<class-string> $discovered

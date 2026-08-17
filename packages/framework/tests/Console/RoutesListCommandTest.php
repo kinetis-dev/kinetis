@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Console;
 
 use Kinetis\Console\RoutesListCommand;
 use Kinetis\Http\Middleware\ExceptionHandlerMiddleware;
+use Kinetis\Http\Middleware\SecurityHeadersMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\HighPriorityMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\RouteLevelMiddlewareA;
@@ -56,12 +57,13 @@ final class RoutesListCommandTest extends TestCase
         self::fail("No line contains \"{$needle}\".\n\nOutput:\n" . implode("\n", $lines));
     }
 
-    public function test_prints_the_global_middleware_pipeline_with_exception_handler_first(): void
+    public function test_prints_the_global_middleware_pipeline_in_order(): void
     {
         $lines = self::lines($this->runCommand());
 
         self::assertStringContainsString('Global middleware (outermost to innermost):', $lines[0]);
-        self::assertStringContainsString('1. ' . ExceptionHandlerMiddleware::class, $lines[1]);
+        self::assertStringContainsString('1. ' . SecurityHeadersMiddleware::class, $lines[1]);
+        self::assertStringContainsString('2. ' . ExceptionHandlerMiddleware::class, $lines[2]);
     }
 
     public function test_higher_priority_discovered_middleware_prints_before_lower_priority(): void
