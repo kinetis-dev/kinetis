@@ -16,7 +16,9 @@ use Kinetis\Runtime\AppEnvironment;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
+use Throwable;
 
 /**
  * Serves the generated OpenAPI document and the Swagger UI page that
@@ -51,6 +53,7 @@ final readonly class DocumentationController
         private Router $router,
         private AppEnvironment $environment,
         private CacheInterface $cache,
+        private LoggerInterface $logger,
     ) {}
 
     #[Get('/openapi.json')]
@@ -102,6 +105,46 @@ final readonly class DocumentationController
     }
 
     /**
+     * The cache is an optimisation with a guaranteed fallback: this
+     * document can always be regenerated. That is why a cache failure
+     * degrades to generating rather than failing the request, unlike
+     * RateLimitMiddleware, which cannot do its job at all without one.
+     * A Redis that is briefly unreachable should not take the API's own
+     * documentation down with it.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function cached(): ?array
+    {
+        try {
+            $cached = $this->cache->get(self::CACHE_KEY);
+        } catch (Throwable $e) {
+            $this->logger->warning('Could not read the cached OpenAPI document; generating it instead.', ['exception' => $e]);
+
+            return null;
+        }
+
+        /** @var array<string, mixed>|null */
+        return is_array($cached) ? $cached : null;
+    }
+
+    /**
+     * @param array<string, mixed> $document
+     */
+    private function store(array $document): void
+    {
+        try {
+            // No TTL: the route table cannot change without a deployment,
+            // and a deployment runs `kinetis openapi:clear`. A time-based
+            // expiry would only mean serving a document that lies about
+            // the API for however long it is set to.
+            $this->cache->set(self::CACHE_KEY, $document);
+        } catch (Throwable $e) {
+            $this->logger->warning('Could not cache the OpenAPI document; it will be regenerated per request.', ['exception' => $e]);
+        }
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function generate(): array
@@ -113,20 +156,14 @@ final readonly class DocumentationController
             return new OpenApiGenerator($this->router)->generate();
         }
 
-        $cached = $this->cache->get(self::CACHE_KEY);
+        $cached = $this->cached();
 
-        if (is_array($cached)) {
-            /** @var array<string, mixed> $cached */
+        if ($cached !== null) {
             return $cached;
         }
 
         $document = new OpenApiGenerator($this->router)->generate();
-
-        // No TTL: the route table cannot change without a deployment,
-        // and a deployment runs `kinetis openapi:clear`. A time-based
-        // expiry would only mean serving a document that lies about the
-        // API for however long it is set to.
-        $this->cache->set(self::CACHE_KEY, $document);
+        $this->store($document);
 
         return $document;
     }

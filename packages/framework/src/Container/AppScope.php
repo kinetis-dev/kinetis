@@ -247,9 +247,13 @@ final class AppScope implements ContainerInterface
      */
     private static function buildDefaultCache(Config $config): CacheInterface
     {
+        // An empty value counts as unset, not as "configured but blank":
+        // `REDIS_HOST=` in a .env is how a value gets turned off, and
+        // reading it as configured would make every cache operation
+        // throw for an application that had switched Redis off.
         $redisConfigured = $config->bool('REDIS_CLUSTER', false)
-            || $config->get('REDIS_URL') !== null
-            || $config->get('REDIS_HOST') !== null;
+            || $config->string('REDIS_URL', '') !== ''
+            || $config->string('REDIS_HOST', '') !== '';
 
         if (!$redisConfigured) {
             return new NullSimpleCache();

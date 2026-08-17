@@ -103,10 +103,13 @@ jobs:
             # the host one, so cluster redirects resolve; every other
             # package reaches the database services over --network host.
             NETWORK="host"
-            REDIS_HOST=""
-            if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_HOST="kinetis-redis"; fi
+            # Passed only where it is wanted: an empty value is a value,
+            # and a package that reads REDIS_HOST would treat it as a
+            # configured cache.
+            REDIS_ENV=""
+            if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
             docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
-            docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 -e REDIS_HOST="$REDIS_HOST" -e REDIS_CLUSTER_SEEDS -e EXTRA_EXTS="$EXTRA_EXTS" -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
+            docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -e EXTRA_EXTS="$EXTRA_EXTS" -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
               apk add --no-cache gcc g++ make autoconf pkgconf re2c
               if [ -n \"\$EXTRA_EXTS\" ]; then apk add --no-cache postgresql-dev && docker-php-ext-install \$EXTRA_EXTS; fi
               pecl install pcov

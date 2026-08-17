@@ -10,10 +10,13 @@ use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\SimpleCache\UnavailableSimpleCache;
+use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
 
 /**
@@ -110,6 +113,38 @@ final class DocumentationControllerTest extends TestCase
 
         self::assertTrue($cache->has(DocumentationController::CACHE_KEY));
         self::assertNull($cache->expiresAt(DocumentationController::CACHE_KEY));
+    }
+
+    /**
+     * The exact shape a configured-but-unreachable Redis produces, and
+     * the one an application that set REDIS_HOST without installing
+     * kinetis/cache-redis gets. The document can always be regenerated,
+     * so a broken cache must not take the endpoint down with it.
+     */
+    public function test_a_failing_cache_degrades_to_generating_rather_than_failing_the_request(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(self::config('production')));
+        $app->instance(CacheInterface::class, new UnavailableSimpleCache());
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $logger = new InMemoryLogger();
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $response = new Kernel($app, $router)->handle(new ServerRequest('GET', '/openapi.json'));
+
+        self::assertSame(200, $response->getStatusCode());
+        $response->getBody()->rewind();
+        $document = json_decode($response->getBody()->getContents(), true);
+        self::assertIsArray($document);
+        self::assertArrayHasKey('/users', $document['paths']);
+
+        // Degraded, not silent.
+        self::assertNotSame([], $logger->records);
     }
 
     public function test_both_paths_are_closed_when_no_environment_names_them(): void
