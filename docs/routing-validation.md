@@ -362,6 +362,13 @@ other:
   enforces that the two agree — you could return a 404 without declaring
   it, or declare a status the method never actually returns.
 
+It documents the statuses *besides* the route's own. The route attribute
+already declares that one — `200` unless you set `status:` — and the
+generator describes it from the method's return type, response schema
+included. An attribute repeating that status is ignored rather than
+overwriting the richer entry with a bare description, so there is no way
+to accidentally strip a route's own response schema out of the document.
+
 ## Returning HTML, files, and redirects
 
 Any route can return something other than JSON, using the same

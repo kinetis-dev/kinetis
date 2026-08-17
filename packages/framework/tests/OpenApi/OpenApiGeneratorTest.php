@@ -11,6 +11,7 @@ use Kinetis\Tests\Http\Fixtures\HiddenController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
+use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use PHPUnit\Framework\TestCase;
 
@@ -223,6 +224,49 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertArrayHasKey('200', $responses);
         self::assertArrayHasKey('404', $responses);
         self::assertSame('User not found.', $responses['404']['description']);
+    }
+
+    /**
+     * The route's own status is described from the return type, schema
+     * included. An attribute repeating that status is ignored rather
+     * than replacing the entry with a description and no schema, which
+     * would also leave the component it referenced defined and unused.
+     */
+    public function test_a_response_attribute_repeating_the_routes_own_status_is_ignored(): void
+    {
+        $router = new Router();
+        $router->register(SameStatusResponseController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $responses = $spec['paths']['/echo']['get']['responses'];
+
+        self::assertSame('Successful response', $responses['200']['description']);
+        self::assertSame(
+            ['$ref' => '#/components/schemas/UserResponse'],
+            $responses['200']['content']['application/json']['schema'],
+        );
+
+        // The other statuses are additional, and still described.
+        self::assertSame('Not found.', $responses['404']['description']);
+        self::assertArrayNotHasKey('content', $responses['404']);
+    }
+
+    /**
+     * The same rule for a route whose status is not the 200 default, so
+     * the comparison is against the route's actual status rather than a
+     * hardcoded one.
+     */
+    public function test_the_rule_holds_for_a_route_with_an_explicit_status(): void
+    {
+        $router = new Router();
+        $router->register(SameStatusResponseController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $responses = $spec['paths']['/echo-created']['post']['responses'];
+
+        self::assertSame('Successful response', $responses['201']['description']);
+        self::assertArrayHasKey('content', $responses['201']);
+        self::assertSame('Validation failed.', $responses['422']['description']);
     }
 
     public function test_a_list_of_property_is_a_dollar_ref_array_not_an_inlined_bare_object(): void

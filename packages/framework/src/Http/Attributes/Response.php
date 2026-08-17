@@ -15,6 +15,12 @@ use Attribute;
  * here enforces that the method actually produces this status at runtime,
  * the same trust OpenApiGenerator already places in the route's own
  * declared default.
+ *
+ * Documents the statuses *besides* the route's own, which the route
+ * attribute already declares (200 unless it says otherwise) and which
+ * OpenApiGenerator describes from the method's return type, schema
+ * included. An attribute repeating that status is ignored, so it can
+ * never replace that richer entry with a bare description.
  */
 #[Attribute(Attribute::TARGET_METHOD | Attribute::IS_REPEATABLE)]
 final readonly class Response

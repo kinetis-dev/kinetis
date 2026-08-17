@@ -172,6 +172,16 @@ final class OpenApiGenerator
 
         foreach ($method->getAttributes(Response::class) as $attribute) {
             $response = $attribute->newInstance();
+
+            // The route's own status is already described above, from the
+            // method's return type, so an attribute repeating it is
+            // ignored rather than allowed to replace that entry with a
+            // description and no schema. #[Response] documents the
+            // *additional* statuses a method can produce.
+            if ($response->status() === $route->status) {
+                continue;
+            }
+
             $responses[(string) $response->status()] = ['description' => $response->description()];
         }
 
