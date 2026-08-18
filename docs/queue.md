@@ -398,7 +398,12 @@ retried if something has explicitly set a cap above `1`.
     "level": "error",
     "message": "Job \"App\\SendWelcomeEmail\" failed permanently after 3 attempt(s): Connection refused",
     "context": {
-        "job": {"class": "App\\SendWelcomeEmail", "args": {"email": "a@b.com", "name": "Ana"}},
+        "job": {
+            "class": "App\\SendWelcomeEmail",
+            "queue": "default",
+            "attempts": 3,
+            "args": {"email": "a@b.com", "name": "Ana"}
+        },
         "exception": "..."
     }
 }
@@ -406,9 +411,55 @@ retried if something has explicitly set a cap above `1`.
 
 That log entry — job class, constructor arguments, and the exception — is
 the only record kept of a job that's given up on; there's no dead-letter
-table or queue to inspect afterward. A job that still has attempts
-remaining logs the same way, without "permanently" in the message, and is
-released rather than removed.
+table or queue to inspect afterward.
+
+A job that still has attempts remaining logs the same way but without
+`args`, and without "permanently" in the message, and is released rather
+than removed. Its payload is still held by the backend at that point, so
+copying the arguments into the log would add nothing you couldn't already
+recover.
+
+### Keeping sensitive arguments out of the log
+
+A job routinely carries a token, an email address, or customer data that
+has no business in a log aggregator. Mark those constructor parameters
+`Kinetis\Queue\Attributes\Sensitive` and they are written as
+`[redacted]` in the entry above, while everything else is logged as-is:
+
+```{code-block} php
+use Kinetis\Queue\Attributes\Sensitive;
+use Kinetis\Queue\Job;
+
+final readonly class SendPasswordReset implements Job
+{
+    public function __construct(
+        public int $userId,
+        #[Sensitive]
+        public string $email,
+        #[Sensitive]
+        public string $resetToken,
+    ) {}
+
+    public function handle(Mailer $mailer, UrlSigner $signer): void
+    {
+        $mailer->send($this->email, $signer->resetLink($this->resetToken));
+    }
+}
+```
+
+```{code-block} json
+"args": {"userId": 4812, "email": "[redacted]", "resetToken": "[redacted]"}
+```
+
+Leaving `userId` unmarked is the point: the record stays actionable — you
+can find the account and trigger a new reset — without the address or the
+token reaching the log. Marking a parameter holding an array or an object
+redacts that value whole; there is no per-element redaction within one.
+
+This governs what is logged, not what is stored. The real values still
+travel to the queue backend, because the worker needs them to run the job
+— so a backend holding sensitive payloads wants the same access control
+as the database.
 
 ## Deferring an event listener onto the queue
 

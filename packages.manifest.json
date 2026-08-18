@@ -178,7 +178,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.5.4",
+            "version": "1.6.0",
             "requires": [
                 "framework",
                 "persistence",
