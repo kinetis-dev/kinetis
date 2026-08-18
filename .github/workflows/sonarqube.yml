@@ -83,22 +83,41 @@ jobs:
           CLUSTER_IP=$(docker inspect kinetis-redis-cluster --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           echo "REDIS_CLUSTER_SEEDS=$CLUSTER_IP:7000,$CLUSTER_IP:7001,$CLUSTER_IP:7002" >> "$GITHUB_ENV"
 
+      - name: Build the coverage image
+        # One image for every package below. infection.yml can install
+        # pcov per package because it is a matrix and each package gets
+        # its own runner; this job walks all twenty in sequence, so the
+        # same snippet would build the toolchain and reach pecl.php.net
+        # twenty times from one address — which is how a run failed on
+        # "No releases available for package pecl.php.net/pcov" with
+        # nothing wrong with the package it was building. Once is enough,
+        # and it retries after refreshing the channel.
+        #
+        # The database drivers are baked in rather than added per package:
+        # only persistence's env-gated tests/Integration suite uses them,
+        # and carrying them everywhere costs nothing next to a conditional
+        # install inside the loop.
+        run: |
+          # Its own empty directory as the build context, not /tmp:
+          # docker sends the whole context to the daemon, and a single
+          # unreadable file anywhere under it fails the build.
+          mkdir -p /tmp/coverage-image
+          cat > /tmp/coverage-image/Dockerfile <<'DOCKERFILE'
+          FROM php:8.4-cli-alpine
+          RUN apk add --no-cache gcc g++ make autoconf pkgconf re2c postgresql-dev \
+           && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql \
+           && (pecl install pcov || (pecl channel-update pecl.php.net && pecl install pcov)) \
+           && echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+          DOCKERFILE
+          docker build -q -t kinetis-coverage /tmp/coverage-image
+
       - name: Package coverage
-        # Same Docker-based pattern every other workflow here uses
-        # (php:8.4-cli-alpine via `docker run`, not a host-level PHP setup
-        # action) — pcov installed via pecl inside the container, the
-        # identical snippet infection.yml's own coverage step already
-        # uses. GIT_CONFIG_* works around "detected dubious ownership":
-        # the container runs as a different UID than the host checkout it
+        # GIT_CONFIG_* works around "detected dubious ownership": the
+        # container runs as a different UID than the host checkout it
         # bind-mounts, which git (invoked internally by Composer for
         # path-repo version resolution) refuses by default.
         run: |
           for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer migrations query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
-            # persistence's env-gated tests/Integration suite talks to the
-            # job's MySQL/Postgres services and needs the driver
-            # extensions; every other package needs none.
-            EXTRA_EXTS=""
-            if [ "$pkg" = "persistence" ]; then EXTRA_EXTS="mysqli pdo_mysql pgsql pdo_pgsql"; fi
             # cache-redis joins the Redis network started above instead of
             # the host one, so cluster redirects resolve; every other
             # package reaches the database services over --network host.
@@ -109,13 +128,7 @@ jobs:
             REDIS_ENV=""
             if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
             docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
-            docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -e EXTRA_EXTS="$EXTRA_EXTS" -v "$PWD":/app -w "/app/packages/$pkg" php:8.4-cli-alpine sh -c "
-              apk add --no-cache gcc g++ make autoconf pkgconf re2c
-              if [ -n \"\$EXTRA_EXTS\" ]; then apk add --no-cache postgresql-dev && docker-php-ext-install \$EXTRA_EXTS; fi
-              pecl install pcov
-              echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
-              php vendor/bin/phpunit --coverage-clover=coverage.xml
-            "
+            docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
           done
 
       - name: SonarQube Cloud scan
