@@ -11,6 +11,13 @@ on:
       - 'packages/**'
       - '.github/workflows/integration.yml'
 
+env:
+  # Composer runs natively in this workflow rather than in a container,
+  # so the cache is addressed by COMPOSER_CACHE_DIR instead of a mount.
+  # See ci.yml for why both exist.
+  COMPOSER_CACHE_DIR: ${{ runner.temp }}/composer-cache
+  COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
+
 jobs:
   query-builder:
     name: query-builder (${{ matrix.mysql.name }} + Postgres, PHP ${{ matrix.php-version }})
@@ -54,6 +61,12 @@ jobs:
           php-version: ${{ matrix.php-version }}
           extensions: pgsql
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/query-builder
         run: composer install --no-interaction --prefer-dist
@@ -102,6 +115,12 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/queue
         run: composer install --no-interaction --prefer-dist
@@ -148,6 +167,12 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/queue-rabbitmq
         run: composer install --no-interaction --prefer-dist
@@ -211,6 +236,12 @@ jobs:
           php-version: ${{ matrix.php-version }}
           extensions: pgsql
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install persistence dependencies
         working-directory: packages/persistence
         run: composer install --no-interaction --prefer-dist
@@ -276,6 +307,12 @@ jobs:
           TLS_CLIENT_CERT: /tmp/tls-certs/client.pem
           TLS_CLIENT_KEY: /tmp/tls-certs/client.key
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install cache-redis dependencies
         working-directory: packages/cache-redis
         run: composer install --no-interaction --prefer-dist
@@ -310,6 +347,12 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/mailer
         run: composer install --no-interaction --prefer-dist
@@ -362,6 +405,12 @@ jobs:
           php-version: ${{ matrix.php-version }}
           extensions: pgsql
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/migrations
         run: composer install --no-interaction --prefer-dist
@@ -461,6 +510,12 @@ jobs:
           mv composer.phar /usr/local/bin/composer
           rm composer-setup.php
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/cache-redis
         run: composer install --no-interaction --prefer-dist
@@ -501,6 +556,12 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install queue-sqs dependencies
         working-directory: packages/queue-sqs
         run: composer install --no-interaction --prefer-dist
@@ -509,6 +570,12 @@ jobs:
         working-directory: packages/queue-sqs
         run: php tests-integration/run.php
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install storage-s3 dependencies
         working-directory: packages/storage-s3
         run: composer install --no-interaction --prefer-dist
@@ -653,6 +720,12 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
 
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
       - name: Install dependencies
         working-directory: packages/search-opensearch
         run: composer install --no-interaction --prefer-dist

@@ -14,6 +14,13 @@ on:
       - 'sonar-project.properties'
       - '.github/workflows/sonarqube.yml'
 
+env:
+  # The cache above removes almost every download; this covers what is
+  # left — a cold cache, or a lock file that just changed. The job's own
+  # ephemeral token lifts the anonymous codeload.github.com rate limit
+  # that a run hit while fetching php-fig/log. No secret to provision.
+  COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
+
 jobs:
   sonarqube:
     name: SonarQube Cloud scan
@@ -83,6 +90,26 @@ jobs:
           CLUSTER_IP=$(docker inspect kinetis-redis-cluster --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
           echo "REDIS_CLUSTER_SEEDS=$CLUSTER_IP:7000,$CLUSTER_IP:7001,$CLUSTER_IP:7002" >> "$GITHUB_ENV"
 
+      # ~95 composer installs run across this pipeline per push, each
+      # resolving about a hundred packages, and their dependency sets
+      # overlap almost entirely — the whole universe is 22 MB. Without a
+      # cache that is ~9,500 unauthenticated zip downloads from
+      # codeload.github.com per push, concurrent, from one address, which
+      # is how a run failed on "HTTP/2 429" while fetching php-fig/log. A
+      # warm cache installs the same hundred packages with the network
+      # switched off entirely.
+      #
+      # One key across every lock file rather than one per package: the
+      # sharing between packages is what makes this work, and 22 MB is
+      # small enough that a single lock change re-downloading everything
+      # costs seconds.
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
+
       - name: Build the coverage image
         # One image for every package below. infection.yml can install
         # pcov per package because it is a matrix and each package gets
@@ -127,7 +154,7 @@ jobs:
             # configured cache.
             REDIS_ENV=""
             if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
-            docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
+            docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
             docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
           done
 
