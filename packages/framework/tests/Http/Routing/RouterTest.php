@@ -23,6 +23,10 @@ use Kinetis\Tests\Reflection\Fixtures\AbstractRouted;
 use Kinetis\Tests\Reflection\Fixtures\InheritsHelperOnly;
 use Kinetis\Tests\Reflection\Fixtures\InheritsRoute;
 use Kinetis\Tests\Reflection\Fixtures\UsesRoutedTrait;
+use Kinetis\Http\Routing\Exception\InvalidRoutePathException;
+use Kinetis\Tests\Http\Fixtures\EmptyPathController;
+use Kinetis\Tests\Http\Fixtures\UnrootedPathController;
+use Kinetis\Tests\Http\Fixtures\UnrootedPrefixController;
 use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase
@@ -254,8 +258,9 @@ final class RouterTest extends TestCase
         $router = new Router();
         $router->register(PrefixedOrderController::class);
 
-        // Declared as 'orders/' — neither leading nor trailing slashes
-        // should reach the compiled path.
+        // Declared as '/orders/' — the trailing slash is normalised away.
+        // A missing *leading* slash is rejected instead; see
+        // test_a_route_prefix_must_start_with_a_slash.
         self::assertSame(
             ['/orders', '/orders/{id}'],
             array_map(fn ($r) => $r->pathTemplate, $router->routes()),
@@ -276,5 +281,44 @@ final class RouterTest extends TestCase
             PrefixedOrderController::class,
             $router->match('GET', '/orders/7')->route->controllerClass,
         );
+    }
+
+    public function test_a_route_path_must_start_with_a_slash(): void
+    {
+        $router = new Router();
+
+        $this->expectException(InvalidRoutePathException::class);
+        $this->expectExceptionMessage('declares the path "users" — a route path must start with "/"');
+
+        $router->register(UnrootedPathController::class);
+    }
+
+    public function test_an_empty_route_path_is_rejected_rather_than_claiming_the_root(): void
+    {
+        $router = new Router();
+
+        // '' would normalise to '/', so a likely typo would quietly take
+        // over the root route.
+        $this->expectException(InvalidRoutePathException::class);
+
+        $router->register(EmptyPathController::class);
+    }
+
+    public function test_a_route_prefix_must_start_with_a_slash(): void
+    {
+        $router = new Router();
+
+        $this->expectException(InvalidRoutePathException::class);
+        $this->expectExceptionMessage('#[RoutePrefix("users")]');
+
+        $router->register(UnrootedPrefixController::class);
+    }
+
+    public function test_a_route_declaring_a_slash_sits_at_its_prefix(): void
+    {
+        $router = new Router();
+        $router->register(PrefixedUserController::class);
+
+        self::assertSame('index', $router->match('GET', '/users')->route->controllerMethod);
     }
 }

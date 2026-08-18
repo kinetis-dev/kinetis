@@ -6,7 +6,7 @@ namespace Kinetis\Tests\Http\Fixtures;
 
 use Kinetis\Http\Attributes\RoutePrefix;
 
-#[RoutePrefix('orders/')]
+#[RoutePrefix('/orders/')]
 final class PrefixedOrderController
 {
     use SharedCrudRoutes;

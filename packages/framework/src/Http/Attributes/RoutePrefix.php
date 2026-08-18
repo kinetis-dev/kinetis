@@ -12,7 +12,7 @@ use Attribute;
  * controller that uses it:
  *
  *     trait CrudRoutes {
- *         #[Get('')]      public function index(): array { ... }
+ *         #[Get('/')]     public function index(): array { ... }
  *         #[Get('/{id}')] public function show(int $id): array { ... }
  *     }
  *
@@ -25,7 +25,8 @@ use Attribute;
  *
  * Not inherited and not read from a trait, like every other attribute: the
  * prefix belongs to the concrete controller being registered, which is
- * what lets one trait serve several of them.
+ * what lets one trait serve several of them. Must start with `/`, like
+ * any other declared path.
  */
 #[Attribute(Attribute::TARGET_CLASS)]
 final readonly class RoutePrefix
@@ -38,7 +39,7 @@ final readonly class RoutePrefix
      * Joins this prefix with a route's own path. Stray slashes on either
      * half are left to Route, which normalizes every path it is given to
      * one canonical form — so this only has to guarantee a separator, and
-     * a route may declare an empty path to sit at the prefix itself.
+     * a route declaring `/` sits at the prefix itself.
      */
     public function join(string $path): string
     {

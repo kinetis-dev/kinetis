@@ -8,6 +8,7 @@ use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Attributes\RouteAttribute;
 use Kinetis\Http\Attributes\RoutePrefix;
 use Kinetis\Http\Routing\Exception\DuplicateRouteException;
+use Kinetis\Http\Routing\Exception\InvalidRoutePathException;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Reflection\AttributeScope;
@@ -40,6 +41,9 @@ final class Router
      * registered: its #[Get] belongs to the parent while the child's own
      * attributes would go unread. See Kinetis\Reflection\AttributeScope.
      *
+     * A path or #[RoutePrefix] that isn't rooted is rejected too — see
+     * Exception\InvalidRoutePathException.
+     *
      * @param class-string $controllerClass
      */
     public function register(string $controllerClass): void
@@ -47,6 +51,10 @@ final class Router
         $reflection = AttributeScope::reflect($controllerClass);
         $classMiddleware = self::middlewareClassesFor($reflection);
         $prefix = self::prefixFor($reflection);
+
+        if ($prefix !== null && !str_starts_with($prefix->prefix, '/')) {
+            throw InvalidRoutePathException::forPrefix($controllerClass, $prefix->prefix);
+        }
 
         foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             $attributes = $method->getAttributes(RouteAttribute::class, ReflectionAttribute::IS_INSTANCEOF);
@@ -60,10 +68,18 @@ final class Router
             AttributeScope::assertDeclares($method, $controllerClass);
 
             $routeAttribute = $attributes[0]->newInstance();
+            $declaredPath = $routeAttribute->path();
+
+            // Route paths are absolute, so anything not rooted is a typo
+            // rather than a shorthand — the empty string included, which
+            // normalizes to "/" and would quietly claim the root route.
+            if (!str_starts_with($declaredPath, '/')) {
+                throw InvalidRoutePathException::forRoute($controllerClass, $method->getName(), $declaredPath);
+            }
 
             $route = new Route(
                 httpMethod: $routeAttribute->httpMethod(),
-                pathTemplate: $prefix?->join($routeAttribute->path()) ?? $routeAttribute->path(),
+                pathTemplate: $prefix?->join($declaredPath) ?? $declaredPath,
                 controllerClass: $controllerClass,
                 controllerMethod: $method->getName(),
                 status: $routeAttribute->status(),

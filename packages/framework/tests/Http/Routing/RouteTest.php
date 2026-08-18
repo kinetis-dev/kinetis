@@ -93,6 +93,13 @@ final class RouteTest extends TestCase
         ];
     }
 
+    /**
+     * Route normalizes whatever it is handed, including a path with no
+     * leading slash — Router rejects that earlier
+     * (Exception\InvalidRoutePathException), so in practice this only
+     * ever fires for the trailing slash, but Route is also constructed by
+     * fromArray() and directly, and stays self-consistent for both.
+     */
     #[DataProvider('pathsToNormalize')]
     public function test_a_path_is_stored_in_one_canonical_form(string $declared, string $expected): void
     {

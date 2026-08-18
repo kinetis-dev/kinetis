@@ -98,7 +98,7 @@ different path by each controller that uses it:
 ```{code-block} php
 trait CrudRoutes
 {
-    #[Get('')]
+    #[Get('/')]
     public function index(): array { ... }
 
     #[Get('/{id}')]
@@ -119,12 +119,19 @@ final class OrderController
 ```
 
 That registers `/users`, `/users/{id}`, `/orders` and `/orders/{id}`. A
-route may declare an empty path to sit at the prefix itself.
+route declaring `/` sits at the prefix itself, which is what
+`UserController::index()` above does.
 
-Every path is stored in one canonical form — a leading slash, no trailing
-one — whether it came from a prefix or was written out in full. So
-`#[Get('/users')]`, `#[Get('/users/')]` and `#[Get('users')]` are the
-same route, and declaring two of them is a duplicate rather than two
+**Every declared path must start with `/`** — a route path is absolute,
+so `#[Get('users')]` is a typo rather than a shorthand and is rejected at
+registration, as is `#[RoutePrefix('users')]`. The empty string is
+rejected for the same reason: it would resolve to `/` and quietly claim
+the root route, which is almost never what someone leaving a path blank
+meant.
+
+Trailing slashes, by contrast, are normalised away, so every path is
+stored in one canonical form. `#[Get('/users')]` and `#[Get('/users/')]`
+are the same route, and declaring both is a duplicate rather than two
 routes each answering half the requests you'd expect. `/` itself is
 unchanged.
 

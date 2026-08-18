@@ -12,7 +12,7 @@ use Kinetis\Http\Attributes\Get;
  */
 trait SharedCrudRoutes
 {
-    #[Get('')]
+    #[Get('/')]
     public function index(): array
     {
         return ['listed'];
