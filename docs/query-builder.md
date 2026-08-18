@@ -257,39 +257,33 @@ across separate queries merges their `where()`s together.
 
 ## How a value reaches the database: literal or bound parameter
 
-A prepared statement only pays for itself when it's reused — one `Query`
-is built and run exactly once, so a value it binds never gets the chance
-to amortize the extra round trip a real `PREPARE` costs. Because of that,
-`Query` writes a value directly into the SQL text as a literal instead of
-binding it, whenever doing so is provably safe:
+A `Query` binds its values as real parameters, or writes them into the
+SQL text as literals, and which one it picks depends on the driver
+underneath it. Both produce the same rows; the difference is only how the
+value physically reaches the database.
 
-- Every `int` and `bool` value — always, on both dialects.
-- Every `string` value on Postgres — via `PostgresExecutor::quoteLiteral()`,
-  the driver's own real escaping call.
-- Every `string` value on MySQL, but only when the connection's configured
-  charset is `utf8mb4`, `utf8mb3`, `utf8`, `ascii`, `latin1`, or `binary`
-  (Kinetis's own default is `utf8mb4`). Outside that list, the value is
-  bound as a real parameter instead.
+**On the native MySQL and Postgres drivers, `int` and `bool` values are
+written as literals.** Those drivers reach the server once for a query
+carrying no parameters and twice for a prepared one, so a query whose
+values are all safely representable saves a round trip. Nothing else is
+ever inlined: `string`, `null` and `float` always bind. A string literal
+would depend on connection charset and SQL-mode state the builder
+deliberately knows nothing about, and `(string)` on a float can produce
+`NAN` or `INF`, neither of which is valid SQL.
 
-`null` and `float` values are always bound, never written as a literal —
-this also applies to the whole query the moment any single value in it
-needs binding: a query is either fully inlined or fully parameterized,
-never a mix. The same is true for `whereRaw()`/`selectRaw()`/
-`orderByRaw()`: using any of them anywhere in a query disables inlining
-for the entire query, since raw SQL text may contain a `?` that was never
-meant as a placeholder.
+**On the PDO drivers, every value binds.** They run with native prepares
+and memoize the prepared statement per connection, so binding costs one
+round trip after the first and keeps the binary protocol — while an
+unparameterized query drops to the text protocol and measures about half
+again as expensive per query. The drivers say which they prefer by
+carrying `Kinetis\Persistence\Contract\PrefersPreparedStatements`; a
+third-party link can declare the same.
 
-None of this changes what a query returns or which rows it matches —
-only how the value physically reaches the database. `where()`'s value
-still ends up compared exactly the way it always did.
-
-```{warning}
-On MySQL, the literal form assumes the connection's SQL mode has
-`NO_BACKSLASH_ESCAPES` disabled, which is MySQL's default. A server
-explicitly configured with `NO_BACKSLASH_ESCAPES` makes this unsafe —
-not silently, though: a value containing a quote character fails with a
-SQL syntax error on that server rather than matching the wrong rows.
-```
+Two rules apply either way. A query is fully inlined or fully
+parameterized, never a mix — one value that must bind makes the whole
+query bind. And `whereRaw()`, `selectRaw()` or `orderByRaw()` anywhere in
+a query disables inlining for all of it, since raw SQL text may contain a
+`?` that was never meant as a placeholder.
 
 ## Operators, directions, and join types are allow-listed
 

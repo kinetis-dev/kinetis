@@ -129,10 +129,16 @@ writes" is noise.
 ## What not to tune
 
 - **`DB_DRIVER`.** The `auto` split (native under worker mode, PDO
-  under FPM) is itself a measured optimum: forcing PDO under worker
-  mode measures ~20% slower on fan-out routes, and forcing the async
-  driver under FPM pays client CPU for overlap that boot-and-die
-  lifetimes can't use.
+  under FPM) is itself a measured optimum. Under a worker, a 20-query
+  fan-out completes in about 1.7 ms of wall time on the native driver
+  against 3.7 ms on PDO — the queries genuinely overlap, which is the
+  whole point of the driver. Under FPM there is nothing to overlap and
+  the pool is built and discarded per request, which is expensive: for
+  the same 20 queries, `DB_MAX_CONNECTIONS` of 1, 4, 8 and 20 costs
+  3.2, 4.3, 6.3 and 13.4 ms of CPU, against 2.3 ms for PDO's single
+  connection. Forcing the async driver there pays for overlap a
+  boot-and-die lifetime cannot use, and pays again for every connection
+  it opens.
 - **The mysqli poll window.** The native MySQL driver's 1 ms poll
   quantum looks like an obvious latency suspect against a
   sub-millisecond database; it isn't — measured throughput is
