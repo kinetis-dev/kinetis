@@ -120,7 +120,9 @@ final class TelemetryHolderTest extends TestCase
 
     public function test_a_failing_backend_is_not_swallowed(): void
     {
-        $backend = $this->createMock(TelemetryInterface::class);
+        // A stub, not a mock: the test asserts the exception reaches the
+        // caller, never that the backend was called a certain way.
+        $backend = $this->createStub(TelemetryInterface::class);
         $backend->method('phase')->willThrowException(new RuntimeException('backend failed'));
 
         $telemetry = new Telemetry($backend);

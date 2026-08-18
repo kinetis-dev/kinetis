@@ -11,10 +11,10 @@
         "preferStable": true,
         "phpVersion": "^8.4",
         "requireDev": {
-            "infection/infection": "^0.34.2",
-            "phpstan/phpstan": "^2.2",
-            "phpunit/phpunit": "^11.0",
-            "vimeo/psalm": "^6.16"
+            "infection/infection": "^0.35.0",
+            "phpstan/phpstan": "^2.2.8",
+            "phpunit/phpunit": "^12.5.33",
+            "vimeo/psalm": "^6.16.1"
         },
         "phpstanRules": [
             "Kinetis\\Linting\\NoStaticPropertiesRule"
@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.19.1",
+            "version": "1.19.2",
             "bin": [
                 "bin/kinetis"
             ],
@@ -34,20 +34,20 @@
                 "src/Async/functions.php"
             ],
             "requireDevExtra": {
-                "nikic/php-parser": "^5.0"
+                "nikic/php-parser": "^5.8.0"
             },
             "require": {
                 "ext-fileinfo": "*",
-                "nyholm/psr7": "^1.8",
-                "nyholm/psr7-server": "^1.1",
-                "psr/container": "^2.0",
-                "psr/event-dispatcher": "^1.0",
+                "nyholm/psr7": "^1.8.2",
+                "nyholm/psr7-server": "^1.1.0",
+                "psr/container": "^2.0.2",
+                "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
-                "psr/http-server-middleware": "^1.0",
-                "psr/log": "^3.0",
-                "psr/simple-cache": "^3.0",
-                "revolt/event-loop": "^1.0",
-                "vlucas/phpdotenv": "^5.6"
+                "psr/http-server-middleware": "^1.0.2",
+                "psr/log": "^3.0.2",
+                "psr/simple-cache": "^3.0.0",
+                "revolt/event-loop": "^1.0.9",
+                "vlucas/phpdotenv": "^5.6.4"
             },
             "suggest": {
                 "ext-event": "An OS-native Revolt event-loop backend (epoll), removing select()'s 1024 fd-number ceiling. Needed when the loop watches real sockets (native Postgres driver, Redis, HTTP client) in a FrankenPHP worker process; a MySQL-only deployment does not need it. ext-uv/ext-ev work equally."
@@ -59,15 +59,15 @@
             "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.10.2",
+            "version": "1.10.3",
             "requires": [
                 "framework"
             ],
             "require": {
-                "revolt/event-loop": "^1.0"
+                "revolt/event-loop": "^1.0.9"
             },
             "requireDevExtra": {
-                "nyholm/psr7": "^1.8"
+                "nyholm/psr7": "^1.8.2"
             },
             "suggest": {
                 "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
@@ -84,15 +84,15 @@
             "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
-            "version": "1.0.5",
+            "version": "1.0.6",
             "requires": [
                 "framework"
             ],
             "require": {
-                "amphp/amp": "^3.1",
-                "amphp/redis": "^2.0",
-                "amphp/socket": "^2.3",
-                "amphp/serialization": "^1.0"
+                "amphp/amp": "^3.1.3",
+                "amphp/redis": "^2.0.4",
+                "amphp/socket": "^2.4.0",
+                "amphp/serialization": "^1.1.0"
             },
             "kinetis": []
         },
@@ -101,14 +101,14 @@
             "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
-            "version": "1.0.4",
+            "version": "1.0.5",
             "requires": [
                 "framework"
             ],
             "require": {
-                "nyholm/psr7": "^1.8",
+                "nyholm/psr7": "^1.8.2",
                 "psr/http-message": "^2.0",
-                "riverline/multipart-parser": "^2.1"
+                "riverline/multipart-parser": "^2.2.2"
             },
             "kinetis": []
         },
@@ -117,7 +117,7 @@
             "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via kinetis/persistence's drivers, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.2.5",
+            "version": "1.2.6",
             "requires": [
                 "framework",
                 "persistence"
@@ -129,14 +129,14 @@
             "description": "Bearer/opaque-token authentication middleware for Kinetis, built entirely on interfaces core already requires (PSR-7/PSR-15). See kinetis/auth-jwt for stateless JWT verification instead.",
             "namespace": "Kinetis\\Auth\\",
             "testNamespace": "Kinetis\\Auth\\Tests\\",
-            "version": "1.0.4",
+            "version": "1.0.5",
             "requires": [
                 "framework"
             ],
             "require": {
-                "nyholm/psr7": "^1.8",
+                "nyholm/psr7": "^1.8.2",
                 "psr/http-message": "^2.0",
-                "psr/http-server-middleware": "^1.0"
+                "psr/http-server-middleware": "^1.0.2"
             },
             "kinetis": []
         },
@@ -145,17 +145,17 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.0.4",
+            "version": "1.0.5",
             "requires": [
                 "framework"
             ],
             "require": {
                 "ext-openssl": "*",
-                "firebase/php-jwt": "^7.1",
-                "nyholm/psr7": "^1.8",
+                "firebase/php-jwt": "^7.1.0",
+                "nyholm/psr7": "^1.8.2",
                 "psr/http-message": "^2.0",
-                "psr/http-server-middleware": "^1.0",
-                "psr/simple-cache": "^3.0"
+                "psr/http-server-middleware": "^1.0.2",
+                "psr/simple-cache": "^3.0.0"
             },
             "kinetis": []
         },
@@ -164,7 +164,7 @@
             "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.3.1",
+            "version": "1.3.2",
             "requires": [
                 "framework",
                 "persistence"
@@ -178,16 +178,16 @@
             "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.5.3",
+            "version": "1.5.4",
             "requires": [
                 "framework",
                 "persistence",
                 "cache-redis"
             ],
             "require": {
-                "amphp/redis": "^2.0",
-                "psr/container": "^2.0",
-                "psr/log": "^3.0"
+                "amphp/redis": "^2.0.4",
+                "psr/container": "^2.0.2",
+                "psr/log": "^3.0.2"
             },
             "suggest": {
                 "ext-pcntl": "Lets `kinetis queue:work` stop gracefully on SIGTERM, finishing the job in flight instead of being killed mid-job. Not loaded by default in the official PHP Docker images."
@@ -202,15 +202,15 @@
             "description": "File storage for Kinetis, built on League\\Flysystem — local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "namespace": "Kinetis\\Storage\\",
             "testNamespace": "Kinetis\\Storage\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework"
             ],
             "require": {
-                "league/flysystem": "^3.35",
-                "league/mime-type-detection": "^1.0",
-                "amphp/file": "^3.0",
-                "amphp/byte-stream": "^2"
+                "league/flysystem": "^3.35.2",
+                "league/mime-type-detection": "^1.17.0",
+                "amphp/file": "^3.2.0",
+                "amphp/byte-stream": "^2.1.2"
             },
             "kinetis": {
                 "bootstrap": "Kinetis\\Storage\\PackageBootstrap"
@@ -221,14 +221,14 @@
             "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
             "namespace": "Kinetis\\RevoltHttpClient\\",
             "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requiresDev": [
                 "framework"
             ],
             "require": {
-                "symfony/http-client": "^8.0",
-                "symfony/http-client-contracts": "^3.7",
-                "amphp/http-client": "^5.3"
+                "symfony/http-client": "^8.1.4",
+                "symfony/http-client-contracts": "^3.7.1",
+                "amphp/http-client": "^5.3.6"
             },
             "kinetis": []
         },
@@ -237,15 +237,15 @@
             "description": "Fiber-native non-blocking S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3.",
             "namespace": "Kinetis\\StorageS3\\",
             "testNamespace": "Kinetis\\StorageS3\\Tests\\",
-            "version": "1.0.4",
+            "version": "1.0.5",
             "requires": [
                 "framework",
                 "revolt-http-client"
             ],
             "require": {
-                "async-aws/s3": "^3.4",
-                "league/flysystem": "^3.35",
-                "league/flysystem-async-aws-s3": "^3.0"
+                "async-aws/s3": "^3.4.1",
+                "league/flysystem": "^3.35.2",
+                "league/flysystem-async-aws-s3": "^3.31.0"
             },
             "kinetis": []
         },
@@ -254,14 +254,14 @@
             "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueSqs\\",
             "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
-            "version": "1.2.1",
+            "version": "1.2.2",
             "requires": [
                 "framework",
                 "queue",
                 "revolt-http-client"
             ],
             "require": {
-                "async-aws/sqs": "^2.9"
+                "async-aws/sqs": "^2.9.0"
             },
             "requiresDev": [
                 "persistence",
@@ -274,15 +274,15 @@
             "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueRabbitMq\\",
             "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
-            "version": "1.2.1",
+            "version": "1.2.2",
             "requires": [
                 "framework",
                 "queue"
             ],
             "require": {
-                "amphp/amp": "^3.1",
-                "thesis/amqp": "^1.0",
-                "thesis/time-span": "^0.2"
+                "amphp/amp": "^3.1.3",
+                "thesis/amqp": "^1.0.2",
+                "thesis/time-span": "^0.2.3"
             },
             "requiresDev": [
                 "persistence",
@@ -295,13 +295,13 @@
             "description": "Non-blocking mail sending for Kinetis — Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
             "namespace": "Kinetis\\Mailer\\",
             "testNamespace": "Kinetis\\Mailer\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework",
                 "revolt-http-client"
             ],
             "require": {
-                "symfony/mailer": "^7.2|^8.0"
+                "symfony/mailer": "^8.1.2"
             },
             "kinetis": {
                 "bootstrap": "Kinetis\\Mailer\\PackageBootstrap"
@@ -312,14 +312,14 @@
             "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, via kinetis/revolt-http-client's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchOpenSearch\\",
             "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework",
                 "revolt-http-client"
             ],
             "require": {
-                "opensearch-project/opensearch-php": "^2.6",
-                "symfony/http-client": "^8.0"
+                "opensearch-project/opensearch-php": "^2.6.0",
+                "symfony/http-client": "^8.1.4"
             },
             "kinetis": {
                 "bootstrap": "Kinetis\\SearchOpenSearch\\PackageBootstrap"
@@ -330,7 +330,7 @@
             "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
-            "version": "1.1.4",
+            "version": "1.1.5",
             "requires": [
                 "revolt-http-client"
             ],
@@ -338,12 +338,12 @@
                 "framework"
             ],
             "require": {
-                "async-aws/core": "^1.20",
-                "psr/http-client": "^1.0",
+                "async-aws/core": "^1.29.2",
+                "psr/http-client": "^1.0.3",
                 "psr/http-message": "^2.0"
             },
             "requireDevExtra": {
-                "nyholm/psr7": "^1.8"
+                "nyholm/psr7": "^1.8.2"
             },
             "kinetis": []
         },
@@ -352,12 +352,12 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.1.9",
+            "version": "1.1.10",
             "type": "project",
             "requireDevOverride": {
-                "phpstan/phpstan": "^2.2",
-                "phpunit/phpunit": "^11.0",
-                "vimeo/psalm": "^6.16"
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^12.5.33",
+                "vimeo/psalm": "^6.16.1"
             },
             "requires": [
                 "framework",
@@ -368,10 +368,10 @@
                 "queue"
             ],
             "require": {
-                "league/plates": "^3.6",
-                "monolog/monolog": "^3.0",
+                "league/plates": "^3.6.0",
+                "monolog/monolog": "^3.10.0",
                 "psr/http-message": "^2.0",
-                "pusher/pusher-php-server": "^7.2"
+                "pusher/pusher-php-server": "^7.3.0"
             }
         },
         "skeleton": {
@@ -379,7 +379,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.0.8",
+            "version": "1.0.9",
             "type": "project",
             "requires": [
                 "framework"
@@ -390,7 +390,7 @@
             "description": "OpenTelemetry tracing for Kinetis — request spans, SQL and queue decorators, a traced HTTP transport, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.4.1",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -401,12 +401,12 @@
                 "cache-redis"
             ],
             "require": {
-                "open-telemetry/sdk": "^1.15",
-                "open-telemetry/exporter-otlp": "^1.4",
-                "symfony/http-client": "^8.0",
-                "symfony/http-client-contracts": "^3.7",
-                "nyholm/psr7": "^1.8",
-                "psr/log": "^3.0"
+                "open-telemetry/sdk": "^1.15.0",
+                "open-telemetry/exporter-otlp": "^1.4.0",
+                "symfony/http-client": "^8.1.4",
+                "symfony/http-client-contracts": "^3.7.1",
+                "nyholm/psr7": "^1.8.2",
+                "psr/log": "^3.0.2"
             },
             "suggest": {
                 "kinetis/persistence": "Enables the TracingMysqlLink/TracingPostgresLink decorators, a span per SQL query.",
@@ -422,7 +422,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework"
             ],
@@ -431,9 +431,9 @@
                 "cache-redis"
             ],
             "require": {
-                "psr/simple-cache": "^3.0",
+                "psr/simple-cache": "^3.0.0",
                 "psr/http-message": "^2.0",
-                "psr/http-server-middleware": "^1.0"
+                "psr/http-server-middleware": "^1.0.2"
             },
             "suggest": {
                 "kinetis/persistence": "Enables SqlSessionStore, sessions in a kinetis_sessions table over the SQL contracts.",

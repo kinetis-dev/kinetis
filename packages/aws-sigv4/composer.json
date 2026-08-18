@@ -11,17 +11,17 @@
     "require": {
         "php": "^8.4",
         "kinetis/revolt-http-client": "dev-main",
-        "async-aws/core": "^1.20",
-        "psr/http-client": "^1.0",
+        "async-aws/core": "^1.29.2",
+        "psr/http-client": "^1.0.3",
         "psr/http-message": "^2.0"
     },
     "require-dev": {
-        "infection/infection": "^0.34.2",
+        "infection/infection": "^0.35.0",
         "kinetis/framework": "dev-main",
-        "nyholm/psr7": "^1.8",
-        "phpstan/phpstan": "^2.2",
-        "phpunit/phpunit": "^11.0",
-        "vimeo/psalm": "^6.16"
+        "nyholm/psr7": "^1.8.2",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^12.5.33",
+        "vimeo/psalm": "^6.16.1"
     },
     "autoload": {
         "psr-4": {

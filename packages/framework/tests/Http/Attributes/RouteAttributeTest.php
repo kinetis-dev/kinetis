@@ -55,9 +55,21 @@ final class RouteAttributeTest extends TestCase
     }
 
     /**
+     * The verb classes alone, for the cases that need nothing else. A
+     * provider may not hand a test more arguments than it declares, so
+     * this is derived from verbs() rather than repeated.
+     *
+     * @return list<array{class-string<RouteAttribute>}>
+     */
+    public static function verbClasses(): array
+    {
+        return array_map(static fn (array $verb): array => [$verb[0]], self::verbs());
+    }
+
+    /**
      * @param class-string<RouteAttribute> $class
      */
-    #[DataProvider('verbs')]
+    #[DataProvider('verbClasses')]
     public function test_the_status_can_be_overridden(string $class): void
     {
         self::assertSame(418, new $class('/teapot', status: 418)->status());
@@ -66,7 +78,7 @@ final class RouteAttributeTest extends TestCase
     /**
      * @param class-string<RouteAttribute> $class
      */
-    #[DataProvider('verbs')]
+    #[DataProvider('verbClasses')]
     public function test_is_declared_for_methods_only(string $class): void
     {
         $attributes = new ReflectionClass($class)->getAttributes(\Attribute::class);

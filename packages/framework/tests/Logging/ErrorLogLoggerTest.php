@@ -19,50 +19,60 @@ final class ErrorLogLoggerTest extends TestCase
 {
     private string $logFile;
 
-    private string|false $previousDestination;
-
-    private string|false $previousType;
-
     protected function setUp(): void
     {
         $this->logFile = tempnam(sys_get_temp_dir(), 'errorlog');
-        $this->previousDestination = ini_set('error_log', $this->logFile);
-        $this->previousType = ini_set('log_errors', '1');
     }
 
     protected function tearDown(): void
     {
-        if ($this->previousDestination !== false) {
-            ini_set('error_log', $this->previousDestination);
-        }
-
-        if ($this->previousType !== false) {
-            ini_set('log_errors', $this->previousType);
-        }
-
         @unlink($this->logFile);
     }
 
-    private function logged(): string
+    /**
+     * Runs $log with error_log() pointed at this test's own file, and
+     * returns what it wrote.
+     *
+     * The redirect has to happen inside the test body rather than in
+     * setUp(): PHPUnit applies its own error_log setting between setUp()
+     * and the test method, to capture output per test, which discards
+     * anything setUp() set.
+     */
+    private function logged(callable $log): string
     {
+        $previousDestination = ini_set('error_log', $this->logFile);
+        $previousType = ini_set('log_errors', '1');
+
+        try {
+            $log();
+        } finally {
+            if ($previousDestination !== false) {
+                ini_set('error_log', $previousDestination);
+            }
+
+            if ($previousType !== false) {
+                ini_set('log_errors', $previousType);
+            }
+        }
+
         return (string) file_get_contents($this->logFile);
     }
 
     public function test_writes_the_level_and_message(): void
     {
-        new ErrorLogLogger()->log(LogLevel::WARNING, 'disk is filling up');
+        $logged = $this->logged(static fn () => new ErrorLogLogger()->log(LogLevel::WARNING, 'disk is filling up'));
 
-        self::assertStringContainsString('[warning] disk is filling up', $this->logged());
+        self::assertStringContainsString('[warning] disk is filling up', $logged);
     }
 
     public function test_interpolates_placeholders_from_context(): void
     {
-        new ErrorLogLogger()->log(LogLevel::INFO, 'user {id} signed in from {ip}', [
+        $logged = $this->logged(static fn () => new ErrorLogLogger()->log(LogLevel::INFO, 'user {id} signed in from {ip}', [
             'id' => 42,
             'ip' => '203.0.113.9',
-        ]);
+        ]));
 
-        self::assertStringContainsString('user 42 signed in from 203.0.113.9', $this->logged());
+        self::assertStringContainsString('user 42 signed in from 203.0.113.9', $logged);
     }
 
     /**
@@ -71,18 +81,16 @@ final class ErrorLogLoggerTest extends TestCase
      */
     public function test_leaves_a_placeholder_alone_when_its_value_is_not_stringable(): void
     {
-        new ErrorLogLogger()->log(LogLevel::INFO, 'payload {data}', ['data' => ['a' => 1]]);
+        $logged = $this->logged(static fn () => new ErrorLogLogger()->log(LogLevel::INFO, 'payload {data}', ['data' => ['a' => 1]]));
 
-        self::assertStringContainsString('payload {data}', $this->logged());
+        self::assertStringContainsString('payload {data}', $logged);
     }
 
     public function test_appends_the_class_and_location_of_an_exception(): void
     {
         $exception = new RuntimeException('boom');
 
-        new ErrorLogLogger()->log(LogLevel::ERROR, 'request failed', ['exception' => $exception]);
-
-        $logged = $this->logged();
+        $logged = $this->logged(static fn () => new ErrorLogLogger()->log(LogLevel::ERROR, 'request failed', ['exception' => $exception]));
         self::assertStringContainsString('request failed', $logged);
         self::assertStringContainsString(RuntimeException::class, $logged);
         self::assertStringContainsString(basename($exception->getFile()) . ':' . $exception->getLine(), $logged);
@@ -95,8 +103,12 @@ final class ErrorLogLoggerTest extends TestCase
      */
     public function test_a_non_throwable_under_the_exception_key_is_not_treated_as_one(): void
     {
-        new ErrorLogLogger()->log(LogLevel::ERROR, 'odd', ['exception' => 'not really']);
+        $logged = $this->logged(static fn () => new ErrorLogLogger()->log(LogLevel::ERROR, 'odd', ['exception' => 'not really']));
 
-        self::assertStringNotContainsString(' at ', $this->logged());
+        // Asserted positively first: a "does not contain" check passes
+        // trivially against an empty string, so it proves nothing unless
+        // something was captured.
+        self::assertStringContainsString('odd', $logged);
+        self::assertStringNotContainsString(' at ', $logged);
     }
 }

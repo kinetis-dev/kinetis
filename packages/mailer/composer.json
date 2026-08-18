@@ -12,13 +12,13 @@
         "php": "^8.4",
         "kinetis/framework": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
-        "symfony/mailer": "^7.2|^8.0"
+        "symfony/mailer": "^8.1.2"
     },
     "require-dev": {
-        "infection/infection": "^0.34.2",
-        "phpstan/phpstan": "^2.2",
-        "phpunit/phpunit": "^11.0",
-        "vimeo/psalm": "^6.16"
+        "infection/infection": "^0.35.0",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^12.5.33",
+        "vimeo/psalm": "^6.16.1"
     },
     "autoload": {
         "psr-4": {
