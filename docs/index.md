@@ -8,7 +8,7 @@ article[role="main"] section > p > strong:only-child { color: #D97706; }
 body[data-theme="dark"] article[role="main"] section > p > strong:only-child { color: #F59E0B; }
 </style>
 
-**Optimized for long-running processes, but equally snappy on PHP-FPM and serverless environments. One codebase, either runtime.**
+**Optimized for long-running processes, but equally snappy on PHP-FPM and serverless environments. One codebase — any runtime.**
 
 - Typed requests and responses.
 - OpenAPI generated from your code rather than maintained beside it.
@@ -29,7 +29,7 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 - Controllers, commands, event listeners, and middleware found
   automatically anywhere under your own namespace.
 
-**Do several things at once, inside one request**
+**True request-level concurrency**
 
 - Real concurrency on PHP Fibers: run four queries, an HTTP call, and a
   cache read side by side and wait once.
