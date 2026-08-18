@@ -236,4 +236,58 @@ final class SessionKernelTest extends TestCase
             self::assertStringContainsString('valid cookie name', (string) $response->getBody(), var_export($name, true));
         }
     }
+
+    public function test_an_unrecognised_same_site_value_is_refused(): void
+    {
+        foreach (['Invalid', 'Lax;Domain=evil.com', ''] as $value) {
+            $response = $this->clientWith(['SESSION_SAMESITE' => $value, 'APP_ENV' => 'development'])
+                ->get('/remember/dark');
+
+            $response->assertStatus(500);
+            self::assertStringContainsString('SESSION_SAMESITE', (string) $response->getBody(), var_export($value, true));
+        }
+    }
+
+    /**
+     * A browser drops a SameSite=None cookie that is not Secure, so the
+     * session would be lost on every response. Refused where it can still
+     * be read as a configuration mistake.
+     */
+    public function test_same_site_none_without_secure_is_refused(): void
+    {
+        $response = $this->clientWith([
+            'SESSION_SAMESITE' => 'None',
+            'SESSION_SECURE' => 'false',
+            'APP_ENV' => 'development',
+        ])->get('/remember/dark');
+
+        $response->assertStatus(500);
+        self::assertStringContainsString('SESSION_SECURE', (string) $response->getBody());
+    }
+
+    public function test_same_site_none_is_sent_when_the_cookie_is_secure(): void
+    {
+        $setCookie = $this->clientWith(['SESSION_SAMESITE' => 'None'])
+            ->get('/remember/dark')
+            ->getHeaderLine('Set-Cookie');
+
+        self::assertStringContainsString('SameSite=None', $setCookie);
+        self::assertStringContainsString('Secure', $setCookie);
+    }
+
+    /**
+     * A browser matches the attribute case-insensitively, but the header
+     * is written once and read by everything downstream, so it is
+     * normalised rather than echoed as typed.
+     */
+    public function test_a_same_site_value_is_normalised_to_its_canonical_casing(): void
+    {
+        foreach (['strict' => 'Strict', 'LAX' => 'Lax', 'nOnE' => 'None'] as $configured => $expected) {
+            $setCookie = $this->clientWith(['SESSION_SAMESITE' => $configured])
+                ->get('/remember/dark')
+                ->getHeaderLine('Set-Cookie');
+
+            self::assertStringContainsString("SameSite={$expected}", $setCookie, $configured);
+        }
+    }
 }

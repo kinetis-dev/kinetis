@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.19.2",
+            "version": "1.20.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -422,7 +422,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.2.0",
             "requires": [
                 "framework"
             ],

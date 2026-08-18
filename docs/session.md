@@ -23,9 +23,14 @@ it on:
 | `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset means the package binds nothing. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable, counted from its last write. |
 | `SESSION_COOKIE` | `kinetis_session` | The cookie name. A `__Host-`/`__Secure-` prefix is honoured — see [below](#cookie-name-prefixes). |
-| `SESSION_SAMESITE` | `Lax` | The cookie's `SameSite` attribute. |
+| `SESSION_SAMESITE` | `Lax` | The cookie's `SameSite` attribute: `Strict`, `Lax`, or `None`, matched regardless of casing. `None` requires `SESSION_SECURE`. |
 | `SESSION_SECURE` | `true` | The cookie's `Secure` attribute — set `false` only for non-TLS local development. |
 | `SESSION_FILES_DIR` | system temp | The `file` driver's directory. |
+
+Both cookie settings are checked when the middleware is constructed, not
+when a cookie is first written. A `SESSION_SAMESITE` outside those three
+values, or `None` without `SESSION_SECURE`, stops the application rather
+than sending a header a browser would ignore or a cookie it would drop.
 
 The three drivers:
 

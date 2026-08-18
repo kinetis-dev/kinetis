@@ -62,9 +62,13 @@ final readonly class SessionMiddleware implements MiddlewareInterface
      */
     private const string NAME_PATTERN = '/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+$/';
 
+    /** The only values a browser recognises for the SameSite attribute. */
+    private const array SAME_SITE_VALUES = ['Strict', 'Lax', 'None'];
+
     private string $cookieName;
 
     private bool $secure;
+    private string $sameSite;
 
     public function __construct(
         private RequestScope $scope,
@@ -73,6 +77,25 @@ final readonly class SessionMiddleware implements MiddlewareInterface
     ) {
         $this->cookieName = $config->string('SESSION_COOKIE', 'kinetis_session');
         $this->secure = $config->bool('SESSION_SECURE', true);
+        $this->sameSite = ucfirst(strtolower($config->string('SESSION_SAMESITE', 'Lax')));
+
+        if (!\in_array($this->sameSite, self::SAME_SITE_VALUES, true)) {
+            $accepted = implode(', ', self::SAME_SITE_VALUES);
+
+            throw new SessionException(
+                "SESSION_SAMESITE \"{$config->string('SESSION_SAMESITE', 'Lax')}\" is not a SameSite value. "
+                . "Use one of {$accepted} — anything else is written into the cookie header verbatim, where a "
+                . 'browser ignores the attribute and may drop the cookie.',
+            );
+        }
+
+        if ($this->sameSite === 'None' && !$this->secure) {
+            throw new SessionException(
+                'SESSION_SAMESITE is None, which a browser only accepts on a Secure cookie, but SESSION_SECURE '
+                . 'is off — the cookie would be dropped and every session lost. Turn SESSION_SECURE on, or use '
+                . 'Lax for non-TLS local development.',
+            );
+        }
 
         if (\preg_match(self::NAME_PATTERN, $this->cookieName) !== 1) {
             throw new SessionException(
@@ -165,7 +188,7 @@ final readonly class SessionMiddleware implements MiddlewareInterface
             $this->cookieName . '=' . $value,
             'Path=/',
             'HttpOnly',
-            'SameSite=' . $this->config->string('SESSION_SAMESITE', 'Lax'),
+            'SameSite=' . $this->sameSite,
         ];
 
         if ($lifetimeSeconds >= 0) {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Middleware;
 
+use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Nyholm\Psr7\Response;
@@ -57,6 +58,54 @@ class RateLimitMiddleware implements MiddlewareInterface
     ) {
         if ($cache instanceof NullSimpleCache) {
             throw RateLimitUnavailableException::nullCache();
+        }
+
+        if ($maxAttempts < 1) {
+            throw InvalidRateLimitConfigException::nonPositiveMaxAttempts($maxAttempts);
+        }
+
+        if ($windowSeconds < 1) {
+            throw InvalidRateLimitConfigException::nonPositiveWindow($windowSeconds);
+        }
+
+        foreach ($trustedProxies as $proxy) {
+            self::assertUsableProxy($proxy);
+        }
+    }
+
+    /**
+     * A range decides who may set X-Forwarded-For, so a malformed one is
+     * rejected here rather than reaching ipInCidr(), where a negative
+     * prefix raises ArithmeticError on the bit shift and an oversized one
+     * silently narrows the range to a single address.
+     */
+    private static function assertUsableProxy(string $proxy): void
+    {
+        if (!str_contains($proxy, '/')) {
+            if (@inet_pton($proxy) === false) {
+                throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, 'not an IP address');
+            }
+
+            return;
+        }
+
+        [$subnet, $prefix] = explode('/', $proxy, 2);
+        $binary = @inet_pton($subnet);
+
+        if ($binary === false) {
+            throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, 'the part before "/" is not an IP address');
+        }
+
+        if (preg_match('/^\d+$/', $prefix) !== 1) {
+            throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, 'the prefix length must be a whole number');
+        }
+
+        $maxBits = strlen($binary) * 8;
+
+        if ((int) $prefix > $maxBits) {
+            $family = $maxBits === 32 ? 'IPv4' : 'IPv6';
+
+            throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, "an {$family} prefix length runs from 0 to {$maxBits}");
         }
     }
 

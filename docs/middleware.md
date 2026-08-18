@@ -756,7 +756,9 @@ $app->bind(RateLimitMiddleware::class, function ($c) {
 
     return new RateLimitMiddleware(
         $c->get(CacheInterface::class),
-        trustedProxies: $trustedProxies === '' ? [] : explode(',', $trustedProxies),
+        // Trimmed, so a space after a comma in .env is not read as
+        // part of the next range.
+        trustedProxies: $trustedProxies === '' ? [] : array_map(trim(...), explode(',', $trustedProxies)),
     );
 });
 ```
@@ -765,6 +767,17 @@ When a request comes through more than one trusted hop, the
 `X-Forwarded-For` chain is walked from the end backward, skipping every
 entry that's itself a trusted proxy — the first untrusted entry is the
 real client.
+
+Each range is parsed when the middleware is constructed. One that cannot
+be — a prefix length outside 0-32 for IPv4 or 0-128 for IPv6, or an
+address that isn't one — raises
+`Exception\InvalidRateLimitConfigException` there rather than on the
+first request to reach it, since the list decides who is allowed to set
+`X-Forwarded-For`. `maxAttempts` and `windowSeconds` are checked the same
+way and must both be at least 1: a window of zero has no length to divide
+the clock into, and a negative one stores the counter already expired, so
+nothing is ever counted while the `X-RateLimit-*` headers keep looking
+healthy.
 
 ### A different limit for a different route
 

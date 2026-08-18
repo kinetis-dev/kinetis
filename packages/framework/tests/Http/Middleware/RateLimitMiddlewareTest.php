@@ -9,6 +9,7 @@ use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Kernel;
+use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
 use Kinetis\Http\Middleware\RateLimitMiddleware;
 use Kinetis\Http\Routing\Router;
@@ -19,6 +20,7 @@ use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Http\Fixtures\RateLimitedFixtureController;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\SimpleCache\CacheInterface;
@@ -337,5 +339,84 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->expectException(SimpleCacheUnavailableException::class);
         $this->expectExceptionMessage('kinetis/cache-redis');
         $middleware->process($this->request(), $this->handler());
+    }
+    /**
+     * @return list<array{int}>
+     */
+    public static function nonPositiveWindows(): array
+    {
+        return [[0], [-1], [-60]];
+    }
+
+    #[DataProvider('nonPositiveWindows')]
+    public function test_a_window_of_zero_or_less_is_rejected_at_construction(int $windowSeconds): void
+    {
+        $this->expectException(InvalidRateLimitConfigException::class);
+
+        new RateLimitMiddleware(new InMemorySimpleCache(), windowSeconds: $windowSeconds);
+    }
+
+    /**
+     * @return list<array{int}>
+     */
+    public static function nonPositiveAttempts(): array
+    {
+        return [[0], [-1]];
+    }
+
+    #[DataProvider('nonPositiveAttempts')]
+    public function test_a_max_attempts_of_zero_or_less_is_rejected_at_construction(int $maxAttempts): void
+    {
+        $this->expectException(InvalidRateLimitConfigException::class);
+
+        new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: $maxAttempts);
+    }
+
+    /**
+     * @return list<array{string}>
+     */
+    public static function malformedProxies(): array
+    {
+        return [
+            ['not-an-ip'],
+            ['10.0.0.0/-1'],
+            ['10.0.0.0/33'],
+            ['::1/129'],
+            ['10.0.0.0/eight'],
+            ['10.0.0.0/'],
+            ['nope/8'],
+        ];
+    }
+
+    #[DataProvider('malformedProxies')]
+    public function test_a_malformed_trusted_proxy_is_rejected_at_construction(string $proxy): void
+    {
+        $this->expectException(InvalidRateLimitConfigException::class);
+
+        new RateLimitMiddleware(new InMemorySimpleCache(), trustedProxies: [$proxy]);
+    }
+
+    /**
+     * @return list<array{string}>
+     */
+    public static function usableProxies(): array
+    {
+        return [
+            ['10.0.0.0/8'],
+            ['10.0.0.1'],
+            ['0.0.0.0/0'],
+            ['192.168.1.0/32'],
+            ['2001:db8::/32'],
+            ['::1'],
+            ['::1/128'],
+        ];
+    }
+
+    #[DataProvider('usableProxies')]
+    public function test_a_usable_trusted_proxy_is_accepted(string $proxy): void
+    {
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), trustedProxies: [$proxy]);
+
+        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
     }
 }
