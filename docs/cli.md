@@ -64,7 +64,14 @@ Discovery reaches a class through its PSR-4 file path, so the standard
 autoloading layout is what makes a class findable: one class per file,
 the file named for the class. A second class declared inside an existing
 file isn't PSR-4-autoloadable, so discovery never sees it. There's
-nothing to register. Run a command by name:
+nothing to register.
+
+Abstract classes, interfaces, traits and enums are skipped: none of them
+can be instantiated as a command, controller, tool or listener. And an
+attribute is only read from the class it is written on — see
+[Where attributes are read from](#where-attributes-are-read-from) below.
+
+Run a command by name:
 
 ```{code-block} sh
 vendor/bin/kinetis app:cleanup-sessions
@@ -248,6 +255,54 @@ newly-added `#[Command]` method is picked up immediately. In production
 (`APP_ENV=production`, the default when unset), the binary loads its
 command list from the compiled cache `kinetis build` produces, compiling
 one automatically on the first invocation if none exists yet.
+
+## Where attributes are read from
+
+An attribute applies to the class it is written on, and nowhere else.
+This is PHP's own rule for class attributes — a subclass never inherits a
+parent's — and Kinetis applies the same rule to methods, which PHP leaves
+open: `ReflectionClass::getMethods()` returns a parent's methods flattened
+in with a class's own, each still carrying whatever attributes were
+written on it further up.
+
+So a routed method, a `#[Command]`, an `#[McpTool]` or a `#[Listener]`
+must be declared by the class being registered. One inherited from a
+parent is rejected at registration rather than silently registered
+against a class whose own attributes would then go unread:
+
+```{code-block} php
+abstract class BaseController
+{
+    #[Get('/health')]                 // belongs to BaseController
+    public function health(): array { ... }
+}
+
+#[Hidden]                             // would never be consulted
+final class InternalController extends BaseController {}
+```
+
+Share a routed method through a trait instead. PHP reports a trait
+method's declaring class as the class that *uses* the trait, so it counts
+as that class's own and every attribute on that class applies normally:
+
+```{code-block} php
+trait HealthRoute
+{
+    #[Get('/health')]
+    public function health(): array { ... }
+}
+
+#[Hidden]
+final class InternalController
+{
+    use HealthRoute;                  // registered, and hidden
+}
+```
+
+Attributes written on the trait declaration itself are ignored — only its
+methods carry through. Extending a base class for ordinary shared
+behaviour stays perfectly legal; only an inherited method that carries an
+attribute is an error.
 
 ## Restricting discovery
 

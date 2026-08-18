@@ -13,6 +13,7 @@ use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
 use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Tests\Reflection\Fixtures\HiddenChildOfRoutedBase;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/Fixtures/global_namespace_dto.php';
@@ -365,5 +366,29 @@ final class OpenApiGeneratorTest extends TestCase
 
         self::assertSame(['$ref' => '#/components/schemas/Paginator'], $ref);
         self::assertSame(['type' => 'object'], $spec['components']['schemas']['Paginator']['properties']['data']);
+    }
+
+    /**
+     * #[Hidden] is read from the class a route is registered on, not from
+     * the class that declares its method. Router::register() no longer
+     * accepts an inherited routed method at all, so this goes through
+     * fromArray() — the path a compiled cache loads through — to reach the
+     * distinction directly.
+     */
+    public function test_hidden_is_read_from_the_registered_class_not_the_declaring_one(): void
+    {
+        $router = Router::fromArray([[
+            'httpMethod' => 'GET',
+            'pathTemplate' => '/from-parent',
+            'controllerClass' => HiddenChildOfRoutedBase::class,
+            'controllerMethod' => 'fromParent',
+            'status' => 200,
+            'middleware' => [],
+        ]]);
+
+        $document = new OpenApiGenerator($router)->generate();
+
+        // The declaring class carries no #[Hidden]; the registered one does.
+        self::assertSame([], $document['paths']);
     }
 }

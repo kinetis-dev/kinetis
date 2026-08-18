@@ -35,16 +35,21 @@ final class Route
     /** @var array<string, string> constraint pattern by placeholder name, only for placeholders that declared one */
     private readonly array $paramPatterns;
 
+    /** Always canonical: a leading slash, no trailing one. See normalizePath(). */
+    public readonly string $pathTemplate;
+
     public function __construct(
         public readonly string $httpMethod,
-        public readonly string $pathTemplate,
+        string $pathTemplate,
+        /** @var class-string */
         public readonly string $controllerClass,
         public readonly string $controllerMethod,
         public readonly int $status,
         /** @var list<string> each entry is either a middleware class-string or a `@name` group reference — see Kinetis\Http\Attributes\Middleware */
         public readonly array $middleware = [],
     ) {
-        $segments = self::parse($pathTemplate);
+        $this->pathTemplate = self::normalizePath($pathTemplate);
+        $segments = self::parse($this->pathTemplate);
         $paramNames = [];
         $paramPatterns = [];
 
@@ -141,6 +146,23 @@ final class Route
     public function pathParameterNames(): array
     {
         return $this->paramNames;
+    }
+
+    /**
+     * The one canonical form for a compiled path: a leading slash, no
+     * trailing one, `/` itself unchanged. Applied here rather than in
+     * Router so it holds for every Route however it was built — including
+     * fromArray(), and including a path assembled from a #[RoutePrefix].
+     *
+     * Without it a trailing slash would be significant, making `/users`
+     * and `/users/` two routes that each answer half the requests a caller
+     * would expect either to answer, and conflictKey() would not see them
+     * as the same route. Normalizing makes declaring both a duplicate,
+     * which is what it is.
+     */
+    private static function normalizePath(string $path): string
+    {
+        return '/' . trim($path, '/');
     }
 
     /**

@@ -7,6 +7,7 @@ namespace Kinetis\Mcp;
 use Kinetis\Mcp\Attributes\McpResource;
 use Kinetis\Mcp\Attributes\McpTool;
 use Kinetis\Validation\JsonSchema;
+use Kinetis\Reflection\AttributeScope;
 use ReflectionClass;
 use ReflectionMethod;
 
@@ -28,10 +29,12 @@ final class McpRegistry
      */
     public function register(string $class): void
     {
-        $reflection = new ReflectionClass($class);
+        $reflection = AttributeScope::reflect($class);
 
         foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             foreach ($method->getAttributes(McpTool::class) as $attribute) {
+                AttributeScope::assertDeclares($method, $class);
+
                 $tool = $attribute->newInstance();
 
                 $this->tools[] = new ToolDefinition(
@@ -44,6 +47,8 @@ final class McpRegistry
             }
 
             foreach ($method->getAttributes(McpResource::class) as $attribute) {
+                AttributeScope::assertDeclares($method, $class);
+
                 $resource = $attribute->newInstance();
 
                 $this->resources[] = new ResourceDefinition(

@@ -89,6 +89,63 @@ parameter's own `schema.pattern` there, and the path key itself always
 reads as plain `{id}`, since OpenAPI's own path-templating syntax has no
 concept of an inline regex.
 
+## Sharing routes across controllers
+
+`#[RoutePrefix]` prepends a path segment to every route on a controller.
+Combined with a trait, that lets one set of route methods be mounted at a
+different path by each controller that uses it:
+
+```{code-block} php
+trait CrudRoutes
+{
+    #[Get('')]
+    public function index(): array { ... }
+
+    #[Get('/{id}')]
+    public function show(int $id): array { ... }
+}
+
+#[RoutePrefix('/users')]
+final class UserController
+{
+    use CrudRoutes;
+}
+
+#[RoutePrefix('/orders')]
+final class OrderController
+{
+    use CrudRoutes;
+}
+```
+
+That registers `/users`, `/users/{id}`, `/orders` and `/orders/{id}`. A
+route may declare an empty path to sit at the prefix itself.
+
+Every path is stored in one canonical form — a leading slash, no trailing
+one — whether it came from a prefix or was written out in full. So
+`#[Get('/users')]`, `#[Get('/users/')]` and `#[Get('users')]` are the
+same route, and declaring two of them is a duplicate rather than two
+routes each answering half the requests you'd expect. `/` itself is
+unchanged.
+
+Only the declared path is normalised, not the request path. A route is
+reachable at exactly one URL: a request for `/users/` does not reach a
+route registered as `/users`. Nothing rewrites or redirects a trailing
+slash at request time — put that in front of the application if you want
+it.
+
+The prefix is resolved when the route is registered, so everything
+downstream sees the finished path: duplicate detection, the compiled
+cache, the OpenAPI document and `kinetis routes:list`. Two controllers
+sharing one trait under different prefixes therefore don't collide, while
+two under the *same* prefix are rejected as duplicates, exactly as if the
+paths had been written out by hand.
+
+A trait is the way to share route methods — not a base class. An
+attribute is only ever read from the class it is written on, so a routed
+method inherited from a parent is rejected at registration; see
+[Where attributes are read from](cli.md#where-attributes-are-read-from).
+
 ## Parameter binding
 
 A controller method's parameters are resolved from six possible sources,

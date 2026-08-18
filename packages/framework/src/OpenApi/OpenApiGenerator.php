@@ -15,6 +15,7 @@ use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Validation\JsonSchema;
 use Psr\Http\Message\ResponseInterface;
+use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionParameter;
@@ -52,9 +53,12 @@ use ReflectionUnionType;
  * method's declared return type doesn't capture at all (an error body, not
  * the success DTO), so there's nothing correct to derive it from.
  *
- * #[Hidden] on a method or its declaring class excludes a route entirely
- * — checked before describeOperation() ever runs, so a hidden route's own
- * DTOs never register a components/schemas entry either.
+ * #[Hidden] on a route method, or on the controller it is registered on,
+ * excludes the route entirely — checked before describeOperation() ever
+ * runs, so a hidden route's own DTOs never register a components/schemas
+ * entry either. Read from the registered class rather than the declaring
+ * one, so it obeys the same rule as every other attribute; see
+ * Kinetis\Reflection\AttributeScope.
  *
  * A route returning Paginator/CursorPaginator describes `data` as a bare
  * {type: object} by default — the same class is reused by every paginated
@@ -115,7 +119,7 @@ final class OpenApiGenerator
         $method = new ReflectionMethod($route->controllerClass, $route->controllerMethod);
 
         return $method->getAttributes(Hidden::class) !== []
-            || $method->getDeclaringClass()->getAttributes(Hidden::class) !== [];
+            || new ReflectionClass($route->controllerClass)->getAttributes(Hidden::class) !== [];
     }
 
     /**

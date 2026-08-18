@@ -16,6 +16,13 @@ use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerB;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Reflection\Exception\AttributeScopeException;
+use Kinetis\Tests\Http\Fixtures\PrefixedOrderController;
+use Kinetis\Tests\Http\Fixtures\PrefixedUserController;
+use Kinetis\Tests\Reflection\Fixtures\AbstractRouted;
+use Kinetis\Tests\Reflection\Fixtures\InheritsHelperOnly;
+use Kinetis\Tests\Reflection\Fixtures\InheritsRoute;
+use Kinetis\Tests\Reflection\Fixtures\UsesRoutedTrait;
 use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase
@@ -188,5 +195,86 @@ final class RouterTest extends TestCase
         // unconstrained one everything else.
         self::assertSame('showNumeric', $router->match('GET', '/dup/42')->route->controllerMethod);
         self::assertSame('show', $router->match('GET', '/dup/abc')->route->controllerMethod);
+    }
+
+    public function test_a_routed_method_inherited_from_a_parent_is_rejected(): void
+    {
+        $router = new Router();
+
+        // The #[Get] belongs to the parent while #[Hidden], #[Middleware]
+        // and everything else on the child would go unread — registering
+        // it would honour one class's attributes and ignore the other's.
+        $this->expectException(AttributeScopeException::class);
+        $this->expectExceptionMessage(AbstractRouted::class);
+
+        $router->register(InheritsRoute::class);
+    }
+
+    public function test_inheriting_a_plain_helper_alongside_an_own_route_stays_legal(): void
+    {
+        $router = new Router();
+        $router->register(InheritsHelperOnly::class);
+
+        // Only an inherited *routed* method is an error; a controller may
+        // still extend a base class for ordinary shared behaviour.
+        self::assertSame(['/own'], array_map(fn ($r) => $r->pathTemplate, $router->routes()));
+    }
+
+    public function test_a_routed_method_used_from_a_trait_registers(): void
+    {
+        $router = new Router();
+        $router->register(UsesRoutedTrait::class);
+
+        self::assertSame(['/from-trait'], array_map(fn ($r) => $r->pathTemplate, $router->routes()));
+    }
+
+    public function test_an_abstract_controller_cannot_be_registered(): void
+    {
+        $router = new Router();
+
+        $this->expectException(AttributeScopeException::class);
+        $this->expectExceptionMessage('is abstract and cannot be registered');
+
+        $router->register(AbstractRouted::class);
+    }
+
+    public function test_a_route_prefix_is_prepended_to_every_route_on_the_controller(): void
+    {
+        $router = new Router();
+        $router->register(PrefixedUserController::class);
+
+        self::assertSame(
+            ['/users', '/users/{id}'],
+            array_map(fn ($r) => $r->pathTemplate, $router->routes()),
+        );
+    }
+
+    public function test_a_route_prefix_normalises_stray_slashes(): void
+    {
+        $router = new Router();
+        $router->register(PrefixedOrderController::class);
+
+        // Declared as 'orders/' — neither leading nor trailing slashes
+        // should reach the compiled path.
+        self::assertSame(
+            ['/orders', '/orders/{id}'],
+            array_map(fn ($r) => $r->pathTemplate, $router->routes()),
+        );
+    }
+
+    public function test_two_controllers_sharing_a_trait_under_different_prefixes_do_not_conflict(): void
+    {
+        $router = new Router();
+        $router->register(PrefixedUserController::class);
+
+        // Identical route attributes, different prefixes: conflict
+        // detection sees the resolved paths, so these are distinct.
+        $router->register(PrefixedOrderController::class);
+
+        self::assertSame('show', $router->match('GET', '/users/7')->route->controllerMethod);
+        self::assertSame(
+            PrefixedOrderController::class,
+            $router->match('GET', '/orders/7')->route->controllerClass,
+        );
     }
 }

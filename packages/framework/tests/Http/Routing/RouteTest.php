@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Http\Routing;
 
 use Kinetis\Http\Routing\Route;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class RouteTest extends TestCase
@@ -74,5 +75,52 @@ final class RouteTest extends TestCase
         $route = new Route('GET', '/users/{id}', 'C', 'm', 200);
 
         self::assertSame('/users/{id}', $route->openApiPathTemplate());
+    }
+
+    /**
+     * @return list<array{string, string}>
+     */
+    public static function pathsToNormalize(): array
+    {
+        return [
+            ['/users', '/users'],
+            ['/users/', '/users'],
+            ['users', '/users'],
+            ['users/', '/users'],
+            ['/', '/'],
+            ['', '/'],
+            ['/users/{id}/', '/users/{id}'],
+        ];
+    }
+
+    #[DataProvider('pathsToNormalize')]
+    public function test_a_path_is_stored_in_one_canonical_form(string $declared, string $expected): void
+    {
+        $route = new Route('GET', $declared, 'C', 'm', 200);
+
+        self::assertSame($expected, $route->pathTemplate);
+    }
+
+    /**
+     * Only the declared template is normalized, not the request path: a
+     * route is reachable at exactly one URL, whichever form it was written
+     * in. Nothing rewrites or redirects an incoming trailing slash.
+     */
+    public function test_only_the_template_is_normalized_not_the_request_path(): void
+    {
+        $route = new Route('GET', '/users/', 'C', 'm', 200);
+
+        self::assertNotNull($route->matchPath('/users'));
+        self::assertNull($route->matchPath('/users/'));
+    }
+
+    public function test_paths_differing_only_by_a_trailing_slash_are_the_same_route(): void
+    {
+        $withSlash = new Route('GET', '/users/', 'C', 'm', 200);
+        $without = new Route('GET', '/users', 'C', 'm', 200);
+
+        // Which is why registering both is a duplicate rather than two
+        // routes each answering half the requests a caller would expect.
+        self::assertSame($without->conflictKey(), $withSlash->conflictKey());
     }
 }

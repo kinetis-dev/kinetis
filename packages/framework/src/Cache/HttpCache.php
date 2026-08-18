@@ -28,7 +28,7 @@ final readonly class HttpCache
 {
     public function __construct(
         public int $formatVersion,
-        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}> */
+        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> */
         public array $routes,
         /** @var array<string, list<HttpBindingPlan>> */
         public array $httpBindingPlans,
@@ -71,7 +71,7 @@ final readonly class HttpCache
      */
     public static function fromArray(array $data): self
     {
-        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}> $routes */
+        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> $routes */
         $routes = $data['routes'];
         /** @var array<string, list<HttpBindingPlan>> $httpBindingPlans */
         $httpBindingPlans = $data['httpBindingPlans'];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Cache;
 
 use FilesystemIterator;
+use Kinetis\Reflection\AttributeScope;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 
@@ -234,7 +235,11 @@ final class NamespaceScanner
             $relative = substr($file->getPathname(), strlen($directory) + 1, -4);
             $className = $namespacePrefix . str_replace(DIRECTORY_SEPARATOR, '\\', $relative);
 
-            if (class_exists($className)) {
+            // Discovery skips what registration would reject: an abstract
+            // base or an enum under a scanned namespace is not an error,
+            // it just isn't a candidate. AttributeScope::reflect() is what
+            // fails loudly when one is registered by name instead.
+            if (AttributeScope::isRegistrable($className)) {
                 yield $className;
             }
         }

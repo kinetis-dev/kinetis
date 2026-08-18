@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Events;
 
 use Kinetis\Events\Exception\InvalidListenerException;
+use Kinetis\Reflection\AttributeScope;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -45,7 +46,7 @@ final class EventListenerRegistry
      */
     public function register(string $class): void
     {
-        $reflection = new ReflectionClass($class);
+        $reflection = AttributeScope::reflect($class);
 
         foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             $attributes = $method->getAttributes(Listener::class);
@@ -53,6 +54,8 @@ final class EventListenerRegistry
             if ($attributes === []) {
                 continue;
             }
+
+            AttributeScope::assertDeclares($method, $class);
 
             $parameters = $method->getParameters();
 

@@ -6,9 +6,11 @@ namespace Kinetis\Http\Routing;
 
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Attributes\RouteAttribute;
+use Kinetis\Http\Attributes\RoutePrefix;
 use Kinetis\Http\Routing\Exception\DuplicateRouteException;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
+use Kinetis\Reflection\AttributeScope;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
@@ -29,17 +31,22 @@ final class Router
     private array $routesByConflictKey = [];
 
     /**
-     * Reflects every public method on the controller for a RouteAttribute
-     * (Get, Post, ...) and registers a matching Route. Methods without one
-     * are ignored, so a controller can freely mix routed actions with plain
-     * helper methods.
+     * Reflects every public method the controller itself declares for a
+     * RouteAttribute (Get, Post, ...) and registers a matching Route.
+     * Methods without one are ignored, so a controller can freely mix
+     * routed actions with plain helper methods.
+     *
+     * A routed method inherited from a parent is rejected rather than
+     * registered: its #[Get] belongs to the parent while the child's own
+     * attributes would go unread. See Kinetis\Reflection\AttributeScope.
      *
      * @param class-string $controllerClass
      */
     public function register(string $controllerClass): void
     {
-        $reflection = new ReflectionClass($controllerClass);
+        $reflection = AttributeScope::reflect($controllerClass);
         $classMiddleware = self::middlewareClassesFor($reflection);
+        $prefix = self::prefixFor($reflection);
 
         foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             $attributes = $method->getAttributes(RouteAttribute::class, ReflectionAttribute::IS_INSTANCEOF);
@@ -48,11 +55,15 @@ final class Router
                 continue;
             }
 
+            // After the attribute check, so a controller may inherit plain
+            // helper methods — only an inherited *routed* method is an error.
+            AttributeScope::assertDeclares($method, $controllerClass);
+
             $routeAttribute = $attributes[0]->newInstance();
 
             $route = new Route(
                 httpMethod: $routeAttribute->httpMethod(),
-                pathTemplate: $routeAttribute->path(),
+                pathTemplate: $prefix?->join($routeAttribute->path()) ?? $routeAttribute->path(),
                 controllerClass: $controllerClass,
                 controllerMethod: $method->getName(),
                 status: $routeAttribute->status(),
@@ -76,6 +87,16 @@ final class Router
             $this->routesByConflictKey[$key] = $route;
             $this->routes[] = $route;
         }
+    }
+
+    /**
+     * @param ReflectionClass<object> $reflection
+     */
+    private static function prefixFor(ReflectionClass $reflection): ?RoutePrefix
+    {
+        $attributes = $reflection->getAttributes(RoutePrefix::class);
+
+        return $attributes === [] ? null : $attributes[0]->newInstance();
     }
 
     /**
@@ -110,7 +131,7 @@ final class Router
      * those regardless of provenance. Used by Kinetis\Cache\Compiler to
      * produce a var_export()-able artifact with no live objects in it.
      *
-     * @return list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}>
+     * @return list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}>
      */
     public function toArray(): array
     {
@@ -131,7 +152,7 @@ final class Router
      * Reconstructs a Router from toArray()'s output with zero reflection —
      * the compiled-cache load path's counterpart to register().
      *
-     * @param list<array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}> $routes
+     * @param list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> $routes
      */
     public static function fromArray(array $routes): self
     {

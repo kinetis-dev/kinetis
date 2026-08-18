@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Cache;
 
 use Kinetis\Cache\NamespaceScanner;
+use Kinetis\Tests\Cache\Fixtures\Http\AbstractScannedController;
 use PHPUnit\Framework\TestCase;
 
 final class NamespaceScannerTest extends TestCase
@@ -118,5 +119,19 @@ final class NamespaceScannerTest extends TestCase
 
         self::assertContains('Kinetis\Console\BuildCommand', $classes);
         self::assertContains('Kinetis\Console\McpServeCommand', $classes);
+    }
+
+    public function test_does_not_yield_a_class_that_cannot_be_registered(): void
+    {
+        // Discovery walks whole directories, so an abstract base or an
+        // enum under a scanned namespace has to be skipped rather than
+        // fail the application — AttributeScope::reflect() is what fails
+        // loudly when one is registered by name instead.
+        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures'));
+
+        self::assertNotContains(AbstractScannedController::class, $classes);
+        // The concrete controller in the same directory still is yielded,
+        // so this is the abstract check firing and not an empty scan.
+        self::assertContains('Kinetis\\Tests\\Cache\\Fixtures\\Http\\DiscoveredPingController', $classes);
     }
 }

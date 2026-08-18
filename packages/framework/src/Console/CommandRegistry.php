@@ -6,6 +6,7 @@ namespace Kinetis\Console;
 
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\Exception\InvalidCommandException;
+use Kinetis\Reflection\AttributeScope;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -29,10 +30,12 @@ final class CommandRegistry
      */
     public function register(string $class): void
     {
-        $reflection = new ReflectionClass($class);
+        $reflection = AttributeScope::reflect($class);
 
         foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             foreach ($method->getAttributes(Command::class) as $attribute) {
+                AttributeScope::assertDeclares($method, $class);
+
                 $command = $attribute->newInstance();
                 $takesArguments = $this->validateSignature($class, $method);
 
