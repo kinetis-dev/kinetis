@@ -28,3 +28,246 @@ article table.docutils {
     margin-left: 0;
     margin-right: 0;
 }
+
+/* Benchmark tables and cards. Every color comes from a Furo theme
+   variable rather than a literal, so the light and dark palettes both
+   resolve without a second set of declarations — except the two accents,
+   which are the logo colors already used for headings above. */
+
+.bench-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem;
+    margin: 1.25rem 0 2rem;
+}
+
+.bench-card {
+    background: var(--color-background-secondary);
+    border: 1px solid var(--color-background-border);
+    padding: 0.7rem 0.8rem;
+}
+
+.bench-card p {
+    margin: 0;
+}
+
+.bench-card-test {
+    font-family: var(--font-stack--monospace);
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-foreground-muted);
+    margin-bottom: 0.35rem !important;
+}
+
+.bench-card-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--color-foreground-primary);
+}
+
+.bench-card-name--kinetis {
+    color: #DC2626;
+}
+
+.bench-card-value {
+    font-family: var(--font-stack--monospace);
+    font-size: 1.4rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+}
+
+.bench-card-value span {
+    font-size: 0.58rem;
+    letter-spacing: 0.05em;
+    color: var(--color-foreground-muted);
+    margin-left: 0.3rem;
+}
+
+.bench-card-margin {
+    font-size: 0.76rem;
+    color: var(--color-foreground-secondary);
+}
+
+/* Wide tables scroll inside their own container so the page body never
+   scrolls sideways on a narrow viewport. */
+.bench-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--color-background-border);
+    margin-bottom: 1.5rem;
+}
+
+table.bench-table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 40rem;
+    margin: 0;
+}
+
+table.bench-table thead th {
+    font-family: var(--font-stack--monospace);
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--color-foreground-muted);
+    text-align: right;
+    white-space: nowrap;
+    padding: 0.45rem 0.6rem;
+    background: var(--color-background-secondary);
+    border-bottom: 1px solid var(--color-background-border);
+}
+
+table.bench-table thead th.corner {
+    text-align: left;
+}
+
+table.bench-table thead th.p99h,
+table.bench-table td.p99 {
+    border-left: 1px solid var(--color-background-border);
+}
+
+table.bench-table tbody th {
+    text-align: left;
+    white-space: nowrap;
+    font-weight: 550;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.6rem;
+    color: var(--color-foreground-primary);
+}
+
+table.bench-table tbody td {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.85rem;
+    color: var(--color-foreground-secondary);
+}
+
+table.bench-table tbody th,
+table.bench-table tbody td {
+    border-bottom: 1px solid var(--color-background-border);
+}
+
+table.bench-table tbody tr:last-child th,
+table.bench-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+table.bench-table td.num {
+    position: relative;
+    text-align: right;
+    white-space: nowrap;
+    font-family: var(--font-stack--monospace);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-foreground-primary);
+}
+
+/* The bar sits behind the figure rather than beside it, so a column
+   stays as narrow as its digits. */
+.bench-bar {
+    position: absolute;
+    left: 0;
+    top: 2px;
+    bottom: 2px;
+    background: rgba(217, 119, 6, 0.14);
+    border-left: 2px solid transparent;
+    pointer-events: none;
+}
+
+.bench-fig {
+    position: relative;
+}
+
+table.bench-table td.is-best .bench-bar {
+    border-left-color: #D97706;
+}
+
+table.bench-table td.is-best .bench-fig {
+    font-weight: 700;
+    color: #B45309;
+}
+
+table.bench-table tbody tr.is-kinetis {
+    background: rgba(220, 38, 38, 0.05);
+}
+
+table.bench-table tbody tr.is-kinetis th {
+    color: #DC2626;
+    font-weight: 700;
+}
+
+table.bench-table tbody tr.is-control th {
+    color: #B45309;
+    font-weight: 650;
+}
+
+table.bench-table td.ratio-up {
+    color: #15803D;
+    font-weight: 650;
+}
+
+table.bench-table td.ratio-down {
+    color: #B91C1C;
+    font-weight: 650;
+}
+
+table.bench-table td.ratio-flat {
+    color: var(--color-foreground-muted);
+}
+
+/* Dark mode: the amber and red hold on a dark ground, but the "best
+   figure" and ratio colors need lifting off it. Furo stamps
+   data-theme="dark" for an explicit choice and leaves it unset for
+   "system", so both paths are covered. */
+@media (prefers-color-scheme: dark) {
+    body:not([data-theme="light"]) table.bench-table td.is-best .bench-fig {
+        color: #F59E0B;
+    }
+
+    body:not([data-theme="light"]) table.bench-table tbody tr.is-control th,
+    body:not([data-theme="light"]) .bench-card-name--kinetis,
+    body:not([data-theme="light"]) table.bench-table tbody tr.is-kinetis th {
+        color: #F87171;
+    }
+
+    body:not([data-theme="light"]) table.bench-table tbody tr.is-control th {
+        color: #F59E0B;
+    }
+
+    body:not([data-theme="light"]) table.bench-table td.ratio-up {
+        color: #4ADE80;
+    }
+
+    body:not([data-theme="light"]) table.bench-table td.ratio-down {
+        color: #F87171;
+    }
+
+    body:not([data-theme="light"]) table.bench-table tbody tr.is-kinetis {
+        background: rgba(248, 113, 113, 0.07);
+    }
+}
+
+body[data-theme="dark"] table.bench-table td.is-best .bench-fig {
+    color: #F59E0B;
+}
+
+body[data-theme="dark"] .bench-card-name--kinetis,
+body[data-theme="dark"] table.bench-table tbody tr.is-kinetis th {
+    color: #F87171;
+}
+
+body[data-theme="dark"] table.bench-table tbody tr.is-control th {
+    color: #F59E0B;
+}
+
+body[data-theme="dark"] table.bench-table td.ratio-up {
+    color: #4ADE80;
+}
+
+body[data-theme="dark"] table.bench-table td.ratio-down {
+    color: #F87171;
+}
+
+body[data-theme="dark"] table.bench-table tbody tr.is-kinetis {
+    background: rgba(248, 113, 113, 0.07);
+}
