@@ -127,7 +127,7 @@ final class Route
      */
     public function matchPath(string $path): ?array
     {
-        if (preg_match($this->pattern, $path, $matches) !== 1) {
+        if (preg_match($this->pattern, self::normalizePath($path), $matches) !== 1) {
             return null;
         }
 
@@ -154,13 +154,12 @@ final class Route
      * Router so it holds for every Route however it was built — including
      * fromArray(), and including a path assembled from a #[RoutePrefix].
      *
-     * Without it a trailing slash would be significant, making `/users`
-     * and `/users/` two routes that each answer half the requests a caller
-     * would expect either to answer, and conflictKey() would not see them
-     * as the same route. Normalizing makes declaring both a duplicate,
-     * which is what it is.
+     * Applied to the request path too, in matchPath() — so `/users/` and
+     * `/users` are one route answering one set of requests, rather than
+     * one route and a 404. Public because Kernel compares its own `/mcp`
+     * endpoint the same way, and there should be one rule.
      */
-    private static function normalizePath(string $path): string
+    public static function normalizePath(string $path): string
     {
         return '/' . trim($path, '/');
     }

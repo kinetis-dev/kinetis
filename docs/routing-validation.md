@@ -135,11 +135,12 @@ are the same route, and declaring both is a duplicate rather than two
 routes each answering half the requests you'd expect. `/` itself is
 unchanged.
 
-Only the declared path is normalised, not the request path. A route is
-reachable at exactly one URL: a request for `/users/` does not reach a
-route registered as `/users`. Nothing rewrites or redirects a trailing
-slash at request time — put that in front of the application if you want
-it.
+The request path goes through the same rule, so a request for `/users/`
+reaches a route registered as `/users` and binds path parameters exactly
+as it would without the slash. Both URLs serve the response directly
+rather than redirecting; if you'd rather have a `301` to the canonical
+form — for search engines, say — that belongs in front of the
+application.
 
 The prefix is resolved when the route is registered, so everything
 downstream sees the finished path: duplicate detection, the compiled

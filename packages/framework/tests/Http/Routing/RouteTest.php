@@ -109,16 +109,31 @@ final class RouteTest extends TestCase
     }
 
     /**
-     * Only the declared template is normalized, not the request path: a
-     * route is reachable at exactly one URL, whichever form it was written
-     * in. Nothing rewrites or redirects an incoming trailing slash.
+     * The request path goes through the same rule as the declared one, so
+     * one route answers one set of requests however either was written.
      */
-    public function test_only_the_template_is_normalized_not_the_request_path(): void
+    public function test_a_trailing_slash_on_the_request_path_still_matches(): void
     {
-        $route = new Route('GET', '/users/', 'C', 'm', 200);
+        $route = new Route('GET', '/users', 'C', 'm', 200);
 
         self::assertNotNull($route->matchPath('/users'));
-        self::assertNull($route->matchPath('/users/'));
+        self::assertNotNull($route->matchPath('/users/'));
+    }
+
+    public function test_the_root_route_still_matches_the_root_path(): void
+    {
+        $route = new Route('GET', '/', 'C', 'm', 200);
+
+        self::assertNotNull($route->matchPath('/'));
+        // A PSR-7 URI may carry no path component at all.
+        self::assertNotNull($route->matchPath(''));
+    }
+
+    public function test_a_trailing_slash_after_a_path_parameter_still_binds_it(): void
+    {
+        $route = new Route('GET', '/users/{id}', 'C', 'm', 200);
+
+        self::assertSame(['id' => '7'], $route->matchPath('/users/7/'));
     }
 
     public function test_paths_differing_only_by_a_trailing_slash_are_the_same_route(): void

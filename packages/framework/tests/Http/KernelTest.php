@@ -376,6 +376,32 @@ final class KernelTest extends TestCase
         self::assertSame('get_user_status', $body['result']['tools'][0]['name']);
     }
 
+    /**
+     * The /mcp endpoint is a literal comparison rather than a registered
+     * route, so it needs the request path normalised on its own account.
+     */
+    public function test_mcp_endpoint_answers_with_a_trailing_slash_too(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $mcpRegistry = new McpRegistry();
+        $mcpRegistry->register(AccountController::class);
+        $kernel = new Kernel($app, new Router(), mcp: new McpServer($mcpRegistry, new McpDispatcher($app)));
+
+        $request = new ServerRequest('POST', '/mcp/', body: json_encode([
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/list',
+        ]));
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame('get_user_status', $body['result']['tools'][0]['name']);
+    }
+
     // --- /mcp Origin validation and #[AsMcpMiddleware]/
     // #[AsOpenApiMiddleware] scoped pipelines. ---
 

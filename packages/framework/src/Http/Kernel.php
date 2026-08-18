@@ -15,6 +15,7 @@ use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Mcp\McpServer;
 use Kinetis\OpenApi\OpenApiAccess;
@@ -235,7 +236,7 @@ final class Kernel
 
     private function dispatchCore(ServerRequestInterface $request): ResponseInterface
     {
-        $path = $request->getUri()->getPath();
+        $path = Route::normalizePath($request->getUri()->getPath());
 
         // POST/GET/DELETE are all handled for /mcp (see serveMcp()) — any
         // other method falls through to normal routing. GET and DELETE
