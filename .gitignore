@@ -3,3 +3,7 @@
 /CLAUDE.md
 coverage.xml
 /AUDIT-*.md
+
+# Written on a CI runner by integration.yml's COMPOSER_CACHE_DIR; never
+# committed, ignored here so a local run of the same env stays clean.
+/.composer-cache/

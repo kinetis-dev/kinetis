@@ -15,7 +15,12 @@ env:
   # Composer runs natively in this workflow rather than in a container,
   # so the cache is addressed by COMPOSER_CACHE_DIR instead of a mount.
   # See ci.yml for why both exist.
-  COMPOSER_CACHE_DIR: ${{ runner.temp }}/composer-cache
+  #
+  # github.workspace, not runner.temp: a workflow-level env block can only
+  # read the github, inputs, secrets and vars contexts, and runner is not
+  # among them. It resolves inside a job container too, which the
+  # redis-cluster job needs.
+  COMPOSER_CACHE_DIR: ${{ github.workspace }}/.composer-cache
   COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
 
 jobs:
@@ -64,7 +69,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
@@ -118,7 +123,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
@@ -170,7 +175,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
@@ -239,7 +244,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install persistence dependencies
@@ -310,7 +315,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install cache-redis dependencies
@@ -350,7 +355,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
@@ -408,7 +413,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
@@ -513,7 +518,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
@@ -559,7 +564,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install queue-sqs dependencies
@@ -573,7 +578,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install storage-s3 dependencies
@@ -723,7 +728,7 @@ jobs:
       - name: Cache Composer downloads
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/composer-cache
+          path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
