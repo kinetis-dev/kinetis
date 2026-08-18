@@ -24,7 +24,7 @@ declare(strict_types=1);
  *   php tools/generate-composer.php --release=<key>[,<key>,...]
  *                                               Print each package's
  *                                               release-mode composer.json
- *                                               (real sibling ^X.Y
+ *                                               (real sibling ^X.Y.Z
  *                                               constraints, no
  *                                               repositories key) to
  *                                               stdout — never writes.
@@ -55,11 +55,19 @@ function loadManifest(): array
     return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
 }
 
-function majorMinorConstraint(string $version): string
+/**
+ * The sibling constraint a release ships with: a caret on the exact
+ * version being released alongside it, patch included. `^1.19` would
+ * admit 1.19.0, which is not a version this package was ever built
+ * against — and a patch release can add public API, so the difference is
+ * real rather than pedantic. The upper bound is unchanged, so nobody's
+ * upgrade path narrows; only the floor becomes true.
+ */
+function siblingConstraint(string $version): string
 {
     $v = parseSemver($version);
 
-    return "^{$v['major']}.{$v['minor']}";
+    return "^{$v['major']}.{$v['minor']}.{$v['patch']}";
 }
 
 /**
@@ -74,13 +82,13 @@ function assembleComposerJson(array $pkg, array $manifest, bool $release = false
     $requiresDevSiblings = $pkg['requiresDev'] ?? [];
 
     // Dev mode: every sibling is "dev-main", resolved via a path repo.
-    // Release mode: every sibling resolves to a real ^X.Y constraint,
+    // Release mode: every sibling resolves to a real ^X.Y.Z constraint,
     // read from that sibling's own *current* version in the manifest —
     // not whether it's also releasing this round. No repositories key
     // at all, since there's nothing local to point at once this ships
     // to its own standalone repo.
     $siblingConstraint = $release
-        ? static fn (string $sibling): string => majorMinorConstraint($manifest['packages'][$sibling]['version'])
+        ? static fn (string $sibling): string => siblingConstraint($manifest['packages'][$sibling]['version'])
         : static fn (string $sibling): string => 'dev-main';
 
     $require = ['php' => $defaults['phpVersion']];
@@ -250,7 +258,7 @@ function parseKeys(array $manifest, string $keysArg): array
 
 /**
  * Writes each given package's release-mode composer.json to disk —
- * real ^X.Y sibling constraints, no repositories key — the counterpart
+ * real ^X.Y.Z sibling constraints, no repositories key — the counterpart
  * to runRelease()'s stdout preview. $projectRoot is injectable for
  * testing against a temp directory rather than this repo's own tree.
  *

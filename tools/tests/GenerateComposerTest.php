@@ -59,7 +59,7 @@ final class GenerateComposerTest extends TestCase
 
         $out = assembleComposerJson($manifest['packages']['persistence'], $manifest, release: true);
 
-        self::assertSame('^1.4', $out['require']['kinetis/kinetis']);
+        self::assertSame('^1.4.2', $out['require']['kinetis/kinetis']);
         self::assertArrayNotHasKey('repositories', $out);
     }
 
@@ -94,8 +94,8 @@ final class GenerateComposerTest extends TestCase
         );
 
         $release = assembleComposerJson($manifest['packages']['sigv4'], $manifest, release: true);
-        self::assertSame('^2.0', $release['require']['kinetis/http-client']);
-        self::assertSame('^1.0', $release['require-dev']['kinetis/kinetis']);
+        self::assertSame('^2.0.0', $release['require']['kinetis/http-client']);
+        self::assertSame('^1.0.0', $release['require-dev']['kinetis/kinetis']);
         self::assertArrayNotHasKey('repositories', $release);
     }
 
@@ -177,10 +177,13 @@ final class GenerateComposerTest extends TestCase
         self::assertStringEndsWith("}\n", $encoded);
     }
 
-    public function test_major_minor_constraint_drops_the_patch_component(): void
+    public function test_a_sibling_constraint_carries_the_full_version(): void
     {
-        self::assertSame('^1.4', majorMinorConstraint('1.4.2'));
-        self::assertSame('^2.0', majorMinorConstraint('2.0.0'));
+        // The patch is part of the floor: a package is only ever built
+        // against one exact sibling version, and a patch release can add
+        // public API.
+        self::assertSame('^1.4.2', siblingConstraint('1.4.2'));
+        self::assertSame('^2.0.0', siblingConstraint('2.0.0'));
     }
 
     public function test_parse_semver_accepts_plain_x_y_z(): void
@@ -256,7 +259,7 @@ final class GenerateComposerTest extends TestCase
 
         self::assertSame(0, $exitCode);
         self::assertArrayNotHasKey('repositories', $written);
-        self::assertSame('^2.1', $written['require']['kinetis/root']);
+        self::assertSame('^2.1.0', $written['require']['kinetis/root']);
         // root itself was never named, so it must not have been touched
         // — release-write only ever writes the keys it was given.
         self::assertFileDoesNotExist("{$dir}/packages/root/composer.json");
