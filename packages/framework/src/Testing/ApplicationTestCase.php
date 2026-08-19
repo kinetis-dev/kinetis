@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Testing;
 
+use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use PHPUnit\Framework\Attributes\Before;
 use PHPUnit\Framework\TestCase;
@@ -61,10 +62,26 @@ abstract class ApplicationTestCase extends TestCase
         return [];
     }
 
+    /**
+     * Registrations applied after the application's own bootstrap.php
+     * and before the container locks — where a test replaces something
+     * the application should not reach from a test run:
+     *
+     *     protected function registerTestDoubles(AppScope $app, Config $config): void
+     *     {
+     *         $app->instance(PaymentGateway::class, new FakeGateway());
+     *     }
+     */
+    protected function registerTestDoubles(AppScope $app, Config $config): void {}
+
     #[Before]
     protected function bootApplication(): void
     {
-        $this->application = TestApplication::boot($this->projectRoot(), $this->configOverrides());
+        $this->application = TestApplication::boot(
+            $this->projectRoot(),
+            $this->configOverrides(),
+            $this->registerTestDoubles(...),
+        );
         $this->client = $this->application->client();
         $this->app = $this->application->app;
     }

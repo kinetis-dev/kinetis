@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Testing;
 
 use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
 use Kinetis\Testing\ApplicationTestCase;
 use Kinetis\Tests\Cache\Fixtures\BootstrapMarker;
 
@@ -18,6 +19,8 @@ final class ApplicationTestCaseTest extends ApplicationTestCase
 {
     use RecordsHookOrder;
 
+    private BootstrapMarker $double;
+
     protected function projectRoot(): string
     {
         return dirname(__DIR__) . '/Cache/Fixtures';
@@ -26,6 +29,13 @@ final class ApplicationTestCaseTest extends ApplicationTestCase
     protected function configOverrides(): array
     {
         return ['APP_ENV' => 'development', 'SOME_SETTING' => 'from-the-test'];
+    }
+
+    #[\Override]
+    protected function registerTestDoubles(AppScope $app, Config $config): void
+    {
+        $this->double = new BootstrapMarker();
+        $app->instance(BootstrapMarker::class, $this->double);
     }
 
     public function test_the_application_is_booted_before_the_test_body_runs(): void
@@ -42,6 +52,17 @@ final class ApplicationTestCaseTest extends ApplicationTestCase
     public function test_bootstrap_php_has_run_against_the_container(): void
     {
         self::assertInstanceOf(BootstrapMarker::class, $this->app->get(BootstrapMarker::class));
+    }
+
+    /**
+     * The window a test double has to win in: after the application's
+     * own bootstrap.php, before boot() locks the container. The fixture
+     * bootstrap.php binds a BootstrapMarker of its own, so the instance
+     * resolved here is only this one if the hook ran later.
+     */
+    public function test_a_registered_double_replaces_what_bootstrap_php_bound(): void
+    {
+        self::assertSame($this->double, $this->app->get(BootstrapMarker::class));
     }
 
     public function test_config_overrides_reach_the_booted_container(): void

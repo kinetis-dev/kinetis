@@ -58,6 +58,34 @@ protected function configOverrides(): array
 }
 ```
 
+## Replacing what a test should not reach
+
+Configuration only goes so far: some things a request touches are
+services, not settings — a payment gateway, a WebSocket server, a queue
+you would rather hold a job than run it. Register a replacement in
+`registerTestDoubles()`, which runs after your own `bootstrap.php` and
+before the container locks, so a binding made here replaces the one the
+application made:
+
+```{code-block} php
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+
+protected function registerTestDoubles(AppScope $app, Config $config): void
+{
+    $app->instance(PaymentGateway::class, new FakeGateway());
+}
+```
+
+That window is the only one there is: `AppScope` refuses new bindings
+once `boot()` has run, so a double registered from a test body would be
+too late.
+
+`kinetis/pingpong`'s own controller test is this in practice — it
+replaces the Soketi publisher and the queue, which leaves a real MySQL
+as the only thing it needs, and the suite runs against a bare database
+rather than only inside the full compose stack.
+
 ## Making requests
 
 ```{code-block} php

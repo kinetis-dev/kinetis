@@ -49,8 +49,13 @@ final class TestApplication
 
     /**
      * @param array<string, string> $configOverrides
+     * @param (callable(AppScope, Config): void)|null $beforeBoot registrations applied
+     *        after the application's own bootstrap.php and before boot() locks the
+     *        container, which is the only window a test double can win in. An
+     *        application that talks to something it should not talk to from a test —
+     *        a payment gateway, a WebSocket server — is replaced here.
      */
-    public static function boot(string $projectRoot, array $configOverrides = []): self
+    public static function boot(string $projectRoot, array $configOverrides = [], ?callable $beforeBoot = null): self
     {
         EnvFile::safeLoad($projectRoot);
 
@@ -76,6 +81,12 @@ final class TestApplication
         // bootstrap.php — the same order, and the same last-write-wins
         // override, every other entry point uses.
         RoutesFile::loadBootstrap($projectRoot)($app, $config);
+
+        // Last, so a double registered here replaces whatever
+        // bootstrap.php bound under the same id.
+        if ($beforeBoot !== null) {
+            $beforeBoot($app, $config);
+        }
 
         $app->instance(EventListenerRegistry::class, $listeners);
         $app->boot();

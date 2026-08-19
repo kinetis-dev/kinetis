@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.24.1",
+            "version": "1.25.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -352,7 +352,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.1.10",
+            "version": "1.1.11",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",

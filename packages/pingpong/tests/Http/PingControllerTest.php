@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace App\Tests\Http;
 
 use App\Repositories\PingRepository;
+use App\Services\SoketiPublisher;
+use App\Tests\Fixtures\RecordingQueue;
+use Kinetis\Queue\QueueInterface;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Testing\DatabaseTransactions;
 use Kinetis\Testing\ApplicationTestCase;
 use PHPUnit\Framework\Attributes\BeforeClass;
+use Pusher\Pusher;
 use Throwable;
 
 /**
@@ -39,19 +45,88 @@ final class PingControllerTest extends ApplicationTestCase
         return $this->link ??= $this->app->get(MysqlLink::class);
     }
 
+    /**
+     * Where the database is, which differs by where the suite runs: the
+     * compose stack supplies this application's own DB_* values, while
+     * CI supplies a shared MySQL under the repository-wide MYSQL_* ones.
+     * Returning them as config overrides is what lets the same tests run
+     * in both, rather than only inside the stack.
+     *
+     * @return array<string, string>
+     */
+    private static function databaseEnv(): array
+    {
+        $ciHost = getenv('MYSQL_HOST');
+
+        if ($ciHost !== false && $ciHost !== '') {
+            return [
+                'DB_CONNECTION' => 'mysql',
+                'DB_HOST' => $ciHost,
+                'DB_NAME' => getenv('MYSQL_DATABASE') ?: 'testdb',
+                'DB_USER' => getenv('MYSQL_USER') ?: 'testuser',
+                'DB_PASSWORD' => getenv('MYSQL_PASSWORD') ?: 'testpass',
+                'DB_PORT' => getenv('MYSQL_PORT') ?: '3306',
+            ];
+        }
+
+        return [
+            'DB_CONNECTION' => 'mysql',
+            'DB_HOST' => getenv('DB_HOST') ?: 'mysql',
+            'DB_NAME' => getenv('DB_NAME') ?: 'pingpong',
+            'DB_USER' => getenv('DB_USER') ?: 'pingpong',
+            'DB_PASSWORD' => getenv('DB_PASSWORD') ?: 'pingpong',
+            'DB_PORT' => getenv('DB_PORT') ?: '3306',
+        ];
+    }
+
+    #[\Override]
+    protected function configOverrides(): array
+    {
+        return self::databaseEnv();
+    }
+
+    /**
+     * The controller announces every stage to Soketi and defers one
+     * scenario to a Redis-backed queue, neither of which this suite has
+     * any reason to need: these tests are about what reaches the
+     * database. Substituting both is what lets them run against a bare
+     * MySQL rather than only inside the full stack.
+     */
+    #[\Override]
+    protected function registerTestDoubles(AppScope $app, Config $config): void
+    {
+        $app->instance(SoketiPublisher::class, new SoketiPublisher($this->createStub(Pusher::class)));
+        // Redis, for the same reason. A queue that holds the job rather
+        // than running it is what keeps a queued ping pending, which is
+        // what the test below asserts.
+        $app->instance(QueueInterface::class, new RecordingQueue());
+    }
+
     #[BeforeClass]
     public static function requireDatabase(): void
     {
+        $env = self::databaseEnv();
+
         try {
-            new \PDO(
-                'mysql:host=' . (getenv('DB_HOST') ?: 'mysql') . ';dbname=' . (getenv('DB_NAME') ?: 'pingpong'),
-                getenv('DB_USER') ?: 'pingpong',
-                getenv('DB_PASSWORD') ?: 'pingpong',
-                [\PDO::ATTR_TIMEOUT => 2],
+            $pdo = new \PDO(
+                'mysql:host=' . $env['DB_HOST'] . ';port=' . $env['DB_PORT'] . ';dbname=' . $env['DB_NAME'],
+                $env['DB_USER'],
+                $env['DB_PASSWORD'],
+                [\PDO::ATTR_TIMEOUT => 2, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION],
             );
         } catch (Throwable) {
-            self::markTestSkipped('No database reachable — run this inside the compose stack.');
+            self::markTestSkipped('No database reachable — run this inside the compose stack, or set MYSQL_HOST.');
         }
+
+        // The compose stack's migrate service creates this; anywhere
+        // else the suite creates it itself, so it needs no stack.
+        $pdo->exec('CREATE TABLE IF NOT EXISTS ping_messages (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            scenario VARCHAR(20) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT \'pending\',
+            created_at DATETIME NOT NULL,
+            ponged_at DATETIME NULL
+        )');
     }
 
     public function test_a_direct_ping_is_ponged_within_the_same_request(): void
