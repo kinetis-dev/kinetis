@@ -240,7 +240,7 @@ $client = TestApplication::withRouter($router)->client();
 
 ## See also
 
-- {doc}`getting-started` — the controllers these requests target.
+- {doc}`routing-validation` — the routes and DTOs these requests target.
 - {doc}`container` — `AppScope` and the binding rules a booted
   application follows.
 - {doc}`persistence` — driver selection, and why a test run gets the PDO

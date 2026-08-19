@@ -53,12 +53,6 @@ final readonly class KinetisDocsResource
         return $this->read('index');
     }
 
-    #[McpResource(uri: 'kinetis://docs/getting-started', name: 'getting-started', description: 'Install Kinetis, write your first controller, and run it under FrankenPHP', mimeType: self::MIME_TYPE)]
-    public function gettingStarted(): string
-    {
-        return $this->read('getting-started');
-    }
-
     #[McpResource(uri: 'kinetis://docs/benchmarks', name: 'benchmarks', description: 'TechEmpower-style benchmark results against seven other PHP frameworks, versions tested, and results', mimeType: self::MIME_TYPE)]
     public function benchmarks(): string
     {
@@ -215,7 +209,7 @@ final readonly class KinetisDocsResource
         return $this->read('caching');
     }
 
-    #[McpResource(uri: 'kinetis://docs/cli', name: 'cli', description: 'The kinetis CLI: mcp:serve and build', mimeType: self::MIME_TYPE)]
+    #[McpResource(uri: 'kinetis://docs/cli', name: 'cli', description: 'The kinetis CLI: built-in commands, application commands via #[Command], commands from installed packages, and restricting discovery', mimeType: self::MIME_TYPE)]
     public function cli(): string
     {
         return $this->read('cli');

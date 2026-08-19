@@ -312,3 +312,14 @@ blanket exemption.
 | Falls back to autowiring? | No | Yes, for anything not explicitly on `AppScope` |
 | Autowired instances promoted upward? | — | Never |
 | Analogous to | A correctly-scoped singleton | A fresh object graph per request |
+
+## See also
+
+- {doc}`config` — `Config` and `bootstrap.php`, the usual reason to
+  register something on `AppScope` in the first place.
+- {doc}`core-concepts` — why a persistent worker makes scope a
+  correctness question rather than a style one.
+- {doc}`routing-validation` — where controllers get resolved from, and
+  what a route's own dependencies are resolved against.
+- {doc}`testing` — building a booted application in a test, and the
+  container it gives you.

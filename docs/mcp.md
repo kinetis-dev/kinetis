@@ -305,7 +305,7 @@ mcp:serve` already wires this through for you.
 ## Exposing Kinetis's own docs as a resource
 
 `Kinetis\Mcp\KinetisDocsResource` registers every page of this documentation
-site as an MCP resource — `kinetis://docs/getting-started`,
+site as an MCP resource — `kinetis://docs/tutorial`,
 `kinetis://docs/routing-validation`, and so on — so an agent working in
 *your* codebase can read Kinetis's own docs the same way it reads your
 app's resources, instead of relying on stale training data about the

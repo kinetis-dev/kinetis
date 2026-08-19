@@ -36,7 +36,7 @@ is a matter of implementing that interface, not touching `Router` itself.
 Routes are discovered automatically: any class anywhere under one of your
 own PSR-4 roots is registered the moment a route attribute appears on one
 of its methods, with no required directory or namespace convention and
-nothing to register by hand — see {doc}`getting-started` and {doc}`cli`
+nothing to register by hand — see {doc}`cli`
 (including how to restrict the scan for a large application, and how
 installed packages contribute discovered classes through their own
 `extra.kinetis` scan roots). Methods

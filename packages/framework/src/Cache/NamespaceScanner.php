@@ -77,7 +77,7 @@ final class NamespaceScanner
      * A missing/empty `autoload.psr-4` map means discovery will silently
      * find nothing, ever — without this warning, that's a plain 404 on a
      * project's very first request with zero explanation
-     * (getting-started.md's own reproduction of exactly this). Surfaced
+     * (the tutorial reproduces exactly this). Surfaced
      * via error_log() rather than a real PSR-3 LoggerInterface: every
      * caller of classesInProject() (RouteDiscovery, CommandDiscovery,
      * McpDiscovery, ...) is a pure static function with no container

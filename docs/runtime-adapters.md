@@ -21,8 +21,36 @@ code needs to know or care which one is actually running it.
 
 This is the deployment Kinetis is built around: a single PHP process that
 boots once and serves thousands of requests, keeping everything warm
-between them. See {doc}`getting-started` for a complete, working
-`Caddyfile`.
+between them. A complete `Caddyfile`:
+
+```{code-block}
+:caption: Caddyfile
+
+{
+    admin off
+}
+
+:8080 {
+    root * public
+    php_server {
+        worker public/index.php
+    }
+}
+```
+
+```{code-block} bash
+docker run --rm -p 8080:8080 -v "$PWD":/app -w /app dunglas/frankenphp:latest \
+    frankenphp run --config Caddyfile
+```
+
+```{note}
+Worker mode keeps `public/index.php` — including route discovery —
+loaded in memory across every request it serves, so editing a controller
+while the container runs has no effect until you restart it: PHP cannot
+redeclare a loaded class with new content. While you are editing code
+constantly, PHP-FPM's boot-and-die model rebuilds this on every request
+instead, and Kinetis falls back to it automatically with no code change.
+```
 
 ```{warning}
 **A deployment gotcha worth knowing about:** Caddy's `php_server`

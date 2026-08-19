@@ -93,8 +93,8 @@ final class KinetisDocsResourceTest extends TestCase
         $resource = new KinetisDocsResource();
 
         self::assertSame(
-            file_get_contents(dirname(__DIR__, 4) . '/docs/getting-started.md'),
-            $resource->gettingStarted(),
+            file_get_contents(dirname(__DIR__, 4) . '/docs/tutorial.md'),
+            $resource->tutorial(),
         );
     }
 
@@ -145,15 +145,15 @@ final class KinetisDocsResourceTest extends TestCase
             'jsonrpc' => '2.0',
             'id' => 2,
             'method' => 'resources/read',
-            'params' => ['uri' => 'kinetis://docs/getting-started'],
+            'params' => ['uri' => 'kinetis://docs/tutorial'],
         ]);
 
         self::assertSame('text/markdown', $response['result']['contents'][0]['mimeType']);
-        self::assertStringContainsString('# Getting Started', $response['result']['contents'][0]['text']);
+        self::assertStringContainsString('# Tutorial', $response['result']['contents'][0]['text']);
     }
 
     /**
-     * read() is private and every one of the 31 public methods hardcodes a
+     * read() is private and every one of its public methods hardcodes a
      * real, always-present slug, so the missing-page branch has no path
      * through the real public API at all — invoked directly via reflection
      * instead, the same technique this class's own first test already uses,
@@ -213,6 +213,6 @@ final class KinetisDocsResourceTest extends TestCase
     {
         $resource = new KinetisDocsResource(remoteBaseUrl: 'http://127.0.0.1:1/');
 
-        self::assertStringContainsString('# Getting Started', $resource->gettingStarted());
+        self::assertStringContainsString('# Tutorial', $resource->tutorial());
     }
 }

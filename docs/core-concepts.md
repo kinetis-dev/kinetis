@@ -144,7 +144,7 @@ state": it's specifically the state *your own application code* introduces
 outside the container's request-scoping mechanism — which is precisely what
 the `NoStaticPropertiesRule` in {doc}`container` exists to catch.
 
-## Where to go next
+## See also
 
 - {doc}`container` — `AppScope`, `RequestScope`, and the enforcement
   mechanism behind everything above.

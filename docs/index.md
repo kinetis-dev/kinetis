@@ -84,19 +84,13 @@ test coverage above 90%. The benchmarks are
 ````{grid} 1 2 2 2
 :gutter: 3
 
-```{grid-item-card} Getting Started
-:link: getting-started
-:link-type: doc
-
-Install Kinetis, write your first controller, and serve it.
-```
-
 ```{grid-item-card} Tutorial
 :link: tutorial
 :link-type: doc
 
-Build a real-time application from scratch — a database, a queue, a
-scheduled command, and live updates over a WebSocket.
+Start here. Install Kinetis, write a controller, then build a real-time
+application on it — a database, a queue, a scheduled command, live
+updates over a WebSocket, and a tool an AI agent can call.
 ```
 
 ```{grid-item-card} Core Concepts
@@ -105,13 +99,6 @@ scheduled command, and live updates over a WebSocket.
 
 The runtime-agnostic Kernel, the request lifecycle, and why persistent
 workers change the rules.
-```
-
-```{grid-item-card} Container
-:link: container
-:link-type: doc
-
-AppScope and RequestScope — and why Kinetis bans `static` properties.
 ```
 
 ```{grid-item-card} Routing & Validation
@@ -131,45 +118,108 @@ one request, instead of one after another.
 ```
 ````
 
+
 ```{toctree}
 :maxdepth: 2
-:caption: Documentation
+:caption: Start here
 :hidden:
 
 Home <self>
-getting-started
-benchmarks
 tutorial
 core-concepts
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Building an application
+:hidden:
+
 container
 config
 routing-validation
 middleware
 events
-logging
-runtime-adapters
-concurrency
+cli
+testing
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Working with data
+:hidden:
+
 persistence
-performance-tuning
-migrations
 query-builder
+migrations
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Background work
+:hidden:
+
 queue
 queue-sqs
 queue-rabbitmq
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Authentication and sessions
+:hidden:
+
+auth
+auth-jwt
+session
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Runtime and performance
+:hidden:
+
+runtime-adapters
+concurrency
+caching
+performance-tuning
+benchmarks
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Observability
+:hidden:
+
+logging
+telemetry
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Integrations
+:hidden:
+
 storage
 storage-s3
 mailer
 revolt-http-client
-aws-sigv4
 search-opensearch
-telemetry
-auth
-auth-jwt
-session
+aws-sigv4
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: AI agents
+:hidden:
+
 mcp
-caching
-cli
-testing
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Reference
+:hidden:
+
 appendix
 appendix-packages
 appendix-ci

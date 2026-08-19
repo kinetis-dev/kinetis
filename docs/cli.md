@@ -336,3 +336,13 @@ never subject to your application's own discovery scope. The same goes
 for anything an installed package registers through `extra.kinetis` (see
 above): a package's own declared scan roots are read as given, outside
 these variables' reach.
+
+## See also
+
+- {doc}`events` — listeners are discovered the same way commands are, and
+  a command is a common place to dispatch one from.
+- {doc}`queue` — `queue:work`, the longest-running command most
+  applications run, and how a package contributes commands of its own.
+- {doc}`caching` — `kinetis build`, which compiles the discovery this
+  page describes into a cache production reads instead.
+- {doc}`mcp` — `mcp:serve`, and tools discovered by the same scan.

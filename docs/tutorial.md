@@ -35,6 +35,17 @@ somewhere to write a row.
 - [Composer](https://getcomposer.org)
 - Docker, with Compose
 
+```{note}
+**PHP version support policy.** Kinetis targets PHP's own currently
+*actively supported* minor versions — those still receiving both bug and
+security fixes upstream, not the older security-only tail. Today that is
+PHP 8.4 and 8.5, tracked by every package's `composer.json` floor and by
+the CI matrix (see {doc}`appendix-ci`). As new minors enter active
+support and older ones age out, Kinetis's floor and CI move with them:
+this is a policy of following PHP's own release lifecycle, not a
+commitment to 8.4/8.5 specifically.
+```
+
 ## Setting up the project
 
 ```{code-block} bash
@@ -62,6 +73,21 @@ Add a PSR-4 mapping for your own code to `composer.json`:
 
 ```{code-block} bash
 composer dump-autoload
+```
+
+That mapping is not optional. Kinetis finds your controllers, commands
+and tools by reading `composer.json`'s own `autoload.psr-4` section — it
+never scans the filesystem blindly — so without one there is nothing for
+it to look at. The namespace you choose does not matter, only that one is
+declared.
+
+```{warning}
+Skipping it produces no error. Discovery finds zero routes and logs a
+warning naming the gap (`Kinetis\Cache\NamespaceScanner found no PSR-4
+root [...] — did you forget an "autoload": {"psr-4": ...} entry in
+composer.json?`), but every request still returns a plain `404`, because
+nothing was registered to match. If a route below 404s, check this
+first, and look for that warning in your error log.
 ```
 
 ## A minimal controller
@@ -240,6 +266,13 @@ docker compose up --build
 curl http://localhost:8080/
 # {"message":"pong"}
 ```
+
+That route already documents itself. Open
+`http://localhost:8080/openapi` for a Swagger UI, and
+`http://localhost:8080/openapi.json` for the OpenAPI 3.1 document behind
+it — both generated from the attributes you just wrote, with nothing to
+annotate or keep in step. Every route you add below appears there as you
+go. {doc}`routing-validation` covers what the generator reads.
 
 ## Storing pings: MySQL, migrations, and the query builder
 
@@ -1393,8 +1426,12 @@ for FrankenPHP.
 
 ## See also
 
-- {doc}`getting-started` — a shorter path to a single working controller,
-  without the database, queue, or Soketi pieces.
+- {doc}`core-concepts` — why a persistent worker changes the rules, and
+  what the request lifecycle you just used actually does.
+- {doc}`container` — `AppScope` and `RequestScope`, and why Kinetis bans
+  `static` properties.
+- {doc}`routing-validation` — the full attribute vocabulary, validation
+  constraints, and the OpenAPI generator.
 - {doc}`config` — `.env` loading, typed `Config` access, and
   `bootstrap.php` in full.
 - {doc}`persistence` — connecting to MySQL, Postgres, and Redis directly.

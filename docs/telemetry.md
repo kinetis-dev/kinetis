@@ -206,3 +206,14 @@ span attribute already covers the leak-detection case that matters
 most. Business metrics are the application's own concern through OTel's
 API directly; this package instruments what the framework owns and
 stops there.
+
+## See also
+
+- {doc}`logging` — PSR-3 logging, which `TraceAwareLogger` decorates to
+  correlate log lines with the span they happened in.
+- {doc}`performance-tuning` — what to do with a trace once it shows where
+  a request spends its time.
+- {doc}`concurrency` — why concurrent tasks appear as overlapping spans,
+  and what that looks like when they do not.
+- {doc}`queue` — trace propagation across a queue, so a job's spans join
+  the request that pushed it.

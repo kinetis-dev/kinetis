@@ -221,3 +221,14 @@ has the complete picture: every framework's implementation, the AWS
 infrastructure as code, and the fairness rules applied identically
 across all ten targets — everything needed to run the same sweep
 yourself and check these numbers directly.
+
+## See also
+
+- {doc}`performance-tuning` — the settings these numbers were produced
+  with, and how to apply them to your own application.
+- {doc}`runtime-adapters` — worker thread sizing, the single setting that
+  moved these results most.
+- {doc}`caching` — the production AOT cache the benchmarked configuration
+  builds ahead of time.
+- {doc}`concurrency` — the reason the query-heavy tests scale the way
+  they do.
