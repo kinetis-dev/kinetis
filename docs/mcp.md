@@ -82,6 +82,24 @@ $mcp = new McpServer($registry, new McpDispatcher($app));
 $kernel = new Kernel($app, $router, mcp: $mcp);
 ```
 
+Every message is its own unit of work, the same discipline an HTTP
+request, a queue job, and a CLI command already get: `Kernel` (and
+`bin/kinetis mcp:serve`'s stdio transport) create a fresh request scope
+per JSON-RPC message, tool and resource controllers resolve from it — a
+tool constructor-injecting `RequestScope` receives the live scope of its
+own call — a dangling transaction is rolled back through the same
+`TransactionGuard` hook every HTTP request gets, and the scope is
+disposed once the response is written. State a tool registers on its
+scope does not survive to the next message. Only a hand-rolled transport
+that calls `McpServer::handle()` without passing a scope keeps the
+unscoped behavior.
+
+Identity, however, does not reach tools yet: `#[AsMcpMiddleware]`
+middleware can authenticate and reject, but runs outside the per-message
+scope, so it has nowhere to publish `CurrentUserInterface` that a tool
+would see. That arrives with `kinetis/mcp`, where `/mcp` becomes an
+ordinary route and route middleware does this natively.
+
 ```{code-block} bash
 curl -X POST http://localhost:8080/mcp \
     -H "Content-Type: application/json" \

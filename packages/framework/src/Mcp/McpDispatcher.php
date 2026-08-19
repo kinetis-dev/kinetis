@@ -40,12 +40,19 @@ final class McpDispatcher
     ) {}
 
     /**
+     * $scope, when given, is the per-message scope the transport created
+     * for this one call — the controller and its dependencies resolve
+     * from it instead of the constructor's container, which is how a
+     * tool injecting RequestScope receives the live scope of its own
+     * call rather than a disconnected autowired one. Omitted, the
+     * constructor's container is used, which is not per-message-scoped.
+     *
      * @param array<string, mixed> $arguments
      * @throws ValidationException
      */
-    public function callTool(ToolDefinition $tool, array $arguments, ?ProgressReporter $progress = null): mixed
+    public function callTool(ToolDefinition $tool, array $arguments, ?ProgressReporter $progress = null, ?ContainerInterface $scope = null): mixed
     {
-        $controller = $this->container->get($tool->controllerClass);
+        $controller = ($scope ?? $this->container)->get($tool->controllerClass);
         $key = "{$tool->controllerClass}::{$tool->controllerMethod}";
         $plan = $this->bindingPlans[$key]
             ?? self::derivePlan(new ReflectionMethod($controller, $tool->controllerMethod));
@@ -69,9 +76,12 @@ final class McpDispatcher
         }
     }
 
-    public function readResource(ResourceDefinition $resource): mixed
+    /**
+     * $scope — see callTool().
+     */
+    public function readResource(ResourceDefinition $resource, ?ContainerInterface $scope = null): mixed
     {
-        $controller = $this->container->get($resource->controllerClass);
+        $controller = ($scope ?? $this->container)->get($resource->controllerClass);
         $key = "{$resource->controllerClass}::{$resource->controllerMethod}";
         $plan = $this->bindingPlans[$key]
             ?? self::derivePlan(new ReflectionMethod($controller, $resource->controllerMethod));

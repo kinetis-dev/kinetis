@@ -7,6 +7,7 @@ namespace Kinetis\Http;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
+use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
@@ -359,6 +360,25 @@ final class Kernel
         );
     }
 
+    /**
+     * One fresh scope per JSON-RPC message — the same unit-of-work
+     * discipline dispatchCore() gives an HTTP request, with the same
+     * rollback hook behind the same class_exists() gate. The caller
+     * disposes it in a finally once the response is written.
+     */
+    private function createMcpScope(): RequestScope
+    {
+        $scope = $this->app->createRequestScope();
+
+        if (class_exists(self::TRANSACTION_GUARD_CLASS)) {
+            $transactionGuardClass = self::TRANSACTION_GUARD_CLASS;
+            $transactionGuard = $scope->get($transactionGuardClass);
+            $scope->onDispose($transactionGuard->rollbackDangling(...));
+        }
+
+        return $scope;
+    }
+
     private function handleMcp(ServerRequestInterface $request, McpServer $mcp): ResponseInterface
     {
         $decoded = json_decode((string) $request->getBody(), associative: true);
@@ -388,7 +408,13 @@ final class Kernel
             return $this->handleMcpStreaming($mcp, $decoded);
         }
 
-        $response = $mcp->handle($decoded);
+        $scope = $this->createMcpScope();
+
+        try {
+            $response = $mcp->handle($decoded, scope: $scope);
+        } finally {
+            $scope->dispose();
+        }
 
         // Spec: a POST body containing only notifications/responses gets
         // 202 Accepted with no body once the server has accepted it. Not
@@ -442,7 +468,7 @@ final class Kernel
             'X-Accel-Buffering' => 'no',
         ]);
 
-        $emitter = static function () use ($mcp, $decoded): void {
+        $emitter = function () use ($mcp, $decoded): void {
             $write = static function (array $payload): void {
                 echo 'data: ' . json_encode($payload, JSON_THROW_ON_ERROR) . "\n\n";
 
@@ -461,7 +487,17 @@ final class Kernel
                 ]);
             };
 
-            $response = $mcp->handle($decoded, $onNotification);
+            // The scope lives for the whole streamed call — the tool is
+            // still reporting progress while events are written — and is
+            // disposed only after the final event carrying the JSON-RPC
+            // response, so a dispose hook cannot fire mid-stream.
+            $scope = $this->createMcpScope();
+
+            try {
+                $response = $mcp->handle($decoded, $onNotification, $scope);
+            } finally {
+                $scope->dispose();
+            }
 
             if ($response !== null) {
                 $write($response);

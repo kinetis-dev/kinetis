@@ -85,7 +85,11 @@ final readonly class McpServeCommand
 
         $mcp = new McpServer($registry, $dispatcher, logger: $logger);
 
-        (new StdioTransport())->run($mcp, $this->input, $this->output);
+        // The command's own scope stays what the dispatcher falls back
+        // to, but every message gets a fresh scope of its own — created
+        // per line by the transport from the real AppScope, reachable
+        // here because a command's scope self-registers its parent.
+        (new StdioTransport())->run($mcp, $this->input, $this->output, $this->scope->appScope());
 
         return 0;
     }

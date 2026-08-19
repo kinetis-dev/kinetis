@@ -7,6 +7,7 @@ namespace Kinetis\Mcp;
 use Kinetis\Mcp\Exception\JsonRpcException;
 use Kinetis\Validation\Exception\ValidationException;
 use Closure;
+use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Throwable;
@@ -156,10 +157,16 @@ final class McpServer
      * writes one more SSE event. Omitting it (the default) behaves exactly
      * as before — report() calls become no-ops.
      *
+     * $scope, when given, is the per-message scope the transport created
+     * for this one message — tool and resource controllers resolve from
+     * it, and the transport disposes it once the response is written.
+     * Omitted, the dispatcher's own container is used, which is not
+     * per-message-scoped.
+     *
      * @param array<string, mixed> $message
      * @return array<string, mixed>|null
      */
-    public function handle(array $message, ?Closure $onNotification = null): ?array
+    public function handle(array $message, ?Closure $onNotification = null, ?ContainerInterface $scope = null): ?array
     {
         $hasId = array_key_exists('id', $message);
         $id = $message['id'] ?? null;
@@ -188,9 +195,9 @@ final class McpServer
                     // from the core protocol entirely. The legacy arm below
                     // keeps it, since 2025-03-26 clients still send it.
                     'tools/list' => $this->listTools(),
-                    'tools/call' => $this->callTool($params, $onNotification),
+                    'tools/call' => $this->callTool($params, $onNotification, $scope),
                     'resources/list' => $this->listResources(),
-                    'resources/read' => $this->readResource($params),
+                    'resources/read' => $this->readResource($params, $scope),
                     default => throw JsonRpcException::methodNotFound($method),
                 };
                 $result = $this->wrapModernResult($result, $method);
@@ -199,9 +206,9 @@ final class McpServer
                     'initialize' => $this->initialize(),
                     'notifications/initialized', 'ping' => [],
                     'tools/list' => $this->listTools(),
-                    'tools/call' => $this->callTool($params, $onNotification),
+                    'tools/call' => $this->callTool($params, $onNotification, $scope),
                     'resources/list' => $this->listResources(),
-                    'resources/read' => $this->readResource($params),
+                    'resources/read' => $this->readResource($params, $scope),
                     default => throw JsonRpcException::methodNotFound($method),
                 };
             }
@@ -352,7 +359,7 @@ final class McpServer
      * @param array<string, mixed> $params
      * @return array<string, mixed>
      */
-    private function callTool(array $params, ?Closure $onNotification = null): array
+    private function callTool(array $params, ?Closure $onNotification = null, ?ContainerInterface $scope = null): array
     {
         $name = $params['name'] ?? null;
 
@@ -376,7 +383,7 @@ final class McpServer
         $progress = new ProgressReporter($progressToken !== null ? $onNotification : null, $progressToken);
 
         try {
-            $result = $this->dispatcher->callTool($tool, $arguments, $progress);
+            $result = $this->dispatcher->callTool($tool, $arguments, $progress, $scope);
 
             return [
                 'content' => [['type' => 'text', 'text' => json_encode($result, JSON_THROW_ON_ERROR)]],
@@ -430,7 +437,7 @@ final class McpServer
      * @param array<string, mixed> $params
      * @return array<string, mixed>
      */
-    private function readResource(array $params): array
+    private function readResource(array $params, ?ContainerInterface $scope = null): array
     {
         $uri = $params['uri'] ?? null;
 
@@ -444,7 +451,7 @@ final class McpServer
             throw JsonRpcException::invalidParams("Unknown resource \"{$uri}\".");
         }
 
-        $content = $this->dispatcher->readResource($resource);
+        $content = $this->dispatcher->readResource($resource, $scope);
 
         return [
             'contents' => [[
