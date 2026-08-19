@@ -65,12 +65,12 @@ final readonly class CorsMiddleware implements MiddlewareInterface
      *        expressible as a fixed list. Added as the last constructor parameter, not next to
      *        $allowedOrigins where it reads most naturally, specifically so no existing
      *        positional constructor call shifts which argument lands in which parameter.
-     *        Every pattern here MUST be anchored (`^`...`$`) with every literal `.` escaped
-     *        (`\.`): an unanchored `example\.com` matches `https://evil-example.com.attacker.net`
-     *        just as happily as the intended subdomain — a real, recurring class of
-     *        CORS-misconfiguration vulnerability, not a hypothetical one. Not validated at
-     *        construction time — a malformed or under-anchored pattern is a configuration bug,
-     *        the same trust already placed in every other constructor argument here.
+     *        A pattern must compile, which is checked here, and must match the Origin in
+     *        full — a partial match is not enough, so an unanchored `example\.com` does not
+     *        allow `https://evil-example.com.attacker.net`, a real and recurring class of
+     *        CORS misconfiguration. Escaping literal dots is still yours to get right:
+     *        `.+example\.com` matches `https://evilexample.com` in full, and nothing
+     *        generic can tell that from an intended pattern.
      */
     public function __construct(
         private array $allowedOrigins = [],
@@ -87,6 +87,17 @@ final readonly class CorsMiddleware implements MiddlewareInterface
                 . 'this would grant any origin credentialed access to every response. '
                 . 'List specific allowed origins instead, or set allowCredentials to false.',
             );
+        }
+
+        foreach ($allowedOriginPatterns as $pattern) {
+            if (@preg_match($pattern, '') === false) {
+                throw new InvalidArgumentException(
+                    "CorsMiddleware origin pattern \"{$pattern}\" is not a valid PCRE pattern. "
+                    . 'It runs against the Origin header on every request, where one that cannot '
+                    . 'compile matches nothing and silently denies every origin it was meant to '
+                    . 'allow. Include the delimiters, as in #^https://[a-z0-9-]+\.example\.com$#.',
+                );
+            }
         }
     }
 
@@ -142,7 +153,13 @@ final readonly class CorsMiddleware implements MiddlewareInterface
         }
 
         foreach ($this->allowedOriginPatterns as $pattern) {
-            if (preg_match($pattern, $origin) === 1) {
+            // The match has to span the whole Origin. Without that, a
+            // pattern carrying no anchors matches a substring, and
+            // example\.com would allow https://evil-example.com.attacker.net.
+            // Checking the pattern for ^...$ instead would not do: an
+            // alternation such as ^https://good\.com$|evil\.com$ carries
+            // both anchors and is still unanchored on its second branch.
+            if (preg_match($pattern, $origin, $matches) === 1 && $matches[0] === $origin) {
                 return true;
             }
         }

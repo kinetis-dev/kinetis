@@ -656,17 +656,29 @@ new CorsMiddleware(
 );
 ```
 
+A pattern has to match the `Origin` in full. A partial match is not
+enough, so an unanchored `example\.com` does not allow
+`https://evil-example.com.attacker.net` — the recurring class of CORS
+misconfiguration this parameter would otherwise invite. Anchors are
+still worth writing for clarity, but leaving them out cannot widen what
+a pattern allows.
+
+The whole-`Origin` rule is what enforces this, rather than a check that
+the pattern carries `^` and `$`. Such a check cannot be trusted: an
+alternation like `#^https://good\.com$|evil\.com$#` carries both
+anchors and is still unanchored on its second branch, so it would pass
+inspection while allowing any origin ending in `evil.com`.
+
 ```{danger}
-**Every pattern must be anchored (`^`...`$`) with every literal `.`
-escaped (`\.`) — an unanchored or unescaped pattern is a recurring class
-of CORS-misconfiguration vulnerability.** An unanchored, unescaped
-`example.com` treats the `.` as "any character" and has no start/end
-boundary, so it matches `https://evil-example.com.attacker.net` exactly
-as happily as the intended subdomain. Patterns aren't validated at
-construction time; a
-malformed or under-anchored one is a configuration bug the same way any
-other misconfigured constructor argument would be.
+**Escaping literal dots is still yours to get right.** `.+example\.com`
+matches `https://evilexample.com` in full, and nothing generic can tell
+that from an intended pattern. Write `\.` for a literal dot.
 ```
+
+Patterns are compiled when the middleware is constructed, and one that
+cannot compile raises `InvalidArgumentException` there — it would
+otherwise match nothing and quietly deny every origin it was written to
+allow.
 
 For anything beyond pattern matching against the `Origin` header itself —
 a per-tenant allow-list, for example — write your own middleware using

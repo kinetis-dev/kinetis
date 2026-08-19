@@ -11,6 +11,8 @@ use Kinetis\Http\Middleware\CorsMiddleware;
 use Kinetis\Http\Routing\Router;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
+use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class CorsMiddlewareTest extends TestCase
@@ -256,12 +258,14 @@ final class CorsMiddlewareTest extends TestCase
         self::assertFalse($response->hasHeader('Access-Control-Allow-Origin'));
     }
 
-    public function test_an_unanchored_pattern_is_a_real_footgun_not_a_hypothetical_one(): void
+    /**
+     * The classic CORS misconfiguration: no anchors and an unescaped
+     * ".", so "example.com" reads as any character between "example" and
+     * "com" and appears anywhere in the Origin. Requiring the match to
+     * cover the whole Origin is what denies it.
+     */
+    public function test_an_unanchored_pattern_does_not_allow_an_origin_that_merely_contains_it(): void
     {
-        // Documents the exact mistake the class docblock warns against:
-        // no ^...$ anchors and an unescaped "." means "example.com" is
-        // treated as "any character" between "example" and "com", so a
-        // clearly-unintended attacker-controlled origin matches too.
         $middleware = new CorsMiddleware(
             allowedOrigins: [],
             allowedOriginPatterns: ['#example.com#'],
@@ -270,7 +274,59 @@ final class CorsMiddlewareTest extends TestCase
 
         $response = $middleware->process($request, $this->handler());
 
-        self::assertSame('https://evil-example.com.attacker.net', $response->getHeaderLine('Access-Control-Allow-Origin'));
+        self::assertFalse($response->hasHeader('Access-Control-Allow-Origin'));
+    }
+
+    /**
+     * Why the pattern is not inspected for ^...$ instead: this one
+     * carries both and is still unanchored on its second branch, so an
+     * anchor check would pass it while it allows any origin ending in
+     * evil.com.
+     */
+    public function test_an_alternation_carrying_anchors_is_still_matched_against_the_whole_origin(): void
+    {
+        $middleware = new CorsMiddleware(
+            allowedOrigins: [],
+            allowedOriginPatterns: ['#^https://good\.com$|evil\.com$#'],
+        );
+
+        $denied = $middleware->process(
+            new ServerRequest('GET', '/', ['Origin' => 'https://not-evil.com']),
+            $this->handler(),
+        );
+        self::assertFalse($denied->hasHeader('Access-Control-Allow-Origin'));
+
+        // The branch that does describe a whole Origin still works.
+        $allowed = $middleware->process(
+            new ServerRequest('GET', '/', ['Origin' => 'https://good.com']),
+            $this->handler(),
+        );
+        self::assertSame('https://good.com', $allowed->getHeaderLine('Access-Control-Allow-Origin'));
+    }
+
+    /**
+     * @return list<array{string}>
+     */
+    public static function uncompilablePatterns(): array
+    {
+        return [
+            ['example.com'],
+            ['#^https://[unclosed#'],
+            ['#^https://example\\.com$#Z'],
+            [''],
+        ];
+    }
+
+    /**
+     * A pattern that cannot compile matches nothing, so it would deny
+     * every origin it was written to allow, on every request, quietly.
+     */
+    #[DataProvider('uncompilablePatterns')]
+    public function test_a_pattern_that_cannot_compile_is_rejected_at_construction(string $pattern): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new CorsMiddleware(allowedOriginPatterns: [$pattern]);
     }
 
     public function test_works_as_global_middleware_and_answers_a_preflight_before_routing_would_404(): void
