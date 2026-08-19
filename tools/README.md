@@ -19,7 +19,11 @@ Three scripts. The first two are driven by `packages.manifest.json`
   and workflow coverage: every package needs a `ci.yml` and an
   `infection.yml` job, and every job in those two must map back to a
   package. Absences are named in `INFECTION_EXEMPT`/`WORKFLOW_ONLY` with
-  a reason, so one is a decision rather than an oversight.
+  a reason, so one is a decision rather than an oversight. The same check
+  requires `sonarqube.yml`'s coverage loop and `sonar-project.properties`'
+  `reportPaths` to name the same packages — a package in one but not the
+  other writes a report nobody reads, and shows as 0% covered while its
+  tests pass.
 - `setup-docs-mcp.sh` — see "Setting up the docs MCP server" below.
 
 Never hand-edit a `packages/*/composer.json` directly for anything the

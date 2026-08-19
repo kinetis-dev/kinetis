@@ -255,8 +255,9 @@ change:
   drift, version-bump completeness, content-bump completeness — a
   changed file under a package requires a version change in the same
   commit — and workflow coverage, which requires every package to have a
-  `ci.yml` and `infection.yml` job) plus `composer validate --strict`
-  across every package. This is the one that enforces everything in
+  `ci.yml` and `infection.yml` job, and `sonarqube.yml`'s coverage loop
+  to name the same packages as `sonar-project.properties` reads reports
+  for) plus `composer validate --strict` across every package. This is the one that enforces everything in
   the "changing a package's dependencies" section above — skip a
   version bump, forget to regenerate, or introduce a dependency cycle,
   and this is what catches it. Run it locally before pushing:

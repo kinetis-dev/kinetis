@@ -390,4 +390,48 @@ final class ValidateManifestTest extends TestCase
     {
         self::assertSame([], workflowPackages(__DIR__ . '/does-not-exist.yml'));
     }
+
+    public function test_coverage_wiring_accepts_matching_lists(): void
+    {
+        self::assertSame([], checkCoverageWiring(['framework', 'session'], ['session', 'framework']));
+    }
+
+    /**
+     * The mistake this catches: a package added to the loop that
+     * generates reports, but not to the list that reads them. The report
+     * is written and thrown away, and the package reads as 0% covered
+     * while its tests pass.
+     */
+    public function test_coverage_wiring_names_a_report_nobody_reads(): void
+    {
+        $problems = checkCoverageWiring(['framework', 'pingpong'], ['framework']);
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('pingpong', $problems[0]);
+        self::assertStringContainsString('never reads', $problems[0]);
+    }
+
+    public function test_coverage_wiring_names_a_report_nobody_writes(): void
+    {
+        $problems = checkCoverageWiring(['framework'], ['framework', 'gone']);
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('never generates', $problems[0]);
+    }
+
+    public function test_coverage_lists_are_read_from_the_repos_own_files(): void
+    {
+        $loop = coverageLoopPackages(__DIR__ . '/../../.github/workflows/sonarqube.yml');
+        $read = coverageReportPackages(__DIR__ . '/../../sonar-project.properties');
+
+        self::assertContains('framework', $loop);
+        self::assertContains('framework', $read);
+        self::assertSame([], checkCoverageWiring($loop, $read), 'the repo\'s own coverage wiring must agree');
+    }
+
+    public function test_coverage_lists_are_empty_for_files_that_do_not_exist(): void
+    {
+        self::assertSame([], coverageLoopPackages(__DIR__ . '/nope.yml'));
+        self::assertSame([], coverageReportPackages(__DIR__ . '/nope.properties'));
+    }
 }
