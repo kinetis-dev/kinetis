@@ -11,6 +11,15 @@ on:
       - 'packages/**'
       - '.github/workflows/integration.yml'
 
+# One run per branch at a time: a superseded PR push cancels the older
+# run outright; on main nothing is cancelled, but stacked pushes queue
+# as at most one pending run instead of piling their whole job matrix
+# behind each other's. release.yml deliberately has no such block — a
+# release in progress must never be cancelled or superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   # Composer runs natively in this workflow rather than in a container,
   # so the cache is addressed by COMPOSER_CACHE_DIR instead of a mount.

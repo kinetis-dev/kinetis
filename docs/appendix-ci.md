@@ -145,6 +145,12 @@ package, set with a margin below that package's own measured score. Runs
 on PHP 8.4 only, not matrixed across 8.4/8.5 like
 `ci.yml`/`integration.yml`.
 
+On a pull request, only the code the PR actually changes is mutated
+(`--git-diff-filter` against the base branch), under the same
+thresholds; a package the PR never touches skips its job outright.
+Every push to `main` runs the full mutation suite, so the complete
+score stays enforced there.
+
 Thresholds, as declared in `infection.yml` — which is the authority; a
 package's current score is whatever its own job last reported, and sits
 above the number here by design:

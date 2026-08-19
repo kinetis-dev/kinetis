@@ -10,6 +10,15 @@ permissions:
   security-events: write
   actions: read
 
+# One run per branch at a time: a superseded PR push cancels the older
+# run outright; on main nothing is cancelled, but stacked pushes queue
+# as at most one pending run instead of piling their whole job matrix
+# behind each other's. release.yml deliberately has no such block — a
+# release in progress must never be cancelled or superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   # The cache above removes almost every download; this covers what is
   # left — a cold cache, or a lock file that just changed. The job's own

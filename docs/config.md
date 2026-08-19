@@ -229,7 +229,7 @@ directory, for large applications that want a bounded scan (see
 |---|---|
 | `ROUTE_DISCOVERY_PATHS` | HTTP controllers (`#[Get]`/`#[Post]`/...) |
 | `COMMAND_DISCOVERY_PATHS` | CLI commands (`#[Command]`) |
-| `MCP_DISCOVERY_PATHS` | MCP tools and resources (`#[McpTool]`/`#[McpResource]`) |
+| `MCP_DISCOVERY_PATHS` | MCP tools and resources (`#[McpTool]`/`#[McpResource]`) — read by `kinetis/mcp` |
 | `MIDDLEWARE_DISCOVERY_PATHS` | Global middleware (`#[AsGlobalMiddleware]`) and middleware groups (`#[AsMiddlewareGroup]`) |
 | `LISTENER_DISCOVERY_PATHS` | Event listeners (`#[Listener]`) |
 
@@ -332,6 +332,36 @@ keys as persistence.
 | `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
 | `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
 | `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate. |
+
+### Sessions (`kinetis/session`)
+
+| Key | Default | Purpose |
+|---|---|---|
+| `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset leaves the package inert — no store is bound. |
+| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write. |
+| `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
+| `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute: `Strict`, `Lax`, or `None`. `None` requires `SESSION_SECURE`. |
+| `SESSION_SECURE` | `true` | Cookie `Secure` attribute — `false` only for non-TLS local development. |
+| `SESSION_FILES_DIR` | system temp | The `file` driver's directory. |
+
+### MCP (`kinetis/mcp`)
+
+`MCP_DISCOVERY_PATHS`, in the discovery table above, also belongs to
+this package.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `MCP_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact `Origin` values allowed on `/mcp`. Empty rejects any request that sends an `Origin` header at all; requests without one (CLI clients, server-to-server) always pass. |
+
+### Telemetry (`kinetis/telemetry`)
+
+| Key | Default | Purpose |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | Collector's OTLP/HTTP base URL. Unset means tracing is off (no-op provider). |
+| `OTEL_SERVICE_NAME` | `kinetis` | The `service.name` resource attribute. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | — | Export-request headers, `key=value,key2=value2` — where a hosted backend's auth goes. |
+| `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | One of the standard OTel sampler names; `traceidratio` variants read `OTEL_TRACES_SAMPLER_ARG`. |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampling ratio for the `traceidratio` samplers, `0`–`1`. |
 
 ## See also
 

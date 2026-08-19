@@ -14,6 +14,15 @@ on:
       - 'sonar-project.properties'
       - '.github/workflows/sonarqube.yml'
 
+# One run per branch at a time: a superseded PR push cancels the older
+# run outright; on main nothing is cancelled, but stacked pushes queue
+# as at most one pending run instead of piling their whole job matrix
+# behind each other's. release.yml deliberately has no such block — a
+# release in progress must never be cancelled or superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   # The cache above removes almost every download; this covers what is
   # left — a cold cache, or a lock file that just changed. The job's own
@@ -143,8 +152,17 @@ jobs:
         # container runs as a different UID than the host checkout it
         # bind-mounts, which git (invoked internally by Composer for
         # path-repo version resolution) refuses by default.
+        #
+        # Four packages at a time rather than sequentially — every
+        # package that touches the shared databases uses its own table
+        # names, so their suites don't collide. Each package's output
+        # goes to its own log file, printed only on failure so the step's
+        # own log stays readable.
         run: |
-          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer mcp migrations pingpong query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
+          mkdir -p /tmp/cov-logs
+          : > /tmp/cov-failed
+          run_pkg() {
+            pkg=$1
             # cache-redis joins the Redis network started above instead of
             # the host one, so cluster redirects resolve; every other
             # package reaches the database services over --network host.
@@ -154,9 +172,25 @@ jobs:
             # configured cache.
             REDIS_ENV=""
             if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
-            docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist
-            docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
+            {
+              docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist &&
+              docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
+            } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
+            echo "$pkg done"
+          }
+          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter mailer mcp migrations pingpong query-builder queue queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
+            run_pkg "$pkg" &
+            while [ "$(jobs -rp | wc -l)" -ge 4 ]; do sleep 1; done
           done
+          wait
+          if [ -s /tmp/cov-failed ]; then
+            while read -r pkg; do
+              echo "::group::$pkg failed"
+              cat "/tmp/cov-logs/$pkg.log"
+              echo "::endgroup::"
+            done < /tmp/cov-failed
+            exit 1
+          fi
 
       - name: SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@v8
