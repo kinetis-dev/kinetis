@@ -9,8 +9,8 @@ framework's own code. Five workflow files, `.github/workflows/`:
 
 ## `ci.yml` — static checks and unit tests, per package
 
-One job per package (core plus every satellite package, 14 in total),
-matrixed across PHP 8.4 and 8.5 — every check below runs against both,
+One job per package — every package in `packages.manifest.json`, plus
+`tools/` — matrixed across PHP 8.4 and 8.5 — every check below runs against both,
 not just one — each running against the exact same Docker images used
 for local development:
 
@@ -136,36 +136,48 @@ incrementing a constant, ...) and re-runs the covering tests per
 mutant — a mutant the suite doesn't catch ("escaped") is a gap in
 assertion rigor, not just a coverage gap.
 
-One matrix job per package, core plus every satellite package except
-`kinetis/pingpong` (no PHPUnit tests, nothing to mutate against). Each:
+One matrix job per package that has a PHPUnit suite. `kinetis/pingpong`
+is excluded (no tests, nothing to mutate against), and `tools/` is the
+monorepo's own tooling rather than a published package. Each job runs
 `composer install`, then Infection with PCOV as the coverage driver,
-gated on `--min-msi`/`--min-covered-msi`, a real, non-zero threshold per
-package, set with a margin below each package's own score. Runs on PHP
-8.4 only — not matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`:
+gated on `--min-msi`/`--min-covered-msi` — a real, non-zero threshold per
+package, set with a margin below that package's own measured score. Runs
+on PHP 8.4 only, not matrixed across 8.4/8.5 like
+`ci.yml`/`integration.yml`.
 
-| Package | min-msi / min-covered-msi | Score at the time it was set |
-|---|---|---|
-| core | 75% | 81% |
-| auth | 70% | 75% |
-| auth-jwt | 70% | 77% |
-| bref-adapter | 70% | 80% |
-| mailer | 90% | 100% |
-| migrations | 75% | 82% |
-| query-builder | 80% | 86% |
-| queue | 60% | 70% |
-| queue-rabbitmq | 90% | 100% |
-| queue-sqs | 55% | 66% |
-| revolt-http-client | 75% | 85% |
-| search-opensearch | 70% | 77% |
-| skeleton | 90% | 100% |
-| storage | 90% | 100% |
-| storage-s3 | 15% | 20% |
+Thresholds, as declared in `infection.yml` — which is the authority; a
+package's current score is whatever its own job last reported, and sits
+above the number here by design:
 
-`queue-sqs`/`storage-s3` score lowest: their real backend-specific logic
-(`SqsQueue`, the AWS S3 adapter path) is real-backend-verified only,
-with no PHPUnit coverage (see {doc}`appendix-packages`). Infection only
-scores the config-parsing factory classes those two packages do
-unit-test.
+| Package | min-msi / min-covered-msi |
+|---|---|
+| `auth` | 70% |
+| `auth-jwt` | 70% |
+| `aws-sigv4` | 90% |
+| `bref-adapter` | 70% |
+| `cache-redis` | 75% |
+| `core` | 75% |
+| `mailer` | 90% |
+| `migrations` | 75% |
+| `persistence` | 85% |
+| `query-builder` | 80% |
+| `queue` | 60% |
+| `queue-rabbitmq` | 90% |
+| `queue-sqs` | 55% |
+| `revolt-http-client` | 75% |
+| `search-opensearch` | 70% |
+| `session` | 65% |
+| `skeleton` | 90% |
+| `storage` | 90% |
+| `storage-s3` | 15% |
+| `telemetry` | 70% |
+
+`queue-sqs` and `storage-s3` sit lowest because their real
+backend-specific logic (`SqsQueue`, the AWS S3 adapter path) is
+real-backend-verified only, with no PHPUnit coverage (see
+{doc}`appendix-packages`). Infection scores only the config-parsing
+factory classes those two packages do unit-test, so the number reflects
+established scope rather than a gap to close.
 
 ## `sonarqube.yml` — SonarQube Cloud
 

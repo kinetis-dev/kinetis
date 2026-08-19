@@ -250,10 +250,11 @@ change:
   audit`, PHPUnit, PHPStan, and Psalm, one job per package (matrixed
   across PHP 8.4 and 8.5), plus a separate job building the Sphinx docs
   with `-W` (a broken docs page fails the build the same as broken code).
-- **`monorepo-validate.yml`** — the four `packages.manifest.json` checks
+- **`monorepo-validate.yml`** — the five `packages.manifest.json` checks
   (cycle detection, cross-manifest version consistency, generated-file
-  drift, version-bump completeness) plus `composer validate --strict`
-  across all 19 packages. This is the one that enforces everything in
+  drift, version-bump completeness, and content-bump completeness: a
+  changed file under a package requires a version change in the same
+  commit) plus `composer validate --strict` across every package. This is the one that enforces everything in
   the "changing a package's dependencies" section above — skip a
   version bump, forget to regenerate, or introduce a dependency cycle,
   and this is what catches it. Run it locally before pushing:

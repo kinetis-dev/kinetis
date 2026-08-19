@@ -34,10 +34,12 @@ fixes. Kinetis is pre-1.0 in spirit even where a package's version
 number has crossed 1.0 — expect the fix to land as a new patch release
 on the current minor line, not backported indefinitely.
 
-| Package (example) | Supported |
-| --- | --- |
-| `kinetis/framework` 1.5.x | ✅ |
-| `kinetis/framework` < 1.5 | ❌ |
+Concretely, for any package: the newest minor line published on
+Packagist is supported, and every minor line below it is not. No version
+number is written here on purpose — packages release often enough that
+one would be wrong within a week, and
+[packagist.org/packages/kinetis/](https://packagist.org/packages/kinetis/)
+always shows what is current.
 
 If a vulnerability affects multiple packages (a shared dependency, a
 contract both sides implement), we'll coordinate fixes across all of
