@@ -104,7 +104,7 @@ jobs:
       # small enough that a single lock change re-downloading everything
       # costs seconds.
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}

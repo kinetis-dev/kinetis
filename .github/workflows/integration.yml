@@ -67,7 +67,7 @@ jobs:
           extensions: pgsql
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -121,7 +121,7 @@ jobs:
           php-version: ${{ matrix.php-version }}
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -173,7 +173,7 @@ jobs:
           php-version: ${{ matrix.php-version }}
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -242,7 +242,7 @@ jobs:
           extensions: pgsql
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -313,7 +313,7 @@ jobs:
           TLS_CLIENT_KEY: /tmp/tls-certs/client.key
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -353,7 +353,7 @@ jobs:
           php-version: ${{ matrix.php-version }}
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -411,7 +411,7 @@ jobs:
           extensions: pgsql
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -516,7 +516,7 @@ jobs:
           rm composer-setup.php
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -562,7 +562,7 @@ jobs:
           php-version: ${{ matrix.php-version }}
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -576,7 +576,7 @@ jobs:
         run: php tests-integration/run.php
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
@@ -726,7 +726,7 @@ jobs:
           php-version: ${{ matrix.php-version }}
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
