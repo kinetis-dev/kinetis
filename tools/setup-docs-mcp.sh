@@ -29,6 +29,11 @@ echo "  claude CLI: found - OK"
 echo
 echo "Installing kinetis/mcp into ${INSTALL_DIR}..."
 mkdir -p "$INSTALL_DIR"
+# A rerun rewrites composer.json below, and composer install refuses a
+# lock file that no longer matches it. Dropping the lock makes Composer
+# resolve fresh and reconcile vendor/ on its own; deleting only this
+# one file keeps the script safe against a mistyped KINETIS_MCP_DIR.
+rm -f "$INSTALL_DIR/composer.lock"
 cat > "$INSTALL_DIR/composer.json" <<'EOF'
 {
     "require": {
