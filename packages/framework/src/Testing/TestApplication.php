@@ -95,7 +95,6 @@ final class TestApplication
             $app,
             $router,
             discoveredGlobalMiddleware: $middleware['global'],
-            discoveredMcpMiddleware: $middleware['mcp'],
             discoveredOpenApiMiddleware: $middleware['openApi'],
             middlewareGroups: $middleware['groups'],
         );

@@ -62,7 +62,6 @@ if ($env->isProduction()) {
 
     $router = Router::fromArray($httpCache->routes);
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
-    $discoveredMcpMiddleware = $httpCache->mcpMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
     $middlewareGroups = $httpCache->middlewareGroups;
     // Another confirmed nullsafe.neverNull false positive (see
@@ -81,14 +80,13 @@ if ($env->isProduction()) {
     // Any class anywhere under one of your own PSR-4 roots is picked up
     // automatically — nothing to register.
     $router = RouteDiscovery::discover($projectRoot);
-    // Same for a class carrying #[AsGlobalMiddleware]/#[AsMcpMiddleware]/
+    // Same for a class carrying #[AsGlobalMiddleware]/
     // #[AsOpenApiMiddleware] or #[Listener] — no AppScope::middleware()
     // call, or manual EventListenerRegistry construction in
     // bootstrap.php, needed for any of them. One shared scan produces all
     // three middleware lists at once.
     $discoveredMiddleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
     $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
-    $discoveredMcpMiddleware = $discoveredMiddleware['mcp'];
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
     $middlewareGroups = $discoveredMiddleware['groups'];
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
@@ -130,7 +128,6 @@ $kernel = new Kernel(
     isPersistent: $adapter->isPersistent(),
     httpCache: $httpCache,
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
-    discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,
     middlewareGroups: $middlewareGroups,
 );

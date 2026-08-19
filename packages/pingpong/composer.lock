@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9f6cfa29a3e6f288154c63bc3aa2e4f8",
+    "content-hash": "0e554fec8538c3e16251511280399286",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1427,6 +1427,61 @@
             }
         },
         {
+            "name": "kinetis/mcp",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../mcp",
+                "reference": "aaab278bd50bfde0f4f79e1733fc6c4db6865afa"
+            },
+            "require": {
+                "kinetis/framework": "dev-main",
+                "nyholm/psr7": "^1.8.2",
+                "php": "^8.4",
+                "psr/container": "^2.0.2",
+                "psr/http-message": "^2.0",
+                "psr/http-server-middleware": "^1.0.2",
+                "psr/log": "^3.0.2"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "kinetis/auth": "dev-main",
+                "kinetis/persistence": "dev-main",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^12.5.33",
+                "vimeo/psalm": "^6.16.1"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": {
+                    "scan": "Kinetis\\Mcp\\",
+                    "bootstrap": "Kinetis\\Mcp\\PackageBootstrap"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Mcp\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\Mcp\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
             "name": "kinetis/migrations",
             "version": "dev-main",
             "dist": {
@@ -1480,7 +1535,7 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "f5f772c360f0e5c9acc51d70cd5cee370c89cc30"
+                "reference": "f8402ca22f24dd55c95fc91a00c76e72526dd100"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1489,6 +1544,7 @@
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
+                "kinetis/mcp": "dev-main",
                 "nyholm/psr7": "^1.8.2",
                 "phpstan/phpstan": "^2.2.8",
                 "phpunit/phpunit": "^12.5.33",
@@ -6809,6 +6865,7 @@
     "stability-flags": {
         "kinetis/cache-redis": 20,
         "kinetis/framework": 20,
+        "kinetis/mcp": 20,
         "kinetis/migrations": 20,
         "kinetis/persistence": 20,
         "kinetis/query-builder": 20,

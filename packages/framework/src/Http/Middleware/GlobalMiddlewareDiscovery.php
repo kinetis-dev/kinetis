@@ -7,27 +7,26 @@ namespace Kinetis\Http\Middleware;
 use Kinetis\Cache\NamespaceScanner;
 use Kinetis\Cache\PackageDiscovery;
 use Kinetis\Http\Attributes\AsGlobalMiddleware;
-use Kinetis\Http\Attributes\AsMcpMiddleware;
 use Kinetis\Http\Attributes\AsMiddlewareGroup;
 use Kinetis\Http\Attributes\AsOpenApiMiddleware;
 use ReflectionClass;
 
 /**
  * Finds every class anywhere under a project's own PSR-4 root(s) — plus
- * Kinetis\Http itself, for symmetry with RouteDiscovery/CommandDiscovery/
- * McpDiscovery — carrying #[AsGlobalMiddleware], #[AsMcpMiddleware],
+ * Kinetis\Http itself, for symmetry with RouteDiscovery and
+ * CommandDiscovery — carrying #[AsGlobalMiddleware],
  * #[AsOpenApiMiddleware], or #[AsMiddlewareGroup], returning each as its
  * own already-sorted result: priority descending, ties broken
  * alphabetically by fully-qualified class name so nothing depends on
  * filesystem/scan order. discoverAll() performs exactly one project-wide
  * scan and buckets by attribute — so a class can be discovered as any
- * combination of the four without multiplying the filesystem walk, which
+ * combination of the three without multiplying the filesystem walk, which
  * matters most under a boot-and-die runtime where discovery reruns on
  * every request. discover() is the single-purpose entry point for any
  * caller that only ever wanted the global list — still exactly one scan
  * when called alone.
  *
- * The first three buckets are flat class-string lists (each is one
+ * The first two buckets are flat class-string lists (each is one
  * pipeline). `groups` is a map of group name to its own sorted member
  * list, since a project can declare any number of independent groups —
  * see #[AsMiddlewareGroup] and #[Middleware]'s `@name` references.
@@ -43,7 +42,7 @@ use ReflectionClass;
  * Kinetis's own built-in middleware (CorsMiddleware, RateLimitMiddleware,
  * ...) is never attributed this way — each needs app-specific
  * constructor config (allowed origins, a limit) no default could supply,
- * so they stay opt-in via AppScope::middleware()/mcpMiddleware()/
+ * so they stay opt-in via AppScope::middleware()/
  * openApiMiddleware() only.
  *
  * $paths restricts the project-wide scan to one or more sub-paths
@@ -59,7 +58,6 @@ use ReflectionClass;
  *
  * @phpstan-type DiscoveredMiddleware array{
  *     global?: list<class-string>,
- *     mcp?: list<class-string>,
  *     openApi?: list<class-string>,
  *     groups?: array<string, list<class-string>>,
  * }
@@ -80,7 +78,7 @@ final class GlobalMiddlewareDiscovery
 
     /**
      * @param list<string>|null $paths
-     * @return array{global: list<class-string>, mcp: list<class-string>, openApi: list<class-string>, groups: array<string, list<class-string>>}
+     * @return array{global: list<class-string>, openApi: list<class-string>, groups: array<string, list<class-string>>}
      */
     public static function discoverAll(string $projectRoot, ?array $paths = null): array
     {
@@ -92,8 +90,6 @@ final class GlobalMiddlewareDiscovery
 
         /** @var array<class-string, int> $global */
         $global = [];
-        /** @var array<class-string, int> $mcp */
-        $mcp = [];
         /** @var array<class-string, int> $openApi */
         $openApi = [];
         /** @var array<string, array<class-string, int>> $groups */
@@ -105,11 +101,6 @@ final class GlobalMiddlewareDiscovery
             $globalAttributes = $reflection->getAttributes(AsGlobalMiddleware::class);
             if ($globalAttributes !== []) {
                 $global[$class] = $globalAttributes[0]->newInstance()->priority;
-            }
-
-            $mcpAttributes = $reflection->getAttributes(AsMcpMiddleware::class);
-            if ($mcpAttributes !== []) {
-                $mcp[$class] = $mcpAttributes[0]->newInstance()->priority;
             }
 
             $openApiAttributes = $reflection->getAttributes(AsOpenApiMiddleware::class);
@@ -138,7 +129,6 @@ final class GlobalMiddlewareDiscovery
 
         return [
             'global' => self::sortedByPriority($global),
-            'mcp' => self::sortedByPriority($mcp),
             'openApi' => self::sortedByPriority($openApi),
             'groups' => $resolvedGroups,
         ];

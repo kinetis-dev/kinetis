@@ -15,7 +15,6 @@ final class NamespaceScannerTest extends TestCase
         $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures'));
 
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Console\DiscoveredPingCommand', $classes);
-        self::assertContains('Kinetis\Tests\Cache\Fixtures\Mcp\DiscoveredToolController', $classes);
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Http\DiscoveredPingController', $classes);
     }
 
@@ -118,7 +117,6 @@ final class NamespaceScannerTest extends TestCase
         $classes = iterator_to_array(NamespaceScanner::classesUnderFrameworkSegment('Console'));
 
         self::assertContains('Kinetis\Console\BuildCommand', $classes);
-        self::assertContains('Kinetis\Console\McpServeCommand', $classes);
     }
 
     public function test_does_not_yield_a_class_that_cannot_be_registered(): void

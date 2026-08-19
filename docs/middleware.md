@@ -144,22 +144,36 @@ comma-separated sub-paths relative to each PSR-4 base directory,
 committed in `.env`. See {doc}`caching` for how this is compiled ahead of
 time in production, alongside the route table itself.
 
-### Scoping middleware to `/mcp` or `/openapi.json`/`/openapi` specifically
+### Scoping middleware to `/openapi.json`/`/openapi` or `/mcp` specifically
 
-Global middleware already wraps `/mcp` and `/openapi.json`/`/openapi` — the
-global pipeline covers `Kernel::handle()`'s entire body, these endpoints
-included. `#[AsMcpMiddleware]` and `#[AsOpenApiMiddleware]` exist for the
-narrower need: middleware that should run for *only* one of these
-endpoints, not every other route too.
+Global middleware already wraps every route, these endpoints included.
+The narrower need — middleware that should run for *only* one of them —
+is served by two mechanisms with one underlying shape, since both
+endpoints are ordinary discovered routes on controllers a package or
+the framework ships:
+
+**`#[AsOpenApiMiddleware]`** covers `/openapi.json` and `/openapi`
+together — the same "expose the API's own shape" concern, not two
+independently protectable surfaces. Its classes are published as a
+built-in `openapi` middleware group that the framework's
+`DocumentationController` references like any other route middleware.
+It takes the same `priority` (bounded `0`-`100`, default `50`,
+alphabetical tiebreak) as `#[AsGlobalMiddleware]`, is discovered by the
+same project-wide scan, and has an explicit-registration counterpart,
+`AppScope::openApiMiddleware(SomeClass::class)`.
+
+**The `mcp` middleware group** covers `/mcp`, which `kinetis/mcp`'s own
+controller references via `#[Middleware('@mcp')]`. Join it by declaring
+membership:
 
 ```{code-block} php
-use Kinetis\Http\Attributes\AsMcpMiddleware;
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
-#[AsMcpMiddleware]
+#[AsMiddlewareGroup('mcp')]
 final readonly class McpAuthMiddleware implements MiddlewareInterface
 {
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -173,40 +187,19 @@ final readonly class McpAuthMiddleware implements MiddlewareInterface
 }
 ```
 
-`#[AsOpenApiMiddleware]` is the identical attribute, shared by both
-`/openapi.json` and `/openapi` — the same "expose the API's own shape"
-concern, not two independently protectable surfaces. It reaches them by
-a different route, though: those two are ordinary discovered routes on a
-controller the framework ships, so the attribute publishes its classes
-as a built-in `openapi` middleware group that the controller references
-like any other route middleware. Nothing about using it changes; it is
-worth knowing only because `routes:list` shows the expansion. Both attributes take
-the exact same `priority` (bounded `0`-`100`, default `50`,
-alphabetical tiebreak) that `#[AsGlobalMiddleware]` does, discovered by
-the same project-wide scan, and both have an explicit-registration
-counterpart — `AppScope::mcpMiddleware(SomeClass::class)`/
-`AppScope::openApiMiddleware(SomeClass::class)` — mirroring
-`AppScope::middleware()`.
+Because a group is route middleware — resolved from each request's own
+scope — a class here can constructor-inject `RequestScope` and publish
+`CurrentUserInterface` for the tool to see, which is how the auth
+packages work on `/mcp` unchanged. The package's own
+`McpOriginMiddleware` is a permanent group member at priority 100, so
+the spec-required `Origin` validation always runs first; see
+{doc}`mcp`'s "Securing the HTTP transport".
 
 ```{note}
-**Order matters**: a scoped pipeline runs *inside* the global one, not
-instead of it. For a request to `/mcp`, that means global middleware
-runs first (outermost), then any `#[AsMcpMiddleware]`/
-`AppScope::mcpMiddleware()` classes, then the MCP request itself.
+**Order matters**: route middleware runs *inside* the global pipeline,
+not instead of it. For a request to `/mcp`, global middleware runs
+first (outermost), then the `mcp` group, then the MCP request itself.
 ```
-
-`/mcp` also gets one more, narrower knob: `Kernel`'s `$mcpAllowedOrigins`
-constructor parameter — an exact list of `Origin` header values allowed
-to reach it, checked before anything else on that endpoint runs (per the
-MCP Streamable HTTP specification's requirement to validate `Origin` on
-every incoming connection, to prevent DNS-rebinding attacks). Empty by
-default — deny by default, the same posture `CorsMiddleware` takes — so
-any request carrying an `Origin` header at all is rejected with `403`
-until you explicitly list which origins may reach it. A request with no
-`Origin` header (any non-browser client — `bin/kinetis mcp:serve`'s own
-stdio transport, a server-to-server call, `curl`) is unaffected either
-way, since DNS rebinding is specifically a browser attack that always
-carries an `Origin`.
 
 ### Route middleware — attribute-driven, per endpoint
 

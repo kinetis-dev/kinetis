@@ -15,14 +15,9 @@ use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Instrumentation\Telemetry;
-use Kinetis\Mcp\McpDiscovery;
-use Kinetis\Mcp\McpDispatcher;
-use Kinetis\Mcp\McpRegistry;
-use Kinetis\Mcp\McpServer;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\ProjectRoot;
 use Kinetis\Runtime\RuntimeDetector;
-use Psr\Log\LoggerInterface;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -47,8 +42,11 @@ $httpCache = null;
 
 // Same APP_ENV-gated cache-or-discover split as kinetis/framework's own
 // reference public/index.php — mirrored here rather than diverging from
-// it, so this app's routes/middleware/MCP tools actually benefit from
-// `bin/kinetis build` the way the caching docs describe.
+// it, so this app's routes and middleware actually benefit from
+// `bin/kinetis build` the way the caching docs describe. The /mcp
+// endpoint and this app's own tools need nothing here: kinetis/mcp's
+// bootstrap binds the server, and its controller is discovered like any
+// other route.
 if ($env->isProduction()) {
     $httpCache = $store->loadHttp();
 
@@ -56,44 +54,32 @@ if ($env->isProduction()) {
         $compiled = (new Compiler())->compileProject($projectRoot);
         $store->writeAll($compiled);
         $httpCache = $compiled->http;
-        $mcpCache = $compiled->mcp;
         $eventCache = $compiled->events;
     } else {
-        $mcpCache = $store->loadMcp();
         $eventCache = $store->loadEvents();
     }
 
     $router = Router::fromArray($httpCache->routes);
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
-    $discoveredMcpMiddleware = $httpCache->mcpMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
     $middlewareGroups = $httpCache->middlewareGroups;
     $listenerRegistry = EventListenerRegistry::fromArray($eventCache !== null ? $eventCache->listeners : []);
-    $mcpRegistry = $mcpCache !== null
-        ? McpRegistry::fromArray(['tools' => $mcpCache->mcpTools, 'resources' => $mcpCache->mcpResources])
-        : McpDiscovery::discover($projectRoot);
-    $mcpBindingPlans = $mcpCache !== null ? $mcpCache->mcpBindingPlans : [];
-    $mcpHydrationPlans = $mcpCache !== null ? $mcpCache->hydrationPlans : [];
     $packageBootstraps = $httpCache->packageBootstraps;
 } else {
     $phaseStart = microtime(true);
     // Any class anywhere under one of your own PSR-4 roots is picked up
     // automatically — nothing to register.
     $router = RouteDiscovery::discover($projectRoot);
-    // Same for a class carrying #[AsGlobalMiddleware]/#[AsMcpMiddleware]/
+    // Same for a class carrying #[AsGlobalMiddleware]/
     // #[AsOpenApiMiddleware] or #[Listener] — no AppScope::middleware()
     // call, or manual EventListenerRegistry construction in
-    // bootstrap.php, needed for any of them. One shared scan produces all
-    // three middleware lists at once.
+    // bootstrap.php, needed for any of them. One shared scan produces
+    // both middleware lists at once.
     $discoveredMiddleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
     $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
-    $discoveredMcpMiddleware = $discoveredMiddleware['mcp'];
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
     $middlewareGroups = $discoveredMiddleware['groups'];
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
-    $mcpRegistry = McpDiscovery::discover($projectRoot);
-    $mcpBindingPlans = [];
-    $mcpHydrationPlans = [];
     // null = discover the package bootstrap list live, alongside the rest.
     $packageBootstraps = null;
     $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
@@ -119,12 +105,6 @@ foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
     $telemetry->phase($phaseName, $phaseStartedAt, $phaseEndedAt);
 }
 
-$mcp = new McpServer(
-    $mcpRegistry,
-    new McpDispatcher($app, $mcpBindingPlans, $mcpHydrationPlans),
-    logger: $app->get(LoggerInterface::class),
-);
-
 // Detected before constructing Kernel, not after, so its isPersistent()
 // can be passed straight into the constructor rather than patched in.
 $adapter = RuntimeDetector::detect();
@@ -133,10 +113,8 @@ $kernel = new Kernel(
     $app,
     $router,
     isPersistent: $adapter->isPersistent(),
-    mcp: $mcp,
     httpCache: $httpCache,
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
-    discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,
     middlewareGroups: $middlewareGroups,
 );

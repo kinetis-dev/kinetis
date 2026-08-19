@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Mcp\McpRegistry;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -26,7 +25,7 @@ if ($cacheDir === null) {
 $store = new CacheStore($cacheDir);
 
 if (!$store->exists()) {
-    $compiled = (new Compiler())->compile(new Router(), new McpRegistry());
+    $compiled = (new Compiler())->compile(new Router());
     $store->writeAll($compiled);
 }
 

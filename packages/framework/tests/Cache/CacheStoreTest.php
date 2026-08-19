@@ -11,7 +11,6 @@ use Kinetis\Cache\CommandCache;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\EventCache;
 use Kinetis\Cache\HttpCache;
-use Kinetis\Cache\McpCache;
 use PHPUnit\Framework\TestCase;
 
 final class CacheStoreTest extends TestCase
@@ -42,16 +41,7 @@ final class CacheStoreTest extends TestCase
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],
-            mcpMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
-        $mcp = new McpCache(
-            formatVersion: CacheFormat::VERSION,
-            mcpTools: [],
-            mcpResources: [],
-            mcpBindingPlans: [],
-            hydrationPlans: [],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
         $commands = new CommandCache(
@@ -65,7 +55,7 @@ final class CacheStoreTest extends TestCase
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
 
-        return new CompiledCache($http, $mcp, $commands, $events);
+        return new CompiledCache($http, $commands, $events);
     }
 
     public function test_exists_is_false_when_no_cache_files_exist(): void
@@ -80,7 +70,6 @@ final class CacheStoreTest extends TestCase
         $store = new CacheStore($this->directory);
 
         self::assertNull($store->loadHttp());
-        self::assertNull($store->loadMcp());
         self::assertNull($store->loadCommands());
         self::assertNull($store->loadEvents());
     }
@@ -94,12 +83,11 @@ final class CacheStoreTest extends TestCase
 
         self::assertTrue($store->exists());
         self::assertEquals($cache->http, $store->loadHttp());
-        self::assertEquals($cache->mcp, $store->loadMcp());
         self::assertEquals($cache->commands, $store->loadCommands());
         self::assertEquals($cache->events, $store->loadEvents());
     }
 
-    public function test_a_normal_http_request_never_needs_to_read_mcp_or_openapi_files(): void
+    public function test_a_normal_http_request_never_needs_to_read_the_other_artifacts(): void
     {
         $store = new CacheStore($this->directory);
         $store->writeAll($this->compiledCache());
@@ -130,7 +118,7 @@ final class CacheStoreTest extends TestCase
         $files = glob($this->directory . '/*') ?: [];
         sort($files);
 
-        $expected = [$store->commandsPath(), $store->eventsPath(), $store->httpPath(), $store->mcpPath()];
+        $expected = [$store->commandsPath(), $store->eventsPath(), $store->httpPath()];
         sort($expected);
 
         self::assertSame($expected, $files);
@@ -156,7 +144,6 @@ final class CacheStoreTest extends TestCase
                 ],
             ],
             globalMiddleware: [],
-            mcpMiddleware: [],
             openApiMiddleware: [],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
@@ -166,7 +153,6 @@ final class CacheStoreTest extends TestCase
         try {
             $store->writeAll(new CompiledCache(
                 $http,
-                $this->compiledCache()->mcp,
                 $this->compiledCache()->commands,
                 $this->compiledCache()->events,
             ));

@@ -31,7 +31,6 @@ final class BuildCommandTest extends TestCase
 
         self::assertSame(0, $exitCode);
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/http.php');
-        self::assertFileExists($this->projectRoot . '/.kinetis-cache/mcp.php');
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/commands.php');
         self::assertFileExists($this->projectRoot . '/.kinetis-cache/events.php');
     }

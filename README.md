@@ -37,7 +37,7 @@ installable Composer package with its own `README.md` and test suite:
 
 | Package | What it is | Version |
 |---|---|---|
-| [`kinetis/framework`](packages/framework) | The framework itself — routing, validation, DI, concurrency, MCP | [![Version](https://img.shields.io/packagist/v/kinetis/framework?label=)](https://packagist.org/packages/kinetis/framework) |
+| [`kinetis/framework`](packages/framework) | The framework itself — routing, validation, DI, concurrency | [![Version](https://img.shields.io/packagist/v/kinetis/framework?label=)](https://packagist.org/packages/kinetis/framework) |
 | [`kinetis/persistence`](packages/persistence) | Native async DB drivers (mysqli, pgsql, PDO) and transaction safety nets | [![Version](https://img.shields.io/packagist/v/kinetis/persistence?label=)](https://packagist.org/packages/kinetis/persistence) |
 | [`kinetis/cache-redis`](packages/cache-redis) | PSR-16 cache backed by Redis, single-node or Cluster, TLS included | [![Version](https://img.shields.io/packagist/v/kinetis/cache-redis?label=)](https://packagist.org/packages/kinetis/cache-redis) |
 | [`kinetis/query-builder`](packages/query-builder) | A thin, parameterized SQL query builder | [![Version](https://img.shields.io/packagist/v/kinetis/query-builder?label=)](https://packagist.org/packages/kinetis/query-builder) |
@@ -55,6 +55,7 @@ installable Composer package with its own `README.md` and test suite:
 | [`kinetis/mailer`](packages/mailer) | Non-blocking mail sending over symfony/mailer transports | [![Version](https://img.shields.io/packagist/v/kinetis/mailer?label=)](https://packagist.org/packages/kinetis/mailer) |
 | [`kinetis/search-opensearch`](packages/search-opensearch) | Non-blocking OpenSearch client construction | [![Version](https://img.shields.io/packagist/v/kinetis/search-opensearch?label=)](https://packagist.org/packages/kinetis/search-opensearch) |
 | [`kinetis/telemetry`](packages/telemetry) | OpenTelemetry tracing | [![Version](https://img.shields.io/packagist/v/kinetis/telemetry?label=)](https://packagist.org/packages/kinetis/telemetry) |
+| [`kinetis/mcp`](packages/mcp) | The native Model Context Protocol server — stdio and HTTP | [![Version](https://img.shields.io/packagist/v/kinetis/mcp?label=)](https://packagist.org/packages/kinetis/mcp) |
 | [`kinetis/bref-adapter`](packages/bref-adapter) | AWS Lambda (Bref) runtime adapter | [![Version](https://img.shields.io/packagist/v/kinetis/bref-adapter?label=)](https://packagist.org/packages/kinetis/bref-adapter) |
 | [`kinetis/skeleton`](packages/skeleton) | The smallest runnable Kinetis application — a starting point | [![Version](https://img.shields.io/packagist/v/kinetis/skeleton?label=)](https://packagist.org/packages/kinetis/skeleton) |
 | [`kinetis/pingpong`](packages/pingpong) | A full demo app: MySQL, queue, events, cron, live WebSocket updates | [![Version](https://img.shields.io/packagist/v/kinetis/pingpong?label=)](https://packagist.org/packages/kinetis/pingpong) |

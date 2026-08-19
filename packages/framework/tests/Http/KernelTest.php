@@ -11,7 +11,6 @@ use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\Compiler;
 use Kinetis\Cache\EventCache;
 use Kinetis\Cache\HttpCache;
-use Kinetis\Cache\McpCache;
 use Kinetis\Cache\OpenApiCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
@@ -20,9 +19,6 @@ use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Http\StreamedResponse;
-use Kinetis\Mcp\McpDispatcher;
-use Kinetis\Mcp\McpRegistry;
-use Kinetis\Mcp\McpServer;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\CurrentUserController;
@@ -42,7 +38,6 @@ use Kinetis\Tests\Http\Fixtures\RecordingMiddleware;
 use Kinetis\Tests\Http\Fixtures\SendOrderConfirmationListener;
 use Kinetis\Tests\Http\Fixtures\UnknownMiddlewareGroupController;
 use Kinetis\Tests\Http\Fixtures\UserController;
-use Kinetis\Tests\Mcp\Fixtures\AccountController;
 use Kinetis\Tests\Mcp\Fixtures\ProgressReportingController;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
@@ -342,684 +337,6 @@ final class KernelTest extends TestCase
         self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
     }
 
-    public function test_mcp_endpoint_is_absent_by_default(): void
-    {
-        $response = $this->kernel()->handle(new ServerRequest('POST', '/mcp', body: '{}'));
-
-        self::assertSame(404, $response->getStatusCode());
-    }
-
-    public function test_mcp_endpoint_handles_json_rpc_over_http_when_provided(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $router->register(UserController::class);
-
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/list',
-        ]));
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame('get_user_status', $body['result']['tools'][0]['name']);
-    }
-
-    /**
-     * The /mcp endpoint is a literal comparison rather than a registered
-     * route, so it needs the request path normalised on its own account.
-     */
-    public function test_mcp_endpoint_answers_with_a_trailing_slash_too(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $kernel = new Kernel($app, new Router(), mcp: new McpServer($mcpRegistry, new McpDispatcher($app)));
-
-        $request = new ServerRequest('POST', '/mcp/', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/list',
-        ]));
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame('get_user_status', $body['result']['tools'][0]['name']);
-    }
-
-    // --- /mcp Origin validation and #[AsMcpMiddleware]/
-    // #[AsOpenApiMiddleware] scoped pipelines. ---
-
-    private function mcpEnabledKernel(array $discoveredMcpMiddleware = [], array $mcpAllowedOrigins = []): Kernel
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $router->register(UserController::class);
-
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-
-        return new Kernel(
-            $app,
-            $router,
-            mcp: $mcp,
-            discoveredMcpMiddleware: $discoveredMcpMiddleware,
-            mcpAllowedOrigins: $mcpAllowedOrigins,
-        );
-    }
-
-    private function mcpToolsListRequest(): ServerRequest
-    {
-        return new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/list',
-        ]));
-    }
-
-    public function test_a_request_with_no_origin_header_reaches_mcp_regardless_of_the_allow_list(): void
-    {
-        $kernel = $this->mcpEnabledKernel(mcpAllowedOrigins: ['https://allowed.example']);
-
-        $response = $kernel->handle($this->mcpToolsListRequest());
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_an_origin_not_on_the_allow_list_is_rejected_with_403(): void
-    {
-        $kernel = $this->mcpEnabledKernel(mcpAllowedOrigins: ['https://allowed.example']);
-
-        $request = $this->mcpToolsListRequest()->withHeader('Origin', 'https://evil.example');
-        $response = $kernel->handle($request);
-
-        self::assertSame(403, $response->getStatusCode());
-    }
-
-    public function test_an_origin_on_the_allow_list_is_accepted(): void
-    {
-        $kernel = $this->mcpEnabledKernel(mcpAllowedOrigins: ['https://allowed.example']);
-
-        $request = $this->mcpToolsListRequest()->withHeader('Origin', 'https://allowed.example');
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_the_default_allow_list_rejects_any_origin_at_all(): void
-    {
-        $kernel = $this->mcpEnabledKernel();
-
-        $request = $this->mcpToolsListRequest()->withHeader('Origin', 'https://anything.example');
-        $response = $kernel->handle($request);
-
-        self::assertSame(403, $response->getStatusCode());
-    }
-
-    public function test_discovered_mcp_middleware_runs_for_mcp_but_not_for_a_normal_route_or_openapi(): void
-    {
-        RecordingMiddleware::$log = [];
-        $kernel = $this->mcpEnabledKernel(discoveredMcpMiddleware: [McpScopedMiddleware::class]);
-
-        $kernel->handle($this->mcpToolsListRequest());
-        self::assertSame([McpScopedMiddleware::class], RecordingMiddleware::$log);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/users/1'));
-        self::assertSame([], RecordingMiddleware::$log);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
-        self::assertSame([], RecordingMiddleware::$log);
-    }
-
-    public function test_discovered_openapi_middleware_runs_for_both_openapi_json_and_docs_but_not_mcp(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-        $router = new Router();
-        $router->register(UserController::class);
-        $router->register(DocumentationController::class);
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-
-        $kernel = new Kernel($app, $router, exposeOpenApi: true, mcp: $mcp, discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
-        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/openapi'));
-        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle($this->mcpToolsListRequest());
-        self::assertSame([], RecordingMiddleware::$log);
-    }
-
-    /**
-     * The explicit counterpart to the discovered case above.
-     * AppScope::openApiMiddleware() registrations are invisible to
-     * discovery, so Kernel folds them into the same `openapi` group the
-     * controller references — without that, an explicitly registered
-     * class would silently never run.
-     */
-    public function test_explicitly_registered_openapi_middleware_runs_on_the_documentation_routes(): void
-    {
-        $app = new AppScope();
-        $app->openApiMiddleware(OpenApiScopedMiddleware::class);
-        $app->boot();
-
-        $router = new Router();
-        $router->register(UserController::class);
-        $router->register(DocumentationController::class);
-
-        $kernel = new Kernel($app, $router, exposeOpenApi: true);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
-        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
-
-        // And nowhere else.
-        RecordingMiddleware::$log = [];
-        $kernel->handle(new ServerRequest('GET', '/users/1'));
-        self::assertSame([], RecordingMiddleware::$log);
-    }
-
-    public function test_scoped_mcp_middleware_runs_inside_the_global_pipeline_not_instead_of_it(): void
-    {
-        $app = new AppScope();
-        $app->middleware(GlobalMiddleware::class);
-        $app->boot();
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-
-        $kernel = new Kernel($app, $router, mcp: $mcp, discoveredMcpMiddleware: [McpScopedMiddleware::class]);
-
-        RecordingMiddleware::$log = [];
-        $kernel->handle($this->mcpToolsListRequest());
-
-        self::assertSame([GlobalMiddleware::class, McpScopedMiddleware::class], RecordingMiddleware::$log);
-    }
-
-    public function test_mcp_endpoint_returns_202_for_a_notification(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'method' => 'notifications/initialized',
-        ]));
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(202, $response->getStatusCode());
-    }
-
-    public function test_mcp_endpoint_returns_405_for_get_since_no_server_initiated_stream_is_supported(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $response = $kernel->handle(new ServerRequest('GET', '/mcp'));
-
-        self::assertSame(405, $response->getStatusCode());
-    }
-
-    public function test_mcp_endpoint_returns_405_for_delete_since_session_termination_is_not_supported(): void
-    {
-        // Checked directly against the real 2026-07-28 spec text, not
-        // assumed: a server implementing only this revision "SHOULD"
-        // answer 405 to a DELETE /mcp the same way it does a GET —
-        // DELETE used to terminate a session under the now-removed
-        // Mcp-Session-Id mechanism from earlier Streamable HTTP
-        // revisions. This route is deliberately intercepted by the same
-        // scoped $mcpPipeline as GET now, rather than falling through to
-        // the router's own 404 for an unmatched path/method.
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $response = $kernel->handle(new ServerRequest('DELETE', '/mcp'));
-
-        self::assertSame(405, $response->getStatusCode());
-        self::assertSame('POST', $response->getHeaderLine('Allow'));
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function modernMcpMeta(): array
-    {
-        return [
-            'io.modelcontextprotocol/protocolVersion' => '2026-07-28',
-            'io.modelcontextprotocol/clientCapabilities' => [],
-        ];
-    }
-
-    public function test_modern_mcp_request_with_matching_headers_succeeds(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'server/discover',
-            'params' => ['_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'server/discover');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame('complete', $body['result']['resultType']);
-    }
-
-    public function test_modern_mcp_request_missing_the_protocol_version_header_is_rejected(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'server/discover',
-            'params' => ['_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('Mcp-Method', 'server/discover');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32020, $body['error']['code']);
-    }
-
-    public function test_modern_mcp_request_with_a_mismatched_method_header_is_rejected(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'server/discover',
-            'params' => ['_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'tools/list');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32020, $body['error']['code']);
-    }
-
-    public function test_modern_mcp_unknown_method_maps_to_a_404(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'does/not/exist',
-            'params' => ['_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'does/not/exist');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(404, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32601, $body['error']['code']);
-    }
-
-    public function test_modern_mcp_unsupported_protocol_version_maps_to_a_400(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/list',
-            'params' => ['_meta' => [
-                'io.modelcontextprotocol/protocolVersion' => '1999-01-01',
-                'io.modelcontextprotocol/clientCapabilities' => [],
-            ]],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '1999-01-01')
-            ->withHeader('Mcp-Method', 'tools/list');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32022, $body['error']['code']);
-    }
-
-    public function test_modern_tools_call_with_a_matching_mcp_name_header_succeeds(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'get_user_status',
-                'arguments' => ['userId' => 7],
-                '_meta' => $this->modernMcpMeta(),
-            ],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'tools/call')
-            ->withHeader('Mcp-Name', 'get_user_status');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_modern_tools_call_with_a_mismatched_mcp_name_header_is_rejected(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'get_user_status',
-                'arguments' => ['userId' => 7],
-                '_meta' => $this->modernMcpMeta(),
-            ],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'tools/call')
-            ->withHeader('Mcp-Name', 'create_user');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32020, $body['error']['code']);
-    }
-
-    public function test_modern_tools_call_with_a_missing_mcp_name_header_is_rejected(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'get_user_status',
-                'arguments' => ['userId' => 7],
-                '_meta' => $this->modernMcpMeta(),
-            ],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'tools/call');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32020, $body['error']['code']);
-    }
-
-    public function test_modern_resources_read_with_a_matching_mcp_name_header_succeeds(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'resources/read',
-            'params' => ['uri' => 'kinetis://status', '_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'resources/read')
-            ->withHeader('Mcp-Name', 'kinetis://status');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_modern_resources_read_with_a_mismatched_mcp_name_header_is_rejected(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'resources/read',
-            'params' => ['uri' => 'kinetis://status', '_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'resources/read')
-            ->withHeader('Mcp-Name', 'kinetis://something-else');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32020, $body['error']['code']);
-    }
-
-    public function test_a_base64_sentinel_encoded_mcp_name_header_is_decoded_before_comparing(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $encoded = '=?base64?' . base64_encode('get_user_status') . '?=';
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'get_user_status',
-                'arguments' => ['userId' => 7],
-                '_meta' => $this->modernMcpMeta(),
-            ],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'tools/call')
-            ->withHeader('Mcp-Name', $encoded);
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_a_malformed_base64_sentinel_mcp_name_header_fails_closed(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'get_user_status',
-                'arguments' => ['userId' => 7],
-                '_meta' => $this->modernMcpMeta(),
-            ],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'tools/call')
-            ->withHeader('Mcp-Name', '=?base64?not valid base64!!!?=');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(400, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(-32020, $body['error']['code']);
-    }
-
-    public function test_modern_server_discover_does_not_require_an_mcp_name_header(): void
-    {
-        // server/discover has no name/uri in its body at all — the one
-        // method already covered by the matching-headers test above, but
-        // worth a dedicated assertion that this specific header isn't
-        // demanded where the spec doesn't require it.
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcp = new McpServer(new McpRegistry(), new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = (new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'server/discover',
-            'params' => ['_meta' => $this->modernMcpMeta()],
-        ])))
-            ->withHeader('MCP-Protocol-Version', '2026-07-28')
-            ->withHeader('Mcp-Method', 'server/discover');
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_legacy_mcp_request_ignores_missing_headers(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(AccountController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/list',
-        ]));
-
-        $response = $kernel->handle($request);
-
-        self::assertSame(200, $response->getStatusCode());
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame('get_user_status', $body['result']['tools'][0]['name']);
-    }
-
     public function test_forces_a_gc_cycle_at_the_end_of_a_request_when_persistent(): void
     {
         $GLOBALS['kinetisGcCollectCyclesCallCount'] = 0;
@@ -1048,78 +365,6 @@ final class KernelTest extends TestCase
         self::assertSame(0, $GLOBALS['kinetisGcCollectCyclesCallCount']);
     }
 
-    public function test_a_tools_call_with_a_progress_token_returns_a_streamed_sse_response(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(ProgressReportingController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => ['name' => 'count_to_three', '_meta' => ['progressToken' => 'tok']],
-        ]));
-
-        $response = $kernel->handle($request);
-
-        self::assertInstanceOf(StreamedResponse::class, $response);
-        self::assertSame('text/event-stream', $response->getHeaderLine('Content-Type'));
-
-        // The emitter itself calls ob_flush()/flush() to push each chunk out
-        // immediately — a single ob_start() here would have those calls push
-        // straight to real stdout instead of accumulating. Nesting a second
-        // buffer lets the emitter's own flushes land in the outer one, which
-        // we then read back.
-        ob_start();
-        ob_start();
-        ($response->getEmitter())();
-        ob_end_clean();
-        $output = ob_get_clean();
-
-        $events = array_values(array_filter(explode("\n\n", trim($output))));
-        self::assertCount(4, $events);
-
-        $first = json_decode(substr($events[0], strlen('data: ')), true);
-        self::assertSame('notifications/progress', $first['method']);
-        self::assertSame(1, $first['params']['progress']);
-
-        $last = json_decode(substr($events[3], strlen('data: ')), true);
-        self::assertSame(1, $last['id']);
-        self::assertFalse($last['result']['isError']);
-    }
-
-    public function test_a_tools_call_without_a_progress_token_stays_a_buffered_json_response(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $mcpRegistry = new McpRegistry();
-        $mcpRegistry->register(ProgressReportingController::class);
-        $mcp = new McpServer($mcpRegistry, new McpDispatcher($app));
-        $kernel = new Kernel($app, $router, mcp: $mcp);
-
-        $request = new ServerRequest('POST', '/mcp', body: json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => ['name' => 'count_to_three'],
-        ]));
-
-        $response = $kernel->handle($request);
-
-        self::assertNotInstanceOf(StreamedResponse::class, $response);
-        self::assertSame(200, $response->getStatusCode());
-        self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
-    }
-
-
     public function test_dispatch_uses_the_compiled_binding_plan_end_to_end(): void
     {
         $app = new AppScope();
@@ -1129,7 +374,7 @@ final class KernelTest extends TestCase
         $router->register(UserController::class);
 
         $compiler = new Compiler();
-        $compiled = $compiler->compile($router, new McpRegistry());
+        $compiled = $compiler->compile($router);
 
         $kernel = new Kernel($app, $router, httpCache: $compiled->http);
         $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
@@ -1437,5 +682,57 @@ final class KernelTest extends TestCase
             [ClassLevelMiddleware::class, MethodLevelMiddleware::class],
             RecordingMiddleware::$log,
         );
+    }
+
+    public function test_discovered_openapi_middleware_runs_for_both_openapi_json_and_docs_only(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: true, discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+        self::assertSame([], RecordingMiddleware::$log);
+    }
+
+    /**
+     * The explicit counterpart to the discovered case above.
+     * AppScope::openApiMiddleware() registrations are invisible to
+     * discovery, so Kernel folds them into the same `openapi` group the
+     * controller references — without that, an explicitly registered
+     * class would silently never run.
+     */
+    public function test_explicitly_registered_openapi_middleware_runs_on_the_documentation_routes(): void
+    {
+        $app = new AppScope();
+        $app->openApiMiddleware(OpenApiScopedMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: true);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        // And nowhere else.
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+        self::assertSame([], RecordingMiddleware::$log);
     }
 }

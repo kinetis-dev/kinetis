@@ -13,7 +13,7 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 - Typed requests and responses.
 - OpenAPI generated from your code rather than maintained beside it.
 - Genuinely concurrent non-blocking I/O.
-- Native Model Context Protocol (MCP) server.
+- Native Model Context Protocol (MCP) server, one install away.
 
 ## What you get
 
@@ -54,7 +54,8 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 
 **Built for agents, not adapted for them**
 
-- A Model Context Protocol server in core, over stdio or HTTP.
+- A native Model Context Protocol server (`kinetis/mcp`), over stdio or
+  HTTP — installing the package is the whole setup.
 - Tools and resources declared with attributes and validated exactly like
   HTTP routes — one definition, two audiences.
 

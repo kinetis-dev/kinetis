@@ -25,7 +25,7 @@ tutorial, then read whichever section you have reached.
 - [Routing & Validation](https://docs.kinetis.dev/routing-validation.html): Attribute-based routes, typed DTOs, constraint validation, and zero-config OpenAPI.
 - [Middleware](https://docs.kinetis.dev/middleware.html): The PSR-15 middleware pipeline: global vs. route, plus the built-in ExceptionHandlerMiddleware/CorsMiddleware/RateLimitMiddleware.
 - [Events](https://docs.kinetis.dev/events.html): A PSR-14 event dispatcher with attribute-driven listener registration, plus ShouldQueue for deferring a listener to a queue.
-- [CLI](https://docs.kinetis.dev/cli.html): The kinetis CLI: mcp:serve and build.
+- [CLI](https://docs.kinetis.dev/cli.html): The kinetis CLI: built-in commands, application commands via #[Command], commands from installed packages, and restricting discovery.
 - [Testing](https://docs.kinetis.dev/testing.html): TestClient, for exercising a Kernel end-to-end in a consumer's own test suite.
 
 ## Working with data
@@ -50,7 +50,7 @@ tutorial, then read whichever section you have reached.
 
 - [Runtime Adapters](https://docs.kinetis.dev/runtime-adapters.html): FrankenPHP, PHP-FPM, and AWS Lambda adapters, and how RuntimeDetector picks one.
 - [Concurrency](https://docs.kinetis.dev/concurrency.html): Fiber-based concurrency over Revolt: concurrently(), Async\Socket, and Async\Timer.
-- [Caching & AOT Compilation](https://docs.kinetis.dev/caching.html): Production-only AOT caching of routes, MCP registrations, validation plans, and OpenAPI, plus APP_ENV.
+- [Caching & AOT Compilation](https://docs.kinetis.dev/caching.html): Production-only AOT caching of routes, commands, event listeners, and validation plans, plus APP_ENV.
 - [Performance tuning](https://docs.kinetis.dev/performance-tuning.html): Capacity tuning: the worker-threads x maxConnections budget, what to observe under load, and tuning by workload shape.
 - [Benchmarks](https://docs.kinetis.dev/benchmarks.html): TechEmpower-style benchmark results against seven other PHP frameworks, versions tested, and results.
 
@@ -70,7 +70,7 @@ tutorial, then read whichever section you have reached.
 
 ## AI agents
 
-- [Model Context Protocol (MCP)](https://docs.kinetis.dev/mcp.html): The native Model Context Protocol server: tools, resources, transports, and protocol-era handling.
+- [Model Context Protocol (MCP)](https://docs.kinetis.dev/mcp.html): kinetis/mcp: the native Model Context Protocol server — tools, resources, stdio and HTTP transports, and protocol-era handling.
 
 ## Reference
 

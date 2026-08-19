@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Mcp\McpRegistry;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -25,7 +24,7 @@ for ($i = 1; $i <= 150; $i++) {
     $router->register("Kinetis\\Bench\\Fixtures\\Controller{$n}");
 }
 
-$compiled = (new Compiler())->compile($router, new McpRegistry());
+$compiled = (new Compiler())->compile($router);
 (new CacheStore($cacheDir))->writeAll($compiled);
 
 echo "Cache built at {$cacheDir}\n";

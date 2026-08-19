@@ -63,6 +63,9 @@
             "requires": [
                 "framework"
             ],
+            "requiresDev": [
+                "mcp"
+            ],
             "require": {
                 "revolt/event-loop": "^1.0.9"
             },
@@ -129,7 +132,7 @@
             "description": "Bearer/opaque-token authentication middleware for Kinetis, built entirely on interfaces core already requires (PSR-7/PSR-15). See kinetis/auth-jwt for stateless JWT verification instead.",
             "namespace": "Kinetis\\Auth\\",
             "testNamespace": "Kinetis\\Auth\\Tests\\",
-            "version": "1.0.5",
+            "version": "1.1.0",
             "requires": [
                 "framework"
             ],
@@ -171,6 +174,31 @@
             ],
             "kinetis": {
                 "scan": "Kinetis\\Migrations\\Console\\"
+            }
+        },
+        "mcp": {
+            "name": "kinetis/mcp",
+            "description": "The Model Context Protocol server for Kinetis \u2014 tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
+            "namespace": "Kinetis\\Mcp\\",
+            "testNamespace": "Kinetis\\Mcp\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework"
+            ],
+            "requiresDev": [
+                "auth",
+                "persistence"
+            ],
+            "require": {
+                "nyholm/psr7": "^1.8.2",
+                "psr/container": "^2.0.2",
+                "psr/http-message": "^2.0",
+                "psr/http-server-middleware": "^1.0.2",
+                "psr/log": "^3.0.2"
+            },
+            "kinetis": {
+                "scan": "Kinetis\\Mcp\\",
+                "bootstrap": "Kinetis\\Mcp\\PackageBootstrap"
             }
         },
         "queue": {
@@ -352,7 +380,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.1.11",
+            "version": "1.1.12",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -366,7 +394,8 @@
                 "cache-redis",
                 "query-builder",
                 "queue"
-            ],
+            ,
+                "mcp"],
             "require": {
                 "league/plates": "^3.6.0",
                 "monolog/monolog": "^3.10.0",
@@ -379,7 +408,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.0.9",
+            "version": "1.0.10",
             "type": "project",
             "requires": [
                 "framework"

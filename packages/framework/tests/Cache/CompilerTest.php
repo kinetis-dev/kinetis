@@ -7,7 +7,6 @@ namespace Kinetis\Tests\Cache;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Mcp\McpRegistry;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
@@ -15,7 +14,6 @@ use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\UserController;
-use Kinetis\Tests\Mcp\Fixtures\AccountController;
 use Kinetis\Validation\Hydrator;
 use PHPUnit\Framework\TestCase;
 
@@ -26,7 +24,7 @@ final class CompilerTest extends TestCase
         $router = new Router();
         $router->register(UserController::class);
 
-        $compiled = (new Compiler())->compile($router, new McpRegistry());
+        $compiled = (new Compiler())->compile($router);
 
         self::assertArrayHasKey('Kinetis\Tests\Http\Fixtures\UserController::store', $compiled->http->httpBindingPlans);
         self::assertArrayHasKey('Kinetis\Tests\Http\Fixtures\UserController::index', $compiled->http->httpBindingPlans);
@@ -39,59 +37,34 @@ final class CompilerTest extends TestCase
         $router = new Router();
         $router->register(UserController::class);
 
-        $compiled = (new Compiler())->compile($router, new McpRegistry());
+        $compiled = (new Compiler())->compile($router);
 
         self::assertArrayHasKey('Kinetis\Tests\Http\Fixtures\CreateUserRequest', $compiled->http->hydrationPlans);
         self::assertArrayHasKey('Kinetis\Tests\Http\Fixtures\UpdateStatusRequest', $compiled->http->hydrationPlans);
         self::assertTrue($compiled->http->hydrationPlans['Kinetis\Tests\Http\Fixtures\CreateUserRequest']['hasConstructor']);
     }
 
-    public function test_compile_keeps_http_and_mcp_hydration_plans_independent(): void
-    {
-        $router = new Router();
-        $router->register(UserController::class);
-
-        $registry = new McpRegistry();
-        $registry->register(AccountController::class);
-
-        $compiled = (new Compiler())->compile($router, $registry);
-
-        // UserController's DTOs are HTTP-only — must not leak into the MCP
-        // artifact, which is meant to be loadable independently of http.php.
-        self::assertArrayNotHasKey('Kinetis\Tests\Http\Fixtures\UpdateStatusRequest', $compiled->mcp->hydrationPlans);
-    }
-
-    public function test_compile_discovers_dto_classes_reachable_through_mcp_tools_too(): void
-    {
-        $registry = new McpRegistry();
-        $registry->register(AccountController::class);
-
-        $compiled = (new Compiler())->compile(new Router(), $registry);
-
-        self::assertArrayHasKey('Kinetis\Tests\Http\Fixtures\CreateUserRequest', $compiled->mcp->hydrationPlans);
-        self::assertArrayHasKey('Kinetis\Tests\Mcp\Fixtures\AccountController::createUser', $compiled->mcp->mcpBindingPlans);
-    }
 
 
-    public function test_compile_project_discovers_routes_mcp_tools_and_commands_by_namespace(): void
+
+    public function test_compile_project_discovers_routes_and_commands_by_namespace(): void
     {
         $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures');
 
-        // Routes, MCP tools, and commands are all discovered by namespace
-        // — Fixtures/Http/, Fixtures/Mcp/, and Fixtures/Console/ are found
-        // via Fixtures/composer.json's own PSR-4 mapping. Kinetis's own
-        // real Kinetis\Http/Kinetis\Mcp/Kinetis\Console classes are
-        // discovered right alongside them, so these assertions check for
-        // the fixture's specific entries rather than exact equality.
+        // Routes and commands are discovered by namespace — Fixtures/Http/
+        // and Fixtures/Console/ are found via Fixtures/composer.json's own
+        // PSR-4 mapping. Kinetis's own real Kinetis\Http/Kinetis\Console
+        // classes are discovered right alongside them, so these assertions
+        // check for the fixture's specific entries rather than exact
+        // equality.
         self::assertArrayHasKey('Kinetis\Tests\Cache\Fixtures\Http\DiscoveredPingController::ping', $compiled->http->httpBindingPlans);
-        self::assertContains('discovered_ping', array_column($compiled->mcp->mcpTools, 'name'));
         self::assertContains('fixture:ping', array_column($compiled->commands->commands, 'name'));
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware', $compiled->http->globalMiddleware);
     }
 
     public function test_compile_carries_an_explicitly_passed_global_middleware_list_verbatim(): void
     {
-        $compiled = (new Compiler())->compile(new Router(), new McpRegistry(), middleware: ['global' => ['App\\RequestIdMiddleware']]);
+        $compiled = (new Compiler())->compile(new Router(), middleware: ['global' => ['App\\RequestIdMiddleware']]);
 
         self::assertSame(['App\\RequestIdMiddleware'], $compiled->http->globalMiddleware);
     }
@@ -113,7 +86,6 @@ final class CompilerTest extends TestCase
     {
         $compiled = (new Compiler())->compile(
             new Router(),
-            new McpRegistry(),
             middleware: ['groups' => ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']]],
         );
 
@@ -143,7 +115,7 @@ final class CompilerTest extends TestCase
         $router = new Router();
         $router->register(MiddlewareTestController::class);
 
-        $compiled = (new Compiler())->compile($router, new McpRegistry());
+        $compiled = (new Compiler())->compile($router);
         $reloaded = Router::fromArray($compiled->http->routes);
 
         $match = $reloaded->match('GET', '/middleware-test');
@@ -159,7 +131,7 @@ final class CompilerTest extends TestCase
         $router = new Router();
         $router->register(OrderController::class);
 
-        $compiled = (new Compiler())->compile($router, new McpRegistry());
+        $compiled = (new Compiler())->compile($router);
 
         // The top-level #[Body] DTO gets its own top-level hydration-plan
         // entry, with Address embedded inline as its nestedPlan — exactly
@@ -181,7 +153,7 @@ final class CompilerTest extends TestCase
         $router = new Router();
         $router->register(OrderController::class);
 
-        $compiled = (new Compiler())->compile($router, new McpRegistry());
+        $compiled = (new Compiler())->compile($router);
 
         $directory = sys_get_temp_dir() . '/kinetis_nested_dto_cache_test_' . bin2hex(random_bytes(8));
         $store = new CacheStore($directory);

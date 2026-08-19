@@ -12,9 +12,6 @@ use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Mcp\McpDiscovery;
-use Kinetis\Mcp\McpDispatcher;
-use Kinetis\Mcp\McpRegistry;
 use Kinetis\Validation\Hydrator;
 use DateTimeImmutable;
 use ReflectionMethod;
@@ -26,12 +23,12 @@ use ReflectionMethod;
  * document once, and carries the already-sorted list of
  * #[AsGlobalMiddleware]-discovered classes and #[Listener]-discovered
  * event listeners — producing five independent artifacts
- * (HttpCache/McpCache/CommandCache/EventCache, grouped for
+ * (HttpCache/CommandCache/EventCache, grouped for
  * convenience as one CompiledCache) with zero live objects/closures
  * inside any of them.
  *
  * DTO discovery is tracked separately for HTTP and MCP (rather than one
- * shared bag) precisely so HttpCache/McpCache stay self-contained — a DTO
+ * shared bag) precisely so each artifact stays self-contained — a DTO
  * reachable from both a route and a tool ends up in both caches (harmless
  * duplication), never forcing one side to depend on the other's discovery
  * pass.
@@ -63,7 +60,6 @@ final class Compiler
      */
     public function compile(
         Router $router,
-        McpRegistry $registry,
         ?CommandRegistry $commands = null,
         ?EventListenerRegistry $listeners = null,
         array $middleware = [],
@@ -86,43 +82,16 @@ final class Compiler
             }
         }
 
-        $mcpBindingPlans = [];
-        $mcpDtoClasses = [];
-
-        foreach ([...$registry->tools(), ...$registry->resources()] as $definition) {
-            $method = new ReflectionMethod($definition->controllerClass, $definition->controllerMethod);
-            $plan = McpDispatcher::derivePlan($method);
-            $mcpBindingPlans["{$definition->controllerClass}::{$definition->controllerMethod}"] = $plan;
-
-            foreach ($plan as $param) {
-                if ($param['dtoClass'] !== null) {
-                    $mcpDtoClasses[$param['dtoClass']] = true;
-                }
-            }
-        }
-
         $http = new HttpCache(
             formatVersion: CacheFormat::VERSION,
             routes: $router->toArray(),
             httpBindingPlans: $httpBindingPlans,
             hydrationPlans: $this->hydrationPlansFor($httpDtoClasses),
             globalMiddleware: $middleware['global'] ?? [],
-            mcpMiddleware: $middleware['mcp'] ?? [],
             openApiMiddleware: $middleware['openApi'] ?? [],
             compiledAt: $compiledAt,
             middlewareGroups: $middleware['groups'] ?? [],
             packageBootstraps: $packageBootstraps,
-        );
-
-        $mcpToArray = $registry->toArray();
-
-        $mcp = new McpCache(
-            formatVersion: CacheFormat::VERSION,
-            mcpTools: $mcpToArray['tools'],
-            mcpResources: $mcpToArray['resources'],
-            mcpBindingPlans: $mcpBindingPlans,
-            hydrationPlans: $this->hydrationPlansFor($mcpDtoClasses),
-            compiledAt: $compiledAt,
         );
 
         $commandsCache = new CommandCache(
@@ -138,7 +107,7 @@ final class Compiler
             compiledAt: $compiledAt,
         );
 
-        return new CompiledCache($http, $mcp, $commandsCache, $eventsCache);
+        return new CompiledCache($http, $commandsCache, $eventsCache);
     }
 
     /**
@@ -160,24 +129,25 @@ final class Compiler
     /**
      * The one entry point every lazy-first-run/build path calls — "compile
      * everything" doesn't exist twice, they all just call this. Routes,
-     * MCP tools/resources, commands, #[AsGlobalMiddleware]/
-     * #[AsMcpMiddleware]/#[AsOpenApiMiddleware]/#[AsMiddlewareGroup]-attributed
-     * classes, and #[Listener]-attributed methods are all discovered by
-     * namespace — see
-     * RouteDiscovery/McpDiscovery/CommandDiscovery/GlobalMiddlewareDiscovery/EventListenerDiscovery.
+     * commands, #[AsGlobalMiddleware]/#[AsOpenApiMiddleware]/
+     * #[AsMiddlewareGroup]-attributed classes, and #[Listener]-attributed
+     * methods are all discovered by namespace — see
+     * RouteDiscovery/CommandDiscovery/GlobalMiddlewareDiscovery/EventListenerDiscovery.
      * GlobalMiddlewareDiscovery::discoverAll() performs exactly one scan
-     * for all four middleware attributes rather than four, and its result
-     * is handed to compile() whole rather than destructured per bucket.
+     * for all three middleware attributes rather than three, and its
+     * result is handed to compile() whole rather than destructured per
+     * bucket. MCP is kinetis/mcp's own concern: its bootstrap discovers
+     * tools and resources when something first resolves the server, and
+     * nothing about it is compiled here.
      */
     public function compileProject(string $projectRoot): CompiledCache
     {
         $router = RouteDiscovery::discover($projectRoot);
-        $registry = McpDiscovery::discover($projectRoot);
         $commands = CommandDiscovery::discover($projectRoot);
         $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
         $listeners = EventListenerDiscovery::discover($projectRoot);
         $packageBootstraps = PackageDiscovery::bootstrapClasses($projectRoot);
 
-        return $this->compile($router, $registry, $commands, $listeners, $middleware, $packageBootstraps);
+        return $this->compile($router, $commands, $listeners, $middleware, $packageBootstraps);
     }
 }

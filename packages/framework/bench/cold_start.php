@@ -7,7 +7,6 @@ use Kinetis\Cache\Compiler;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Mcp\McpRegistry;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 
@@ -105,7 +104,7 @@ report('LIVE (cold-start simulated)', runLive(ITERATIONS));
 $cacheDir = sys_get_temp_dir() . '/kinetis_bench_cache_' . bin2hex(random_bytes(4));
 $router = new Router();
 $router->register(UserController::class);
-$compiled = (new Compiler())->compile($router, new McpRegistry());
+$compiled = (new Compiler())->compile($router);
 (new CacheStore($cacheDir))->writeAll($compiled);
 
 runCached(WARMUP, $cacheDir);

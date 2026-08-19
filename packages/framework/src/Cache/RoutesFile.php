@@ -52,6 +52,18 @@ final class RoutesFile
         /** @var callable(AppScope, Config): void $appBootstrap */
         return static function (AppScope $app, Config $config) use ($bootstrapClasses, $appBootstrap): void {
             foreach ($bootstrapClasses as $class) {
+                // A stale production cache can name a bootstrap whose
+                // package has since been removed — skipped with a
+                // warning, the same tolerance PackageDiscovery gives a
+                // declared-but-missing class on the live path, rather
+                // than a fatal that takes the application down until
+                // someone rebuilds the cache.
+                if (!class_exists($class)) {
+                    error_log("Package bootstrap {$class} is named by the compiled cache but no longer exists — was its package removed without rebuilding the cache (kinetis build)? Skipped.");
+
+                    continue;
+                }
+
                 $bootstrap = new $class();
 
                 if ($bootstrap instanceof PackageBootstrapInterface) {

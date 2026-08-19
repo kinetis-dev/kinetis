@@ -63,7 +63,6 @@ if ($env->isProduction()) {
 
     $router = Router::fromArray($httpCache->routes);
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
-    $discoveredMcpMiddleware = $httpCache->mcpMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
     $middlewareGroups = $httpCache->middlewareGroups;
     // Another confirmed nullsafe.neverNull false positive (see
@@ -90,7 +89,6 @@ if ($env->isProduction()) {
     // once.
     $discoveredMiddleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
     $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
-    $discoveredMcpMiddleware = $discoveredMiddleware['mcp'];
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
     $middlewareGroups = $discoveredMiddleware['groups'];
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
@@ -132,7 +130,6 @@ $kernel = new Kernel(
     isPersistent: $adapter->isPersistent(),
     httpCache: $httpCache,
     discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
-    discoveredMcpMiddleware: $discoveredMcpMiddleware,
     discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,
     middlewareGroups: $middlewareGroups,
 );

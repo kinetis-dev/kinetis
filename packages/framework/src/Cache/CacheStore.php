@@ -8,17 +8,15 @@ use Kinetis\Cache\Exception\CacheWriteException;
 
 /**
  * Reads/writes five independent, self-contained generated PHP files —
- * http.php, mcp.php, openapi.php, commands.php, events.php, each
+ * http.php, openapi.php, commands.php, events.php, each
  * returning a literal array via var_export() — rather than one
  * monolithic artifact. A normal HTTP request only ever loads http.php;
- * the OpenAPI document (often the bulkiest of the five, and the least
+ * the OpenAPI document (often the bulkiest of the four, and the least
  * frequently requested) is loaded lazily by Kernel only the instant
- * /openapi.json is actually hit; MCP data is used entirely outside
- * Kernel (the mcp:serve command, or a consumer's own /mcp HTTP wiring)
- * and never touched by a plain API request at all; commands.php is used
- * entirely by bin/kinetis's own bootstrap, to find which class handles a
- * given command name; events.php is loaded wherever an EventDispatcher
- * is resolved, independent of all four others.
+ * /openapi.json is actually hit; commands.php is used entirely by
+ * bin/kinetis's own bootstrap, to find which class handles a given
+ * command name; events.php is loaded wherever an EventDispatcher is
+ * resolved, independent of the others.
  *
  * var_export()-PHP over JSON for the same reason as before: OPcache's
  * shared opcode cache is keyed by realpath and shared across every FPM
@@ -40,10 +38,6 @@ final class CacheStore
         return $this->directory . '/http.php';
     }
 
-    public function mcpPath(): string
-    {
-        return $this->directory . '/mcp.php';
-    }
 
 
     public function commandsPath(): string
@@ -65,7 +59,7 @@ final class CacheStore
      */
     public function exists(): bool
     {
-        return is_file($this->httpPath()) && is_file($this->mcpPath()) && is_file($this->commandsPath()) && is_file($this->eventsPath());
+        return is_file($this->httpPath()) && is_file($this->commandsPath()) && is_file($this->eventsPath());
     }
 
     public function loadHttp(): ?HttpCache
@@ -75,12 +69,6 @@ final class CacheStore
         return $data === null ? null : HttpCache::fromArray($data);
     }
 
-    public function loadMcp(): ?McpCache
-    {
-        $data = $this->loadSection($this->mcpPath());
-
-        return $data === null ? null : McpCache::fromArray($data);
-    }
 
 
     public function loadCommands(): ?CommandCache
@@ -114,7 +102,6 @@ final class CacheStore
     public function writeAll(CompiledCache $cache): void
     {
         $this->writeSection($this->httpPath(), $cache->http->toArray());
-        $this->writeSection($this->mcpPath(), $cache->mcp->toArray());
         $this->writeSection($this->commandsPath(), $cache->commands->toArray());
         $this->writeSection($this->eventsPath(), $cache->events->toArray());
     }

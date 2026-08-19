@@ -16,6 +16,7 @@
         "kinetis/cache-redis": "dev-main",
         "kinetis/query-builder": "dev-main",
         "kinetis/queue": "dev-main",
+        "kinetis/mcp": "dev-main",
         "league/plates": "^3.6.0",
         "monolog/monolog": "^3.10.0",
         "psr/http-message": "^2.0",
@@ -60,6 +61,10 @@
         {
             "type": "path",
             "url": "../queue"
+        },
+        {
+            "type": "path",
+            "url": "../mcp"
         }
     ],
     "config": {

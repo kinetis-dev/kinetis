@@ -9,12 +9,12 @@ use PHPUnit\Framework\TestCase;
 
 final class CommandDiscoveryTest extends TestCase
 {
-    public function test_discovers_the_built_in_build_and_mcp_serve_commands(): void
+    public function test_discovers_the_built_in_commands(): void
     {
         $registry = CommandDiscovery::discover(__DIR__ . '/Fixtures/does-not-exist');
 
         self::assertNotNull($registry->findCommand('build'));
-        self::assertNotNull($registry->findCommand('mcp:serve'));
+        self::assertNotNull($registry->findCommand('routes:list'));
     }
 
     public function test_discovers_a_projects_own_commands_anywhere_under_its_psr4_root(): void
@@ -71,7 +71,6 @@ final class CommandDiscoveryTest extends TestCase
         $registry = CommandDiscovery::discover(dirname(__DIR__, 2));
 
         self::assertNotNull($registry->findCommand('build'));
-        self::assertNotNull($registry->findCommand('mcp:serve'));
         self::assertNotNull($registry->findCommand('routes:list'));
     }
 }

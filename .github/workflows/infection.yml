@@ -50,6 +50,7 @@ jobs:
           - { name: bref-adapter, dir: packages/bref-adapter, minMsi: 70, minCoveredMsi: 70 }
           - { name: mailer, dir: packages/mailer, minMsi: 90, minCoveredMsi: 90 }
           - { name: migrations, dir: packages/migrations, minMsi: 75, minCoveredMsi: 75 }
+          - { name: mcp, dir: packages/mcp, minMsi: 75, minCoveredMsi: 75 }
           - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
           - { name: search-opensearch, dir: packages/search-opensearch, minMsi: 70, minCoveredMsi: 70 }
           - { name: telemetry, dir: packages/telemetry, minMsi: 70, minCoveredMsi: 70 }

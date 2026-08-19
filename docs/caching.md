@@ -1,9 +1,9 @@
 # Caching & AOT Compilation
 
 Production deployments can precompute everything Kinetis would otherwise
-derive through reflection on every request — routing, MCP tool/resource
-registration, command registration, HTTP and MCP parameter binding, and
-DTO validation plans — into a build-time artifact, avoiding that cost at
+derive through reflection on every request — routing, command and
+event-listener registration, HTTP parameter binding, and DTO validation
+plans — into a build-time artifact, avoiding that cost at
 request time. This page covers what gets cached, how it's structured, and
 what it's worth in practice.
 
@@ -25,50 +25,47 @@ root, or {doc}`config` for loading it from a `.env` file automatically.
 
 ## What gets cached
 
-Ten things get precomputed:
+Eight things get precomputed:
 
 - The route table.
-- MCP tool/resource definitions.
 - Command definitions.
 - The `#[AsGlobalMiddleware]`-discovered class list, already priority-sorted.
-- The `#[AsMcpMiddleware]`-discovered class list, scoped to `/mcp` only,
-  already priority-sorted.
 - The `#[AsOpenApiMiddleware]`-discovered class list, published as the
   built-in `openapi` middleware group, already priority-sorted.
 - The `#[AsMiddlewareGroup]`-declared groups, each group's own members
   already priority-sorted.
 - The `#[Listener]`-discovered event listener list, grouped by event class,
   already priority-sorted.
-- HTTP and MCP parameter-binding plans (how each request's data maps onto
-  your controller/tool method's parameters).
-- DTO validation plans.
-- The installed packages' bootstrap-class list (declared via
-  `extra.kinetis` — see {doc}`cli`), so production never re-reads
-  `vendor/composer/installed.json` per request.
+- HTTP parameter-binding plans (how each request's data maps onto your
+  controller method's parameters).
+- DTO validation plans, and the installed packages' bootstrap-class list
+  (declared via `extra.kinetis` — see {doc}`cli`), so production never
+  re-reads `vendor/composer/installed.json` per request.
 
 `GlobalMiddlewareDiscovery::discoverAll()` performs exactly one
-project-wide scan for all four middleware attributes, not four — see
+project-wide scan for all three middleware attributes, not three — see
 {doc}`middleware`.
+
+MCP is not compiled here: `kinetis/mcp` discovers its tools and
+resources when something first resolves the server — once per worker
+under a persistent runtime, once per `/mcp` request under PHP-FPM, and
+never on a request that doesn't touch it. See {doc}`mcp`.
 
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
 
-The on-disk result is five independent files:
+The on-disk result is three independent files:
 
 ```{code-block} text
 .kinetis-cache/
-├── http.php       routes + global/mcp/openapi middleware + named
+├── http.php       routes + global/openapi middleware + named
 │                  middleware groups + HTTP binding plans + validation
 │                  plans for DTOs reachable from HTTP routes + the
 │                  package bootstrap-class list
-├── mcp.php        tool/resource definitions + MCP binding plans +
-│                  validation plans for DTOs reachable from MCP tools
 ├── commands.php   command definitions + the package bootstrap-class
 │                  list (repeated so `bin/kinetis` loads one file)
 └── events.php     event listeners, grouped by event class
 ```
-
-A DTO used by both an HTTP route and an MCP tool appears in both files.
 
 The OpenAPI document is deliberately not among these. It is generated
 per request in development and cached in whatever `CacheInterface` the
@@ -82,13 +79,13 @@ or DTOs runs `kinetis openapi:clear` alongside `kinetis build` — see
 
 ```{code-block} bash
 php vendor/bin/kinetis build
-# Compiled routes, MCP tools/resources, commands, event listeners, and
-# OpenAPI cache written to .kinetis-cache/
+# Compiled routes, commands, and event listeners written to
+# .kinetis-cache/
 ```
 
-Run this as part of your deploy step. Routes, MCP tools/resources,
-commands, global middleware, and event listeners are all found by
-namespace — see {doc}`cli` for how.
+Run this as part of your deploy step. Routes, commands, global
+middleware, and event listeners are all found by namespace — see
+{doc}`cli` for how.
 
 ### Lazy, on first request
 
@@ -96,8 +93,8 @@ If `APP_ENV=production` and no cache exists yet, the very first request
 compiles and writes it — safely, even under concurrent PHP-FPM workers
 racing to be "first" against an empty cache directory. Every request after
 that, on any worker, just loads what's already there. Once the cache
-exists, live discovery never runs again: your `Http`/`Mcp`/`Console`/
-`Events` classes, and any `#[AsGlobalMiddleware]`-attributed class, aren't
+exists, live discovery never runs again: your `Http`/`Console`/`Events`
+classes, and any `#[AsGlobalMiddleware]`-attributed class, aren't
 reflected again until the cache is rebuilt with `bin/kinetis build`.
 
 ```{note}

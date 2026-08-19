@@ -1,8 +1,19 @@
 # Model Context Protocol (MCP)
 
-Kinetis ships a native [Model Context Protocol](https://modelcontextprotocol.io)
+Kinetis's native [Model Context Protocol](https://modelcontextprotocol.io)
 server — expose tools and resources an AI agent can discover and call
 using the same attributes and validation you already use for HTTP routes.
+It ships as its own package, and installing it is the whole setup:
+
+```{code-block} bash
+composer require kinetis/mcp
+```
+
+That one install registers everything below — the `kinetis mcp:serve`
+command, the `/mcp` HTTP endpoint, and Kinetis's own documentation as
+readable resources — through the package's `extra.kinetis` declaration,
+with nothing to wire by hand. Without the package, none of it exists:
+core has no MCP surface of its own.
 
 ## Tools and resources
 
@@ -70,35 +81,9 @@ large application, and how it interacts with production caching.
 
 ### Streamable HTTP
 
-The same `McpServer`/`McpRegistry` also work over HTTP for free, via
-`Kernel`'s opt-in `$mcp` constructor parameter:
-
-```{code-block} php
-use Kinetis\Http\Kernel;
-use Kinetis\Mcp\McpDispatcher;
-use Kinetis\Mcp\McpServer;
-
-$mcp = new McpServer($registry, new McpDispatcher($app));
-$kernel = new Kernel($app, $router, mcp: $mcp);
-```
-
-Every message is its own unit of work, the same discipline an HTTP
-request, a queue job, and a CLI command already get: `Kernel` (and
-`bin/kinetis mcp:serve`'s stdio transport) create a fresh request scope
-per JSON-RPC message, tool and resource controllers resolve from it — a
-tool constructor-injecting `RequestScope` receives the live scope of its
-own call — a dangling transaction is rolled back through the same
-`TransactionGuard` hook every HTTP request gets, and the scope is
-disposed once the response is written. State a tool registers on its
-scope does not survive to the next message. Only a hand-rolled transport
-that calls `McpServer::handle()` without passing a scope keeps the
-unscoped behavior.
-
-Identity, however, does not reach tools yet: `#[AsMcpMiddleware]`
-middleware can authenticate and reject, but runs outside the per-message
-scope, so it has nowhere to publish `CurrentUserInterface` that a tool
-would see. That arrives with `kinetis/mcp`, where `/mcp` becomes an
-ordinary route and route middleware does this natively.
+`/mcp` is an ordinary route — `Kinetis\Mcp\Http\McpController`,
+discovered from this package's own scan root the moment the package is
+installed, with nothing to pass to `Kernel`:
 
 ```{code-block} bash
 curl -X POST http://localhost:8080/mcp \
@@ -106,36 +91,68 @@ curl -X POST http://localhost:8080/mcp \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-`GET /mcp` and `DELETE /mcp` both answer `405` — correct for both protocol
-eras, [below](#protocol-eras) — rather than falling through to routing's
-`404`. Earlier Streamable HTTP revisions used GET to open a
-server-initiated stream and DELETE to terminate a session; Kinetis never
-implements either.
+Being an ordinary route is what gives every message the full request
+lifecycle with nothing special wired: a fresh request scope per message,
+tool and resource controllers resolving from it — a tool
+constructor-injecting `RequestScope` receives the live scope of its own
+call — a dangling transaction rolled back through the same
+`TransactionGuard` hook every HTTP request gets, and disposal once the
+response is written. State a tool registers on its scope does not
+survive to the next message. The stdio transport gives each line the
+same treatment. Only a hand-rolled transport that calls
+`McpServer::handle()` without passing a scope keeps the unscoped
+behavior.
+
+`GET /mcp` and `DELETE /mcp` both answer the router's own `405` carrying
+`Allow: POST` — correct for both protocol eras,
+[below](#protocol-eras). Earlier Streamable HTTP revisions used GET to
+open a server-initiated stream and DELETE to terminate a session;
+Kinetis implements neither, so neither method is declared.
 
 ### Securing the HTTP transport
 
-Two independent layers, since global middleware — protecting authentication,
-logging, whatever else already wraps every request — already covers `/mcp`
-too (`Kernel`'s global pipeline covers its entire body, `/mcp` included):
+The endpoint's own middleware is the `mcp` middleware group, which
+`McpController` references like any route references a group — resolved
+from each request's own scope, so everything route middleware can do
+works here (see {doc}`middleware`):
 
 1. **`Origin` validation, always on.** The Streamable HTTP specification
-   requires validating the `Origin` header on every incoming connection to
-   prevent DNS-rebinding attacks. `Kernel`'s `$mcpAllowedOrigins`
-   constructor parameter is an exact list of allowed values, checked
-   before anything else on this endpoint runs — empty by default, so any
-   request carrying an `Origin` header at all is rejected `403` until you
-   list which ones may reach it. A request with no `Origin` header (any
-   non-browser client — `bin/kinetis mcp:serve`'s own stdio transport
-   never sends one) is unaffected regardless.
-2. **`#[AsMcpMiddleware]`, for middleware scoped to just this endpoint.**
-   See {doc}`middleware`'s "Scoping middleware to `/mcp` or
-   `/openapi.json`/`/openapi` specifically" — a real authentication check
-   (a bearer token, an API key) belongs here rather than in global
-   middleware, if it should apply to `/mcp` only and not every other route.
+   requires validating the `Origin` header on every incoming connection
+   to prevent DNS-rebinding attacks. The package's own
+   `McpOriginMiddleware` is a permanent member of the group and reads
+   `MCP_ALLOWED_ORIGINS` — a comma-separated exact list, empty by
+   default, so any request carrying an `Origin` header at all is
+   rejected `403` until the deployment names which ones may connect. A
+   request with no `Origin` header (any non-browser client — the stdio
+   transport never sends one) passes regardless.
 
-```{code-block} php
-$kernel = new Kernel($app, $router, mcp: $mcp, mcpAllowedOrigins: ['https://my-mcp-client.example']);
-```
+   ```{code-block} text
+   :caption: .env
+   MCP_ALLOWED_ORIGINS=https://my-mcp-client.example
+   ```
+
+2. **Your own middleware, via `#[AsMiddlewareGroup('mcp')]`.** Declare
+   membership on the middleware class and it joins the endpoint's
+   pipeline — after the origin check, which runs first by priority.
+   Because the group resolves from the request's scope,
+   `kinetis/auth`'s `BearerAuthMiddleware` and `kinetis/auth-jwt`'s
+   `JwtAuthMiddleware` subclasses work here unchanged, and the
+   `CurrentUserInterface` they publish reaches the tool:
+
+   ```{code-block} php
+   use Kinetis\Http\Attributes\AsMiddlewareGroup;
+
+   #[AsMiddlewareGroup('mcp')]
+   final readonly class McpAuthMiddleware extends BearerAuthMiddleware {}
+   ```
+
+   A tool that constructor-injects `CurrentUserInterface` (or resolves
+   it from its injected `RequestScope`) sees exactly the identity the
+   middleware resolved for this message — the same mechanism an HTTP
+   controller already uses.
+
+Global middleware wraps `/mcp` too, like every route — the group exists
+for what should apply to this endpoint only.
 
 ## Protocol eras
 
@@ -329,19 +346,16 @@ site as an MCP resource — `kinetis://docs/tutorial`,
 app's resources, instead of relying on stale training data about the
 framework:
 
-Included automatically when running `mcp:serve` — nothing to opt into.
-For the HTTP transport, where you construct `McpRegistry` yourself,
-register it explicitly:
+Included automatically on both transports — the class lives under this
+package's own scan root, so discovery finds it exactly the way it finds
+your application's resources. Registering it explicitly
+(`$registry->register(KinetisDocsResource::class)`) is only needed for a
+hand-wired `McpRegistry` that never goes through discovery.
 
-```{code-block} php
-use Kinetis\Mcp\KinetisDocsResource;
-
-$registry->register(KinetisDocsResource::class);
-```
-
-Each resource returns the actual `docs/*.md` source as `text/markdown`,
-read directly from wherever `kinetis/framework` is installed, so there's
-nothing to keep in sync as pages change.
+Each resource returns the actual `docs/*.md` source as `text/markdown` —
+read from the monorepo when developing Kinetis itself, and fetched from
+the published documentation otherwise — so there's nothing to keep in
+sync as pages change.
 
 ### A standalone docs server for Claude Code
 

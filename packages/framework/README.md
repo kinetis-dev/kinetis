@@ -68,14 +68,15 @@ Kinetis talks to, not an assumption baked into the framework itself.
 - **Fiber-based concurrency** (`Kinetis\Async\concurrently()`) over Revolt,
   plus Revolt-native MySQL, Postgres, and Redis clients — no blocking
   drivers, no hand-rolled wire protocols.
-- **A native MCP server** — stdio and Streamable HTTP transports, so an AI
-  agent can call your application's own tools and resources the same way
-  it calls anything else.
+- **A native MCP server** (`kinetis/mcp`) — stdio and Streamable HTTP
+  transports, so an AI agent can call your application's own tools and
+  resources the same way it calls anything else. Installing the package
+  is the whole setup.
 - **A PSR-14 event dispatcher** — attribute-driven listener registration,
   with `ShouldQueue` for deferring a listener onto a queue instead of
   running it inline.
-- **Production AOT caching** — routes, validation plans, and MCP
-  registrations compiled once (`bin/kinetis build`). A boot-and-die runtime
+- **Production AOT caching** — routes, validation plans, commands, and
+  event listeners compiled once (`bin/kinetis build`). A boot-and-die runtime
   skips re-registering everything from scratch on every request; even a
   persistent worker skips the per-dispatch reflection cost that otherwise
   recurs on every single request regardless.
@@ -100,7 +101,6 @@ via `Kinetis\Config`:
 | `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read. |
 | `ROUTE_DISCOVERY_PATHS` | — | Restricts the HTTP-controller scan to comma-separated sub-paths, relative to each PSR-4 base directory. |
 | `COMMAND_DISCOVERY_PATHS` | — | The same, for CLI commands. |
-| `MCP_DISCOVERY_PATHS` | — | The same, for MCP tools and resources. |
 | `MIDDLEWARE_DISCOVERY_PATHS` | — | The same, for global middleware and middleware groups. |
 | `LISTENER_DISCOVERY_PATHS` | — | The same, for event listeners. |
 

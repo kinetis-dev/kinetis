@@ -13,10 +13,11 @@ use InvalidArgumentException;
  * since they're the same "expose the API's own shape" concern, not two
  * independently protectable surfaces. Found by the same project-wide scan
  * Kinetis\Http\Middleware\GlobalMiddlewareDiscovery already performs for
- * #[AsGlobalMiddleware], bucketed separately. See #[AsMcpMiddleware]'s
- * own docblock for why this narrower-than-global scoping exists at all.
+ * #[AsGlobalMiddleware], bucketed separately — global middleware already
+ * wraps these endpoints as part of every request; this exists for
+ * protecting them specifically without touching unrelated traffic.
  *
- * Same shape as #[AsGlobalMiddleware]/#[AsMcpMiddleware] deliberately:
+ * Same shape as #[AsGlobalMiddleware] deliberately:
  * $priority bounded 0-100, defaulting 50, alphabetical tiebreak. An
  * explicit `AppScope::openApiMiddleware()` registration always wins over
  * a discovered one.

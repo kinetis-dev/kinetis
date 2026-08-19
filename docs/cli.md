@@ -12,9 +12,9 @@ php vendor/bin/kinetis
 Usage: kinetis <command>
 
 Available commands:
-  mcp:serve              Starts the MCP server over stdio
   routes:list            Displays every discovered route and the full global middleware pipeline
-  build                  Compiles routes, MCP tools/resources, commands, and OpenAPI data ahead of time
+  build                  Compiles routes, commands, and event listeners ahead of time
+  mcp:serve              Starts the MCP server over stdio
   app:cleanup-sessions   Deletes sessions older than 30 days
 ```
 
@@ -103,8 +103,9 @@ your own PSR-4 roots, with no directory convention required.
 php vendor/bin/kinetis build
 ```
 
-Removes any existing `.kinetis-cache/` and compiles a fresh one — routing,
-MCP, commands, and OpenAPI data. Run this as part of your deploy pipeline
+Removes any existing `.kinetis-cache/` and compiles a fresh one —
+routing and validation plans, commands, and event listeners. Run this as
+part of your deploy pipeline
 to pre-warm the cache before real traffic arrives — see {doc}`caching`
 for exactly what gets written.
 
@@ -134,12 +135,12 @@ vendor/bin/kinetis build --destroy
 php vendor/bin/kinetis mcp:serve
 ```
 
-Starts Kinetis's MCP server over stdio — one JSON-RPC message per line in,
-one per line out — the way Claude Desktop, Cursor, and most local MCP
-clients launch a server as a subprocess. Your own `App\Mcp\...` tools and
-resources are included automatically, alongside Kinetis's own
-documentation resources — see {doc}`mcp` for the protocol itself and
-{doc}`caching` for how production caching applies here.
+Contributed by `kinetis/mcp` — present exactly when that package is
+installed, like `queue:work` or `migrate`. Starts the MCP server over
+stdio — one JSON-RPC message per line in, one per line out — the way
+Claude Desktop, Cursor, and most local MCP clients launch a server as a
+subprocess. Your own tools and resources are included automatically,
+alongside Kinetis's own documentation resources — see {doc}`mcp`.
 
 ## `kinetis routes:list`
 
@@ -212,8 +213,9 @@ Both keys are optional. `scan` is a comma-separated list of PSR-4
 namespace prefixes (each must sit at or below one of the package's own
 declared PSR-4 roots); every class under them joins the same
 attribute-driven discovery as your application's own code — `#[Command]`
-methods become `kinetis` commands, and `#[Get]`/`#[McpTool]`/
-`#[Listener]`/`#[AsGlobalMiddleware]` classes register the same way.
+methods become `kinetis` commands, and `#[Get]`/`#[Listener]`/
+`#[AsGlobalMiddleware]` classes register the same way — `#[McpTool]` and
+`#[McpResource]` too, once `kinetis/mcp` is installed.
 `bootstrap` names a class implementing
 `Kinetis\Container\PackageBootstrapInterface`; its `register(AppScope
 $app, Config $config)` runs before your application's own
@@ -311,9 +313,11 @@ whole application on every request is not the relevant cost — the
 scan only ever runs live in development, or once to build the cache.
 Even so, for a large enough codebase, that development-time scan can be
 worth bounding. `COMMAND_DISCOVERY_PATHS` (and its siblings
-`MCP_DISCOVERY_PATHS`/`ROUTE_DISCOVERY_PATHS`/`MIDDLEWARE_DISCOVERY_PATHS`/
-`LISTENER_DISCOVERY_PATHS` for MCP, HTTP, global-middleware, and event-
-listener discovery — see {doc}`middleware`/{doc}`events` for the last two)
+`ROUTE_DISCOVERY_PATHS`/`MIDDLEWARE_DISCOVERY_PATHS`/
+`LISTENER_DISCOVERY_PATHS` for HTTP, global-middleware, and event-
+listener discovery — see {doc}`middleware`/{doc}`events` for the last
+two — plus `MCP_DISCOVERY_PATHS`, read by `kinetis/mcp`'s tool and
+resource discovery)
 restricts the scan to one or more comma-separated sub-paths, relative to
 each PSR-4 base directory your `composer.json` declares:
 

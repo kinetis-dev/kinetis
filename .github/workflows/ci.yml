@@ -68,6 +68,7 @@ jobs:
           - { name: auth, dir: packages/auth, phpunit: true }
           - { name: auth-jwt, dir: packages/auth-jwt, phpunit: true }
           - { name: migrations, dir: packages/migrations, phpunit: true }
+          - { name: mcp, dir: packages/mcp, phpunit: true }
           - { name: queue, dir: packages/queue, phpunit: true }
           - { name: storage, dir: packages/storage, phpunit: true }
           - { name: revolt-http-client, dir: packages/revolt-http-client, phpunit: true }

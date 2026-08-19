@@ -6,7 +6,7 @@ namespace Kinetis\Cache;
 
 /**
  * Every registered command's plain scalar fields. Unlike HttpCache/
- * McpCache, there are no binding/hydration plans to carry here at all:
+ * HttpCache, there are no binding/hydration plans to carry here at all:
  * CommandDispatcher does zero reflection at dispatch time —
  * CommandRegistry::register() already validated each method's signature
  * at registration time, so the command list itself is the entire

@@ -7,8 +7,6 @@ namespace Kinetis\Tests\Http\Middleware;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware;
-use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredMcpMiddleware;
-use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredOpenApiAndMcpMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\GroupedAdminMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\GroupedAuditMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\GroupedAuthMiddleware;
@@ -87,27 +85,14 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
         }
     }
 
-    // --- discoverAll(): one shared scan, three independently-sorted lists.
+    // --- discoverAll(): one shared scan, independently-sorted lists.
 
     public function test_discover_all_buckets_by_which_attribute_a_class_carries(): void
     {
         $middleware = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures');
 
         self::assertContains(DiscoveredGlobalMiddleware::class, $middleware['global']);
-        self::assertNotContains(DiscoveredMcpMiddleware::class, $middleware['global']);
-
-        self::assertContains(DiscoveredMcpMiddleware::class, $middleware['mcp']);
-        self::assertNotContains(DiscoveredGlobalMiddleware::class, $middleware['mcp']);
-
         self::assertNotContains(DiscoveredGlobalMiddleware::class, $middleware['openApi']);
-    }
-
-    public function test_a_class_carrying_both_mcp_and_openapi_attributes_appears_in_both_lists(): void
-    {
-        $middleware = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures');
-
-        self::assertContains(DiscoveredOpenApiAndMcpMiddleware::class, $middleware['mcp']);
-        self::assertContains(DiscoveredOpenApiAndMcpMiddleware::class, $middleware['openApi']);
     }
 
     public function test_discover_wraps_discover_all_and_returns_only_the_global_list(): void
@@ -162,7 +147,6 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
         $middleware = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures');
 
         self::assertNotContains(GroupedAuthMiddleware::class, $middleware['global']);
-        self::assertNotContains(GroupedAuthMiddleware::class, $middleware['mcp']);
         self::assertNotContains(GroupedAuthMiddleware::class, $middleware['openApi']);
     }
 

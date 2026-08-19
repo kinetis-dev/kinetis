@@ -1246,8 +1246,16 @@ curl http://localhost:8080/pong/tally
 
 ## Exposing it to an AI agent: an MCP tool
 
-The same statistics can answer a question for an AI agent, through an
-`#[McpTool]` method instead of a route attribute. A slightly richer
+The MCP server is its own package:
+
+```{code-block} bash
+composer require kinetis/mcp
+```
+
+That one install registers the `kinetis mcp:serve` command and the
+`/mcp` HTTP endpoint — nothing else to wire. The same statistics can
+then answer a question for an AI agent, through an `#[McpTool]` method
+instead of a route attribute. A slightly richer
 response — a percentage alongside each count — is a good excuse to nest
 one more DTO inside another:
 

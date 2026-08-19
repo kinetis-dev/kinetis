@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\Cache;
 
 /**
- * Shared by HttpCache/McpCache/CommandCache/EventCache — one
- * version number for the five artifacts a single Compiler run always
- * produces together, so CacheStore can detect a stale shape regardless of
- * which file it's reading.
+ * Shared by HttpCache/CommandCache/EventCache — one version number for
+ * the four artifacts a single Compiler run always produces together, so
+ * CacheStore can detect a stale shape regardless of which file it's
+ * reading.
  */
 final class CacheFormat
 {
@@ -22,5 +22,9 @@ final class CacheFormat
     // 9: binding plans gained the 'container' parameter source — an old
     //    plan records those parameters as 'default', which would keep
     //    throwing instead of resolving them.
-    public const int VERSION = 10;
+    // 11: MCP moved to kinetis/mcp — mcp.php is no longer produced, and
+    //     HttpCache lost mcpMiddleware, so an older http.php would hit
+    //     an undefined key instead of the clean fall-back-and-recompile
+    //     this version check exists for.
+    public const int VERSION = 11;
 }

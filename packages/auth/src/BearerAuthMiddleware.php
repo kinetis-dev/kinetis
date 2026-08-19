@@ -31,8 +31,14 @@ use Psr\Http\Server\RequestHandlerInterface;
  * CurrentUserInterface — a controller (or any other package) depends on
  * that interface, never on UserProviderInterface or this middleware's
  * concrete implementation of it.
+ *
+ * Not final, for the same reason JwtAuthMiddleware and
+ * RateLimitMiddleware are not: an attribute only attaches to a class by
+ * declaring it there, so joining a middleware group
+ * (#[AsMiddlewareGroup('mcp')] on a thin subclass) requires one — as
+ * does fixing constructor defaults, the reason the other two are open.
  */
-final readonly class BearerAuthMiddleware implements MiddlewareInterface
+readonly class BearerAuthMiddleware implements MiddlewareInterface
 {
     public function __construct(
         private UserProviderInterface $users,

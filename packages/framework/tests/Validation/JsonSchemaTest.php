@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Validation;
 
-use Kinetis\Mcp\ProgressReporter;
+use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
@@ -70,10 +70,10 @@ final class JsonSchemaTest extends TestCase
 
     public function test_excluded_types_are_skipped_entirely_not_added_to_properties_or_required(): void
     {
-        $fn = static function (string $name, ProgressReporter $progress) {};
+        $fn = static function (string $name, RequestScope $scope) {};
         $params = (new ReflectionFunction($fn))->getParameters();
 
-        $schema = JsonSchema::forParameters($params, [ProgressReporter::class]);
+        $schema = JsonSchema::forParameters($params, [RequestScope::class]);
 
         self::assertSame(['name'], array_keys($schema['properties']));
         self::assertSame(['name'], $schema['required']);

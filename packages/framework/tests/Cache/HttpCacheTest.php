@@ -34,7 +34,6 @@ final class HttpCacheTest extends TestCase
                 ],
             ],
             globalMiddleware: ['App\\RequestIdMiddleware'],
-            mcpMiddleware: ['App\\McpAuthMiddleware'],
             openApiMiddleware: ['App\\OpenApiAuthMiddleware'],
             compiledAt: '2026-01-01T00:00:00+00:00',
             middlewareGroups: ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
@@ -47,7 +46,6 @@ final class HttpCacheTest extends TestCase
         self::assertSame(false, $reconstructed->httpBindingPlans['App\\C::index'][1]['defaultValue']);
         self::assertNull($reconstructed->httpBindingPlans['App\\C::index'][2]['defaultValue']);
         self::assertSame(['App\\RequestIdMiddleware'], $reconstructed->globalMiddleware);
-        self::assertSame(['App\\McpAuthMiddleware'], $reconstructed->mcpMiddleware);
         self::assertSame(['App\\OpenApiAuthMiddleware'], $reconstructed->openApiMiddleware);
         self::assertSame(
             ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
@@ -63,7 +61,6 @@ final class HttpCacheTest extends TestCase
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],
-            mcpMiddleware: [],
             openApiMiddleware: [],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );

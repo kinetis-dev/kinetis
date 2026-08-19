@@ -52,9 +52,6 @@ final class AppScope implements ContainerInterface
     private array $middleware = [];
 
     /** @var list<class-string<MiddlewareInterface>> */
-    private array $mcpMiddleware = [];
-
-    /** @var list<class-string<MiddlewareInterface>> */
     private array $openApiMiddleware = [];
 
     private bool $booted = false;
@@ -97,34 +94,12 @@ final class AppScope implements ContainerInterface
     }
 
     /**
-     * Registers middleware scoped to Kernel's `/mcp` endpoint only — never
-     * runs for any other route, unlike middleware(). Global middleware
-     * already wraps `/mcp` (see Kernel's own docblock), so this exists for
-     * the narrower need of protecting `/mcp` specifically without also
-     * touching unrelated traffic. Same registration-order/lock-after-
-     * boot() discipline as middleware().
-     *
-     * @param class-string<MiddlewareInterface> $middlewareClass
-     */
-    public function mcpMiddleware(string $middlewareClass): void
-    {
-        $this->assertNotBooted($middlewareClass);
-        $this->mcpMiddleware[] = $middlewareClass;
-    }
-
-    /**
-     * @return list<class-string<MiddlewareInterface>>
-     */
-    public function mcpMiddlewares(): array
-    {
-        return $this->mcpMiddleware;
-    }
-
-    /**
      * Registers middleware scoped to the `/openapi.json` and `/openapi`
      * endpoints only — one registration point for both, since they're the
-     * same "expose the API's own shape" concern. See mcpMiddleware()'s own
-     * docblock for why this narrower-than-global scoping exists at all.
+     * same "expose the API's own shape" concern — never runs for any
+     * other route, unlike middleware(), which already wraps those two
+     * endpoints as part of every request. Same registration-order/
+     * lock-after-boot() discipline as middleware().
      *
      * @param class-string<MiddlewareInterface> $middlewareClass
      */

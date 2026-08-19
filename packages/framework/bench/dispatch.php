@@ -6,7 +6,6 @@ use Kinetis\Cache\Compiler;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Mcp\McpRegistry;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 use Psr\Http\Message\ServerRequestInterface;
@@ -32,7 +31,7 @@ $liveKernel = new Kernel($app, $router);
 // Router::register()'s boot-time-only cost) measurably help once
 // everything's already warm — not a cold-start question at all. See
 // bench/cold_start.php for the separate FPM-boot-and-die comparison.
-$compiled = (new Compiler())->compile($router, new McpRegistry());
+$compiled = (new Compiler())->compile($router);
 $compiledKernel = new Kernel($app, $router, httpCache: $compiled->http);
 
 /** @var array<string, callable(): ServerRequestInterface> $scenarios */
