@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
 # One-time setup for a standalone Kinetis docs MCP server: installs
-# kinetis/framework from Packagist into its own small directory (never
-# this monorepo) and registers it with Claude Code. KinetisDocsResource
-# falls back to fetching docs straight from GitHub when it finds no
-# local docs/ directory, so this scratch install works with zero
-# checkout of kinetis-dev/kinetis at all.
+# kinetis/mcp (which brings kinetis/framework with it) from Packagist
+# into its own small directory (never this monorepo) and registers it
+# with Claude Code. KinetisDocsResource falls back to fetching docs
+# straight from GitHub when it finds no local docs/ directory, so this
+# scratch install works with zero checkout of kinetis-dev/kinetis at
+# all.
 set -euo pipefail
 
 INSTALL_DIR="${KINETIS_MCP_DIR:-$HOME/.kinetis-mcp}"
@@ -26,12 +27,12 @@ fi
 echo "  claude CLI: found - OK"
 
 echo
-echo "Installing kinetis/framework into ${INSTALL_DIR}..."
+echo "Installing kinetis/mcp into ${INSTALL_DIR}..."
 mkdir -p "$INSTALL_DIR"
 cat > "$INSTALL_DIR/composer.json" <<'EOF'
 {
     "require": {
-        "kinetis/framework": "^1.0"
+        "kinetis/mcp": "^1.0"
     },
     "autoload": {
         "psr-4": {
@@ -83,7 +84,7 @@ claude mcp add "$SERVER_NAME" -s user -- docker run --rm -i \
     -v "${INSTALL_DIR}:/app" \
     -w /app \
     -e APP_ENV=development \
-    composer:2 sh -c 'now=$(date +%s); last=$(cat .last-update-check 2>/dev/null || echo 0); if [ $((now - last)) -gt 86400 ]; then composer update kinetis/framework --no-interaction --prefer-dist 1>&2 && echo "$now" > .last-update-check; fi; exec php vendor/bin/kinetis mcp:serve'
+    composer:2 sh -c 'now=$(date +%s); last=$(cat .last-update-check 2>/dev/null || echo 0); if [ $((now - last)) -gt 86400 ]; then composer update kinetis/mcp --with-all-dependencies --no-interaction --prefer-dist 1>&2 && echo "$now" > .last-update-check; fi; exec php vendor/bin/kinetis mcp:serve'
 
 echo
 echo "Verifying the server actually responds..."
