@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.24.0",
+            "version": "1.24.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -164,7 +164,7 @@
             "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.3.2",
+            "version": "1.3.3",
             "requires": [
                 "framework",
                 "persistence"
@@ -422,7 +422,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "requires": [
                 "framework"
             ],

@@ -351,7 +351,7 @@ function checkContentBumpCompleteness(?array $oldManifest, array $newManifest, a
  * Packages with no infection.yml job, and why.
  */
 const INFECTION_EXEMPT = [
-    'pingpong' => 'no PHPUnit suite, so there is nothing to mutate against',
+    'pingpong' => 'a demo application, read and run rather than mutated; its suite runs in ci.yml and is measured for coverage',
 ];
 
 /**
