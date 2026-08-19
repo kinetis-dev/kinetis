@@ -11,6 +11,7 @@ use Amp\Redis\RedisConfig;
 use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
 use Amp\Serialization\Serializer;
+use Kinetis\SimpleCache\AtomicCounterInterface;
 use DateInterval;
 use DateTimeImmutable;
 use Kinetis\Config\Config;
@@ -35,7 +36,7 @@ use function Kinetis\Async\concurrently;
  * Redis Cluster only ever supports database 0 — REDIS_DATABASE has no
  * equivalent here, unlike RedisSimpleCache's single-node config.
  */
-final class ClusteredRedisSimpleCache implements CacheInterface
+final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterInterface
 {
     private readonly Serializer $serializer;
 
@@ -87,6 +88,34 @@ final class ClusteredRedisSimpleCache implements CacheInterface
         $value = $this->guard('get', $key, fn (): ?string => $this->topology->nodeForSlot(Crc16::slotFor($key))->get($key));
 
         return $value === null ? $default : $this->serializer->unserialize($value);
+    }
+
+    /**
+     * One key, so the script runs on whichever node owns that key's
+     * slot — the same routing every other operation here uses.
+     */
+    #[\Override]
+    public function increment(string $key, int $ttlSeconds): int
+    {
+        self::assertValidKey($key);
+
+        $value = $this->guard('increment', $key, fn () => $this->topology->nodeForSlot(Crc16::slotFor($key))->eval(
+            "local v = redis.call('INCR', KEYS[1]) redis.call('EXPIRE', KEYS[1], ARGV[1]) return v",
+            [$key],
+            [(string) $ttlSeconds],
+        ));
+
+        return is_numeric($value) ? (int) $value : 0;
+    }
+
+    #[\Override]
+    public function count(string $key): int
+    {
+        self::assertValidKey($key);
+
+        $value = $this->guard('count', $key, fn () => $this->topology->nodeForSlot(Crc16::slotFor($key))->get($key));
+
+        return is_numeric($value) ? (int) $value : 0;
     }
 
     #[\Override]

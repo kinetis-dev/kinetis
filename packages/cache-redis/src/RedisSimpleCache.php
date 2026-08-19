@@ -14,6 +14,7 @@ use Amp\Redis\RedisConfig;
 use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
 use Amp\Serialization\Serializer;
+use Kinetis\SimpleCache\AtomicCounterInterface;
 use DateInterval;
 use DateTimeImmutable;
 use Psr\SimpleCache\CacheInterface;
@@ -40,7 +41,7 @@ use function Amp\Redis\createRedisClient;
  * deployment (REDIS_CLUSTER=true), which routes each key to whichever
  * node actually owns it instead of one fixed connection.
  */
-final class RedisSimpleCache implements CacheInterface
+final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface
 {
     public function __construct(
         private readonly RedisClient $client,
@@ -107,6 +108,36 @@ final class RedisSimpleCache implements CacheInterface
         }
 
         return $redisConfig->withDatabase($config->int(Config::scopedKey('REDIS_DATABASE', $connection), 0));
+    }
+
+    /**
+     * INCR and EXPIRE in one script, so the value a caller receives is
+     * its own and never one another caller also received. The counter
+     * holds a bare integer rather than a serialized value, which is why
+     * count() exists and get() must not be used to read it.
+     */
+    #[\Override]
+    public function increment(string $key, int $ttlSeconds): int
+    {
+        self::assertValidKey($key);
+
+        $value = $this->guard('increment', $key, fn () => $this->client->eval(
+            "local v = redis.call('INCR', KEYS[1]) redis.call('EXPIRE', KEYS[1], ARGV[1]) return v",
+            [$key],
+            [(string) $ttlSeconds],
+        ));
+
+        return is_numeric($value) ? (int) $value : 0;
+    }
+
+    #[\Override]
+    public function count(string $key): int
+    {
+        self::assertValidKey($key);
+
+        $value = $this->guard('count', $key, fn () => $this->client->get($key));
+
+        return is_numeric($value) ? (int) $value : 0;
     }
 
     #[\Override]

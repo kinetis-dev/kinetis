@@ -150,4 +150,40 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     {
         self::assertSame('fallback', $this->cache->get('cluster-key-absent', 'fallback'));
     }
+
+    /**
+     * One key, so the script must run on whichever node owns that key's
+     * slot. Sending it anywhere else is a MOVED, not a wrong answer, so
+     * this fails loudly if the routing is wrong.
+     */
+    public function test_a_counter_is_incremented_on_the_node_that_owns_its_slot(): void
+    {
+        $key = 'counter-' . \bin2hex(\random_bytes(6));
+
+        self::assertSame(0, $this->cache->count($key));
+        self::assertSame(1, $this->cache->increment($key, 60));
+        self::assertSame(2, $this->cache->increment($key, 60));
+        self::assertSame(2, $this->cache->count($key));
+    }
+
+    public function test_counters_on_different_slots_are_independent(): void
+    {
+        $keys = [];
+
+        // Deliberately spread: without slot-aware routing these would
+        // collide on whichever node the client happened to hold.
+        for ($i = 0; $i < 12; $i++) {
+            $keys[] = 'counter-spread-' . $i . '-' . \bin2hex(\random_bytes(4));
+        }
+
+        foreach ($keys as $index => $key) {
+            for ($n = 0; $n <= $index; $n++) {
+                $this->cache->increment($key, 60);
+            }
+        }
+
+        foreach ($keys as $index => $key) {
+            self::assertSame($index + 1, $this->cache->count($key), $key);
+        }
+    }
 }

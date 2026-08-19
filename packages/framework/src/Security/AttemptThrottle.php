@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Security;
 
 use Kinetis\Security\Exception\AttemptThrottleUnavailableException;
+use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
 
@@ -33,6 +34,8 @@ use Psr\SimpleCache\CacheInterface;
  */
 final readonly class AttemptThrottle
 {
+    private Counter $counter;
+
     public function __construct(
         private CacheInterface $cache,
         private int $maxAttempts = 5,
@@ -41,29 +44,43 @@ final readonly class AttemptThrottle
         if ($cache instanceof NullSimpleCache) {
             throw AttemptThrottleUnavailableException::nullCache();
         }
+
+        $this->counter = new Counter($cache);
+    }
+
+    /**
+     * Whether failures are counted atomically, which they are only when
+     * the cache can — see Kinetis\SimpleCache\Counter. False means
+     * attempts arriving together register as one and the lockout can be
+     * outrun; check it at boot if that matters, which for a login it
+     * does.
+     */
+    public function countsAtomically(): bool
+    {
+        return $this->counter->isAtomic();
     }
 
     public function tooManyAttempts(string $identifier): bool
     {
-        $entry = $this->entry($identifier);
-
-        return $entry !== null && $entry['count'] >= $this->maxAttempts;
+        return $this->count($identifier) >= $this->maxAttempts;
     }
 
     public function recordFailure(string $identifier): void
     {
-        $entry = $this->entry($identifier);
-        $count = ($entry['count'] ?? 0) + 1;
+        // The expiry is refreshed on every failure, so the count decays
+        // from the last one rather than the first. Whether failures
+        // arriving together are each counted depends on the cache —
+        // countsAtomically() reports it.
+        $this->counter->increment($this->key($identifier), $this->decaySeconds);
 
-        $this->cache->set($this->key($identifier), [
-            'count' => $count,
-            'expiresAt' => time() + $this->decaySeconds,
-        ], $this->decaySeconds);
+        // Only for availableInSeconds(); no decision depends on it, and
+        // concurrent writers store the same second either way.
+        $this->cache->set($this->expiryKey($identifier), time() + $this->decaySeconds, $this->decaySeconds);
     }
 
     public function clear(string $identifier): void
     {
-        $this->cache->delete($this->key($identifier));
+        $this->cache->deleteMultiple([$this->key($identifier), $this->expiryKey($identifier)]);
     }
 
     /**
@@ -73,25 +90,25 @@ final readonly class AttemptThrottle
      */
     public function availableInSeconds(string $identifier): int
     {
-        $entry = $this->entry($identifier);
+        $expiresAt = $this->cache->get($this->expiryKey($identifier));
 
-        return $entry === null ? 0 : max(0, $entry['expiresAt'] - time());
+        return is_int($expiresAt) ? max(0, $expiresAt - time()) : 0;
     }
 
-    /**
-     * @return array{count: int, expiresAt: int}|null
-     */
-    private function entry(string $identifier): ?array
+    private function count(string $identifier): int
     {
-        $value = $this->cache->get($this->key($identifier));
-
-        return is_array($value) && is_int($value['count'] ?? null) && is_int($value['expiresAt'] ?? null)
-            ? $value
-            : null;
+        // Through the counter, not the cache: a natively-incremented
+        // counter is not stored in the form get() reads back.
+        return $this->counter->count($this->key($identifier));
     }
 
     private function key(string $identifier): string
     {
         return 'attempt-throttle.' . hash('sha256', $identifier);
+    }
+
+    private function expiryKey(string $identifier): string
+    {
+        return 'attempt-throttle-expiry.' . hash('sha256', $identifier);
     }
 }

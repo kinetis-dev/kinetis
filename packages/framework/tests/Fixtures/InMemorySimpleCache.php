@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Fixtures;
 
 use DateInterval;
 use DateTimeImmutable;
+use Kinetis\SimpleCache\AtomicCounterInterface;
 use Psr\SimpleCache\CacheInterface;
 
 /**
@@ -14,7 +15,7 @@ use Psr\SimpleCache\CacheInterface;
  * stand-in for RedisSimpleCache in tests that need an actually-storing
  * cache, not NullSimpleCache's permanent miss.
  */
-final class InMemorySimpleCache implements CacheInterface
+final class InMemorySimpleCache implements CacheInterface, AtomicCounterInterface
 {
     /** @var array<string, array{value: mixed, expiresAt: ?int}> */
     private array $entries = [];
@@ -22,6 +23,29 @@ final class InMemorySimpleCache implements CacheInterface
     public function get(string $key, mixed $default = null): mixed
     {
         return $this->has($key) ? $this->entries[$key]['value'] : $default;
+    }
+
+    /**
+     * Trivially atomic: one process, one array, and nothing suspends
+     * between the read and the write.
+     */
+    #[\Override]
+    public function increment(string $key, int $ttlSeconds): int
+    {
+        $value = $this->has($key) ? $this->entries[$key]['value'] : 0;
+        $next = (is_numeric($value) ? (int) $value : 0) + 1;
+
+        $this->set($key, $next, $ttlSeconds);
+
+        return $next;
+    }
+
+    #[\Override]
+    public function count(string $key): int
+    {
+        $value = $this->has($key) ? $this->entries[$key]['value'] : 0;
+
+        return is_numeric($value) ? (int) $value : 0;
     }
 
     public function set(string $key, mixed $value, null|int|DateInterval $ttl = null): bool

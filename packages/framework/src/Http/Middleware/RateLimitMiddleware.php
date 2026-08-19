@@ -6,6 +6,7 @@ namespace Kinetis\Http\Middleware;
 
 use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
+use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -47,11 +48,13 @@ use Psr\SimpleCache\CacheInterface;
  */
 class RateLimitMiddleware implements MiddlewareInterface
 {
+    private readonly Counter $counter;
+
     /**
      * @param list<string> $trustedProxies CIDR ranges (e.g. '10.0.0.0/8') — see identifierFor().
      */
     public function __construct(
-        private readonly CacheInterface $cache,
+        CacheInterface $cache,
         private readonly int $maxAttempts = 60,
         private readonly int $windowSeconds = 60,
         private readonly array $trustedProxies = [],
@@ -59,6 +62,8 @@ class RateLimitMiddleware implements MiddlewareInterface
         if ($cache instanceof NullSimpleCache) {
             throw RateLimitUnavailableException::nullCache();
         }
+
+        $this->counter = new Counter($cache);
 
         if ($maxAttempts < 1) {
             throw InvalidRateLimitConfigException::nonPositiveMaxAttempts($maxAttempts);
@@ -114,15 +119,19 @@ class RateLimitMiddleware implements MiddlewareInterface
     {
         $window = intdiv(time(), $this->windowSeconds);
         $key = $this->cacheKey($request, $window);
-        $attempts = (int) $this->cache->get($key, 0);
 
-        if ($attempts >= $this->maxAttempts) {
+        // Counted before the decision, not after. A request over the
+        // limit still counts, which costs nothing: the key belongs to
+        // this window alone and the next window uses a different one.
+        // The count holds under concurrency only when the cache can
+        // increment atomically — see Kinetis\SimpleCache\Counter.
+        $attempts = $this->counter->increment($key, $this->windowSeconds);
+
+        if ($attempts > $this->maxAttempts) {
             return $this->tooManyRequestsResponse($window);
         }
 
-        $this->cache->set($key, $attempts + 1, $this->windowSeconds);
-
-        $remaining = $this->maxAttempts - $attempts - 1;
+        $remaining = $this->maxAttempts - $attempts;
 
         return $handler->handle($request)
             ->withHeader('X-RateLimit-Limit', (string) $this->maxAttempts)

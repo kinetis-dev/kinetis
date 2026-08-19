@@ -8,6 +8,7 @@ use Kinetis\Security\AttemptThrottle;
 use Kinetis\Security\Exception\AttemptThrottleUnavailableException;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
+use Kinetis\Tests\Fixtures\NonAtomicCache;
 use PHPUnit\Framework\TestCase;
 
 final class AttemptThrottleTest extends TestCase
@@ -90,5 +91,29 @@ final class AttemptThrottleTest extends TestCase
         $this->expectException(AttemptThrottleUnavailableException::class);
 
         new AttemptThrottle(new NullSimpleCache());
+    }
+
+    /**
+     * A cache that cannot count atomically still locks out sequential
+     * failures. What it cannot do is count failures arriving together,
+     * which is how a password is actually attacked — so the throttle
+     * reports which mode it is in rather than leaving it to be assumed.
+     */
+    public function test_a_cache_that_cannot_count_atomically_is_reported_as_such(): void
+    {
+        $throttle = new AttemptThrottle(new NonAtomicCache(), maxAttempts: 2, decaySeconds: 60);
+
+        self::assertFalse($throttle->countsAtomically());
+
+        $throttle->recordFailure('ana@example.com');
+        self::assertFalse($throttle->tooManyAttempts('ana@example.com'));
+
+        $throttle->recordFailure('ana@example.com');
+        self::assertTrue($throttle->tooManyAttempts('ana@example.com'));
+    }
+
+    public function test_a_cache_that_can_count_atomically_is_reported_as_such(): void
+    {
+        self::assertTrue(new AttemptThrottle(new InMemorySimpleCache())->countsAtomically());
     }
 }

@@ -126,4 +126,57 @@ final class RedisSimpleCacheIntegrationTest extends TestCase
         self::assertTrue($this->cache->clear());
         self::assertFalse($this->cache->has('will-clear'));
     }
+
+    public function test_increment_counts_up_from_nothing_and_sets_the_expiry(): void
+    {
+        $key = 'counter-' . \bin2hex(\random_bytes(6));
+
+        self::assertSame(0, $this->cache->count($key), 'a counter that does not exist reads as zero');
+        self::assertSame(1, $this->cache->increment($key, 60));
+        self::assertSame(2, $this->cache->increment($key, 60));
+        self::assertSame(2, $this->cache->count($key));
+    }
+
+    /**
+     * The expiry is refreshed on every increment, not just when the
+     * counter is created — what lets a caller decay a count from the
+     * last increment rather than the first.
+     */
+    public function test_increment_expires_the_counter(): void
+    {
+        $key = 'counter-ttl-' . \bin2hex(\random_bytes(6));
+
+        $this->cache->increment($key, 1);
+        self::assertSame(1, $this->cache->count($key));
+
+        \sleep(2);
+
+        self::assertSame(0, $this->cache->count($key), 'the counter should have expired on its own');
+    }
+
+    /**
+     * The property the whole interface exists for. Read-then-write lets
+     * concurrent callers receive the same value; these must every one be
+     * distinct, which is what stops a limit admitting everything that
+     * arrives together.
+     *
+     * Fibers rather than processes: they interleave at every suspension
+     * point the client has, which is where a read-then-write loses an
+     * increment, and they need no separate runner.
+     */
+    public function test_concurrent_increments_each_receive_a_distinct_value(): void
+    {
+        $key = 'counter-race-' . \bin2hex(\random_bytes(6));
+        $tasks = [];
+
+        for ($i = 0; $i < 25; $i++) {
+            $tasks[] = fn (): int => $this->cache->increment($key, 60);
+        }
+
+        $values = \Kinetis\Async\concurrently($tasks);
+
+        \sort($values);
+        self::assertSame(\range(1, 25), $values, 'every caller must receive its own value');
+        self::assertSame(25, $this->cache->count($key));
+    }
 }

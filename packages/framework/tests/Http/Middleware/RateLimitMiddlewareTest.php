@@ -17,6 +17,7 @@ use Kinetis\SimpleCache\NullSimpleCache;
 use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
 use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
+use Kinetis\Tests\Fixtures\NonAtomicCache;
 use Kinetis\Tests\Http\Fixtures\RateLimitedFixtureController;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
@@ -418,5 +419,20 @@ final class RateLimitMiddlewareTest extends TestCase
         $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), trustedProxies: [$proxy]);
 
         self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
+    }
+
+    /**
+     * A cache that cannot count atomically still works, sequentially.
+     * What it cannot do is hold the limit against requests arriving
+     * together, since each reads the count before any writes — the
+     * reason Counter reports which mode it is in.
+     */
+    public function test_a_cache_that_cannot_count_atomically_still_enforces_the_limit_sequentially(): void
+    {
+        $middleware = new RateLimitMiddleware(new NonAtomicCache(), maxAttempts: 2, windowSeconds: 60);
+
+        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
+        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
+        self::assertSame(429, $middleware->process($this->request(), $this->handler())->getStatusCode());
     }
 }

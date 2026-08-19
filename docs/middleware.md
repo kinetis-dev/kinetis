@@ -821,18 +821,36 @@ $app->bind(RateLimitMiddleware::class, fn ($c) => new RateLimitMiddleware(
 ));
 ```
 
-```{note}
-The `get()`-then-`set()` pair behind this isn't atomic — under concurrent
-requests hitting the same window, two requests can both read the same
-count and both write the same incremented value, silently losing an
-increment. This is a real, accepted limitation of building against the
-plain PSR-16 interface rather than a backend-specific atomic `INCR`, which
-would make this Redis-only and defeat the point of depending on
-`CacheInterface` rather than `Amp\Redis\RedisClient` directly. For most
-rate-limiting use cases this is a rounding error, not a correctness bug —
-an exact limiter needs a backend offering an atomic increment primitive,
-which PSR-16 doesn't expose.
+```{danger}
+**The limit only holds under concurrency if the cache can count
+atomically.** `RedisSimpleCache` and `ClusteredRedisSimpleCache` can,
+through `Kinetis\SimpleCache\AtomicCounterInterface`. Any other PSR-16
+cache falls back to reading the count and writing it back, which is all
+PSR-16 alone allows — and every request in flight then reads the same
+number before any of them writes, so each believes it is the first.
+
+Measured against a real Redis: with the fallback, a limit of 5 admitted
+**all 40** requests that arrived together. The limiter does not degrade
+under concurrency, it stops applying, and concurrency is what it exists
+for.
 ```
+
+So a third-party PSR-16 cache is accepted and works sequentially, but
+only a cache implementing `AtomicCounterInterface` enforces the limit
+against parallel traffic. `Kinetis\SimpleCache\Counter` is the small
+class that picks between the two, and `isAtomic()` reports which is in
+use:
+
+```{code-block} php
+$counter = new Kinetis\SimpleCache\Counter($cache);
+
+if (!$counter->isAtomic()) {
+    // Your cache cannot hold a limit against parallel requests.
+}
+```
+
+Implementing the interface yourself is two methods, `increment()` and
+`count()`, and worth it for any backend with a native atomic increment.
 
 ### Keying by the authenticated user instead of IP
 
@@ -873,9 +891,9 @@ fresh per request the normal way — no binding needed at all, the same as
 any other constructor with only class-typed parameters.
 ```
 
-Also not atomic, for the same reason as the base class — and also
-deliberately not `final`, so a stricter per-route limit still works via
-the same subclass pattern.
+It counts through the same atomic primitive as the base class, and is
+also deliberately not `final`, so a stricter per-route limit still works
+via the same subclass pattern.
 
 ## See also
 

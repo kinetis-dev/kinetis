@@ -26,12 +26,29 @@ use Psr\SimpleCache\CacheInterface;
  * at construction rather than having the container refuse to boot
  * without Redis.
  */
-final class UnavailableSimpleCache implements CacheInterface
+final class UnavailableSimpleCache implements CacheInterface, AtomicCounterInterface
 {
     public function __construct(private readonly string $package = 'kinetis/cache-redis') {}
 
     #[\Override]
     public function get(string $key, mixed $default = null): mixed
+    {
+        throw $this->unavailable();
+    }
+
+    /**
+     * Implemented so RateLimitMiddleware and AttemptThrottle accept this
+     * cache at construction and fail on first use, naming the package to
+     * install rather than complaining that the cache cannot count.
+     */
+    #[\Override]
+    public function increment(string $key, int $ttlSeconds): int
+    {
+        throw $this->unavailable();
+    }
+
+    #[\Override]
+    public function count(string $key): int
     {
         throw $this->unavailable();
     }
