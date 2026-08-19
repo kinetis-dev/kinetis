@@ -12,4 +12,9 @@ final class FileResponseException extends RuntimeException
     {
         return new self("Cannot build a FileResponse: \"{$path}\" does not exist or is not a file.");
     }
+
+    public static function invalidDownloadFilename(string $reason): self
+    {
+        return new self("Cannot build a FileResponse: the download filename {$reason}.");
+    }
 }

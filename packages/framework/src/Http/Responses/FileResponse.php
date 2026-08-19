@@ -34,10 +34,46 @@ final class FileResponse
         ];
 
         if ($downloadFilename !== null) {
-            $headers['Content-Disposition'] = 'attachment; filename="' . $downloadFilename . '"';
+            $headers['Content-Disposition'] = self::contentDisposition($downloadFilename);
         }
 
         return new Response(status: $status, headers: $headers, body: $contents);
+    }
+
+    /**
+     * Builds the header per RFC 6266. A download name often comes from
+     * whatever a user called the file when they uploaded it, so it is
+     * treated as untrusted: without escaping, a name containing a quote
+     * and a semicolon closes the quoted-string and appends parameters of
+     * its own, and `a.pdf"; filename="evil.exe` becomes a second
+     * filename that decides what the browser saves.
+     */
+    private static function contentDisposition(string $filename): string
+    {
+        if ($filename === '') {
+            throw FileResponseException::invalidDownloadFilename('is empty — pass null for no download name');
+        }
+
+        // Rejected here so the error names the filename. A control
+        // character never reaches the header anyway: PSR-7 refuses one,
+        // but as an opaque complaint about the header value.
+        if (preg_match('/[\x00-\x1F\x7F]/', $filename) === 1) {
+            throw FileResponseException::invalidDownloadFilename('contains a control character');
+        }
+
+        // The quoted-string carries the ASCII fallback, with \ and "
+        // escaped as quoted-pairs so the name cannot end the quoting.
+        $ascii = preg_replace('/[^\x20-\x7E]/', '_', $filename) ?? '';
+        $disposition = 'attachment; filename="' . str_replace(['\\', '"'], ['\\\\', '\\"'], $ascii) . '"';
+
+        // Anything outside ASCII travels percent-encoded as well, which
+        // recipients that understand it prefer over the fallback.
+        // rawurlencode() leaves only characters RFC 8187 allows bare.
+        if ($ascii !== $filename) {
+            $disposition .= "; filename*=UTF-8''" . rawurlencode($filename);
+        }
+
+        return $disposition;
     }
 
     private static function detectMimeType(string $contents): string

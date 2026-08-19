@@ -485,7 +485,7 @@ final readonly class PagesController
   `$contentType` is omitted. `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
   does the same for data you already have in memory — a generated image
   or PDF, for instance. Either one adds a `Content-Disposition: attachment`
-  header when `$downloadFilename` is given.
+  header when `$downloadFilename` is given — see below.
 - `RedirectResponse::to(string $url, int $status = 302)` sets a `Location`
   header.
 - `ErrorResponse::create(int $status, string $message, array $headers = [])` builds
@@ -493,6 +493,34 @@ final readonly class PagesController
   404/405/500 responses already use — a real 405 (a path matches, but not
   this method) carries a real RFC 9110 `Allow` header listing every
   method the path *does* support, via this same `$headers` parameter.
+
+### Download filenames are treated as untrusted
+
+`$downloadFilename` is usually whatever a user called the file when they
+uploaded it, so it is escaped rather than dropped into the header. The
+name is written as an RFC 6266 quoted-string with `\` and `"` escaped as
+quoted-pairs, so a value like `a.pdf"; filename="evil.exe` stays one
+value instead of closing the quoting and appending a second `filename`
+parameter that decides what the browser saves.
+
+A name carrying anything outside ASCII is sent twice: an ASCII fallback
+in `filename`, with each non-ASCII byte replaced by `_`, and the real
+name percent-encoded in `filename*=UTF-8''…` per RFC 8187, which
+recipients prefer when they understand it.
+
+```{code-block} text
+attachment; filename="na__ve-r__sum__.pdf"; filename*=UTF-8''na%C3%AFve-r%C3%A9sum%C3%A9.pdf
+```
+
+A control character, or an empty string, raises `FileResponseException`.
+PSR-7 refuses a control character in any header value regardless, but as
+a complaint about the header rather than about the argument that produced
+it. Pass `null` for no download name.
+
+Path separators are left alone: RFC 6266 puts stripping them on the
+recipient, and rewriting the name here would quietly change what the
+caller asked for. Call `basename()` yourself if the source is a stored
+path rather than a name.
 
 ## Validation constraints
 
