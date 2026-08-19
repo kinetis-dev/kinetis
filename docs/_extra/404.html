@@ -64,6 +64,10 @@
             text-align: center;
         }
 
+        a.home {
+            display: block;
+        }
+
         .logo {
             width: 128px;
             aspect-ratio: 400 / 420;
@@ -156,7 +160,9 @@
 </head>
 <body>
     <div class="card">
-        <div class="logo" role="img" aria-label="Kinetis"></div>
+        <a class="home" href="https://kinetis.dev/">
+            <div class="logo" role="img" aria-label="Kinetis"></div>
+        </a>
         <p class="code">Error 404</p>
         <h1>This page moved, or never existed</h1>
         <p class="tagline">The documentation is reorganised from time to time. Everything is still here — start from one of these.</p>
