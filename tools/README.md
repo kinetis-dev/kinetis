@@ -9,13 +9,17 @@ Three scripts. The first two are driven by `packages.manifest.json`
   `--check` (regenerates in memory, diffs, never writes — what CI
   runs), `--bump` (force-bumps one or more packages' `version` field
   only).
-- `validate-manifest.php` — the five checks CI runs on every PR and
+- `validate-manifest.php` — the six checks CI runs on every PR and
   push to `main`: cycle detection, cross-manifest version consistency,
   generated-file drift, version-bump completeness (manifest entries),
-  and content-bump completeness — a change to any of a package's own
+  content-bump completeness — a change to any of a package's own
   tracked files (its root `composer.lock` excepted) requires a version
   bump, since an unbumped version means the release pipeline never tags
-  the new content and the split repo silently stays on the old tag.
+  the new content and the split repo silently stays on the old tag —
+  and workflow coverage: every package needs a `ci.yml` and an
+  `infection.yml` job, and every job in those two must map back to a
+  package. Absences are named in `INFECTION_EXEMPT`/`WORKFLOW_ONLY` with
+  a reason, so one is a decision rather than an oversight.
 - `setup-docs-mcp.sh` — see "Setting up the docs MCP server" below.
 
 Never hand-edit a `packages/*/composer.json` directly for anything the
@@ -71,7 +75,7 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
 ```
 
-Runs all five checks locally — the exact same thing CI runs. `git`
+Runs all six checks locally — the exact same thing CI runs. `git`
 needs installing inside the container every time; the base
 `php:8.4-cli-alpine` image doesn't ship it (CI does the same install
 step).

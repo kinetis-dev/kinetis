@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Five checks against packages.manifest.json — see CLAUDE.md and the
+ * Six checks against packages.manifest.json — see CLAUDE.md and the
  * monorepo packaging plan for the full design:
  *
  *   1. Cycle detection over the requires graph.
@@ -31,6 +31,14 @@ declare(strict_types=1);
  *      skip-when-no-history behavior as check 4. Uncommitted brand-new
  *      files are invisible to a local run (git diff only sees tracked
  *      paths); the post-push CI run sees everything.
+ *   6. Workflow coverage — every package in the manifest has a job in
+ *      ci.yml and in infection.yml, and every job in those two maps
+ *      back to a package. Adding a package without wiring it into CI
+ *      leaves it untested while everything still passes, which is how
+ *      session and telemetry ended up missing from the mutation matrix
+ *      documented in docs/appendix-ci.md. Exemptions are named in
+ *      INFECTION_EXEMPT and WORKFLOW_ONLY below, with reasons, so an
+ *      absence is a decision rather than an oversight.
  *
  * A separate check — does each package's committed composer.lock
  * still match its composer.json — is just `composer validate --strict`,
@@ -339,6 +347,87 @@ function checkContentBumpCompleteness(?array $oldManifest, array $newManifest, a
     return $problems;
 }
 
+/**
+ * Packages with no infection.yml job, and why.
+ */
+const INFECTION_EXEMPT = [
+    'pingpong' => 'no PHPUnit suite, so there is nothing to mutate against',
+];
+
+/**
+ * Workflow job directories that are deliberately not manifest packages.
+ */
+const WORKFLOW_ONLY = [
+    'tools' => "the monorepo's own tooling rather than a published package",
+];
+
+/**
+ * Reads the package directories a workflow's matrix declares.
+ *
+ * Matched on `dir:` rather than `name:` because the two differ — the
+ * framework package is called `core` in both workflows — and the
+ * directory is what maps back to a manifest key.
+ *
+ * @return list<string> manifest keys, e.g. 'framework', plus any
+ *         non-package directory such as 'tools'
+ */
+function workflowPackages(string $workflowPath): array
+{
+    $contents = @file_get_contents($workflowPath);
+
+    if ($contents === false) {
+        return [];
+    }
+
+    preg_match_all('/^\s*- \{[^}]*\bdir: ([^,}\s]+)/m', $contents, $matches);
+
+    $keys = [];
+
+    foreach ($matches[1] as $dir) {
+        $keys[] = str_starts_with($dir, 'packages/') ? substr($dir, strlen('packages/')) : $dir;
+    }
+
+    return array_values(array_unique($keys));
+}
+
+/**
+ * @param array<string, array<string, mixed>> $manifest
+ * @param list<string> $ciPackages
+ * @param list<string> $infectionPackages
+ * @return list<string>
+ */
+function checkWorkflowCoverage(array $manifest, array $ciPackages, array $infectionPackages): array
+{
+    $packages = array_keys($manifest['packages'] ?? []);
+    $problems = [];
+
+    foreach ($packages as $key) {
+        if (!in_array($key, $ciPackages, true)) {
+            $problems[] = "{$key} has no job in ci.yml — add one to its matrix.";
+        }
+
+        if (in_array($key, $infectionPackages, true) || isset(INFECTION_EXEMPT[$key])) {
+            continue;
+        }
+
+        $problems[] = "{$key} has no job in infection.yml — add one with a threshold below its measured score, "
+            . 'or add it to INFECTION_EXEMPT here with the reason.';
+    }
+
+    foreach (['ci.yml' => $ciPackages, 'infection.yml' => $infectionPackages] as $workflow => $declared) {
+        foreach ($declared as $key) {
+            if (in_array($key, $packages, true) || isset(WORKFLOW_ONLY[$key])) {
+                continue;
+            }
+
+            $problems[] = "{$workflow} has a job for \"{$key}\", which is not a manifest package — "
+                . 'remove it, or add it to WORKFLOW_ONLY here with the reason.';
+        }
+    }
+
+    return $problems;
+}
+
 function validatorMain(): int
 {
     $manifest = loadManifest();
@@ -408,6 +497,22 @@ function validatorMain(): int
                 echo "[content-bump] OK.\n";
             }
         }
+    }
+
+    $coverageProblems = checkWorkflowCoverage(
+        $manifest,
+        workflowPackages(__DIR__ . '/../.github/workflows/ci.yml'),
+        workflowPackages(__DIR__ . '/../.github/workflows/infection.yml'),
+    );
+
+    if ($coverageProblems !== []) {
+        foreach ($coverageProblems as $p) {
+            fwrite(STDERR, "[workflow-coverage] {$p}\n");
+        }
+
+        $ok = false;
+    } else {
+        echo "[workflow-coverage] OK.\n";
     }
 
     return $ok ? 0 : 1;

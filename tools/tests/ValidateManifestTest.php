@@ -313,4 +313,81 @@ final class ValidateManifestTest extends TestCase
         unlink($repo . '/packages/demo/a.txt');
         exec('rm -rf ' . escapeshellarg($repo));
     }
+
+    public function test_workflow_coverage_accepts_a_package_present_in_both_workflows(): void
+    {
+        $manifest = ['packages' => ['framework' => [], 'session' => []]];
+
+        self::assertSame([], checkWorkflowCoverage($manifest, ['framework', 'session'], ['framework', 'session']));
+    }
+
+    public function test_workflow_coverage_names_a_package_missing_from_ci(): void
+    {
+        $manifest = ['packages' => ['framework' => [], 'telemetry' => []]];
+
+        $problems = checkWorkflowCoverage($manifest, ['framework'], ['framework', 'telemetry']);
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('telemetry has no job in ci.yml', $problems[0]);
+    }
+
+    /**
+     * The drift this check exists for: session and telemetry were added
+     * without an infection.yml job, which nothing noticed.
+     */
+    public function test_workflow_coverage_names_a_package_missing_from_infection(): void
+    {
+        $manifest = ['packages' => ['framework' => [], 'session' => []]];
+
+        $problems = checkWorkflowCoverage($manifest, ['framework', 'session'], ['framework']);
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('session has no job in infection.yml', $problems[0]);
+    }
+
+    public function test_workflow_coverage_allows_a_named_infection_exemption(): void
+    {
+        $manifest = ['packages' => ['pingpong' => []]];
+
+        self::assertSame([], checkWorkflowCoverage($manifest, ['pingpong'], []));
+    }
+
+    public function test_workflow_coverage_allows_a_named_non_package_job(): void
+    {
+        $manifest = ['packages' => ['framework' => []]];
+
+        self::assertSame([], checkWorkflowCoverage($manifest, ['framework', 'tools'], ['framework']));
+    }
+
+    /**
+     * A job left behind after a package is renamed or removed points at
+     * a directory nothing builds any more.
+     */
+    public function test_workflow_coverage_names_a_job_with_no_matching_package(): void
+    {
+        $manifest = ['packages' => ['framework' => []]];
+
+        $problems = checkWorkflowCoverage($manifest, ['framework', 'skeleton'], ['framework']);
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('ci.yml has a job for "skeleton"', $problems[0]);
+    }
+
+    /**
+     * Read from dir: rather than name: — the two differ, the framework
+     * package being called "core" in both workflows.
+     */
+    public function test_workflow_packages_reads_the_repos_own_workflows(): void
+    {
+        $ci = workflowPackages(__DIR__ . '/../../.github/workflows/ci.yml');
+
+        self::assertContains('framework', $ci, 'matched on dir:, so the framework package appears under its own key');
+        self::assertNotContains('core', $ci);
+        self::assertContains('tools', $ci);
+    }
+
+    public function test_workflow_packages_is_empty_for_a_file_that_does_not_exist(): void
+    {
+        self::assertSame([], workflowPackages(__DIR__ . '/does-not-exist.yml'));
+    }
 }
