@@ -23,9 +23,7 @@ final class FpmAdapter implements RuntimeAdapterInterface
     #[\Override]
     public function run(callable $handler): void
     {
-        $response = $handler(SuperglobalsBridge::requestFromGlobals());
-
-        SuperglobalsBridge::emit($response);
+        SuperglobalsBridge::handle($handler);
 
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();

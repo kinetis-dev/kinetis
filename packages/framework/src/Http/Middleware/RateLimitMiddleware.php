@@ -6,6 +6,7 @@ namespace Kinetis\Http\Middleware;
 
 use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
+use Kinetis\SimpleCache\AtomicCounterInterface;
 use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Nyholm\Psr7\Response;
@@ -17,12 +18,19 @@ use Psr\SimpleCache\CacheInterface;
 
 /**
  * A fixed-window request counter backed by Psr\SimpleCache\CacheInterface
- * (see Kinetis\SimpleCache) — works with any real PSR-16 implementation.
- * NullSimpleCache specifically is rejected at construction: a counter that
- * never stores anything enforces no limit at all while still emitting
- * healthy-looking X-RateLimit-* headers, so an app that registered this
- * middleware without configuring a real cache fails loudly instead of
- * silently serving unlimited traffic.
+ * (see Kinetis\SimpleCache) — requires the cache to also implement
+ * Kinetis\SimpleCache\AtomicCounterInterface. A cache lacking it can only
+ * count by reading the value and writing it back, which is not safe
+ * across processes: every request in flight reads the same number before
+ * any of them writes, so each one believes it is the first. Measured
+ * against a real Redis, that fallback let a limit of 5 admit all 40
+ * requests that arrived together — a rate limiter that stops applying
+ * under the exact concurrent load it exists to resist is not a rounding
+ * error, so this is rejected at construction rather than left to a flag
+ * (`Counter::isAtomic()`) the application has to remember to check.
+ * NullSimpleCache is checked first, for its own clearer message: a
+ * counter that never stores anything enforces no limit at all while
+ * still emitting healthy-looking X-RateLimit-* headers.
  *
  * Keyed by client IP by default, sha256-hashed (PSR-16 forbids `{}()/\@:`
  * in a key, and IPv6 addresses are full of colons). Holds no per-request
@@ -39,12 +47,6 @@ use Psr\SimpleCache\CacheInterface;
  * means a thin subclass overriding the constructor defaults (this class is
  * deliberately not `final`, unlike almost everything else here) or a
  * distinct `AppScope::bind()` closure.
- *
- * The get()-then-set() pair below is not atomic — two concurrent requests
- * against the same bucket can both read the same count and both write the
- * same incremented value, silently losing an increment. Accepted as a
- * rounding error rather than switching to a backend-specific atomic INCR,
- * which would make this Redis-only.
  */
 class RateLimitMiddleware implements MiddlewareInterface
 {
@@ -61,6 +63,10 @@ class RateLimitMiddleware implements MiddlewareInterface
     ) {
         if ($cache instanceof NullSimpleCache) {
             throw RateLimitUnavailableException::nullCache();
+        }
+
+        if (!$cache instanceof AtomicCounterInterface) {
+            throw RateLimitUnavailableException::notAtomic();
         }
 
         $this->counter = new Counter($cache);
@@ -123,8 +129,6 @@ class RateLimitMiddleware implements MiddlewareInterface
         // Counted before the decision, not after. A request over the
         // limit still counts, which costs nothing: the key belongs to
         // this window alone and the next window uses a different one.
-        // The count holds under concurrency only when the cache can
-        // increment atomically — see Kinetis\SimpleCache\Counter.
         $attempts = $this->counter->increment($key, $this->windowSeconds);
 
         if ($attempts > $this->maxAttempts) {

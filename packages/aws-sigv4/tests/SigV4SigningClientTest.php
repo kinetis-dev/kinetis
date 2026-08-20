@@ -15,6 +15,8 @@ use PHPUnit\Framework\TestCase;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamInterface;
+use RuntimeException;
 
 final class SigV4SigningClientTest extends TestCase
 {
@@ -198,6 +200,80 @@ final class SigV4SigningClientTest extends TestCase
         $client->sendRequest(new Request('GET', '/'));
     }
 
+    /**
+     * PSR-7 explicitly permits a stream that cannot be seeked at all
+     * (StreamInterface::isSeekable() === false) — a chunked HTTP request
+     * body, or a pipe, are real examples. The previous implementation
+     * unconditionally called rewind() on the original body after reading
+     * it, which throws for exactly this stream, so this class couldn't
+     * sign a request carrying one at all.
+     */
+    public function test_a_non_seekable_request_body_is_signed_and_sent_without_throwing(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+
+        $client = new SigV4SigningClient($recordingClient, 'us-east-1', 'service', $credentialProvider);
+        $response = $client->sendRequest(
+            (new Request('POST', 'https://example.amazonaws.com/'))
+                ->withBody(new NonSeekableStream('{"query":{"match_all":{}}}')),
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Signature=', $recordingClient->captured?->getHeaderLine('Authorization') ?? '');
+        self::assertSame('{"query":{"match_all":{}}}', $recordingClient->captured?->getBody()->getContents());
+    }
+
+    /**
+     * `SpooledStream` is backed by `php://temp`, which PHP keeps in
+     * memory only up to 2MB before spilling to a real temp file — this
+     * confirms a body past that boundary still round-trips correctly
+     * through both the signing step and the wrapped client, not just
+     * that construction doesn't throw.
+     */
+    public function test_a_large_request_body_past_the_in_memory_threshold_is_signed_and_sent_correctly(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+        $largeBody = str_repeat('a', 3 * 1024 * 1024);
+
+        $client = new SigV4SigningClient($recordingClient, 'us-east-1', 'service', $credentialProvider);
+        $client->sendRequest(new Request('POST', 'https://example.amazonaws.com/', [], $largeBody));
+
+        self::assertStringContainsString('Signature=', $recordingClient->captured?->getHeaderLine('Authorization') ?? '');
+        self::assertSame($largeBody, $recordingClient->captured?->getBody()->getContents());
+    }
+
+    /**
+     * The stream a caller built their request with is the same object
+     * this class reads from to compute the signature — rewinding and
+     * reading it is a real, visible mutation on the caller's own object,
+     * not a private copy, unless the original position is explicitly
+     * restored afterward. A first version of this fix left the caller's
+     * stream sitting at end-of-body after signing regardless of where it
+     * started — reproduced here directly: a 6-byte body seeked to offset
+     * 2 before sendRequest() must still read offset 2 afterward.
+     */
+    public function test_a_seekable_request_bodys_original_cursor_position_is_restored_after_signing(): void
+    {
+        $recordingClient = new RecordingClient();
+        $credentialProvider = new FixedCredentialProvider(new Credentials('AKIDEXAMPLE', 'secret'));
+
+        $request = new Request('POST', 'https://example.amazonaws.com/', [], 'abcdef');
+        $body = $request->getBody();
+        $body->seek(2);
+
+        $client = new SigV4SigningClient($recordingClient, 'us-east-1', 'service', $credentialProvider);
+        $client->sendRequest($request);
+
+        self::assertSame(2, $body->tell());
+        // Restoring the caller's own cursor doesn't come at the cost of
+        // the signed request itself being wrong -- the wrapped client
+        // still receives the full, correct body regardless of where the
+        // original stream was left positioned.
+        self::assertSame('abcdef', $recordingClient->captured?->getBody()->getContents());
+    }
+
     public function test_no_resolvable_credentials_throws_a_clear_error(): void
     {
         $recordingClient = new RecordingClient();
@@ -238,5 +314,96 @@ final class FixedCredentialProvider implements CredentialProvider
     public function getCredentials(Configuration $configuration): ?Credentials
     {
         return $this->credentials;
+    }
+}
+
+/**
+ * A real, sequential-read-only PSR-7 stream — isSeekable() genuinely
+ * reports false, and both seek()/rewind() throw exactly as a real
+ * non-seekable implementation's would, rather than merely asserting the
+ * interface without honoring its own seekability contract.
+ */
+final class NonSeekableStream implements StreamInterface
+{
+    private int $position = 0;
+
+    public function __construct(private readonly string $contents) {}
+
+    public function __toString(): string
+    {
+        return $this->getContents();
+    }
+
+    public function close(): void {}
+
+    public function detach()
+    {
+        return null;
+    }
+
+    public function getSize(): ?int
+    {
+        return strlen($this->contents);
+    }
+
+    public function tell(): int
+    {
+        return $this->position;
+    }
+
+    public function eof(): bool
+    {
+        return $this->position >= strlen($this->contents);
+    }
+
+    public function isSeekable(): bool
+    {
+        return false;
+    }
+
+    public function seek(int $offset, int $whence = SEEK_SET): void
+    {
+        throw new RuntimeException('This stream is not seekable.');
+    }
+
+    public function rewind(): void
+    {
+        throw new RuntimeException('This stream is not seekable.');
+    }
+
+    public function isWritable(): bool
+    {
+        return false;
+    }
+
+    public function write(string $string): int
+    {
+        throw new RuntimeException('This stream is not writable.');
+    }
+
+    public function isReadable(): bool
+    {
+        return true;
+    }
+
+    public function read(int $length): string
+    {
+        $chunk = substr($this->contents, $this->position, $length);
+        $this->position += strlen($chunk);
+
+        return $chunk;
+    }
+
+    public function getContents(): string
+    {
+        $remaining = substr($this->contents, $this->position);
+        $this->position = strlen($this->contents);
+
+        return $remaining;
+    }
+
+    public function getMetadata(?string $key = null): mixed
+    {
+        return $key === null ? [] : null;
     }
 }

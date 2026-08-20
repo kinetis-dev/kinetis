@@ -200,7 +200,14 @@ would conflict with the concurrent-worker model the whole framework is
 built around. Concurrent requests sharing one session are
 last-write-wins — which is why session data should stay small and
 low-contention (an auth reference, the CSRF token, flash data), not a
-shared mutable workspace.
+shared mutable workspace. "Last-write-wins" means exactly that, not "a
+reader might see a half-written file": the file store writes to a
+temporary file in the same directory and renames it into place, so a
+concurrent read always sees either the complete previous write or the
+complete new one, never a partial one. That temporary file is named
+`.sess-tmp-*`, deliberately outside `gc()`'s own `sess_*` glob pattern —
+a session mid-write must never be collectable while it's still in
+progress.
 
 ## Custom stores
 

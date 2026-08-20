@@ -50,6 +50,23 @@ $client = new SigV4SigningClient(
 );
 ```
 
+## Request bodies
+
+SigV4 signs over the body's exact bytes, so `sendRequest()` always reads
+the request's entire body into memory as a plain string, more than once
+— a large body is fully buffered, not streamed, and peak memory during a
+signed request is a real multiple of the body's own size, not bounded by
+it. A body's own stream doesn't need to be seekable: a seekable one is
+rewound first so the full content is always captured, with its original
+cursor position restored once signing finishes (success or failure) — the
+same stream object the request was built with is the one this reads from,
+so leaving it seeked wherever reading happened to stop would be a real,
+visible side effect on your own object. A non-seekable one (PSR-7 permits
+these — a chunked body, a pipe) is read from wherever its cursor already
+sits instead, since seeking one backward is impossible — supply a
+non-seekable body already positioned at its start for it to be signed and
+sent correctly.
+
 ## Amazon OpenSearch Service
 
 `OpenSearch\TransportFactory::setHttpClient()` (see {doc}`search-opensearch`)

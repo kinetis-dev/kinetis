@@ -578,6 +578,17 @@ Only the raw JSON `#[Body]` path is capped this way — a
 parsed before Kinetis code reads it, bounded by PHP's own
 `upload_max_filesize`/`post_max_size` instead.
 
+```{note}
+That SAPI-limit explanation is specific to FrankenPHP/PHP-FPM, where a
+real SAPI parses the body before this middleware ever runs. Under
+`kinetis/bref-adapter`, a Lambda event's whole body arrives as one
+in-memory string with no SAPI involved at all — `BrefLambdaAdapter`
+parses `multipart/form-data`/`application/x-www-form-urlencoded` itself,
+in userland PHP, so neither `upload_max_filesize`/`post_max_size` nor
+this middleware's own read-time check apply there; the effective limit
+is whatever Lambda's own payload size limit already is.
+```
+
 ## Built in: `CorsMiddleware`
 
 `Kinetis\Http\Middleware\CorsMiddleware` — Cross-Origin Resource Sharing.
@@ -814,32 +825,22 @@ $app->bind(RateLimitMiddleware::class, fn ($c) => new RateLimitMiddleware(
 ));
 ```
 
-```{danger}
-**The limit only holds under concurrency if the cache can count
-atomically.** `RedisSimpleCache` and `ClusteredRedisSimpleCache` can,
-through `Kinetis\SimpleCache\AtomicCounterInterface`. Any other PSR-16
-cache falls back to reading the count and writing it back, which is all
-PSR-16 alone allows — and every request in flight then reads the same
-number before any of them writes, so each believes it is the first.
+```{note}
+**The cache must count atomically, and construction enforces it.**
+`RateLimitMiddleware` requires the given cache to implement
+`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` and
+`ClusteredRedisSimpleCache` do — and throws
+`Exception\RateLimitUnavailableException` at construction for any
+cache that doesn't, `NullSimpleCache` included.
 
-Measured against a real Redis: with the fallback, a limit of 5 admitted
-**all 40** requests that arrived together. The limiter does not degrade
-under concurrency, it stops applying, and concurrency is what it exists
-for.
-```
-
-So a third-party PSR-16 cache is accepted and works sequentially, but
-only a cache implementing `AtomicCounterInterface` enforces the limit
-against parallel traffic. `Kinetis\SimpleCache\Counter` is the small
-class that picks between the two, and `isAtomic()` reports which is in
-use:
-
-```{code-block} php
-$counter = new Kinetis\SimpleCache\Counter($cache);
-
-if (!$counter->isAtomic()) {
-    // Your cache cannot hold a limit against parallel requests.
-}
+Without it, the only way PSR-16 alone allows counting is reading the
+value and writing it back, which is not safe across processes: every
+request in flight reads the same number before any of them writes, so
+each believes it is the first. Measured against a real Redis, that
+fallback let a limit of 5 admit **all 40** requests that arrived
+together — a limiter that stops applying under the exact concurrency
+it exists to resist, so this fails at boot rather than behind a flag
+the application has to remember to check.
 ```
 
 Implementing the interface yourself is two methods, `increment()` and

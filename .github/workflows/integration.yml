@@ -92,6 +92,20 @@ jobs:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1
 
+      - name: Cursor-pagination integration tests
+        # tests/Integration/ lives in the normal phpunit suite,
+        # environment-gated the same way persistence's does: it skips
+        # without MYSQL_HOST/POSTGRES_HOST, so plain unit runs elsewhere
+        # stay database-free. Run here as well as under coverage in the
+        # SonarQube workflow, so these cases get this job's full matrix
+        # (MariaDB and PHP 8.5 included) rather than only the single
+        # MySQL 8.4 + PHP 8.4 combination that job pins.
+        working-directory: packages/query-builder
+        run: vendor/bin/phpunit
+        env:
+          MYSQL_HOST: 127.0.0.1
+          POSTGRES_HOST: 127.0.0.1
+
   queue:
     name: queue (Redis + SQL on ${{ matrix.mysql.name }}, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
@@ -177,13 +191,6 @@ jobs:
       fail-fast: false
       matrix:
         php-version: ['8.4', '8.5']
-    # RabbitMqQueue's own docblock discloses that Kinetis\Async\
-    # concurrently() can never be called again anywhere in the same OS
-    # process once its connection opens — a real, permanent limitation,
-    # not a reason to leave this backend untested in CI: a dedicated job
-    # here is already its own separate runner process, sharing nothing
-    # with any other job's tests, so that limitation never actually
-    # applies to this workflow.
     services:
       rabbitmq:
         image: rabbitmq:3-management
@@ -450,6 +457,13 @@ jobs:
       - name: Run integration checks
         working-directory: packages/migrations
         run: php tests-integration/run.php
+        env:
+          MYSQL_HOST: 127.0.0.1
+          POSTGRES_HOST: 127.0.0.1
+
+      - name: Run the cross-process migration lock proof
+        working-directory: packages/migrations
+        run: php tests-integration/concurrent_lock.php
         env:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1

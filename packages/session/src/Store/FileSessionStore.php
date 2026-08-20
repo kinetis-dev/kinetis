@@ -69,7 +69,43 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
             JSON_THROW_ON_ERROR,
         );
 
-        if (@\file_put_contents($this->pathFor($id), $payload, LOCK_EX) === false) {
+        $path = $this->pathFor($id);
+        // Same directory as $path, not sys_get_temp_dir(): rename() is
+        // only atomic within one filesystem, and writing straight to
+        // $path (even under LOCK_EX, which only ever protected against
+        // another *writer*) lets a concurrent, lock-free read() observe
+        // a truncated/partial file mid-write — a torn read, not covered
+        // by "last-write-wins". Write-then-rename is what this
+        // project's own AOT CacheStore already does for the same
+        // reason; a session file additionally gets 0600, matching this
+        // store's own 0700 directory, since it's not meant to be
+        // group/world-readable the way the AOT cache is.
+        //
+        // Named ".sess-tmp-*", deliberately never matching gc()'s own
+        // "sess_*" glob pattern — the earlier "$path.<random>.tmp" naming
+        // still started with "sess_", so a gc() sweep landing between
+        // this file_put_contents() and the rename() below could collect
+        // and unlink the in-progress temp file out from under this write
+        // (a partial envelope is always collectable; a complete one that
+        // just hasn't been renamed yet still looks collectable too, since
+        // gc() has no way to tell "in progress" from "abandoned"), making
+        // the rename() below fail and silently losing the write.
+        $tmpPath = $this->directory . '/.sess-tmp-' . \bin2hex(\random_bytes(8)) . '.tmp';
+
+        if (@\file_put_contents($tmpPath, $payload) === false) {
+            // file_put_contents() can create a partial file before
+            // failing (e.g. the disk fills up mid-write) — clean it up
+            // rather than leaving a stray temp file behind.
+            @\unlink($tmpPath);
+
+            throw new SessionException("Session file for \"{$id}\" could not be written.");
+        }
+
+        @\chmod($tmpPath, 0600);
+
+        if (!@\rename($tmpPath, $path)) {
+            @\unlink($tmpPath);
+
             throw new SessionException("Session file for \"{$id}\" could not be written.");
         }
     }

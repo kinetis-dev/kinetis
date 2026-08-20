@@ -135,6 +135,24 @@ migration before it in that run is already recorded as applied, and the
 failing one is not. The exception propagates, so the run stops there
 instead of continuing past a failure.
 
+## Concurrent deploys are safe
+
+`migrate`/`migrate:rollback` hold a cross-process advisory lock (MySQL's
+`GET_LOCK()`; Postgres has no equivalent blocking-with-timeout primitive,
+so it's `pg_try_advisory_lock()` instead, polled with a short sleep
+between attempts) for the whole run, so two deploy instances starting at
+the same time can't both compute the same pending set and run it twice —
+the second one waits for the first to finish before it even looks at
+what's pending.
+
+The lock is scoped to your database session, not a row in a table, so it
+releases on its own the moment the connection holding it closes —
+gracefully or not — with nothing to clean up by hand if a process is
+killed mid-migration. Waiting longer than 10 seconds throws
+`Exception\MigrationLockTimeoutException`, most often meaning another
+`migrate`/`migrate:rollback` is already running elsewhere; retry once it
+finishes.
+
 ## See also
 
 - {doc}`query-builder` — a fluent builder for querying the tables these

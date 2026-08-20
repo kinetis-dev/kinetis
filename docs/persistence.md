@@ -176,6 +176,33 @@ interpolation on native MySQL (whose async mode has no bind step; the
 client pins the connection charset explicitly so escaping is always
 performed against a known charset).
 
+The two native drivers scan the SQL text itself to find each `?`
+placeholder — a dialect-aware pass recognizing `'...'`/`"..."`/`` `...` ``
+quoting, `--`/`#`/`/* */` comments, and Postgres's `$$...$$`/`$tag$...$tag$`
+dollar-quoted strings, so a `?` inside any of those is data, never a
+slot. Postgres's own jsonb containment/existence operators (`?`, `?|`,
+`?&`) are lexically identical to a placeholder at the position they
+appear — write `??`, `??|`, `??&` under `native`/`DB_DRIVER=auto` to mean
+the literal operator rather than a bind slot (the PDO driver has no such
+ambiguity, since it never scans the SQL text itself).
+
+Two comment rules match real MySQL rather than a generic reading of the
+syntax. `--` only opens a comment under `native`/`DB_DRIVER=auto` against
+MySQL when the second dash is followed by whitespace, a control
+character, or the end of the string — `5--?` is `5 - - ?`, not a comment
+(Postgres has no such condition; a bare `--` always opens one there). And
+MySQL/MariaDB's *executable* comments (`/*! ... */`, `/*M! ... */`) are
+copied through verbatim, left for the connected server to interpret on
+its own — whether one is even live SQL depends on its version gate
+against that server's actual version (and, for `/*M!`, whether it's
+MariaDB at all), which Kinetis has no way to check client-side. A `?`
+inside one is rejected outright rather than guessed at, on `native` and
+`pdo` alike: the two would otherwise silently require a different number
+of bound parameters for the same query depending on the connected
+server's version, since `pdo`'s native prepare defers the question to
+the real server while `native`'s own scanner never could. Move a bound
+value outside the comment instead.
+
 The `auto` split is measured, not aesthetic: under boot-and-die PHP-FPM,
 per-request connection handshakes and per-query client CPU dominate, and
 an async client's I/O overlap cannot pay for them (sub-millisecond
@@ -233,13 +260,17 @@ DB_MAX_CONNECTIONS=12
 |---|---|---|---|---|
 | `DB_CHARSET` | `set_charset()` | DSN `charset=` | `client_encoding` | `client_encoding` |
 | `DB_COLLATION` | `SET NAMES ... COLLATE` | `SET NAMES ... COLLATE` | — | — |
-| `DB_SSLMODE` | `MYSQLI_CLIENT_SSL` + verify flag | `MYSQL_ATTR_SSL_*` | `sslmode` | `sslmode` |
-| `DB_SSL_CA` | `ssl_set()` | `MYSQL_ATTR_SSL_CA` | `sslrootcert` | `sslrootcert` |
-| `DB_SSL_CERT` | `ssl_set()` | `MYSQL_ATTR_SSL_CERT` | `sslcert` | `sslcert` |
-| `DB_SSL_KEY` | `ssl_set()` | `MYSQL_ATTR_SSL_KEY` | `sslkey` | `sslkey` |
+| `DB_SSLMODE` | `MYSQLI_CLIENT_SSL` + verify flag | `Pdo\Mysql::ATTR_SSL_*` | `sslmode` | `sslmode` |
+| `DB_SSL_CA` | `ssl_set()` | `Pdo\Mysql::ATTR_SSL_CA` | `sslrootcert` | `sslrootcert` |
+| `DB_SSL_CERT` | `ssl_set()` | `Pdo\Mysql::ATTR_SSL_CERT` | `sslcert` | `sslcert` |
+| `DB_SSL_KEY` | `ssl_set()` | `Pdo\Mysql::ATTR_SSL_KEY` | `sslkey` | `sslkey` |
 | `DB_CONNECT_TIMEOUT` | `MYSQLI_OPT_CONNECT_TIMEOUT` | `PDO::ATTR_TIMEOUT` | `connect_timeout` | `connect_timeout` |
 | `DB_APP_NAME` | — | — | `application_name` | `application_name` |
-| `DB_COMPRESSION` | `MYSQLI_CLIENT_COMPRESS` | `MYSQL_ATTR_COMPRESS` | — | — |
+| `DB_COMPRESSION` | `MYSQLI_CLIENT_COMPRESS` | `Pdo\Mysql::ATTR_COMPRESS` | — | — |
+
+`Pdo\Mysql::ATTR_*`, not the equivalent, deprecated-as-of-PHP-8.5
+`PDO::MYSQL_ATTR_*` constants — identical underlying values, just without
+the deprecation notice.
 
 A "—" is not a silent ignore: setting an option the selected driver
 cannot honor throws at construction, naming both the option and the

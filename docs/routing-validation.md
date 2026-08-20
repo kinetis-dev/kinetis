@@ -82,6 +82,60 @@ repetition quantifier, which is handled correctly even though it
 contains braces of its own — nothing about the placeholder syntax gets
 confused by a `{...}` inside the constraint.
 
+A pattern is regex text Kinetis inserts rather than rewrites, and the
+brace scanner that finds where the placeholder ends reads enough PCRE to
+know where a `}` is *not* that end. All of these parse and match
+correctly:
+
+| constraint | matches |
+|---|---|
+| `{value:\}}` | a literal `}` — an escaped brace |
+| `{value:[{]}` | a literal `{` — a brace as an ordinary character-class member |
+| `{value:[[:alpha:]{]}` | a letter or a literal `{` — a POSIX sub-form inside a class |
+| `{value:a\Q{\E}` | a literal `a{` — a `\Q...\E` quoted span |
+| `{value:\Q~\E}` | a literal `~` — the delimiter itself, inside a quoted span |
+| `{value:(?#})a}` | `a` — a `}` inside a `(?#...)` comment group |
+| `{value:[#~!%@|+\-=]+}` | any of those characters, delimiter included |
+
+The delimiter is `~`, and a literal occurrence of it in a pattern is
+escaped rather than dodged by picking a different one. Inside a `\Q...\E`
+span that escape needs a rewrite rather than a plain backslash — a
+backslash is literal text there, so `\~` would match two characters
+instead of one — so the span is closed and reopened around it. That
+happens automatically; the pattern you write is the pattern that runs.
+
+```{warning}
+The scanner is a bounded reader of those constructs, not a full PCRE
+parser, and the supported constraint grammar is exactly what it can read
+faithfully. Two things fall outside it, and both are rejected at
+registration with an error naming them rather than mis-scanned:
+
+**Extended mode** — the `x` flag, via `(?x)`, `(?x:...)`, or `x` among a
+set that enables it like `(?imx:...)`. In extended mode an unescaped `#`
+starts a comment running to the end of the line, so a `}` after one would
+stop closing the placeholder; unlike every construct in the table above,
+whether the mode is on at a given point is flag *scope* rather than
+something with a fixed opener and closer. A route constraint is a single
+fragment, with no real need for the whitespace and comments extended mode
+exists to allow. Only flags a run actually *enables* count — everything
+after a `-` is being switched off, so `(?-x:...)` and `(?im-sx:...)`
+register and match normally.
+
+**Control verbs** — anything spelled `(*...)`, such as `(*MARK:name)` or
+`(*atomic:...)`. Their shape varies by verb: some end at their first `)`
+while others hold a whole nested sub-pattern, so a `}` inside one can't
+be told apart from the brace closing the placeholder. Use `(?>...)` for
+atomic grouping; the backtracking verbs have no meaning in a
+single-fragment constraint.
+
+Both exclusions are about a construct being *active*, not about the
+characters that spell it. The constructs in the table above compose with
+them exactly as you'd expect: `{value:[(*]}` is a character class
+matching `(` or `*`, `{value:\Q(?x)\E}` matches that literal text, and
+`{value:(?#(*)a}` is a comment followed by `a` — none of them turns
+anything on, and all three register and match.
+```
+
 This is purely a routing-time detail: `/orders/{id}` and `/orders/{id:\d+}`
 are indistinguishable to a client, to `#[Query]`/`#[Body]` binding, and
 in the generated OpenAPI document — the constraint moves into the path

@@ -119,9 +119,25 @@ succeeded so it chains:
 $order = $http->get('/orders/42')->throw()->json();
 ```
 
-The exception carries the status and includes the response body, since an
-API's own error payload is usually the only thing that explains the
-status.
+```{warning}
+`$e->getMessage()` deliberately excludes the response body and the
+request URL's userinfo/query string — a query string routinely carries a
+signed URL's signature or an API key, and an upstream error body can
+carry PII or credentials. Since exception messages are commonly logged
+by default, including either there would turn routine error logging into
+data exfiltration. `diagnosticUrl()`/`diagnosticBody()` are private-backed
+accessor *methods*, not public properties, so a generic serializer —
+`json_encode($e)`, a structured-logging pipeline that reflects over an
+exception's public state — never exposes them either. The full,
+unredacted detail — an API's own error payload is usually the only thing
+that explains the status — is still reachable, but only by explicitly
+calling `$e->diagnosticUrl()`, `$e->diagnosticBody()`, or
+`$e->diagnosticMessage()` for all of it at once. A transport failure's
+own message is never copied into `getMessage()` either, since a lower-
+level client can embed the same URL/credentials in its own error text —
+the original exception, message included, is always reachable via
+`$e->getPrevious()`.
+```
 
 A transport failure — DNS, a refused connection, a timeout hit — has no
 status to return, so it throws the same `HttpRequestException` (with
@@ -135,6 +151,10 @@ try {
     $order = $http->withTimeout(5)->get('/orders/42')->throw()->json();
 } catch (HttpRequestException $e) {
     // $e->status is the HTTP status, or 0 when nothing answered at all.
+    // $e->getMessage() is safe to log by default; reach for
+    // $e->diagnosticMessage() only when logging the full detail —
+    // including whatever the upstream response body contained — is a
+    // deliberate choice for this particular call site.
 }
 ```
 

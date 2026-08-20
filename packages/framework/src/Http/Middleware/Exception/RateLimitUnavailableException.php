@@ -16,4 +16,15 @@ final class RateLimitUnavailableException extends RuntimeException
             . 'Configure Redis (REDIS_URL/REDIS_HOST) or pass another PSR-16 CacheInterface implementation.',
         );
     }
+
+    public static function notAtomic(): self
+    {
+        return new self(
+            'RateLimitMiddleware requires a cache implementing Kinetis\SimpleCache\AtomicCounterInterface: '
+            . 'counting by reading the value and writing it back is not safe across processes, and lets '
+            . 'the limit be exceeded by every request that arrives concurrently rather than sequentially. '
+            . 'Kinetis\SimpleCache\RedisSimpleCache and ClusteredRedisSimpleCache (kinetis/cache-redis) both '
+            . 'implement it.',
+        );
+    }
 }

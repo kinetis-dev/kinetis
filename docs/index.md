@@ -8,6 +8,8 @@ article[role="main"] section > p > strong:only-child { color: #D97706; }
 body[data-theme="dark"] article[role="main"] section > p > strong:only-child { color: #F59E0B; }
 </style>
 
+*Persistent Workers, Non-Blocking I/O.*
+
 **Optimized for long-running processes, but equally snappy on PHP-FPM and serverless environments. One codebase — any runtime.**
 
 - Typed requests and responses.

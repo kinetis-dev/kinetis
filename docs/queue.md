@@ -328,6 +328,12 @@ eventually gives up on a job whose worker keeps crashing rather than
 retrying it forever. `null` (the default) preserves the original
 forever-stranded behavior exactly, unchanged.
 
+A value below `1` — `0` or negative — is rejected at construction: it
+would make `reserveNext()`'s own query treat a row reserved an instant
+ago (or one whose reservation timestamp is in the future relative to
+now) as already stale, letting a second worker reclaim an actively-held
+reservation immediately instead of after it genuinely goes stale.
+
 `kinetis queue:work` reads this from the optional
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` environment variable (via
 `Config::scopedKey()`, so it respects `QUEUE_CONNECTION_NAME` the same as

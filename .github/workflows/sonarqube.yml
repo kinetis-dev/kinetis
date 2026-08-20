@@ -130,9 +130,9 @@ jobs:
         # and it retries after refreshing the channel.
         #
         # The database drivers are baked in rather than added per package:
-        # only persistence's env-gated tests/Integration suite uses them,
-        # and carrying them everywhere costs nothing next to a conditional
-        # install inside the loop.
+        # persistence's and query-builder's env-gated tests/Integration
+        # suites use them, and carrying them everywhere costs nothing next
+        # to a conditional install inside the loop.
         run: |
           # Its own empty directory as the build context, not /tmp:
           # docker sends the whole context to the daemon, and a single

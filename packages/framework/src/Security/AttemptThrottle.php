@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\Security;
 
 use Kinetis\Security\Exception\AttemptThrottleUnavailableException;
+use Kinetis\Security\Exception\InvalidAttemptThrottleConfigException;
+use Kinetis\SimpleCache\AtomicCounterInterface;
 use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
@@ -22,12 +24,18 @@ use Psr\SimpleCache\CacheInterface;
  * of inactivity clears the lockout on its own; clear() removes it
  * immediately on a successful attempt.
  *
- * Built against plain Psr\SimpleCache\CacheInterface, the same "don't
- * hard-couple to Redis specifically" reasoning
- * Kinetis\Http\Middleware\RateLimitMiddleware already applies.
- * NullSimpleCache is rejected at construction — a throttle that never
- * stores anything enforces no lockout at all while recordFailure()
- * calls appear to succeed.
+ * Built against plain Psr\SimpleCache\CacheInterface, but requires the
+ * cache to also implement Kinetis\SimpleCache\AtomicCounterInterface —
+ * the same "fail at construction, not behind a flag the application has
+ * to remember to check" discipline
+ * Kinetis\Http\Middleware\RateLimitMiddleware applies. Without it,
+ * failures arriving together — how a password list is actually worked
+ * through — each read the same count before any of them write, so they
+ * register as one and the lockout never arms; measured against a real
+ * Redis, 40 parallel wrong passwords recorded a single failure.
+ * NullSimpleCache is checked first, for its own clearer message: a
+ * throttle that never stores anything enforces no lockout at all while
+ * recordFailure() calls appear to succeed.
  *
  * Identifiers are sha256-hashed before use (PSR-16 forbids `{}()/\@:`
  * in a key, and an email address contains `@`).
@@ -45,19 +53,19 @@ final readonly class AttemptThrottle
             throw AttemptThrottleUnavailableException::nullCache();
         }
 
-        $this->counter = new Counter($cache);
-    }
+        if (!$cache instanceof AtomicCounterInterface) {
+            throw AttemptThrottleUnavailableException::notAtomic();
+        }
 
-    /**
-     * Whether failures are counted atomically, which they are only when
-     * the cache can — see Kinetis\SimpleCache\Counter. False means
-     * attempts arriving together register as one and the lockout can be
-     * outrun; check it at boot if that matters, which for a login it
-     * does.
-     */
-    public function countsAtomically(): bool
-    {
-        return $this->counter->isAtomic();
+        if ($maxAttempts < 1) {
+            throw InvalidAttemptThrottleConfigException::nonPositiveMaxAttempts($maxAttempts);
+        }
+
+        if ($decaySeconds < 1) {
+            throw InvalidAttemptThrottleConfigException::nonPositiveDecay($decaySeconds);
+        }
+
+        $this->counter = new Counter($cache);
     }
 
     public function tooManyAttempts(string $identifier): bool
@@ -68,9 +76,7 @@ final readonly class AttemptThrottle
     public function recordFailure(string $identifier): void
     {
         // The expiry is refreshed on every failure, so the count decays
-        // from the last one rather than the first. Whether failures
-        // arriving together are each counted depends on the cache —
-        // countsAtomically() reports it.
+        // from the last one rather than the first.
         $this->counter->increment($this->key($identifier), $this->decaySeconds);
 
         // Only for availableInSeconds(); no decision depends on it, and

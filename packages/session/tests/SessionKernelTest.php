@@ -10,6 +10,7 @@ use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Session\SessionStoreInterface;
 use Kinetis\Session\Store\CacheSessionStore;
+use Kinetis\Session\Tests\Fixtures\CsrfWithoutSessionFixtureController;
 use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
 use Kinetis\Session\Tests\Fixtures\SessionFixtureController;
 use Kinetis\Testing\TestApplication;
@@ -36,6 +37,7 @@ final class SessionKernelTest extends TestCase
 
         $router = new Router();
         $router->register(SessionFixtureController::class);
+        $router->register(CsrfWithoutSessionFixtureController::class);
 
         $this->client = TestApplication::withRouter($router, $app)->client();
     }
@@ -108,6 +110,21 @@ final class SessionKernelTest extends TestCase
 
         $this->client->post('/guarded', [], ['Cookie' => $cookie, 'X-CSRF-Token' => \str_repeat('0', 40)])
             ->assertStatus(403);
+    }
+
+    /**
+     * CsrfMiddleware declared without SessionMiddleware ahead of it on
+     * the same route — a declaration-order mistake, not an attacker
+     * probing without a token — must fail with the clean, explanatory
+     * 500 this middleware documents, not an uncaught NotFoundException
+     * surfacing from deep inside Session's own constructor trying (and
+     * failing) to autowire SessionStoreInterface.
+     */
+    public function test_csrf_without_session_middleware_ahead_of_it_fails_clearly(): void
+    {
+        $this->client->post('/csrf-without-session')
+            ->assertStatus(500)
+            ->assertJsonPath('error', 'CsrfMiddleware needs SessionMiddleware declared before it on this route.');
     }
 
     public function test_regenerate_rotates_the_cookie_and_the_old_id_dead_ends(): void

@@ -9,7 +9,10 @@ composer require kinetis/storage-s3
 ````
 
 Adds Amazon S3 (and S3-compatible services) as a second storage option
-for {doc}`storage`, alongside local disk.
+for {doc}`storage`, alongside local disk — installing `kinetis/storage-s3`
+brings `kinetis/storage` in with it as a real dependency, so
+`Kinetis\Storage\FilesystemFactory` (below) is available with nothing
+else to install.
 
 ```{code-block} php
 use Kinetis\Storage\FilesystemFactory;

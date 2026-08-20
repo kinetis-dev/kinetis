@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Security;
 
 use Kinetis\Security\AttemptThrottle;
 use Kinetis\Security\Exception\AttemptThrottleUnavailableException;
+use Kinetis\Security\Exception\InvalidAttemptThrottleConfigException;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Fixtures\NonAtomicCache;
@@ -93,17 +94,17 @@ final class AttemptThrottleTest extends TestCase
         new AttemptThrottle(new NullSimpleCache());
     }
 
-    /**
-     * A cache that cannot count atomically still locks out sequential
-     * failures. What it cannot do is count failures arriving together,
-     * which is how a password is actually attacked — so the throttle
-     * reports which mode it is in rather than leaving it to be assumed.
-     */
-    public function test_a_cache_that_cannot_count_atomically_is_reported_as_such(): void
+    public function test_construction_over_a_cache_that_cannot_count_atomically_throws(): void
     {
-        $throttle = new AttemptThrottle(new NonAtomicCache(), maxAttempts: 2, decaySeconds: 60);
+        $this->expectException(AttemptThrottleUnavailableException::class);
+        $this->expectExceptionMessage('AtomicCounterInterface');
 
-        self::assertFalse($throttle->countsAtomically());
+        new AttemptThrottle(new NonAtomicCache());
+    }
+
+    public function test_construction_over_a_cache_that_can_count_atomically_succeeds(): void
+    {
+        $throttle = new AttemptThrottle(new InMemorySimpleCache(), maxAttempts: 2, decaySeconds: 60);
 
         $throttle->recordFailure('ana@example.com');
         self::assertFalse($throttle->tooManyAttempts('ana@example.com'));
@@ -112,8 +113,19 @@ final class AttemptThrottleTest extends TestCase
         self::assertTrue($throttle->tooManyAttempts('ana@example.com'));
     }
 
-    public function test_a_cache_that_can_count_atomically_is_reported_as_such(): void
+    public function test_construction_rejects_a_non_positive_max_attempts(): void
     {
-        self::assertTrue(new AttemptThrottle(new InMemorySimpleCache())->countsAtomically());
+        $this->expectException(InvalidAttemptThrottleConfigException::class);
+        $this->expectExceptionMessage('maxAttempts of at least 1, got 0');
+
+        new AttemptThrottle(new InMemorySimpleCache(), maxAttempts: 0);
+    }
+
+    public function test_construction_rejects_a_non_positive_decay(): void
+    {
+        $this->expectException(InvalidAttemptThrottleConfigException::class);
+        $this->expectExceptionMessage('decaySeconds of at least 1, got -1');
+
+        new AttemptThrottle(new InMemorySimpleCache(), decaySeconds: -1);
     }
 }

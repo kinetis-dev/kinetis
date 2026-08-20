@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Kinetis\Runtime;
 
 use Nyholm\Psr7\Factory\Psr17Factory;
+use Nyholm\Psr7\Response;
 use Nyholm\Psr7Server\ServerRequestCreator;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use RequestParseBodyException;
 
 /**
  * The one place superglobals and header()/http_response_code() are allowed
@@ -18,6 +20,47 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class SuperglobalsBridge
 {
+    /**
+     * The full request/handle/emit cycle for one request, wrapping the
+     * one failure mode that happens *before* $handler (and so before
+     * Kernel/ExceptionHandlerMiddleware) ever runs: request_parse_body()
+     * — called below for a PUT/PATCH form body — can throw
+     * RequestParseBodyException for malformed input or an exceeded
+     * parsing limit. Left uncaught, that's a fatal error escaping the
+     * persistent request callback (FrankenPhpAdapter) or an unhandled
+     * exception PHP itself renders (FpmAdapter) — neither is a JSON
+     * error response, and neither goes through this framework's own
+     * error-handling policy at all. Both adapters call this instead of
+     * requestFromGlobals()+emit() directly, so the failure is caught in
+     * exactly one place rather than duplicated in each.
+     *
+     * @param callable(ServerRequestInterface): ResponseInterface $handler
+     */
+    public static function handle(callable $handler): void
+    {
+        try {
+            $request = self::requestFromGlobals();
+        } catch (RequestParseBodyException $e) {
+            // No structured way to distinguish "malformed" from "a
+            // parsing limit was exceeded" on this exception — checked
+            // directly against its real shape, not assumed: it carries
+            // only a plain message and code, both undocumented. 400
+            // either way; the real message is logged, never returned to
+            // the client, since it may echo back a fragment of
+            // attacker-controlled input.
+            error_log('Malformed request body: ' . $e->getMessage());
+            self::emit(new Response(
+                status: 400,
+                headers: ['Content-Type' => 'application/json'],
+                body: json_encode(['error' => 'The request body could not be parsed.'], JSON_THROW_ON_ERROR),
+            ));
+
+            return;
+        }
+
+        self::emit($handler($request));
+    }
+
     public static function requestFromGlobals(): ServerRequestInterface
     {
         $factory = new Psr17Factory();

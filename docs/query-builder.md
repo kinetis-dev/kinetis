@@ -63,7 +63,11 @@ counts — is identical between the two.
 
 A qualified column name is quoted per segment: `orders.total` becomes
 `` `orders`.`total` `` (or `"orders"."total"` on Postgres), not one literal
-identifier containing a dot.
+identifier containing a dot. The one exception is a qualified wildcard —
+`select('orders.*')` produces `` `orders`.* `` with the `*` segment left
+unquoted, since quoting it (`` `orders`.`*` ``) asks the server for a real
+column literally named `*` and it rejects that outright, rather than
+expanding to every column the way an unqualified `*` does.
 
 ## Works inside `TransactionGuard`
 
@@ -145,7 +149,7 @@ public function index(#[Query] ?string $cursor = null): CursorPaginator
 {"data": ["...", "..."], "nextCursor": "165", "hasMore": true}
 ```
 
-`cursorPaginate(int $perPage, ?string $cursor, string $cursorColumn = 'id', ?string $dtoClass = null)`
+`cursorPaginate(int $perPage, ?string $cursor, string $cursorColumn = 'id', ?string $dtoClass = null, ?string $cursorAlias = null)`
 orders the query by `$cursorColumn` itself and filters
 `WHERE $cursorColumn > $cursor` once a cursor is given — `null` (the first
 call) fetches from the start. The cursor is the column's own raw value,
@@ -156,17 +160,94 @@ expensive, and it means a client can't jump to an arbitrary page, only
 "give me the next one."
 
 ```{warning}
-`cursorPaginate()` always orders by `$cursorColumn`. Adding your own
-`orderBy()` call on a *different* column can make it skip or repeat rows —
-the `WHERE $cursorColumn > ?` comparison only makes sense against the
-column the results are actually ordered by.
+`$cursorColumn` must be unique and strictly monotonic — a primary key or
+an auto-incrementing/serial column, not e.g. `created_at`, which two rows
+can share. A page boundary landing inside a run of equal values silently
+skips whatever's left of that run: `WHERE $cursorColumn > ?` only
+excludes rows up to and including the value already seen, not "rows
+already seen."
+
+`cursorPaginate()` also always orders by `$cursorColumn` itself. Adding
+your own `orderBy()` call on a *different* column can make it skip or
+repeat rows for the same reason — the `WHERE $cursorColumn > ?`
+comparison only makes sense against the column the results are actually
+ordered by.
 ```
 
-Neither method caps `$perPage` — a request for `?perPage=1000000` is
-passed straight through. Capping it, if your application needs one, is a
-normal application-level concern (clamp it in the controller before
-calling either method), the same way `Query` doesn't validate a `where()`
-value either.
+`nextCursor` always comes out of the same result as the rows you were
+handed — never a second query. Two reads of a live table are not one
+snapshot, and a cursor pointing at a row you were never given would
+silently skip everything between the two.
+
+Computing it needs `$cursorColumn` in every row regardless of what your
+own `select()` call asked to see, so a projection that omits it
+(`->select('name')->cursorPaginate(...)`) still works correctly —
+`$cursorColumn` is added to the query automatically and stripped back
+out of every returned row (and never reaches `$dtoClass` hydration
+either) before the method returns, so the projection you actually get
+back is exactly the one you asked for. Selecting it yourself, or using
+the default `*`, leaves it in the result as normal.
+
+### Paginating a joined query: `cursorAlias`
+
+On a `join()`ed query you generally want a *qualified* cursor column
+(`orders.id`) to say which table's `id` you mean. That needs one more
+argument, because MySQL and Postgres both report an unaliased qualified
+column under its plain name — `id`, not `orders.id` — which the joined
+table's own `id` collides with. A PHP row is an associative array, so
+two columns arriving under one key silently become one.
+
+Kinetis won't guess a name that's safe against your projection, because
+none is: pick one yourself with `cursorAlias`.
+
+```{code-block} php
+:caption: The column is selected under your alias, read from it, then removed
+return new Query($this->db)->table('orders')
+    ->join('customers', 'orders.customer_id', '=', 'customers.id')
+    ->select('orders.total', 'customers.name')
+    ->cursorPaginate(perPage: 20, cursor: $cursor, cursorColumn: 'orders.id', cursorAlias: 'order_cursor');
+```
+
+The alias is appended to your projection, read back, and stripped from
+every returned row before you see them — so the rows still contain
+exactly `total` and `name`. Nothing else about the query changes: an
+alias an `orderBy()` depends on stays where you put it, and an
+`offset()` you set stays yours.
+
+Pass a qualified `$cursorColumn` without an alias and you get an
+`InvalidArgumentException` naming the parameter, not a silently wrong
+cursor. `cursorAlias` works for an unqualified column too, which is how
+you disambiguate a projection that already has a *different* column of
+that name.
+
+```{warning}
+Choosing an alias nothing else in the projection uses is yours to get
+right, exactly as it is for any `AS` you write by hand. Pick a name a
+column already answers to and the cursor **replaces** that column: it
+takes the key in the returned row, and the cleanup that removes the
+alias removes your field with it. The cursor itself stays correct; the
+row just comes back one field short.
+
+Kinetis rejects the half of this it can see. An alias matching a column
+you listed yourself — `select('row_cursor')`, or `select('t.row_cursor')`,
+which resolves to the same key — throws `InvalidArgumentException`
+before any SQL runs. A column that only a wildcard brings in can't be
+checked the same way: knowing what `*` expands to needs column metadata
+the result doesn't carry, and the one available check — counting
+distinct keys against the server's column count — also fires on the
+duplicate `id` every `SELECT *` across a join produces, which is the
+most common reason to want a cursor alias in the first place. So with a
+wildcard, the name is yours to keep clear.
+```
+
+`perPage`/`page` (for `paginate()`) and `perPage` (for `cursorPaginate()`)
+must be at least 1 — either method throws `InvalidArgumentException`
+otherwise, rather than compiling a nonsensical `LIMIT 0`/negative
+`OFFSET`. Neither method caps how *large* `$perPage` can be — a request
+for `?perPage=1000000` is passed straight through. Capping it, if your
+application needs one, is a normal application-level concern (clamp it in
+the controller before calling either method), the same way `Query`
+doesn't validate a `where()` value either.
 
 ### Describing the item shape in OpenAPI
 
@@ -205,7 +286,12 @@ $affected = new Query($db)->table('users')->where('id', '=', $id)->update(['name
 $deleted = new Query($db)->table('users')->where('id', '=', $id)->delete();
 ```
 
-`update()`/`delete()` return the affected-row count.
+`update()`/`delete()` return the affected-row count. `insert()`/
+`insertGetId()`/`update()` all reject an empty `$data` array with
+`InvalidArgumentException` — an empty array compiles to invalid SQL
+(`INSERT INTO t () VALUES ()`, `UPDATE t SET  WHERE ...`) rather than
+anything meaningful, and this class has no `DEFAULT VALUES` shorthand for
+the (rare) case that's genuinely intended.
 
 ## Raw SQL
 

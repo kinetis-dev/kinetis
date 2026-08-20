@@ -82,37 +82,24 @@ the plain keys shown earlier in this page. `QUEUE_RABBITMQ_QUEUE_PREFIX`
 when staging and production share one broker and need to stay on separate
 queues without both trying to use a plain name like `default`.
 
-## Opening this connection disables `concurrently()` in that process
-
-Once anything calls `push()` or `pop()` for the first time,
-`Kinetis\Async\concurrently()` can't be called again anywhere in that
-same process, for any reason, for as long as the connection stays open —
-which is indefinitely, since nothing closes it automatically. RabbitMQ
-keeps a connection open and listening at all times (so it can receive
-deliveries and heartbeats the moment they arrive, not only in response to
-something you asked for), and `concurrently()` waits for every pending
-operation in the process to settle before it returns — which never
-happens while that connection stays open.
-
-This never affects the `kinetis queue:work` loop itself. It does
-affect two other things:
-
-- **A job's own `handle()`** reaching for `concurrently()` for its own
-  unrelated work, once any code in that process has opened a connection
-  to this backend.
-- **A persistent HTTP worker (FrankenPHP), not just a queue worker.** If a
-  controller calls `push()` to enqueue a job, that opens the connection in
-  the *request-handling* worker process too — and a persistent worker
-  keeps running that same process across many unrelated requests
-  afterward. Every later request that process happens to serve loses the
-  ability to call `concurrently()` from that point on, even one that never
-  touches this queue at all, until the worker restarts.
-
 ## If the package isn't installed
 
 Setting `QUEUE_CONNECTION=rabbitmq` without having run
 `composer require kinetis/queue-rabbitmq` produces a clear error telling
 you which package to install, rather than a confusing crash.
+
+```{note}
+On PHP 8.5, `thesis/amqp`'s own transitive dependency on `thesis/endian`
+(pinned to its `0.1.x` line — a constraint set by `thesis/amqp` itself,
+not by this package) emits repeated `chr(): Providing a value not
+in-between 0 and 255 is deprecated` notices from its byte-packing code.
+Confirmed harmless — the deprecated `chr()` behavior still masks the
+value to a single byte exactly as before, just with a notice — and not
+fixable from this package: no stable `thesis/amqp` release yet requires
+a `thesis/endian` version that corrects it, and this project does not
+pull in an unreleased dev branch to chase a deprecation notice. Track
+`thesis/amqp`'s own releases; this note goes away once one does.
+```
 
 ## See also
 

@@ -32,7 +32,7 @@ final class FrankenPhpAdapter implements RuntimeAdapterInterface
 
         do {
             $keepRunning = frankenphp_handle_request(static function () use ($handler): void {
-                SuperglobalsBridge::emit($handler(SuperglobalsBridge::requestFromGlobals()));
+                SuperglobalsBridge::handle($handler);
             });
         } while ($keepRunning);
     }

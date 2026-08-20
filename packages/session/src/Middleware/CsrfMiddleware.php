@@ -42,7 +42,11 @@ final readonly class CsrfMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        if (!$this->scope->has(Session::class)) {
+        if (!$this->scope->isRegistered(Session::class)) {
+            // isRegistered(), not has(): has() also reports true for any
+            // autowirable class, so it would never actually catch this —
+            // Session is a plain, autowirable class regardless of
+            // whether SessionMiddleware ever registered a real one.
             // Declaration-order mistake, not an attack: without
             // SessionMiddleware ahead of this one there is no session to
             // hold a token, so every request would 403 mysteriously.

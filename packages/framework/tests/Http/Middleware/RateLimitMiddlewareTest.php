@@ -421,18 +421,11 @@ final class RateLimitMiddlewareTest extends TestCase
         self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
     }
 
-    /**
-     * A cache that cannot count atomically still works, sequentially.
-     * What it cannot do is hold the limit against requests arriving
-     * together, since each reads the count before any writes — the
-     * reason Counter reports which mode it is in.
-     */
-    public function test_a_cache_that_cannot_count_atomically_still_enforces_the_limit_sequentially(): void
+    public function test_construction_over_a_cache_that_cannot_count_atomically_throws(): void
     {
-        $middleware = new RateLimitMiddleware(new NonAtomicCache(), maxAttempts: 2, windowSeconds: 60);
+        $this->expectException(RateLimitUnavailableException::class);
+        $this->expectExceptionMessage('AtomicCounterInterface');
 
-        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
-        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
-        self::assertSame(429, $middleware->process($this->request(), $this->handler())->getStatusCode());
+        new RateLimitMiddleware(new NonAtomicCache());
     }
 }

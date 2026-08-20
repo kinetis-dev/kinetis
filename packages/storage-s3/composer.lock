@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a1efc6b2a4eff6dcd8090e0e71691319",
+    "content-hash": "f04272f8cede35e4321f294487663a14",
     "packages": [
         {
             "name": "amphp/amp",
@@ -317,6 +317,91 @@
             "time": "2025-01-19T15:43:40+00:00"
         },
         {
+            "name": "amphp/file",
+            "version": "v3.2.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/amphp/file.git",
+                "reference": "28b38a805d2c235bb581d24415e78a42cd03aedc"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/amphp/file/zipball/28b38a805d2c235bb581d24415e78a42cd03aedc",
+                "reference": "28b38a805d2c235bb581d24415e78a42cd03aedc",
+                "shasum": ""
+            },
+            "require": {
+                "amphp/amp": "^3",
+                "amphp/byte-stream": "^2",
+                "amphp/cache": "^2",
+                "amphp/parallel": "^2.3",
+                "amphp/sync": "^2",
+                "php": ">=8.1",
+                "revolt/event-loop": "^1"
+            },
+            "require-dev": {
+                "amphp/php-cs-fixer-config": "^2",
+                "amphp/phpunit-util": "^3",
+                "phpunit/phpunit": "^9",
+                "psalm/phar": "5.22.2"
+            },
+            "suggest": {
+                "ext-eio": "^2 || ^3",
+                "ext-uv": "^0.3 || ^0.2"
+            },
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "src/functions.php"
+                ],
+                "psr-4": {
+                    "Amp\\File\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Daniel Lowrey",
+                    "email": "rdlowrey@php.net"
+                },
+                {
+                    "name": "Aaron Piotrowski",
+                    "email": "aaron@trowski.com"
+                },
+                {
+                    "name": "Niklas Keller",
+                    "email": "me@kelunik.com"
+                }
+            ],
+            "description": "Non-blocking access to the filesystem based on Amp and Revolt.",
+            "homepage": "https://github.com/amphp/file",
+            "keywords": [
+                "amp",
+                "amphp",
+                "async",
+                "disk",
+                "file",
+                "filesystem",
+                "io",
+                "non-blocking",
+                "static"
+            ],
+            "support": {
+                "issues": "https://github.com/amphp/file/issues",
+                "source": "https://github.com/amphp/file/tree/v3.2.0"
+            },
+            "funding": [
+                {
+                    "url": "https://github.com/amphp",
+                    "type": "github"
+                }
+            ],
+            "time": "2024-12-06T23:39:02+00:00"
+        },
+        {
             "name": "amphp/hpack",
             "version": "v3.2.2",
             "source": {
@@ -550,6 +635,90 @@
                 }
             ],
             "time": "2026-05-15T23:29:38+00:00"
+        },
+        {
+            "name": "amphp/parallel",
+            "version": "v2.4.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/amphp/parallel.git",
+                "reference": "37f5b2754fadc229c00f9416bd68fb8d04529a81"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/amphp/parallel/zipball/37f5b2754fadc229c00f9416bd68fb8d04529a81",
+                "reference": "37f5b2754fadc229c00f9416bd68fb8d04529a81",
+                "shasum": ""
+            },
+            "require": {
+                "amphp/amp": "^3",
+                "amphp/byte-stream": "^2",
+                "amphp/cache": "^2",
+                "amphp/parser": "^1",
+                "amphp/pipeline": "^1",
+                "amphp/process": "^2",
+                "amphp/serialization": "^1",
+                "amphp/socket": "^2",
+                "amphp/sync": "^2",
+                "php": ">=8.1",
+                "revolt/event-loop": "^1"
+            },
+            "require-dev": {
+                "amphp/php-cs-fixer-config": "^2",
+                "amphp/phpunit-util": "^3",
+                "phpunit/phpunit": "^9",
+                "psalm/phar": "6.16.1"
+            },
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "src/Context/functions.php",
+                    "src/Context/Internal/functions.php",
+                    "src/Ipc/functions.php",
+                    "src/Worker/functions.php"
+                ],
+                "psr-4": {
+                    "Amp\\Parallel\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Aaron Piotrowski",
+                    "email": "aaron@trowski.com"
+                },
+                {
+                    "name": "Niklas Keller",
+                    "email": "me@kelunik.com"
+                },
+                {
+                    "name": "Stephen Coakley",
+                    "email": "me@stephencoakley.com"
+                }
+            ],
+            "description": "Parallel processing component for Amp.",
+            "homepage": "https://github.com/amphp/parallel",
+            "keywords": [
+                "async",
+                "asynchronous",
+                "concurrent",
+                "multi-processing",
+                "multi-threading"
+            ],
+            "support": {
+                "issues": "https://github.com/amphp/parallel/issues",
+                "source": "https://github.com/amphp/parallel/tree/v2.4.0"
+            },
+            "funding": [
+                {
+                    "url": "https://github.com/amphp",
+                    "type": "github"
+                }
+            ],
+            "time": "2026-05-16T16:54:01+00:00"
         },
         {
             "name": "amphp/parser",
@@ -1384,6 +1553,57 @@
                 }
             ],
             "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/storage",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../storage",
+                "reference": "7c6ff4d036b05058b4a4317a7055defdae672771"
+            },
+            "require": {
+                "amphp/byte-stream": "^2.1.2",
+                "amphp/file": "^3.2.0",
+                "kinetis/framework": "dev-main",
+                "league/flysystem": "^3.35.2",
+                "league/mime-type-detection": "^1.17.0",
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^12.5.33",
+                "vimeo/psalm": "^6.16.1"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": {
+                    "bootstrap": "Kinetis\\Storage\\PackageBootstrap"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Storage\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\Storage\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "File storage for Kinetis, built on League\\Flysystem — local storage via a genuinely non-blocking Amp\\File-backed adapter; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "transport-options": {
                 "relative": true
             }
@@ -3341,90 +3561,6 @@
     ],
     "packages-dev": [
         {
-            "name": "amphp/parallel",
-            "version": "v2.4.0",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/amphp/parallel.git",
-                "reference": "37f5b2754fadc229c00f9416bd68fb8d04529a81"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/amphp/parallel/zipball/37f5b2754fadc229c00f9416bd68fb8d04529a81",
-                "reference": "37f5b2754fadc229c00f9416bd68fb8d04529a81",
-                "shasum": ""
-            },
-            "require": {
-                "amphp/amp": "^3",
-                "amphp/byte-stream": "^2",
-                "amphp/cache": "^2",
-                "amphp/parser": "^1",
-                "amphp/pipeline": "^1",
-                "amphp/process": "^2",
-                "amphp/serialization": "^1",
-                "amphp/socket": "^2",
-                "amphp/sync": "^2",
-                "php": ">=8.1",
-                "revolt/event-loop": "^1"
-            },
-            "require-dev": {
-                "amphp/php-cs-fixer-config": "^2",
-                "amphp/phpunit-util": "^3",
-                "phpunit/phpunit": "^9",
-                "psalm/phar": "6.16.1"
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "src/Context/functions.php",
-                    "src/Context/Internal/functions.php",
-                    "src/Ipc/functions.php",
-                    "src/Worker/functions.php"
-                ],
-                "psr-4": {
-                    "Amp\\Parallel\\": "src"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Aaron Piotrowski",
-                    "email": "aaron@trowski.com"
-                },
-                {
-                    "name": "Niklas Keller",
-                    "email": "me@kelunik.com"
-                },
-                {
-                    "name": "Stephen Coakley",
-                    "email": "me@stephencoakley.com"
-                }
-            ],
-            "description": "Parallel processing component for Amp.",
-            "homepage": "https://github.com/amphp/parallel",
-            "keywords": [
-                "async",
-                "asynchronous",
-                "concurrent",
-                "multi-processing",
-                "multi-threading"
-            ],
-            "support": {
-                "issues": "https://github.com/amphp/parallel/issues",
-                "source": "https://github.com/amphp/parallel/tree/v2.4.0"
-            },
-            "funding": [
-                {
-                    "url": "https://github.com/amphp",
-                    "type": "github"
-                }
-            ],
-            "time": "2026-05-16T16:54:01+00:00"
-        },
-        {
             "name": "colinodell/json5",
             "version": "v3.0.0",
             "source": {
@@ -4166,16 +4302,16 @@
         },
         {
             "name": "infection/infection",
-            "version": "0.35.0",
+            "version": "0.35.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/infection/infection.git",
-                "reference": "f54ac591f8ae3e2341c09cef7c26d69afe83f5ee"
+                "reference": "c7ad005fc541b36952781b3ab602a4648cd9e9c8"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/infection/infection/zipball/f54ac591f8ae3e2341c09cef7c26d69afe83f5ee",
-                "reference": "f54ac591f8ae3e2341c09cef7c26d69afe83f5ee",
+                "url": "https://api.github.com/repos/infection/infection/zipball/c7ad005fc541b36952781b3ab602a4648cd9e9c8",
+                "reference": "c7ad005fc541b36952781b3ab602a4648cd9e9c8",
                 "shasum": ""
             },
             "require": {
@@ -4290,7 +4426,7 @@
             ],
             "support": {
                 "issues": "https://github.com/infection/infection/issues",
-                "source": "https://github.com/infection/infection/tree/0.35.0"
+                "source": "https://github.com/infection/infection/tree/0.35.2"
             },
             "funding": [
                 {
@@ -4302,7 +4438,7 @@
                     "type": "open_collective"
                 }
             ],
-            "time": "2026-08-17T07:19:49+00:00"
+            "time": "2026-08-19T21:14:49+00:00"
         },
         {
             "name": "infection/mutator",
@@ -8045,7 +8181,8 @@
     "minimum-stability": "stable",
     "stability-flags": {
         "kinetis/framework": 20,
-        "kinetis/revolt-http-client": 20
+        "kinetis/revolt-http-client": 20,
+        "kinetis/storage": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

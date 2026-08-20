@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Routing;
 
+use Kinetis\Http\Routing\Exception\InvalidRouteConstraintException;
+
 /**
  * A single registered route: which controller method handles it, and the
  * compiled regex used to test an incoming path and extract its {placeholders}.
@@ -23,10 +25,50 @@ namespace Kinetis\Http\Routing;
  * find the *placeholder's* matching brace correctly regardless of what
  * the pattern inside contains.
  *
+ * That scanner reads enough PCRE to know where a `}` is *not* the
+ * placeholder's own — an escape (`\}`), a character class (`[{]`,
+ * including its POSIX/collating/equivalence sub-forms), a `\Q...\E`
+ * quoted span, and a `(?#...)` comment group — but it is a bounded
+ * reader of those constructs, not a full PCRE parser, and the supported
+ * constraint grammar is exactly what it can read faithfully. Two things
+ * it rules out instead of guessing at, both rejected by name at
+ * registration by {@see unsupportedConstruct()} rather than silently
+ * mis-scanned: extended mode (the `x` flag, whose `#`-to-end-of-line
+ * comments hide a `}` behind flag *scope*) and `(*...)` control verbs
+ * (whose own shape varies by verb). Everything the grammar does accept
+ * is embedded faithfully, including a literal delimiter inside a quoted
+ * span, which needs a rewrite rather than a plain escape — see
+ * {@see escapeDelimiter()}.
+ *
  * @phpstan-type PathSegment array{type: 'literal', value: string}|array{type: 'placeholder', name: string, pattern: ?string}
  */
 final class Route
 {
+    /**
+     * The one, fixed PCRE delimiter every compiled route pattern uses.
+     * Never varies per route — a literal, unescaped occurrence inside a
+     * constraint pattern is handled by escaping it (see
+     * escapeDelimiter()), not by picking a different delimiter to dodge
+     * it, so there's no reason for this to be anything other than a
+     * single shared constant.
+     *
+     * "#" (this constant's own first choice) was reverted once a real
+     * counterexample surfaced: "#" is PCRE syntax, not just a candidate
+     * delimiter, inside a "(?#comment)" comment group — escapeDelimiter()
+     * blindly escaping an unescaped "#" corrupts "(?#note)" into
+     * "(?\#note)", which no longer opens a comment group at all, breaking
+     * a perfectly valid caller fragment rather than merely dodging a
+     * collision. "~" has no PCRE-syntactic role anywhere — not in any
+     * "(?...)" construct, not as a quantifier, not inside a character
+     * class — confirmed directly against PCRE's own metacharacter list
+     * before picking it, not assumed safe by elimination. Escaping a
+     * literal, unescaped "~" the caller's own pattern happens to contain
+     * is therefore always exactly that: hiding a literal delimiter
+     * occurrence from PHP's own end-of-pattern search, never a change to
+     * what the fragment means to PCRE itself.
+     */
+    private const string DELIMITER = '~';
+
     private readonly string $pattern;
 
     /** @var list<string> */
@@ -55,9 +97,29 @@ final class Route
 
         foreach ($segments as $segment) {
             if ($segment['type'] === 'placeholder') {
+                if (in_array($segment['name'], $paramNames, true)) {
+                    throw InvalidRouteConstraintException::duplicatePlaceholderName($this->pathTemplate, $segment['name']);
+                }
+
                 $paramNames[] = $segment['name'];
 
                 if ($segment['pattern'] !== null) {
+                    $unsupported = self::unsupportedConstruct($segment['pattern']);
+
+                    if ($unsupported !== null) {
+                        throw $unsupported === 'extendedMode'
+                            ? InvalidRouteConstraintException::extendedModeNotSupported(
+                                $this->pathTemplate,
+                                $segment['name'],
+                                $segment['pattern'],
+                            )
+                            : InvalidRouteConstraintException::controlVerbNotSupported(
+                                $this->pathTemplate,
+                                $segment['name'],
+                                $segment['pattern'],
+                            );
+                    }
+
                     $paramPatterns[$segment['name']] = $segment['pattern'];
                 }
             }
@@ -66,6 +128,32 @@ final class Route
         $this->paramNames = $paramNames;
         $this->paramPatterns = $paramPatterns;
         $this->pattern = self::compile($segments);
+
+        // preg_match() returns false (with an E_WARNING, not an
+        // exception) rather than throwing on a compile error — left
+        // unchecked, a malformed {name:pattern} constraint would only
+        // surface as a silent, permanent 404 on the route's first real
+        // request, not at registration where the actual mistake is.
+        if (@preg_match($this->pattern, '') === false) {
+            foreach ($paramPatterns as $name => $pattern) {
+                // Re-check each constraint individually to name the
+                // actual offending one, rather than the whole compiled
+                // route pattern — escaped exactly as compile() itself
+                // escapes it (see escapeDelimiter()), so this check
+                // agrees with what actually gets compiled instead of
+                // misreporting a pattern compile() handles correctly.
+                $escaped = self::escapeDelimiter($pattern);
+
+                if (@preg_match(self::DELIMITER . $escaped . self::DELIMITER, '') === false) {
+                    throw InvalidRouteConstraintException::malformedPattern($this->pathTemplate, $name, $pattern);
+                }
+            }
+
+            // A compile failure not isolated to one constraint's own
+            // pattern in isolation — still a real failure, named against
+            // the whole route rather than a specific placeholder.
+            throw InvalidRouteConstraintException::malformedRoute($this->pathTemplate);
+        }
     }
 
     /**
@@ -226,6 +314,30 @@ final class Route
      * loop body once its combined nesting (an inner while alongside an
      * if/elseif) became the dominant share of that method's cognitive
      * complexity — a pure move, no behavior change.
+     *
+     * A backslash-escaped brace (`\{`/`\}`, a real PCRE construct — an
+     * escaped literal brace character, e.g. the `\}` in `{value:\}}`
+     * matching a literal `}`) is skipped as a pair rather than counted
+     * toward depth: it's the constraint pattern's own literal text, not
+     * this scanner's nesting syntax, and counting it would close the
+     * placeholder one character early. Consuming exactly two bytes per
+     * backslash also gets a run of several backslashes right for free —
+     * an even run pairs off completely, leaving the following character
+     * genuinely unescaped; an odd run leaves exactly one backslash
+     * escaping whatever comes next — the same rule real regex engines
+     * use, not something special-cased here.
+     *
+     * A `{`/`}` is only this scanner's own syntax where it sits in
+     * ordinary regex text. Everywhere else it is a literal the pattern
+     * happens to contain, and {@see skipNonSyntax()} is the single
+     * definition of "everywhere else" — an escape pair, a `\Q...\E`
+     * quoted span, a character class, or a `(?#...)` comment group, each
+     * skipped as one unit rather than scanned character by character.
+     *
+     * That definition is shared with {@see unsupportedConstruct()} rather
+     * than restated, which is the point: the two once disagreed about
+     * which contexts existed, and a construct one of them knew to skip
+     * was read as live syntax by the other.
      */
     private static function findMatchingBrace(string $pathTemplate, int $openBraceIndex): int
     {
@@ -234,6 +346,14 @@ final class Route
         $j = $openBraceIndex + 1;
 
         while ($j < $length && $depth > 0) {
+            $skipped = self::skipNonSyntax($pathTemplate, $j, $length);
+
+            if ($skipped !== null) {
+                $j = $skipped;
+
+                continue;
+            }
+
             if ($pathTemplate[$j] === '{') {
                 $depth++;
             } elseif ($pathTemplate[$j] === '}') {
@@ -246,6 +366,222 @@ final class Route
         }
 
         return $j;
+    }
+
+    /**
+     * The index just past the construct starting at $i when that
+     * construct is one PCRE reads as literal or discarded text, or null
+     * when $i is ordinary regex syntax the caller should interpret
+     * itself.
+     *
+     * The one place this class decides what "ordinary regex syntax"
+     * means, so that finding a placeholder's closing brace and deciding
+     * whether a pattern uses an unsupported construct cannot disagree
+     * about it:
+     *
+     * - an escape pair (`\}`), consumed two bytes at a time, which also
+     *   handles a run of backslashes correctly for free — an even run
+     *   pairs off completely and leaves the next character unescaped, an
+     *   odd one leaves exactly one backslash escaping it;
+     * - a `\Q...\E` quoted span, where nothing at all is syntax
+     *   (`\Q{\E` matches a literal `{`);
+     * - a character class, whose contents are ordinary members however
+     *   they are spelled (`[{]`, `[(*]`);
+     * - a `(?#...)` comment group, which PCRE discards outright and which
+     *   ends at its very first `)` with no nesting and no escaping
+     *   recognized inside — confirmed against real preg_match() rather
+     *   than read off the syntax alone.
+     */
+    private static function skipNonSyntax(string $pattern, int $i, int $length): ?int
+    {
+        if ($pattern[$i] === '\\' && $i + 1 < $length) {
+            if ($pattern[$i + 1] === 'Q') {
+                $end = strpos($pattern, '\E', $i + 2);
+
+                return $end === false ? $length : $end + 2;
+            }
+
+            return $i + 2;
+        }
+
+        if ($pattern[$i] === '[') {
+            return self::skipCharacterClass($pattern, $i, $length);
+        }
+
+        if ($pattern[$i] === '(' && $i + 2 < $length && $pattern[$i + 1] === '?' && $pattern[$i + 2] === '#') {
+            $close = strpos($pattern, ')', $i + 3);
+
+            return $close === false ? $length : $close + 1;
+        }
+
+        return null;
+    }
+
+    /**
+     * The index just past the character class opening at $i, whose
+     * every member is an ordinary character however it is spelled.
+     *
+     * Four PCRE rules decide where it ends, each confirmed against real
+     * preg_match() rather than read off the syntax:
+     *
+     * - a `]` in the first member position is a literal member rather
+     *   than the close (`[]a]` matches `]` or `a`), as is one straight
+     *   after a negating `^`;
+     * - an escaped `\]` is a member too;
+     * - `\Q...\E` is processed inside a class, so `[\Q]\E]` is a class
+     *   holding a literal `]` — the span has to be skipped here as well
+     *   as outside, or its contents end the class early;
+     * - a POSIX/collating/equivalence sub-form (`[:alpha:]`, `[.ch.]`,
+     *   `[=e=]`) carries its own `:]`/`.]`/`=]` closer, which is not the
+     *   enclosing class's.
+     */
+    private static function skipCharacterClass(string $pattern, int $i, int $length): int
+    {
+        $j = $i + 1;
+
+        if ($j < $length && $pattern[$j] === '^') {
+            $j++;
+        }
+
+        if ($j < $length && $pattern[$j] === ']') {
+            $j++;
+        }
+
+        while ($j < $length) {
+            if ($pattern[$j] === '\\' && $j + 1 < $length) {
+                if ($pattern[$j + 1] === 'Q') {
+                    $end = strpos($pattern, '\E', $j + 2);
+                    $j = $end === false ? $length : $end + 2;
+
+                    continue;
+                }
+
+                $j += 2;
+
+                continue;
+            }
+
+            if ($pattern[$j] === '[' && $j + 1 < $length && in_array($pattern[$j + 1], [':', '.', '='], true)) {
+                $marker = $pattern[$j + 1] . ']';
+                $close = strpos($pattern, $marker, $j + 2);
+                $j = $close === false ? $length : $close + 2;
+
+                continue;
+            }
+
+            if ($pattern[$j] === ']') {
+                return $j + 1;
+            }
+
+            $j++;
+        }
+
+        return $length;
+    }
+
+    /**
+     * The unsupported construct $pattern uses, or null when it uses
+     * none — the two things {@see findMatchingBrace()} refuses rather
+     * than lexes, both because a `}` inside them would stop being the
+     * placeholder's own close and neither can be skipped by a rule as
+     * simple as the constructs that scanner does handle.
+     *
+     * `'extendedMode'`: an inline flag group that *enables* `x`, which
+     * makes an unescaped `#` start a comment running to the end of the
+     * line. Whether it is on at a given byte is flag scope — `(?x)` runs
+     * to the end of its enclosing group, `(?x:...)` only to that group's
+     * — which is parser state rather than a construct with a fixed
+     * opener and closer.
+     *
+     * `'controlVerb'`: a `(*...)` verb. Some carry a free-text argument
+     * that can contain a brace and end at the first `)` (`(*MARK:})`),
+     * while others are group forms holding a whole sub-pattern with
+     * nested parentheses (`(*atomic:a(b))`) — one spelling, two
+     * incompatible shapes, confirmed against real preg_match() on both
+     * supported PHP versions. Telling them apart means tracking PCRE's
+     * verb list, which is the treadmill this bounded scanner exists to
+     * step off; `(?>...)` covers the useful case without one.
+     *
+     * The `x` test respects the set/unset split a flag run carries: in
+     * `(?im-sx:...)` the letters after `-` are being turned *off*, so
+     * that fragment and `(?-x:...)` enable nothing and register normally
+     * — verified against real preg_match() rather than read off the
+     * syntax, since treating either as an enable is exactly the
+     * inversion this once shipped with.
+     *
+     * Only text that is actually syntax is inspected: this walks the
+     * pattern through the same {@see skipNonSyntax()} the brace scanner
+     * uses, so a `(*` or `(?x)` that is ordinary literal text — members
+     * of a character class (`[(*]`), the contents of a `\Q...\E` span,
+     * or the body of a `(?#...)` comment — is not mistaken for the
+     * construct it merely spells. Reporting one of those as an active
+     * control verb was both a rejection of a valid route and a factually
+     * untrue error, and it broke the composition the grammar promises:
+     * a supported character class does not stop being supported because
+     * of which ordinary members it holds.
+     *
+     * @return 'extendedMode'|'controlVerb'|null
+     */
+    private static function unsupportedConstruct(string $pattern): ?string
+    {
+        $length = strlen($pattern);
+        $i = 0;
+
+        while ($i < $length) {
+            $skipped = self::skipNonSyntax($pattern, $i, $length);
+
+            if ($skipped !== null) {
+                $i = $skipped;
+
+                continue;
+            }
+
+            if ($pattern[$i] === '(' && $i + 1 < $length) {
+                if ($pattern[$i + 1] === '*') {
+                    return 'controlVerb';
+                }
+
+                if ($pattern[$i + 1] === '?' && self::enablesExtendedMode($pattern, $i + 2, $length)) {
+                    return 'extendedMode';
+                }
+            }
+
+            $i++;
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether the inline flag group starting at $start (just past its own
+     * `(?`) turns `x` on. Everything before the run's `-` is being set
+     * and everything after it unset, so only the first half is asked
+     * about; `^` resets the inherited options and then sets whatever
+     * follows, which leaves those letters on the setting side too.
+     *
+     * Returns false for anything that isn't a flag group at all — a
+     * named group, a lookaround, a comment — since a run of flag letters
+     * is only a flag group when `)` or `:` closes it.
+     */
+    private static function enablesExtendedMode(string $pattern, int $start, int $length): bool
+    {
+        $enabled = '';
+        $unsetting = false;
+        $j = $start;
+
+        while ($j < $length && (ctype_alpha($pattern[$j]) || $pattern[$j] === '-' || $pattern[$j] === '^')) {
+            if ($pattern[$j] === '-') {
+                $unsetting = true;
+            } elseif (!$unsetting && $pattern[$j] !== '^') {
+                $enabled .= $pattern[$j];
+            }
+
+            $j++;
+        }
+
+        return $j < $length
+            && ($pattern[$j] === ')' || $pattern[$j] === ':')
+            && str_contains($enabled, 'x');
     }
 
     /**
@@ -282,10 +618,80 @@ final class Route
 
         foreach ($segments as $segment) {
             $regex .= $segment['type'] === 'placeholder'
-                ? '(?P<' . $segment['name'] . '>' . ($segment['pattern'] ?? '[^/]+') . ')'
-                : preg_quote($segment['value'], '#');
+                ? '(?P<' . $segment['name'] . '>' . ($segment['pattern'] !== null ? self::escapeDelimiter($segment['pattern']) : '[^/]+') . ')'
+                : preg_quote($segment['value'], self::DELIMITER);
         }
 
-        return '#^' . $regex . '$#';
+        return self::DELIMITER . '^' . $regex . '$' . self::DELIMITER;
+    }
+
+    /**
+     * A constraint pattern is regex text this class inserts rather than
+     * rewrites, so a literal, *unescaped* occurrence of this class's own
+     * PCRE delimiter inside one — a character class like `[A-F~]`, say —
+     * would otherwise terminate the delimiter early and corrupt the whole
+     * compiled pattern, rejecting a perfectly valid PCRE fragment as
+     * "malformed" for a reason that has nothing to do with the fragment
+     * itself. Escaping every unescaped occurrence with a backslash is the
+     * standard PCRE way to include a literal delimiter character inside a
+     * delimited pattern. An *already* escaped occurrence (a caller who
+     * wrote `\~` themselves) is left exactly as it was — re-escaping it
+     * would turn a correct `\~` into `\\~`, a literal backslash followed
+     * by a now-*unescaped* delimiter, corrupting the one case this exists
+     * to leave alone. Literal path segments need no equivalent treatment:
+     * preg_quote() is given the same fixed delimiter to escape, which it
+     * already does correctly for any input.
+     *
+     * Inside a `\Q...\E` quoted span a backslash is ordinary literal
+     * text, not an escape — so a plain `\~` there would match a
+     * backslash *and* a tilde rather than the single tilde the caller
+     * wrote, silently changing what the route matches. The span is closed
+     * and reopened around the escape instead (`\E\~\Q`), which PHP's own
+     * delimiter scan skips as an escaped character while PCRE reads it as
+     * exactly the one literal delimiter it replaces — confirmed against
+     * real preg_match() calls, both that the naive form is wrong and that
+     * this form is identical to the same fragment under a delimiter that
+     * needs no escaping at all.
+     */
+    private static function escapeDelimiter(string $pattern): string
+    {
+        $escaped = '';
+        $length = strlen($pattern);
+        $i = 0;
+        $inQuotedSpan = false;
+
+        while ($i < $length) {
+            // Tracked before the escape-pair skip below, since inside a
+            // quoted span there are no escape pairs to skip — only `\E`
+            // is recognized there at all.
+            if ($pattern[$i] === '\\' && $i + 1 < $length && ($pattern[$i + 1] === 'Q' || $pattern[$i + 1] === 'E')) {
+                $inQuotedSpan = $pattern[$i + 1] === 'Q';
+                $escaped .= '\\' . $pattern[$i + 1];
+                $i += 2;
+
+                continue;
+            }
+
+            if (!$inQuotedSpan && $pattern[$i] === '\\' && $i + 1 < $length) {
+                $escaped .= $pattern[$i] . $pattern[$i + 1];
+                $i += 2;
+
+                continue;
+            }
+
+            if ($pattern[$i] === self::DELIMITER) {
+                $escaped .= $inQuotedSpan
+                    ? '\\E\\' . self::DELIMITER . '\\Q'
+                    : '\\' . self::DELIMITER;
+                $i++;
+
+                continue;
+            }
+
+            $escaped .= $pattern[$i];
+            $i++;
+        }
+
+        return $escaped;
     }
 }

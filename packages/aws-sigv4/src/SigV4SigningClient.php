@@ -40,6 +40,31 @@ use Psr\Http\Message\ResponseInterface;
  * already proven for kinetis/storage-s3's S3Client and kinetis/queue-sqs's
  * SqsClient. Usable standalone, not only with Kinetis — this package has
  * no dependency on kinetis/framework itself.
+ *
+ * SigV4 signs over the body's exact bytes, so `sendRequest()` always
+ * reads the request's entire body into memory as a plain PHP string —
+ * more than once, not just once: withReplayableBody() reads it in full
+ * to build the SpooledStream replacement, and toAwsRequest() reads that
+ * replacement's own contents again to compute the signature. Peak memory
+ * during a signed request is therefore a real multiple of the body's own
+ * size, not bounded by it — SpooledStream's `php://temp` backing avoids
+ * holding a *second, long-lived* full copy once construction finishes,
+ * but does nothing about the transient copies made along the way. A
+ * large body is fully buffered, not streamed, the same trade-off
+ * `Kinetis\Http\Responses\FileResponse` already discloses for its own
+ * non-streaming case — genuinely bounding this would need a signer that
+ * hashes the body incrementally as it's copied, which AsyncAws's own
+ * `SignerV4` doesn't expose a way to do.
+ *
+ * A *non-seekable* body (`StreamInterface::isSeekable() === false`) is
+ * read from wherever its cursor already sits rather than rewound first,
+ * since rewinding one is impossible by definition — supply a body
+ * already positioned at its start for a non-seekable stream to be signed
+ * and sent correctly. A *seekable* body's own original position is
+ * restored once signing finishes (success or failure) — the stream
+ * object a caller built the request with is the same one this method
+ * reads, so leaving it seeked to wherever this method happened to stop
+ * would be a real, visible side effect on the caller's own object.
  */
 final class SigV4SigningClient implements ClientInterface
 {
@@ -86,6 +111,7 @@ final class SigV4SigningClient implements ClientInterface
     public function sendRequest(RequestInterface $request): ResponseInterface
     {
         $request = $this->resolveUri($request);
+        $request = $this->withReplayableBody($request);
 
         $credentials = $this->credentialProvider->getCredentials($this->configuration)
             ?? throw SigningException::noCredentialsResolved();
@@ -133,6 +159,52 @@ final class SigV4SigningClient implements ClientInterface
         return $request->withUri($uri);
     }
 
+    /**
+     * Replaces the request's body with a fresh SpooledStream built from
+     * its full contents, so neither the signing step below nor the
+     * wrapped client's own later read ever has to seek the *original*
+     * stream. PSR-7 explicitly permits a non-seekable stream
+     * (`StreamInterface::isSeekable()`), and `rewind()`'s own contract
+     * requires it to throw when seeking fails — which an unconditional
+     * rewind() after reading, the previous approach here, would do for
+     * exactly that stream.
+     *
+     * A seekable stream is rewound first, matching what `__toString()`'s
+     * own contract already promises to attempt — so the full body is
+     * always captured, not just whatever remains from wherever the
+     * cursor happened to be left by earlier code — and its *original*
+     * position is saved beforehand and restored afterward in a finally
+     * block, so a caller's own request object is left exactly as it was
+     * regardless of whether signing succeeds: the same PSR-7 stream
+     * instance the caller built the request with is also the one this
+     * method reads from, so rewinding/reading it is a real, visible
+     * mutation to anyone still holding a reference to it, not a private
+     * copy — confirmed by a real reproduction: a caller-positioned
+     * stream came back at a different offset after a first version of
+     * this method that never restored it. A non-seekable stream is read
+     * from its current position instead, since seeking one backward is
+     * impossible by definition — the one real, disclosed limitation this
+     * leaves; see this class's own docblock above.
+     */
+    private function withReplayableBody(RequestInterface $request): RequestInterface
+    {
+        $body = $request->getBody();
+
+        if (!$body->isSeekable()) {
+            return $request->withBody(new SpooledStream($body->getContents()));
+        }
+
+        $originalPosition = $body->tell();
+
+        try {
+            $body->rewind();
+
+            return $request->withBody(new SpooledStream($body->getContents()));
+        } finally {
+            $body->seek($originalPosition);
+        }
+    }
+
     private function toAwsRequest(RequestInterface $request): AwsRequest
     {
         $headers = [];
@@ -141,7 +213,13 @@ final class SigV4SigningClient implements ClientInterface
             $headers[$name] = implode(', ', $values);
         }
 
-        $body = (string) $request->getBody();
+        // $request's body is always a SpooledStream by this point (see
+        // withReplayableBody()), so reading it here to compute the
+        // signature can always be followed by a rewind() that's
+        // guaranteed not to throw — leaving the body positioned at 0
+        // again for the wrapped client's own later read, exactly as
+        // before this method ever touched it.
+        $body = $request->getBody()->getContents();
         $request->getBody()->rewind();
 
         $awsRequest = new AwsRequest($request->getMethod(), '', [], $headers, StringStream::create($body));

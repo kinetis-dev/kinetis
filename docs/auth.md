@@ -191,25 +191,22 @@ successful attempt removes it immediately. Identifiers aren't limited to
 emails — anything failure-prone and identifier-keyed works the same way,
 a 2FA code or an invite redemption included.
 
-````{danger}
-**Give this a cache that can count atomically.** `RedisSimpleCache` and
-`ClusteredRedisSimpleCache` can, through
-`Kinetis\SimpleCache\AtomicCounterInterface`; see {doc}`middleware`'s
-rate-limiting section for the `REDIS_URL`/`REDIS_HOST` configuration they
-read. Any other PSR-16 cache is accepted and locks out sequential
-failures, but cannot count failures that arrive together — measured
-against a real Redis, 40 parallel wrong passwords recorded a **single**
-failure and the lockout never armed.
+````{note}
+**The cache must count atomically, and construction enforces it.**
+`AttemptThrottle` requires the given cache to implement
+`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` and
+`ClusteredRedisSimpleCache` do, see {doc}`middleware`'s rate-limiting
+section for the `REDIS_URL`/`REDIS_HOST` configuration they read — and
+throws `Exception\AttemptThrottleUnavailableException` at construction
+for any cache that doesn't, `NullSimpleCache` included.
 
-That is the normal shape of the attack this class exists to stop:
-someone working through a password list sends attempts in parallel by
-default. Check it where it matters:
-
-```{code-block} php
-if (!$throttle->countsAtomically()) {
-    // Sequential lockout only — parallel attempts can outrun this.
-}
-```
+Without it, failures arriving together cannot be counted — every
+attempt reads the same value before any of them writes, so they
+register as one and the lockout never arms. That is the normal shape
+of the attack this class exists to stop: someone working through a
+password list sends attempts in parallel by default. Measured against
+a real Redis, 40 parallel wrong passwords recorded a **single**
+failure without this guard.
 ````
 
 ## See also
