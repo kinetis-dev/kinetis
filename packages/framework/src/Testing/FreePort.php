@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Testing;
 
-use RuntimeException;
+use Kinetis\Testing\Exception\FreePortException;
 
 /**
  * A TCP port nothing is currently listening on, for a test that spawns
@@ -25,14 +25,14 @@ final class FreePort
         $socket = @stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
 
         if ($socket === false) {
-            throw new RuntimeException("Could not reserve a free TCP port: {$errstr} ({$errno})");
+            throw FreePortException::couldNotReserve($errno, $errstr);
         }
 
         $name = stream_socket_get_name($socket, false);
         fclose($socket);
 
         if ($name === false) {
-            throw new RuntimeException('Could not read back the port the kernel assigned.');
+            throw FreePortException::couldNotReadAssignedPort();
         }
 
         return (int) substr($name, (int) strrpos($name, ':') + 1);
