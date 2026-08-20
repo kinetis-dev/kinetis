@@ -8,10 +8,9 @@ composer require kinetis/queue-rabbitmq
 ```
 ````
 
-Adds RabbitMQ as another backend for {doc}`queue`, alongside Redis, SQL,
-and SQS. Application code that already pushes and pops jobs through
-`QueueInterface` needs no changes at all to switch — only your
-configuration changes.
+Adds RabbitMQ as a backend for {doc}`queue`. Application code that
+already pushes and pops jobs through `QueueInterface` needs no changes
+at all to switch — only your configuration changes.
 
 ```{code-block} text
 QUEUE_CONNECTION=rabbitmq

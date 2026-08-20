@@ -22,8 +22,8 @@ blocking/non-blocking decision where the runtime knowledge lives.
 
 MariaDB works too, everywhere this page says MySQL — mysqli and
 PDO-MySQL speak the wire protocol both databases share. The one place a
-specific minimum version matters is `kinetis/queue`'s SQL backend; see
-{doc}`queue`.
+specific minimum version matters is `kinetis/queue-sql`; see
+{doc}`queue-sql`.
 
 ```{note}
 Core itself has no MySQL/Postgres/Redis dependency of its own —

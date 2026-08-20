@@ -8,10 +8,9 @@ composer require kinetis/queue-sqs
 ```
 ````
 
-Adds Amazon SQS as a third backend for {doc}`queue`, alongside Redis and
-SQL. Application code that already pushes and pops jobs through
-`QueueInterface` needs no changes at all to switch — only your
-configuration changes.
+Adds Amazon SQS as a backend for {doc}`queue`. Application code that
+already pushes and pops jobs through `QueueInterface` needs no changes
+at all to switch — only your configuration changes.
 
 ```{code-block} text
 QUEUE_CONNECTION=sqs
