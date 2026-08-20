@@ -7,6 +7,7 @@ namespace Kinetis\AuthJwt\Tests;
 use Kinetis\AuthJwt\Exception\RefreshTokenUnavailableException;
 use Kinetis\AuthJwt\RefreshTokenStore;
 use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
+use Kinetis\AuthJwt\Tests\Fixtures\NonAtomicSimpleCache;
 use Kinetis\SimpleCache\NullSimpleCache;
 use PHPUnit\Framework\TestCase;
 
@@ -96,8 +97,33 @@ final class RefreshTokenStoreTest extends TestCase
 
     public function test_construction_over_a_null_cache_throws_instead_of_silently_issuing_unredeemable_tokens(): void
     {
-        $this->expectException(RefreshTokenUnavailableException::class);
+        try {
+            new RefreshTokenStore(new NullSimpleCache());
+            self::fail('Expected RefreshTokenUnavailableException to be thrown.');
+        } catch (RefreshTokenUnavailableException $e) {
+            self::assertSame(
+                'RefreshTokenStore requires a real cache: NullSimpleCache never stores anything, so every '
+                . 'issued refresh token would be unredeemable and revokeAllForUser() would have nothing to '
+                . 'affect. Configure Redis (REDIS_URL/REDIS_HOST) or pass another PSR-16 CacheInterface '
+                . 'implementation.',
+                $e->getMessage(),
+            );
+        }
+    }
 
-        new RefreshTokenStore(new NullSimpleCache());
+    public function test_construction_over_a_non_atomic_cache_throws_instead_of_silently_allowing_replay(): void
+    {
+        try {
+            new RefreshTokenStore(new NonAtomicSimpleCache());
+            self::fail('Expected RefreshTokenUnavailableException to be thrown.');
+        } catch (RefreshTokenUnavailableException $e) {
+            self::assertSame(
+                'RefreshTokenStore requires a cache implementing Kinetis\SimpleCache\AtomicConsumeInterface: '
+                . 'redeeming a token by reading it and deleting it in two separate calls lets two concurrent '
+                . 'redeems of the same token both succeed, defeating single use. Kinetis\SimpleCache\RedisSimpleCache '
+                . 'and ClusteredRedisSimpleCache (kinetis/cache-redis) both implement it.',
+                $e->getMessage(),
+            );
+        }
     }
 }

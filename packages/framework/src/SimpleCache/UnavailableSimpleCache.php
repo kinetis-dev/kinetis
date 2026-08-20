@@ -26,7 +26,7 @@ use Psr\SimpleCache\CacheInterface;
  * at construction rather than having the container refuse to boot
  * without Redis.
  */
-final class UnavailableSimpleCache implements CacheInterface, AtomicCounterInterface
+final class UnavailableSimpleCache implements CacheInterface, AtomicCounterInterface, AtomicConsumeInterface
 {
     public function __construct(private readonly string $package = 'kinetis/cache-redis') {}
 
@@ -49,6 +49,17 @@ final class UnavailableSimpleCache implements CacheInterface, AtomicCounterInter
 
     #[\Override]
     public function count(string $key): int
+    {
+        throw $this->unavailable();
+    }
+
+    /**
+     * Implemented so RefreshTokenStore accepts this cache at construction
+     * and fails on first use, naming the package to install rather than
+     * complaining that the cache cannot consume atomically.
+     */
+    #[\Override]
+    public function consume(string $key, mixed $default = null): mixed
     {
         throw $this->unavailable();
     }

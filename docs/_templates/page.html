@@ -2,6 +2,20 @@
    line. Mirrors furo/theme/furo/page.html's footer block verbatim, minus
    that one line -- keep this in sync if Furo's own template changes. #}
 {% extends "!page.html" %}
+{#- Furo's base.html emits the favicon link itself from `favicon_url`,
+   which Sphinx always computes as a page-relative path (`_static/...`
+   here, `../_static/...` for a page one level deeper) via `pathto()` --
+   there's no conf.py setting that makes it root-relative instead. Google
+   Search's own favicon documentation gives a leading-slash path
+   (`/smile.ico`) as its example and checks the home page specifically, so
+   this overrides `extrahead` (the one block base.html leaves empty right
+   before `</head>`) to add a second, root-relative `<link rel="icon">`
+   matching the one docs/_extra/404.html already hand-writes for the same
+   reason -- html_favicon stays unset in conf.py so Sphinx's own
+   page-relative version is never emitted alongside it. #}
+{% block extrahead %}
+<link rel="icon" type="image/svg+xml" href="/_static/favicon.svg">
+{% endblock %}
 {% block footer %}
 <div class="related-pages">
   {% if next -%}

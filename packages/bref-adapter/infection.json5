@@ -5,6 +5,14 @@
             "src"
         ]
     },
+    // The protocol-boundary suite spins up a real subprocess Runtime API
+    // server per test and includes several deliberately real (not
+    // simulated) timing delays up to 2.5s — the same "a mutant run costs
+    // far more than the 10s default allows" issue already documented and
+    // fixed for kinetis/revolt-http-client, here for the same reason.
+    // Without this, most mutants on lines many of these slow tests cover
+    // report as "timed out" rather than a real kill/escape verdict.
+    "timeout": 60,
     "mutators": {
         "@default": true
     }

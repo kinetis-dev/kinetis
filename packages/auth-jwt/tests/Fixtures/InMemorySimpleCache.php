@@ -6,6 +6,7 @@ namespace Kinetis\AuthJwt\Tests\Fixtures;
 
 use DateInterval;
 use DateTimeImmutable;
+use Kinetis\SimpleCache\AtomicConsumeInterface;
 use Psr\SimpleCache\CacheInterface;
 
 /**
@@ -14,8 +15,13 @@ use Psr\SimpleCache\CacheInterface;
  * stand-in for RedisSimpleCache. Mirrors Kinetis\Tests\Fixtures\InMemorySimpleCache
  * from core's own test suite; duplicated here since satellite packages'
  * autoload-dev can't reach into core's tests/ directory.
+ *
+ * Also implements AtomicConsumeInterface: a single PHP process has
+ * nothing concurrent to race against, so a plain get()-then-delete() is
+ * genuinely atomic here, the same reasoning core's own InMemorySimpleCache
+ * fixture already applies to AtomicCounterInterface.
  */
-final class InMemorySimpleCache implements CacheInterface
+final class InMemorySimpleCache implements CacheInterface, AtomicConsumeInterface
 {
     /** @var array<string, array{value: mixed, expiresAt: ?int}> */
     private array $entries = [];
@@ -23,6 +29,14 @@ final class InMemorySimpleCache implements CacheInterface
     public function get(string $key, mixed $default = null): mixed
     {
         return $this->has($key) ? $this->entries[$key]['value'] : $default;
+    }
+
+    public function consume(string $key, mixed $default = null): mixed
+    {
+        $value = $this->get($key, $default);
+        unset($this->entries[$key]);
+
+        return $value;
     }
 
     public function set(string $key, mixed $value, null|int|DateInterval $ttl = null): bool

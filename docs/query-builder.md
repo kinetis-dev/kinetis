@@ -285,14 +285,15 @@ query bind. And `whereRaw()`, `selectRaw()` or `orderByRaw()` anywhere in
 a query disables inlining for all of it, since raw SQL text may contain a
 `?` that was never meant as a placeholder.
 
-## Operators, directions, and join types are allow-listed
+## Operators, directions, join types, and boolean conjunctions are allow-listed
 
-`where()`'s `$operator`, `orderBy()`'s `$direction`, and `join()`'s
-`$type`/`$operator` are checked against a fixed set — not bound as `?`
-like a value, since none of them can be (SQL doesn't allow a parameter in
-an operator/keyword position), but not passed through unchecked either.
-An unrecognized value throws `InvalidArgumentException` immediately,
-rather than reaching the generated SQL:
+`where()`'s `$operator`, `orderBy()`'s `$direction`, `join()`'s
+`$type`/`$operator`, and `where()`/`whereIn()`/`whereRaw()`'s `$boolean`
+are all checked against a fixed set — not bound as `?` like a value,
+since none of them can be (SQL doesn't allow a parameter in an
+operator/keyword position), but not passed through unchecked either. An
+unrecognized value throws `InvalidArgumentException` immediately, rather
+than reaching the generated SQL:
 
 ```{code-block} php
 ->where('id', '=', 5)      // ok
@@ -304,15 +305,21 @@ rather than reaching the generated SQL:
 
 ->join('customers', 'orders.customer_id', '=', 'customers.id', 'left') // ok
 ->join('customers', 'orders.customer_id', '=', 'customers.id', $type)  // throws unless $type is INNER, LEFT, RIGHT, FULL, or CROSS
+
+->where('active', '=', 1, 'or')            // ok — case-insensitive
+->where('active', '=', 1, $userBoolean)    // throws unless $userBoolean is AND or OR
 ```
 
 This matters specifically because a sortable/filterable API
 (`?sort=name&dir=asc&op=gte`) is exactly the shape that passes a client
 value into one of these slots — every other value or identifier in this
 class is already safe by construction (bound as `?`, or identifier-quoted
-via `Dialect::quoteIdentifier()`), but an operator/direction/join-type is
-neither a value nor a plain identifier, so it needed its own check rather
-than inheriting safety from one of those two existing mechanisms.
+via `Dialect::quoteIdentifier()`), but an operator/direction/join-type/
+boolean is neither a value nor a plain identifier, so each needed its own
+check rather than inheriting safety from one of those two existing
+mechanisms. A generic filter builder that maps a request value straight
+into `$boolean` is exactly as real a risk as the operator/direction case
+above — the same check applies to it.
 
 `whereIn()` with an empty array compiles to a constant-false predicate
 (`1 = 0`) instead of the syntactically invalid `IN ()` both MySQL and

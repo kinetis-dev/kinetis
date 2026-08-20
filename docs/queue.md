@@ -346,8 +346,30 @@ meant to bound, not eliminate outright.
 
 `RedisQueue` has no equivalent parameter — its own reliable-queue design
 (a separate `processing` list, distinct from `pending`) already avoids
-losing a job outright on a crash, but has no reaper for a job stuck in
-`processing` either; that remains its own disclosed, still-open gap.
+losing a job outright on a crash: moving a job between lists (`release()`,
+and delayed-job promotion) runs as a single Lua script, which Redis
+always executes as one indivisible unit, so a process crash can never
+land between the two halves of either move the way it could before.
+`release()`'s move is also conditional, not just indivisible: it only
+writes the replacement onto `pending` when it actually found and removed
+the job from `processing`. Calling `release()` a second time with the
+same `QueuedJob` — a duplicate call, or a retry after a connection
+failure whose server-side outcome wasn't known at the time — throws
+`Kinetis\Queue\Exception\StaleJobHandleException` instead of enqueueing a
+second replacement; `QueueWorker` itself already treats this as a benign
+"already released through another path" outcome rather than letting it
+crash the worker. It still has no reaper for a job stuck in `processing`
+because the worker that popped it crashed before `ack()`/`release()`/
+`fail()` ever ran — that job is stranded, not lost, sitting exactly where
+a future reaper would find it, and closing that gap remains its own
+disclosed, still-open limitation.
+
+Delayed-job promotion also bounds how much it moves in one call
+(`RedisQueue::DELAYED_PROMOTION_BATCH_SIZE`, currently 100) — a large
+ready backlog is promoted in batches across successive polls rather than
+inside one Lua script, since Redis executes one command at a time and an
+unbounded promotion would stall every other client sharing that Redis for
+its full duration.
 
 ## Delayed jobs
 

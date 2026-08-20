@@ -17,4 +17,14 @@ final class RefreshTokenUnavailableException extends RuntimeException
             . 'implementation.',
         );
     }
+
+    public static function notAtomic(): self
+    {
+        return new self(
+            'RefreshTokenStore requires a cache implementing Kinetis\SimpleCache\AtomicConsumeInterface: '
+            . 'redeeming a token by reading it and deleting it in two separate calls lets two concurrent '
+            . 'redeems of the same token both succeed, defeating single use. Kinetis\SimpleCache\RedisSimpleCache '
+            . 'and ClusteredRedisSimpleCache (kinetis/cache-redis) both implement it.',
+        );
+    }
 }

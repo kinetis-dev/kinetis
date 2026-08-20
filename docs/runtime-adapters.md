@@ -182,6 +182,113 @@ configure. It needs one extra dependency beyond what core ships with (for
 parsing file uploads), which is why it's a separate install rather than
 bundled by default.
 
+`Kinetis\BrefAdapter\BrefLambdaAdapter` speaks the Lambda Runtime API
+directly (poll `.../invocation/next`, run the request, post the response
+to `.../invocation/{id}/response`) and converts to/from API Gateway's
+**HTTP API payload format 2.0** event shape — the format a Function URL
+or an HTTP API (as opposed to the older REST API) integration sends.
+ALB and the older REST API's payload format 1.0 aren't handled.
+
+Every field this depends on is validated before an event is ever routed
+— a direct Lambda invocation (not just API Gateway) can carry arbitrary
+JSON, so this is checked, not assumed. `"version": "2.0"` is required
+and checked explicitly, specifically because it's the one field that
+tells a genuine payload-v2 event apart from anything else that happens
+to be shaped similarly — a payload-format-1 event carrying a
+coincidentally (or deliberately) v2-shaped `requestContext.http` would
+otherwise pass a check that only looked at that nested shape.
+`rawPath` and `requestContext.http.method` are required as non-empty
+strings; every other field this adapter reads (`rawQueryString`,
+`headers`, `queryStringParameters`, `body`, `isBase64Encoded`,
+`requestContext.http.sourceIp`, `cookies`) is optional but, when
+present, is checked for the right type — including the exact
+collection shape, not just "is this an array": `headers` and
+`queryStringParameters` must each be a genuine JSON *object* with
+string values (an array-valued entry, or the field being a JSON list
+instead of an object, is rejected), and `cookies` must be a genuine
+JSON *list* of strings (a JSON object — `{"session": "abc"}` rather
+than `["session=abc"]` — is rejected, not silently accepted as a
+one-entry list). This distinction only exists at the raw JSON level:
+`json_decode(..., associative: true)` collapses `{}` and `[]`, and an
+object-valued and a string-valued map entry, into the identical shape
+of plain PHP array — so validation runs against a separate,
+non-associative decode of the same body first, which is the only
+decode mode where a JSON object and a JSON list actually stay
+distinguishable. Anything that fails any of these checks is rejected
+outright, reported to the Runtime API's invocation error endpoint —
+never silently degraded into a plausible-looking request built from
+whichever fields happen to be missing or malformed.
+
+### What's mapped, and how
+
+- **Method, path, query string, and headers** — straight from the
+  event's own `requestContext.http.method`/`rawPath`/`rawQueryString`/
+  `headers`. A purely-numeric header name (`"123"`, valid per RFC 9110 —
+  digits are ordinary token characters) is mapped correctly: PHP's own
+  `json_decode(..., associative: true)` coerces a canonical-integer JSON
+  object key into a real PHP int array key, so it's cast back to a
+  string before reaching PSR-7's `withHeader()`, which requires one.
+  `queryStringParameters` has the identical coercion and no equivalent
+  fix — PHP always coerces a canonical-integer string used as an array
+  *key* back to int, regardless of any cast applied first, unlike a
+  genuine function-argument cast — but this is harmless rather than
+  disclosed as a gap: `withQueryParams()` never rejects an int key the
+  way `withHeader()` rejects an int argument, and PHP's own array-lookup
+  semantics coerce a numeric-string *read* the identical way, so
+  `$request->getQueryParams()['123']` still finds the value regardless
+  of which key type is actually stored.
+- **Cookies** — payload format 2.0 carries these as their own top-level
+  `cookies: string[]` list, never folded into `headers`. Reconstructed
+  into a real `Cookie` header and into `getCookieParams()`, so cookie-
+  and session-based authentication (see {doc}`session`) works the same
+  as it does under FrankenPHP or FPM.
+- **The client's IP address** — `requestContext.http.sourceIp` is
+  mapped to the request's `REMOTE_ADDR` server parameter. Nothing else
+  here has one: every invocation arrives over the Runtime API, not a
+  socket PHP itself accepted, so without this every request would look
+  identical to code reading `REMOTE_ADDR` (`RateLimitMiddleware`'s
+  identifier for one — see {doc}`middleware` — and any per-client
+  logging).
+- **The request body** — a base64-encoded body (`isBase64Encoded: true`)
+  is decoded strictly: invalid base64 throws rather than silently
+  becoming an empty body. `multipart/form-data` and
+  `application/x-www-form-urlencoded` bodies are parsed into
+  `getParsedBody()`/`getUploadedFiles()` the same way core's own
+  adapters parse a form body.
+- **The response body** — checked for valid UTF-8 before being handed
+  to the Runtime API, which receives the whole response as one JSON
+  document. A body that isn't valid UTF-8 (an image, a PDF, any binary
+  payload) is base64-encoded and `isBase64Encoded: true` is set on the
+  payload — API Gateway decodes it again on the way out. A body that's
+  already valid UTF-8 is sent as-is.
+- **Response cookies** — every `Set-Cookie` header value is emitted as
+  its own entry in the payload's `cookies` array, never comma-joined
+  with any other `Set-Cookie` value into one header. This matters
+  because a cookie's own attributes (`Expires`, in particular) already
+  contain a comma, so folding two cookies together the way ordinary
+  repeated headers are folded here would produce a value no client
+  could parse back into distinct cookies.
+
+### What isn't supported
+
+- **Response streaming.** The Runtime API's poll/respond contract is
+  strictly one invocation → one response payload; a controller
+  returning a `Kinetis\Runtime\StreamableResponseInterface` throws
+  immediately rather than silently buffering or dropping the stream.
+  Real Lambda response streaming needs a Function URL configured with
+  `InvokeMode: RESPONSE_STREAM`, a different invocation model this
+  adapter doesn't implement.
+- **ALB and REST API (payload format 1.0) events.** Only the HTTP API's
+  format 2.0 shape is understood — see the event-validation paragraph
+  above for exactly what's checked and how an unsupported or malformed
+  event is reported.
+- **A Runtime API the adapter can't reach.** A poll or a response POST
+  that fails outright (connection refused, a non-2xx status) throws
+  instead of being treated as an empty response — there is no
+  invocation to serve and nothing meaningful to fall back to, so
+  surfacing the failure (visible in CloudWatch as the function
+  erroring) is the correct outcome rather than continuing silently.
+
 ## Writing your own adapter
 
 If you need to target something else entirely, implement this interface

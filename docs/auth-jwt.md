@@ -301,9 +301,13 @@ final readonly class RefreshController
 }
 ```
 
-A refresh token is single-use: `redeem()` deletes it the moment it's
-looked up, valid or not, so the same refresh token can never be
-redeemed twice. `revoke()` invalidates one
+A refresh token is single-use: `redeem()` reads it and deletes it in one
+atomic operation the moment it's looked up, valid or not, so the same
+refresh token can never be redeemed twice — even by two requests racing
+each other, since the cache is required to implement
+`Kinetis\SimpleCache\AtomicConsumeInterface` (both `RedisSimpleCache`
+and `ClusteredRedisSimpleCache` do; construction throws otherwise, the
+same refusal `NullSimpleCache` already gets). `revoke()` invalidates one
 token directly — a "log out this device" action — without needing to
 redeem it first:
 

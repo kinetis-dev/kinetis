@@ -186,4 +186,17 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
             self::assertSame($index + 1, $this->cache->count($key), $key);
         }
     }
+
+    /**
+     * One key, so the script must run on whichever node owns that key's
+     * slot — the same routing the counter test above proves.
+     */
+    public function test_a_key_is_consumed_on_the_node_that_owns_its_slot(): void
+    {
+        $key = 'consume-' . \bin2hex(\random_bytes(6));
+        $this->cache->set($key, 'the-only-copy');
+
+        self::assertSame('the-only-copy', $this->cache->consume($key, 'missed-it'));
+        self::assertSame('missed-it', $this->cache->consume($key, 'missed-it'), 'the key must already be gone');
+    }
 }

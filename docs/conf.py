@@ -59,7 +59,12 @@ html_static_path = ["_static"]
 html_extra_path = ["_extra"]
 html_css_files = ["custom.css"]
 html_logo = "_static/logo.svg"
-html_favicon = "_static/favicon.svg"
+# Deliberately unset, not "_static/favicon.svg": Sphinx always renders
+# html_favicon's <link> with a page-relative pathto() href, with no
+# leading-slash option. docs/_templates/page.html's `extrahead` block
+# emits a root-relative one instead (see its comment for why); the file
+# itself still ships in the build via html_static_path below regardless
+# of html_favicon.
 html_title = "Kinetis"
 
 # The real, deployed URL — required by sphinx-sitemap to build sitemap.xml

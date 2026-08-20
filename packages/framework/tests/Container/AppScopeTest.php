@@ -22,6 +22,7 @@ use Kinetis\Tests\Container\Fixtures\WithOptionalInterfaceDependency;
 use Kinetis\Tests\Container\Fixtures\WithOptionalUnresolvableDependency;
 use Kinetis\Tests\Container\Fixtures\WithRequiredUnresolvableDependency;
 use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
+use Kinetis\SimpleCache\AtomicConsumeInterface;
 use Kinetis\SimpleCache\AtomicCounterInterface;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Kinetis\SimpleCache\UnavailableSimpleCache;
@@ -351,6 +352,7 @@ final class AppScopeTest extends TestCase
         // must fail loudly rather than report a plausible zero.
         yield 'increment' => [static fn (CacheInterface $c): mixed => $c instanceof AtomicCounterInterface ? $c->increment('k', 60) : null];
         yield 'count' => [static fn (CacheInterface $c): mixed => $c instanceof AtomicCounterInterface ? $c->count('k') : null];
+        yield 'consume' => [static fn (CacheInterface $c): mixed => $c instanceof AtomicConsumeInterface ? $c->consume('k') : null];
     }
 
     /**

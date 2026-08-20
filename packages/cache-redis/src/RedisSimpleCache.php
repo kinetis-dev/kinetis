@@ -15,6 +15,7 @@ use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
 use Amp\Serialization\Serializer;
 use Kinetis\SimpleCache\AtomicCounterInterface;
+use Kinetis\SimpleCache\AtomicConsumeInterface;
 use DateInterval;
 use DateTimeImmutable;
 use Psr\SimpleCache\CacheInterface;
@@ -41,7 +42,7 @@ use function Amp\Redis\createRedisClient;
  * deployment (REDIS_CLUSTER=true), which routes each key to whichever
  * node actually owns it instead of one fixed connection.
  */
-final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface
+final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, AtomicConsumeInterface
 {
     public function __construct(
         private readonly RedisClient $client,
@@ -148,6 +149,24 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface
         $value = $this->guard('get', $key, fn () => $this->client->get($key));
 
         return $value === null ? $default : $this->serializer->unserialize($value);
+    }
+
+    /**
+     * GET and DEL in one script, the same shape increment()'s INCR+EXPIRE
+     * already uses — so a value two callers both try to consume is
+     * returned to at most one of them, never both.
+     */
+    #[\Override]
+    public function consume(string $key, mixed $default = null): mixed
+    {
+        self::assertValidKey($key);
+
+        $value = $this->guard('consume', $key, fn () => $this->client->eval(
+            "local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v",
+            [$key],
+        ));
+
+        return $value === null ? $default : $this->serializer->unserialize((string) $value);
     }
 
     #[\Override]

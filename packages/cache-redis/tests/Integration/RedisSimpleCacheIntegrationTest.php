@@ -179,4 +179,43 @@ final class RedisSimpleCacheIntegrationTest extends TestCase
         self::assertSame(\range(1, 25), $values, 'every caller must receive its own value');
         self::assertSame(25, $this->cache->count($key));
     }
+
+    public function test_consume_returns_the_value_and_deletes_the_key(): void
+    {
+        $key = 'consume-' . \bin2hex(\random_bytes(6));
+        $this->cache->set($key, ['claim' => 'once']);
+
+        self::assertSame(['claim' => 'once'], $this->cache->consume($key));
+        self::assertFalse($this->cache->has($key));
+    }
+
+    public function test_consume_on_a_missing_key_returns_the_given_default(): void
+    {
+        self::assertSame('fallback', $this->cache->consume('nope', 'fallback'));
+    }
+
+    /**
+     * The property AtomicConsumeInterface exists for, mirroring
+     * test_concurrent_increments_each_receive_a_distinct_value() above: a
+     * get() then a separate delete() lets concurrent callers both read
+     * the value before either deletes it, so this must never happen —
+     * exactly one of N concurrent consumers may receive the real value.
+     */
+    public function test_concurrent_consumes_of_the_same_key_only_one_receives_the_value(): void
+    {
+        $key = 'consume-race-' . \bin2hex(\random_bytes(6));
+        $this->cache->set($key, 'the-only-copy');
+
+        $tasks = [];
+
+        for ($i = 0; $i < 25; $i++) {
+            $tasks[] = fn (): mixed => $this->cache->consume($key, 'missed-it');
+        }
+
+        $values = \Kinetis\Async\concurrently($tasks);
+
+        self::assertSame(1, \count(\array_filter($values, static fn ($v) => $v === 'the-only-copy')), 'exactly one caller must receive the value');
+        self::assertSame(24, \count(\array_filter($values, static fn ($v) => $v === 'missed-it')), 'every other caller must receive the default');
+        self::assertFalse($this->cache->has($key));
+    }
 }

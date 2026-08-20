@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\AuthJwt;
 
 use Kinetis\AuthJwt\Exception\RefreshTokenUnavailableException;
+use Kinetis\SimpleCache\AtomicConsumeInterface;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
 
@@ -14,11 +15,14 @@ use Psr\SimpleCache\CacheInterface;
  * on every request, so it doesn't reopen the no-storage-lookup reasoning
  * JwtIssuer/JwtAuthMiddleware are built around.
  *
- * Single-use: redeem() deletes a token the moment it's looked up,
- * valid or not. A refresh endpoint
- * pairs redeem() with issuing both a fresh access token (JwtIssuer) and
- * a fresh refresh token (issue() again) — rotating both together rather
- * than reusing the old refresh token.
+ * Single-use: redeem() consumes a token the moment it's looked up, valid
+ * or not, in one atomic operation — reading it and deleting it in two
+ * separate calls would let two concurrent redeems of the same token both
+ * succeed, which is why the cache is required to implement
+ * Kinetis\SimpleCache\AtomicConsumeInterface (see the constructor). A
+ * refresh endpoint pairs redeem() with issuing both a fresh access token
+ * (JwtIssuer) and a fresh refresh token (issue() again) — rotating both
+ * together rather than reusing the old refresh token.
  *
  * revokeAllForUser() uses the same cutoff-timestamp mechanism
  * RevocationStore already uses for access tokens, not an enumerated
@@ -30,18 +34,28 @@ use Psr\SimpleCache\CacheInterface;
  * lifetime any of this user's currently-outstanding refresh tokens
  * could still have; once it elapses, the cutoff itself is forgotten.
  *
- * Built against plain Psr\SimpleCache\CacheInterface. NullSimpleCache is
- * rejected at construction — a store that never stores anything issues
- * unredeemable tokens while appearing to succeed.
+ * Built against plain Psr\SimpleCache\CacheInterface, but requires the
+ * cache to also implement AtomicConsumeInterface — NullSimpleCache is
+ * rejected for issuing unredeemable tokens while appearing to succeed,
+ * and any other cache lacking atomic consume is rejected for advertising
+ * single use while not actually enforcing it under concurrent redeems.
  */
 final readonly class RefreshTokenStore
 {
+    private CacheInterface&AtomicConsumeInterface $atomicCache;
+
     public function __construct(
         private CacheInterface $cache,
     ) {
         if ($cache instanceof NullSimpleCache) {
             throw RefreshTokenUnavailableException::nullCache();
         }
+
+        if (!$cache instanceof AtomicConsumeInterface) {
+            throw RefreshTokenUnavailableException::notAtomic();
+        }
+
+        $this->atomicCache = $cache;
     }
 
     /**
@@ -66,7 +80,6 @@ final readonly class RefreshTokenStore
     public function redeem(string $token): ?array
     {
         $entry = $this->entry($token);
-        $this->cache->delete($this->key($token));
 
         if ($entry === null) {
             return null;
@@ -101,7 +114,11 @@ final readonly class RefreshTokenStore
      */
     private function entry(string $token): ?array
     {
-        $value = $this->cache->get($this->key($token));
+        // Reads and deletes the token in one atomic operation — see the
+        // constructor's AtomicConsumeInterface requirement. A get() then
+        // a separate delete() would let two concurrent redeems of the
+        // same token both read it before either one deletes it.
+        $value = $this->atomicCache->consume($this->key($token));
 
         if (
             !is_array($value)

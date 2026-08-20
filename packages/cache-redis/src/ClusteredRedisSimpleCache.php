@@ -12,6 +12,7 @@ use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
 use Amp\Serialization\Serializer;
 use Kinetis\SimpleCache\AtomicCounterInterface;
+use Kinetis\SimpleCache\AtomicConsumeInterface;
 use DateInterval;
 use DateTimeImmutable;
 use Kinetis\Config\Config;
@@ -36,7 +37,7 @@ use function Kinetis\Async\concurrently;
  * Redis Cluster only ever supports database 0 — REDIS_DATABASE has no
  * equivalent here, unlike RedisSimpleCache's single-node config.
  */
-final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterInterface
+final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterInterface, AtomicConsumeInterface
 {
     private readonly Serializer $serializer;
 
@@ -88,6 +89,23 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
         $value = $this->guard('get', $key, fn (): ?string => $this->topology->nodeForSlot(Crc16::slotFor($key))->get($key));
 
         return $value === null ? $default : $this->serializer->unserialize($value);
+    }
+
+    /**
+     * One key, so the script runs on whichever node owns that key's
+     * slot — the same routing every other operation here uses.
+     */
+    #[\Override]
+    public function consume(string $key, mixed $default = null): mixed
+    {
+        self::assertValidKey($key);
+
+        $value = $this->guard('consume', $key, fn () => $this->topology->nodeForSlot(Crc16::slotFor($key))->eval(
+            "local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v",
+            [$key],
+        ));
+
+        return $value === null ? $default : $this->serializer->unserialize((string) $value);
     }
 
     /**

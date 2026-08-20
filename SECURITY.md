@@ -59,3 +59,24 @@ report (usually much sooner for anything with a working exploit).
   we'll track and update once a fix is available.
 - Findings that require an already-compromised environment or admin
   access to exploit.
+
+## Known Accepted Risks
+
+Some residual risk is accepted by deliberate decision rather than left
+as an oversight. These are documented, not hidden, and a report against
+one of them will be closed as expected behavior unless it demonstrates a
+way past the stated threat model.
+
+- **`kinetis/storage`'s local driver (`AmpFileAdapter`) rejects a
+  symlink below `FILESYSTEM_ROOT` with a check-then-use guard, not a
+  race-free one.** This is *not* covered by the "already-compromised
+  environment" carve-out above — exploiting the gap between the check
+  and the real operation needs only ordinary, concurrent write access to
+  `FILESYSTEM_ROOT` itself (a lower-trust co-tenant process, an unpack
+  step sharing the same directory, ...), not a compromised environment
+  in any other sense. The supported threat model is narrower than that:
+  `FILESYSTEM_ROOT` is a real boundary only when this adapter is the
+  sole writer to it. See
+  [docs.kinetis.dev/storage](https://docs.kinetis.dev/storage.html)'s
+  symlink-checks section for the full decision and the operational
+  mitigation for a deployment that can't guarantee exclusive access.

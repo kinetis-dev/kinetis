@@ -152,6 +152,24 @@ jobs:
         env:
           REDIS_HOST: 127.0.0.1
 
+      - name: Run RedisQueue duplicate-payload check
+        working-directory: packages/queue
+        run: php tests-integration/redis_duplicate_jobs.php
+        env:
+          REDIS_HOST: 127.0.0.1
+
+      - name: Run RedisQueue atomic-transition check
+        working-directory: packages/queue
+        run: php tests-integration/redis_atomic_transitions.php
+        env:
+          REDIS_HOST: 127.0.0.1
+
+      - name: Run RedisQueue bounded delayed-promotion check
+        working-directory: packages/queue
+        run: php tests-integration/redis_bounded_promotion.php
+        env:
+          REDIS_HOST: 127.0.0.1
+
   queue-rabbitmq:
     name: queue-rabbitmq (RabbitMQ, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
