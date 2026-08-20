@@ -97,6 +97,23 @@ disguised PHPUnit test.
   real forced slot reassignment producing a genuine `-MOVED` reply that
   `guard()` must catch, refresh its topology from, and retry — not a
   simulated redirect.
+- **`runtime-conformance`** (matrix: a `dunglas/frankenphp` worker behind
+  Caddy; `php:8.4-fpm-alpine` behind `nginx:alpine`) — the shared runtime
+  adapter conformance suite (`Kinetis\Testing\Runtime`, see
+  {doc}`testing`) against each real SAPI, where the committed framework
+  suite can only spawn `php -S`. The same shape as the local
+  verification: the SAPI serving the conformance fixture (one FrankenPHP
+  container; nginx plus a PHP-FPM container for the FPM leg), and a
+  `php:8.4-cli-alpine` runner on the same Docker network executing
+  `RemoteSuperglobalsConformanceTest` against it, every container
+  mounting the checkout at `/app` so the fixture's state directory is
+  one path on every side. Readiness is the fixture's own
+  `/__conformance/ready` answering 204 through the full adapter path,
+  not a TCP accept — nginx listens before the FPM pool behind it does. Exercises each SAPI's own superglobal population, header
+  folding, client address, form/binary bodies, the `post_max_size` 400,
+  and — timed on the wire — incremental streaming, which is why the
+  nginx fixture sets `fastcgi_buffering off`: with the default on, the
+  stream arrives as one lump and the case fails, as verified.
 - **`pingpong`** — not a package's own real-backend script like every
   job above; the real `docker compose up --build` stack (`app`, `mysql`,
   `redis`, `soketi`, `migrate`, `queue-worker`, `cron`) brought up from
@@ -114,7 +131,7 @@ the service
 container's image and health-check command (`mysqladmin` vs.
 `mariadb-admin`) differ between the two matrix entries.
 
-Every job above except `pingpong` (which exercises a real multi-container
+Every job above except `pingpong` and `runtime-conformance` (each exercises a real multi-container
 stack, not a bare per-package PHP matrix) also runs across PHP 8.4 and
 8.5, the same matrix `ci.yml` uses — real-backend correctness is checked
 against both, not just one.

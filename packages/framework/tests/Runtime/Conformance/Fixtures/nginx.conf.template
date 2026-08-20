@@ -1,0 +1,22 @@
+# nginx in front of PHP-FPM for the conformance fixture — the classic
+# single-entrypoint shape, with two settings the suite depends on.
+# nginx:alpine renders this into conf.d/default.conf at start, with the
+# ${...} variables from the container's environment.
+server {
+    listen ${NGINX_PORT};
+
+    # The suite sends a 1 MiB raw body; nginx's default cap is exactly 1m.
+    client_max_body_size 8m;
+
+    location / {
+        fastcgi_pass ${FPM_UPSTREAM};
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME ${FIXTURE_PATH};
+
+        # Off, or a streamed response is held back until the script ends
+        # and the suite's streaming case fails — correctly: that is what a
+        # buffering proxy does to an SSE stream, and what a real deployment
+        # has to turn off (or send X-Accel-Buffering: no) for one to work.
+        fastcgi_buffering off;
+    }
+}

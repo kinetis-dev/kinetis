@@ -309,21 +309,30 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
 
     /**
      * Asserted in both directions of the driver's declaration. A
-     * streaming environment has to deliver every chunk, in order; one
-     * that can't stream has to refuse the response outright — after the
-     * handler ran, since that is where the adapter first sees it — never
-     * buffer it silently or drop it.
+     * streaming environment has to deliver every chunk, in order, *as it
+     * is written* — the chunks are spaced out on the emitting side, so
+     * a response that arrives whole at the end shows up as near-zero
+     * time between its first and last byte, which is what a buffering
+     * proxy in front of the SAPI produces and exactly what this catches.
+     * One that can't stream has to refuse the response outright — after
+     * the handler ran, since that is where the adapter first sees it —
+     * never buffer it silently or drop it.
      */
     final public function test_a_streamed_response_is_delivered_or_refused_as_the_environment_declares(): void
     {
         $chunks = ['data: 1', "\n\n", 'data: 2', "\n\n"];
-        $spec = new ResponseSpec(200, [['Content-Type', 'text/event-stream']], streamChunks: $chunks);
+        $spec = new ResponseSpec(200, [['Content-Type', 'text/event-stream']], streamChunks: $chunks, streamDelayMs: 300);
         $outcome = $this->dispatch(new WireRequest(), $spec);
 
         if ($this->driver()->supportsStreaming()) {
             $response = $this->wire($outcome);
             self::assertSame(200, $response->status);
             self::assertSame(implode('', $chunks), $response->body);
+            self::assertNotNull($response->bodyArrivalSpanSeconds, 'a streaming driver has to time the body on the wire');
+            // Three 300 ms gaps were written; a generous floor, so a slow
+            // runner can't fail this — only a proxy holding the body
+            // back until the end, which arrives in well under 100 ms.
+            self::assertGreaterThan(0.5, $response->bodyArrivalSpanSeconds, 'the body arrived all at once: something between the adapter and the client is buffering the stream');
 
             return;
         }

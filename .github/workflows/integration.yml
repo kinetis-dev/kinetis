@@ -759,6 +759,102 @@ jobs:
         working-directory: packages/pingpong
         run: docker compose down -v
 
+  runtime-conformance:
+    name: runtime conformance (${{ matrix.sapi.name }})
+    runs-on: ubuntu-latest
+    # The shared runtime conformance suite (Kinetis\Testing\Runtime)
+    # against a real SAPI, not the php -S stand-in the committed framework
+    # suite spawns: a FrankenPHP worker loop behind Caddy, and PHP-FPM
+    # behind nginx. Each SAPI populates superglobals, folds repeated
+    # headers, reports the client address, and streams a response through
+    # its own code — this is the only place that code is exercised.
+    #
+    # The same shape as the local verification: the SAPI under test (one
+    # FrankenPHP container; nginx plus a PHP-FPM container for the FPM
+    # leg), and a php:8.4-cli-alpine runner on the same Docker network
+    # running RemoteSuperglobalsConformanceTest against it. Every
+    # container mounts the checkout at /app, so the fixture's state
+    # directory is the same path on every side.
+    strategy:
+      fail-fast: false
+      matrix:
+        sapi:
+          - name: frankenphp
+          - name: fpm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install framework dependencies
+        run: docker run --rm -v "$PWD":/app -w /app/packages/framework composer:2 install --no-interaction --prefer-dist
+
+      - name: Start the SAPI under test
+        run: |
+          docker network create conformance
+          mkdir -p .conformance-state && chmod 777 .conformance-state
+          FIXTURES=/app/packages/framework/tests/Runtime/Conformance/Fixtures
+          case "${{ matrix.sapi.name }}" in
+            frankenphp)
+              docker run -d --name sapi --network conformance \
+                -v "$PWD":/app \
+                -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
+                -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
+                dunglas/frankenphp:latest \
+                frankenphp php-server --listen :8080 --root "$FIXTURES" --worker "$FIXTURES/index.php"
+              ;;
+            fpm)
+              docker run -d --name fpm --network conformance \
+                -v "$PWD":/app \
+                -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
+                -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
+                php:8.4-fpm-alpine
+              docker run -d --name sapi --network conformance \
+                -v "$PWD":/app:ro \
+                -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/nginx.conf.template":/etc/nginx/templates/default.conf.template:ro \
+                -e NGINX_PORT=8080 -e FPM_UPSTREAM=fpm:9000 -e FIXTURE_PATH="$FIXTURES/index.php" \
+                nginx:alpine
+              ;;
+          esac
+
+      - name: Wait for the fixture to answer through the whole SAPI path
+        # A TCP accept is not readiness: nginx listens before the PHP-FPM
+        # pool behind it does, and the first real request would get a
+        # 502. /__conformance/ready goes through RuntimeDetector, the
+        # adapter's run() loop, the bridge and the fixture's handler, and
+        # answers 204 only once all of that does. The driver polls the
+        # same endpoint itself; this step exists to fail with a clear
+        # message and the SAPI's logs if the stack never comes up.
+        run: |
+          docker run --rm --network conformance php:8.4-cli-alpine php -r '
+            $deadline = microtime(true) + 90; $last = "no connection";
+            while (microtime(true) < $deadline) {
+              if ($s = @stream_socket_client("tcp://sapi:8080", $e, $m, 1)) {
+                stream_set_timeout($s, 2);
+                fwrite($s, "GET /__conformance/ready HTTP/1.1\r\nHost: sapi:8080\r\nConnection: close\r\n\r\n");
+                $line = trim((string) fgets($s)); fclose($s);
+                if (str_starts_with($line, "HTTP/1.1 204") || str_starts_with($line, "HTTP/1.0 204")) { exit(0); }
+                $last = $line !== "" ? $line : "an empty response";
+              }
+              usleep(250000);
+            }
+            fwrite(STDERR, "the fixture never answered /__conformance/ready with 204 (last seen: $last)\n");
+            exit(1);
+          '
+
+      - name: Run the conformance suite against it
+        # KINETIS_CONFORMANCE_CLIENT_IP is the runner container's own
+        # address — what the SAPI reports as REMOTE_ADDR for it.
+        run: |
+          docker run --rm --network conformance -v "$PWD":/app -w /app/packages/framework \
+            -e KINETIS_CONFORMANCE_HOST=sapi:8080 \
+            -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
+            php:8.4-cli-alpine sh -c 'export KINETIS_CONFORMANCE_CLIENT_IP=$(hostname -i); php vendor/bin/phpunit --filter RemoteSuperglobalsConformanceTest'
+
+      - name: SAPI logs
+        if: failure()
+        run: |
+          docker logs sapi 2>&1 | tail -100
+          docker logs fpm 2>&1 | tail -50 || true
+
   search-opensearch:
     name: search-opensearch (OpenSearch, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest

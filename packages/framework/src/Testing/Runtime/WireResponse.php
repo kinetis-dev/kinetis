@@ -17,12 +17,18 @@ final readonly class WireResponse
      * @param list<array{0: string, 1: string}> $headers every header except
      *     Set-Cookie, repeats preserved as separate pairs
      * @param list<string> $setCookies each `Set-Cookie` value on its own
+     * @param float|null $bodyArrivalSpanSeconds seconds between the first
+     *     body byte reaching the client and the last — the only evidence,
+     *     from the receiving side, of whether a streamed response was
+     *     delivered as it was written or held until the end. Null when
+     *     the driver has no wire to time (an in-process payload).
      */
     public function __construct(
         public int $status,
         public array $headers,
         public array $setCookies,
         public string $body,
+        public ?float $bodyArrivalSpanSeconds = null,
     ) {}
 
     /**

@@ -344,12 +344,18 @@ under every adapter and tested there. `Kinetis\Testing\FreePort::reserve()`
 hands a fixture server a port nothing is listening on, so two suites
 spawning servers in one checkout don't collide on a hard-coded number.
 
-What the core runs prove, precisely: the shared bridge under the CLI
-server's superglobal population, and the Lambda conversion in-process.
-A run against a real FrankenPHP worker or PHP-FPM pool — each SAPI's own
-population of headers, client address, body and streaming — is the same
-driver pointed at a container rather than a spawned `php -S`, and is not
-part of the committed suite yet.
+What each run proves, precisely. The committed framework suite spawns
+`php -S` and, through `RuntimeDetector`, runs `FpmAdapter` under the CLI
+server's superglobal population; the bref-adapter suite runs the Lambda
+conversion in-process. The real SAPIs — a FrankenPHP worker loop behind
+Caddy, and PHP-FPM behind nginx — run the identical suite in CI
+(`integration.yml`'s `runtime-conformance` job), the same driver pointed
+at a container instead of a spawned process. That is where each SAPI's
+own population of headers, client address and body, and its own
+streaming path, are exercised; the streaming case times the body as it
+arrives, so a proxy holding a stream back until the end fails it — as
+nginx does with its default `fastcgi_buffering`, which the FPM fixture
+turns off.
 
 ## See also
 

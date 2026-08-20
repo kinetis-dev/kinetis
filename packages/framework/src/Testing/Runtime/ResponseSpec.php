@@ -29,6 +29,10 @@ final readonly class ResponseSpec
      * @param list<string>|null $streamChunks when set, the response is a
      *     {@see StreamedResponse} emitting these in order and $body is
      *     ignored
+     * @param int $streamDelayMs a pause between chunks, so whether the
+     *     environment delivered them as they were written — or held the
+     *     whole body back until the end — shows up as elapsed time on the
+     *     receiving side
      */
     public function __construct(
         public int $status = 200,
@@ -36,6 +40,7 @@ final readonly class ResponseSpec
         public array $setCookies = [],
         public string $body = '',
         public ?array $streamChunks = null,
+        public int $streamDelayMs = 0,
     ) {}
 
     public static function json(int $status, string $body): self
@@ -57,9 +62,22 @@ final readonly class ResponseSpec
 
         if ($this->streamChunks !== null) {
             $chunks = $this->streamChunks;
+            $delayMs = $this->streamDelayMs;
 
-            return new StreamedResponse($response, static function () use ($chunks): void {
-                foreach ($chunks as $chunk) {
+            return new StreamedResponse($response, static function () use ($chunks, $delayMs): void {
+                // flush() pushes the SAPI's buffer, not PHP's own output
+                // buffers — under an output_buffering ini a chunk would
+                // sit in one of those until the script ended. Close them
+                // first, the way any real streaming emitter has to.
+                while (ob_get_level() > 0) {
+                    ob_end_flush();
+                }
+
+                foreach ($chunks as $index => $chunk) {
+                    if ($index > 0 && $delayMs > 0) {
+                        usleep($delayMs * 1_000);
+                    }
+
                     echo $chunk;
                     flush();
                 }
@@ -82,6 +100,7 @@ final readonly class ResponseSpec
             'setCookies' => $this->setCookies,
             'body' => base64_encode($this->body),
             'streamChunks' => $this->streamChunks === null ? null : array_map(base64_encode(...), $this->streamChunks),
+            'streamDelayMs' => $this->streamDelayMs,
         ];
     }
 
@@ -103,6 +122,7 @@ final readonly class ResponseSpec
             $setCookies,
             self::decode((string) $data['body']),
             $chunks === null ? null : array_map(self::decode(...), $chunks),
+            (int) ($data['streamDelayMs'] ?? 0),
         );
     }
 

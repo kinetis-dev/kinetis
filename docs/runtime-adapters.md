@@ -167,6 +167,19 @@ since PHP-FPM doesn't keep anything in memory between requests. See
 {doc}`caching` for what changes about that in production, and why it
 matters more here than under FrankenPHP.
 
+One setting matters for a streamed response (an MCP progress stream,
+any `StreamedResponse`): nginx buffers a FastCGI response by default and
+delivers it whole once the script ends, which turns a stream into a
+delayed lump. Set `fastcgi_buffering off;` in the location that proxies
+to PHP-FPM — or have the response carry `X-Accel-Buffering: no`. The
+conformance suite's FPM run (see {doc}`testing`) fails without it, on
+purpose.
+
+Both this adapter and the FrankenPHP one run the shared runtime
+conformance suite against their real SAPI in CI — a FrankenPHP worker
+behind Caddy, PHP-FPM behind nginx — not only against the `php -S`
+stand-in the committed unit suite uses.
+
 ## Running on AWS Lambda
 
 ````{note}

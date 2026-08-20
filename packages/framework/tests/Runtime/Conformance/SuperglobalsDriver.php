@@ -14,60 +14,87 @@ use Kinetis\Testing\Runtime\WireResponse;
 use RuntimeException;
 
 /**
- * Drives SuperglobalsBridge — the conversion FpmAdapter and
- * FrankenPhpAdapter share — through a real `php -S` process serving
- * Fixtures/conformance-front-controller.php. A real server is not a
- * preference here: `php://input` cannot be fed from inside the test
- * process, and `request_parse_body()`'s failure modes only reproduce in
- * a genuine SAPI request context. What this proves is the bridge under
- * the CLI server's superglobal population; FrankenPHP's own loop stays
- * covered by the real-container smoke test.
+ * Drives the superglobals adapters through a real server serving
+ * Fixtures/index.php. Two ways to get one:
+ *
+ * - {@see spawn()} starts `php -S` itself on a free port — the committed
+ *   suite. A real server is not a preference here: `php://input` cannot
+ *   be fed from inside the test process, and `request_parse_body()`'s
+ *   failure modes only reproduce in a genuine SAPI request context.
+ *   RuntimeDetector picks FpmAdapter under the CLI server, so this is
+ *   the bridge plus FpmAdapter::run(), under `php -S`'s superglobal
+ *   population.
+ * - {@see against()} targets a server something else started — the
+ *   integration job's FrankenPHP worker and nginx+PHP-FPM containers,
+ *   the real SAPIs. The fixture writes each observed request to a
+ *   directory both sides can see, named by the per-dispatch id.
  *
  * Requests go out as hand-written HTTP/1.1 over a socket rather than
  * through the `http://` stream wrapper, so a repeated header and a
- * binary body reach the server byte-exact, and repeated `Set-Cookie`
- * lines come back as separate lines.
+ * binary body reach the server byte-exact, repeated `Set-Cookie` lines
+ * come back as separate lines — and the body can be timed as it
+ * arrives, which is how a streamed response is told apart from one a
+ * proxy held back until the end.
  */
 final class SuperglobalsDriver implements RuntimeAdapterDriver
 {
     /** @var resource|null */
     private $server = null;
 
-    private int $port = 0;
+    private function __construct(
+        private readonly string $hostPort,
+        private readonly string $stateDir,
+        private readonly bool $ownsStateDir,
+        private readonly string $clientIp,
+    ) {}
 
-    private string $stateDir = '';
+    public static function spawn(): self
+    {
+        $stateDir = sys_get_temp_dir() . '/kinetis-conformance-' . bin2hex(random_bytes(8));
+        mkdir($stateDir);
+
+        return new self('127.0.0.1:' . FreePort::reserve(), $stateDir, ownsStateDir: true, clientIp: '127.0.0.1');
+    }
+
+    /**
+     * @param string $stateDir the directory the running server's fixture
+     *     writes to — as this process sees it, which may be a different
+     *     path from the one the server was given
+     * @param string $clientIp the address the server reports as
+     *     REMOTE_ADDR for connections from this process
+     */
+    public static function against(string $hostPort, string $stateDir, string $clientIp): self
+    {
+        return new self($hostPort, $stateDir, ownsStateDir: false, clientIp: $clientIp);
+    }
 
     public function start(): void
     {
-        $this->stateDir = sys_get_temp_dir() . '/kinetis-conformance-' . bin2hex(random_bytes(8));
-        mkdir($this->stateDir);
-        $this->port = FreePort::reserve();
+        if ($this->ownsStateDir) {
+            $server = proc_open(
+                [
+                    'php',
+                    // The same values Fixtures/php-conformance.ini gives the
+                    // containers — see that file for why.
+                    '-d', 'post_max_size=2K',
+                    '-d', 'upload_max_filesize=1K',
+                    '-d', 'output_buffering=0',
+                    '-S', $this->hostPort,
+                    __DIR__ . '/Fixtures/index.php',
+                ],
+                [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes,
+                null,
+                [...getenv(), 'KINETIS_CONFORMANCE_STATE_DIR' => $this->stateDir],
+            );
 
-        $server = proc_open(
-            [
-                'php',
-                // Low enough that the 5 KB body unparseableFormRequest()
-                // sends trips request_parse_body() — the only way the
-                // bridge's own parse-failure path can be reached — and
-                // high enough that the suite's ordinary multipart bodies
-                // (a few hundred bytes) parse normally. The SAPI drops
-                // $_POST silently past post_max_size, with no exception.
-                '-d', 'post_max_size=2K',
-                '-d', 'upload_max_filesize=1K',
-                '-S', "127.0.0.1:{$this->port}",
-                __DIR__ . '/Fixtures/conformance-front-controller.php',
-            ],
-            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $pipes,
-            null,
-            [...getenv(), 'KINETIS_CONFORMANCE_STATE_DIR' => $this->stateDir],
-        );
+            if ($server === false) {
+                throw new RuntimeException('Could not start the conformance fixture server.');
+            }
 
-        if ($server === false) {
-            throw new RuntimeException('Could not start the conformance fixture server.');
+            $this->server = $server;
         }
 
-        $this->server = $server;
         $this->waitForServerReady();
     }
 
@@ -79,11 +106,11 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
             $this->server = null;
         }
 
-        foreach (glob($this->stateDir . '/*') ?: [] as $file) {
+        foreach (glob($this->stateDir . '/*.json') ?: [] as $file) {
             unlink($file);
         }
 
-        if ($this->stateDir !== '' && is_dir($this->stateDir)) {
+        if ($this->ownsStateDir && is_dir($this->stateDir)) {
             rmdir($this->stateDir);
         }
     }
@@ -92,21 +119,7 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     public function dispatch(WireRequest $request, ResponseSpec $response): Outcome
     {
         $id = bin2hex(random_bytes(16));
-        $raw = $this->rawHttpRequest($request, $response, $id);
-
-        $socket = @stream_socket_client("tcp://127.0.0.1:{$this->port}", $errno, $errstr, 5.0);
-
-        if ($socket === false) {
-            throw new RuntimeException("Could not connect to the conformance fixture server: {$errstr} ({$errno})");
-        }
-
-        fwrite($socket, $raw);
-        $wire = stream_get_contents($socket);
-        fclose($socket);
-
-        if ($wire === false || $wire === '') {
-            throw new RuntimeException('The conformance fixture server closed the connection without a response.');
-        }
+        [$wire, $span] = $this->exchange($this->rawHttpRequest($request, $response, $id));
 
         $observedFile = "{$this->stateDir}/{$id}.json";
         $observed = null;
@@ -118,14 +131,13 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
             unlink($observedFile);
         }
 
-        return new Outcome($observed, self::parseResponse($wire));
+        return new Outcome($observed, self::parseResponse($wire, $span));
     }
 
     #[\Override]
     public function expectedClientIp(): string
     {
-        // A real TCP connection from this process to the fixture server.
-        return '127.0.0.1';
+        return $this->clientIp;
     }
 
     #[\Override]
@@ -137,10 +149,10 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     #[\Override]
     public function unparseableFormRequest(): WireRequest
     {
-        // Far past the fixture server's post_max_size=2K. PUT, not POST:
-        // the SAPI handles an oversized POST body itself (an empty $_POST
-        // and a warning, no exception), whereas PUT reaches
-        // request_parse_body(), the one call in the bridge that can throw.
+        // Far past post_max_size=2K. PUT, not POST: the SAPI handles an
+        // oversized POST body itself (an empty $_POST and a warning, no
+        // exception), whereas PUT reaches request_parse_body(), the one
+        // call in the bridge that can throw.
         return new WireRequest(
             'PUT',
             '/',
@@ -149,12 +161,104 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
         );
     }
 
+    /**
+     * Sends $raw and reads the whole response, timing the body: the
+     * seconds between the read that delivered the first body byte and
+     * the read that delivered the last one. Not "until the connection
+     * closed" — a server that buffers the whole body and then sits on
+     * the FIN would look like a slow stream by that measure; the last
+     * *body-bearing* read is what says when the bytes actually arrived.
+     *
+     * @return array{0: string, 1: ?float}
+     */
+    private function exchange(string $raw): array
+    {
+        $socket = @stream_socket_client("tcp://{$this->hostPort}", $errno, $errstr, 5.0);
+
+        if ($socket === false) {
+            throw new RuntimeException("Could not connect to the conformance fixture server at {$this->hostPort}: {$errstr} ({$errno})");
+        }
+
+        stream_set_timeout($socket, 15);
+        self::writeAll($socket, $raw);
+
+        $wire = '';
+        $bodyStartsAt = null;
+        $firstBodyReadAt = null;
+        $lastBodyReadAt = null;
+
+        while (!feof($socket)) {
+            $chunk = fread($socket, 65_536);
+
+            if ($chunk === false || $chunk === '') {
+                $meta = stream_get_meta_data($socket);
+
+                if ($meta['timed_out']) {
+                    throw new RuntimeException('Timed out reading from the conformance fixture server.');
+                }
+
+                continue;
+            }
+
+            $wire .= $chunk;
+
+            if ($bodyStartsAt === null) {
+                $separator = strpos($wire, "\r\n\r\n");
+
+                if ($separator !== false) {
+                    $bodyStartsAt = $separator + 4;
+                }
+            }
+
+            if ($bodyStartsAt !== null && strlen($wire) > $bodyStartsAt) {
+                $now = microtime(true);
+                $firstBodyReadAt ??= $now;
+                $lastBodyReadAt = $now;
+            }
+        }
+
+        fclose($socket);
+
+        if ($wire === '') {
+            throw new RuntimeException('The conformance fixture server closed the connection without a response.');
+        }
+
+        return [$wire, $firstBodyReadAt === null || $lastBodyReadAt === null ? null : $lastBodyReadAt - $firstBodyReadAt];
+    }
+
+    /**
+     * A socket write can be partial — a 1 MiB request body will not go
+     * out in one fwrite() — so keep writing until every byte has, or say
+     * so rather than let a truncated request masquerade as an adapter
+     * failure.
+     *
+     * @param resource $socket
+     */
+    private static function writeAll($socket, string $data): void
+    {
+        $offset = 0;
+        $length = strlen($data);
+
+        while ($offset < $length) {
+            $written = fwrite($socket, substr($data, $offset));
+
+            if ($written === false || $written === 0) {
+                $meta = stream_get_meta_data($socket);
+                $reason = $meta['timed_out'] ? 'timed out' : 'the write failed';
+
+                throw new RuntimeException("Could not send the full request to the conformance fixture server: {$reason} after {$offset} of {$length} bytes.");
+            }
+
+            $offset += $written;
+        }
+    }
+
     private function rawHttpRequest(WireRequest $request, ResponseSpec $response, string $id): string
     {
         $target = $request->path . ($request->queryString !== '' ? '?' . $request->queryString : '');
         $lines = [
             "{$request->method} {$target} HTTP/1.1",
-            "Host: 127.0.0.1:{$this->port}",
+            "Host: {$this->hostPort}",
             'Connection: close',
             "X-Conformance-Id: {$id}",
             'X-Conformance-Response: ' . base64_encode(json_encode($response->toArray(), JSON_THROW_ON_ERROR)),
@@ -180,7 +284,7 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
         return implode("\r\n", $lines) . "\r\n\r\n" . $request->body;
     }
 
-    private static function parseResponse(string $wire): WireResponse
+    private static function parseResponse(string $wire, ?float $bodyArrivalSpan): WireResponse
     {
         $separator = strpos($wire, "\r\n\r\n");
 
@@ -217,13 +321,13 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
             $headers[] = [$name, $value];
         }
 
-        return new WireResponse((int) $matches[1], $headers, $setCookies, $chunked ? self::dechunk($body) : $body);
+        return new WireResponse((int) $matches[1], $headers, $setCookies, $chunked ? self::dechunk($body) : $body, $bodyArrivalSpan);
     }
 
     /**
-     * The built-in server streams a flushed, length-less body as HTTP/1.1
-     * chunked transfer coding; the suite wants the bytes the client would
-     * see after its own decoding.
+     * A flushed, length-less body goes out as HTTP/1.1 chunked transfer
+     * coding; the suite wants the bytes the client would see after its
+     * own decoding.
      */
     private static function dechunk(string $body): string
     {
@@ -251,22 +355,36 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
         return $out;
     }
 
+    /**
+     * Ready means the fixture answers through the whole path — not that
+     * something accepted a TCP connection, which nginx does before the
+     * PHP-FPM pool behind it is up (a 502 for the first real request).
+     * Polls the fixture's own /__conformance/ready until it says 204.
+     */
     private function waitForServerReady(): void
     {
-        $deadline = microtime(true) + 5.0;
+        $deadline = microtime(true) + 30.0;
+        $lastSeen = 'no connection';
 
         while (microtime(true) < $deadline) {
-            $socket = @stream_socket_client("tcp://127.0.0.1:{$this->port}", timeout: 0.1);
+            $socket = @stream_socket_client("tcp://{$this->hostPort}", timeout: 1.0);
 
             if ($socket !== false) {
+                stream_set_timeout($socket, 2);
+                self::writeAll($socket, "GET /__conformance/ready HTTP/1.1\r\nHost: {$this->hostPort}\r\nConnection: close\r\n\r\n");
+                $statusLine = (string) fgets($socket);
                 fclose($socket);
 
-                return;
+                if (str_starts_with($statusLine, 'HTTP/1.1 204') || str_starts_with($statusLine, 'HTTP/1.0 204')) {
+                    return;
+                }
+
+                $lastSeen = trim($statusLine) !== '' ? trim($statusLine) : 'an empty response';
             }
 
-            usleep(20_000);
+            usleep(100_000);
         }
 
-        throw new RuntimeException("The conformance fixture server at 127.0.0.1:{$this->port} never started accepting connections.");
+        throw new RuntimeException("The conformance fixture at {$this->hostPort} never answered /__conformance/ready with 204 (last seen: {$lastSeen}).");
     }
 }

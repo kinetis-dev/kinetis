@@ -8,10 +8,11 @@ use Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase;
 use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
 
 /**
- * The shared conformance suite run against SuperglobalsBridge — see
- * {@see SuperglobalsDriver} for what that proves and what it doesn't.
- * One fixture server for the whole class; each dispatch is its own
- * HTTP request.
+ * The shared conformance suite against the superglobals adapters under a
+ * spawned `php -S` — see {@see SuperglobalsDriver} for what that proves
+ * and what it doesn't. The real SAPIs run the same suite through
+ * {@see RemoteSuperglobalsConformanceTest}. One fixture server for the
+ * whole class; each dispatch is its own HTTP request.
  */
 final class SuperglobalsConformanceTest extends RuntimeAdapterConformanceTestCase
 {
@@ -19,7 +20,7 @@ final class SuperglobalsConformanceTest extends RuntimeAdapterConformanceTestCas
 
     public static function setUpBeforeClass(): void
     {
-        self::$driver = new SuperglobalsDriver();
+        self::$driver = SuperglobalsDriver::spawn();
         self::$driver->start();
     }
 
