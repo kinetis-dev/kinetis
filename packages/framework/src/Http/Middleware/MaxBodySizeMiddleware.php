@@ -30,8 +30,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  *
  * Only the raw #[Body] JSON path is guarded this way. A
  * multipart/form-data or application/x-www-form-urlencoded body is
- * already parsed by the SAPI before Kinetis code reads it, bounded by
- * PHP's own upload_max_filesize/post_max_size instead.
+ * parsed before Kinetis code reads it — by the SAPI under FrankenPHP and
+ * FPM, bounded by PHP's own upload_max_filesize/post_max_size; by the
+ * adapter itself under kinetis/bref-adapter, where no SAPI limit exists
+ * and the only cap is the platform's own invocation payload size (6 MB
+ * on AWS Lambda).
  *
  * Resolved through the container (see Kernel), so $maxBytes is read once
  * per worker boot from Config, not re-read on every request.

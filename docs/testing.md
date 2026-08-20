@@ -266,8 +266,95 @@ $router->register(OrderController::class);
 $client = TestApplication::withRouter($router)->client();
 ```
 
+## Conformance-testing a runtime adapter
+
+A runtime adapter turns whatever its environment delivers — superglobals
+and `php://input`, an API Gateway event — into a PSR-7 request, and turns
+the PSR-7 response back. Two adapters built through different code have
+to agree on what that conversion means: which header a repeated header
+becomes, where cookies end up, that a `PUT` or `PATCH` form body parses
+the same as a `POST` one (url-encoded and multipart alike), that the
+declared `Content-Length` and a large body both arrive intact, that a
+binary body arrives byte for byte, that two `Set-Cookie` headers leave
+as two cookies, what happens to a body the environment cannot parse. `Kinetis\Testing\Runtime` expresses each of
+those once, as a PHPUnit base class, and runs the whole list against any
+adapter that provides a driver:
+
+```{code-block} php
+use Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase;
+use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
+
+final class SwooleConformanceTest extends RuntimeAdapterConformanceTestCase
+{
+    protected function driver(): RuntimeAdapterDriver
+    {
+        return new SwooleDriver();
+    }
+}
+```
+
+The driver is the only adapter-specific code. It pushes one
+`WireRequest` (method, path, query string, headers as repeatable pairs,
+cookies, raw body) through the adapter, has the handler answer with the
+given `ResponseSpec`, and reports an `Outcome`: the `ObservedRequest`
+the handler saw (`null` if the adapter never reached it) and the
+`WireResponse` the environment received — or an `AdapterRejection`, when
+the adapter refused outright.
+
+```{code-block} php
+interface RuntimeAdapterDriver
+{
+    public function dispatch(WireRequest $request, ResponseSpec $response): Outcome;
+    public function expectedClientIp(): string;
+    public function supportsStreaming(): bool;
+    public function unparseableFormRequest(): WireRequest;
+}
+```
+
+The last three are facts the environment decides, not the test: the
+address it reports as `REMOTE_ADDR` (a real socket's peer for a SAPI,
+whatever the driver injects as `sourceIp` for Lambda), whether a
+`StreamedResponse` can reach the client incrementally, and what a form
+body it cannot parse looks like (past `post_max_size` for a SAPI; no
+usable boundary for an adapter that parses the body itself). The suite
+asserts against the declaration either way — a streaming environment
+must deliver every chunk in order, a non-streaming one must refuse the
+response rather than buffer it — so every method runs on every adapter.
+Nothing is skipped.
+
+The core adapters run this suite themselves. `SuperglobalsBridge`, which
+`FpmAdapter` and `FrankenPhpAdapter` share, is driven through a real
+`php -S` process (the only way `php://input` and `request_parse_body()`
+see a genuine request); `kinetis/bref-adapter` drives
+`BrefLambdaAdapter::handleEvent()` in-process, building the event the
+way API Gateway would. Read either driver for a worked example —
+`Kinetis\Tests\Runtime\Conformance\SuperglobalsDriver` in the framework
+package, `Kinetis\BrefAdapter\Tests\Conformance\LambdaDriver` in the
+adapter's.
+
+Only behavior every environment can exhibit belongs in the shared suite.
+An input one environment alone can produce — a base64-flagged event
+body, an absent client address — is that adapter's own test to write,
+alongside the conformance run; the suite's public assertion helpers
+(`assertMalformedBodyResponse()`) hold that input to the same contract
+the shared cases use, so the *outcome* stays unified even where the
+*trigger* can't be. The byte cap on a request body is not the adapter's
+to test — it is `MaxBodySizeMiddleware`'s, in the Kernel, identical
+under every adapter and tested there. `Kinetis\Testing\FreePort::reserve()`
+hands a fixture server a port nothing is listening on, so two suites
+spawning servers in one checkout don't collide on a hard-coded number.
+
+What the core runs prove, precisely: the shared bridge under the CLI
+server's superglobal population, and the Lambda conversion in-process.
+A run against a real FrankenPHP worker or PHP-FPM pool — each SAPI's own
+population of headers, client address, body and streaming — is the same
+driver pointed at a container rather than a spawned `php -S`, and is not
+part of the committed suite yet.
+
 ## See also
 
+- {doc}`runtime-adapters` — the adapters this suite holds to one
+  contract, and how to write your own.
 - {doc}`routing-validation` — the routes and DTOs these requests target.
 - {doc}`container` — `AppScope` and the binding rules a booted
   application follows.

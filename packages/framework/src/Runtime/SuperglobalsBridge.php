@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Runtime;
 
+use Kinetis\Http\Responses\ErrorResponse;
 use Nyholm\Psr7\Factory\Psr17Factory;
-use Nyholm\Psr7\Response;
 use Nyholm\Psr7Server\ServerRequestCreator;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -49,11 +49,7 @@ final class SuperglobalsBridge
             // the client, since it may echo back a fragment of
             // attacker-controlled input.
             error_log('Malformed request body: ' . $e->getMessage());
-            self::emit(new Response(
-                status: 400,
-                headers: ['Content-Type' => 'application/json'],
-                body: json_encode(['error' => 'The request body could not be parsed.'], JSON_THROW_ON_ERROR),
-            ));
+            self::emit(ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE));
 
             return;
         }

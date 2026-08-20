@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\BrefAdapter;
 
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
+use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
+use Kinetis\Http\Responses\ErrorResponse;
+use LogicException;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Runtime\StreamableResponseInterface;
@@ -114,8 +117,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
                 // and not silently downgraded into an empty, plausible-
                 // looking GET / that reaches application routing either.
                 $event = self::decodeInvocationEvent($rawBody);
-                $response = $handler(self::requestFromEvent($event));
-                $this->postResponse($requestId, self::responseToPayload($response));
+                $this->postResponse($requestId, self::handleEvent($event, $handler));
             } catch (Throwable $e) {
                 $this->postError($requestId, $e);
             }
@@ -126,6 +128,40 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     public function isPersistent(): bool
     {
         return true;
+    }
+
+    /**
+     * One invocation, from a decoded event to the payload to post back:
+     * the Lambda counterpart of SuperglobalsBridge::handle(), and like it
+     * the one place the failure that happens *before* $handler is turned
+     * into a response. A body the adapter cannot parse — invalid base64,
+     * a multipart body with no usable boundary — is the client's
+     * mistake, answered with the same 400 every other adapter gives,
+     * not an invocation error (which API Gateway renders as a 502, with
+     * the real message in CloudWatch only). Anything else escapes to
+     * run()'s postError() as before.
+     *
+     * Public so the runtime conformance suite can drive exactly the code
+     * run() drives, without a Runtime API in the loop.
+     *
+     * @param array<string,mixed> $event
+     * @param callable(ServerRequestInterface): ResponseInterface $handler
+     * @return array{statusCode:int,headers:array<string,string>,cookies:list<string>,body:string,isBase64Encoded:bool}
+     */
+    public static function handleEvent(array $event, callable $handler): array
+    {
+        try {
+            $request = self::requestFromEvent($event);
+        } catch (MalformedRequestBodyException $e) {
+            // Logged, never returned — the same policy as
+            // SuperglobalsBridge::handle(): the message may carry a
+            // fragment of attacker-controlled input.
+            error_log('Malformed request body: ' . $e->getMessage());
+
+            return self::responseToPayload(ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE));
+        }
+
+        return self::responseToPayload($handler($request));
     }
 
     /**
@@ -253,7 +289,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         $decoded = base64_decode($body, strict: true);
 
         if ($decoded === false) {
-            throw BrefAdapterException::malformedBase64Body();
+            throw MalformedRequestBodyException::invalidBase64();
         }
 
         return $decoded;
@@ -387,7 +423,17 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         $fields = [];
         $files = [];
 
-        foreach ((new StreamedPart($stream))->getParts() as $part) {
+        // riverline reports an unusable body — no boundary it can find,
+        // a truncated part — as a LogicException. Without this it would
+        // escape to run()'s generic catch and be posted as an invocation
+        // error, a 502 for what is a malformed client request.
+        try {
+            $parts = (new StreamedPart($stream))->getParts();
+        } catch (LogicException $e) {
+            throw MalformedRequestBodyException::unparseableMultipart($e->getMessage());
+        }
+
+        foreach ($parts as $part) {
             $name = $part->getName();
 
             if ($name === null) {

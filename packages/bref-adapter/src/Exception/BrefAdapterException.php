@@ -22,19 +22,6 @@ final class BrefAdapterException extends RuntimeException
         return new self('Failed to open a php://temp stream to parse a multipart body.');
     }
 
-    /**
-     * The event declared isBase64Encoded: true but $body isn't valid
-     * base64 — reported rather than silently treated as an empty body,
-     * which would otherwise be indistinguishable from a genuinely empty
-     * one and from the valid decoded values "" and "0".
-     */
-    public static function malformedBase64Body(): self
-    {
-        return new self(
-            'The Lambda event declared isBase64Encoded: true, but the body is not valid base64.',
-        );
-    }
-
     public static function runtimeApiUnreachable(string $url): self
     {
         return new self("Could not reach the Lambda Runtime API at {$url}.");

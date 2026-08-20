@@ -250,11 +250,19 @@ whichever fields happen to be missing or malformed.
   identifier for one — see {doc}`middleware` — and any per-client
   logging).
 - **The request body** — a base64-encoded body (`isBase64Encoded: true`)
-  is decoded strictly: invalid base64 throws rather than silently
-  becoming an empty body. `multipart/form-data` and
+  is decoded strictly: invalid base64 is answered with a `400` rather
+  than silently becoming an empty body. `multipart/form-data` and
   `application/x-www-form-urlencoded` bodies are parsed into
   `getParsedBody()`/`getUploadedFiles()` the same way core's own
-  adapters parse a form body.
+  adapters parse a form body, and a multipart body with no usable
+  boundary gets the same `400` — the identical response, with the
+  identical fixed message, `SuperglobalsBridge` gives a body
+  `request_parse_body()` rejects under FrankenPHP or FPM. Either way
+  the real reason is logged, never returned, and the handler never
+  runs. There is no SAPI here to enforce `post_max_size`: the only cap
+  on a form body is Lambda's own invocation payload limit (6 MB).
+  `MaxBodySizeMiddleware`'s cap on a raw JSON body applies as
+  everywhere else.
 - **The response body** — checked for valid UTF-8 before being handed
   to the Runtime API, which receives the whole response as one JSON
   document. A body that isn't valid UTF-8 (an image, a PDF, any binary
@@ -314,6 +322,15 @@ interface RuntimeAdapterInterface
 `isPersistent()` tells Kinetis whether to force a memory cleanup pass at
 the end of every request — worth doing in a long-running process, pure
 waste in one that's about to exit anyway.
+
+Then hold it to the same contract as the built-in ones: implement a
+`Kinetis\Testing\Runtime\RuntimeAdapterDriver` for it and extend
+`RuntimeAdapterConformanceTestCase` — see {doc}`testing`. Every behavior
+the core adapters agree on (how a repeated header folds, where cookies
+land, form and binary bodies, response cookies, streaming, the `400` for
+a body the environment can't parse — whose fixed message is
+`RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE`) runs against yours
+with no further test code.
 
 You can also construct any adapter directly if you want to force a
 specific one instead of relying on automatic detection:

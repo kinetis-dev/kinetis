@@ -18,6 +18,15 @@ use Psr\Http\Message\ServerRequestInterface;
 interface RuntimeAdapterInterface
 {
     /**
+     * The one message a client sees for a request body the environment
+     * could not parse — fixed, and silent about the input, which may be
+     * attacker-controlled. Every adapter answers a parse failure with a
+     * 400 carrying this message; the runtime conformance suite
+     * (`Kinetis\Testing\Runtime`) holds them to it.
+     */
+    public const string MALFORMED_BODY_MESSAGE = 'The request body could not be parsed.';
+
+    /**
      * Start the execution loop (persistent runtimes) or process the single
      * pending request/event (boot-and-die runtimes), invoking $handler once
      * per request with the PSR-7 request that arrived and emitting whatever
