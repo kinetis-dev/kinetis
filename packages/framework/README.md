@@ -87,7 +87,7 @@ Kinetis talks to, not an assumption baked into the framework itself.
 composer require kinetis/framework
 ```
 
-Requires PHP 8.4 or later. See the [Tutorial](https://docs.kinetis.dev/tutorial.html)
+Requires PHP 8.4 or later. See the [Tutorial](https://kinetis.dev/docs/tutorial.html)
 for a complete walkthrough, including running under FrankenPHP.
 
 ## Configuration
@@ -106,7 +106,7 @@ via `Kinetis\Config`:
 
 Each package documents its own keys (`DB_*`, `REDIS_*`, `QUEUE_*`, ...)
 in its own README; the full reference across every package is at
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 ## Packages
 
@@ -115,25 +115,25 @@ dependencies:
 
 | Package | What it adds |
 |---|---|
-| [`kinetis/persistence`](https://docs.kinetis.dev/persistence.html) | Request-scoped SQL transaction safety net (`TransactionGuard`) and connection-pool factory for MySQL/Postgres |
-| [`kinetis/cache-redis`](https://docs.kinetis.dev/persistence.html) | Redis-backed PSR-16 `CacheInterface` — single-node, Cluster, and TLS |
-| [`kinetis/auth`](https://docs.kinetis.dev/auth.html) | Opaque Bearer-token authentication middleware |
-| [`kinetis/auth-jwt`](https://docs.kinetis.dev/auth-jwt.html) | Stateless JWT authentication (HS256/RS256), with optional per-token revocation |
-| [`kinetis/migrations`](https://docs.kinetis.dev/migrations.html) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
-| [`kinetis/query-builder`](https://docs.kinetis.dev/query-builder.html) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |
-| [`kinetis/queue`](https://docs.kinetis.dev/queue.html) | A backend-agnostic background job queue — Redis and SQL backends included |
-| [`kinetis/queue-sqs`](https://docs.kinetis.dev/queue-sqs.html) | An Amazon SQS backend for `kinetis/queue` — non-blocking via `kinetis/revolt-http-client` |
-| [`kinetis/storage`](https://docs.kinetis.dev/storage.html) | File storage on `League\Flysystem` — a genuinely non-blocking, `Amp\File`-backed local adapter |
-| [`kinetis/storage-s3`](https://docs.kinetis.dev/storage-s3.html) | S3 (and S3-compatible) storage for `kinetis/storage`'s `FILESYSTEM_DRIVER=s3` — non-blocking via `kinetis/revolt-http-client` |
-| [`kinetis/mailer`](https://docs.kinetis.dev/mailer.html) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via `kinetis/revolt-http-client` |
-| [`kinetis/revolt-http-client`](https://docs.kinetis.dev/revolt-http-client.html) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
+| [`kinetis/persistence`](https://kinetis.dev/docs/persistence.html) | Request-scoped SQL transaction safety net (`TransactionGuard`) and connection-pool factory for MySQL/Postgres |
+| [`kinetis/cache-redis`](https://kinetis.dev/docs/persistence.html) | Redis-backed PSR-16 `CacheInterface` — single-node, Cluster, and TLS |
+| [`kinetis/auth`](https://kinetis.dev/docs/auth.html) | Opaque Bearer-token authentication middleware |
+| [`kinetis/auth-jwt`](https://kinetis.dev/docs/auth-jwt.html) | Stateless JWT authentication (HS256/RS256), with optional per-token revocation |
+| [`kinetis/migrations`](https://kinetis.dev/docs/migrations.html) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
+| [`kinetis/query-builder`](https://kinetis.dev/docs/query-builder.html) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |
+| [`kinetis/queue`](https://kinetis.dev/docs/queue.html) | A backend-agnostic background job queue — Redis and SQL backends included |
+| [`kinetis/queue-sqs`](https://kinetis.dev/docs/queue-sqs.html) | An Amazon SQS backend for `kinetis/queue` — non-blocking via `kinetis/revolt-http-client` |
+| [`kinetis/storage`](https://kinetis.dev/docs/storage.html) | File storage on `League\Flysystem` — a genuinely non-blocking, `Amp\File`-backed local adapter |
+| [`kinetis/storage-s3`](https://kinetis.dev/docs/storage-s3.html) | S3 (and S3-compatible) storage for `kinetis/storage`'s `FILESYSTEM_DRIVER=s3` — non-blocking via `kinetis/revolt-http-client` |
+| [`kinetis/mailer`](https://kinetis.dev/docs/mailer.html) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via `kinetis/revolt-http-client` |
+| [`kinetis/revolt-http-client`](https://kinetis.dev/docs/revolt-http-client.html) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
 | `kinetis/bref-adapter` | AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs |
 
 ## Documentation
 
-The full documentation is hosted at [docs.kinetis.dev](https://docs.kinetis.dev/)
-— start with the [Tutorial](https://docs.kinetis.dev/tutorial.html)
-or [Core Concepts](https://docs.kinetis.dev/core-concepts.html).
+The full documentation is hosted at [kinetis.dev/docs](https://kinetis.dev/docs/)
+— start with the [Tutorial](https://kinetis.dev/docs/tutorial.html)
+or [Core Concepts](https://kinetis.dev/docs/core-concepts.html).
 
 ## Development
 

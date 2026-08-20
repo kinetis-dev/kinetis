@@ -63,7 +63,7 @@ composer require kinetis/aws-sigv4
 ```
 
 Requires PHP 8.4+ and `kinetis/revolt-http-client`. Full documentation:
-[docs.kinetis.dev/aws-sigv4.html](https://docs.kinetis.dev/aws-sigv4.html).
+[kinetis.dev/docs/aws-sigv4.html](https://kinetis.dev/docs/aws-sigv4.html).
 
 ## License
 

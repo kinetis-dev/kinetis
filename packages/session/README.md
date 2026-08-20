@@ -85,7 +85,7 @@ composer require kinetis/session
 ```
 
 Requires PHP 8.4+. Full documentation:
-[docs.kinetis.dev/session.html](https://docs.kinetis.dev/session.html).
+[kinetis.dev/docs/session.html](https://kinetis.dev/docs/session.html).
 
 ## License
 

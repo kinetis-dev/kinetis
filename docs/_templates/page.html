@@ -3,18 +3,21 @@
    that one line -- keep this in sync if Furo's own template changes. #}
 {% extends "!page.html" %}
 {#- Furo's base.html emits the favicon link itself from `favicon_url`,
-   which Sphinx always computes as a page-relative path (`_static/...`
-   here, `../_static/...` for a page one level deeper) via `pathto()` --
-   there's no conf.py setting that makes it root-relative instead. Google
-   Search's own favicon documentation gives a leading-slash path
-   (`/smile.ico`) as its example and checks the home page specifically, so
-   this overrides `extrahead` (the one block base.html leaves empty right
-   before `</head>`) to add a second, root-relative `<link rel="icon">`
-   matching the one docs/_extra/404.html already hand-writes for the same
-   reason -- html_favicon stays unset in conf.py so Sphinx's own
-   page-relative version is never emitted alongside it. #}
+   which requires html_favicon to name a file this build ships -- the
+   docs site has no favicon of its own, it reuses kinetis-website's,
+   which lives outside this build entirely (html_favicon has no way to
+   reference a URL, only a local file path html_static_path can copy).
+   This overrides `extrahead` (the one block base.html leaves empty right
+   before `</head>`) to add a single, site-root-relative `<link
+   rel="icon">` pointing at it instead, matching the one
+   docs/_extra/404.html already hand-writes for the same reason --
+   html_favicon stays unset in conf.py so Sphinx never tries to emit its
+   own. The docs site lives under kinetis-website's own /docs/ prefix, not
+   at a domain root, so this has to be the site root (/assets/...), not a
+   /docs/-prefixed path -- the favicon is one of kinetis-website's own
+   assets, not one of this build's. #}
 {% block extrahead %}
-<link rel="icon" type="image/svg+xml" href="/_static/favicon.svg">
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 {% endblock %}
 {% block footer %}
 <div class="related-pages">

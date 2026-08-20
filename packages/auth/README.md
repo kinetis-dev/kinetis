@@ -54,7 +54,7 @@ composer require kinetis/auth
 ```
 
 Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
-[docs.kinetis.dev/auth.html](https://docs.kinetis.dev/auth.html).
+[kinetis.dev/docs/auth.html](https://kinetis.dev/docs/auth.html).
 
 ## License
 

@@ -32,7 +32,7 @@ composer require kinetis/bref-adapter
 ```
 
 Requires PHP 8.4+ and `kinetis/framework`. See
-[Runtime Adapters](https://docs.kinetis.dev/runtime-adapters.html) for how
+[Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html) for how
 runtime detection works and what changes under Lambda specifically.
 
 ## License

@@ -60,7 +60,7 @@ is scoped.
 Scoped keys follow the named-connection convention — the connection
 name inserts after the first segment: `FILESYSTEM_ROOT` + `uploads` → `FILESYSTEM_UPLOADS_ROOT`.
 Full reference across every package:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 ## Installation
 
@@ -69,7 +69,7 @@ composer require kinetis/storage
 ```
 
 Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
-[docs.kinetis.dev/storage.html](https://docs.kinetis.dev/storage.html).
+[kinetis.dev/docs/storage.html](https://kinetis.dev/docs/storage.html).
 
 ## License
 

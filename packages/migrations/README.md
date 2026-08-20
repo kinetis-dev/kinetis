@@ -63,7 +63,7 @@ vendor/bin/kinetis migrate:make <description>
 Installing this package is what opts it in — it registers the
 following automatically, through the `extra.kinetis` declaration in its
 `composer.json` (see
-[docs.kinetis.dev/cli.html](https://docs.kinetis.dev/cli.html)):
+[kinetis.dev/docs/cli.html](https://kinetis.dev/docs/cli.html)):
 
 - **Commands**: `migrate`, `migrate:rollback`, `migrate:status`, and
   `migrate:make` on `vendor/bin/kinetis`. All four run without the
@@ -86,7 +86,7 @@ package's own:
 | `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate; the `--connection=<name>` flag wins over it. |
 
 Full reference across every package:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 ## Installation
 
@@ -95,7 +95,7 @@ composer require kinetis/migrations
 ```
 
 Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
-[docs.kinetis.dev/migrations.html](https://docs.kinetis.dev/migrations.html).
+[kinetis.dev/docs/migrations.html](https://kinetis.dev/docs/migrations.html).
 
 ## License
 

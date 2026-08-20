@@ -52,7 +52,7 @@ FILESYSTEM_S3_REGION=us-east-1
 
 Every key is scoped — `FILESYSTEM_S3_BUCKET` + `backups` →
 `FILESYSTEM_BACKUPS_S3_BUCKET`. Full reference:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 Credentials are never read from Kinetis config — `AsyncAws\Core\Configuration`
 resolves them on its own, from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
@@ -66,7 +66,7 @@ composer require kinetis/storage-s3
 
 Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
 Full documentation:
-[docs.kinetis.dev/storage-s3.html](https://docs.kinetis.dev/storage-s3.html).
+[kinetis.dev/docs/storage-s3.html](https://kinetis.dev/docs/storage-s3.html).
 
 ## License
 

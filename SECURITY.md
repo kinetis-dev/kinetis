@@ -77,6 +77,6 @@ way past the stated threat model.
   in any other sense. The supported threat model is narrower than that:
   `FILESYSTEM_ROOT` is a real boundary only when this adapter is the
   sole writer to it. See
-  [docs.kinetis.dev/storage](https://docs.kinetis.dev/storage.html)'s
+  [kinetis.dev/docs/storage](https://kinetis.dev/docs/storage.html)'s
   symlink-checks section for the full decision and the operational
   mitigation for a deployment that can't guarantee exclusive access.

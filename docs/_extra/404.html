@@ -1,16 +1,20 @@
 <!doctype html>
 <!--
     Served by S3, not Sphinx: html_extra_path copies this file to the
-    build root, the docs deploy syncs it, and the bucket's website
-    configuration names it as the ErrorDocument, so a missing key comes
-    back as this page with a 404 status. CloudFront passes that through
-    and needs no custom error response of its own — that is the
-    mechanism for a REST-endpoint origin, which serves XML and has no
-    error document to name.
+    build root and the docs deploy syncs it to the docs/ prefix of
+    kinetis-website's own bucket. It is no longer the only 404.html in
+    that bucket, though — kinetis-website has its own at the bucket root
+    — and S3 static website hosting names exactly one ErrorDocument for
+    the whole bucket, not one per prefix. Which of the two actually
+    serves for a missing key under docs/ depends on how that single
+    ErrorDocument is configured; this file is written to be correct
+    wherever it does end up being served from, not assumed to be it.
 
-    Every path is absolute. This page renders at whatever URL was asked
-    for, so a relative one would resolve against a directory that does
-    not exist.
+    Every path is absolute: this page renders at whatever URL was asked
+    for, so a relative path would resolve against a directory that does
+    not exist. Every one is under /docs/ specifically, except the
+    favicon — that's one of kinetis-website's own assets, not this
+    build's, so it stays site-root instead.
 -->
 <html lang="en">
 <head>
@@ -18,7 +22,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Page not found — Kinetis</title>
     <meta name="robots" content="noindex">
-    <link rel="icon" type="image/svg+xml" href="/_static/favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
     <style>
         :root {
             --amber: #D97706;
@@ -72,7 +76,7 @@
             width: 128px;
             aspect-ratio: 400 / 420;
             margin: 0 auto 1.5rem;
-            background-image: url('/_static/logo.svg');
+            background-image: url('/docs/_static/logo.svg');
             background-size: contain;
             background-repeat: no-repeat;
             background-position: center;
@@ -168,19 +172,19 @@
         <p class="tagline">The documentation is reorganised from time to time. Everything is still here — start from one of these.</p>
 
         <div class="destinations">
-            <a class="destination" href="/">
+            <a class="destination" href="/docs/">
                 <h2>Documentation home</h2>
                 <p>Every page, grouped in the order an application is built.</p>
             </a>
-            <a class="destination" href="/tutorial.html">
+            <a class="destination" href="/docs/tutorial.html">
                 <h2>Tutorial</h2>
                 <p>Install Kinetis and build a real application on it, start to finish.</p>
             </a>
-            <a class="destination" href="/search.html">
+            <a class="destination" href="/docs/search.html">
                 <h2>Search</h2>
                 <p>Look for what you were reading by name.</p>
             </a>
-            <a class="destination" href="/appendix.html">
+            <a class="destination" href="/docs/appendix.html">
                 <h2>API reference</h2>
                 <p>Every class and attribute in core, one line each.</p>
             </a>

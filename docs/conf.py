@@ -59,18 +59,22 @@ html_static_path = ["_static"]
 html_extra_path = ["_extra"]
 html_css_files = ["custom.css"]
 html_logo = "_static/logo.svg"
-# Deliberately unset, not "_static/favicon.svg": Sphinx always renders
-# html_favicon's <link> with a page-relative pathto() href, with no
-# leading-slash option. docs/_templates/page.html's `extrahead` block
-# emits a root-relative one instead (see its comment for why); the file
-# itself still ships in the build via html_static_path below regardless
-# of html_favicon.
+# Deliberately unset: the favicon is kinetis-website's own
+# /assets/favicon.svg, not a file this build ships. Sphinx always renders
+# html_favicon's <link> with a page-relative pathto() href anyway, with no
+# leading-slash option, so it couldn't point at a site-root asset even if
+# one existed here. docs/_templates/page.html's `extrahead` block emits
+# the real <link rel="icon"> instead (see its comment for why).
 html_title = "Kinetis"
 
 # The real, deployed URL — required by sphinx-sitemap to build sitemap.xml
 # and consulted by sphinxext-opengraph for canonical/OG URLs below. Sphinx
-# itself uses it to emit a <link rel="canonical"> on every page.
-html_baseurl = "https://docs.kinetis.dev/"
+# itself uses it to emit a <link rel="canonical"> on every page. Served
+# under kinetis-website's own domain at a /docs/ prefix, not a separate
+# docs.kinetis.dev subdomain — the trailing slash matters here exactly as
+# it would for a bare-domain baseurl, since everything else (sitemap
+# entries, canonical links, OG URLs) is built by joining onto it.
+html_baseurl = "https://kinetis.dev/docs/"
 
 # -- Open Graph / social previews --------------------------------------------
 # sphinxext-opengraph auto-generates <meta name="description"> plus

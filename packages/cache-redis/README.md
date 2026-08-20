@@ -64,7 +64,7 @@ Redis is simply off and `CacheInterface` binds to `NullSimpleCache`.
 Scoped keys follow the named-connection convention — the connection
 name inserts after the first segment: `REDIS_HOST` + `cache2` → `REDIS_CACHE2_HOST`.
 Full reference across every package:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 ## Installation
 
@@ -73,8 +73,8 @@ composer require kinetis/cache-redis
 ```
 
 Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
-[docs.kinetis.dev/caching.html](https://docs.kinetis.dev/caching.html)
-and [docs.kinetis.dev/persistence.html](https://docs.kinetis.dev/persistence.html)
+[kinetis.dev/docs/caching.html](https://kinetis.dev/docs/caching.html)
+and [kinetis.dev/docs/persistence.html](https://kinetis.dev/docs/persistence.html)
 (the Redis Cluster/TLS section).
 
 ## License

@@ -63,7 +63,7 @@ installable Composer package with its own `README.md` and test suite:
 ## Documentation
 
 [`docs/`](docs) is the Sphinx source for
-[docs.kinetis.dev](https://docs.kinetis.dev/), covering every package
+[kinetis.dev/docs](https://kinetis.dev/docs/), covering every package
 in one place. Build it locally with:
 
 ```sh

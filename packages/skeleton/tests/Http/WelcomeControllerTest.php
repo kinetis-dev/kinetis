@@ -22,7 +22,7 @@ final class WelcomeControllerTest extends ApplicationTestCase
             ->assertHeader('Content-Type', 'text/html; charset=utf-8')
             ->assertBodyContains('Kinetis')
             ->assertBodyContains('Zero configuration')
-            ->assertBodyContains('docs.kinetis.dev');
+            ->assertBodyContains('kinetis.dev/docs');
     }
 
     public function test_an_unknown_path_is_a_404(): void

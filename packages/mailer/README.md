@@ -61,7 +61,7 @@ MAILER_DSN=smtp://user:pass@smtp.example.com:587
 | `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN. |
 
 Scoped — `MAILER_DSN` + `alerts` → `MAILER_ALERTS_DSN`. Full reference:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 Or an API-based transport instead — install the matching Symfony bridge
 package too (`symfony/sendgrid-mailer`, `symfony/mailgun-mailer`, ...):
@@ -83,7 +83,7 @@ composer require kinetis/mailer
 
 Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
 Full documentation:
-[docs.kinetis.dev/mailer.html](https://docs.kinetis.dev/mailer.html).
+[kinetis.dev/docs/mailer.html](https://kinetis.dev/docs/mailer.html).
 
 ## License
 

@@ -192,7 +192,7 @@ final readonly class WelcomeController
                 </p>
 
                 <p class="links">
-                    <a href="https://docs.kinetis.dev">Read the documentation &rarr;</a>
+                    <a href="https://kinetis.dev/docs/">Read the documentation &rarr;</a>
                 </p>
             </div>
         </body>

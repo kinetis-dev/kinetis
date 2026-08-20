@@ -55,7 +55,7 @@ code: a FrankenPHP worker loads `public/index.php` (including all
 route/command/tool discovery) exactly once at boot, so a code change is
 invisible until the `app` container restarts — there's no PHP-FPM-style
 "every request reboots the script" hot reload here. See
-[the CLI docs](https://docs.kinetis.dev/cli.html) for the full
+[the CLI docs](https://kinetis.dev/docs/cli.html) for the full
 discovery/hot-reload tradeoff. Looking for that kind of instant-feedback
 loop instead? See [`kinetis/skeleton`](../skeleton), a much smaller demo
 running on nginx + PHP-FPM for exactly that reason.
@@ -81,7 +81,7 @@ script of the template's own.
 
 ## Learn by building the same thing yourself
 
-The [Tutorial](https://docs.kinetis.dev/tutorial.html) builds this exact
+The [Tutorial](https://kinetis.dev/docs/tutorial.html) builds this exact
 application from an empty directory, one working piece at a time —
 useful for understanding *why* each file looks the way it does, not just
 what it does.

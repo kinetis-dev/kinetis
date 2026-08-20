@@ -60,7 +60,7 @@ SEARCH_OPENSEARCH_HOST=http://localhost:9200
 
 Every key is scoped — `SEARCH_OPENSEARCH_HOST` + `logs` →
 `SEARCH_LOGS_OPENSEARCH_HOST`. Full reference:
-[docs.kinetis.dev/config.html](https://docs.kinetis.dev/config.html).
+[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 `SEARCH_OPENSEARCH_HOST` is a single base URI, not a list — this
 construction path has no multi-node selector/failover; put a load
@@ -74,7 +74,7 @@ composer require kinetis/search-opensearch
 
 Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
 Full documentation:
-[docs.kinetis.dev/search-opensearch.html](https://docs.kinetis.dev/search-opensearch.html).
+[kinetis.dev/docs/search-opensearch.html](https://kinetis.dev/docs/search-opensearch.html).
 
 ## License
 
