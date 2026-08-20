@@ -283,11 +283,11 @@ the backend-specific keys are scoped.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `QUEUE_CONNECTION` | *(required)* | `redis`, `sql`, `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). |
+| `QUEUE_CONNECTION` | *(required)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
 | `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries); a job's own `push(maxAttempts: ...)` wins. |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds per `pop()` wait. |
-| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | SQL backend only: reclaim a crashed worker's reserved job after this long; unset means never. |
+| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | `kinetis/queue-sql` only: reclaim a crashed worker's reserved job after this long; unset means never. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
 | `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). |
 | `QUEUE_SQS_QUEUE_PREFIX` | — | Queue-name prefix for shared AWS accounts. |

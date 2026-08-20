@@ -79,6 +79,8 @@ jobs:
           - { name: migrations, dir: packages/migrations, phpunit: true }
           - { name: mcp, dir: packages/mcp, phpunit: true }
           - { name: queue, dir: packages/queue, phpunit: true }
+          - { name: queue-redis, dir: packages/queue-redis, phpunit: true }
+          - { name: queue-sql, dir: packages/queue-sql, phpunit: true }
           - { name: storage, dir: packages/storage, phpunit: true }
           - { name: revolt-http-client, dir: packages/revolt-http-client, phpunit: true }
           - { name: aws-sigv4, dir: packages/aws-sigv4, phpunit: true }

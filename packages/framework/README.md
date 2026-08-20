@@ -121,7 +121,9 @@ dependencies:
 | [`kinetis/auth-jwt`](https://kinetis.dev/docs/auth-jwt.html) | Stateless JWT authentication (HS256/RS256), with optional per-token revocation |
 | [`kinetis/migrations`](https://kinetis.dev/docs/migrations.html) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
 | [`kinetis/query-builder`](https://kinetis.dev/docs/query-builder.html) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |
-| [`kinetis/queue`](https://kinetis.dev/docs/queue.html) | A backend-agnostic background job queue — Redis and SQL backends included |
+| [`kinetis/queue`](https://kinetis.dev/docs/queue.html) | A backend-agnostic background job queue — every backend lives in its own separate package |
+| [`kinetis/queue-redis`](https://kinetis.dev/docs/queue-redis.html) | A Redis backend for `kinetis/queue` |
+| [`kinetis/queue-sql`](https://kinetis.dev/docs/queue-sql.html) | A MySQL/Postgres backend for `kinetis/queue` |
 | [`kinetis/queue-sqs`](https://kinetis.dev/docs/queue-sqs.html) | An Amazon SQS backend for `kinetis/queue` — non-blocking via `kinetis/revolt-http-client` |
 | [`kinetis/storage`](https://kinetis.dev/docs/storage.html) | File storage on `League\Flysystem` — a genuinely non-blocking, `Amp\File`-backed local adapter |
 | [`kinetis/storage-s3`](https://kinetis.dev/docs/storage-s3.html) | S3 (and S3-compatible) storage for `kinetis/storage`'s `FILESYSTEM_DRIVER=s3` — non-blocking via `kinetis/revolt-http-client` |

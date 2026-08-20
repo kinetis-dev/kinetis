@@ -515,7 +515,7 @@ curl -X POST http://localhost:8080/pong/direct
 ## Deferring the reply: Redis and the queue
 
 ```{code-block} bash
-composer require kinetis/queue
+composer require kinetis/queue kinetis/queue-redis
 ```
 
 ```{code-block} text

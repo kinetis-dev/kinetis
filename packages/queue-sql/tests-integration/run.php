@@ -3,12 +3,12 @@
 declare(strict_types=1);
 
 /**
- * Real-backend regression coverage for RedisQueue/SqlQueue — neither has
- * a single committed PHPUnit test, by design: a mocked "was this method
- * called with X" test can't prove backend-specific correctness (the
- * reliable-queue ack/release mechanics, FOR UPDATE SKIP LOCKED,
- * priority-queue cycling). This runs the same checks originally verified
- * by hand, on every CI push instead of once.
+ * Real-backend regression coverage for SqlQueue — it has no committed
+ * PHPUnit test beyond constructor validation, by design: a mocked "was
+ * this method called with X" test can't prove backend-specific
+ * correctness (FOR UPDATE SKIP LOCKED, priority-queue cycling, the
+ * visibility-timeout reclaim). This runs the same checks originally
+ * verified by hand, on every CI push instead of once.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -18,10 +18,7 @@ use Kinetis\Persistence\Driver\MysqliAsyncClient;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\QueuedJob;
 use Kinetis\Queue\QueueInterface;
-use Kinetis\Queue\RedisQueue;
-use Kinetis\Queue\SqlQueue;
-
-use function Amp\Redis\createRedisClient;
+use Kinetis\QueueSql\SqlQueue;
 
 function check(string $label, bool $condition): void
 {
@@ -87,12 +84,11 @@ function runQueueChecks(string $backend, QueueInterface $queue): void
 
 /**
  * §6.9 of the independent evaluation report: a crashed worker's reserved
- * row stayed stranded forever on SqlQueue, undisclosed, unlike
- * RedisQueue's own equivalent gap. $visibilityTimeoutSeconds closes it —
- * this proves both halves: no timeout configured behaves exactly as
- * before (stranded forever), a real timeout reclaims the row and
- * correctly increments attempts (crediting the crashed attempt), while a
- * genuinely fresh row's first reservation stays unaffected.
+ * row stayed stranded forever on SqlQueue, undisclosed. $visibilityTimeoutSeconds
+ * closes it — this proves both halves: no timeout configured behaves
+ * exactly as before (stranded forever), a real timeout reclaims the row
+ * and correctly increments attempts (crediting the crashed attempt),
+ * while a genuinely fresh row's first reservation stays unaffected.
  */
 function runSqlQueueVisibilityTimeoutChecks(MysqlLink $mysql): void
 {
@@ -143,9 +139,6 @@ function runSqlQueueVisibilityTimeoutChecks(MysqlLink $mysql): void
 
     echo "\n";
 }
-
-$redis = createRedisClient('redis://' . (getenv('REDIS_HOST') ?: '127.0.0.1') . ':6379');
-runQueueChecks('RedisQueue', new RedisQueue($redis));
 
 $mysql = new MysqliAsyncClient(
     getenv('MYSQL_HOST') ?: '127.0.0.1',

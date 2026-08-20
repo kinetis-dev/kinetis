@@ -36,7 +36,9 @@ tutorial, then read whichever section you have reached.
 
 ## Background work
 
-- [Queue](https://kinetis.dev/docs/queue.html): kinetis/queue: a backend-agnostic background job queue — Redis and SQL backends included.
+- [Queue](https://kinetis.dev/docs/queue.html): kinetis/queue: a backend-agnostic background job queue — every backend lives in its own separate package.
+- [Queue (Redis)](https://kinetis.dev/docs/queue-redis.html): kinetis/queue-redis: a Redis backend for kinetis/queue's QueueInterface.
+- [Queue (SQL)](https://kinetis.dev/docs/queue-sql.html): kinetis/queue-sql: a MySQL/Postgres backend for kinetis/queue's QueueInterface.
 - [Queue (SQS)](https://kinetis.dev/docs/queue-sqs.html): kinetis/queue-sqs: an Amazon SQS backend for kinetis/queue's QueueInterface.
 - [Queue (RabbitMQ)](https://kinetis.dev/docs/queue-rabbitmq.html): kinetis/queue-rabbitmq: a RabbitMQ backend for kinetis/queue's QueueInterface.
 

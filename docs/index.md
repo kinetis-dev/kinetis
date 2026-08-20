@@ -162,6 +162,8 @@ migrations
 :hidden:
 
 queue
+queue-redis
+queue-sql
 queue-sqs
 queue-rabbitmq
 ```

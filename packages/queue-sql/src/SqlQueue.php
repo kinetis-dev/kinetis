@@ -2,12 +2,16 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Queue;
+namespace Kinetis\QueueSql;
 
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Async\Timer;
 use Kinetis\Persistence\TransactionGuard;
+use Kinetis\Queue\Job;
+use Kinetis\Queue\JobSerializer;
+use Kinetis\Queue\QueuedJob;
+use Kinetis\Queue\QueueInterface;
 use Psr\Log\NullLogger;
 use function Kinetis\Async\concurrently;
 use Throwable;

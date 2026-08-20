@@ -2,11 +2,15 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Queue;
+namespace Kinetis\QueueRedis;
 
 use Kinetis\Instrumentation\Telemetry;
 use Amp\Redis\RedisClient;
 use Kinetis\Queue\Exception\StaleJobHandleException;
+use Kinetis\Queue\Job;
+use Kinetis\Queue\JobSerializer;
+use Kinetis\Queue\QueuedJob;
+use Kinetis\Queue\QueueInterface;
 use Throwable;
 
 /**

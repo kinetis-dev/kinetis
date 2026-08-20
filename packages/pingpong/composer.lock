@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "0e554fec8538c3e16251511280399286",
+    "content-hash": "d873f2a12f0cbb32ca390340024ff215",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1637,13 +1637,10 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "05a0feeaf868cbff104a9779e202f254794b42e8"
+                "reference": "d40db8a8664e3cff00f1fbe91dac5734ca567851"
             },
             "require": {
-                "amphp/redis": "^2.0.4",
-                "kinetis/cache-redis": "dev-main",
                 "kinetis/framework": "dev-main",
-                "kinetis/persistence": "dev-main",
                 "php": "^8.4",
                 "psr/container": "^2.0.2",
                 "psr/log": "^3.0.2"
@@ -1682,7 +1679,55 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A backend-agnostic background job queue for Kinetis — Redis and SQL (MySQL/Postgres) backends included, no fluent job-scheduling DSL.",
+            "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/queue-redis",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../queue-redis",
+                "reference": "5b41b416c3025adb152bb284209b8c3a089903e2"
+            },
+            "require": {
+                "amphp/redis": "^2.0.4",
+                "kinetis/cache-redis": "dev-main",
+                "kinetis/framework": "dev-main",
+                "kinetis/queue": "dev-main",
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^12.5.33",
+                "vimeo/psalm": "^6.16.1"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": []
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\QueueRedis\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\QueueRedis\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "A Redis-backed queue implementation for kinetis/queue's QueueInterface — the reliable-queue pattern (pending/processing/delayed lists), so a worker crash never silently loses a job.",
             "transport-options": {
                 "relative": true
             }
@@ -6869,7 +6914,8 @@
         "kinetis/migrations": 20,
         "kinetis/persistence": 20,
         "kinetis/query-builder": 20,
-        "kinetis/queue": 20
+        "kinetis/queue": 20,
+        "kinetis/queue-redis": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

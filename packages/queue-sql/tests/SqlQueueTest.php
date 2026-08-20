@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Queue\Tests;
+namespace Kinetis\QueueSql\Tests;
 
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Contract\SqlResult;
 use Kinetis\Persistence\Contract\SqlTransaction;
-use Kinetis\Queue\SqlQueue;
+use Kinetis\QueueSql\SqlQueue;
 use InvalidArgumentException;
 use LogicException;
 use PHPUnit\Framework\TestCase;
@@ -64,6 +64,13 @@ final class SqlQueueTest extends TestCase
     public function test_a_positive_visibility_timeout_is_accepted(): void
     {
         $queue = new SqlQueue($this->neverTouchedLink(), visibilityTimeoutSeconds: 30);
+
+        self::assertInstanceOf(SqlQueue::class, $queue);
+    }
+
+    public function test_the_minimum_valid_visibility_timeout_of_one_is_accepted(): void
+    {
+        $queue = new SqlQueue($this->neverTouchedLink(), visibilityTimeoutSeconds: 1);
 
         self::assertInstanceOf(SqlQueue::class, $queue);
     }

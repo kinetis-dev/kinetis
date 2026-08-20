@@ -19,7 +19,7 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 
 use Kinetis\Queue\Job;
-use Kinetis\Queue\RedisQueue;
+use Kinetis\QueueRedis\RedisQueue;
 
 use function Amp\Redis\createRedisClient;
 

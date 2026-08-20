@@ -9,12 +9,12 @@ composer require kinetis/queue
 ````
 
 A backend-agnostic background job queue: push a job from application code,
-a separate `kinetis queue:work` worker process pops and runs it. `Redis` and
-`SQL` (MySQL/Postgres) backends are both included, behind one
-`Kinetis\Queue\QueueInterface` contract — application code never sees which
-one is running underneath. Amazon SQS ({doc}`queue-sqs`) and RabbitMQ
-({doc}`queue-rabbitmq`) are two more, equally `QueueInterface`-conforming
-backends, each in its own separate package.
+a separate `kinetis queue:work` worker process pops and runs it. This
+package carries only the `Kinetis\Queue\QueueInterface` contract, the
+worker, and the CLI commands — application code never sees which backend
+is running underneath, and every backend lives in its own separate
+package: Redis ({doc}`queue-redis`), SQL/MySQL/Postgres ({doc}`queue-sql`),
+Amazon SQS ({doc}`queue-sqs`), and RabbitMQ ({doc}`queue-rabbitmq`).
 
 `push()` and `pop()` never block the worker while waiting on the backend,
 so a push can run alongside other work through {doc}`concurrency`'s
@@ -102,38 +102,24 @@ jobs pushed to `reports` sit untouched until some worker actually watches
 
 ## Choosing a backend
 
-`QUEUE_CONNECTION` has no default — set it explicitly to `redis`, `sql`,
-`sqs`, or `rabbitmq`:
+`QUEUE_CONNECTION` has no default — set it explicitly, and install the
+matching package:
+
+| `QUEUE_CONNECTION` | Package | Configuration |
+|---|---|---|
+| `redis` | `kinetis/queue-redis` | {doc}`queue-redis` |
+| `sql` | `kinetis/queue-sql` | {doc}`queue-sql` |
+| `sqs` | `kinetis/queue-sqs` | {doc}`queue-sqs` |
+| `rabbitmq` | `kinetis/queue-rabbitmq` | {doc}`queue-rabbitmq` |
 
 ```{code-block} text
 QUEUE_CONNECTION=redis
 REDIS_HOST=127.0.0.1
-
-# — or —
-
-QUEUE_CONNECTION=sql
-DB_CONNECTION=mysql   # or "pgsql"
-DB_HOST=127.0.0.1
-DB_NAME=app
-DB_USER=app
-DB_PASSWORD=secret
-
-# — or —
-
-QUEUE_CONNECTION=sqs
-QUEUE_SQS_REGION=us-east-1
-
-# — or —
-
-QUEUE_CONNECTION=rabbitmq
-QUEUE_RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 ```
 
-The Redis variables are the same ones {doc}`persistence`'s
-`RedisSimpleCache` reads; the SQL variables are the same ones
-{doc}`migrations` reads. `sqs` needs the separate `kinetis/queue-sqs`
-installed — see {doc}`queue-sqs` for its own configuration. `rabbitmq`
-needs `kinetis/queue-rabbitmq` — see {doc}`queue-rabbitmq`.
+Picking a `QUEUE_CONNECTION` value without its package installed fails
+clearly, naming the package to install — see
+`Kinetis\Queue\Exception\QueueUnavailableException`.
 
 Setting `QUEUE_CONNECTION` is also all the container wiring there is:
 this package's bootstrap class (declared via `extra.kinetis`, see
@@ -222,15 +208,19 @@ worker until it finishes with them.
 
 ## Multiple backends
 
-Different queues can live on different backends — a `RedisQueue` for
-low-latency jobs, a `SqlQueue` for jobs that should ride along with an
-existing database's backups and transactions, an `SqsQueue` (from
+Different queues can live on different backends — a `RedisQueue` (from
+{doc}`queue-redis`) for low-latency jobs, a `SqlQueue` (from
+{doc}`queue-sql`) for jobs that should ride along with an existing
+database's backups and transactions, an `SqsQueue` (from
 {doc}`queue-sqs`) for jobs a separate AWS account or service needs to
 consume, or a `RabbitMqQueue` (from {doc}`queue-rabbitmq`) for jobs routed
 through an existing broker. Register each concrete class directly rather
 than binding `QueueInterface` to just one of them:
 
 ```{code-block} php
+use Kinetis\QueueRedis\RedisQueue;
+use Kinetis\QueueSql\SqlQueue;
+
 $app->instance(RedisQueue::class, new RedisQueue($redisClient));
 $app->instance(SqlQueue::class, new SqlQueue($db));
 ```
@@ -278,104 +268,6 @@ instead. It accepts a `queue` argument on `push()` for
 signature compatibility with the other backends, but ignores it — there's
 only ever one "queue" (immediate execution), so a queue name has nothing
 to select between.
-
-## The SQL backend needs a table
-
-`kinetis/queue` ships two ready-to-copy {doc}`migrations` files — one per
-dialect, since the auto-incrementing primary key syntax itself isn't
-portable between MySQL and Postgres:
-
-The table includes a nullable `metadata` column — the instrumentation propagation channel (see {doc}`telemetry`). A table created from an earlier stub needs it added:
-
-```{code-block} sql
-ALTER TABLE kinetis_queue_jobs ADD COLUMN metadata TEXT NULL;
-```
-
-```{code-block} text
-vendor/kinetis/queue/resources/migrations/create_kinetis_queue_jobs_table.mysql.php.stub
-vendor/kinetis/queue/resources/migrations/create_kinetis_queue_jobs_table.pgsql.php.stub
-```
-
-Copy whichever matches your database into your own `migrations/`
-directory with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
-
-`SqlQueue`'s `pop()` relies on `SELECT ... FOR UPDATE SKIP LOCKED` to
-guarantee two workers never receive the same job — that's this backend's
-actual version floor: **MySQL 8.0+ or MariaDB 10.6+**. An older server
-doesn't support that clause at all, so `pop()` would fail outright rather
-than degrade quietly.
-
-## A crashed worker's job: `SqlQueue`'s visibility timeout
-
-By default, a job that's been popped but whose worker crashes before
-`ack()`/`release()` runs stays reserved **forever** — no other worker can
-ever pick it up again, since nothing ever clears its `reserved_at`.
-
-`SqlQueue`'s second constructor argument, `$visibilityTimeoutSeconds`,
-closes it — the standard "visibility timeout" pattern SQS's own
-`VisibilityTimeout` already uses:
-
-```{code-block} php
-use Kinetis\Queue\SqlQueue;
-
-$queue = new SqlQueue($db, visibilityTimeoutSeconds: 300);
-```
-
-A row reserved longer than this becomes poppable again by any worker —
-`attempts` is incremented at that point (crediting the crashed attempt,
-the same as an explicit `release()` call would), so `maxAttempts` still
-eventually gives up on a job whose worker keeps crashing rather than
-retrying it forever. `null` (the default) preserves the original
-forever-stranded behavior exactly, unchanged.
-
-A value below `1` — `0` or negative — is rejected at construction: it
-would make `reserveNext()`'s own query treat a row reserved an instant
-ago (or one whose reservation timestamp is in the future relative to
-now) as already stale, letting a second worker reclaim an actively-held
-reservation immediately instead of after it genuinely goes stale.
-
-`kinetis queue:work` reads this from the optional
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` environment variable (via
-`Config::scopedKey()`, so it respects `QUEUE_CONNECTION_NAME` the same as
-every other queue setting) — absent means `null`, the same as constructing
-`SqlQueue` directly with no second argument:
-
-```{code-block} text
-QUEUE_CONNECTION=sql
-QUEUE_VISIBILITY_TIMEOUT_SECONDS=300
-```
-
-Pick a value comfortably longer than your slowest real job takes to run —
-too short reclaims a job that's still being legitimately processed,
-producing exactly the duplicate-processing risk a visibility timeout is
-meant to bound, not eliminate outright.
-
-`RedisQueue` has no equivalent parameter — its own reliable-queue design
-(a separate `processing` list, distinct from `pending`) already avoids
-losing a job outright on a crash: moving a job between lists (`release()`,
-and delayed-job promotion) runs as a single Lua script, which Redis
-always executes as one indivisible unit, so a process crash can never
-land between the two halves of either move the way it could before.
-`release()`'s move is also conditional, not just indivisible: it only
-writes the replacement onto `pending` when it actually found and removed
-the job from `processing`. Calling `release()` a second time with the
-same `QueuedJob` — a duplicate call, or a retry after a connection
-failure whose server-side outcome wasn't known at the time — throws
-`Kinetis\Queue\Exception\StaleJobHandleException` instead of enqueueing a
-second replacement; `QueueWorker` itself already treats this as a benign
-"already released through another path" outcome rather than letting it
-crash the worker. It still has no reaper for a job stuck in `processing`
-because the worker that popped it crashed before `ack()`/`release()`/
-`fail()` ever ran — that job is stranded, not lost, sitting exactly where
-a future reaper would find it, and closing that gap remains its own
-disclosed, still-open limitation.
-
-Delayed-job promotion also bounds how much it moves in one call
-(`RedisQueue::DELAYED_PROMOTION_BATCH_SIZE`, currently 100) — a large
-ready backlog is promoted in batches across successive polls rather than
-inside one Lua script, since Redis executes one command at a time and an
-unbounded promotion would stall every other client sharing that Redis for
-its full duration.
 
 ## Delayed jobs
 
@@ -506,6 +398,8 @@ See {doc}`events` for writing the listener itself.
 
 ## See also
 
+- {doc}`queue-redis` — the Redis backend, in its own package.
+- {doc}`queue-sql` — the MySQL/Postgres backend, in its own package.
 - {doc}`queue-sqs` — the Amazon SQS backend, in its own package.
 - {doc}`queue-rabbitmq` — the RabbitMQ backend, in its own package.
 - {doc}`persistence` — connecting to MySQL, Postgres, and Redis directly.

@@ -52,6 +52,16 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
+    directory: "/packages/queue-redis"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
+    directory: "/packages/queue-sql"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
     directory: "/packages/storage"
     schedule:
       interval: "weekly"

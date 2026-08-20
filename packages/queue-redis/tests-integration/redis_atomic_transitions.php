@@ -40,7 +40,7 @@ use Kinetis\Async\Timer;
 use Kinetis\Queue\Exception\StaleJobHandleException;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\QueuedJob;
-use Kinetis\Queue\RedisQueue;
+use Kinetis\QueueRedis\RedisQueue;
 
 use function Amp\Redis\createRedisClient;
 use function Kinetis\Async\concurrently;

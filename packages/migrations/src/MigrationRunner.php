@@ -190,7 +190,7 @@ final readonly class MigrationRunner
         // functions, unlike MySQL's GET_LOCK — pg_try_advisory_lock is
         // the non-blocking primitive, polled with a short sleep between
         // attempts, the same "no native blocking-with-timeout" shape
-        // Kinetis\Queue\SqlQueue::pop() already uses for the identical
+        // Kinetis\QueueSql\SqlQueue::pop() already uses for the identical
         // reason. Cast to ::int so the result is a plain 0/1 regardless
         // of whether the driver represents SQL boolean as a native PHP
         // bool or Postgres's own "t"/"f" text — confirmed to differ
