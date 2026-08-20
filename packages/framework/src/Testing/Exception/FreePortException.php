@@ -8,9 +8,13 @@ use RuntimeException;
 
 final class FreePortException extends RuntimeException
 {
-    public static function couldNotReserve(int $errno, string $errstr): self
+    /**
+     * stream_socket_server() leaves both out-parameters null when it
+     * fails before the OS is even asked, hence the nullable types.
+     */
+    public static function couldNotReserve(?int $errno, ?string $errstr): self
     {
-        return new self("Could not reserve a free TCP port: {$errstr} ({$errno})");
+        return new self(sprintf('Could not reserve a free TCP port: %s (%s)', $errstr ?? 'unknown error', $errno ?? '?'));
     }
 
     public static function couldNotReadAssignedPort(): self
