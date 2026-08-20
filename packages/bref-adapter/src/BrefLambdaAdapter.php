@@ -48,6 +48,9 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
 {
     private const RUNTIME_HEADER_PREFIX = 'lambda-runtime-aws-request-id:';
 
+    /** assertOptionalScalar()'s own $description for an is_string predicate — reused across every optional string field it validates. */
+    private const string DESCRIPTION_STRING = 'a string';
+
     /**
      * AWS's Runtime API reference is explicit: "Do not set a timeout on
      * the GET request as the response may be delayed" — the long poll
@@ -175,13 +178,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         // into cookieParams) is what makes cookie/session authentication
         // reachable at all under this adapter — see kinetis/session's
         // SessionMiddleware, which reads cookieParams first.
-        /** @var list<string> $cookies */
-        $cookies = is_array($event['cookies'] ?? null) ? array_values(array_filter($event['cookies'], 'is_string')) : [];
-
-        if ($cookies !== []) {
-            $cookieHeader = implode('; ', $cookies);
-            $request = $request->withHeader('Cookie', $cookieHeader)->withCookieParams(self::parseCookieHeader($cookieHeader));
-        }
+        $request = self::applyCookies($request, $event);
 
         // A canonical numeric JSON object key like "123" becomes a
         // genuine PHP int array key here (json_decode(..., associative:
@@ -204,37 +201,77 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
 
         $request = $request->withQueryParams($queryParams);
 
-        $body = is_string($event['body'] ?? null) ? $event['body'] : '';
-
-        if (($event['isBase64Encoded'] ?? false) === true) {
-            // Strict mode: base64_decode() without it would silently
-            // accept invalid base64 as best-effort garbage instead of
-            // reporting it, and the bare `?: ''` this replaces collapsed
-            // a genuinely decoded "" or "0" body into the same "empty"
-            // outcome as a decode failure — three different situations
-            // that must not be conflated.
-            $decoded = base64_decode($body, strict: true);
-
-            if ($decoded === false) {
-                throw BrefAdapterException::malformedBase64Body();
-            }
-
-            $body = $decoded;
-        }
-
+        $body = self::decodeBody($event);
         $request = $request->withBody($factory->createStream($body));
 
-        $contentType = $request->getHeaderLine('Content-Type');
+        return self::applyFormBody($request, $body);
+    }
 
-        if (self::isFormEncoded($contentType)) {
-            [$parsedBody, $uploadedFiles] = self::isMultipart($contentType)
-                ? self::parseMultipart($contentType, $body)
-                : self::parseUrlEncoded($body);
+    /**
+     * Payload format 2.0 never puts cookies in $headers at all — they
+     * arrive as their own top-level list, one "name=value" pair per
+     * entry, specifically so API Gateway never has to fold multiple
+     * cookies into one header the way it does for ordinary multi-value
+     * headers. Reconstructing the Cookie header here (and parsing it
+     * into cookieParams) is what makes cookie/session authentication
+     * reachable at all under this adapter — see kinetis/session's
+     * SessionMiddleware, which reads cookieParams first.
+     *
+     * @param array<string,mixed> $event
+     */
+    private static function applyCookies(ServerRequestInterface $request, array $event): ServerRequestInterface
+    {
+        /** @var list<string> $cookies */
+        $cookies = is_array($event['cookies'] ?? null) ? array_values(array_filter($event['cookies'], 'is_string')) : [];
 
-            $request = $request->withParsedBody($parsedBody)->withUploadedFiles($uploadedFiles);
+        if ($cookies === []) {
+            return $request;
         }
 
-        return $request;
+        $cookieHeader = implode('; ', $cookies);
+
+        return $request->withHeader('Cookie', $cookieHeader)->withCookieParams(self::parseCookieHeader($cookieHeader));
+    }
+
+    /**
+     * @param array<string,mixed> $event
+     */
+    private static function decodeBody(array $event): string
+    {
+        $body = is_string($event['body'] ?? null) ? $event['body'] : '';
+
+        if (($event['isBase64Encoded'] ?? false) !== true) {
+            return $body;
+        }
+
+        // Strict mode: base64_decode() without it would silently accept
+        // invalid base64 as best-effort garbage instead of reporting it,
+        // and the bare `?: ''` this replaces collapsed a genuinely
+        // decoded "" or "0" body into the same "empty" outcome as a
+        // decode failure — three different situations that must not be
+        // conflated.
+        $decoded = base64_decode($body, strict: true);
+
+        if ($decoded === false) {
+            throw BrefAdapterException::malformedBase64Body();
+        }
+
+        return $decoded;
+    }
+
+    private static function applyFormBody(ServerRequestInterface $request, string $body): ServerRequestInterface
+    {
+        $contentType = $request->getHeaderLine('Content-Type');
+
+        if (!self::isFormEncoded($contentType)) {
+            return $request;
+        }
+
+        [$parsedBody, $uploadedFiles] = self::isMultipart($contentType)
+            ? self::parseMultipart($contentType, $body)
+            : self::parseUrlEncoded($body);
+
+        return $request->withParsedBody($parsedBody)->withUploadedFiles($uploadedFiles);
     }
 
     /**
@@ -438,10 +475,8 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         // Only decoded as a plain array afterward, once validation above
         // has already confirmed the real shape — requestFromEvent()'s
         // own array<string,mixed> contract is unaffected by any of this.
-        /** @var array<string,mixed> $event */
-        $event = json_decode($body, associative: true, flags: JSON_THROW_ON_ERROR);
-
-        return $event;
+        /** @var array<string,mixed> */
+        return json_decode($body, associative: true, flags: JSON_THROW_ON_ERROR);
     }
 
     /**
@@ -499,10 +534,10 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
             throw BrefAdapterException::malformedInvocationEvent('the decoded event has no requestContext.http.method.');
         }
 
-        self::assertOptionalScalar($decoded, 'rawQueryString', 'is_string', 'a string');
-        self::assertOptionalScalar($decoded, 'body', 'is_string', 'a string');
+        self::assertOptionalScalar($decoded, 'rawQueryString', 'is_string', self::DESCRIPTION_STRING);
+        self::assertOptionalScalar($decoded, 'body', 'is_string', self::DESCRIPTION_STRING);
         self::assertOptionalScalar($decoded, 'isBase64Encoded', 'is_bool', 'a boolean');
-        self::assertOptionalScalar($http, 'sourceIp', 'is_string', 'a string');
+        self::assertOptionalScalar($http, 'sourceIp', 'is_string', self::DESCRIPTION_STRING);
 
         self::assertOptionalStringMap($decoded, 'headers');
         self::assertOptionalStringMap($decoded, 'queryStringParameters');

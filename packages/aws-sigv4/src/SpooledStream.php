@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\AwsSigV4;
 
+use Kinetis\AwsSigV4\Exception\StreamException;
 use Psr\Http\Message\StreamInterface;
-use RuntimeException;
 
 /**
  * A minimal, always-seekable PSR-7 stream over already-in-memory string
@@ -34,7 +34,7 @@ final class SpooledStream implements StreamInterface
         $resource = fopen('php://temp', 'r+b');
 
         if ($resource === false) {
-            throw new RuntimeException('Could not open a php://temp stream.');
+            throw StreamException::couldNotOpenTempStream();
         }
 
         $this->resource = $resource;
@@ -83,7 +83,7 @@ final class SpooledStream implements StreamInterface
         $position = ftell($this->resource);
 
         if ($position === false) {
-            throw new RuntimeException('Could not determine the stream position.');
+            throw StreamException::couldNotDetermineStreamPosition();
         }
 
         return $position;
@@ -105,7 +105,7 @@ final class SpooledStream implements StreamInterface
     public function seek(int $offset, int $whence = SEEK_SET): void
     {
         if (fseek($this->resource, $offset, $whence) === -1) {
-            throw new RuntimeException('Could not seek the stream.');
+            throw StreamException::couldNotSeekStream();
         }
     }
 
@@ -115,6 +115,9 @@ final class SpooledStream implements StreamInterface
         $this->seek(0);
     }
 
+    // Genuinely, independently always true for this stream, the same as
+    // isSeekable() above and isReadable() below — not a copy-paste
+    // artifact of one of the three.
     #[\Override]
     public function isWritable(): bool
     {
@@ -127,7 +130,7 @@ final class SpooledStream implements StreamInterface
         $written = fwrite($this->resource, $string);
 
         if ($written === false) {
-            throw new RuntimeException('Could not write to the stream.');
+            throw StreamException::couldNotWriteToStream();
         }
 
         return $written;
@@ -152,7 +155,7 @@ final class SpooledStream implements StreamInterface
         $data = fread($this->resource, $length);
 
         if ($data === false) {
-            throw new RuntimeException('Could not read from the stream.');
+            throw StreamException::couldNotReadFromStream();
         }
 
         return $data;
@@ -164,7 +167,7 @@ final class SpooledStream implements StreamInterface
         $contents = stream_get_contents($this->resource);
 
         if ($contents === false) {
-            throw new RuntimeException('Could not read the remaining stream contents.');
+            throw StreamException::couldNotReadRemainingStreamContents();
         }
 
         return $contents;

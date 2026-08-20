@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.28.1",
+            "version": "1.28.2",
             "bin": [
                 "bin/kinetis"
             ],
@@ -59,7 +59,7 @@
             "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.11.4",
+            "version": "1.11.5",
             "requires": [
                 "framework"
             ],
@@ -104,7 +104,7 @@
             "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
-            "version": "1.0.7",
+            "version": "1.0.8",
             "requires": [
                 "framework"
             ],
@@ -120,7 +120,7 @@
             "description": "A thin, parameterized SQL query builder for Kinetis — MySQL and Postgres via kinetis/persistence's drivers, row-to-DTO mapping via Kinetis\\Validation\\Hydrator. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.4.1",
+            "version": "1.4.2",
             "requires": [
                 "framework",
                 "persistence"
@@ -359,7 +359,7 @@
             "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
-            "version": "1.1.7",
+            "version": "1.1.8",
             "requires": [
                 "revolt-http-client"
             ],

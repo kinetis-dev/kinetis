@@ -92,68 +92,99 @@ final class Route
     ) {
         $this->pathTemplate = self::normalizePath($pathTemplate);
         $segments = self::parse($this->pathTemplate);
+        $params = self::collectParams($segments, $this->pathTemplate);
+        $this->paramNames = $params['names'];
+        $this->paramPatterns = $params['patterns'];
+        $this->pattern = self::compile($segments);
+
+        self::assertValidPattern($this->pattern, $this->pathTemplate, $this->paramPatterns);
+    }
+
+    /**
+     * Walks the parsed segments once, collecting each placeholder's name
+     * (rejecting a repeat) and, when it declared one, its constraint
+     * pattern (rejecting one that uses a construct {@see findMatchingBrace()}
+     * can lex but this class can't compile against — see
+     * unsupportedConstruct()'s own docblock).
+     *
+     * @param list<PathSegment> $segments
+     * @return array{names: list<string>, patterns: array<string, string>}
+     */
+    private static function collectParams(array $segments, string $pathTemplate): array
+    {
         $paramNames = [];
         $paramPatterns = [];
 
         foreach ($segments as $segment) {
-            if ($segment['type'] === 'placeholder') {
-                if (in_array($segment['name'], $paramNames, true)) {
-                    throw InvalidRouteConstraintException::duplicatePlaceholderName($this->pathTemplate, $segment['name']);
-                }
+            if ($segment['type'] !== 'placeholder') {
+                continue;
+            }
 
-                $paramNames[] = $segment['name'];
+            if (in_array($segment['name'], $paramNames, true)) {
+                throw InvalidRouteConstraintException::duplicatePlaceholderName($pathTemplate, $segment['name']);
+            }
 
-                if ($segment['pattern'] !== null) {
-                    $unsupported = self::unsupportedConstruct($segment['pattern']);
+            $paramNames[] = $segment['name'];
 
-                    if ($unsupported !== null) {
-                        throw $unsupported === 'extendedMode'
-                            ? InvalidRouteConstraintException::extendedModeNotSupported(
-                                $this->pathTemplate,
-                                $segment['name'],
-                                $segment['pattern'],
-                            )
-                            : InvalidRouteConstraintException::controlVerbNotSupported(
-                                $this->pathTemplate,
-                                $segment['name'],
-                                $segment['pattern'],
-                            );
-                    }
+            if ($segment['pattern'] === null) {
+                continue;
+            }
 
-                    $paramPatterns[$segment['name']] = $segment['pattern'];
-                }
+            $unsupported = self::unsupportedConstruct($segment['pattern']);
+
+            if ($unsupported !== null) {
+                throw $unsupported === 'extendedMode'
+                    ? InvalidRouteConstraintException::extendedModeNotSupported(
+                        $pathTemplate,
+                        $segment['name'],
+                        $segment['pattern'],
+                    )
+                    : InvalidRouteConstraintException::controlVerbNotSupported(
+                        $pathTemplate,
+                        $segment['name'],
+                        $segment['pattern'],
+                    );
+            }
+
+            $paramPatterns[$segment['name']] = $segment['pattern'];
+        }
+
+        return ['names' => $paramNames, 'patterns' => $paramPatterns];
+    }
+
+    /**
+     * preg_match() returns false (with an E_WARNING, not an exception)
+     * rather than throwing on a compile error — left unchecked, a
+     * malformed {name:pattern} constraint would only surface as a
+     * silent, permanent 404 on the route's first real request, not at
+     * registration where the actual mistake is.
+     *
+     * @param array<string, string> $paramPatterns
+     */
+    private static function assertValidPattern(string $pattern, string $pathTemplate, array $paramPatterns): void
+    {
+        if (@preg_match($pattern, '') !== false) {
+            return;
+        }
+
+        foreach ($paramPatterns as $name => $paramPattern) {
+            // Re-check each constraint individually to name the actual
+            // offending one, rather than the whole compiled route
+            // pattern — escaped exactly as compile() itself escapes it
+            // (see escapeDelimiter()), so this check agrees with what
+            // actually gets compiled instead of misreporting a pattern
+            // compile() handles correctly.
+            $escaped = self::escapeDelimiter($paramPattern);
+
+            if (@preg_match(self::DELIMITER . $escaped . self::DELIMITER, '') === false) {
+                throw InvalidRouteConstraintException::malformedPattern($pathTemplate, $name, $paramPattern);
             }
         }
 
-        $this->paramNames = $paramNames;
-        $this->paramPatterns = $paramPatterns;
-        $this->pattern = self::compile($segments);
-
-        // preg_match() returns false (with an E_WARNING, not an
-        // exception) rather than throwing on a compile error — left
-        // unchecked, a malformed {name:pattern} constraint would only
-        // surface as a silent, permanent 404 on the route's first real
-        // request, not at registration where the actual mistake is.
-        if (@preg_match($this->pattern, '') === false) {
-            foreach ($paramPatterns as $name => $pattern) {
-                // Re-check each constraint individually to name the
-                // actual offending one, rather than the whole compiled
-                // route pattern — escaped exactly as compile() itself
-                // escapes it (see escapeDelimiter()), so this check
-                // agrees with what actually gets compiled instead of
-                // misreporting a pattern compile() handles correctly.
-                $escaped = self::escapeDelimiter($pattern);
-
-                if (@preg_match(self::DELIMITER . $escaped . self::DELIMITER, '') === false) {
-                    throw InvalidRouteConstraintException::malformedPattern($this->pathTemplate, $name, $pattern);
-                }
-            }
-
-            // A compile failure not isolated to one constraint's own
-            // pattern in isolation — still a real failure, named against
-            // the whole route rather than a specific placeholder.
-            throw InvalidRouteConstraintException::malformedRoute($this->pathTemplate);
-        }
+        // A compile failure not isolated to one constraint's own pattern
+        // in isolation — still a real failure, named against the whole
+        // route rather than a specific placeholder.
+        throw InvalidRouteConstraintException::malformedRoute($pathTemplate);
     }
 
     /**
@@ -618,11 +649,21 @@ final class Route
 
         foreach ($segments as $segment) {
             $regex .= $segment['type'] === 'placeholder'
-                ? '(?P<' . $segment['name'] . '>' . ($segment['pattern'] !== null ? self::escapeDelimiter($segment['pattern']) : '[^/]+') . ')'
+                ? self::placeholderFragment($segment)
                 : preg_quote($segment['value'], self::DELIMITER);
         }
 
         return self::DELIMITER . '^' . $regex . '$' . self::DELIMITER;
+    }
+
+    /**
+     * @param array{type: 'placeholder', name: string, pattern: ?string} $segment
+     */
+    private static function placeholderFragment(array $segment): string
+    {
+        $body = $segment['pattern'] !== null ? self::escapeDelimiter($segment['pattern']) : '[^/]+';
+
+        return '(?P<' . $segment['name'] . '>' . $body . ')';
     }
 
     /**
