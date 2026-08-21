@@ -505,9 +505,8 @@ final class Hydrator
      * value for a non-nullable parameter by its "must not be null." check.
      *
      * Public specifically so Kinetis\Http\Dispatcher can apply the identical
-     * policy to #[Query]/path parameters — Decision 1 of the fix pass this
-     * came from was to apply one uniform rule regardless of source, not a
-     * second, separately-maintained copy of it.
+     * policy to #[Query]/path parameters — one uniform rule regardless of
+     * source, not a second, separately-maintained copy of it.
      */
     public static function typeMismatchMessage(string $scalarType, mixed $value): ?string
     {

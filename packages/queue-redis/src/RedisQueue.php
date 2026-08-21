@@ -46,17 +46,17 @@ use Throwable;
  * stranded, not lost — it's still sitting in the processing list, exactly
  * where a future reaper would find it.
  *
- * Two other transitions genuinely could lose a job outright, and both are
- * fixed the same way: release() (processing -> pending) and
- * promoteDelayedJobs() (delayed -> pending) each used to be two separate
- * Redis commands — a process crash between them left the job removed from
- * the source with nothing ever written to the destination. Both now run
- * as a single Lua script (eval()) instead, which Redis executes as one
- * indivisible unit: no other command, including a second worker's own
- * concurrent promotion, can observe or interleave with a partially-applied
- * script, and a client that dies before or after the call can never
- * observe a state where the job exists in neither list, only "still in
- * the source" or "already in the destination".
+ * Two other transitions could otherwise lose a job outright: release()
+ * (processing -> pending) and promoteDelayedJobs() (delayed -> pending)
+ * both run as a single Lua script (eval()), which Redis executes as one
+ * indivisible unit — a naive remove-then-push pair of separate commands
+ * would leave a job removed from the source with nothing ever written to
+ * the destination if a process crashed between them. No other command,
+ * including a second worker's own concurrent promotion, can observe or
+ * interleave with a partially-applied script, and a client that dies
+ * before or after the call can never observe a state where the job
+ * exists in neither list, only "still in the source" or "already in the
+ * destination".
  *
  * Indivisible isn't the same as conditional, and release() needs both:
  * its script only performs the LPUSH when the LREM actually found and
@@ -312,16 +312,15 @@ final readonly class RedisQueue implements QueueInterface
      * One Lua script does the read (ZRANGEBYSCORE, bounded by
      * DELAYED_PROMOTION_BATCH_SIZE — see that constant's own docblock)
      * and every move (ZREM+LPUSH per ready member) as a single indivisible
-     * unit, rather than a read followed by separate remove-then-push
-     * commands per member — see this class's own docblock for why the
-     * split version could both double-process under concurrent workers
-     * and lose a job outright on a crash mid-loop. Redis executes one
-     * EVAL to completion before touching another command from any client,
-     * so two workers calling this concurrently are simply serialized by
-     * Redis itself: whichever one runs first moves its whole batch of
-     * ready members, and the second sees whatever's left (nothing, or
-     * the next batch) — no return-value check needed to tell which worker
-     * "won," the way the previous per-member version needed.
+     * unit — see this class's own docblock for why a read followed by
+     * separate remove-then-push commands per member would both
+     * double-process under concurrent workers and lose a job outright on
+     * a crash mid-loop. Redis executes one EVAL to completion before
+     * touching another command from any client, so two workers calling
+     * this concurrently are simply serialized by Redis itself: whichever
+     * one runs first moves its whole batch of ready members, and the
+     * second sees whatever's left (nothing, or the next batch) — no
+     * return-value check needed to tell which worker "won."
      */
     private function promoteDelayedJobs(string $queue): void
     {

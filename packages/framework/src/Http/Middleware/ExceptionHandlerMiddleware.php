@@ -15,8 +15,9 @@ use Psr\Log\LoggerInterface;
 use Throwable;
 
 /**
- * Registered unconditionally as the outermost global middleware by
- * Kernel — the same unconditional-dispose-hook reasoning
+ * Registered unconditionally as global middleware by Kernel, second only
+ * to SecurityHeadersMiddleware (see GlobalMiddlewareOrder::resolve() for
+ * the exact order) — the same unconditional-dispose-hook reasoning
  * TransactionGuard::rollbackDangling() uses. An uncaught exception from
  * anywhere in the pipeline — a controller, a route-level middleware,
  * application code in general — is caught here and converted into a 500

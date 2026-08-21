@@ -165,9 +165,8 @@ final class SigV4SigningClient implements ClientInterface
      * wrapped client's own later read ever has to seek the *original*
      * stream. PSR-7 explicitly permits a non-seekable stream
      * (`StreamInterface::isSeekable()`), and `rewind()`'s own contract
-     * requires it to throw when seeking fails — which an unconditional
-     * rewind() after reading, the previous approach here, would do for
-     * exactly that stream.
+     * requires it to throw when seeking fails, which is why a
+     * non-seekable stream is captured this way instead of rewound.
      *
      * A seekable stream is rewound first, matching what `__toString()`'s
      * own contract already promises to attempt — so the full body is
@@ -179,12 +178,10 @@ final class SigV4SigningClient implements ClientInterface
      * instance the caller built the request with is also the one this
      * method reads from, so rewinding/reading it is a real, visible
      * mutation to anyone still holding a reference to it, not a private
-     * copy — confirmed by a real reproduction: a caller-positioned
-     * stream came back at a different offset after a first version of
-     * this method that never restored it. A non-seekable stream is read
-     * from its current position instead, since seeking one backward is
-     * impossible by definition — the one real, disclosed limitation this
-     * leaves; see this class's own docblock above.
+     * copy. A non-seekable stream is read from its current position
+     * instead, since seeking one backward is impossible by definition —
+     * the one real, disclosed limitation this leaves; see this class's
+     * own docblock above.
      */
     private function withReplayableBody(RequestInterface $request): RequestInterface
     {

@@ -170,9 +170,9 @@ report becomes a span with zero configuration beyond the same
   runtimes these appear per request; under a worker, once per boot.
 - **The request pipeline, opened up** — a span per middleware layer,
   `route.match` (carrying the matched template as `http.route`),
-  hydration per DTO, `Controller::method`, and `response.encode`. The
-  previously unattributed gap between a request span and its query
-  spans now has names.
+  hydration per DTO, `Controller::method`, and `response.encode`: the
+  time between a request span and its query spans is attributed to
+  these, not left as an unnamed gap.
 - **Queries, split at the pool boundary** — a span per query from
   inside the drivers, with a `server.started` event marking the moment
   it actually went to the server: everything before that event is time

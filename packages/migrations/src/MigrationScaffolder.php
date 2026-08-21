@@ -58,19 +58,14 @@ final class MigrationScaffolder
             }
 
             // Both effects always run, in this exact order, regardless of
-            // which one (or both) fails — the previous "||" short-circuit
-            // skipped fclose() entirely once writeAll() had already
-            // returned false, unlinking a file PHP hadn't closed yet.
-            // POSIX permits unlinking an open file (masking the bug on
-            // Linux, where the test suite runs), but that's not portable
-            // — an explicit close before the unlink is what actually
-            // makes the cleanup contract correct rather than incidentally
-            // working on one platform. fclose() can itself fail to flush
-            // buffered data to disk even when every fwrite() call above
-            // reported success; either failure alone means the file "x"
-            // mode already created on disk isn't a valid migration stub,
-            // so it's removed rather than left behind to collide against
-            // on the next migrate:make run.
+            // which one (or both) fails — fclose() always runs before any
+            // unlink(), since unlinking a file PHP still has open is not
+            // portable (POSIX permits it; other platforms don't). fclose()
+            // can itself fail to flush buffered data to disk even when
+            // every fwrite() call above reported success; either failure
+            // alone means the file "x" mode already created on disk isn't
+            // a valid migration stub, so it's removed rather than left
+            // behind to collide against on the next migrate:make run.
             $written = self::writeAll($handle, self::stub());
             $closed = fclose($handle);
 

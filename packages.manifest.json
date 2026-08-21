@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.31.0",
+            "version": "1.31.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -104,7 +104,7 @@
             "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "requires": [
                 "framework"
             ],
@@ -167,7 +167,7 @@
             "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.3.6",
+            "version": "1.3.7",
             "requires": [
                 "framework",
                 "persistence"
@@ -181,7 +181,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "requires": [
                 "framework"
             ],
@@ -227,7 +227,7 @@
             "description": "A Redis-backed queue implementation for kinetis/queue's QueueInterface — the reliable-queue pattern (pending/processing/delayed lists), so a worker crash never silently loses a job.",
             "namespace": "Kinetis\\QueueRedis\\",
             "testNamespace": "Kinetis\\QueueRedis\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "framework",
                 "queue",
@@ -243,7 +243,7 @@
             "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for exactly-once delivery, an optional visibility timeout for a crashed worker's reserved job.",
             "namespace": "Kinetis\\QueueSql\\",
             "testNamespace": "Kinetis\\QueueSql\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "framework",
                 "queue",
@@ -325,7 +325,7 @@
             "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueRabbitMq\\",
             "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework",
                 "queue"
@@ -377,7 +377,7 @@
             "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
-            "version": "1.1.8",
+            "version": "1.1.9",
             "requires": [
                 "revolt-http-client"
             ],
@@ -439,7 +439,7 @@
             "description": "OpenTelemetry tracing for Kinetis — request spans, SQL and queue decorators, a traced HTTP transport, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.4.2",
+            "version": "1.4.3",
             "requires": [
                 "framework",
                 "revolt-http-client"

@@ -149,7 +149,33 @@ docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine \
 
 For a change confined to one file inside one package, that's the whole
 process. The sections below cover the two things that reach outside a
-single package: changing a dependency, and cutting a release.
+single package — changing a dependency, and cutting a release — plus how
+a change gets verified before it's pushed.
+
+## AI-assisted development
+
+Kinetis's own development — core and every satellite package — is done
+using Claude Code and other AI tools working directly in this
+repository, not as a caveat but as the actual engineering practice: the
+same PHPUnit/PHPStan/Psalm/manifest verification described throughout
+this page runs identically on every change regardless of who or what
+wrote it. Correctness comes from what's actually checked before a
+change lands, not from who typed it.
+
+`.claude/skills/push-ready/` is a concrete result of that practice, not
+just a description of it: a project-scoped
+[Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills)
+encoding the exact pre-push checklist this repo runs by hand — scope
+from the real diff, bump versions, regenerate `composer.json`, lint,
+test and analyse every affected package (not just the one touched — it
+walks the manifest's dependency graph), rebuild the docs if touched,
+validate the manifest — stopping at the first failure and never
+staging, committing, or pushing on its own. Any Claude Code session
+working in this repo picks it up automatically; ask it whether a
+change is ready to push, or run `/push-ready` directly. A human
+contributor can read the same file at
+`.claude/skills/push-ready/SKILL.md` and run the identical commands by
+hand.
 
 ## Changing a package's dependencies — the manifest tooling
 

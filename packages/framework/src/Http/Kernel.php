@@ -49,9 +49,9 @@ use Throwable;
  * persistent worker; skipped for a boot-and-die process about to have
  * the OS reclaim everything anyway.
  *
- * Every request runs through a global PSR-15 middleware pipeline:
- * `ExceptionHandlerMiddleware` outermost, then `$app`'s own
- * `AppScope::middleware()` registrations in order, then
+ * Every request runs through a global PSR-15 middleware pipeline, in the
+ * order {@see GlobalMiddlewareOrder::resolve()} computes from `$app`'s
+ * own `AppScope::middleware()` registrations and
  * `$discoveredGlobalMiddleware` (`#[AsGlobalMiddleware]` classes, sorted
  * by priority, minus anything already in `$app`'s explicit list),
  * terminating at `dispatchCore()` — routing and dispatch. A matched

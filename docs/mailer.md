@@ -71,8 +71,8 @@ Same convention as everywhere else in Kinetis (see {doc}`config`):
 ## Queueing mail
 
 Sending mail from inside a request means the client waits for it — and if
-you're on SMTP, that wait is a genuinely blocking one. The fix isn't
-anything `kinetis/mailer` needs to provide: a {doc}`queue <queue>` job
+you're on SMTP, that wait is a genuinely blocking one. `kinetis/mailer`
+doesn't need to provide anything for this: a {doc}`queue <queue>` job
 that constructor-injects `MailerInterface` already gets this for free,
 with no extra code in either package.
 

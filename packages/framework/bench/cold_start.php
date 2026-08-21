@@ -23,11 +23,11 @@ require dirname(__DIR__) . '/vendor/autoload.php';
  * The cached scenario only ever loads http.php — never mcp.php or
  * openapi.php — matching exactly what a real request to this route would
  * do via CacheStore::loadHttp() and Kernel's lazy $cacheStore. This is the
- * whole point of splitting the artifact: an earlier version of this
- * benchmark that loaded one monolithic file (routes + MCP + the full
- * OpenAPI document) showed the cached path *losing* to live reflection at
- * this small scale, because it paid to reconstruct data this route never
- * needed. Splitting fixes that by construction, not just by tuning.
+ * whole point of splitting the artifact: a monolithic file (routes + MCP
+ * + the full OpenAPI document) would mean reconstructing data this route
+ * never needs, which at this small scale can make the cached path lose
+ * to live reflection. Splitting avoids that by construction, not just by
+ * tuning.
  */
 const ITERATIONS = 2_000;
 const WARMUP = 100;

@@ -52,18 +52,17 @@ final class Route
      * it, so there's no reason for this to be anything other than a
      * single shared constant.
      *
-     * "#" (this constant's own first choice) was reverted once a real
-     * counterexample surfaced: "#" is PCRE syntax, not just a candidate
-     * delimiter, inside a "(?#comment)" comment group — escapeDelimiter()
-     * blindly escaping an unescaped "#" corrupts "(?#note)" into
-     * "(?\#note)", which no longer opens a comment group at all, breaking
-     * a perfectly valid caller fragment rather than merely dodging a
-     * collision. "~" has no PCRE-syntactic role anywhere — not in any
-     * "(?...)" construct, not as a quantifier, not inside a character
-     * class — confirmed directly against PCRE's own metacharacter list
-     * before picking it, not assumed safe by elimination. Escaping a
-     * literal, unescaped "~" the caller's own pattern happens to contain
-     * is therefore always exactly that: hiding a literal delimiter
+     * "~" has no PCRE-syntactic role anywhere — not in any "(?...)"
+     * construct, not as a quantifier, not inside a character class —
+     * confirmed directly against PCRE's own metacharacter list. "#" is
+     * not a safe alternative despite looking like one: it is PCRE syntax,
+     * not just a candidate delimiter, inside a "(?#comment)" comment
+     * group — escapeDelimiter() blindly escaping an unescaped "#" would
+     * corrupt "(?#note)" into "(?\#note)", which no longer opens a
+     * comment group at all, breaking a perfectly valid caller fragment
+     * rather than merely dodging a collision. Escaping a literal,
+     * unescaped "~" the caller's own pattern happens to contain is
+     * therefore always exactly that: hiding a literal delimiter
      * occurrence from PHP's own end-of-pattern search, never a change to
      * what the fragment means to PCRE itself.
      */
@@ -619,11 +618,10 @@ final class Route
      * Validates and builds one `{name}`/`{name:pattern}` placeholder's
      * segment from its already-extracted inner text, or null when the
      * name isn't a plain identifier — most likely someone using literal
-     * braces for something else entirely, matching the exact tolerance
-     * the previous `\{(\w+)\}` regex already gave that case: the caller
-     * falls through to plain-character advancement so it ends up quoted
-     * as literal text, rather than this producing an invalid PCRE named
-     * group (e.g. one containing a hyphen) that would fail to compile.
+     * braces for something else entirely. The caller falls through to
+     * plain-character advancement so it ends up quoted as literal text,
+     * rather than this producing an invalid PCRE named group (e.g. one
+     * containing a hyphen) that would fail to compile.
      *
      * @return PathSegment|null
      */

@@ -31,13 +31,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  * Access-Control-Allow-Origin header naming it. Nothing server-side needs
  * to reject the request itself.
  *
- * `$allowedOrigins` defaults to `[]` (deny-by-default) — reversed from an
- * earlier `['*']` default after an independent security evaluation flagged
- * the combination this shipped with: `['*']` + `allowCredentials: true`
- * meant zero-configuration use of this middleware granted any origin
- * credentialed access to every response. A consumer must now explicitly
- * opt in to `['*']` (or a real allow-list) before any cross-origin request
- * succeeds at all. Separately, and regardless of the default,
+ * `$allowedOrigins` defaults to `[]` (deny-by-default): a consumer must
+ * explicitly opt in to `['*']` (or a real allow-list) before any
+ * cross-origin request succeeds at all — zero-configuration use of this
+ * middleware never grants any origin credentialed access to a response.
+ * Separately, and regardless of the default,
  * `['*']` combined with `allowCredentials: true` is rejected outright at
  * construction — that combination has no correct interpretation to fall
  * back to (the spec forbids a literal wildcard alongside credentials,

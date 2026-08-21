@@ -724,8 +724,8 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         // A transport failure (the Runtime API sidecar unreachable, a
         // reset connection, ...) is fatal for a Lambda worker — there's
         // no invocation to serve and nothing left to fall back to — so
-        // this surfaces it rather than the previous silent '', which was
-        // indistinguishable from a genuinely empty, successful body.
+        // this throws rather than returning an empty string, which would
+        // be indistinguishable from a genuinely empty, successful body.
         if ($result === false) {
             throw BrefAdapterException::runtimeApiUnreachable($url);
         }
