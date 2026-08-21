@@ -123,7 +123,7 @@ as standalone PHP scripts under each package's `tests-integration/`. See
 need to run these locally for an ordinary change; CI runs them against
 real service containers on every push.
 
-```{tip}
+````{tip}
 `tools/` — the release tooling itself — has its own PHPUnit suite too
 (38 tests). Run it the same way, with one addition: its suite shells out
 to `git`, which the base `php:8.4-cli-alpine` image doesn't ship:
@@ -132,7 +132,7 @@ to `git`, which the base `php:8.4-cli-alpine` image doesn't ship:
 docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine \
   sh -c "apk add --no-cache git >/dev/null 2>&1 && php vendor/bin/phpunit"
 ```
-```
+````
 
 ## Making a change
 
