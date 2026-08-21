@@ -65,10 +65,10 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 
 Kinetis targets FrankenPHP's worker mode first: one warm process serving
 request after request. **The same application code runs unchanged under
-classic nginx and PHP-FPM** — and on AWS Lambda via Bref — because the
-runtime is an adapter Kinetis talks to, not an assumption baked into the
-framework. Deploy the way you deploy today, and move to a worker when it 
-suits you.
+classic nginx and PHP-FPM** — on RoadRunner, and on AWS Lambda via Bref
+— because the runtime is an adapter Kinetis talks to, not an assumption
+baked into the framework. Deploy the way you deploy today, and move to a
+worker when it suits you.
 
 ## Built to a standard you can check
 

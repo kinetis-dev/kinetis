@@ -23,14 +23,14 @@ use Throwable;
 
 /**
  * Bridges AWS Lambda's Runtime API to the Kernel, so the same application
- * code that runs under FrankenPHP or FPM also runs behind API Gateway
- * without changes. Polls .../runtime/invocation/next for the next event,
- * converts it to PSR-7, and posts the Kernel's response back as the
- * function's return payload. Supports the API Gateway HTTP API (payload
- * format 2.0) event shape used by Bref-style Lambda functions; ALB/REST
- * API (1.0) payloads aren't handled yet — see {doc}`runtime-adapters` for
- * the complete supported/unsupported feature list, including cookies,
- * REMOTE_ADDR, and binary body handling.
+ * code that runs under FrankenPHP, FPM, or RoadRunner also runs behind
+ * API Gateway without changes. Polls .../runtime/invocation/next for the
+ * next event, converts it to PSR-7, and posts the Kernel's response back
+ * as the function's return payload. Supports the API Gateway HTTP API
+ * (payload format 2.0) event shape used by Bref-style Lambda functions;
+ * ALB/REST API (1.0) payloads aren't handled yet — see
+ * {doc}`runtime-adapters` for the complete supported/unsupported feature
+ * list, including cookies, REMOTE_ADDR, and binary body handling.
  *
  * Talks to the Runtime API with plain stream-context HTTP rather than
  * ext-curl or the bref/bref package: it's a synchronous request/response

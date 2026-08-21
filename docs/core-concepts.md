@@ -137,7 +137,10 @@ because not everything does. Superglobal state (`$_GET`, `$_POST`,
 needs some kind of manual superglobal-reset step between requests, but it
 needs no code at all: FrankenPHP already repopulates every superglobal
 correctly on each call into the worker, and `Kinetis\Runtime\
-SuperglobalsBridge` relies on exactly that.
+SuperglobalsBridge` relies on exactly that. RoadRunner sidesteps the
+question a different way — `RoadRunnerAdapter` builds the PSR-7 request
+directly from RoadRunner's own protocol and never touches a superglobal
+at all, so there's nothing there to reset either.
 
 The genuinely new risk is narrower and more specific than "any global
 state": it's specifically the state *your own application code* introduces
@@ -154,7 +157,8 @@ the `NoStaticPropertiesRule` in {doc}`container` exists to catch.
 - {doc}`middleware` — the two PSR-15 pipelines wrapping every request
   through this lifecycle, and the built-in `ExceptionHandlerMiddleware`
   that guarantees an uncaught exception still becomes a response.
-- {doc}`runtime-adapters` — exactly how `Kernel` gets driven by FrankenPHP,
-  PHP-FPM, and AWS Lambda, and what each one is actually responsible for.
+- {doc}`runtime-adapters` — exactly how `Kernel` gets driven by
+  FrankenPHP, PHP-FPM, RoadRunner, and AWS Lambda, and what each one is
+  actually responsible for.
 - {doc}`caching` — what changes about this lifecycle in production, and
   why the answer turned out to be more specific than "cache everything."

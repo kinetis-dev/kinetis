@@ -107,8 +107,9 @@ removes entirely.
 
 ## Performance characteristics
 
-For a persistent worker (FrankenPHP's primary deployment target — see
-{doc}`runtime-adapters`), `Router::register()` only ever runs once
+For a persistent worker (FrankenPHP, Kinetis's primary deployment
+target, or RoadRunner — see {doc}`runtime-adapters`),
+`Router::register()` only ever runs once
 regardless of caching, since boot happens once for the whole worker's
 lifetime. What still runs on **every single dispatch**, cached or not, is
 `Dispatcher`/`Hydrator`'s parameter-binding and validation-plan derivation

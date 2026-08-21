@@ -34,7 +34,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  * FPM, bounded by PHP's own upload_max_filesize/post_max_size; by the
  * adapter itself under kinetis/bref-adapter, where no SAPI limit exists
  * and the only cap is the platform's own invocation payload size (6 MB
- * on AWS Lambda).
+ * on AWS Lambda); and by the adapter itself under
+ * kinetis/roadrunner-adapter too, where the real defense is RoadRunner's
+ * own http.max_request_size setting, not this middleware.
  *
  * Resolved through the container (see Kernel), so $maxBytes is read once
  * per worker boot from Config, not re-read on every request.

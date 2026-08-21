@@ -2,9 +2,10 @@
 
 Kinetis connects to MySQL, Postgres, and Redis through clients matched to
 the runtime actually serving your application. Under a persistent worker
-(FrankenPHP), queries suspend only their own request's Fiber — a request
-waiting on the database doesn't stop the worker's request from making
-progress on anything else it has in flight. Under PHP-FPM, where a worker
+(FrankenPHP or RoadRunner), queries suspend only their own request's
+Fiber — a request waiting on the database doesn't stop the worker's
+request from making progress on anything else it has in flight. Under
+PHP-FPM, where a worker
 serves exactly one request at a time from a fresh process, Kinetis uses a
 plain blocking PDO connection instead — measured to be the faster choice
 there by a wide margin, since nothing else could have used the wait time
@@ -164,7 +165,7 @@ non-default connection is always retrieved explicitly
 
 | value | what you get |
 |---|---|
-| `auto` (default) | FrankenPHP worker mode → `native`; PHP-FPM → `pdo`. |
+| `auto` (default) | FrankenPHP worker mode or RoadRunner → `native`; PHP-FPM → `pdo`. |
 | `native` | mysqli's `MYSQLI_ASYNC` (`Driver\MysqliAsyncClient`) or ext-pgsql's `pg_send_query` (`Driver\PgsqlAsyncClient`): the wire protocol runs at C speed inside the extension, queries overlap across connections, and each waits by suspending only its own Fiber — full `concurrently()` support. |
 | `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
 
@@ -358,9 +359,9 @@ of on first use (clamped to `maxConnections`); the connection-scoped
 same explicit-value-wins precedence. Every driver also exposes the
 underlying call directly — `warmUp(?int $connections = null)`, where
 `null` warms the whole pool. Warming makes a wrong database
-configuration fail at boot instead of on the first query, and under
-FrankenPHP worker mode it is **load-bearing for the native MySQL
-driver**, not just a latency optimization — see
+configuration fail at boot instead of on the first query, and under a
+persistent worker (FrankenPHP or RoadRunner) it is **load-bearing for
+the native MySQL driver**, not just a latency optimization — see
 {doc}`performance-tuning`'s "mysqli's poll limit" for why boot-time
 connecting is what keeps that driver's sockets pollable at all.
 
@@ -386,6 +387,14 @@ simultaneous database connections is `num_workers × maxConnections`, not
 almost certainly far more than your database allows, and every one of
 them costs the database real memory and setup work even when the client
 survives the rejection.
+
+`RoadRunnerAdapter` runs into the identical multiplication, for the same
+underlying reason — the bootstrap chain runs once per worker, so each
+one builds its own pool — just with worker *processes* standing in for
+worker threads: RoadRunner's own `pool.num_workers` is the multiplier
+instead of FrankenPHP's `worker.num`, but `num_workers × maxConnections`
+against your database's `max_connections` is the exact same budget to
+size against either way.
 
 Size `maxConnections` so `num_workers × maxConnections` stays
 comfortably under your database's own `max_connections` — not so that

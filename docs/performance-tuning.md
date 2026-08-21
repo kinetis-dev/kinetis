@@ -1,14 +1,18 @@
 # Performance tuning
 
 Kinetis exposes three capacity knobs that multiply into one deployment
-envelope: worker thread count, per-thread connection pool width, and
-the database server's own limits behind them. This page covers how
-they interact, what saturates first under each workload shape, and
-which numbers to read before turning anything. Database-side tuning
-itself belongs to your database's documentation; what's here is the
-interaction surface. The figures quoted come from load testing on an
-8-vCPU application host against a dedicated MySQL 8.4 host with
-sub-millisecond round trips.
+envelope: worker count, per-worker connection pool width, and the
+database server's own limits behind them. This page covers how they
+interact, what saturates first under each workload shape, and which
+numbers to read before turning anything. Database-side tuning itself
+belongs to your database's documentation; what's here is the
+interaction surface. The figures quoted come from load testing a
+FrankenPHP worker on an 8-vCPU application host against a dedicated
+MySQL 8.4 host with sub-millisecond round trips — the connection-budget
+formula below applies identically to RoadRunner's worker *processes*,
+but the specific tuning ratios (thread/process count relative to
+vCPUs, connections per worker) haven't been separately measured there
+and shouldn't be assumed to transfer unchanged.
 
 Read {doc}`runtime-adapters`'s "Sizing FrankenPHP's worker threads"
 and {doc}`persistence`'s "Sizing `maxConnections` under worker mode"
@@ -16,18 +20,20 @@ first. This page builds on both.
 
 ## The connection budget
 
-Under FrankenPHP worker mode, every worker thread builds its own
-connection pool, so the deployment's ceiling is a product, not a
-single number:
+Under a persistent worker (FrankenPHP or RoadRunner), every worker
+builds its own connection pool — a thread under FrankenPHP, a separate
+process under RoadRunner — so the deployment's ceiling is a product,
+not a single number:
 
 ```{code-block} text
-worker_threads × maxConnections  ≤  comfortably under the DB's max_connections
+workers × maxConnections  ≤  comfortably under the DB's max_connections
 ```
 
 Pool width comes from `DB_MAX_CONNECTIONS` (connection-scoped, like
 every `DB_*` key) or the `$poolOptions` argument to
-`SqlConnectionFactory::fromConfig()`; worker thread count from your
-runtime's own worker setting.
+`SqlConnectionFactory::fromConfig()`; worker count from your runtime's
+own worker setting (`worker.num` under FrankenPHP,
+`pool.num_workers` under RoadRunner).
 
 "Comfortably" is doing real work in that sentence: leave room for
 migrations, monitoring agents, a second app instance, and anything
@@ -56,9 +62,12 @@ Two subtler ceilings sit below `max_connections`:
   at low load. Warm the pool at worker boot instead
   (`DB_WARM_CONNECTIONS`, or `warmConnections` in `$poolOptions` — see
   {doc}`persistence`): connections opened before traffic exists claim
-  low numbers and keep them for the process's lifetime. Keep
-  `worker threads × maxConnections` under ~1000 so a fully warmed pool
-  fits below the ceiling at all.
+  low numbers and keep them for the process's lifetime. Keep the total
+  mysqli connections in one process under ~1000 so a fully warmed pool
+  fits below the ceiling at all — `worker threads × maxConnections`
+  under FrankenPHP, where several threads share one process's fd table;
+  just `maxConnections` under RoadRunner, where each worker is its own
+  process with its own fd table.
 - **Prepared-statement count (MySQL).** The PDO drivers cache
   prepared statements per connection (see {doc}`persistence`), and
   MySQL caps server-side statements globally via

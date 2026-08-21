@@ -34,8 +34,9 @@ Installing the package registers its pieces automatically (via
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | The ratio for the `traceidratio` samplers, `0`–`1` — `0.1` keeps roughly one trace in ten. |
 
 Spans batch in memory and export when the batch fills or at shutdown —
-which is request end under PHP-FPM and worker exit under FrankenPHP, so
-both shapes flush with no further configuration.
+which is request end under PHP-FPM and worker exit under a persistent
+worker (FrankenPHP or RoadRunner), so every shape flushes with no
+further configuration.
 
 ## Request spans
 

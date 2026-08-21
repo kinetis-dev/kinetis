@@ -44,14 +44,16 @@ Timer::delay(0.05); // suspends this Fiber for 50ms, without blocking the proces
 **What this buys you, precisely.** Every primitive on this page provides
 concurrency *within the scope of what's currently executing* — most
 concretely, several independent pieces of one request's own work (see
-`concurrently()` below). It does not, by itself, let one worker thread
-serve a second, unrelated incoming HTTP request while the first is
-suspended waiting on I/O — under FrankenPHP worker mode specifically,
-each worker thread processes one request fully before picking up the
-next; cross-request concurrency there comes from the number of worker
-threads, not from this suspend/resume mechanism. See {doc}`runtime-adapters`'s
-"Sizing FrankenPHP's worker threads" section for what that means in
-practice and how to size for it.
+`concurrently()` below). It does not, by itself, let one worker serve a
+second, unrelated incoming HTTP request while the first is suspended
+waiting on I/O — under a persistent worker (FrankenPHP or RoadRunner)
+specifically, each worker (a thread under FrankenPHP, a process under
+RoadRunner) processes one request fully before picking up the next;
+cross-request concurrency there comes from the number of workers, not
+from this suspend/resume mechanism. See {doc}`runtime-adapters`'s
+"Sizing FrankenPHP's worker threads" and "Sizing RoadRunner's worker
+processes" sections for what that means in practice and how to size for
+it.
 ```
 
 ## `Socket` — non-blocking TCP

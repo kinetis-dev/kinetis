@@ -162,11 +162,13 @@ default).
 ## Running under PHP-FPM
 
 Nothing to configure — Kinetis detects a plain PHP-FPM environment
-automatically and falls back to it whenever FrankenPHP isn't available.
+automatically and falls back to it whenever none of the other three
+runtimes' own signals (FrankenPHP, RoadRunner, Lambda) are present.
 Every request reruns the whole `public/index.php` script from scratch,
 since PHP-FPM doesn't keep anything in memory between requests. See
 {doc}`caching` for what changes about that in production, and why it
-matters more here than under FrankenPHP.
+matters more here than under a persistent worker (FrankenPHP or
+RoadRunner).
 
 One setting matters for a streamed response (an MCP progress stream,
 any `StreamedResponse`): nginx buffers a FastCGI response by default and
@@ -408,6 +410,35 @@ defense in depth for the common, honestly-labeled case — not a
 substitute for `http.max_request_size`, which is what actually bounds
 the case this check can't see: a request that lies about its length, or
 declares none.
+
+### Sizing RoadRunner's worker processes
+
+The same underlying shape {doc}`runtime-adapters`'s "Sizing FrankenPHP's
+worker threads" section describes applies here, just with a process in
+place of a thread: `.rr.yaml`'s `http.pool.num_workers` sets how many
+PHP worker processes RoadRunner keeps running, each handling exactly
+one HTTP request at a time, start to finish. `bootstrap.php` (and every
+`extra.kinetis` package bootstrap) runs once per worker process, so
+each one builds its own separate service instances — including a
+database connection pool via `kinetis/persistence`'s
+`SqlConnectionFactory`. Oversizing `num_workers` without correspondingly
+undersizing each pool's `maxConnections` can exhaust your database's
+own connection limit exactly the same way it can under FrankenPHP — see
+{doc}`persistence`'s "Sizing `maxConnections` under worker mode"
+section.
+
+Where this genuinely differs from FrankenPHP, not just in name: each
+RoadRunner worker is a separate OS process rather than a thread sharing
+one process, so there's no cross-worker contention on that process's
+own resources (the kernel `mm` lock contention `Kinetis\Async\FiberPool`
+exists to avoid under FrankenPHP's threaded model doesn't arise here in
+the same way, since nothing is shared to contend over) — but process
+creation itself has its own, different overhead. FrankenPHP's own
+measured thread-sizing ratios (2–3× vCPUs for a mixed CPU/fast-query
+workload) come from load testing threads specifically and haven't been
+separately re-measured against RoadRunner's process model; see
+{doc}`performance-tuning`'s own note on this before assuming they
+transfer unchanged. Measure under realistic load either way.
 
 ### `ext-sockets` under an Alpine-based image
 

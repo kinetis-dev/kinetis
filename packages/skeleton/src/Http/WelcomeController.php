@@ -183,7 +183,7 @@ final readonly class WelcomeController
                     </div>
                     <div class="feature">
                         <h3>Runs anywhere</h3>
-                        <p>The same code runs under FrankenPHP, classic PHP-FPM (like this page), or AWS Lambda.</p>
+                        <p>The same code runs under FrankenPHP, classic PHP-FPM (like this page), RoadRunner, or AWS Lambda.</p>
                     </div>
                 </div>
 

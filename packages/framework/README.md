@@ -51,14 +51,15 @@ not on every single one it serves.
 Kinetis is designed around [FrankenPHP](https://frankenphp.dev)'s worker
 mode — a PHP process that boots once and serves thousands of requests — as
 its primary target, though the same application code also runs correctly
-under classic PHP-FPM and AWS Lambda (via Bref): the runtime is an adapter
-Kinetis talks to, not an assumption baked into the framework itself.
+under classic PHP-FPM, RoadRunner, and AWS Lambda (via Bref): the runtime
+is an adapter Kinetis talks to, not an assumption baked into the
+framework itself.
 
 ## Highlights
 
 - **Runtime-adapter architecture** — the same `public/index.php` runs
-  unmodified under FrankenPHP, PHP-FPM, or AWS Lambda; `RuntimeDetector`
-  picks the right adapter with zero configuration.
+  unmodified under FrankenPHP, PHP-FPM, RoadRunner, or AWS Lambda;
+  `RuntimeDetector` picks the right adapter with zero configuration.
 - **A two-tier container** (`AppScope` + `RequestScope`) that makes
   request-scope isolation an enforced guarantee, not a convention — backed
   by a PHPStan rule that bans stray `static` state.
