@@ -250,11 +250,11 @@ FastCGI. This split matters beyond just "how do I serve HTTP": PHP-FPM
 reboots the whole `public/index.php` script — including route/command
 discovery — on every single request, so an edit to a controller takes
 effect on your very next request, no restart needed. A persistent-worker
-runtime like FrankenPHP can't offer that (once a class is loaded in a
-worker process, PHP has no way to redeclare it with new content), which
-is why local development here runs on PHP-FPM rather than FrankenPHP's
-worker mode — see {doc}`runtime-adapters` for when to reach for FrankenPHP
-instead.
+runtime like FrankenPHP or RoadRunner can't offer that (once a class is
+loaded in a worker process, PHP has no way to redeclare it with new
+content), which is why local development here runs on PHP-FPM rather
+than a worker mode — see {doc}`runtime-adapters` for when to reach for
+one instead.
 
 ```{code-block} bash
 docker compose up --build
@@ -1429,8 +1429,9 @@ worker — Kinetis's *primary optimization target*. One side effect worth
 knowing: a FrankenPHP worker loads `public/index.php` (including all
 discovery) exactly once at boot, so a code change needs an `app`
 container restart to take effect — there's no PHP-FPM-style hot reload
-on every request. See {doc}`runtime-adapters` for more on when to reach
-for FrankenPHP.
+on every request; RoadRunner's own worker processes have the identical
+limitation. See {doc}`runtime-adapters` for more on when to reach for a
+persistent-worker runtime.
 
 ## See also
 

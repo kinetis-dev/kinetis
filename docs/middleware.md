@@ -584,13 +584,17 @@ parsed before Kinetis code reads it, bounded by PHP's own
 
 ```{note}
 That SAPI-limit explanation is specific to FrankenPHP/PHP-FPM, where a
-real SAPI parses the body before this middleware ever runs. Under
-`kinetis/bref-adapter`, a Lambda event's whole body arrives as one
-in-memory string with no SAPI involved at all — `BrefLambdaAdapter`
-parses `multipart/form-data`/`application/x-www-form-urlencoded` itself,
-in userland PHP, so neither `upload_max_filesize`/`post_max_size` nor
-this middleware's own read-time check apply there; the effective limit
-is whatever Lambda's own payload size limit already is.
+real SAPI parses the body before this middleware ever runs.
+`kinetis/bref-adapter` and `kinetis/roadrunner-adapter` both parse form
+bodies themselves, in userland PHP, so `upload_max_filesize`/
+`post_max_size` never apply there. Under `kinetis/bref-adapter`, a
+Lambda event's whole body arrives as one in-memory string with no SAPI
+involved at all; the effective limit is whatever Lambda's own payload
+size limit already is. Under `kinetis/roadrunner-adapter`, the required
+`http.max_request_size` setting is the real limit — a separate, Go-side
+mechanism independent of `raw_body`, not affected by it — see
+{doc}`runtime-adapters` for the full reasoning, including how it relates
+to `MAX_BODY_SIZE`.
 ```
 
 ## Built in: `CorsMiddleware`

@@ -57,6 +57,10 @@ jobs:
           - { name: auth, dir: packages/auth, minMsi: 70, minCoveredMsi: 70 }
           - { name: auth-jwt, dir: packages/auth-jwt, minMsi: 70, minCoveredMsi: 70 }
           - { name: bref-adapter, dir: packages/bref-adapter, minMsi: 70, minCoveredMsi: 70 }
+          # composerFlags bypasses the ext-sockets platform check —
+          # confirmed for real that a from-scratch install fails without
+          # it under Alpine; see ci.yml's matrix for the same reasoning.
+          - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, minMsi: 85, minCoveredMsi: 85, composerFlags: "--ignore-platform-req=ext-sockets" }
           - { name: mailer, dir: packages/mailer, minMsi: 90, minCoveredMsi: 90 }
           - { name: migrations, dir: packages/migrations, minMsi: 75, minCoveredMsi: 75 }
           - { name: mcp, dir: packages/mcp, minMsi: 75, minCoveredMsi: 75 }
@@ -104,7 +108,7 @@ jobs:
         # the container runs as a different UID than the host checkout it
         # bind-mounts, which git (invoked internally by Composer for
         # path-repo version resolution) refuses by default.
-        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "${{ runner.temp }}/composer-cache":/tmp/cache -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "${{ runner.temp }}/composer-cache":/tmp/cache -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist ${{ matrix.package.composerFlags }}
 
       - name: Infection (mutation testing)
         # On a pull request, only the code the PR actually changes is

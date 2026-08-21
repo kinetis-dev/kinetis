@@ -73,6 +73,23 @@ jobs:
           - { name: persistence, dir: packages/persistence, phpunit: true }
           - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
           - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }
+          # ext-sockets — a real, hard `require` of spiral/roadrunner-worker
+          # — compiles under Alpine fine, but needs `linux-headers` on top
+          # of the usual `$PHPIZE_DEPS` (confirmed directly; see
+          # docs/runtime-adapters.md), and every step below is its own
+          # separate, stateless container — installing/PHPStan/Psalm x2/
+          # PHPUnit — so compiling it from source five times per PHP
+          # version, on every push, for an extension nothing this
+          # package's own code, PHPStan, Psalm, or its committed (real-
+          # binary-free) unit suite ever loads, is real wasted cost with
+          # nothing to show for it. Composer's own platform check is
+          # bypassed here instead. RoadRunnerConformanceTest (the real-rr-
+          # binary suite) needs both a real binary and a genuinely loaded
+          # ext-sockets, and runs in integration.yml's dedicated job
+          # instead, on a native runner via shivammathur/setup-php — a
+          # prebuilt extension there, not a from-source Alpine compile;
+          # it skips itself cleanly here with neither present.
+          - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, phpunit: true, composerFlags: "--ignore-platform-req=ext-sockets" }
           - { name: query-builder, dir: packages/query-builder, phpunit: true }
           - { name: auth, dir: packages/auth, phpunit: true }
           - { name: auth-jwt, dir: packages/auth-jwt, phpunit: true }
@@ -125,7 +142,7 @@ jobs:
         run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 validate --strict
 
       - name: Install dependencies
-        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "${{ runner.temp }}/composer-cache":/tmp/cache -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "${{ runner.temp }}/composer-cache":/tmp/cache -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist ${{ matrix.package.composerFlags }}
 
       - name: Composer audit
         run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 audit

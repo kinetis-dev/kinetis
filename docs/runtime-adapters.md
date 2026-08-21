@@ -1,6 +1,6 @@
 # Runtime Adapters
 
-Kinetis runs unmodified on three different kinds of PHP hosting, and picks
+Kinetis runs unmodified on four different kinds of PHP hosting, and picks
 the right one automatically — you don't configure this yourself:
 
 ```{code-block} php
@@ -12,9 +12,10 @@ $adapter = Kinetis\Runtime\RuntimeDetector::detect();
 | FrankenPHP (worker mode) | One long-running process serves request after request — Kinetis's primary target. |
 | Plain PHP-FPM | The classic model: one request in, one response out, then the script ends. Fully supported, not an afterthought. |
 | AWS Lambda (via Bref) | A separate install, `kinetis/bref-adapter` — see below. |
+| RoadRunner | A separate install, `kinetis/roadrunner-adapter` — see below. |
 
 `public/index.php` calls `RuntimeDetector::detect()` once, and the exact
-same file works correctly under all three — nothing in your application
+same file works correctly under all four — nothing in your application
 code needs to know or care which one is actually running it.
 
 ## Running under FrankenPHP
@@ -161,11 +162,13 @@ default).
 ## Running under PHP-FPM
 
 Nothing to configure — Kinetis detects a plain PHP-FPM environment
-automatically and falls back to it whenever FrankenPHP isn't available.
+automatically and falls back to it whenever none of the other three
+runtimes' own signals (FrankenPHP, RoadRunner, Lambda) are present.
 Every request reruns the whole `public/index.php` script from scratch,
 since PHP-FPM doesn't keep anything in memory between requests. See
 {doc}`caching` for what changes about that in production, and why it
-matters more here than under FrankenPHP.
+matters more here than under a persistent worker (FrankenPHP or
+RoadRunner).
 
 One setting matters for a streamed response (an MCP progress stream,
 any `StreamedResponse`): nginx buffers a FastCGI response by default and
@@ -310,10 +313,211 @@ whichever fields happen to be missing or malformed.
   surfacing the failure (visible in CloudWatch as the function
   erroring) is the correct outcome rather than continuing silently.
 
+## Running under RoadRunner
+
+````{note}
+Not part of core. Install it separately:
+
+```{code-block} sh
+composer require kinetis/roadrunner-adapter
+```
+````
+
+Once installed, detection picks it up automatically from `RR_MODE`, the
+environment variable RoadRunner's own `rr serve` sets when it spawns
+the worker — nothing else to configure to be found. It needs two extra
+dependencies beyond what core ships with (RoadRunner's own PHP worker
+library, and the same form-body parser `kinetis/bref-adapter` uses),
+which is why it's a separate install rather than bundled by default.
+
+`Kinetis\RoadRunnerAdapter\RoadRunnerAdapter` speaks RoadRunner's own
+Goridge/`PSR7Worker` protocol — a persistent worker loop, structurally
+the closest of the four to FrankenPHP's, but built on RoadRunner's own
+PHP library rather than a raw request-handling function.
+
+**Two RoadRunner configuration settings are required**, not optional:
+
+```{code-block} yaml
+version: "3"
+
+server:
+  command: "php public/index.php"
+
+http:
+  address: 0.0.0.0:8080
+  raw_body: true
+  max_request_size: 10
+```
+
+`http.raw_body: true` — confirmed directly against RoadRunner's own Go
+source, not assumed: without it, RoadRunner parses
+`multipart/form-data`/`application/x-www-form-urlencoded` bodies itself,
+in Go, before the PHP worker is ever invoked, and a body it can't parse
+never reaches PHP at all — the client gets RoadRunner's own error
+response instead of this framework's `400`/JSON shape. Setting it
+disables that Go-side parsing entirely, so every body — well-formed or
+not — reaches this adapter's own parser untouched, the same reason
+`kinetis/bref-adapter` needs one: a request body here is one in-memory
+string with no live `php://input` stream behind it, so PHP 8.4's
+`request_parse_body()` (what `FrankenPhpAdapter`/`FpmAdapter` use for
+the same problem) can't help.
+
+A misconfigured `raw_body` doesn't fail silently: `RoadRunnerAdapter`
+detects the resulting Go-side pre-parsed body (a real attribute
+RoadRunner's own `PSR7Worker` stamps on every request) and reports it as
+a clear configuration error naming `http.raw_body: true`, rather than
+re-parsing an already-parsed body and silently producing wrong fields.
+
+### `http.max_request_size` is the real defense against an oversized body
+
+`raw_body: true` above means neither `upload_max_filesize`/
+`post_max_size` (no SAPI here to enforce them) nor
+`MaxBodySizeMiddleware` (a `multipart/form-data`/
+`application/x-www-form-urlencoded` body is parsed by this adapter
+*before* the Kernel's own middleware pipeline ever runs — see
+{doc}`middleware`) bound how large a form body can be. Left unset,
+RoadRunner's own default is a generous 1000 MB — confirmed directly
+against its Go source, not assumed — which is real but not a sane
+production limit on its own.
+
+**Set `http.max_request_size` explicitly** (real megabytes, RoadRunner's
+own unit — `10` above is 10 MB, matching a typical small-upload API; size
+it to what your application actually needs). This is enforced in Go,
+wrapping the request in a real `http.MaxBytesReader` before your PHP
+worker is ever invoked — the only place a body with no declared
+`Content-Length` at all (a genuinely chunked request) can be bounded,
+since by the time this adapter's own code runs, RoadRunner has already
+handed it the whole body as one in-memory string with nothing left to
+read incrementally.
+
+This is a separate ceiling from `MAX_BODY_SIZE` (below), and the two
+don't automatically agree: the example's `max_request_size: 10` allows
+up to 10 MB through to PHP, but `MAX_BODY_SIZE` still defaults to 2 MiB,
+so a form body between those two sizes reaches PHP and is then rejected
+there instead of at the Go layer. Either is a real rejection — nothing
+gets silently accepted — but if you want one consistent limit, set both
+to match (`MAX_BODY_SIZE=10485760` alongside `max_request_size: 10`).
+
+`RoadRunnerAdapter` itself adds one more, narrower check on top: a
+form body whose *declared* `Content-Length` already exceeds
+`MAX_BODY_SIZE` (the same env var and default — 2 MiB — `MaxBodySizeMiddleware`
+uses) is rejected with a `413` before this adapter's own multipart/
+url-encoded parser ever runs — the whole body has already been handed
+to PHP as one in-memory string by this point (see above), so what this
+check actually prevents is spending time copying and parsing something
+already known to be too large, not the initial read itself. This is
+defense in depth for the common, honestly-labeled case — not a
+substitute for `http.max_request_size`, which is what actually bounds
+the case this check can't see: a request that lies about its length, or
+declares none.
+
+### Sizing RoadRunner's worker processes
+
+The same underlying shape {doc}`runtime-adapters`'s "Sizing FrankenPHP's
+worker threads" section describes applies here, just with a process in
+place of a thread: `.rr.yaml`'s `http.pool.num_workers` sets how many
+PHP worker processes RoadRunner keeps running, each handling exactly
+one HTTP request at a time, start to finish. `bootstrap.php` (and every
+`extra.kinetis` package bootstrap) runs once per worker process, so
+each one builds its own separate service instances — including a
+database connection pool via `kinetis/persistence`'s
+`SqlConnectionFactory`. Oversizing `num_workers` without correspondingly
+undersizing each pool's `maxConnections` can exhaust your database's
+own connection limit exactly the same way it can under FrankenPHP — see
+{doc}`persistence`'s "Sizing `maxConnections` under worker mode"
+section.
+
+Where this genuinely differs from FrankenPHP, not just in name: each
+RoadRunner worker is a separate OS process rather than a thread sharing
+one process, so there's no cross-worker contention on that process's
+own resources (the kernel `mm` lock contention `Kinetis\Async\FiberPool`
+exists to avoid under FrankenPHP's threaded model doesn't arise here in
+the same way, since nothing is shared to contend over) — but process
+creation itself has its own, different overhead. FrankenPHP's own
+measured thread-sizing ratios (2–3× vCPUs for a mixed CPU/fast-query
+workload) come from load testing threads specifically and haven't been
+separately re-measured against RoadRunner's process model; see
+{doc}`performance-tuning`'s own note on this before assuming they
+transfer unchanged. Measure under realistic load either way.
+
+### `ext-sockets` under an Alpine-based image
+
+`spiral/roadrunner-worker` hard-requires PHP's `sockets` extension.
+Alpine's own `$PHPIZE_DEPS` build-tools set is not enough on its own —
+`docker-php-ext-install sockets` fails there with a missing
+`linux/sock_diag.h` — but adding `apk add linux-headers` alongside it
+closes the gap; confirmed directly, not assumed, against both
+`php:8.3-cli-alpine` and `php:8.4-cli-alpine`:
+
+```{code-block} dockerfile
+FROM php:8.4-cli-alpine
+RUN apk add --no-cache $PHPIZE_DEPS linux-headers \
+ && docker-php-ext-install sockets
+```
+
+This package's own CI deliberately does *not* do this — every step of
+its Alpine-based checks (install, PHPStan, Psalm, the committed unit
+suite) runs in its own separate, stateless container, none of which
+ever load `ext-sockets` at runtime, so compiling it from source
+repeatedly would be pure cost with nothing to show for it; Composer's
+platform check is bypassed there instead. A real deployment image is
+the opposite case — one build, reused for the worker's whole
+lifetime — where the cost above is paid once and is worth it.
+
+### A crash in one request doesn't take the worker down
+
+Unlike `FrankenPhpAdapter`, which lets an uncaught exception propagate
+and end the worker process, `RoadRunnerAdapter::run()` catches it,
+reports it to RoadRunner via `Worker::error()` (a clean error response
+to that one client), and keeps serving requests on the same worker —
+confirmed directly, not assumed, by forcing a handler to throw and then
+sending another request to the same running process. Letting an
+exception propagate here would kill the whole persistent worker over
+one bad request, a materially worse failure than any other adapter
+risks, since it costs `AppScope`'s warm state until RoadRunner's own
+supervisor respawns the worker. If you configure a short
+`pool.supervisor.exec_ttl` for other reasons, know that it bounds a
+worker's *total* lifetime regardless of this — RoadRunner's own default
+is `0s` (unlimited).
+
+### What isn't supported
+
+- **Response streaming.** `Worker::create()`'s default
+  `interceptSideEffects: true` installs a global output-buffer redirect
+  (`StdoutHandler::register()`) sending every stray `echo`/`header()`
+  call to RoadRunner's own log stream instead of the client — required
+  to keep the Goridge binary protocol on STDOUT uncorrupted, and the
+  reason `Kinetis\Http\StreamedResponse`'s emitter closures can't be
+  used here: their output would be silently redirected the same way,
+  with nothing erroring anywhere. A controller returning a
+  `Kinetis\Runtime\StreamableResponseInterface` gets a real `501`
+  instead, after the handler runs — never buffered or dropped silently.
+  RoadRunner's own `HttpWorker::respondStream()` is a genuinely
+  different, lower-level generator-based API than `PSR7Worker::respond()`,
+  and bridging one onto the other needs its own design pass.
+- **A purely-numeric header name.** `"123"` is a valid RFC 9110 header
+  name (digits are ordinary token characters), and every other adapter
+  here maps it correctly — but `spiral/roadrunner-http`'s own request
+  decoding drops it before this adapter ever sees the request: PHP
+  coerces a numeric string array key to an `int`, and that library's
+  `is_string($key)` filter then deletes it. Confirmed by reading its
+  source directly, not inferred from the symptom. Recovering it would
+  mean reimplementing that library's own JSON/protobuf request decoding
+  in this package instead of using `PSR7Worker` — disproportionate to
+  how narrow the trigger is. A disclosed, permanent limitation until
+  the upstream library fixes it.
+- **Cookie order, occasionally.** Every other adapter here preserves
+  the exact order a client sent its cookies in. RoadRunner represents
+  cookies as a Go `map[string]string` on the way to PHP, and Go
+  randomizes map iteration order by design — a request's cookies can
+  arrive re-ordered, observed at roughly 1 request in 10 across
+  repeated real runs, not deterministic. The values themselves are
+  never lost, only their order.
+
 ## Writing your own adapter
 
 If you need to target something else entirely, implement this interface
-and Kinetis will drive it the same way it drives the three built-in ones:
+and Kinetis will drive it the same way it drives the four adapters above:
 
 ```{code-block} php
 namespace Kinetis\Runtime;

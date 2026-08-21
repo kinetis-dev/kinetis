@@ -22,6 +22,11 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
+    directory: "/packages/roadrunner-adapter"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
     directory: "/packages/query-builder"
     schedule:
       interval: "weekly"

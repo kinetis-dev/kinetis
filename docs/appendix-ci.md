@@ -114,6 +114,21 @@ disguised PHPUnit test.
   and — timed on the wire — incremental streaming, which is why the
   nginx fixture sets `fastcgi_buffering off`: with the default on, the
   stream arrives as one lump and the case fails, as verified.
+- **`roadrunner-conformance`** — the same shared suite against
+  `Kinetis\RoadRunnerAdapter\RoadRunnerAdapter`, structurally simpler
+  than `runtime-conformance` above: `RoadRunnerDriver` spawns a real
+  `rr serve` process (which spawns the PHP worker as its own child)
+  directly from inside the test run, so this job needs no separate SAPI
+  container or Docker network — one runner, `shivammathur/setup-php`
+  providing a real, prebuilt `ext-sockets` (it compiles under Alpine
+  too, just not worth doing here — see {doc}`runtime-adapters`), a real
+  binary fetched via `spiral/roadrunner-cli`'s `vendor/bin/rr get-binary`,
+  and the suite itself. Two tests are excluded from this job's gate by
+  name — a purely-numeric header name (a deterministic upstream bug)
+  and cookie order (an occasional, probabilistic reordering) — both
+  disclosed in `RoadRunnerAdapter`'s own docblock and {doc}`runtime-adapters`,
+  neither reachable from this adapter's own code; the full, unfiltered
+  suite still shows both, honestly, for anyone running it directly.
 - **`pingpong`** — not a package's own real-backend script like every
   job above; the real `docker compose up --build` stack (`app`, `mysql`,
   `redis`, `soketi`, `migrate`, `queue-worker`, `cron`) brought up from
@@ -131,10 +146,12 @@ the service
 container's image and health-check command (`mysqladmin` vs.
 `mariadb-admin`) differ between the two matrix entries.
 
-Every job above except `pingpong` and `runtime-conformance` (each exercises a real multi-container
-stack, not a bare per-package PHP matrix) also runs across PHP 8.4 and
-8.5, the same matrix `ci.yml` uses — real-backend correctness is checked
-against both, not just one.
+Every job above except `pingpong`, `runtime-conformance`, and
+`roadrunner-conformance` (each exercises a real multi-container stack,
+or in `roadrunner-conformance`'s case a fixed PHP version chosen to
+match the `ext-sockets` requirement — not a bare per-package PHP
+matrix) also runs across PHP 8.4 and 8.5, the same matrix `ci.yml`
+uses — real-backend correctness is checked against both, not just one.
 
 `redis-cluster` is the one job that runs the job itself inside a
 `container:` rather than on the bare runner — a real multi-node Redis
@@ -188,6 +205,7 @@ above the number here by design:
 | `queue-rabbitmq` | 90% |
 | `queue-sqs` | 55% |
 | `revolt-http-client` | 75% |
+| `roadrunner-adapter` | 80% |
 | `search-opensearch` | 70% |
 | `session` | 65% |
 | `skeleton` | 90% |
@@ -215,7 +233,13 @@ scan via `sonar.php.coverage.reportPaths` — on PHP 8.4 only, not
 matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`. `RedisQueue`,
 `SqlQueue`, `SqsQueue` (and its `SqsQueueException`), and `RabbitMqQueue`
 are excluded from the coverage calculation via `sonar.coverage.exclusions`,
-matching their real-backend-only testing in `integration.yml`.
+matching their real-backend-only testing in `integration.yml`. Two pairs
+of files with known, structural duplication — genuinely independent
+satellite packages sharing the same third-party integration, and two
+async DB drivers whose pooling logic isn't trait-compatible without
+widening production connection-handling signatures — are excluded from
+duplication detection via `sonar.cpd.exclusions`, with the reasoning
+recorded inline in `sonar-project.properties` itself.
 
 Requires a `SONAR_TOKEN` repository secret from the project's own
 SonarCloud dashboard; analysis method is "With GitHub Actions."

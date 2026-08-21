@@ -355,7 +355,13 @@ own population of headers, client address and body, and its own
 streaming path, are exercised; the streaming case times the body as it
 arrives, so a proxy holding a stream back until the end fails it — as
 nginx does with its default `fastcgi_buffering`, which the FPM fixture
-turns off.
+turns off. `kinetis/roadrunner-adapter` runs the identical shared suite
+a third way — against a real, spawned `rr serve` process, structurally
+closer to the FrankenPHP/nginx case above than to an in-process
+shortcut, since a RoadRunner request only ever exists as the real
+Goridge wire protocol between `rr` and a real PHP worker (see
+{doc}`runtime-adapters` and `integration.yml`'s own
+`roadrunner-conformance` job).
 
 ## See also
 
