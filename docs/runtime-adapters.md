@@ -15,7 +15,7 @@ $adapter = Kinetis\Runtime\RuntimeDetector::detect();
 | RoadRunner | A separate install, `kinetis/roadrunner-adapter` — see below. |
 
 `public/index.php` calls `RuntimeDetector::detect()` once, and the exact
-same file works correctly under all three — nothing in your application
+same file works correctly under all four — nothing in your application
 code needs to know or care which one is actually running it.
 
 ## Running under FrankenPHP
@@ -344,6 +344,7 @@ server:
 http:
   address: 0.0.0.0:8080
   raw_body: true
+  max_request_size: 10
 ```
 
 `http.raw_body: true` — confirmed directly against RoadRunner's own Go
@@ -358,6 +359,38 @@ not — reaches this adapter's own parser untouched, the same reason
 string with no live `php://input` stream behind it, so PHP 8.4's
 `request_parse_body()` (what `FrankenPhpAdapter`/`FpmAdapter` use for
 the same problem) can't help.
+
+### `http.max_request_size` is the real defense against an oversized body
+
+`raw_body: true` above means neither `upload_max_filesize`/
+`post_max_size` (no SAPI here to enforce them) nor
+`MaxBodySizeMiddleware` (a `multipart/form-data`/
+`application/x-www-form-urlencoded` body is parsed by this adapter
+*before* the Kernel's own middleware pipeline ever runs — see
+{doc}`middleware`) bound how large a form body can be. Left unset,
+RoadRunner's own default is a generous 1000 MB — confirmed directly
+against its Go source, not assumed — which is real but not a sane
+production limit on its own.
+
+**Set `http.max_request_size` explicitly** (real megabytes, RoadRunner's
+own unit — `10` above is 10 MB, matching a typical small-upload API; size
+it to what your application actually needs). This is enforced in Go,
+wrapping the request in a real `http.MaxBytesReader` before your PHP
+worker is ever invoked — the only place a body with no declared
+`Content-Length` at all (a genuinely chunked request) can be bounded,
+since by the time this adapter's own code runs, RoadRunner has already
+handed it the whole body as one in-memory string with nothing left to
+read incrementally.
+
+`RoadRunnerAdapter` itself adds one more, narrower check on top: a
+form body whose *declared* `Content-Length` already exceeds
+`MAX_BODY_SIZE` (the same env var and default — 2 MiB — `MaxBodySizeMiddleware`
+uses) is rejected with a `413` before the body is read into memory at
+all. This is defense in depth for the common, honestly-labeled case,
+checked before parsing rather than during it — not a substitute for
+`http.max_request_size`, which is what actually bounds the case this
+check can't see: a request that lies about its length, or declares
+none.
 
 ### `ext-sockets` under an Alpine-based image
 
@@ -436,7 +469,7 @@ is `0s` (unlimited).
 ## Writing your own adapter
 
 If you need to target something else entirely, implement this interface
-and Kinetis will drive it the same way it drives the three built-in ones:
+and Kinetis will drive it the same way it drives the four adapters above:
 
 ```{code-block} php
 namespace Kinetis\Runtime;

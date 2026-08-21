@@ -25,6 +25,17 @@ RuntimeDetector::detect()->run(static function (ServerRequestInterface $request)
         return new \Nyholm\Psr7\Response(204);
     }
 
+    // Deliberately thrown before anything else runs, so this exercises
+    // exactly what RoadRunnerAdapter::run()'s own catch (Throwable)
+    // block does — never anything this fixture's own dispatch logic
+    // wraps. The message names something a real client must never see
+    // (RoadRunnerConformanceTest asserts on this directly): proving
+    // that stays server-side is the actual point of the test this
+    // fixture exists for.
+    if ($request->getUri()->getPath() === '/__conformance/throw') {
+        throw new RuntimeException('SENSITIVE_INTERNAL_DETAIL: SELECT * FROM secrets WHERE token = xyz');
+    }
+
     $stateDir = getenv('KINETIS_CONFORMANCE_STATE_DIR');
     $id = $request->getHeaderLine('X-Conformance-Id');
 

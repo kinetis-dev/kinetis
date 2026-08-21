@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\RoadRunnerAdapter;
 
+use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\RoadRunnerAdapter\Exception\MalformedRequestBodyException;
 use Kinetis\RoadRunnerAdapter\Exception\RoadRunnerAdapterException;
@@ -99,6 +100,22 @@ use Throwable;
  * to a full root-cause trace (which codec, which exact serialization
  * step) given how rarely it triggers and that this package's own
  * request handling has nothing to do with the reordering either way.
+ * The one thing this *isn't* is untested: the shared conformance
+ * suite's own order-sensitive assertion is excluded from
+ * `integration.yml`'s gate for exactly this reason, but
+ * `RoadRunnerConformanceTest::test_cookie_values_survive_regardless_of_order()`
+ * still proves the values themselves — both cookies, correctly named,
+ * correctly valued — arrive every time.
+ *
+ * A form body has no size limit enforced before this class parses it —
+ * see {@see assertFormBodyWithinLimit()}'s own docblock for what that
+ * covers and, more importantly, what it can't: an undeclared-length
+ * (chunked) body needs RoadRunner's own `http.max_request_size`, which
+ * is required, not optional, for exactly that reason. See
+ * docs/runtime-adapters.md's "`http.max_request_size` is the real
+ * defense against an oversized body" section for the full reasoning,
+ * and `RoadRunnerConformanceTest::test_an_oversized_chunked_body_is_rejected_by_road_runners_own_limit()`
+ * for proof it actually works, not just that it's documented.
  */
 final class RoadRunnerAdapter implements RuntimeAdapterInterface
 {
@@ -179,6 +196,12 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
             error_log('Malformed request body: ' . $e->getMessage());
 
             return ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE);
+        } catch (BodyTooLargeException $e) {
+            // Unlike the malformed-body case, this message is safe to
+            // return directly — it names a configured byte count, never
+            // request content — the same message MaxBodySizeMiddleware
+            // itself returns for the JSON #[Body] path.
+            return ErrorResponse::create(413, $e->getMessage());
         }
 
         $response = $handler($request);
@@ -204,12 +227,23 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
      * hand the framework one joined string. Folded here, once, up front,
      * so every framework component downstream of this method sees the
      * same shape regardless of which adapter is running.
+     *
+     * `Cookie` is the one header this must not comma-join: RFC 6265
+     * §5.4 requires multiple `Cookie` header fields to be combined with
+     * `; ` — the same separator already used *between* cookie pairs
+     * inside a single `Cookie` header — not the `, ` every other
+     * repeated header gets. A well-behaved client sends at most one
+     * `Cookie` header, but HTTP/2 explicitly permits (and RFC 7540
+     * §8.1.2.5 recommends, for better compression) splitting it into
+     * several — a real case, not a hypothetical one. Comma-joining it
+     * the same way as every other header would corrupt cookie parsing.
      */
     private static function foldRepeatedHeaders(ServerRequestInterface $request): ServerRequestInterface
     {
         foreach ($request->getHeaders() as $name => $values) {
             if (count($values) > 1) {
-                $request = $request->withHeader($name, implode(', ', $values));
+                $separator = strcasecmp($name, 'Cookie') === 0 ? '; ' : ', ';
+                $request = $request->withHeader($name, implode($separator, $values));
             }
         }
 
@@ -224,6 +258,8 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
             return $request;
         }
 
+        self::assertFormBodyWithinLimit($request);
+
         $body = (string) $request->getBody();
 
         [$parsedBody, $uploadedFiles] = self::isMultipart($contentType)
@@ -237,6 +273,47 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
     {
         return self::isMultipart($contentType)
             || str_starts_with($contentType, 'application/x-www-form-urlencoded');
+    }
+
+    /**
+     * A form body is fully materialized into one in-memory string by
+     * {@see applyFormBody()} — unlike the JSON `#[Body]` path, which
+     * `MaxBodySizeMiddleware` already guards, this happens before the
+     * Kernel/middleware pipeline exists, so that middleware never sees
+     * it. This is defense in depth for a request that *declares* its
+     * size honestly, checked against the same `MAX_BODY_SIZE` env var
+     * (and the same default) `MaxBodySizeMiddleware` uses — not a
+     * replacement for it. It cannot bound a body with no declared
+     * `Content-Length` (or an inaccurate one): a `SizeLimitedStream`
+     * only helps when something reads the body incrementally, and
+     * RoadRunner has already handed this adapter the whole thing as one
+     * string by the time `handle()` runs. That case is RoadRunner's own
+     * `http.max_request_size` to close — see docs/runtime-adapters.md.
+     */
+    private static function assertFormBodyWithinLimit(ServerRequestInterface $request): void
+    {
+        $declaredLength = $request->getHeaderLine('Content-Length');
+
+        if ($declaredLength === '' || !ctype_digit($declaredLength)) {
+            return;
+        }
+
+        $maxBytes = self::maxFormBodyBytes();
+
+        if ((int) $declaredLength > $maxBytes) {
+            throw BodyTooLargeException::exceeds($maxBytes);
+        }
+    }
+
+    private static function maxFormBodyBytes(): int
+    {
+        $configured = getenv('MAX_BODY_SIZE');
+
+        if ($configured !== false && ctype_digit($configured)) {
+            return (int) $configured;
+        }
+
+        return 2_097_152;
     }
 
     private static function isMultipart(string $contentType): bool

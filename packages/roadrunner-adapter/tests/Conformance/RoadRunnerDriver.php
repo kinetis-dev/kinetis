@@ -72,9 +72,22 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
         return is_file(self::binaryPath());
     }
 
-    public function start(): void
+    /**
+     * @param ?int $maxRequestSizeMb sets `http.max_request_size` (real
+     *     megabytes, RoadRunner's own unit) — the upstream defense
+     *     {@see \Kinetis\RoadRunnerAdapter\RoadRunnerAdapter}'s own class
+     *     docblock and docs/runtime-adapters.md document as required for
+     *     an undeclared-length (chunked) body, which nothing at the PHP
+     *     layer can bound: RoadRunner hands this adapter the whole body
+     *     as one already-materialized string. `null` (the default)
+     *     leaves RoadRunner's own 1000 MB default in place — every
+     *     existing conformance test relies on that being generous enough
+     *     to never trigger.
+     */
+    public function start(?int $maxRequestSizeMb = null): void
     {
         $this->configPath = $this->stateDir . '/.rr.yaml';
+        $maxRequestSizeLine = $maxRequestSizeMb === null ? '' : "\n  max_request_size: {$maxRequestSizeMb}";
 
         file_put_contents($this->configPath, <<<YAML
             version: "3"
@@ -84,7 +97,7 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
 
             http:
               address: {$this->hostPort}
-              raw_body: true
+              raw_body: true{$maxRequestSizeLine}
               pool:
                 num_workers: 1
             YAML);
@@ -146,6 +159,70 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
         $wireResponse = self::parseResponse($wire, $span);
 
         return new Outcome($observed, self::asRejectionIfStreamingRefused($wireResponse));
+    }
+
+    /**
+     * A genuinely chunked (`Transfer-Encoding: chunked`, no
+     * `Content-Length` at all) POST — {@see dispatch()}'s own
+     * `rawHttpRequest()` always declares a length, so this exists
+     * specifically to prove RoadRunner's `http.max_request_size` (see
+     * {@see start()}) rejects an oversized body that never declared its
+     * real size, the one case nothing at the PHP layer can bound.
+     * Carries the same `X-Conformance-Id`/`X-Conformance-Response`
+     * headers {@see dispatch()} does and reports whether the fixture
+     * ever actually recorded the request — the real signal that
+     * matters here, not the HTTP status alone: a rejection that still
+     * reaches the fixture (this adapter's own `LogicException` for a
+     * missing conformance ID, say, if that header were ever dropped)
+     * would also produce a non-2xx status, and a caller checking status
+     * alone couldn't tell that apart from RoadRunner's own Go-level
+     * `MaxBytesReader` rejection this method exists to prove.
+     *
+     * @param list<string> $chunks
+     * @return array{reachedFixture: bool, status: ?int}
+     */
+    public function dispatchOversizedChunkedBody(string $path, array $chunks): array
+    {
+        $id = bin2hex(random_bytes(16));
+        $body = '';
+
+        foreach ($chunks as $chunk) {
+            $body .= dechex(strlen($chunk)) . "\r\n{$chunk}\r\n";
+        }
+
+        $body .= "0\r\n\r\n";
+
+        $raw = "POST {$path} HTTP/1.1\r\n"
+            . "Host: {$this->hostPort}\r\n"
+            . "Content-Type: application/x-www-form-urlencoded\r\n"
+            . "Transfer-Encoding: chunked\r\n"
+            . "X-Conformance-Id: {$id}\r\n"
+            . 'X-Conformance-Response: ' . base64_encode(json_encode(ResponseSpec::json(200, '{"ok":true}')->toArray(), JSON_THROW_ON_ERROR)) . "\r\n"
+            . "Connection: close\r\n\r\n"
+            . $body;
+
+        $status = null;
+
+        try {
+            [$wire] = $this->exchange($raw);
+
+            if (preg_match('~^HTTP/\d\.\d (\d{3})~', $wire, $matches) === 1) {
+                $status = (int) $matches[1];
+            }
+        } catch (RuntimeException) {
+            // The connection closing mid-write, or with no bytes back
+            // at all — a real rejection, just one with no status line
+            // to read.
+        }
+
+        $observedFile = "{$this->stateDir}/{$id}.json";
+        $reachedFixture = is_file($observedFile);
+
+        if ($reachedFixture) {
+            unlink($observedFile);
+        }
+
+        return ['reachedFixture' => $reachedFixture, 'status' => $status];
     }
 
     /**

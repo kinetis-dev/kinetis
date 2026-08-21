@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\RoadRunnerAdapter\Tests;
 
+use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\StreamedResponse;
 use Kinetis\RoadRunnerAdapter\RoadRunnerAdapter;
@@ -59,6 +60,28 @@ final class RoadRunnerAdapterTest extends TestCase
 
         self::assertInstanceOf(ServerRequestInterface::class, $captured);
         self::assertSame(['first, second'], $captured->getHeader('X-Trace'));
+    }
+
+    /**
+     * The one exception to the comma-join: RFC 6265 §5.4 requires
+     * multiple `Cookie` header fields to be combined with `; `, the
+     * same separator already used between cookie pairs — comma-joining
+     * it the way every other repeated header is folded would corrupt
+     * cookie parsing downstream.
+     */
+    public function test_a_repeated_cookie_header_is_folded_with_a_semicolon_not_a_comma(): void
+    {
+        $request = new ServerRequest('GET', '/', ['Cookie' => ['a=1', 'b=2']]);
+
+        $captured = null;
+        RoadRunnerAdapter::handle($request, static function (ServerRequestInterface $r) use (&$captured): Response {
+            $captured = $r;
+
+            return new Response(200);
+        });
+
+        self::assertInstanceOf(ServerRequestInterface::class, $captured);
+        self::assertSame(['a=1; b=2'], $captured->getHeader('Cookie'));
     }
 
     /**
@@ -212,5 +235,95 @@ final class RoadRunnerAdapterTest extends TestCase
             ErrorResponse::create(501, RoadRunnerAdapter::STREAMING_NOT_SUPPORTED_MESSAGE)->getBody()->__toString(),
             (string) $response->getBody(),
         );
+    }
+
+    /**
+     * Defense in depth for a request that declares its own size
+     * honestly — see `assertFormBodyWithinLimit()`'s own docblock for
+     * what this does and does not cover. Checked against the *declared*
+     * `Content-Length` alone, before the body is ever read — proven
+     * here by giving a tiny real body a `Content-Length` that lies
+     * about being oversized, matching how `MaxBodySizeMiddleware`
+     * itself only ever checks the declared header at this same layer.
+     */
+    public function test_a_form_body_declaring_a_content_length_over_the_limit_is_a_clean_413_and_the_handler_never_runs(): void
+    {
+        $request = new ServerRequest(
+            'POST',
+            '/',
+            [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Content-Length' => '3000000',
+            ],
+            'a=1',
+        );
+
+        $handlerRan = false;
+        $response = RoadRunnerAdapter::handle($request, static function () use (&$handlerRan): Response {
+            $handlerRan = true;
+
+            return new Response(200);
+        });
+
+        self::assertFalse($handlerRan);
+        self::assertSame(413, $response->getStatusCode());
+        self::assertSame(
+            ['error' => BodyTooLargeException::exceeds(2_097_152)->getMessage()],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    /**
+     * The same `MAX_BODY_SIZE` env var `MaxBodySizeMiddleware` reads for
+     * the JSON `#[Body]` path — one value covers both.
+     */
+    public function test_the_form_body_limit_honors_the_max_body_size_env_var(): void
+    {
+        putenv('MAX_BODY_SIZE=10');
+
+        try {
+            $request = new ServerRequest(
+                'POST',
+                '/',
+                [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Content-Length' => '11',
+                ],
+                'a=1',
+            );
+
+            $response = RoadRunnerAdapter::handle($request, static fn (): Response => new Response(200));
+
+            self::assertSame(413, $response->getStatusCode());
+            self::assertSame(
+                ['error' => BodyTooLargeException::exceeds(10)->getMessage()],
+                json_decode((string) $response->getBody(), true),
+            );
+        } finally {
+            putenv('MAX_BODY_SIZE');
+        }
+    }
+
+    public function test_a_form_body_within_the_limit_still_parses_normally(): void
+    {
+        $request = new ServerRequest(
+            'POST',
+            '/',
+            [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Content-Length' => '3',
+            ],
+            'a=1',
+        );
+
+        $captured = null;
+        RoadRunnerAdapter::handle($request, static function (ServerRequestInterface $r) use (&$captured): Response {
+            $captured = $r;
+
+            return new Response(200);
+        });
+
+        self::assertInstanceOf(ServerRequestInterface::class, $captured);
+        self::assertSame(['a' => '1'], $captured->getParsedBody());
     }
 }
