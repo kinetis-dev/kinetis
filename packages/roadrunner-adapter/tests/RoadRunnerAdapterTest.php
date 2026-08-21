@@ -240,15 +240,6 @@ final class RoadRunnerAdapterTest extends TestCase
     }
 
     /**
-     * Defense in depth for a request that declares its own size
-     * honestly — see `assertFormBodyWithinLimit()`'s own docblock for
-     * what this does and does not cover. Checked against the *declared*
-     * `Content-Length` alone, before the body is ever read — proven
-     * here by giving a tiny real body a `Content-Length` that lies
-     * about being oversized, matching how `MaxBodySizeMiddleware`
-     * itself only ever checks the declared header at this same layer.
-     */
-    /**
      * `PSR7Worker::mapRequest()` copies RoadRunner's own
      * `rr_parsed_body` attribute onto the PSR-7 request untouched — this
      * simulates the misconfigured case directly (`raw_body: false`, the
@@ -283,6 +274,15 @@ final class RoadRunnerAdapterTest extends TestCase
         self::assertFalse($handlerRan, 'a misconfiguration must be caught before the handler ever runs');
     }
 
+    /**
+     * Defense in depth for a request that declares its own size
+     * honestly — see `assertFormBodyWithinLimit()`'s own docblock for
+     * what this does and does not cover. Checked against the *declared*
+     * `Content-Length` alone, before the body is ever read — proven
+     * here by giving a tiny real body a `Content-Length` that lies
+     * about being oversized, matching how `MaxBodySizeMiddleware`
+     * itself only ever checks the declared header at this same layer.
+     */
     public function test_a_form_body_declaring_a_content_length_over_the_limit_is_a_clean_413_and_the_handler_never_runs(): void
     {
         $request = new ServerRequest(
@@ -316,6 +316,7 @@ final class RoadRunnerAdapterTest extends TestCase
      */
     public function test_the_form_body_limit_honors_the_max_body_size_env_var(): void
     {
+        $original = getenv('MAX_BODY_SIZE');
         putenv('MAX_BODY_SIZE=10');
 
         try {
@@ -337,7 +338,12 @@ final class RoadRunnerAdapterTest extends TestCase
                 json_decode((string) $response->getBody(), true),
             );
         } finally {
-            putenv('MAX_BODY_SIZE');
+            // Restore the real ambient value rather than unconditionally
+            // unsetting it — a bare putenv('MAX_BODY_SIZE') would strip
+            // a value the running environment genuinely had set, leaking
+            // that change into every test that runs after this one in
+            // the same process.
+            putenv($original === false ? 'MAX_BODY_SIZE' : "MAX_BODY_SIZE={$original}");
         }
     }
 

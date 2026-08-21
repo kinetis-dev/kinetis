@@ -498,7 +498,7 @@
             "description": "RoadRunner runtime adapter for Kinetis — speaks the PSR7Worker/Goridge protocol and converts to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\RoadRunnerAdapter\\",
             "testNamespace": "Kinetis\\RoadRunnerAdapter\\Tests\\",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "requires": [
                 "framework"
             ],
