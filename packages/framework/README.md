@@ -74,7 +74,10 @@ Kinetis talks to, not an assumption baked into the framework itself.
   is the whole setup.
 - **A PSR-14 event dispatcher** — attribute-driven listener registration,
   with `ShouldQueue` for deferring a listener onto a queue instead of
-  running it inline.
+  running it inline. Core dispatches `Kinetis\Console\Events\CommandFailed`
+  when a `vendor/bin/kinetis` command throws; see
+  [kinetis.dev/docs/events.html](https://kinetis.dev/docs/events.html)
+  for the full list across every package.
 - **Production AOT caching** — routes, validation plans, commands, and
   event listeners compiled once (`bin/kinetis build`). A boot-and-die runtime
   skips re-registering everything from scratch on every request; even a

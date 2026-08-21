@@ -105,6 +105,13 @@ DB_DB2_PASSWORD=secret
 
 Omit it and the commands read the plain `DB_*` keys, exactly as above.
 
+`migrate` dispatches `Kinetis\Migrations\Events\MigrationApplied` once
+per migration it actually runs, in the order they ran;
+`migrate:rollback` dispatches `Events\MigrationRolledBack` when it
+undoes one. Both are ordinary events — write a `#[Listener]` for
+whichever one you need (a deploy notification, for one). See
+{doc}`events` for the full catalog.
+
 ## Transactions are not automatic
 
 A migration's `up()`/`down()` runs exactly as written — the runner never

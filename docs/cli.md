@@ -91,7 +91,8 @@ signal your scheduler reads to decide whether to alert or retry, so a
 command that can fail should say so with a non-zero return rather than
 only logging the problem. An uncaught exception is caught once, logged
 through whatever `Psr\Log\LoggerInterface` you've registered (see
-{doc}`logging`), and also produces exit code `1`.
+{doc}`logging`), dispatches `Kinetis\Console\Events\CommandFailed` (see
+{doc}`events`), and also produces exit code `1`.
 
 MCP tools and resources (see {doc}`mcp`) and HTTP routes (see
 {doc}`routing-validation`) work the same way — discovered anywhere under

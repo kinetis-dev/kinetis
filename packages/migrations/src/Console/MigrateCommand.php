@@ -6,9 +6,15 @@ namespace Kinetis\Migrations\Console;
 
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Events\EventDispatcher;
+use Kinetis\Migrations\Events\MigrationApplied;
 
 final readonly class MigrateCommand
 {
+    public function __construct(
+        private EventDispatcher $events,
+    ) {}
+
     #[Command('migrate', description: 'Apply pending migrations. --connection=<name> targets a named DB_* block.', bootstrap: false)]
     public function run(CommandArguments $arguments): int
     {
@@ -22,6 +28,7 @@ final readonly class MigrateCommand
 
         foreach ($applied as $name) {
             fwrite(STDOUT, "Migrated: {$name}\n");
+            $this->events->dispatch(new MigrationApplied($name));
         }
 
         return 0;

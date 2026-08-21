@@ -164,6 +164,33 @@ use Kinetis\Queue\QueuedListenerInvoker;
 $app->instance(ListenerInvokerInterface::class, new QueuedListenerInvoker($queue));
 ```
 
+## Events Kinetis itself dispatches
+
+Everything above is about events *you* define, like `OrderPlaced`. A
+handful of moments inside the framework and its packages are dispatched
+the same way — install the package, write a `#[Listener]` for whichever
+one you need, nothing else to configure. Chosen deliberately narrow: a
+framework-internal moment gets an event only when there's genuinely no
+other way to hook it — a controller or a job's own code that already
+calls something directly (`Session::regenerate()`, `AttemptThrottle::recordFailure()`)
+is already standing in the right place to react itself, so those don't
+get one.
+
+| Event | Package | Fired when | Payload |
+|---|---|---|---|
+| `Kinetis\Queue\Events\JobSucceeded` | `kinetis/queue` | A job's `handle()` returns without throwing and the backend has ack'd it. | `class`, `queue`, `attempts` |
+| `Kinetis\Queue\Events\JobReleased` | `kinetis/queue` | A job's `handle()` throws but attempts hasn't reached the effective cap yet, so it goes back on the queue for another try. Not fired when the release itself turns out to be a stale, no-op call. | `class`, `queue`, `attempts`, `exception` |
+| `Kinetis\Queue\Events\JobFailedPermanently` | `kinetis/queue` | A job's `handle()` throws and attempts has reached the effective cap, so it's given up on instead of retried — the only record of it beyond the log entry that fires alongside it. | `class`, `queue`, `attempts`, `exception`, `args` (redacted per `#[Sensitive]`, the same array the log entry carries) |
+| `Kinetis\Migrations\Events\MigrationApplied` | `kinetis/migrations` | Once per migration `migrate` actually runs, in the order they ran. | `name` |
+| `Kinetis\Migrations\Events\MigrationRolledBack` | `kinetis/migrations` | `migrate:rollback` undoes a migration — never fired when there was nothing to roll back. | `name` |
+| `Kinetis\Console\Events\CommandFailed` | `kinetis/framework` | Any `vendor/bin/kinetis` command throws. Commands typically run outside any request context (cron, a Kubernetes CronJob, a deploy step), so this is the only place that can observe a failure without wrapping every command's own body in a try/catch. | `commandName`, `exception` |
+
+All three queue events are dispatched from inside `QueueWorker::processNext()`'s
+own request scope — the same one a job's `handle()` runs in — so a
+listener can constructor-inject anything that scope can resolve, exactly
+like the job itself can. The two migration events and `CommandFailed`
+work the same way through the command's own request scope.
+
 ## See also
 
 - {doc}`queue` — `ShouldQueue`/`QueuedListenerInvoker`, for running a

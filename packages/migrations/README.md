@@ -70,9 +70,14 @@ following automatically, through the `extra.kinetis` declaration in its
   application's bootstrap (`bootstrap: false`) — they read `DB_*`
   directly, so they work in bare contexts (CI, an init container) with
   nothing but environment variables.
+- **Events**: `Kinetis\Migrations\Events\MigrationApplied` and
+  `MigrationRolledBack`, dispatched once per migration `migrate`/
+  `migrate:rollback` actually runs. See
+  [kinetis.dev/docs/events.html](https://kinetis.dev/docs/events.html)
+  for the full list across every package.
 
-Nothing else — no service bindings, routes, middleware, event
-listeners, or MCP tools.
+That's the entire `extra.kinetis` surface — no service bindings,
+routes, middleware, event listeners it registers itself, or MCP tools.
 
 ## Configuration
 

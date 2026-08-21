@@ -11,7 +11,9 @@ use Kinetis\Config\EnvFile;
 use Kinetis\Console\CommandDiscovery;
 use Kinetis\Console\CommandDispatcher;
 use Kinetis\Console\CommandRegistry;
+use Kinetis\Console\Events\CommandFailed;
 use Kinetis\Container\AppScope;
+use Kinetis\Events\EventDispatcher;
 use Kinetis\Events\EventListenerDiscovery;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Runtime\AppEnvironment;
@@ -157,6 +159,10 @@ try {
     $exitCode = (new CommandDispatcher($scope))->run($definition, array_slice($argv ?? [], 2));
 } catch (Throwable $e) {
     $app->get(LoggerInterface::class)->error("Command \"{$commandName}\" failed: {$e->getMessage()}", ['exception' => $e]);
+    // $commandName is guaranteed a string here: $definition (resolved
+    // above from $commandName) would already have triggered the earlier
+    // exit(1) if $commandName were null.
+    $scope->get(EventDispatcher::class)->dispatch(new CommandFailed($commandName, $e));
     $exitCode = 1;
 } finally {
     $scope->dispose();

@@ -353,14 +353,20 @@ retried if something has explicitly set a cap above `1`.
 ```
 
 That log entry — job class, constructor arguments, and the exception — is
-the only record kept of a job that's given up on; there's no dead-letter
-table or queue to inspect afterward.
+the only *persistent* record kept of a job that's given up on; there's no
+dead-letter table or queue to inspect afterward. `QueueWorker` also
+dispatches `Kinetis\Queue\Events\JobFailedPermanently` (the same data the
+log entry carries) at the same moment, so a listener can react live —
+alerting someone, writing your own dead-letter row, anything the log
+alone can't do for you. See {doc}`events` for the full catalog, including
+the matching `JobSucceeded`/`JobReleased` events for the other two
+outcomes.
 
 A job that still has attempts remaining logs the same way but without
 `args`, and without "permanently" in the message, and is released rather
-than removed. Its payload is still held by the backend at that point, so
-copying the arguments into the log would add nothing you couldn't already
-recover.
+than removed (dispatching `Events\JobReleased` instead). Its payload is
+still held by the backend at that point, so copying the arguments into
+the log would add nothing you couldn't already recover.
 
 ### Keeping sensitive arguments out of the log
 
