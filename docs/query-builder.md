@@ -215,7 +215,7 @@ alias an `orderBy()` depends on stays where you put it, and an
 `offset()` you set stays yours.
 
 Pass a qualified `$cursorColumn` without an alias and you get an
-`InvalidArgumentException` naming the parameter, not a silently wrong
+`InvalidPaginationException` naming the parameter, not a silently wrong
 cursor. `cursorAlias` works for an unqualified column too, which is how
 you disambiguate a projection that already has a *different* column of
 that name.
@@ -230,7 +230,7 @@ row just comes back one field short.
 
 Kinetis rejects the half of this it can see. An alias matching a column
 you listed yourself — `select('row_cursor')`, or `select('t.row_cursor')`,
-which resolves to the same key — throws `InvalidArgumentException`
+which resolves to the same key — throws `InvalidPaginationException`
 before any SQL runs. A column that only a wildcard brings in can't be
 checked the same way: knowing what `*` expands to needs column metadata
 the result doesn't carry, and the one available check — counting
@@ -241,9 +241,14 @@ wildcard, the name is yours to keep clear.
 ```
 
 `perPage`/`page` (for `paginate()`) and `perPage` (for `cursorPaginate()`)
-must be at least 1 — either method throws `InvalidArgumentException`
-otherwise, rather than compiling a nonsensical `LIMIT 0`/negative
-`OFFSET`. Neither method caps how *large* `$perPage` can be — a request
+must be at least 1 — either method throws
+`Kinetis\QueryBuilder\Exception\InvalidPaginationException` otherwise,
+rather than compiling a nonsensical `LIMIT 0`/negative `OFFSET`. Every
+pagination exception this page mentions is one — it implements
+`Kinetis\Http\Exception\HttpStatusExceptionInterface`, so an uncaught one
+reaches your client as a `400` naming the actual problem, not the plain
+`500` an ordinary uncaught exception from a controller gets. Neither
+method caps how *large* `$perPage` can be — a request
 for `?perPage=1000000` is passed straight through. Capping it, if your
 application needs one, is a normal application-level concern (clamp it in
 the controller before calling either method), the same way `Query`

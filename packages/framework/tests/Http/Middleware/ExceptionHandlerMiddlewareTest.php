@@ -7,6 +7,7 @@ namespace Kinetis\Tests\Http\Middleware;
 use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Middleware\ExceptionHandlerMiddleware;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\Tests\Fixtures\FixtureHttpStatusException;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
@@ -85,5 +86,44 @@ final class ExceptionHandlerMiddlewareTest extends TestCase
         $response = $middleware->process(new ServerRequest('GET', '/'), $handler);
 
         self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_an_http_status_exception_becomes_its_own_declared_status(): void
+    {
+        $middleware = new ExceptionHandlerMiddleware(new NullLogger());
+        $handler = new CallableRequestHandler(static function () {
+            throw new FixtureHttpStatusException('bad input');
+        });
+
+        $response = $middleware->process(new ServerRequest('GET', '/'), $handler);
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(['error' => 'bad input'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_an_http_status_exception_is_not_logged(): void
+    {
+        $logger = new InMemoryLogger();
+        $middleware = new ExceptionHandlerMiddleware($logger);
+        $handler = new CallableRequestHandler(static function () {
+            throw new FixtureHttpStatusException('bad input');
+        });
+
+        $middleware->process(new ServerRequest('GET', '/'), $handler);
+
+        self::assertCount(0, $logger->records);
+    }
+
+    public function test_an_http_status_exception_is_not_gated_by_environment(): void
+    {
+        $middleware = new ExceptionHandlerMiddleware(new NullLogger(), AppEnvironment::Production);
+        $handler = new CallableRequestHandler(static function () {
+            throw new FixtureHttpStatusException('bad input');
+        });
+
+        $response = $middleware->process(new ServerRequest('GET', '/'), $handler);
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(['error' => 'bad input'], json_decode((string) $response->getBody(), true));
     }
 }

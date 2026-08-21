@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Http\Fixtures;
 
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
+use Kinetis\Tests\Fixtures\FixtureHttpStatusException;
 use RuntimeException;
 
 #[Middleware(ClassLevelMiddleware::class)]
@@ -29,5 +30,11 @@ final readonly class MiddlewareTestController
     public function throws(): array
     {
         throw new RuntimeException('boom');
+    }
+
+    #[Get('/middleware-test/throws-http-status')]
+    public function throwsHttpStatus(): array
+    {
+        throw new FixtureHttpStatusException('bad input');
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Middleware;
 
+use Kinetis\Http\Exception\HttpStatusExceptionInterface;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Runtime\AppEnvironment;
 use Nyholm\Psr7\Response;
@@ -20,8 +21,10 @@ use Throwable;
  * the exact order) — the same unconditional-dispose-hook reasoning
  * TransactionGuard::rollbackDangling() uses. An uncaught exception from
  * anywhere in the pipeline — a controller, a route-level middleware,
- * application code in general — is caught here and converted into a 500
- * instead of propagating out of Kernel::handle() entirely.
+ * application code in general — is caught here instead of propagating
+ * out of Kernel::handle() entirely: one implementing
+ * Kinetis\Http\Exception\HttpStatusExceptionInterface becomes the status
+ * it declares, everything else becomes a 500.
  *
  * Resolved through the container (see Kernel), so $logger is whatever
  * LoggerInterface AppScope::boot() ended up binding — the consumer's own
@@ -45,6 +48,12 @@ final readonly class ExceptionHandlerMiddleware implements MiddlewareInterface
     {
         try {
             return $handler->handle($request);
+        } catch (HttpStatusExceptionInterface $e) {
+            // A well-formed client error a satellite package's own
+            // exception raised from inside a controller — not a bug, so
+            // not logged as one, and not gated behind $environment: the
+            // exception's own message is already meant to be shown.
+            return ErrorResponse::create($e->httpStatus(), $e->getMessage());
         } catch (Throwable $e) {
             $this->logger->error('Unhandled exception while handling {method} {path}: {message}', [
                 'method' => $request->getMethod(),

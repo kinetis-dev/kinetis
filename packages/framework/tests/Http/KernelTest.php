@@ -551,6 +551,20 @@ final class KernelTest extends TestCase
         self::assertSame('error', $logger->records[0]['level']);
     }
 
+    public function test_an_http_status_exception_from_a_controller_becomes_its_own_status_end_to_end(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test/throws-http-status'));
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(['error' => 'bad input'], json_decode((string) $response->getBody(), true));
+    }
+
     public function test_middleware_can_register_a_current_user_the_controller_then_receives(): void
     {
         $app = new AppScope();
