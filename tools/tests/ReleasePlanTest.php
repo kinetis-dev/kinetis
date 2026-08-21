@@ -111,6 +111,75 @@ final class ReleasePlanTest extends TestCase
         );
     }
 
+    /**
+     * The real bug this reproduces: a re-run of a partially-successful
+     * release round replays the same diff, so a package's version bump
+     * still makes it a diff-based candidate even after an earlier
+     * attempt this same round already pushed its tag successfully.
+     * findUntaggedCandidates() alone can't catch this — it never even
+     * runs on the diff-based source — so resolveCandidates() has to
+     * apply the tag check to the whole union, not just to its own
+     * untagged half.
+     */
+    public function test_a_diff_based_candidate_whose_tag_was_already_published_this_round_is_dropped(): void
+    {
+        $manifest = ['packages' => [
+            'a' => ['version' => '1.0.0'],
+            'b' => ['version' => '1.0.0'],
+        ]];
+
+        $candidates = resolveCandidates(
+            diffCandidates: ['a', 'b'],
+            untaggedCandidates: [],
+            manifest: $manifest,
+            tagExists: static fn (string $repo, string $tag): bool => $repo === 'a',
+        );
+
+        self::assertSame(['b'], $candidates);
+    }
+
+    public function test_an_untagged_only_candidate_with_no_tag_yet_is_kept(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        $candidates = resolveCandidates(
+            diffCandidates: [],
+            untaggedCandidates: ['a'],
+            manifest: $manifest,
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        );
+
+        self::assertSame(['a'], $candidates);
+    }
+
+    public function test_a_candidate_found_by_both_sources_appears_exactly_once(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        $candidates = resolveCandidates(
+            diffCandidates: ['a'],
+            untaggedCandidates: ['a'],
+            manifest: $manifest,
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        );
+
+        self::assertSame(['a'], $candidates);
+    }
+
+    public function test_a_genuinely_unpublished_diff_candidate_is_kept(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        $candidates = resolveCandidates(
+            diffCandidates: ['a'],
+            untaggedCandidates: [],
+            manifest: $manifest,
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        );
+
+        self::assertSame(['a'], $candidates);
+    }
+
     public function test_publish_order_respects_dependency_order_between_two_candidates(): void
     {
         $manifest = ['packages' => [

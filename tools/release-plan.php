@@ -91,6 +91,38 @@ function findUntaggedCandidates(array $manifest, callable $tagExists): array
 }
 
 /**
+ * Unions the two candidate sources, then filters out anything whose tag
+ * already exists — the one check neither source applies on its own to
+ * the *other's* results. findUntaggedCandidates() only ever sees the
+ * untagged path; a diff-based candidate goes straight into the union
+ * with no equivalent check. That gap is invisible on a normal run (a
+ * version bump has no tag yet by definition) but real on a re-run of a
+ * partially-successful release round: re-running release.yml after a
+ * mid-round failure (e.g. a missing split repo) replays the same
+ * GITHUB_EVENT_BEFORE, so a package the diff already found — and whose
+ * tag a *previous* attempt this same round already pushed successfully
+ * — gets re-added by the diff alone and its tag push then fails, since
+ * tags (unlike the branch ref) are never force-pushed. Filtering the
+ * whole union by tag existence, not just the untagged source's own
+ * candidates, is what makes a retry idempotent.
+ *
+ * @param list<string> $diffCandidates
+ * @param list<string> $untaggedCandidates
+ * @param array<string, mixed> $manifest
+ * @param callable(string, string): bool $tagExists
+ * @return list<string>
+ */
+function resolveCandidates(array $diffCandidates, array $untaggedCandidates, array $manifest, callable $tagExists): array
+{
+    $union = array_keys(array_fill_keys($diffCandidates, true) + array_fill_keys($untaggedCandidates, true));
+
+    return array_values(array_filter(
+        $union,
+        static fn (string $key): bool => !$tagExists($key, "v{$manifest['packages'][$key]['version']}"),
+    ));
+}
+
+/**
  * Kahn's algorithm over the full requires graph, foundational packages
  * first — e.g. framework and revolt-http-client before pingpong.
  *
@@ -288,9 +320,12 @@ function main(array $argv = []): int
     // "first release" case a pure diff can never detect on its own).
     // $oldManifest being unavailable (no prior commit to diff against
     // at all) only removes the first source; the second still runs.
+    // resolveCandidates() then filters the whole union by tag
+    // existence — see its own docblock for why that has to happen
+    // after the union, not just inside findUntaggedCandidates().
     $diffCandidates = $oldManifest !== null ? findReleaseCandidates($oldManifest, $newManifest) : [];
     $untaggedCandidates = findUntaggedCandidates($newManifest, tagExists: tagExistsOnGitHub(...));
-    $candidates = array_keys(array_fill_keys($diffCandidates, true) + array_fill_keys($untaggedCandidates, true));
+    $candidates = resolveCandidates($diffCandidates, $untaggedCandidates, $newManifest, tagExists: tagExistsOnGitHub(...));
 
     if ($candidates === []) {
         $json ? printJson([]) : printHumanReadable([], note: null);
