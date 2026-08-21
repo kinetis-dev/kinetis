@@ -382,15 +382,26 @@ since by the time this adapter's own code runs, RoadRunner has already
 handed it the whole body as one in-memory string with nothing left to
 read incrementally.
 
+This is a separate ceiling from `MAX_BODY_SIZE` (below), and the two
+don't automatically agree: the example's `max_request_size: 10` allows
+up to 10 MB through to PHP, but `MAX_BODY_SIZE` still defaults to 2 MiB,
+so a form body between those two sizes reaches PHP and is then rejected
+there instead of at the Go layer. Either is a real rejection — nothing
+gets silently accepted — but if you want one consistent limit, set both
+to match (`MAX_BODY_SIZE=10485760` alongside `max_request_size: 10`).
+
 `RoadRunnerAdapter` itself adds one more, narrower check on top: a
 form body whose *declared* `Content-Length` already exceeds
 `MAX_BODY_SIZE` (the same env var and default — 2 MiB — `MaxBodySizeMiddleware`
-uses) is rejected with a `413` before the body is read into memory at
-all. This is defense in depth for the common, honestly-labeled case,
-checked before parsing rather than during it — not a substitute for
-`http.max_request_size`, which is what actually bounds the case this
-check can't see: a request that lies about its length, or declares
-none.
+uses) is rejected with a `413` before this adapter's own multipart/
+url-encoded parser ever runs — the whole body has already been handed
+to PHP as one in-memory string by this point (see above), so what this
+check actually prevents is spending time copying and parsing something
+already known to be too large, not the initial read itself. This is
+defense in depth for the common, honestly-labeled case — not a
+substitute for `http.max_request_size`, which is what actually bounds
+the case this check can't see: a request that lies about its length, or
+declares none.
 
 ### `ext-sockets` under an Alpine-based image
 

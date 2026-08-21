@@ -63,6 +63,13 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
      * order-insensitive replacement: it proves the values themselves —
      * both cookies, correctly named, correctly valued — still survive
      * every time, which is the actual guarantee worth gating on.
+     *
+     * Checked at both layers, not just `cookieParams` — the PSR-7
+     * `Cookie` header text itself is asserted too. `cookieParams` is
+     * this framework's own derivation from that header; a bug in the
+     * derivation, independent of RoadRunner's own reordering, could in
+     * principle make the two disagree, and only checking the derived
+     * value would miss it.
      */
     public function test_cookie_values_survive_regardless_of_order(): void
     {
@@ -80,6 +87,17 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
         $cookieParams = $outcome->observed->cookieParams;
         ksort($cookieParams);
         self::assertSame(['kinetis_session' => 'abc123', 'theme' => 'dark'], $cookieParams);
+
+        $rawCookieHeader = $outcome->observed->header('Cookie');
+        self::assertCount(
+            1,
+            $rawCookieHeader,
+            'RoadRunnerAdapter::foldRepeatedHeaders() must have joined every Cookie header line into one',
+        );
+
+        $rawPairs = array_map(trim(...), explode(';', $rawCookieHeader[0]));
+        sort($rawPairs);
+        self::assertSame(['kinetis_session=abc123', 'theme=dark'], $rawPairs);
     }
 
     /**
@@ -91,9 +109,28 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
      * repeatable. `Fixtures/worker.php`'s `/__conformance/throw` path
      * throws before anything else runs, carrying a message a real
      * client must never see.
+     *
+     * "The same worker" is proven by process identity, not merely by a
+     * second request succeeding — `pool.num_workers` could in principle
+     * be greater than 1, or RoadRunner could respawn a worker between
+     * requests and this driver's default `.rr.yaml` (see
+     * {@see RoadRunnerDriver::start()}) wouldn't itself rule that out.
+     * `Fixtures/worker.php` reports its own `getmypid()` on every
+     * response via `X-Conformance-Worker-Pid`; a baseline request before
+     * the throw and the recovery request after it are compared against
+     * that header, not just against each other's success.
      */
     public function test_a_handler_exception_produces_a_safe_response_and_the_same_worker_serves_the_next_request(): void
     {
+        $baseline = $this->driver()->dispatch(new WireRequest(), ResponseSpec::json(200, '{"ok":true}'));
+
+        if ($baseline->response instanceof AdapterRejection) {
+            self::fail("The adapter rejected the request: {$baseline->response->exceptionClass}: {$baseline->response->message}");
+        }
+
+        $baselinePid = $baseline->response->header('X-Conformance-Worker-Pid');
+        self::assertNotEmpty($baselinePid, 'the fixture must report its own process id for this test to prove anything');
+
         $failed = $this->driver()->dispatch(
             new WireRequest(path: '/__conformance/throw'),
             ResponseSpec::json(200, '{"ok":true}'),
@@ -113,6 +150,11 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
 
         self::assertNotNull($recovered->observed, 'the same worker must still serve a normal request afterward');
         self::assertSame(200, $recovered->response->status);
+        self::assertSame(
+            $baselinePid,
+            $recovered->response->header('X-Conformance-Worker-Pid'),
+            'the request after the throw must be served by the exact same worker process, not a respawned one',
+        );
     }
 
     /**
@@ -125,6 +167,19 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
      * instance, configured with a deliberately small limit, so this
      * doesn't affect the shared driver every other test in this class
      * uses.
+     *
+     * Both halves of the comparison use the identical chunked encoder
+     * ({@see RoadRunnerDriver::dispatchOversizedChunkedBody()}) against
+     * the same running server — only the body size differs. Without the
+     * under-limit case, "the fixture never recorded the request" could
+     * just as easily mean a broken chunk encoding, a crashed worker, or
+     * any other pre-handler failure unrelated to `max_request_size` at
+     * all; the under-limit case proves the encoder and the server are
+     * otherwise working, so the over-limit rejection can only be
+     * attributed to the limit itself. The exact `413` is asserted too —
+     * `reachedFixture === false` alone doesn't distinguish RoadRunner's
+     * own documented oversized-body response from some other, unrelated
+     * connection failure.
      */
     public function test_an_oversized_chunked_body_is_rejected_by_road_runners_own_limit(): void
     {
@@ -132,11 +187,25 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
         $driver->start(maxRequestSizeMb: 1);
 
         try {
-            $result = $driver->dispatchOversizedChunkedBody('/', [str_repeat('a', 2_000_000)]);
+            $underLimit = $driver->dispatchOversizedChunkedBody('/', [str_repeat('a', 1_000)]);
+
+            self::assertTrue(
+                $underLimit['reachedFixture'],
+                'a chunked body well under the configured http.max_request_size must reach the worker normally — '
+                . 'this is the negative control proving the encoder and server are otherwise working',
+            );
+            self::assertSame(200, $underLimit['status']);
+
+            $overLimit = $driver->dispatchOversizedChunkedBody('/', [str_repeat('a', 2_000_000)]);
 
             self::assertFalse(
-                $result['reachedFixture'],
+                $overLimit['reachedFixture'],
                 'a chunked body over the configured http.max_request_size must be rejected before reaching the worker at all',
+            );
+            self::assertSame(
+                413,
+                $overLimit['status'],
+                'RoadRunner\'s own http.MaxBytesReader rejection is a 413, not merely an unexplained connection failure',
             );
         } finally {
             $driver->stop();

@@ -591,10 +591,10 @@ bodies themselves, in userland PHP, so `upload_max_filesize`/
 Lambda event's whole body arrives as one in-memory string with no SAPI
 involved at all; the effective limit is whatever Lambda's own payload
 size limit already is. Under `kinetis/roadrunner-adapter`, the required
-`http.raw_body: true` setting (see {doc}`runtime-adapters`) disables
-RoadRunner's own Go-side body parsing and its size limit along with it
-— nothing in Kinetis caps a form body there either, unlike the JSON
-`#[Body]` path this middleware does cover.
+`http.max_request_size` setting is the real limit — a separate, Go-side
+mechanism independent of `raw_body`, not affected by it — see
+{doc}`runtime-adapters` for the full reasoning, including how it relates
+to `MAX_BODY_SIZE`.
 ```
 
 ## Built in: `CorsMiddleware`

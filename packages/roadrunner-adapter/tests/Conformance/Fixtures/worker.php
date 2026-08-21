@@ -55,5 +55,11 @@ RuntimeDetector::detect()->run(static function (ServerRequestInterface $request)
         flags: JSON_THROW_ON_ERROR,
     );
 
-    return ResponseSpec::fromArray($spec)->toResponse();
+    // The one header this fixture adds itself, on top of whatever the
+    // test's own ResponseSpec asked for — carries this worker's real
+    // process id so a test can prove two dispatches were served by the
+    // exact same persistent worker (RoadRunnerConformanceTest's
+    // worker-survival test), not merely that both happened to succeed.
+    return ResponseSpec::fromArray($spec)->toResponse()
+        ->withHeader('X-Conformance-Worker-Pid', (string) getmypid());
 });

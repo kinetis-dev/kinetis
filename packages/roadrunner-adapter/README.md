@@ -36,11 +36,11 @@ when it spawns the worker.
 composer require kinetis/roadrunner-adapter
 ```
 
-**One RoadRunner configuration setting is required**, not optional —
-`http.raw_body: true` — and a second is strongly recommended,
-`http.max_request_size`, to actually bound how large a form body can
-grow before this adapter parses it (there's no SAPI here to enforce
-`post_max_size`, and RoadRunner's own default is a generous 1000 MB):
+**Two RoadRunner configuration settings are required**, not optional —
+`http.raw_body: true`, and `http.max_request_size` to actually bound how
+large a form body can grow before this adapter parses it (there's no
+SAPI here to enforce `post_max_size`, and RoadRunner's own default is a
+generous 1000 MB):
 
 ```yaml
 http:
@@ -48,6 +48,11 @@ http:
   raw_body: true
   max_request_size: 10
 ```
+
+`max_request_size` is a separate ceiling from `MAX_BODY_SIZE` (Kinetis's
+own env var, default 2 MiB) — the two don't automatically agree; set
+`MAX_BODY_SIZE=10485760` alongside `max_request_size: 10` above if you
+want one consistent limit.
 
 Requires PHP 8.4+ and `kinetis/framework`. See
 [Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html) for
