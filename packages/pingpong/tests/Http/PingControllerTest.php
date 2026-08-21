@@ -170,7 +170,7 @@ final class PingControllerTest extends ApplicationTestCase
         $this->client->post('/pong/direct')->assertOk();
 
         $tally = $this->client->get('/pong/tally')->assertOk();
-        $counts = $this->app->get(PingRepository::class)->countByScenario();
+        $counts = $this->app->createRequestScope()->get(PingRepository::class)->countByScenario();
 
         $tally->assertJsonPath('total', $counts->total);
     }
