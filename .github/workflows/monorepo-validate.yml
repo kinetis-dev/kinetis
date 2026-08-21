@@ -51,13 +51,13 @@ jobs:
 
       - name: composer validate --strict (every package)
         # Not matrixed — each check is near-instant and there's no build
-        # step to parallelize, so one job looping over all 19 is simpler
-        # than spinning up 19 separate runner jobs for it. Collects every
+        # step to parallelize, so one job looping over every package is simpler
+        # than spinning up a separate runner job per package. Collects every
         # failure before exiting, matching validate-manifest.php's own
         # "report everything, not just the first problem" behavior.
         run: |
           failed=""
-          for pkg in framework persistence cache-redis bref-adapter query-builder auth auth-jwt migrations queue storage revolt-http-client storage-s3 queue-sqs queue-rabbitmq mailer search-opensearch aws-sigv4 pingpong skeleton; do
+          for pkg in framework persistence cache-redis bref-adapter query-builder auth auth-jwt migrations mcp queue queue-redis queue-sql storage revolt-http-client storage-s3 queue-sqs queue-rabbitmq mailer search-opensearch aws-sigv4 telemetry session pingpong skeleton; do
             echo "=== $pkg ==="
             if ! docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/packages/$pkg composer:2 validate --strict; then
               failed="$failed $pkg"
