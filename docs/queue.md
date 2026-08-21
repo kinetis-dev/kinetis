@@ -140,6 +140,29 @@ QUEUE_CONNECTION_NAME=cache2
 REDIS_CACHE2_HOST=127.0.0.1
 ```
 
+### How `release()` behaves across backends
+
+Every backend delivers a job at least once and every backend's `push()`/
+`ack()`/`fail()` are each a single atomic operation. `release()` — what
+runs when a job fails and gets a retry — is where the backends actually
+differ, because it means one entry leaves the in-flight set at the same
+moment a replacement enters the retry set, and not every backend has a
+primitive that can do both as one step:
+
+| Backend | `release()` mechanism | Duplication window |
+|---|---|---|
+| `kinetis/queue-redis` | One Lua script, gated on the source entry actually being found and removed | None — a crash anywhere during release() either leaves the job exactly where it was or completes the swap; a stale/duplicate release() call is rejected rather than enqueuing a second copy |
+| `kinetis/queue-sql` | One `UPDATE` statement (clears the reservation, increments the attempt count) | None |
+| `kinetis/queue-sqs` | One `ChangeMessageVisibility` call | None from `release()` itself — but SQS's own at-least-once delivery model can redeliver independently of anything this package does |
+| `kinetis/queue-rabbitmq` | Two separate AMQP operations — publish the replacement, then nack the original — since AMQP 0-9-1 has no cross-message transaction to make them one | Real: a crash between the two publishes a replacement *and* leaves the original to be redelivered once the connection drops, so the job can be delivered twice — see {doc}`queue-rabbitmq` |
+
+A job handler should be idempotent under retry regardless of backend —
+every backend can redeliver a job that was already fully processed if a
+worker crashes after finishing the work but before calling `ack()` — but
+`kinetis/queue-rabbitmq` is the one backend where `release()` itself,
+not just a crash at an unrelated point in the cycle, can produce a
+duplicate.
+
 ## Scaling out: multiple workers
 
 `kinetis queue:work` is safe to run as any number of separate,

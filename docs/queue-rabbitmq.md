@@ -65,6 +65,20 @@ queue's dead-letter path included), carried forward by `release()`'s
 republish, and read back at `pop()` — so a worker's consumer span
 joins the producer's trace.
 
+## A released job can be delivered twice
+
+`release()` publishes the replacement message before nacking the
+original — two separate AMQP operations, since AMQP 0-9-1 has no
+cross-message transaction to make them one. That ordering means a crash
+between the two never loses the job (the original stays unacked and the
+broker redelivers it once the connection drops), but it also means that
+same crash can leave both the redelivered original and the freshly
+published replacement in the queue at once. RedisQueue's and SqlQueue's
+own `release()` are each a single atomic operation and don't have this
+window — see {doc}`queue`'s backend comparison for how the four
+backends differ here. A job handler run through this backend needs to
+tolerate being invoked more than once for the same logical job.
+
 ## Named connections
 
 ```{code-block} text
