@@ -278,10 +278,14 @@ final class RoadRunnerAdapterTest extends TestCase
      * Defense in depth for a request that declares its own size
      * honestly — see `assertFormBodyWithinLimit()`'s own docblock for
      * what this does and does not cover. Checked against the *declared*
-     * `Content-Length` alone, before the body is ever read — proven
-     * here by giving a tiny real body a `Content-Length` that lies
-     * about being oversized, matching how `MaxBodySizeMiddleware`
-     * itself only ever checks the declared header at this same layer.
+     * `Content-Length` alone, before the adapter copies or parses the
+     * body — RoadRunner has already handed this adapter the whole body
+     * as one in-memory string by this point, so there's nothing left to
+     * "read" in the FrankenPHP/FPM sense; this check only prevents
+     * spending time on something already known to be too large. Proven
+     * here by giving a tiny real body a `Content-Length` that lies about
+     * being oversized, matching how `MaxBodySizeMiddleware` itself only
+     * ever checks the declared header at this same layer.
      */
     public function test_a_form_body_declaring_a_content_length_over_the_limit_is_a_clean_413_and_the_handler_never_runs(): void
     {
