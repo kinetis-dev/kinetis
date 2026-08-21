@@ -62,20 +62,25 @@ final readonly class ExceptionHandlerMiddleware implements MiddlewareInterface
                 'exception' => $e,
             ]);
 
-            if ($this->environment->isProduction()) {
-                return ErrorResponse::create(500, 'Internal server error.');
-            }
-
-            return new Response(
-                status: 500,
-                headers: ['Content-Type' => 'application/json'],
-                body: json_encode([
-                    'error' => 'Internal server error.',
-                    'exception' => $e::class,
-                    'message' => $e->getMessage(),
-                    'location' => $e->getFile() . ':' . $e->getLine(),
-                ], JSON_THROW_ON_ERROR),
-            );
+            return $this->internalErrorResponse($e);
         }
+    }
+
+    private function internalErrorResponse(Throwable $e): ResponseInterface
+    {
+        if ($this->environment->isProduction()) {
+            return ErrorResponse::create(500, 'Internal server error.');
+        }
+
+        return new Response(
+            status: 500,
+            headers: ['Content-Type' => 'application/json'],
+            body: json_encode([
+                'error' => 'Internal server error.',
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+                'location' => $e->getFile() . ':' . $e->getLine(),
+            ], JSON_THROW_ON_ERROR),
+        );
     }
 }
