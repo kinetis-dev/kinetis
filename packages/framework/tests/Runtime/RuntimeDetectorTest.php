@@ -41,4 +41,31 @@ final class RuntimeDetectorTest extends TestCase
 
         self::assertInstanceOf(FpmAdapter::class, $adapter);
     }
+
+    /**
+     * RoadRunnerAdapter lives in the separate kinetis/roadrunner-adapter
+     * package, not core, and this repo's own test suite never installs
+     * it — so this exercises the actual failure mode a consumer hits
+     * running under RoadRunner without that package, the same reasoning
+     * as the Lambda test above.
+     */
+    public function test_throws_a_clear_error_naming_the_adapter_package_when_road_runner_is_detected_but_not_installed(): void
+    {
+        $this->expectException(RuntimeUnavailableException::class);
+        $this->expectExceptionMessage('kinetis/roadrunner-adapter');
+
+        RuntimeDetector::detect(frankenPhpAvailable: false, roadRunnerMode: 'http');
+    }
+
+    /**
+     * RR_MODE has several real values beyond "http" (temporal, jobs,
+     * grpc, tcp, centrifuge, ...) — this adapter must not react to any
+     * of them, since it only ever speaks the HTTP worker protocol.
+     */
+    public function test_a_non_http_road_runner_mode_does_not_select_the_road_runner_adapter(): void
+    {
+        $adapter = RuntimeDetector::detect(frankenPhpAvailable: false, roadRunnerMode: 'jobs');
+
+        self::assertInstanceOf(FpmAdapter::class, $adapter);
+    }
 }

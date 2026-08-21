@@ -133,6 +133,7 @@ dependencies:
 | [`kinetis/mailer`](https://kinetis.dev/docs/mailer.html) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via `kinetis/revolt-http-client` |
 | [`kinetis/revolt-http-client`](https://kinetis.dev/docs/revolt-http-client.html) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
 | `kinetis/bref-adapter` | AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs |
+| `kinetis/roadrunner-adapter` | RoadRunner runtime adapter — a persistent worker over RoadRunner's own Goridge/`PSR7Worker` protocol |
 
 ## Documentation
 

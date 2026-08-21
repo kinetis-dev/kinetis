@@ -1,0 +1,419 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kinetis\RoadRunnerAdapter\Tests\Conformance;
+
+use Kinetis\RoadRunnerAdapter\Exception\RoadRunnerAdapterException;
+use Kinetis\RoadRunnerAdapter\RoadRunnerAdapter;
+use Kinetis\Testing\FreePort;
+use Kinetis\Testing\Runtime\AdapterRejection;
+use Kinetis\Testing\Runtime\ObservedRequest;
+use Kinetis\Testing\Runtime\Outcome;
+use Kinetis\Testing\Runtime\ResponseSpec;
+use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
+use Kinetis\Testing\Runtime\WireRequest;
+use Kinetis\Testing\Runtime\WireResponse;
+use RuntimeException;
+
+/**
+ * Drives RoadRunnerAdapter through a real, spawned `rr serve` process —
+ * no in-process shortcut exists the way Bref's LambdaDriver has one
+ * (driving BrefLambdaAdapter::handleEvent() directly against an
+ * already-decoded event): a RoadRunner request/response only ever exist
+ * as the real Goridge wire protocol between `rr` and a real PHP worker
+ * process, so this is structurally close to kinetis/framework's own
+ * SuperglobalsDriver — real HTTP/1.1 bytes over a real socket — rather
+ * than an in-process call.
+ *
+ * {@see requireRealBinary()} is the one thing every test using this
+ * driver must call first: it needs a real `rr` binary, fetched via
+ * `vendor/bin/rr get-binary` (spiral/roadrunner-cli, a require-dev
+ * dependency), which is not present by default and is never committed.
+ */
+final class RoadRunnerDriver implements RuntimeAdapterDriver
+{
+    private const string CLIENT_IP = '127.0.0.1';
+
+    /** @var resource|null */
+    private $server = null;
+
+    private ?string $configPath = null;
+
+    private function __construct(
+        private readonly string $hostPort,
+        private readonly string $stateDir,
+        private readonly string $binaryPath,
+    ) {}
+
+    public static function spawn(): self
+    {
+        $stateDir = sys_get_temp_dir() . '/kinetis-roadrunner-conformance-' . bin2hex(random_bytes(8));
+        mkdir($stateDir);
+
+        return new self('127.0.0.1:' . FreePort::reserve(), $stateDir, self::binaryPath());
+    }
+
+    /**
+     * The real `rr` binary this driver needs, fetched via
+     * `vendor/bin/rr get-binary --location .` from this package's own
+     * root — see this class's own docblock. Not a fixed name PHPUnit can
+     * assume exists; {@see isBinaryAvailable()} is what lets the test
+     * class turn its absence into a clean skip instead of every test in
+     * the suite failing with a confusing "no such file" error.
+     */
+    public static function binaryPath(): string
+    {
+        return __DIR__ . '/../../rr';
+    }
+
+    public static function isBinaryAvailable(): bool
+    {
+        return is_file(self::binaryPath());
+    }
+
+    public function start(): void
+    {
+        $this->configPath = $this->stateDir . '/.rr.yaml';
+
+        file_put_contents($this->configPath, <<<YAML
+            version: "3"
+
+            server:
+              command: "php {$this->workerScript()}"
+
+            http:
+              address: {$this->hostPort}
+              raw_body: true
+              pool:
+                num_workers: 1
+            YAML);
+
+        $server = proc_open(
+            [$this->binaryPath, 'serve', '-c', $this->configPath],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            [...getenv(), 'KINETIS_CONFORMANCE_STATE_DIR' => $this->stateDir],
+        );
+
+        if ($server === false) {
+            throw new RuntimeException('Could not start the RoadRunner conformance fixture process.');
+        }
+
+        $this->server = $server;
+
+        $this->waitForServerReady();
+    }
+
+    public function stop(): void
+    {
+        if ($this->server !== null) {
+            proc_terminate($this->server);
+            proc_close($this->server);
+            $this->server = null;
+        }
+
+        foreach (glob($this->stateDir . '/*.json') ?: [] as $file) {
+            unlink($file);
+        }
+
+        if ($this->configPath !== null && is_file($this->configPath)) {
+            unlink($this->configPath);
+        }
+
+        if (is_dir($this->stateDir)) {
+            rmdir($this->stateDir);
+        }
+    }
+
+    #[\Override]
+    public function dispatch(WireRequest $request, ResponseSpec $response): Outcome
+    {
+        $id = bin2hex(random_bytes(16));
+        [$wire, $span] = $this->exchange($this->rawHttpRequest($request, $response, $id));
+
+        $observedFile = "{$this->stateDir}/{$id}.json";
+        $observed = null;
+
+        if (is_file($observedFile)) {
+            /** @var array<string, mixed> $data */
+            $data = json_decode((string) file_get_contents($observedFile), true, flags: JSON_THROW_ON_ERROR);
+            $observed = ObservedRequest::fromArray($data);
+            unlink($observedFile);
+        }
+
+        $wireResponse = self::parseResponse($wire, $span);
+
+        return new Outcome($observed, self::asRejectionIfStreamingRefused($wireResponse));
+    }
+
+    /**
+     * A refused streaming response travels back over the wire as a real,
+     * ordinary HTTP response — {@see RoadRunnerAdapter::handle()} returns
+     * it, never `Worker::error()` — so the suite's own contract (a
+     * genuine refusal is an {@see AdapterRejection}, not a successful
+     * {@see WireResponse}) needs this driver to recognize it after the
+     * fact, by the exact status/body pairing
+     * {@see RoadRunnerAdapter::STREAMING_NOT_SUPPORTED_MESSAGE} produces
+     * — nothing else on the wire distinguishes "the adapter deliberately
+     * refused this" from "the handler genuinely returned a 501".
+     */
+    private static function asRejectionIfStreamingRefused(WireResponse $response): WireResponse|AdapterRejection
+    {
+        if ($response->status !== 501) {
+            return $response;
+        }
+
+        $expectedBody = json_encode(['error' => RoadRunnerAdapter::STREAMING_NOT_SUPPORTED_MESSAGE], JSON_THROW_ON_ERROR);
+
+        if ($response->body !== $expectedBody) {
+            return $response;
+        }
+
+        return new AdapterRejection(
+            RoadRunnerAdapterException::class,
+            RoadRunnerAdapter::STREAMING_NOT_SUPPORTED_MESSAGE,
+        );
+    }
+
+    #[\Override]
+    public function expectedClientIp(): string
+    {
+        return self::CLIENT_IP;
+    }
+
+    #[\Override]
+    public function supportsStreaming(): bool
+    {
+        // See RoadRunnerAdapter's own class docblock: Worker::create()'s
+        // StdoutHandler redirect makes StreamedResponse's echo/flush
+        // emitter closures silently unreachable, and bridging
+        // HttpWorker::respondStream()'s generator-based push primitive
+        // onto them is a real, separate design pass, not attempted here.
+        return false;
+    }
+
+    #[\Override]
+    public function unparseableFormRequest(): WireRequest
+    {
+        // http.raw_body: true (required — see RoadRunnerAdapter's class
+        // docblock) means RoadRunner's own size/parsing limits never see
+        // this body at all; the parse failure is this adapter's own
+        // userland riverline/multipart-parser rejecting a body with no
+        // usable boundary — the same trigger kinetis/bref-adapter's
+        // LambdaDriver uses, not SuperglobalsDriver's post_max_size one.
+        return new WireRequest(
+            'POST',
+            '/',
+            headers: [['Content-Type', 'multipart/form-data; boundary=----XYZ']],
+            body: 'not a real multipart body at all',
+        );
+    }
+
+    private function workerScript(): string
+    {
+        return __DIR__ . '/Fixtures/worker.php';
+    }
+
+    /**
+     * @return array{0: string, 1: ?float}
+     */
+    private function exchange(string $raw): array
+    {
+        $socket = @stream_socket_client("tcp://{$this->hostPort}", $errno, $errstr, 5.0);
+
+        if ($socket === false) {
+            throw new RuntimeException("Could not connect to the RoadRunner conformance fixture at {$this->hostPort}: {$errstr} ({$errno})");
+        }
+
+        stream_set_timeout($socket, 15);
+        self::writeAll($socket, $raw);
+
+        $wire = '';
+        $bodyStartsAt = null;
+        $firstBodyReadAt = null;
+        $lastBodyReadAt = null;
+
+        while (!feof($socket)) {
+            $chunk = fread($socket, 65_536);
+
+            if ($chunk === false || $chunk === '') {
+                $meta = stream_get_meta_data($socket);
+
+                if ($meta['timed_out']) {
+                    throw new RuntimeException('Timed out reading from the RoadRunner conformance fixture.');
+                }
+
+                continue;
+            }
+
+            $wire .= $chunk;
+
+            if ($bodyStartsAt === null) {
+                $separator = strpos($wire, "\r\n\r\n");
+
+                if ($separator !== false) {
+                    $bodyStartsAt = $separator + 4;
+                }
+            }
+
+            if ($bodyStartsAt !== null && strlen($wire) > $bodyStartsAt) {
+                $now = microtime(true);
+                $firstBodyReadAt ??= $now;
+                $lastBodyReadAt = $now;
+            }
+        }
+
+        fclose($socket);
+
+        if ($wire === '') {
+            throw new RuntimeException('The RoadRunner conformance fixture closed the connection without a response.');
+        }
+
+        return [$wire, $firstBodyReadAt === null || $lastBodyReadAt === null ? null : $lastBodyReadAt - $firstBodyReadAt];
+    }
+
+    /**
+     * @param resource $socket
+     */
+    private static function writeAll($socket, string $data): void
+    {
+        $offset = 0;
+        $length = strlen($data);
+
+        while ($offset < $length) {
+            $written = fwrite($socket, substr($data, $offset));
+
+            if ($written === false || $written === 0) {
+                $meta = stream_get_meta_data($socket);
+                $reason = $meta['timed_out'] ? 'timed out' : 'the write failed';
+
+                throw new RuntimeException("Could not send the full request to the RoadRunner conformance fixture: {$reason} after {$offset} of {$length} bytes.");
+            }
+
+            $offset += $written;
+        }
+    }
+
+    private function rawHttpRequest(WireRequest $request, ResponseSpec $response, string $id): string
+    {
+        $target = $request->path . ($request->queryString !== '' ? '?' . $request->queryString : '');
+        $lines = [
+            "{$request->method} {$target} HTTP/1.1",
+            "Host: {$this->hostPort}",
+            'Connection: close',
+            "X-Conformance-Id: {$id}",
+            'X-Conformance-Response: ' . base64_encode(json_encode($response->toArray(), JSON_THROW_ON_ERROR)),
+        ];
+
+        foreach ($request->headers as [$name, $value]) {
+            $lines[] = "{$name}: {$value}";
+        }
+
+        if ($request->cookies !== []) {
+            $lines[] = 'Cookie: ' . implode('; ', $request->cookies);
+        }
+
+        $declaresLength = array_any($request->headers, static fn (array $pair): bool => strcasecmp($pair[0], 'Content-Length') === 0);
+
+        if (!$declaresLength && ($request->body !== '' || in_array($request->method, ['POST', 'PUT', 'PATCH'], true))) {
+            $lines[] = 'Content-Length: ' . strlen($request->body);
+        }
+
+        return implode("\r\n", $lines) . "\r\n\r\n" . $request->body;
+    }
+
+    private static function parseResponse(string $wire, ?float $bodyArrivalSpan): WireResponse
+    {
+        $separator = strpos($wire, "\r\n\r\n");
+
+        if ($separator === false) {
+            throw new RuntimeException('Malformed HTTP response from the RoadRunner conformance fixture: ' . $wire);
+        }
+
+        $head = substr($wire, 0, $separator);
+        $body = substr($wire, $separator + 4);
+        $lines = explode("\r\n", $head);
+        $statusLine = array_shift($lines);
+
+        if (preg_match('~^HTTP/\d\.\d (\d{3})~', $statusLine, $matches) !== 1) {
+            throw new RuntimeException("Malformed status line from the RoadRunner conformance fixture: {$statusLine}");
+        }
+
+        $headers = [];
+        $setCookies = [];
+        $chunked = false;
+
+        foreach ($lines as $line) {
+            [$name, $value] = array_map(trim(...), explode(':', $line, 2) + [1 => '']);
+
+            if (strcasecmp($name, 'Set-Cookie') === 0) {
+                $setCookies[] = $value;
+
+                continue;
+            }
+
+            if (strcasecmp($name, 'Transfer-Encoding') === 0 && strcasecmp($value, 'chunked') === 0) {
+                $chunked = true;
+            }
+
+            $headers[] = [$name, $value];
+        }
+
+        return new WireResponse((int) $matches[1], $headers, $setCookies, $chunked ? self::dechunk($body) : $body, $bodyArrivalSpan);
+    }
+
+    private static function dechunk(string $body): string
+    {
+        $out = '';
+        $offset = 0;
+        $length = strlen($body);
+
+        while ($offset < $length) {
+            $lineEnd = strpos($body, "\r\n", $offset);
+
+            if ($lineEnd === false) {
+                break;
+            }
+
+            $size = hexdec(trim(substr($body, $offset, $lineEnd - $offset)));
+
+            if ($size === 0) {
+                break;
+            }
+
+            $out .= substr($body, $lineEnd + 2, (int) $size);
+            $offset = $lineEnd + 2 + (int) $size + 2;
+        }
+
+        return $out;
+    }
+
+    private function waitForServerReady(): void
+    {
+        $deadline = microtime(true) + 30.0;
+        $lastSeen = 'no connection';
+
+        while (microtime(true) < $deadline) {
+            $socket = @stream_socket_client("tcp://{$this->hostPort}", timeout: 1.0);
+
+            if ($socket !== false) {
+                stream_set_timeout($socket, 2);
+                self::writeAll($socket, "GET /__conformance/ready HTTP/1.1\r\nHost: {$this->hostPort}\r\nConnection: close\r\n\r\n");
+                $statusLine = (string) fgets($socket);
+                fclose($socket);
+
+                if (str_starts_with($statusLine, 'HTTP/1.1 204') || str_starts_with($statusLine, 'HTTP/1.0 204')) {
+                    return;
+                }
+
+                $lastSeen = trim($statusLine) !== '' ? trim($statusLine) : 'an empty response';
+            }
+
+            usleep(100_000);
+        }
+
+        throw new RuntimeException("The RoadRunner conformance fixture at {$this->hostPort} never answered /__conformance/ready with 204 (last seen: {$lastSeen}).");
+    }
+}

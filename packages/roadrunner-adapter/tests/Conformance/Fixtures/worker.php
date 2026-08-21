@@ -1,0 +1,48 @@
+<?php
+
+declare(strict_types=1);
+
+// The RoadRunner worker RoadRunnerDriver spawns `rr serve` against —
+// the RoadRunner counterpart of kinetis/framework's own
+// tests/Runtime/Conformance/Fixtures/index.php, reusing the identical
+// protocol (an X-Conformance-Id/X-Conformance-Response header pair, an
+// observed-request JSON file under KINETIS_CONFORMANCE_STATE_DIR) and
+// even the identical handler body — RuntimeDetector::detect() already
+// picks RoadRunnerAdapter here the same way it picks FrankenPhpAdapter/
+// FpmAdapter under those environments, so nothing RoadRunner-specific
+// needed writing at all.
+
+require __DIR__ . '/../../../vendor/autoload.php';
+
+use Kinetis\Runtime\RuntimeDetector;
+use Kinetis\Testing\Runtime\ObservedRequest;
+use Kinetis\Testing\Runtime\ResponseSpec;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+
+RuntimeDetector::detect()->run(static function (ServerRequestInterface $request): ResponseInterface {
+    if ($request->getUri()->getPath() === '/__conformance/ready') {
+        return new \Nyholm\Psr7\Response(204);
+    }
+
+    $stateDir = getenv('KINETIS_CONFORMANCE_STATE_DIR');
+    $id = $request->getHeaderLine('X-Conformance-Id');
+
+    if (!is_string($stateDir) || $stateDir === '' || preg_match('/^[0-9a-f]{32}$/', $id) !== 1) {
+        throw new LogicException('conformance worker invoked without its state directory or dispatch id');
+    }
+
+    file_put_contents(
+        $stateDir . '/' . $id . '.json',
+        json_encode(ObservedRequest::fromServerRequest($request)->toArray(), JSON_THROW_ON_ERROR),
+    );
+
+    /** @var array<string, mixed> $spec */
+    $spec = json_decode(
+        (string) base64_decode($request->getHeaderLine('X-Conformance-Response'), strict: true),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+
+    return ResponseSpec::fromArray($spec)->toResponse();
+});

@@ -427,10 +427,12 @@ public function receiveFile(UploadedFileInterface $file): array
 This works the same way regardless of which `RuntimeAdapterInterface` is
 driving the request — `FrankenPhpAdapter`/`FpmAdapter` populate the
 uploaded-files bag via PHP 8.4's `request_parse_body()` for `PUT`/`PATCH`
-(PHP's SAPI only does this automatically for `POST`), and
-`kinetis/bref-adapter`'s `BrefLambdaAdapter` parses it from the Lambda
-event body directly. See {doc}`runtime-adapters` for what differs
-underneath each one.
+(PHP's SAPI only does this automatically for `POST`), while
+`kinetis/bref-adapter`'s `BrefLambdaAdapter` and
+`kinetis/roadrunner-adapter`'s `RoadRunnerAdapter` both parse it
+themselves — from the Lambda event body directly, and from the
+`http.raw_body: true`-preserved raw body respectively. See
+{doc}`runtime-adapters` for what differs underneath each one.
 ```
 
 ## Returning a status other than the route's default

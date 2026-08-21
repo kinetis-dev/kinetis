@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.34.0",
+            "version": "1.34.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -181,7 +181,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework"
             ],
@@ -492,6 +492,27 @@
                 "scan": "Kinetis\\Session\\Console\\",
                 "bootstrap": "Kinetis\\Session\\PackageBootstrap"
             }
+        },
+        "roadrunner-adapter": {
+            "name": "kinetis/roadrunner-adapter",
+            "description": "RoadRunner runtime adapter for Kinetis — speaks the PSR7Worker/Goridge protocol and converts to/from PSR-7, including multipart/form-data support.",
+            "namespace": "Kinetis\\RoadRunnerAdapter\\",
+            "testNamespace": "Kinetis\\RoadRunnerAdapter\\Tests\\",
+            "version": "1.0.1",
+            "requires": [
+                "framework"
+            ],
+            "require": {
+                "nyholm/psr7": "^1.8.2",
+                "psr/http-message": "^2.0",
+                "riverline/multipart-parser": "^2.2.2",
+                "spiral/roadrunner-http": "^4.1",
+                "spiral/roadrunner-worker": "^3.5"
+            },
+            "requireDevExtra": {
+                "spiral/roadrunner-cli": "^2.6"
+            },
+            "kinetis": []
         }
     }
 }
