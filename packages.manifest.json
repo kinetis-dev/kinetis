@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.32.0",
+            "version": "1.33.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -59,7 +59,7 @@
             "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.11.6",
+            "version": "1.12.0",
             "requires": [
                 "framework"
             ],
@@ -243,7 +243,7 @@
             "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for exactly-once delivery, an optional visibility timeout for a crashed worker's reserved job.",
             "namespace": "Kinetis\\QueueSql\\",
             "testNamespace": "Kinetis\\QueueSql\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.1.0",
             "requires": [
                 "framework",
                 "queue",

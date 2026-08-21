@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Config;
 
 use Kinetis\Config\Config;
+use Kinetis\Config\Exception\InvalidConfigValueException;
 use Kinetis\Config\Exception\MissingConfigException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -41,12 +42,72 @@ final class ConfigTest extends TestCase
         self::assertSame(5432, $config->int('MISSING_PORT', 5432));
     }
 
+    /**
+     * The same "REDIS_HOST= is how a value gets turned off" convention
+     * already established elsewhere — an explicitly-empty value is
+     * treated the same as an absent one, not as "configured to zero."
+     */
+    public function test_int_treats_an_explicitly_empty_value_as_unset(): void
+    {
+        $config = new Config(['DB_PORT' => '']);
+
+        self::assertSame(5432, $config->int('DB_PORT', 5432));
+    }
+
+    public function test_int_throws_on_a_non_numeric_value(): void
+    {
+        $config = new Config(['MAX_BODY_SIZE' => '5abc']);
+
+        $this->expectException(InvalidConfigValueException::class);
+        $this->expectExceptionMessage('Config value "MAX_BODY_SIZE" is not a valid integer, got "5abc".');
+        $config->int('MAX_BODY_SIZE', 2_097_152);
+    }
+
+    public function test_int_or_null_returns_null_when_unset_or_empty(): void
+    {
+        $config = new Config(['DB_CONNECT_TIMEOUT' => '']);
+
+        self::assertNull($config->intOrNull('DB_CONNECT_TIMEOUT'));
+        self::assertNull($config->intOrNull('MISSING'));
+    }
+
+    public function test_int_or_null_returns_the_parsed_value_when_present(): void
+    {
+        $config = new Config(['DB_CONNECT_TIMEOUT' => '5']);
+
+        self::assertSame(5, $config->intOrNull('DB_CONNECT_TIMEOUT'));
+    }
+
+    public function test_int_or_null_throws_on_a_non_numeric_value(): void
+    {
+        $config = new Config(['DB_CONNECT_TIMEOUT' => '5abc']);
+
+        $this->expectException(InvalidConfigValueException::class);
+        $config->intOrNull('DB_CONNECT_TIMEOUT');
+    }
+
     public function test_float_casts_present_values_and_falls_back_to_the_default(): void
     {
         $config = new Config(['THRESHOLD' => '0.75']);
 
         self::assertSame(0.75, $config->float('THRESHOLD', 1.0));
         self::assertSame(1.0, $config->float('MISSING', 1.0));
+    }
+
+    public function test_float_treats_an_explicitly_empty_value_as_unset(): void
+    {
+        $config = new Config(['THRESHOLD' => '']);
+
+        self::assertSame(1.0, $config->float('THRESHOLD', 1.0));
+    }
+
+    public function test_float_throws_on_a_non_numeric_value(): void
+    {
+        $config = new Config(['OTEL_TRACES_SAMPLER_ARG' => 'high']);
+
+        $this->expectException(InvalidConfigValueException::class);
+        $this->expectExceptionMessage('Config value "OTEL_TRACES_SAMPLER_ARG" is not a valid number, got "high".');
+        $config->float('OTEL_TRACES_SAMPLER_ARG', 1.0);
     }
 
     /**
@@ -76,6 +137,25 @@ final class ConfigTest extends TestCase
 
         self::assertTrue($config->bool('DEBUG', true));
         self::assertFalse($config->bool('DEBUG', false));
+    }
+
+    public function test_bool_treats_an_explicitly_empty_value_as_unset(): void
+    {
+        $config = new Config(['DEBUG' => '']);
+
+        self::assertTrue($config->bool('DEBUG', true));
+    }
+
+    public function test_bool_throws_on_an_unrecognized_value(): void
+    {
+        $config = new Config(['DEBUG' => 'purple']);
+
+        $this->expectException(InvalidConfigValueException::class);
+        $this->expectExceptionMessage(
+            'Config value "DEBUG" is not a recognized boolean, got "purple". '
+            . 'Use "true"/"false", "1"/"0", "on"/"off", or "yes"/"no".',
+        );
+        $config->bool('DEBUG', false);
     }
 
     public function test_required_returns_the_value_when_present(): void

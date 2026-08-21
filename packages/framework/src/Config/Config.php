@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Config;
 
+use Kinetis\Config\Exception\InvalidConfigValueException;
 use Kinetis\Config\Exception\MissingConfigException;
 
 /**
@@ -52,19 +53,80 @@ final readonly class Config
         return $this->values[$key] ?? $default;
     }
 
+    /**
+     * An empty value is treated as unset, not as "configured but blank" —
+     * the same "REDIS_HOST= is how a value gets turned off" convention
+     * already established for named-connection config elsewhere. Anything
+     * else set to a string is_numeric() doesn't accept throws
+     * InvalidConfigValueException rather than silently taking whatever
+     * PHP's own (int) cast would produce from it — "5abc" becoming 5 is
+     * exactly the kind of plausible-but-wrong value this exists to catch
+     * before it reaches whatever the number configures.
+     */
     public function int(string $key, int $default): int
     {
-        return isset($this->values[$key]) ? (int) $this->values[$key] : $default;
+        return $this->intOrNull($key) ?? $default;
+    }
+
+    /**
+     * Unlike int(), no literal default: null (unset, or explicitly
+     * cleared) is itself a real, distinct value some callers need —
+     * SqlConnectionFactory's DB_CONNECT_TIMEOUT and kinetis/queue-sql's
+     * QUEUE_VISIBILITY_TIMEOUT_SECONDS both mean "no timeout" only when
+     * genuinely absent, not some literal integer standing in for it.
+     */
+    public function intOrNull(string $key): ?int
+    {
+        $raw = $this->values[$key] ?? null;
+
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        if (!is_numeric($raw)) {
+            throw InvalidConfigValueException::notAnInteger($key, $raw);
+        }
+
+        return (int) $raw;
     }
 
     public function float(string $key, float $default): float
     {
-        return isset($this->values[$key]) ? (float) $this->values[$key] : $default;
+        $raw = $this->values[$key] ?? null;
+
+        if ($raw === null || $raw === '') {
+            return $default;
+        }
+
+        if (!is_numeric($raw)) {
+            throw InvalidConfigValueException::notAFloat($key, $raw);
+        }
+
+        return (float) $raw;
     }
 
+    /**
+     * FILTER_NULL_ON_FAILURE is what makes this distinguishable from a
+     * value FILTER_VALIDATE_BOOLEAN genuinely recognizes as false
+     * ("0"/"false"/"off"/"no") — without it, an unrecognized value like
+     * "purple" would silently produce the identical `false` a real "no"
+     * does, with nothing telling the two apart.
+     */
     public function bool(string $key, bool $default): bool
     {
-        return isset($this->values[$key]) ? filter_var($this->values[$key], FILTER_VALIDATE_BOOLEAN) : $default;
+        $raw = $this->values[$key] ?? null;
+
+        if ($raw === null || $raw === '') {
+            return $default;
+        }
+
+        $parsed = filter_var($raw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        if ($parsed === null) {
+            throw InvalidConfigValueException::notABoolean($key, $raw);
+        }
+
+        return $parsed;
     }
 
     /**

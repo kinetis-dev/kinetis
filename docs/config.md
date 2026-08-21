@@ -70,10 +70,26 @@ state, so there's nothing to keep re-reading for.
 |---|---|
 | `get(string $key, ?string $default = null): ?string` | The raw value, or `$default` |
 | `string(string $key, string $default): string` | Same as `get()`, with a required (non-null) default |
-| `int(string $key, int $default): int` | Cast to `int` |
-| `float(string $key, float $default): float` | Cast to `float` |
-| `bool(string $key, bool $default): bool` | `filter_var($value, FILTER_VALIDATE_BOOLEAN)` |
+| `int(string $key, int $default): int` | The value as `int`, or `$default` when unset or empty |
+| `intOrNull(string $key): ?int` | The value as `int`, or `null` when unset or empty — no default to fall back to |
+| `float(string $key, float $default): float` | The value as `float`, or `$default` when unset or empty |
+| `bool(string $key, bool $default): bool` | The value as `bool`, or `$default` when unset or empty |
 | `required(string $key): string` | The raw value, or throws |
+
+An explicitly empty value (`DB_PORT=`) is treated the same as an unset
+one, falling back to the default — the same convention named-connection
+config already uses to turn a setting off. Anything else that doesn't
+parse throws `Kinetis\Config\Exception\InvalidConfigValueException`
+rather than silently taking whatever PHP's own cast would produce —
+`int()`/`intOrNull()`/`float()` require `is_numeric()`, and `bool()`
+accepts `"true"`/`"false"`, `"1"`/`"0"`, `"on"`/`"off"`, and `"yes"`/`"no"`
+(case-insensitively) and rejects anything else, rather than letting an
+unrecognized value like `"purple"` silently become `false`.
+
+`intOrNull()` exists for the config that means something different when
+it's genuinely absent than when it's zero — `DB_CONNECT_TIMEOUT` and
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` both mean "no timeout at all" only
+when unset, not `0` standing in for it.
 
 `required()` is for config with no sane default — a missing database
 password should fail fast and clearly, not silently proceed as an empty

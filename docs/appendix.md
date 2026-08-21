@@ -53,7 +53,7 @@ so on), see {doc}`appendix-packages`.
 
 ## `Kinetis\Config`
 
-- `Config` — typed environment access: `get()`, `string()`, `int()`, `float()`, `bool()`, `required()`.
+- `Config` — typed environment access: `get()`, `string()`, `int()`, `intOrNull()`, `float()`, `bool()`, `required()`. An unset or empty value falls back to the given default (or `null` for `intOrNull()`); anything else that doesn't parse throws `Exception\InvalidConfigValueException` — see {doc}`config` for the exact rules.
 - `Config::scopedKey(string $key, string $connection = 'default'): string` — the named-connection convention every technology-specific connection builder shares. `'default'` returns `$key` unchanged; any other name inserts itself, uppercased, after the key's own prefix (`REDIS_HOST` + `cache2` → `REDIS_CACHE2_HOST`).
 - `EnvFile::safeLoad(string $projectRoot)` — loads `.env` via `vlucas/phpdotenv`, called unconditionally in `public/index.php` and `bin/kinetis`, before `AppEnvironment::detect()`.
 
