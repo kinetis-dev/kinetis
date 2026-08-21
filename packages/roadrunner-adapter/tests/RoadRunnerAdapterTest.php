@@ -268,7 +268,19 @@ final class RoadRunnerAdapterTest extends TestCase
 
             self::fail('expected RoadRunnerAdapterException to be thrown');
         } catch (RoadRunnerAdapterException $e) {
-            self::assertSame(RoadRunnerAdapterException::rawBodyNotEnabled()->getMessage(), $e->getMessage());
+            // A literal expected string, not
+            // RoadRunnerAdapterException::rawBodyNotEnabled()->getMessage()
+            // — comparing the thrown message against a second call to the
+            // exact same (possibly mutated) source would make this
+            // assertion pass regardless of what the message actually
+            // says, since both sides run the identical code.
+            self::assertSame(
+                'RoadRunner already parsed this form body itself before handing the '
+                . 'request to PHP, which means http.raw_body: true is missing from the '
+                . 'RoadRunner configuration. Set it in .rr.yaml — see the "Running under '
+                . 'RoadRunner" section of docs/runtime-adapters.md.',
+                $e->getMessage(),
+            );
         }
 
         self::assertFalse($handlerRan, 'a misconfiguration must be caught before the handler ever runs');
@@ -347,6 +359,115 @@ final class RoadRunnerAdapterTest extends TestCase
             // a value the running environment genuinely had set, leaking
             // that change into every test that runs after this one in
             // the same process.
+            putenv($original === false ? 'MAX_BODY_SIZE' : "MAX_BODY_SIZE={$original}");
+        }
+    }
+
+    /**
+     * A `MAX_BODY_SIZE` set to something that isn't a plain digit string
+     * (a typo, a `"2M"`-style shorthand this project doesn't support)
+     * must fall back to the real default rather than being coerced —
+     * `(int) 'notanumber'` is `0`, which would reject every request
+     * regardless of size, a materially worse failure than ignoring the
+     * bad value. Distinguishes this from a version that only checks
+     * "is the env var set at all," not "is it actually a digit string."
+     */
+    public function test_a_non_digit_max_body_size_falls_back_to_the_default(): void
+    {
+        $original = getenv('MAX_BODY_SIZE');
+        putenv('MAX_BODY_SIZE=notanumber');
+
+        try {
+            $request = new ServerRequest(
+                'POST',
+                '/',
+                [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Content-Length' => '2097153',
+                ],
+                'a=1',
+            );
+
+            $response = RoadRunnerAdapter::handle($request, static fn (): Response => new Response(200));
+
+            self::assertSame(413, $response->getStatusCode());
+            self::assertSame(
+                ['error' => BodyTooLargeException::exceeds(2_097_152)->getMessage()],
+                json_decode((string) $response->getBody(), true),
+            );
+        } finally {
+            putenv($original === false ? 'MAX_BODY_SIZE' : "MAX_BODY_SIZE={$original}");
+        }
+    }
+
+    /**
+     * A `Content-Length` that isn't a pure digit string — this one has a
+     * numeric prefix large enough to overflow past the limit if it were
+     * cast anyway — must be left to `http.max_request_size`, not rejected
+     * here: {@see \Kinetis\RoadRunnerAdapter\RoadRunnerAdapter::assertFormBodyWithinLimit()}'s
+     * own docblock is explicit that an inaccurate declared length is out
+     * of scope for this check. Distinguishes the guard's `||` from a
+     * mutated `&&` (which only skips the check when the header is
+     * *both* empty and non-digit, not just non-digit) and from the
+     * guard's `return` being removed outright (which would fall through
+     * to the same numeric comparison and reject this value) — both
+     * would incorrectly reject a body this check is documented not to
+     * bound.
+     */
+    public function test_a_non_digit_content_length_is_not_bounded_by_this_check(): void
+    {
+        $request = new ServerRequest(
+            'POST',
+            '/',
+            [
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'Content-Length' => '9999999999abc',
+            ],
+            'a=1',
+        );
+
+        $handlerRan = false;
+        $response = RoadRunnerAdapter::handle($request, static function () use (&$handlerRan): Response {
+            $handlerRan = true;
+
+            return new Response(200);
+        });
+
+        self::assertTrue($handlerRan, 'a malformed Content-Length must not be rejected by this check');
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    /**
+     * A declared length exactly *equal* to the limit must pass — only
+     * strictly *over* it is too large. Distinguishes the `>` comparison
+     * from a mutated `>=`.
+     */
+    public function test_a_content_length_exactly_at_the_limit_is_not_rejected(): void
+    {
+        $original = getenv('MAX_BODY_SIZE');
+        putenv('MAX_BODY_SIZE=10');
+
+        try {
+            $request = new ServerRequest(
+                'POST',
+                '/',
+                [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Content-Length' => '10',
+                ],
+                'a=1',
+            );
+
+            $handlerRan = false;
+            $response = RoadRunnerAdapter::handle($request, static function () use (&$handlerRan): Response {
+                $handlerRan = true;
+
+                return new Response(200);
+            });
+
+            self::assertTrue($handlerRan, 'a body exactly at the limit must be allowed through');
+            self::assertSame(200, $response->getStatusCode());
+        } finally {
             putenv($original === false ? 'MAX_BODY_SIZE' : "MAX_BODY_SIZE={$original}");
         }
     }

@@ -367,6 +367,11 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
      * line, then the body — the shape of one raw HTTP part — so the
      * header is prepended back on before parsing.
      *
+     * No explicit rewind() before handing the stream to StreamedPart —
+     * confirmed directly against its real source, not assumed: its own
+     * constructor already calls rewind() unconditionally, so a second
+     * one here would be genuinely redundant, not defensive.
+     *
      * @return array{0:array<string,string>,1:array<string,UploadedFile>}
      */
     private static function parseMultipart(string $contentType, string $body): array
@@ -378,7 +383,6 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
         }
 
         fwrite($stream, "Content-Type: {$contentType}\r\n\r\n" . $body);
-        rewind($stream);
 
         $fields = [];
         $files = [];

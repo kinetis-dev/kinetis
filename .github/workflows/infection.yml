@@ -60,7 +60,7 @@ jobs:
           # composerFlags bypasses the ext-sockets platform check —
           # confirmed for real that a from-scratch install fails without
           # it under Alpine; see ci.yml's matrix for the same reasoning.
-          - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, minMsi: 80, minCoveredMsi: 80, composerFlags: "--ignore-platform-req=ext-sockets" }
+          - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, minMsi: 85, minCoveredMsi: 85, composerFlags: "--ignore-platform-req=ext-sockets" }
           - { name: mailer, dir: packages/mailer, minMsi: 90, minCoveredMsi: 90 }
           - { name: migrations, dir: packages/migrations, minMsi: 75, minCoveredMsi: 75 }
           - { name: mcp, dir: packages/mcp, minMsi: 75, minCoveredMsi: 75 }

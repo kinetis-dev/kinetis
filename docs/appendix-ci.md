@@ -233,7 +233,13 @@ scan via `sonar.php.coverage.reportPaths` — on PHP 8.4 only, not
 matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`. `RedisQueue`,
 `SqlQueue`, `SqsQueue` (and its `SqsQueueException`), and `RabbitMqQueue`
 are excluded from the coverage calculation via `sonar.coverage.exclusions`,
-matching their real-backend-only testing in `integration.yml`.
+matching their real-backend-only testing in `integration.yml`. Two pairs
+of files with known, structural duplication — genuinely independent
+satellite packages sharing the same third-party integration, and two
+async DB drivers whose pooling logic isn't trait-compatible without
+widening production connection-handling signatures — are excluded from
+duplication detection via `sonar.cpd.exclusions`, with the reasoning
+recorded inline in `sonar-project.properties` itself.
 
 Requires a `SONAR_TOKEN` repository secret from the project's own
 SonarCloud dashboard; analysis method is "With GitHub Actions."
