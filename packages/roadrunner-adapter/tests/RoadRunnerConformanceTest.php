@@ -158,6 +158,61 @@ final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
     }
 
     /**
+     * The real-binary proof for {@see \Kinetis\RoadRunnerAdapter\RoadRunnerAdapter::assertRawBodyEnabled()}:
+     * a deliberately misconfigured server (`raw_body: false`, RoadRunner's
+     * own default) parses a form body itself, in Go, before this adapter
+     * ever sees it — without detection, this adapter's own parser would
+     * go on to re-parse RoadRunner's JSON re-serialization of that body
+     * as if it were the client's original bytes, silently producing wrong
+     * fields. This proves the misconfiguration is caught instead: a
+     * clean `500` via the same `Worker::error()` path
+     * {@see test_a_handler_exception_produces_a_safe_response_and_the_same_worker_serves_the_next_request()}
+     * already proves keeps the worker alive, the request never reaching
+     * the fixture's own handler body at all, and the worker still
+     * serving a normal request afterward. A separate driver and server,
+     * so this deliberate misconfiguration doesn't affect the shared,
+     * correctly-configured driver every other test in this class uses.
+     */
+    public function test_a_missing_raw_body_setting_is_detected_rather_than_silently_corrupting_the_request(): void
+    {
+        $driver = RoadRunnerDriver::spawn();
+        $driver->start(rawBody: false);
+
+        try {
+            $misconfigured = $driver->dispatch(
+                new WireRequest(
+                    method: 'POST',
+                    headers: [['Content-Type', 'application/x-www-form-urlencoded']],
+                    body: 'name=value',
+                ),
+                ResponseSpec::json(200, '{"ok":true}'),
+            );
+
+            self::assertNull(
+                $misconfigured->observed,
+                'RoadRunnerAdapter::assertRawBodyEnabled() must throw before the fixture ever records the request',
+            );
+            self::assertNotInstanceOf(
+                AdapterRejection::class,
+                $misconfigured->response,
+                'a missing raw_body: true is a Worker::error() response, not a connection-level rejection',
+            );
+            self::assertSame(500, $misconfigured->response->status);
+
+            $recovered = $driver->dispatch(new WireRequest(), ResponseSpec::json(200, '{"ok":true}'));
+
+            if ($recovered->response instanceof AdapterRejection) {
+                self::fail("The adapter rejected the request: {$recovered->response->exceptionClass}: {$recovered->response->message}");
+            }
+
+            self::assertNotNull($recovered->observed, 'the worker must still serve a normal, non-form request afterward');
+            self::assertSame(200, $recovered->response->status);
+        } finally {
+            $driver->stop();
+        }
+    }
+
+    /**
      * The other half of the size-limit defense {@see \Kinetis\RoadRunnerAdapter\RoadRunnerAdapter::assertFormBodyWithinLimit()}'s
      * own docblock discloses it cannot cover: a body with no declared
      * `Content-Length` at all. RoadRunner's own `http.max_request_size`

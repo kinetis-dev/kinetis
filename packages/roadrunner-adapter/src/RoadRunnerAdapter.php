@@ -18,6 +18,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Riverline\MultiPartParser\StreamedPart;
 use Spiral\RoadRunner\Http\PSR7Worker;
+use Spiral\RoadRunner\Http\Request as RoadRunnerRequest;
 use Spiral\RoadRunner\Worker;
 use Throwable;
 
@@ -44,7 +45,11 @@ use Throwable;
  * an arbitrary multipart string needs `riverline/multipart-parser`, and
  * pulling that into every Kinetis install just for a deployment target
  * most consumers don't use isn't worth it — the same reasoning that
- * keeps this adapter in its own package rather than core.
+ * keeps this adapter in its own package rather than core. A missing
+ * `raw_body: true` doesn't fail silently: {@see assertRawBodyEnabled()}
+ * detects it from the request itself and throws a clear configuration
+ * error rather than letting this adapter re-parse a body RoadRunner
+ * already parsed.
  *
  * `Worker::create()`'s default `interceptSideEffects: true` installs a
  * global output-buffer redirect (`StdoutHandler::register()`) sending
@@ -258,6 +263,7 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
             return $request;
         }
 
+        self::assertRawBodyEnabled($request);
         self::assertFormBodyWithinLimit($request);
 
         $body = (string) $request->getBody();
@@ -273,6 +279,40 @@ final class RoadRunnerAdapter implements RuntimeAdapterInterface
     {
         return self::isMultipart($contentType)
             || str_starts_with($contentType, 'application/x-www-form-urlencoded');
+    }
+
+    /**
+     * The one detectable sign that `http.raw_body: true` is missing from
+     * the RoadRunner configuration this adapter's own docblock documents
+     * as required. `HttpWorker::arrayToRequest()`/`requestFromProto()`
+     * (confirmed directly against `spiral/roadrunner-http`'s real
+     * source, not assumed) both stamp every request with a
+     * `Spiral\RoadRunner\Http\Request::PARSED_BODY_ATTRIBUTE_NAME`
+     * attribute carrying the Go side's own `parsed` flag — true only for
+     * a form-content-type request the Go side decided to parse itself,
+     * which only happens when `raw_body` isn't enabled — and
+     * `PSR7Worker::mapRequest()` copies every such attribute onto the
+     * PSR-7 request untouched, so it's still readable here.
+     *
+     * Left undetected, the body this class's own parser would go on to
+     * read is not the client's original bytes at all: with `raw_body`
+     * unset, `Request::getParsedBody()`'s real source shows the Go side
+     * re-serializes the fields it already extracted as a JSON string and
+     * hands *that* to PHP as the body — so re-parsing it here would
+     * silently produce wrong fields for a url-encoded body (`parse_str()`
+     * against JSON text), or a `400` for a multipart one (no real
+     * boundary in a JSON string) that never names the real, fixable
+     * cause. Thrown rather than returned as a response: this is a
+     * deployment misconfiguration, not a per-request client error, so it
+     * belongs in {@see run()}'s own `Worker::error()` path — opaque to
+     * the client, loud in the worker's own logs, and (per that method's
+     * own docblock) never crashes the worker over it.
+     */
+    private static function assertRawBodyEnabled(ServerRequestInterface $request): void
+    {
+        if ($request->getAttribute(RoadRunnerRequest::PARSED_BODY_ATTRIBUTE_NAME) === true) {
+            throw RoadRunnerAdapterException::rawBodyNotEnabled();
+        }
     }
 
     /**

@@ -7,12 +7,14 @@ namespace Kinetis\RoadRunnerAdapter\Tests;
 use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\StreamedResponse;
+use Kinetis\RoadRunnerAdapter\Exception\RoadRunnerAdapterException;
 use Kinetis\RoadRunnerAdapter\RoadRunnerAdapter;
 use Kinetis\Runtime\RuntimeAdapterInterface;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ServerRequestInterface;
+use Spiral\RoadRunner\Http\Request as RoadRunnerRequest;
 
 /**
  * What only `RoadRunnerAdapter::handle()` itself does — form-body
@@ -246,6 +248,41 @@ final class RoadRunnerAdapterTest extends TestCase
      * about being oversized, matching how `MaxBodySizeMiddleware`
      * itself only ever checks the declared header at this same layer.
      */
+    /**
+     * `PSR7Worker::mapRequest()` copies RoadRunner's own
+     * `rr_parsed_body` attribute onto the PSR-7 request untouched — this
+     * simulates the misconfigured case directly (`raw_body: false`, the
+     * one thing this class's own fabricated-request suite can prove
+     * without a real `rr` binary; the real end-to-end proof, including
+     * that the worker itself survives it, lives in
+     * `RoadRunnerConformanceTest::test_a_missing_raw_body_setting_is_detected_rather_than_silently_corrupting_the_request()`).
+     */
+    public function test_an_already_parsed_body_attribute_throws_instead_of_reparsing_it(): void
+    {
+        $request = (new ServerRequest(
+            'POST',
+            '/',
+            ['Content-Type' => 'application/x-www-form-urlencoded'],
+            'a=1',
+        ))->withAttribute(RoadRunnerRequest::PARSED_BODY_ATTRIBUTE_NAME, true);
+
+        $handlerRan = false;
+
+        try {
+            RoadRunnerAdapter::handle($request, static function () use (&$handlerRan): Response {
+                $handlerRan = true;
+
+                return new Response(200);
+            });
+
+            self::fail('expected RoadRunnerAdapterException to be thrown');
+        } catch (RoadRunnerAdapterException $e) {
+            self::assertSame(RoadRunnerAdapterException::rawBodyNotEnabled()->getMessage(), $e->getMessage());
+        }
+
+        self::assertFalse($handlerRan, 'a misconfiguration must be caught before the handler ever runs');
+    }
+
     public function test_a_form_body_declaring_a_content_length_over_the_limit_is_a_clean_413_and_the_handler_never_runs(): void
     {
         $request = new ServerRequest(

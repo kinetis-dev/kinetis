@@ -83,11 +83,19 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
      *     leaves RoadRunner's own 1000 MB default in place — every
      *     existing conformance test relies on that being generous enough
      *     to never trigger.
+     * @param bool $rawBody `http.raw_body` — `true` (the default, and
+     *     what every other conformance test needs) matches the
+     *     documented-required configuration. `false` deliberately
+     *     misconfigures it, for the one test proving
+     *     `RoadRunnerAdapter::assertRawBodyEnabled()` actually detects
+     *     the resulting Go-side pre-parsed body rather than silently
+     *     re-parsing it.
      */
-    public function start(?int $maxRequestSizeMb = null): void
+    public function start(?int $maxRequestSizeMb = null, bool $rawBody = true): void
     {
         $this->configPath = $this->stateDir . '/.rr.yaml';
         $maxRequestSizeLine = $maxRequestSizeMb === null ? '' : "\n  max_request_size: {$maxRequestSizeMb}";
+        $rawBodyValue = $rawBody ? 'true' : 'false';
 
         file_put_contents($this->configPath, <<<YAML
             version: "3"
@@ -97,7 +105,7 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
 
             http:
               address: {$this->hostPort}
-              raw_body: true{$maxRequestSizeLine}
+              raw_body: {$rawBodyValue}{$maxRequestSizeLine}
               pool:
                 num_workers: 1
             YAML);

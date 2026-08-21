@@ -333,7 +333,7 @@ Goridge/`PSR7Worker` protocol — a persistent worker loop, structurally
 the closest of the four to FrankenPHP's, but built on RoadRunner's own
 PHP library rather than a raw request-handling function.
 
-**One RoadRunner configuration setting is required**, not optional:
+**Two RoadRunner configuration settings are required**, not optional:
 
 ```{code-block} yaml
 version: "3"
@@ -359,6 +359,12 @@ not — reaches this adapter's own parser untouched, the same reason
 string with no live `php://input` stream behind it, so PHP 8.4's
 `request_parse_body()` (what `FrankenPhpAdapter`/`FpmAdapter` use for
 the same problem) can't help.
+
+A misconfigured `raw_body` doesn't fail silently: `RoadRunnerAdapter`
+detects the resulting Go-side pre-parsed body (a real attribute
+RoadRunner's own `PSR7Worker` stamps on every request) and reports it as
+a clear configuration error naming `http.raw_body: true`, rather than
+re-parsing an already-parsed body and silently producing wrong fields.
 
 ### `http.max_request_size` is the real defense against an oversized body
 
