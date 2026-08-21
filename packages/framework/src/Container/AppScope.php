@@ -7,6 +7,7 @@ namespace Kinetis\Container;
 use Kinetis\Config\Config;
 use Kinetis\Container\Exception\CircularDependencyException;
 use Kinetis\Container\Exception\ContainerException;
+use Kinetis\Container\Exception\DisconnectedRequestScopeException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Events\ListenerInvokerInterface;
 use Kinetis\Events\SynchronousListenerInvoker;
@@ -302,6 +303,12 @@ final class AppScope implements ContainerInterface
 
         if ($binding?->resolved() !== null) {
             return $binding->resolved();
+        }
+
+        // RequestScope only exists per request; resolving it here
+        // would otherwise autowire a disconnected, unbooted one.
+        if ($binding === null && $id === RequestScope::class) {
+            throw DisconnectedRequestScopeException::forPath([...array_keys($this->resolving), $id]);
         }
 
         if (isset($this->resolving[$id])) {

@@ -17,8 +17,8 @@ use Psr\EventDispatcher\StoppableEventInterface;
  * class, not Psr\EventDispatcher\EventDispatcherInterface: interfaces
  * can't be autowired by reflection (there's no way to know which
  * implementation to construct), and registering this class directly on
- * AppScope with a factory that also resolves RequestScope would silently
- * autowire a disconnected RequestScope instead of reaching the real
+ * AppScope with a factory that also resolves RequestScope throws
+ * DisconnectedRequestScopeException rather than reaching the real
  * per-request one, the same hazard already documented for
  * JwtAuthMiddleware/BearerAuthMiddleware. Constructor-injecting
  * RequestScope directly here is safe for the identical reason it's safe

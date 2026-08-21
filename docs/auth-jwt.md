@@ -58,10 +58,10 @@ setup.
 
 ```{warning}
 Don't register `JwtAuthMiddleware::class` itself on `AppScope` with a
-factory that also resolves `RequestScope` — `AppScope` will autowire a
-brand-new, disconnected `RequestScope` instead of reaching the real
-per-request one, since it falls back to autowiring any real class it has
-no explicit binding for. The subclass above avoids this entirely: it's
+factory that also resolves `RequestScope` — `AppScope` throws
+`DisconnectedRequestScopeException` rather than reaching the real
+per-request one (see {doc}`container`'s "Resolving `RequestScope` itself,
+from the wrong scope"). The subclass above avoids this entirely: it's
 resolved through the request's own `RequestScope`, which already has
 itself registered.
 ```

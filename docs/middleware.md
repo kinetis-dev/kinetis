@@ -311,7 +311,11 @@ came from — see {doc}`cli`.
 `RequestScope` registers itself on itself, so a middleware can
 constructor-inject the exact scope the current request is using — not a
 disconnected new one — and write something onto it for a controller to
-read afterward:
+read afterward. This is exactly what makes constructor-injecting
+`RequestScope` route-middleware-only: registered globally instead, it
+would be resolved through `AppScope`, which throws rather than silently
+building a disconnected scope (see {doc}`container`'s "Resolving
+`RequestScope` itself, from the wrong scope"):
 
 ```{code-block} php
 use Kinetis\Container\RequestScope;
@@ -875,12 +879,11 @@ one reads it.
 ```{warning}
 Route middleware only — never register this globally, and never bind
 `AuthenticatedRateLimitMiddleware::class` directly on `AppScope` with a
-factory that also resolves `RequestScope`. `AppScope::resolve()` falls
-back to autowiring any real class it has no explicit binding for (unlike
-`AppScope::has()`, which is explicit-only), so a factory calling
-`$c->get(RequestScope::class)` where `$c` is `AppScope` would silently
-construct a brand-new, disconnected `RequestScope` instead of reaching the
-real per-request one. It's always safe as route middleware, resolved
+factory that also resolves `RequestScope`. A factory calling
+`$c->get(RequestScope::class)` where `$c` is `AppScope` throws
+`DisconnectedRequestScopeException` rather than reaching the real
+per-request one (see {doc}`container`'s "Resolving `RequestScope` itself,
+from the wrong scope"). It's always safe as route middleware, resolved
 fresh per request the normal way — no binding needed at all, the same as
 any other constructor with only class-typed parameters.
 ```

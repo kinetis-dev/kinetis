@@ -80,14 +80,12 @@ use UnexpectedValueException;
  * class-string, with nowhere to pass $key. Registering
  * JwtAuthMiddleware::class directly on AppScope with a factory that also
  * supplies RequestScope would be wrong regardless of the final question —
- * AppScope::resolve() falls back to autowiring any class_exists() id it
- * has no explicit binding for (unlike AppScope::has(), which is
- * explicit-only), so a factory calling $c->get(RequestScope::class) where
- * $c is AppScope silently constructs a brand-new, disconnected
- * RequestScope instead of reaching the real per-request one. The correct
- * pattern is a thin subclass supplying $key, with a constructor that
- * takes only class-typed parameters (RequestScope, optionally Config) —
- * fully autowirable through the request's own RequestScope, exactly like
+ * a factory calling $c->get(RequestScope::class) where $c is AppScope
+ * throws DisconnectedRequestScopeException rather than reaching the real
+ * per-request one. The correct pattern is a thin subclass supplying $key,
+ * with a constructor that takes only class-typed parameters (RequestScope,
+ * optionally Config) — fully autowirable through the request's own
+ * RequestScope, exactly like
  * Kinetis\Auth\BearerAuthMiddleware already is with zero binding at all:
  *
  *     final class AppJwtAuthMiddleware extends JwtAuthMiddleware

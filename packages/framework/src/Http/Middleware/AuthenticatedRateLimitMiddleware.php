@@ -21,16 +21,14 @@ use Psr\SimpleCache\CacheInterface;
  * Route middleware only — never register this globally, and never bind
  * it directly on AppScope with a factory that also resolves RequestScope.
  * Both would hit the same hazard Kinetis\Auth\BearerAuthMiddleware and
- * Kinetis\AuthJwt\JwtAuthMiddleware's own docblocks describe:
- * AppScope::resolve() falls back to autowiring any class_exists() id it
- * has no explicit binding for (unlike the explicit-only AppScope::has()),
- * so a factory calling $c->get(RequestScope::class) where $c is AppScope
- * would silently construct a brand-new, disconnected RequestScope instead
- * of reaching the real per-request one — and even if that hazard didn't
- * exist, global middleware runs before routing, which is chronologically
- * before any route middleware (including auth) has had a chance to
- * register a CurrentUserInterface at all, so user-based keying could
- * never actually apply there regardless.
+ * Kinetis\AuthJwt\JwtAuthMiddleware's own docblocks describe: a factory
+ * calling $c->get(RequestScope::class) where $c is AppScope throws
+ * DisconnectedRequestScopeException rather than reaching the real
+ * per-request one — and even if that hazard didn't exist, global
+ * middleware runs before routing, which is chronologically before any
+ * route middleware (including auth) has had a chance to register a
+ * CurrentUserInterface at all, so user-based keying could never actually
+ * apply there regardless.
  *
  * Ordering matters: register the auth middleware first (outermost) and
  * this one after it — #[Middleware(AuthMiddleware::class)]

@@ -137,6 +137,25 @@ the first request to touch that class would decide, by accident, whether
 its state is request-scoped or worker-lifetime-scoped for every request
 after it.
 
+### Resolving `RequestScope` itself, from the wrong scope
+
+`RequestScope` registers itself onto itself (`RequestScope::class` →
+the current instance) the moment `AppScope::createRequestScope()` mints
+one, so a class resolved *through* that scope can constructor-inject
+`RequestScope $scope` and reach the exact instance the current request is
+using.
+
+`AppScope` never has such a registration — there is no single, "the"
+`RequestScope` at the worker-lifetime scope, since a fresh one exists per
+request. Asking `AppScope` for `RequestScope::class` — directly, or as a
+constructor dependency of anything else `AppScope` resolves (a class
+bound there, or autowired through it) — throws
+`Kinetis\Container\Exception\DisconnectedRequestScopeException` rather
+than autowiring a brand-new, disconnected, unbooted `RequestScope`. A
+class that needs `RequestScope` must be resolved through a real request's
+own scope (route middleware, a controller) — never registered on
+`AppScope` with a factory that also resolves `RequestScope`.
+
 ### Dispose hooks
 
 ```{code-block} php

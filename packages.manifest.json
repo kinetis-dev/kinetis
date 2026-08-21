@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.30.2",
+            "version": "1.31.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -148,7 +148,7 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework"
             ],

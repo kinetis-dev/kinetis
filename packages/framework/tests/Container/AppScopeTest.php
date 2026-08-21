@@ -8,6 +8,7 @@ use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\Exception\CircularDependencyException;
 use Kinetis\Container\Exception\ContainerException;
+use Kinetis\Container\Exception\DisconnectedRequestScopeException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Container\RequestScope;
 use Kinetis\Logging\ErrorLogLogger;
@@ -20,6 +21,7 @@ use Kinetis\Tests\Container\Fixtures\Unresolvable;
 use Kinetis\Tests\Container\Fixtures\WithDefault;
 use Kinetis\Tests\Container\Fixtures\WithOptionalInterfaceDependency;
 use Kinetis\Tests\Container\Fixtures\WithOptionalUnresolvableDependency;
+use Kinetis\Tests\Container\Fixtures\WithRequestScopeDependency;
 use Kinetis\Tests\Container\Fixtures\WithRequiredUnresolvableDependency;
 use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
 use Kinetis\SimpleCache\AtomicConsumeInterface;
@@ -195,6 +197,43 @@ final class AppScopeTest extends TestCase
         $app->boot();
 
         self::assertInstanceOf(RequestScope::class, $app->createRequestScope());
+    }
+
+    public function test_resolving_request_scope_directly_from_app_scope_throws(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $this->expectException(DisconnectedRequestScopeException::class);
+        $this->expectExceptionMessage('Cannot resolve RequestScope from AppScope');
+        $app->get(RequestScope::class);
+    }
+
+    public function test_autowiring_a_class_needing_request_scope_through_app_scope_throws(): void
+    {
+        // The real hazard this guards: a class meant to be resolved
+        // through a request's own scope (route middleware, a controller)
+        // accidentally resolved through AppScope instead — directly, or as
+        // a dependency of something else AppScope resolves — must fail
+        // loudly rather than silently receive a disconnected RequestScope.
+        $app = new AppScope();
+        $app->boot();
+
+        $this->expectException(DisconnectedRequestScopeException::class);
+        $this->expectExceptionMessage('WithRequestScopeDependency');
+        $app->get(WithRequestScopeDependency::class);
+    }
+
+    public function test_a_real_request_scope_still_resolves_itself_normally(): void
+    {
+        // The guard only fires on AppScope's own resolution path — a
+        // RequestScope resolving RequestScope::class through itself (the
+        // self-injection every real request relies on) is untouched.
+        $app = new AppScope();
+        $app->boot();
+        $scope = $app->createRequestScope();
+
+        self::assertSame($scope, $scope->get(RequestScope::class));
     }
 
     public function test_middlewares_returns_registered_classes_in_registration_order(): void
