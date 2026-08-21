@@ -120,10 +120,10 @@ disguised PHPUnit test.
   `rr serve` process (which spawns the PHP worker as its own child)
   directly from inside the test run, so this job needs no separate SAPI
   container or Docker network — one runner, `shivammathur/setup-php`
-  providing a genuinely working `ext-sockets` (which cannot be compiled
-  under Alpine at all — see {doc}`runtime-adapters`), a real binary
-  fetched via `spiral/roadrunner-cli`'s `vendor/bin/rr get-binary`, and
-  the suite itself. Two tests are excluded from this job's gate by
+  providing a real, prebuilt `ext-sockets` (it compiles under Alpine
+  too, just not worth doing here — see {doc}`runtime-adapters`), a real
+  binary fetched via `spiral/roadrunner-cli`'s `vendor/bin/rr get-binary`,
+  and the suite itself. Two tests are excluded from this job's gate by
   name — a purely-numeric header name (a deterministic upstream bug)
   and cookie order (an occasional, probabilistic reordering) — both
   disclosed in `RoadRunnerAdapter`'s own docblock and {doc}`runtime-adapters`,

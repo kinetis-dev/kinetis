@@ -172,9 +172,10 @@ jobs:
             # configured cache.
             REDIS_ENV=""
             if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
-            # roadrunner-adapter's ext-sockets requirement can't be
-            # compiled under Alpine at all — see ci.yml's matrix for the
-            # same reasoning; nothing this coverage run actually loads it.
+            # roadrunner-adapter's ext-sockets requirement compiles under
+            # Alpine fine but isn't worth it here — see ci.yml's matrix
+            # for the full reasoning; nothing this coverage run actually
+            # loads it.
             COMPOSER_FLAGS=""
             if [ "$pkg" = "roadrunner-adapter" ]; then COMPOSER_FLAGS="--ignore-platform-req=ext-sockets"; fi
             {

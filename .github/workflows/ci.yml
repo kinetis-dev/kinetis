@@ -74,17 +74,20 @@ jobs:
           - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
           - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }
           # ext-sockets — a real, hard `require` of spiral/roadrunner-worker
-          # — cannot be compiled under Alpine/musl-libc at all (missing
-          # linux/sock_diag.h and BPF definitions; see
-          # docs/runtime-adapters.md). It's a transitive runtime need of
-          # the worker subprocess a real `rr` binary spawns separately —
-          # nothing this package's own code, PHPStan, Psalm, or its
-          # committed (real-binary-free) unit suite ever loads it for —
-          # so composer's own platform check is bypassed here rather than
-          # switching this one matrix entry to a different base image.
-          # RoadRunnerConformanceTest (the real-rr-binary suite) needs
-          # both a real binary and a genuinely working ext-sockets, and
-          # runs in integration.yml's dedicated Debian-based job instead;
+          # — compiles under Alpine fine, but needs `linux-headers` on top
+          # of the usual `$PHPIZE_DEPS` (confirmed directly; see
+          # docs/runtime-adapters.md), and every step below is its own
+          # separate, stateless container — installing/PHPStan/Psalm x2/
+          # PHPUnit — so compiling it from source five times per PHP
+          # version, on every push, for an extension nothing this
+          # package's own code, PHPStan, Psalm, or its committed (real-
+          # binary-free) unit suite ever loads, is real wasted cost with
+          # nothing to show for it. Composer's own platform check is
+          # bypassed here instead. RoadRunnerConformanceTest (the real-rr-
+          # binary suite) needs both a real binary and a genuinely loaded
+          # ext-sockets, and runs in integration.yml's dedicated job
+          # instead, on a native runner via shivammathur/setup-php — a
+          # prebuilt extension there, not a from-source Alpine compile;
           # it skips itself cleanly here with neither present.
           - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, phpunit: true, composerFlags: "--ignore-platform-req=ext-sockets" }
           - { name: query-builder, dir: packages/query-builder, phpunit: true }

@@ -359,6 +359,30 @@ string with no live `php://input` stream behind it, so PHP 8.4's
 `request_parse_body()` (what `FrankenPhpAdapter`/`FpmAdapter` use for
 the same problem) can't help.
 
+### `ext-sockets` under an Alpine-based image
+
+`spiral/roadrunner-worker` hard-requires PHP's `sockets` extension.
+Alpine's own `$PHPIZE_DEPS` build-tools set is not enough on its own —
+`docker-php-ext-install sockets` fails there with a missing
+`linux/sock_diag.h` — but adding `apk add linux-headers` alongside it
+closes the gap; confirmed directly, not assumed, against both
+`php:8.3-cli-alpine` and `php:8.4-cli-alpine`:
+
+```{code-block} dockerfile
+FROM php:8.4-cli-alpine
+RUN apk add --no-cache $PHPIZE_DEPS linux-headers \
+ && docker-php-ext-install sockets
+```
+
+This package's own CI deliberately does *not* do this — every step of
+its Alpine-based checks (install, PHPStan, Psalm, the committed unit
+suite) runs in its own separate, stateless container, none of which
+ever load `ext-sockets` at runtime, so compiling it from source
+repeatedly would be pure cost with nothing to show for it; Composer's
+platform check is bypassed there instead. A real deployment image is
+the opposite case — one build, reused for the worker's whole
+lifetime — where the cost above is paid once and is worth it.
+
 ### A crash in one request doesn't take the worker down
 
 Unlike `FrankenPhpAdapter`, which lets an uncaught exception propagate

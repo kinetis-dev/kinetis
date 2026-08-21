@@ -863,9 +863,9 @@ jobs:
     # inside the test run, unlike FrankenPHP/nginx+FPM above, which need
     # a genuinely separate long-lived server container reachable over a
     # Docker network. That's why this job needs no `services:` block and
-    # no multi-container orchestration: one runner, a real `ext-sockets`
-    # (native, not Alpine — see docs/runtime-adapters.md for why that
-    # extension can't be compiled under musl-libc at all), a real
+    # no multi-container orchestration: one runner, a real, prebuilt
+    # `ext-sockets` via shivammathur/setup-php (see docs/runtime-adapters.md
+    # — it compiles under Alpine too, just not worth doing here), a real
     # fetched `rr` binary, and the suite itself.
     steps:
       - uses: actions/checkout@v7

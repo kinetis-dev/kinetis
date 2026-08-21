@@ -17,9 +17,9 @@ use PHPUnit\Framework\SkippedTestSuiteError;
  * no real `rr` binary is present (see {@see RoadRunnerDriver::binaryPath()})
  * rather than failing every test with a confusing "no such file" error —
  * this repo's standard `php:8.4-cli-alpine` toolchain image has neither
- * the binary nor a working `ext-sockets` build (a real, disclosed Alpine/
- * musl-libc constraint; see docs/runtime-adapters.md), so this suite is
- * exercised for real only where both are actually provided.
+ * the binary nor `ext-sockets` loaded (compilable under Alpine, just not
+ * worth doing in this image; see docs/runtime-adapters.md), so this
+ * suite is exercised for real only where both are actually provided.
  */
 final class RoadRunnerConformanceTest extends RuntimeAdapterConformanceTestCase
 {
