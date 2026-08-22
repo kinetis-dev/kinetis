@@ -184,31 +184,31 @@ every query count — is in the
 [benchmark repository](https://github.com/aln-1/kinetis-benchmarks);
 this is the overview.
 
-| Test | `kinetis` (FrankenPHP) | `kinetis-roadrunner` | `spiral-roadrunner` |
-|---|---|---|---|
-| `/json` &middot; c=256 | 26,112 | 16,137 | 14,573 |
-| `/plaintext` &middot; c=256 | 26,046 | 16,112 | 14,553 |
-| `/db` &middot; c=256 | 18,860 | 12,192 | 12,259 |
-| `/fortunes` &middot; c=256 | 15,907 | 10,820 | 11,509 |
-| `/queries` &middot; n=20 | 4,497 | 4,510 | 3,303 |
-| `/updates` &middot; n=20 | 1,514 | 1,493 | 1,302 |
+<div class="bench-scroll">
+<table class="bench-table">
+<thead><tr><th class="corner">test</th><th class="is-kinetis">kinetis (FrankenPHP)</th><th>kinetis-roadrunner</th><th>spiral-roadrunner</th></tr></thead>
+<tbody><tr><th scope="row">/json &middot; c=256</th><td class="num">26,112</td><td class="num">16,137</td><td class="num">14,573</td></tr><tr><th scope="row">/plaintext &middot; c=256</th><td class="num">26,046</td><td class="num">16,112</td><td class="num">14,553</td></tr><tr><th scope="row">/db &middot; c=256</th><td class="num">18,860</td><td class="num">12,192</td><td class="num">12,259</td></tr><tr><th scope="row">/fortunes &middot; c=256</th><td class="num">15,907</td><td class="num">10,820</td><td class="num">11,509</td></tr><tr><th scope="row">/queries &middot; n=20</th><td class="num">4,497</td><td class="num">4,510</td><td class="num">3,303</td></tr><tr><th scope="row">/updates &middot; n=20</th><td class="num">1,514</td><td class="num">1,493</td><td class="num">1,302</td></tr></tbody>
+</table>
+</div>
 
 **FrankenPHP beats RoadRunner by a wide margin on the same Kinetis
-application** — 47&ndash;62% ahead on `/json`, `/plaintext`, `/db`, and
-`/fortunes`. That gap narrows to roughly nothing on `/queries` and
-`/updates`, the same pattern the FrankenPHP-vs-PHP-FPM and
-FrankenPHP-vs-Slim comparisons above both show: once a request is
-dominated by database round trips rather than dispatch overhead, the
-runtime underneath matters far less than what happens inside the
-request.
+application** — <span class="bench-stat-win">47&ndash;62% ahead</span> on
+`/json`, `/plaintext`, `/db`, and `/fortunes`. That gap narrows to
+roughly nothing on `/queries` and `/updates`, the same pattern the
+FrankenPHP-vs-PHP-FPM and FrankenPHP-vs-Slim comparisons above both
+show: once a request is dominated by database round trips rather than
+dispatch overhead, the runtime underneath matters far less than what
+happens inside the request.
 
 **Spiral, purpose-built and tuned for RoadRunner, still trails Kinetis
-on that same runtime.** Kinetis leads by 11&ndash;36% on `/json`,
+on that same runtime.** Kinetis leads by
+<span class="bench-stat-win">11&ndash;36%</span> on `/json`,
 `/plaintext`, `/queries`, and `/updates` — the query-fan-out routes show
 the widest gap, the same concurrent-dispatch advantage the framework
 shows on FrankenPHP too. Spiral only edges ahead on `/db` and
-`/fortunes`, and by a small margin — under 1% on `/db`, 6% on
-`/fortunes`.
+`/fortunes`, and by a
+<span class="bench-stat-loss">small margin — under 1% on `/db`, 6% on
+`/fortunes`</span>.
 
 ## Versions tested
 

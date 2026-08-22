@@ -215,6 +215,26 @@ table.bench-table td.ratio-flat {
     color: var(--color-foreground-muted);
 }
 
+/* A kinetis-branded *column* header, for a table where kinetis is one of
+   the columns rather than a row (tr.is-kinetis above only colors a row's
+   own th). Same red, same light/dark pairing. */
+table.bench-table thead th.is-kinetis {
+    color: #DC2626;
+}
+
+/* Inline win/loss coloring for a percentage range in prose, outside any
+   table — same green/red as td.ratio-up/td.ratio-down above, just not
+   scoped to a table cell. */
+.bench-stat-win {
+    color: #15803D;
+    font-weight: 650;
+}
+
+.bench-stat-loss {
+    color: #B91C1C;
+    font-weight: 650;
+}
+
 /* Dark mode: the amber and red hold on a dark ground, but the "best
    figure" and ratio colors need lifting off it. Furo stamps
    data-theme="dark" for an explicit choice and leaves it unset for
@@ -245,6 +265,18 @@ table.bench-table td.ratio-flat {
     body:not([data-theme="light"]) table.bench-table tbody tr.is-kinetis {
         background: rgba(248, 113, 113, 0.07);
     }
+
+    body:not([data-theme="light"]) table.bench-table thead th.is-kinetis {
+        color: #F87171;
+    }
+
+    body:not([data-theme="light"]) .bench-stat-win {
+        color: #4ADE80;
+    }
+
+    body:not([data-theme="light"]) .bench-stat-loss {
+        color: #F87171;
+    }
 }
 
 body[data-theme="dark"] table.bench-table td.is-best .bench-fig {
@@ -270,4 +302,16 @@ body[data-theme="dark"] table.bench-table td.ratio-down {
 
 body[data-theme="dark"] table.bench-table tbody tr.is-kinetis {
     background: rgba(248, 113, 113, 0.07);
+}
+
+body[data-theme="dark"] table.bench-table thead th.is-kinetis {
+    color: #F87171;
+}
+
+body[data-theme="dark"] .bench-stat-win {
+    color: #4ADE80;
+}
+
+body[data-theme="dark"] .bench-stat-loss {
+    color: #F87171;
 }
