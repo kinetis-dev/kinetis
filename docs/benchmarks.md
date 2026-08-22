@@ -168,6 +168,48 @@ one place where the framework rather than the runtime shows up. The
 single 1.13&times; on `/updates` at five queries is an outlier the
 levels either side of it don't support; treat it as noise.
 
+## RoadRunner: a third runtime
+
+Kinetis also runs on [RoadRunner](https://roadrunner.dev/) — see
+{doc}`runtime-adapters` — a second persistent-worker runtime alongside
+FrankenPHP. A follow-up sweep, same full methodology and machine
+isolation as above, compared three targets on the same AWS rig:
+`kinetis` (the FrankenPHP leader from above), `kinetis-roadrunner` (the
+identical Kinetis application under RoadRunner instead), and
+`spiral-roadrunner` — [Spiral Framework](https://spiral.dev/)'s own
+RoadRunner target, built and tuned specifically for that runtime.
+RoadRunner's worker pool was sized the same way as the FrankenPHP worker
+threads above, 2.5&times; vCPUs. Full detail — every concurrency level,
+every query count — is in the
+[benchmark repository](https://github.com/aln-1/kinetis-benchmarks);
+this is the overview.
+
+| Test | `kinetis` (FrankenPHP) | `kinetis-roadrunner` | `spiral-roadrunner` |
+|---|---|---|---|
+| `/json` &middot; c=256 | 26,112 | 16,137 | 14,573 |
+| `/plaintext` &middot; c=256 | 26,046 | 16,112 | 14,553 |
+| `/db` &middot; c=256 | 18,860 | 12,192 | 12,259 |
+| `/fortunes` &middot; c=256 | 15,907 | 10,820 | 11,509 |
+| `/queries` &middot; n=20 | 4,497 | 4,510 | 3,303 |
+| `/updates` &middot; n=20 | 1,514 | 1,493 | 1,302 |
+
+**FrankenPHP beats RoadRunner by a wide margin on the same Kinetis
+application** — 47&ndash;62% ahead on `/json`, `/plaintext`, `/db`, and
+`/fortunes`. That gap narrows to roughly nothing on `/queries` and
+`/updates`, the same pattern the FrankenPHP-vs-PHP-FPM and
+FrankenPHP-vs-Slim comparisons above both show: once a request is
+dominated by database round trips rather than dispatch overhead, the
+runtime underneath matters far less than what happens inside the
+request.
+
+**Spiral, purpose-built and tuned for RoadRunner, still trails Kinetis
+on that same runtime.** Kinetis leads by 11&ndash;36% on `/json`,
+`/plaintext`, `/queries`, and `/updates` — the query-fan-out routes show
+the widest gap, the same concurrent-dispatch advantage the framework
+shows on FrankenPHP too. Spiral only edges ahead on `/db` and
+`/fortunes`, and by a small margin — under 1% on `/db`, 6% on
+`/fortunes`.
+
 ## Versions tested
 
 | Target | Package | Version | PHP |
