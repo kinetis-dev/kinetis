@@ -1,10 +1,10 @@
 # Kinetis
 
-> A PHP framework for persistent-worker runtimes such as FrankenPHP, which
-> also runs unchanged under PHP-FPM and AWS Lambda. Attribute-driven
-> routing, validation and OpenAPI; a two-tier request-scoped container;
-> Fiber-based concurrency over Revolt; a native Model Context Protocol
-> server.
+> A PHP framework for persistent-worker runtimes such as FrankenPHP and
+> RoadRunner, which also run unchanged under PHP-FPM and AWS Lambda.
+> Attribute-driven routing, validation and OpenAPI; a two-tier
+> request-scoped container; Fiber-based concurrency over Revolt; a native
+> Model Context Protocol server.
 
 Kinetis core ships as a single package, `kinetis/framework`, requiring PHP
 8.4 or later. Narrower and optional pieces ship as separate packages,
@@ -50,11 +50,11 @@ tutorial, then read whichever section you have reached.
 
 ## Runtime and performance
 
-- [Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html): FrankenPHP, PHP-FPM, and AWS Lambda adapters, and how RuntimeDetector picks one.
+- [Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html): FrankenPHP, PHP-FPM, RoadRunner, and AWS Lambda adapters, and how RuntimeDetector picks one.
 - [Concurrency](https://kinetis.dev/docs/concurrency.html): Fiber-based concurrency over Revolt: concurrently(), Async\Socket, and Async\Timer.
 - [Caching & AOT Compilation](https://kinetis.dev/docs/caching.html): Production-only AOT caching of routes, commands, event listeners, and validation plans, plus APP_ENV.
 - [Performance tuning](https://kinetis.dev/docs/performance-tuning.html): Capacity tuning: the worker-threads x maxConnections budget, what to observe under load, and tuning by workload shape.
-- [Benchmarks](https://kinetis.dev/docs/benchmarks.html): TechEmpower-style benchmark results against seven other PHP frameworks, versions tested, and results.
+- [Benchmarks](https://kinetis.dev/docs/benchmarks.html): TechEmpower-style benchmark results against eight other PHP frameworks on isolated AWS hardware, plus a separate FrankenPHP-vs-RoadRunner and Kinetis-vs-Spiral comparison.
 
 ## Observability
 
