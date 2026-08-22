@@ -14,6 +14,7 @@ use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Tests\Http\Fixtures\VersionPrefixedController;
 use Kinetis\Validation\Hydrator;
 use PHPUnit\Framework\TestCase;
 
@@ -101,6 +102,39 @@ final class CompilerTest extends TestCase
                 ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
                 $reloaded->middlewareGroups,
             );
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+
+            @rmdir($directory);
+        }
+    }
+
+    public function test_a_middleware_owned_route_prefix_survives_the_full_compile_and_reload_round_trip(): void
+    {
+        // The prefix is already baked into pathTemplate by the time
+        // Router::register() returns — compile()/toArray()/fromArray()
+        // never re-derive it, they just carry the string through, the
+        // same as any other route path. This proves that carry-through
+        // survives a real var_export() cache file, not just an in-memory
+        // toArray()/fromArray() call.
+        $router = new Router();
+        $router->register(VersionPrefixedController::class);
+
+        $compiled = (new Compiler())->compile($router);
+
+        $directory = sys_get_temp_dir() . '/kinetis_prefix_cache_' . bin2hex(random_bytes(8));
+        $store = new CacheStore($directory);
+
+        try {
+            $store->writeAll($compiled);
+            $reloaded = $store->loadHttp();
+
+            self::assertNotNull($reloaded);
+
+            $router = Router::fromArray($reloaded->routes);
+            self::assertSame('index', $router->match('GET', '/v1/users')->route->controllerMethod);
         } finally {
             foreach (glob($directory . '/*') ?: [] as $file) {
                 unlink($file);

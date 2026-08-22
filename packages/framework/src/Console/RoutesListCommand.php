@@ -56,8 +56,12 @@ final readonly class RoutesListCommand
         RoutesFile::loadBootstrap($projectRoot)($app, $config);
         $app->boot();
 
-        $router = RouteDiscovery::discover($projectRoot);
+        // Discovered before routes, not after: RouteDiscovery needs the
+        // global middleware list to resolve any #[RoutePrefix] those
+        // classes declare into each route's own displayed path — see
+        // Router::register()'s own doc comment.
         $discovered = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+        $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discovered['global']);
         $globalMiddleware = GlobalMiddlewareOrder::resolve($app->middlewares(), $discovered['global']);
 
         $this->printGlobalMiddleware($globalMiddleware);

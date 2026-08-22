@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Http\Routing;
 
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Routing\RouteDiscovery;
+use Kinetis\Tests\Http\Fixtures\VersionedMiddleware;
 use PHPUnit\Framework\TestCase;
 
 final class RouteDiscoveryTest extends TestCase
@@ -105,5 +106,16 @@ final class RouteDiscoveryTest extends TestCase
         // are the same repository here, so a missing cross-pass dedupe
         // would register DocumentationController's routes twice.
         self::assertSame(['/openapi', '/openapi.json'], self::sortedPaths($router));
+    }
+
+    public function test_global_middleware_is_threaded_through_to_every_discovered_controller(): void
+    {
+        $router = RouteDiscovery::discover(
+            dirname(__DIR__, 2) . '/Cache/Fixtures',
+            globalMiddleware: [VersionedMiddleware::class],
+        );
+
+        $match = $router->match('GET', '/v1/fixture-ping');
+        self::assertSame('ping', $match->route->controllerMethod);
     }
 }

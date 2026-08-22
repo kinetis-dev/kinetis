@@ -44,17 +44,30 @@ final class Router
      * A path or #[RoutePrefix] that isn't rooted is rejected too — see
      * Exception\InvalidRoutePathException.
      *
+     * $globalMiddleware is the project's own already-sorted, outermost-first
+     * #[AsGlobalMiddleware] list (GlobalMiddlewareDiscovery::discoverAll()
+     * or the compiled HttpCache's own copy of it) — every route on this
+     * controller sits behind whatever prefix those classes declare, ahead
+     * of anything declared here. A route's final path composes, outer to
+     * inner: the global-middleware chain, then this controller's own
+     * route-level #[Middleware(...)] chain (class-level before
+     * method-level, matching their execution order exactly), then this
+     * controller's own #[RoutePrefix], then the route's own declared path.
+     * A `@group` middleware reference never contributes here — group
+     * membership isn't resolved until Kernel construction, well after
+     * routing, so RoutePrefix::declaredOn() simply never finds a real class
+     * behind one (see its own doc comment).
+     *
      * @param class-string $controllerClass
+     * @param list<class-string> $globalMiddleware
      */
-    public function register(string $controllerClass): void
+    public function register(string $controllerClass, array $globalMiddleware = []): void
     {
         $reflection = AttributeScope::reflect($controllerClass);
         $classMiddleware = self::middlewareClassesFor($reflection);
-        $prefix = self::prefixFor($reflection);
 
-        if ($prefix !== null && !str_starts_with($prefix->prefix, '/')) {
-            throw InvalidRoutePathException::forPrefix($controllerClass, $prefix->prefix);
-        }
+        $globalPrefixes = self::rootedPrefixes($globalMiddleware);
+        $controllerPrefix = self::rootedPrefixes([$controllerClass]);
 
         foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
             $attributes = $method->getAttributes(RouteAttribute::class, ReflectionAttribute::IS_INSTANCEOF);
@@ -77,13 +90,23 @@ final class Router
                 throw InvalidRoutePathException::forRoute($controllerClass, $method->getName(), $declaredPath);
             }
 
+            $methodMiddleware = self::middlewareClassesFor($method);
+            $routeMiddlewarePrefixes = self::rootedPrefixes([...$classMiddleware, ...$methodMiddleware]);
+
+            $pathTemplate = RoutePrefix::joinAll(
+                $declaredPath,
+                ...$globalPrefixes,
+                ...$routeMiddlewarePrefixes,
+                ...$controllerPrefix,
+            );
+
             $route = new Route(
                 httpMethod: $routeAttribute->httpMethod(),
-                pathTemplate: $prefix?->join($declaredPath) ?? $declaredPath,
+                pathTemplate: $pathTemplate,
                 controllerClass: $controllerClass,
                 controllerMethod: $method->getName(),
                 status: $routeAttribute->status(),
-                middleware: [...$classMiddleware, ...self::middlewareClassesFor($method)],
+                middleware: [...$classMiddleware, ...$methodMiddleware],
             );
 
             // Matching is first-match-wins, so a second route claiming
@@ -106,13 +129,27 @@ final class Router
     }
 
     /**
-     * @param ReflectionClass<object> $reflection
+     * RoutePrefix::declaredOn() plus the one validation rule that stays
+     * here rather than in Attributes\RoutePrefix itself: "must start with
+     * /", reported against whichever class actually declared the bad
+     * value. Keeping the throw here, not in declaredOn(), is what lets
+     * that method stay a pure attribute reader with no dependency on
+     * Http\Routing's own exception type.
+     *
+     * @param list<string> $classes
+     * @return list<RoutePrefix>
      */
-    private static function prefixFor(ReflectionClass $reflection): ?RoutePrefix
+    private static function rootedPrefixes(array $classes): array
     {
-        $attributes = $reflection->getAttributes(RoutePrefix::class);
+        $prefixes = RoutePrefix::declaredOn($classes);
 
-        return $attributes === [] ? null : $attributes[0]->newInstance();
+        foreach ($prefixes as $class => $prefix) {
+            if (!str_starts_with($prefix->prefix, '/')) {
+                throw InvalidRoutePathException::forPrefix($class, $prefix->prefix);
+            }
+        }
+
+        return array_values($prefixes);
     }
 
     /**
