@@ -142,9 +142,13 @@ final class Compiler
      */
     public function compileProject(string $projectRoot): CompiledCache
     {
-        $router = RouteDiscovery::discover($projectRoot);
-        $commands = CommandDiscovery::discover($projectRoot);
+        // Discovered first, not alongside the others: RouteDiscovery needs
+        // the global middleware list itself, to resolve any #[RoutePrefix]
+        // those classes declare into every route's own compiled path — see
+        // Router::register()'s own doc comment.
         $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+        $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
+        $commands = CommandDiscovery::discover($projectRoot);
         $listeners = EventListenerDiscovery::discover($projectRoot);
         $packageBootstraps = PackageDiscovery::bootstrapClasses($projectRoot);
 

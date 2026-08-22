@@ -78,16 +78,19 @@ if ($env->isProduction()) {
     $packageBootstraps = $httpCache->packageBootstraps;
 } else {
     $phaseStart = microtime(true);
+    // Discovered before routes, not alongside them: RouteDiscovery needs
+    // the global middleware list itself, to resolve any #[RoutePrefix]
+    // those classes declare into every route's own path (see
+    // Router::register()'s own doc comment). Same scan also covers a
+    // class carrying #[AsMcpMiddleware]/#[AsOpenApiMiddleware]/
+    // #[AsMiddlewareGroup] or #[Listener] — no AppScope::middleware()
+    // call, or manual EventListenerRegistry construction in
+    // bootstrap.php, needed for any of them. One shared scan produces
+    // all three middleware lists plus every named group at once.
+    $discoveredMiddleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
     // Any class anywhere under one of your own PSR-4 roots is picked up
     // automatically — nothing to register.
-    $router = RouteDiscovery::discover($projectRoot);
-    // Same for a class carrying #[AsGlobalMiddleware]/#[AsMcpMiddleware]/
-    // #[AsOpenApiMiddleware]/#[AsMiddlewareGroup] or #[Listener] — no
-    // AppScope::middleware() call, or manual EventListenerRegistry
-    // construction in bootstrap.php, needed for any of them. One shared
-    // scan produces all three middleware lists plus every named group at
-    // once.
-    $discoveredMiddleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+    $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discoveredMiddleware['global']);
     $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
     $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
     $middlewareGroups = $discoveredMiddleware['groups'];

@@ -23,13 +23,21 @@ use Kinetis\Cache\PackageDiscovery;
  * Falls back to the ROUTE_DISCOVERY_PATHS environment variable
  * (comma-separated) when not passed explicitly, so a project can commit
  * this restriction without every call site needing to know about it.
+ *
+ * $globalMiddleware is passed straight through to every Router::register()
+ * call — see that method's own doc comment for what it does with it. The
+ * caller (public/index.php's dev branch, Kinetis\Cache\Compiler) is
+ * responsible for discovering it first, via
+ * GlobalMiddlewareDiscovery::discoverAll(), since this class has no
+ * business knowing how a global middleware list is produced.
  */
 final class RouteDiscovery
 {
     /**
      * @param list<string>|null $paths
+     * @param list<class-string> $globalMiddleware
      */
-    public static function discover(string $projectRoot, ?array $paths = null): Router
+    public static function discover(string $projectRoot, ?array $paths = null, array $globalMiddleware = []): Router
     {
         $router = new Router();
 
@@ -52,7 +60,7 @@ final class RouteDiscovery
             }
 
             $seen[$class] = true;
-            $router->register($class);
+            $router->register($class, $globalMiddleware);
         }
 
         return $router;

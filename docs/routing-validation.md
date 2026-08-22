@@ -208,6 +208,55 @@ attribute is only ever read from the class it is written on, so a routed
 method inherited from a parent is rejected at registration; see
 [Where attributes are read from](cli.md#where-attributes-are-read-from).
 
+(a-middleware-can-own-a-prefix-too)=
+### A middleware can own a prefix too
+
+`#[RoutePrefix]` also reads from a *middleware* class, not just a
+controller — a real use for API versioning, where the prefix and a piece
+of version-related behavior naturally belong to the same class:
+
+```{code-block} php
+#[RoutePrefix('/v1')]
+final class VersionMiddleware implements MiddlewareInterface
+{
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        return $handler->handle($request);
+    }
+}
+
+#[Middleware(VersionMiddleware::class)]
+final class UserController
+{
+    #[Get('/users')]
+    public function index(): array { ... }
+}
+```
+
+`/users` becomes `/v1/users`, with no change to `UserController` itself —
+every controller referencing `VersionMiddleware` moves together the next
+time its own `#[RoutePrefix]` changes. The same is true of a middleware
+discovered as {doc}`global <middleware>` (`#[AsGlobalMiddleware]`): its
+prefix applies to every route in the project, ahead of everything else,
+which is the shape a whole API living under one version prefix actually
+takes.
+
+A route's final path composes outer to inner, in the same order the
+middleware itself would run in: the global-middleware chain first
+(priority order), then the route's own `#[Middleware(...)]` chain
+(class-level before method-level — the same order
+{ref}`described above <route-middleware>`), then the controller's own
+`#[RoutePrefix]`, then the route's own declared path. Since declaration
+order decides both what runs first *and* which segment lands leftmost,
+two controllers referencing the same prefixed middlewares in a different
+order end up with genuinely different URLs — not a bug, just the same
+fact about declaration order already being visible in one more place.
+
+A middleware referenced only through a `#[Middleware('@name')]` group
+never contributes a prefix this way: group membership isn't resolved
+until `Kernel` is constructed, well after routing has already produced
+the final path.
+
 ## Parameter binding
 
 A controller method's parameters are resolved from six possible sources,

@@ -24,9 +24,15 @@ use Kinetis\Tests\Reflection\Fixtures\InheritsHelperOnly;
 use Kinetis\Tests\Reflection\Fixtures\InheritsRoute;
 use Kinetis\Tests\Reflection\Fixtures\UsesRoutedTrait;
 use Kinetis\Http\Routing\Exception\InvalidRoutePathException;
+use Kinetis\Tests\Http\Fixtures\AdminScopedMiddleware;
 use Kinetis\Tests\Http\Fixtures\EmptyPathController;
+use Kinetis\Tests\Http\Fixtures\GroupReferencingController;
+use Kinetis\Tests\Http\Fixtures\MultiLayerPrefixController;
+use Kinetis\Tests\Http\Fixtures\UnrootedMiddlewarePrefixController;
 use Kinetis\Tests\Http\Fixtures\UnrootedPathController;
 use Kinetis\Tests\Http\Fixtures\UnrootedPrefixController;
+use Kinetis\Tests\Http\Fixtures\VersionedMiddleware;
+use Kinetis\Tests\Http\Fixtures\VersionPrefixedController;
 use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase
@@ -320,5 +326,58 @@ final class RouterTest extends TestCase
         $router->register(PrefixedUserController::class);
 
         self::assertSame('index', $router->match('GET', '/users')->route->controllerMethod);
+    }
+
+    public function test_a_middlewares_own_route_prefix_is_prepended_to_a_referencing_controllers_routes(): void
+    {
+        $router = new Router();
+        $router->register(VersionPrefixedController::class);
+
+        self::assertSame('index', $router->match('GET', '/v1/users')->route->controllerMethod);
+    }
+
+    public function test_a_global_middlewares_prefix_is_outermost(): void
+    {
+        $router = new Router();
+        $router->register(UserController::class, [VersionedMiddleware::class]);
+
+        self::assertSame('index', $router->match('GET', '/v1/users')->route->controllerMethod);
+    }
+
+    public function test_every_prefix_layer_composes_outer_to_inner(): void
+    {
+        $router = new Router();
+
+        // Global (VersionedMiddleware, "/v1") -> route-level class-level
+        // middleware (also VersionedMiddleware here, "/v1" again, proving
+        // the same class can legitimately contribute at two different
+        // layers without collapsing) -> route-level method-level
+        // middleware (AdminScopedMiddleware, "/admin") -> the controller's
+        // own #[RoutePrefix] ("/users") -> the route's own declared path.
+        $router->register(MultiLayerPrefixController::class, [VersionedMiddleware::class]);
+
+        self::assertSame(
+            ['/v1/v1/admin/users/{id}'],
+            array_map(fn ($r) => $r->pathTemplate, $router->routes()),
+        );
+        self::assertSame(['id' => '42'], $router->match('GET', '/v1/v1/admin/users/42')->pathParams);
+    }
+
+    public function test_a_middleware_group_reference_never_contributes_a_prefix(): void
+    {
+        $router = new Router();
+        $router->register(GroupReferencingController::class);
+
+        self::assertSame('index', $router->match('GET', '/reports')->route->controllerMethod);
+    }
+
+    public function test_a_middlewares_own_route_prefix_must_start_with_a_slash(): void
+    {
+        $router = new Router();
+
+        $this->expectException(InvalidRoutePathException::class);
+        $this->expectExceptionMessage('#[RoutePrefix("bad")]');
+
+        $router->register(UnrootedMiddlewarePrefixController::class);
     }
 }

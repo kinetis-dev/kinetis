@@ -73,8 +73,12 @@ final class TestApplication
         // override actually win, like every other key.
         $app->instance(AppEnvironment::class, AppEnvironment::detect($config->get('APP_ENV')));
 
-        $router = RouteDiscovery::discover($projectRoot);
+        // Discovered before routes, not after: RouteDiscovery needs the
+        // global middleware list to resolve any #[RoutePrefix] those
+        // classes declare into each route's own path — see
+        // Router::register()'s own doc comment.
         $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+        $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
         $listeners = EventListenerDiscovery::discover($projectRoot);
 
         // Package bootstraps first, then the application's own

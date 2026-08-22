@@ -201,6 +201,7 @@ not instead of it. For a request to `/mcp`, global middleware runs
 first (outermost), then the `mcp` group, then the MCP request itself.
 ```
 
+(route-middleware)=
 ### Route middleware — attribute-driven, per endpoint
 
 ```{code-block} php
@@ -232,6 +233,13 @@ Unlike global middleware, route middleware is resolved from the request's
 own `RequestScope`, wrapping only `Dispatcher::dispatch()` — deliberately
 the opposite resolution source from global middleware, since this is
 exactly the kind likely to need a per-request dependency.
+
+A middleware referenced this way — or discovered globally — can also own
+a `#[RoutePrefix]`, which every controller referencing it (or, for a
+global one, every route in the project) then composes into its own path.
+See {ref}`A middleware can own a prefix too
+<a-middleware-can-own-a-prefix-too>` for how that composes with a
+controller's own `#[RoutePrefix]`.
 
 (naming-a-stack-middleware-groups)=
 ### Naming a stack: middleware groups
