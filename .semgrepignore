@@ -1,0 +1,21 @@
+# Mirrors Furo's own upstream footer template verbatim (see the file's own
+# header comment) — Sphinx renders this into static HTML at build time,
+# with no live request-handling involved. next.link/prev.link/path/
+# icon_dict.url are Sphinx's own internal navigation values, never
+# request-controlled input, so the var-in-href rule's XSS concern doesn't
+# apply here.
+docs/_templates/page.html
+
+# A synthetic RSA key pair generated solely to test RS256 JWT
+# verification and JWKS publishing — not a real credential. Semgrep's
+# generic-secret heuristic can't tell that apart from a real leaked key
+# just from the PEM structure.
+packages/auth-jwt/tests/Fixtures/RsaKeyPair.php
+
+# A test-only reflection server (started by HttpTest via `php -S` on
+# 127.0.0.1, never deployed): echoing the request back as JSON is its
+# entire purpose, so tests can assert what the client actually sent from
+# the server's own view. The response is Content-Type: application/json,
+# not an HTML context, so the echoed-request rule's XSS concern doesn't
+# apply here.
+packages/revolt-http-client/tests/Fixtures/reflect-server.php

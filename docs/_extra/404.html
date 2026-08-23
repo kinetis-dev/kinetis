@@ -1,0 +1,200 @@
+<!doctype html>
+<!--
+    Served by S3, not Sphinx: html_extra_path copies this file to the
+    build root and the docs deploy syncs it to the docs/ prefix of
+    kinetis-website's own bucket. It is no longer the only 404.html in
+    that bucket, though — kinetis-website has its own at the bucket root
+    — and S3 static website hosting names exactly one ErrorDocument for
+    the whole bucket, not one per prefix. Which of the two actually
+    serves for a missing key under docs/ depends on how that single
+    ErrorDocument is configured; this file is written to be correct
+    wherever it does end up being served from, not assumed to be it.
+
+    Every path is absolute: this page renders at whatever URL was asked
+    for, so a relative path would resolve against a directory that does
+    not exist. Every one is under /docs/ specifically, except the
+    favicon — that's one of kinetis-website's own assets, not this
+    build's, so it stays site-root instead.
+-->
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Page not found — Kinetis</title>
+    <meta name="robots" content="noindex">
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+    <link rel="icon" href="/assets/favicon.ico" sizes="256x256">
+    <link rel="apple-touch-icon" href="/assets/favicon.png" sizes="256x256">
+    <style>
+        :root {
+            --amber: #D97706;
+            --amber-light: #F59E0B;
+            --red: #DC2626;
+            --bg: #ffffff;
+            --bg-card: #f8f9fb;
+            --text: #1a1c1e;
+            --text-muted: #52585f;
+            --border: #e0e2e6;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #131416;
+                --bg-card: #1a1c1e;
+                --text: #e9e9e9;
+                --text-muted: #a0a6ae;
+                --border: #2a2d31;
+                --amber: #F59E0B;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 2rem 1rem;
+        }
+
+        .card {
+            max-width: 640px;
+            width: 100%;
+            text-align: center;
+        }
+
+        a.home {
+            display: block;
+        }
+
+        .logo {
+            width: 128px;
+            aspect-ratio: 400 / 420;
+            margin: 0 auto 1.5rem;
+            background-image: url('/docs/_static/logo.svg');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        .code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.8rem;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin: 0 0 0.5rem;
+        }
+
+        h1 {
+            margin: 0 0 0.5rem;
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--red);
+        }
+
+        p.tagline {
+            margin: 0 0 2rem;
+            color: var(--text-muted);
+            font-size: 1.05rem;
+        }
+
+        .destinations {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            text-align: left;
+            margin-bottom: 1.75rem;
+        }
+
+        @media (max-width: 600px) {
+            .destinations {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        a.destination {
+            display: block;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.destination:hover {
+            border-color: var(--amber);
+        }
+
+        a.destination h2 {
+            margin: 0 0 0.35rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--amber);
+        }
+
+        a.destination p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.88rem;
+            line-height: 1.5;
+        }
+
+        p.links {
+            font-size: 0.95rem;
+            margin: 0;
+        }
+
+        p.links a {
+            color: var(--amber);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        p.links a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <a class="home" href="https://kinetis.dev/">
+            <div class="logo" role="img" aria-label="Kinetis"></div>
+        </a>
+        <p class="code">Error 404</p>
+        <h1>This page moved, or never existed</h1>
+        <p class="tagline">The documentation is reorganised from time to time. Everything is still here — start from one of these.</p>
+
+        <div class="destinations">
+            <a class="destination" href="/docs/">
+                <h2>Documentation home</h2>
+                <p>Every page, grouped in the order an application is built.</p>
+            </a>
+            <a class="destination" href="/docs/tutorial.html">
+                <h2>Tutorial</h2>
+                <p>Install Kinetis and build a real application on it, start to finish.</p>
+            </a>
+            <a class="destination" href="/docs/search.html">
+                <h2>Search</h2>
+                <p>Look for what you were reading by name.</p>
+            </a>
+            <a class="destination" href="/docs/appendix.html">
+                <h2>API reference</h2>
+                <p>Every class and attribute in core, one line each.</p>
+            </a>
+        </div>
+
+        <p class="links">
+            <a href="https://github.com/kinetis-dev/kinetis">Source on GitHub &rarr;</a>
+        </p>
+    </div>
+</body>
+</html>

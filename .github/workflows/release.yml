@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    name: Split and publish release candidates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # release-plan.php's candidate detection needs GITHUB_EVENT_BEFORE
+          # to be reachable, which can land arbitrarily far back for a
+          # multi-commit push (this project's own normal workflow) — same
+          # reasoning as monorepo-validate.yml's own fetch-depth: 0.
+          fetch-depth: 0
+          # actions/checkout's default (persist-credentials: true) writes
+          # the ephemeral per-job GITHUB_TOKEN into the local git config
+          # as a credential override for every https://github.com/ URL,
+          # taking precedence over RELEASE_DEPLOY_TOKEN embedded directly
+          # in the publish loop's own push URLs and authenticating every
+          # push as github-actions[bot] instead — a bot identity with no
+          # access outside this one checked-out repo. false stops
+          # checkout from persisting any credential at all, so the only
+          # auth the publish loop ever uses is the one it explicitly
+          # provides.
+          persist-credentials: false
+
+      - name: Compute this round's release plan
+        id: plan
+        run: |
+          docker run --rm \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -e GITHUB_EVENT_BEFORE="${{ github.event.before }}" \
+            -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/release-plan.php --json" | tee plan.json
+          echo "count=$(jq '.candidates | length' plan.json)" >> "$GITHUB_OUTPUT"
+          echo "ok=$(jq -r '.ok' plan.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to release
+        if: steps.plan.outputs.count == '0'
+        run: echo "No version changes since the last commit — nothing to release."
+
+      - name: Fail — a candidate's sibling requirement isn't published yet
+        # Two packages bumped together in one commit, but their sibling
+        # ordering doesn't actually resolve (e.g. a version was bumped
+        # without the dependent's own constraint catching up). Distinct
+        # from the "RELEASE_DEPLOY_TOKEN not yet provisioned" case below
+        # — this one can happen on a fully working pipeline too.
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok != 'true'
+        run: |
+          echo "::error::One or more release candidates have an unresolved sibling requirement:"
+          jq -r '.candidates[].problems[]' plan.json | while IFS= read -r line; do echo "::error::${line}"; done
+          exit 1
+
+      - name: Check that publish credentials are configured
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
+        id: creds
+        run: |
+          if [ -z "${{ secrets.RELEASE_DEPLOY_TOKEN }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: RELEASE_DEPLOY_TOKEN not yet provisioned
+        # Fails loudly rather than silently succeeding: this workflow
+        # isn't a required status check (only monorepo-validate.yml is),
+        # so nothing blocks on this failing, but a version bump with
+        # nowhere to go should never look green.
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'false'
+        run: |
+          echo "::warning::$(jq '.candidates | length' plan.json) candidate(s) are ready to release, but the RELEASE_DEPLOY_TOKEN secret hasn't been provisioned yet:"
+          jq -r '.candidates[] | "  \(.key) -> v\(.version)"' plan.json
+          exit 1
+
+      - name: Install splitsh-lite
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'true'
+        run: |
+          # v1.0.1 is the last release with a real prebuilt Linux binary —
+          # v2.0.0 dropped precompiled binaries entirely, needing a Go +
+          # libgit2 build from source instead, for nothing gained here.
+          curl -sL https://github.com/splitsh/lite/releases/download/v1.0.1/lite_linux_amd64.tar.gz | tar xz
+          chmod +x splitsh-lite
+          sudo mv splitsh-lite /usr/local/bin/splitsh-lite
+
+      - name: Split and publish each candidate, in order
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'true'
+        # A for-loop over an array populated via process substitution,
+        # not `jq ... | while read` — the loop body's own git push calls
+        # would otherwise share the same piped stdin `read` is consuming
+        # from, corrupting the loop if a push ever prompts instead of
+        # failing cleanly (a misconfigured credential, for instance).
+        #
+        # Force-pushing main and pushing the tag are two separate git
+        # push calls; a failure between them (main updated, tag not yet
+        # pushed) stops the whole job right there rather than continuing
+        # to later candidates. Safe to just re-run: splitsh-lite's own
+        # caching plus force-push both make a repeated run of this same
+        # workflow idempotent.
+        run: |
+          git config user.name "kinetis-release"
+          git config user.email "noreply@kinetis.dev"
+
+          mapfile -t candidates < <(jq -c '.candidates[]' plan.json)
+
+          for candidate in "${candidates[@]}"; do
+            key=$(echo "$candidate" | jq -r '.key')
+            version=$(echo "$candidate" | jq -r '.version')
+            echo "=== ${key} -> v${version} ==="
+
+            # splitsh-lite reads committed git objects, not the working
+            # directory, so the release-mode composer.json (real ^X.Y
+            # sibling constraints, no repositories key) has to exist in a
+            # real commit before splitting — the checked-out monorepo's
+            # own composer.json is always dev-mode (path repos,
+            # dev-main), meant for local development only. This commit
+            # only ever exists in this runner's own disposable checkout;
+            # it's never pushed to kinetis-dev/kinetis itself.
+            #
+            # composer.lock is removed, not regenerated: Composer never
+            # reads a dependency's own lock file once it's required
+            # transitively, and leaving the dev-mode lock (dev-main
+            # entries) in place fails composer validate --strict against
+            # the now-^X.Y composer.json for anyone who clones the split
+            # repo directly.
+            docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php --release-write="${key}"
+            git add "packages/${key}/composer.json"
+            git rm --quiet "packages/${key}/composer.lock"
+            git commit --quiet -m "release: ${key} v${version}"
+
+            sha1=$(splitsh-lite --prefix="packages/${key}" --origin=HEAD --quiet)
+            echo "split SHA1: ${sha1}"
+
+            target="https://x-access-token:${{ secrets.RELEASE_DEPLOY_TOKEN }}@github.com/kinetis-dev/${key}.git"
+            git push "$target" "${sha1}:refs/heads/main" --force
+            git push "$target" "${sha1}:refs/tags/v${version}"
+          done

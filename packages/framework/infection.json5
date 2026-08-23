@@ -1,0 +1,20 @@
+{
+    "$schema": "vendor/infection/infection/resources/schema.json",
+    "source": {
+        "directories": [
+            "src"
+        ],
+        // The runtime conformance suite is a PHPUnit TestCase that ships in
+        // src/ so adapters outside this package can extend it. Its
+        // statements are assertions: a mutant that weakens one is "killed"
+        // only by an adapter being wrong, which is the opposite of what a
+        // mutation score measures. Scoring it would report escaped mutants
+        // for every assertion the adapters already satisfy.
+        "excludes": [
+            "Testing/Runtime/RuntimeAdapterConformanceTestCase.php"
+        ]
+    },
+    "mutators": {
+        "@default": true
+    }
+}

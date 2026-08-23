@@ -1,0 +1,39 @@
+parameters:
+    level: 8
+    paths:
+        - src
+        - bin/kinetis
+        - public
+    ignoreErrors:
+        # Hydrator's plan cache is memoized *pure derived data* — identical
+        # for a given DTO class on every request for the process lifetime —
+        # so it cannot bleed request state, which is what the rule below
+        # exists to prevent. See Hydrator's class docblock.
+        -
+            identifier: kinetis.noStaticProperties
+            path: src/Validation/Hydrator.php
+        # FiberPool's residents are worker-lifetime *infrastructure*, not
+        # request state: the pool exists precisely so Fiber stacks outlive
+        # a single request (per-task Fiber churn serializes ZTS threads on
+        # the kernel address-space lock — see the class docblock), and a
+        # static on a ZTS build is per-thread, matching the one-loop-per-
+        # thread model. Jobs never park mid-task, so no request data can
+        # ride along in an idle Fiber.
+        -
+            identifier: kinetis.noStaticProperties
+            path: src/Async/FiberPool.php
+        # Telemetry::global() is the same worker-lifetime-infrastructure
+        # class of static as FiberPool's instance: the backend reference
+        # is boot-time configuration, never request state, and it exists
+        # because plain functions (concurrently()) and pre-container
+        # lifecycle phases have no injection point at all. See the class
+        # docblock.
+        -
+            identifier: kinetis.noStaticProperties
+            path: src/Instrumentation/Telemetry.php
+
+services:
+    -
+        class: Kinetis\Linting\NoStaticPropertiesRule
+        tags:
+            - phpstan.rules.rule

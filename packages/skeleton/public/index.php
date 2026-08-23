@@ -1,0 +1,137 @@
+<?php
+
+declare(strict_types=1);
+
+use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\Compiler;
+use Kinetis\Cache\RoutesFile;
+use Kinetis\Config\Config;
+use Kinetis\Config\EnvFile;
+use Kinetis\Container\AppScope;
+use Kinetis\Events\EventListenerDiscovery;
+use Kinetis\Events\EventListenerRegistry;
+use Kinetis\Http\Kernel;
+use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
+use Kinetis\Http\Routing\RouteDiscovery;
+use Kinetis\Http\Routing\Router;
+use Kinetis\Instrumentation\Telemetry;
+use Kinetis\Runtime\AppEnvironment;
+use Kinetis\Runtime\ProjectRoot;
+use Kinetis\Runtime\RuntimeDetector;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$projectRoot = ProjectRoot::detect(__DIR__);
+
+// Loaded before AppEnvironment::detect(): APP_ENV itself might be defined
+// for the first time in .env, not already set in the real process
+// environment.
+$phases = [];
+$phaseStart = microtime(true);
+EnvFile::safeLoad($projectRoot);
+$phases['bootstrap.env'] = [$phaseStart, microtime(true)];
+
+$env = AppEnvironment::detect();
+$store = new CacheStore($projectRoot . '/.kinetis-cache');
+
+$app = new AppScope();
+$config = Config::fromEnvironment();
+$app->instance(Config::class, $config);
+$httpCache = null;
+
+// Computed before boot(): EventListenerRegistry has to be $app->instance()'d
+// below, and instance() is locked after boot() the same as bind()/
+// middleware() — unlike $router/$discoveredGlobalMiddleware, which are
+// plain constructor arguments Kernel takes directly and never touch
+// AppScope at all.
+if ($env->isProduction()) {
+    // First request in this process to find no cache present compiles
+    // once and writes all four artifacts — safe under concurrent workers
+    // racing to be "first" (see CacheStore::writeAll()'s atomic tmp+rename).
+    // Every request after that, on any worker, just loads http.php here.
+    $httpCache = $store->loadHttp();
+
+    if ($httpCache === null) {
+        $compiled = (new Compiler())->compileProject($projectRoot);
+        $store->writeAll($compiled);
+        $httpCache = $compiled->http;
+        $eventCache = $compiled->events;
+    } else {
+        $eventCache = $store->loadEvents();
+    }
+
+    $router = Router::fromArray($httpCache->routes);
+    $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
+    $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
+    $middlewareGroups = $httpCache->middlewareGroups;
+    // Another confirmed nullsafe.neverNull false positive (see
+    // AppScope::resolve()/RequestScope's own documented case, and this
+    // file's twin in bin/kinetis) — $eventCache is genuinely nullable
+    // here: the `else` branch above assigns it from
+    // CacheStore::loadEvents(): ?EventCache, which really can return null
+    // (a stale/foreign-format events.php, or one that simply doesn't
+    // exist yet). Verified directly with an isolated repro forcing that
+    // exact branch before trusting PHPStan's "always non-null" claim —
+    // removing the `?->` here would be a real, reachable fatal error.
+    $listenerRegistry = EventListenerRegistry::fromArray($eventCache?->listeners ?? []); // @phpstan-ignore nullsafe.neverNull
+    $packageBootstraps = $httpCache->packageBootstraps;
+} else {
+    $phaseStart = microtime(true);
+    // Discovered before routes, not after: RouteDiscovery needs the
+    // global middleware list itself, to resolve any #[RoutePrefix] those
+    // classes declare into every route's own path. Same scan also covers
+    // a class carrying #[AsOpenApiMiddleware] or #[Listener] — no
+    // AppScope::middleware() call, or manual EventListenerRegistry
+    // construction in bootstrap.php, needed for any of them. One shared
+    // scan produces all three middleware lists at once.
+    $discoveredMiddleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+    // Any class anywhere under one of your own PSR-4 roots is picked up
+    // automatically — nothing to register.
+    $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discoveredMiddleware['global']);
+    $discoveredGlobalMiddleware = $discoveredMiddleware['global'];
+    $discoveredOpenApiMiddleware = $discoveredMiddleware['openApi'];
+    $middlewareGroups = $discoveredMiddleware['groups'];
+    $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
+    // null = discover the package bootstrap list live, alongside the rest.
+    $packageBootstraps = null;
+    $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
+}
+
+// The bootstrap chain: every installed package's declared
+// PackageBootstrapInterface first, then this application's own
+// bootstrap.php — which therefore always wins on a shared binding.
+// bootstrap.php registers anything package bootstraps don't cover, e.g.:
+// return static function (Kinetis\Container\AppScope $app, Config $config): void {
+//     $app->instance(SomeConnectionPool::class, SomeConnectionPool::fromConfig($config));
+// };
+$phaseStart = microtime(true);
+RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
+$phases['bootstrap.services'] = [$phaseStart, microtime(true)];
+
+$app->instance(EventListenerRegistry::class, $listenerRegistry);
+$app->boot();
+
+// Reported only now: these phases ran before any telemetry backend
+// could exist, so they were measured with plain timestamps and are
+// handed to whatever backend the bootstrap chain just swapped in.
+$telemetry = Telemetry::global();
+
+foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
+    $telemetry->phase($phaseName, $phaseStartedAt, $phaseEndedAt);
+}
+
+// Detected before constructing Kernel, not after, so its isPersistent()
+// can be passed straight into the constructor rather than patched in.
+$adapter = RuntimeDetector::detect();
+
+$kernel = new Kernel(
+    $app,
+    $router,
+    isPersistent: $adapter->isPersistent(),
+    httpCache: $httpCache,
+    discoveredGlobalMiddleware: $discoveredGlobalMiddleware,
+    discoveredOpenApiMiddleware: $discoveredOpenApiMiddleware,
+    middlewareGroups: $middlewareGroups,
+);
+
+$adapter->run($kernel->handle(...));

@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /repo/packages/skeleton
+    volumes:
+      - ../..:/repo
+      - vendor:/repo/packages/skeleton/vendor
+    env_file: .env
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ../..:/repo
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      app:
+        condition: service_started
+
+volumes:
+  vendor:

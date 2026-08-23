@@ -1,0 +1,215 @@
+name: SonarQube Cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'sonar-project.properties'
+      - '.github/workflows/sonarqube.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'packages/**'
+      - 'sonar-project.properties'
+      - '.github/workflows/sonarqube.yml'
+
+# One run per branch at a time: a superseded PR push cancels the older
+# run outright; on main nothing is cancelled, but stacked pushes queue
+# as at most one pending run instead of piling their whole job matrix
+# behind each other's. release.yml deliberately has no such block — a
+# release in progress must never be cancelled or superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # The cache above removes almost every download; this covers what is
+  # left — a cold cache, or a lock file that just changed. The job's own
+  # ephemeral token lifts the anonymous codeload.github.com rate limit
+  # that a run hit while fetching php-fig/log. No secret to provision.
+  COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
+
+jobs:
+  sonarqube:
+    name: SonarQube Cloud scan
+    runs-on: ubuntu-latest
+    # The databases exist for one reason: persistence's env-gated
+    # tests/Integration suite must run *under pcov here* so the native
+    # drivers' real-backend exercise counts as measured coverage —
+    # without them those tests skip and the driver code reads as
+    # uncovered.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # SonarQube Cloud's new-code/blame analysis needs real history,
+          # not the default single-commit shallow clone.
+          fetch-depth: 0
+
+      - name: Start Redis backends
+        # cache-redis's env-gated tests/Integration suite must run under
+        # pcov here for the same reason persistence's does. Both backends
+        # are started by hand rather than declared as services: a Redis
+        # Cluster node answers CLUSTER SHARDS and MOVED with its own
+        # container address, so the test process has to sit on the same
+        # Docker network to follow the redirect at all.
+        run: |
+          docker network create kinetis-redis
+          docker run -d --name kinetis-redis --network kinetis-redis redis:7-alpine
+          docker run -d --name kinetis-redis-cluster --network kinetis-redis grokzen/redis-cluster:7.0.10
+          # grokzen's entrypoint first creates six independent masters and
+          # only then attaches three of them as replicas, so cluster_state:ok
+          # arrives well before the topology settles. Wait for the split.
+          ready=""
+          for i in $(seq 1 40); do
+            roles=$(docker exec kinetis-redis-cluster redis-cli -p 7000 cluster nodes 2>/dev/null | sed 's/myself,//' | awk '{print $3}' | sort | uniq -c | tr -d ' \n')
+            case "$roles" in
+              *3master*3slave*) ready=yes; echo "Cluster ready: 3 masters, 3 replicas."; break ;;
+            esac
+            sleep 2
+          done
+          if [ -z "$ready" ]; then
+            echo "Cluster did not reach a stable 3-master/3-replica split in time." >&2
+            exit 1
+          fi
+          CLUSTER_IP=$(docker inspect kinetis-redis-cluster --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          echo "REDIS_CLUSTER_SEEDS=$CLUSTER_IP:7000,$CLUSTER_IP:7001,$CLUSTER_IP:7002" >> "$GITHUB_ENV"
+
+      # ~95 composer installs run across this pipeline per push, each
+      # resolving about a hundred packages, and their dependency sets
+      # overlap almost entirely — the whole universe is 22 MB. Without a
+      # cache that is ~9,500 unauthenticated zip downloads from
+      # codeload.github.com per push, concurrent, from one address, which
+      # is how a run failed on "HTTP/2 429" while fetching php-fig/log. A
+      # warm cache installs the same hundred packages with the network
+      # switched off entirely.
+      #
+      # One key across every lock file rather than one per package: the
+      # sharing between packages is what makes this work, and 22 MB is
+      # small enough that a single lock change re-downloading everything
+      # costs seconds.
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
+
+      - name: Build the coverage image
+        # One image for every package below. infection.yml can install
+        # pcov per package because it is a matrix and each package gets
+        # its own runner; this job walks all twenty in sequence, so the
+        # same snippet would build the toolchain and reach pecl.php.net
+        # twenty times from one address — which is how a run failed on
+        # "No releases available for package pecl.php.net/pcov" with
+        # nothing wrong with the package it was building. Once is enough,
+        # and it retries after refreshing the channel.
+        #
+        # The database drivers are baked in rather than added per package:
+        # persistence's and query-builder's env-gated tests/Integration
+        # suites use them, and carrying them everywhere costs nothing next
+        # to a conditional install inside the loop.
+        run: |
+          # Its own empty directory as the build context, not /tmp:
+          # docker sends the whole context to the daemon, and a single
+          # unreadable file anywhere under it fails the build.
+          mkdir -p /tmp/coverage-image
+          cat > /tmp/coverage-image/Dockerfile <<'DOCKERFILE'
+          FROM php:8.4-cli-alpine
+          RUN apk add --no-cache gcc g++ make autoconf pkgconf re2c postgresql-dev \
+           && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql \
+           && (pecl install pcov || (pecl channel-update pecl.php.net && pecl install pcov)) \
+           && echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+          DOCKERFILE
+          docker build -q -t kinetis-coverage /tmp/coverage-image
+
+      - name: Package coverage
+        # GIT_CONFIG_* works around "detected dubious ownership": the
+        # container runs as a different UID than the host checkout it
+        # bind-mounts, which git (invoked internally by Composer for
+        # path-repo version resolution) refuses by default.
+        #
+        # Four packages at a time rather than sequentially — every
+        # package that touches the shared databases uses its own table
+        # names, so their suites don't collide. Each package's output
+        # goes to its own log file, printed only on failure so the step's
+        # own log stays readable.
+        run: |
+          mkdir -p /tmp/cov-logs
+          : > /tmp/cov-failed
+          run_pkg() {
+            pkg=$1
+            # cache-redis joins the Redis network started above instead of
+            # the host one, so cluster redirects resolve; every other
+            # package reaches the database services over --network host.
+            NETWORK="host"
+            # Passed only where it is wanted: an empty value is a value,
+            # and a package that reads REDIS_HOST would treat it as a
+            # configured cache.
+            REDIS_ENV=""
+            if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
+            # roadrunner-adapter's ext-sockets requirement compiles under
+            # Alpine fine but isn't worth it here — see ci.yml's matrix
+            # for the full reasoning; nothing this coverage run actually
+            # loads it.
+            COMPOSER_FLAGS=""
+            if [ "$pkg" = "roadrunner-adapter" ]; then COMPOSER_FLAGS="--ignore-platform-req=ext-sockets"; fi
+            {
+              docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist $COMPOSER_FLAGS &&
+              docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
+            } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
+            echo "$pkg done"
+          }
+          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter roadrunner-adapter mailer mcp migrations pingpong query-builder queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
+            run_pkg "$pkg" &
+            while [ "$(jobs -rp | wc -l)" -ge 4 ]; do sleep 1; done
+          done
+          wait
+          if [ -s /tmp/cov-failed ]; then
+            while read -r pkg; do
+              echo "::group::$pkg failed"
+              cat "/tmp/cov-logs/$pkg.log"
+              echo "::endgroup::"
+            done < /tmp/cov-failed
+            exit 1
+          fi
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarQube Cloud quality gate
+        # Fails the build if the gate fails — the scan step above only
+        # ever uploads results; nothing checked the outcome before this.
+        # Reads the scan step's own report-task.txt (the scanner writes
+        # it to .scannerwork/ by default, which this action already knows
+        # to look for) and polls SonarQube Cloud until the gate resolves.
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

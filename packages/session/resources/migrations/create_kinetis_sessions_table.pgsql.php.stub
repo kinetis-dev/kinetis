@@ -1,0 +1,33 @@
+<?php
+
+declare(strict_types=1);
+
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Migrations\Migration;
+
+// Postgres version. Copy this file into your own migrations/ directory
+// (see kinetis/migrations), renaming it with a timestamp prefix, e.g.
+// 20260817090000_create_kinetis_sessions_table.php.
+// Required by Kinetis\Session\Store\SqlSessionStore. Postgres has no
+// inline INDEX clause inside CREATE TABLE, so the index is its own
+// statement.
+
+return new class implements Migration {
+    public function up(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute(<<<'SQL'
+            CREATE TABLE kinetis_sessions (
+                id VARCHAR(64) PRIMARY KEY,
+                payload TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL
+            )
+            SQL);
+        $db->execute('CREATE INDEX kinetis_sessions_expires_at_index ON kinetis_sessions (expires_at)');
+    }
+
+    public function down(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute('DROP TABLE IF EXISTS kinetis_sessions');
+    }
+};

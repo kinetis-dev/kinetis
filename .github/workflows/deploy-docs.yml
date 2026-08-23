@@ -1,0 +1,53 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/deploy-docs.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Sphinx docs
+        run: |
+          docker run --rm -v "$PWD/docs":/app -w /app python:3.12-slim \
+            bash -c "pip install -q -r requirements.txt && sphinx-build -M html . _build -W --keep-going"
+
+      # Same role as before (github-actions-kinetis-docs-deploy is
+      # already OIDC-trust-scoped to this exact repo/branch — that trust
+      # is per-repo and can't be swapped for kinetis-website's own role,
+      # whose trust condition names a different repo ID outright). What
+      # changed is the role's *permission* policy: it now carries the
+      # same statements as kinetis-website's own website-deploy policy
+      # (S3 object actions on the whole kinetis.dev bucket, invalidation
+      # on E3SMHJBBV2860Z) rather than the narrower, now-stale grant it
+      # had for the old docs.kinetis.dev bucket/distribution.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::227129576823:role/github-actions-kinetis-docs-deploy
+          aws-region: eu-west-1
+
+      # A destination prefix, not the bucket root: `aws s3 sync --delete`
+      # only ever deletes keys under the given destination, so this can
+      # never touch anything outside docs/ -- kinetis-website's own root
+      # sync is the one that needs an explicit --exclude to leave this
+      # prefix alone, since *its* destination is the bucket root.
+      - name: Sync to S3
+        run: |
+          aws s3 sync docs/_build/html s3://kinetis.dev/docs/ \
+            --exclude ".doctrees/*" --exclude ".buildinfo" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation --distribution-id E3SMHJBBV2860Z --paths '/docs/*'

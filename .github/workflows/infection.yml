@@ -1,0 +1,142 @@
+name: Infection
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - '.github/workflows/infection.yml'
+  pull_request:
+    paths:
+      - 'packages/**'
+      - '.github/workflows/infection.yml'
+
+# One run per branch at a time: a superseded PR push cancels the older
+# run outright; on main nothing is cancelled, but stacked pushes queue
+# as at most one pending run instead of piling their whole job matrix
+# behind each other's. release.yml deliberately has no such block — a
+# release in progress must never be cancelled or superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # The cache above removes almost every download; this covers what is
+  # left — a cold cache, or a lock file that just changed. The job's own
+  # ephemeral token lifts the anonymous codeload.github.com rate limit
+  # that a run hit while fetching php-fig/log. No secret to provision.
+  COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
+
+jobs:
+  mutation-test:
+    name: ${{ matrix.package.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # minMsi/minCoveredMsi are real thresholds, not 0 — each measured
+        # directly against this exact codebase (not estimated), then set
+        # a real margin below the measured score so ordinary variance
+        # doesn't flake the gate while a genuine regression still fails
+        # it. Mutation Code Coverage is 100% for every package here, so
+        # min-msi and min-covered-msi land on the same number throughout;
+        # they're kept as two separate flags anyway since that stops
+        # being true the moment any package's coverage ever drops below
+        # 100%, and at that point the two numbers need to already mean
+        # different things. A few packages score low by design, not by
+        # neglect — queue-sqs/storage-s3 wrap real AWS clients that are
+        # deliberately real-backend-verified only (see kinetis/queue's
+        # own RedisQueue/SqlQueue precedent for this project's established
+        # "don't fake what a real backend has to prove" testing
+        # discipline) — their thresholds reflect that scope honestly
+        # rather than being padded to look stronger than they are.
+        package:
+          - { name: core, dir: packages/framework, minMsi: 75, minCoveredMsi: 75 }
+          - { name: persistence, dir: packages/persistence, minMsi: 85, minCoveredMsi: 85 }
+          - { name: cache-redis, dir: packages/cache-redis, minMsi: 75, minCoveredMsi: 75 }
+          - { name: auth, dir: packages/auth, minMsi: 70, minCoveredMsi: 70 }
+          - { name: auth-jwt, dir: packages/auth-jwt, minMsi: 70, minCoveredMsi: 70 }
+          - { name: bref-adapter, dir: packages/bref-adapter, minMsi: 70, minCoveredMsi: 70 }
+          # composerFlags bypasses the ext-sockets platform check —
+          # confirmed for real that a from-scratch install fails without
+          # it under Alpine; see ci.yml's matrix for the same reasoning.
+          - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, minMsi: 85, minCoveredMsi: 85, composerFlags: "--ignore-platform-req=ext-sockets" }
+          - { name: mailer, dir: packages/mailer, minMsi: 90, minCoveredMsi: 90 }
+          - { name: migrations, dir: packages/migrations, minMsi: 75, minCoveredMsi: 75 }
+          - { name: mcp, dir: packages/mcp, minMsi: 75, minCoveredMsi: 75 }
+          - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
+          - { name: search-opensearch, dir: packages/search-opensearch, minMsi: 70, minCoveredMsi: 70 }
+          - { name: telemetry, dir: packages/telemetry, minMsi: 70, minCoveredMsi: 70 }
+          - { name: session, dir: packages/session, minMsi: 65, minCoveredMsi: 65 }
+          - { name: queue, dir: packages/queue, minMsi: 60, minCoveredMsi: 60 }
+          - { name: queue-redis, dir: packages/queue-redis, minMsi: 90, minCoveredMsi: 90 }
+          - { name: queue-sql, dir: packages/queue-sql, minMsi: 90, minCoveredMsi: 90 }
+          - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, minMsi: 90, minCoveredMsi: 90 }
+          - { name: queue-sqs, dir: packages/queue-sqs, minMsi: 55, minCoveredMsi: 55 }
+          # 85% measured once the Http client's own suite landed, up from
+          # the 15 the package's earlier four-test surface justified.
+          - { name: revolt-http-client, dir: packages/revolt-http-client, minMsi: 75, minCoveredMsi: 75 }
+          - { name: aws-sigv4, dir: packages/aws-sigv4, minMsi: 90, minCoveredMsi: 90 }
+          - { name: skeleton, dir: packages/skeleton, minMsi: 90, minCoveredMsi: 90 }
+          - { name: storage, dir: packages/storage, minMsi: 90, minCoveredMsi: 90 }
+          - { name: storage-s3, dir: packages/storage-s3, minMsi: 15, minCoveredMsi: 15 }
+    steps:
+      - uses: actions/checkout@v7
+
+      # ~95 composer installs run across this pipeline per push, each
+      # resolving about a hundred packages, and their dependency sets
+      # overlap almost entirely — the whole universe is 22 MB. Without a
+      # cache that is ~9,500 unauthenticated zip downloads from
+      # codeload.github.com per push, concurrent, from one address, which
+      # is how a run failed on "HTTP/2 429" while fetching php-fig/log. A
+      # warm cache installs the same hundred packages with the network
+      # switched off entirely.
+      #
+      # One key across every lock file rather than one per package: the
+      # sharing between packages is what makes this work, and 22 MB is
+      # small enough that a single lock change re-downloading everything
+      # costs seconds.
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies
+        # GIT_CONFIG_* env vars work around "detected dubious ownership" —
+        # the container runs as a different UID than the host checkout it
+        # bind-mounts, which git (invoked internally by Composer for
+        # path-repo version resolution) refuses by default.
+        run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "${{ runner.temp }}/composer-cache":/tmp/cache -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist ${{ matrix.package.composerFlags }}
+
+      - name: Infection (mutation testing)
+        # On a pull request, only the code the PR actually changes is
+        # mutated (--git-diff-filter against the base branch) — an
+        # escaped mutant in changed code still fails the same thresholds,
+        # while a package the PR never touched skips outright. Every push
+        # to main keeps the full run, so the complete score stays
+        # enforced where it matters. --ignore-msi-with-no-mutations
+        # covers a changed file with nothing mutable in it (a docblock
+        # edit), which would otherwise read as MSI 0%. The two-dot diff
+        # against the base tip is exact here because the PR checkout is
+        # the merge commit of the PR onto that tip.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          DIFF_ARGS=""
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- '${{ matrix.package.dir }}/src' | grep -q .; then
+              echo "No changed source files under ${{ matrix.package.dir }}/src — the full run happens on main."
+              exit 0
+            fi
+            DIFF_ARGS="--git-diff-filter=AM --git-diff-base=origin/$BASE_REF --ignore-msi-with-no-mutations"
+          fi
+          docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:8.4-cli-alpine sh -c "
+            apk add --no-cache git gcc g++ make autoconf pkgconf re2c
+            git config --global safe.directory '*'
+            pecl install pcov
+            echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+            php -d memory_limit=512M vendor/bin/infection --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 $DIFF_ARGS
+          "

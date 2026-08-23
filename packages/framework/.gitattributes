@@ -1,0 +1,9 @@
+/bench export-ignore
+/bench/** export-ignore
+/composer.lock export-ignore
+/phpstan.neon export-ignore
+/phpunit.xml export-ignore
+/tests export-ignore
+/tests/** export-ignore
+/tests-integration export-ignore
+/tests-integration/** export-ignore

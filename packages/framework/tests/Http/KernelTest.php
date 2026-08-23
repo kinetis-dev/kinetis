@@ -1,0 +1,752 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kinetis\Tests\Http;
+
+use Kinetis\Cache\CacheFormat;
+use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\CommandCache;
+use Kinetis\Cache\CompiledCache;
+use Kinetis\Cache\Compiler;
+use Kinetis\Cache\EventCache;
+use Kinetis\Cache\HttpCache;
+use Kinetis\Cache\OpenApiCache;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use Kinetis\Events\EventListenerRegistry;
+use Kinetis\Http\Kernel;
+use Kinetis\Http\OpenApi\DocumentationController;
+use Kinetis\Http\Routing\Router;
+use Kinetis\Http\StreamedResponse;
+use Kinetis\Tests\Fixtures\InMemoryLogger;
+use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
+use Kinetis\Tests\Http\Fixtures\CurrentUserController;
+use Kinetis\Tests\Http\Fixtures\DiscoveredGlobalMiddleware;
+use Kinetis\Tests\Http\Fixtures\EventDispatchingController;
+use Kinetis\Tests\Http\Fixtures\EventLog;
+use Kinetis\Tests\Http\Fixtures\GlobalMiddleware;
+use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
+use Kinetis\Tests\Http\Fixtures\McpScopedMiddleware;
+use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAdminMiddleware;
+use Kinetis\Tests\Cache\Fixtures\Http\GroupedAuthMiddleware;
+use Kinetis\Tests\Http\Fixtures\MiddlewareGroupController;
+use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
+use Kinetis\Tests\Http\Fixtures\OpenApiScopedMiddleware;
+use Kinetis\Tests\Http\Fixtures\RecordingMiddleware;
+use Kinetis\Tests\Http\Fixtures\SendOrderConfirmationListener;
+use Kinetis\Tests\Http\Fixtures\UnknownMiddlewareGroupController;
+use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Tests\Mcp\Fixtures\ProgressReportingController;
+use Nyholm\Psr7\ServerRequest;
+use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
+
+require_once __DIR__ . '/Fixtures/gc_collect_cycles_spy.php';
+
+final class KernelTest extends TestCase
+{
+    private function kernel(?bool $exposeOpenApi = null): Kernel
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        return new Kernel($app, $router, exposeOpenApi: $exposeOpenApi);
+    }
+
+    public function test_handles_a_registered_route_end_to_end(): void
+    {
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
+
+        $response = $this->kernel()->handle($request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(
+            ['name' => 'Alon', 'email' => 'alon@noy.cc'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    /**
+     * Kernel resolves Kinetis\Persistence\TransactionGuard from every
+     * request's RequestScope — but that class lives in the separate,
+     * optional kinetis/persistence package, never installed for this
+     * suite. This is the real, always-true "not installed" branch of the
+     * class_exists() gate in Kernel::dispatchCore() — proving a request
+     * completes normally with no dispose-hook crash, not just benefiting
+     * from it implicitly the way every other test in this file already
+     * does. The "is installed" branch is verified in kinetis/persistence's
+     * own test suite instead, which is the one place both Kernel and
+     * TransactionGuard are simultaneously available.
+     */
+    public function test_handles_a_request_normally_when_the_persistence_package_is_not_installed(): void
+    {
+        self::assertFalse(class_exists('Kinetis\Persistence\TransactionGuard'));
+
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
+
+        $response = $this->kernel()->handle($request);
+
+        self::assertSame(201, $response->getStatusCode());
+    }
+
+    public function test_returns_a_404_json_response_for_an_unknown_route(): void
+    {
+        $response = $this->kernel()->handle(new ServerRequest('GET', '/does-not-exist'));
+
+        self::assertSame(404, $response->getStatusCode());
+        self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
+    }
+
+    public function test_returns_a_405_json_response_for_a_disallowed_method(): void
+    {
+        $response = $this->kernel()->handle(new ServerRequest('DELETE', '/users'));
+
+        self::assertSame(405, $response->getStatusCode());
+    }
+
+    public function test_a_405_response_carries_a_real_allow_header(): void
+    {
+        $response = $this->kernel()->handle(new ServerRequest('DELETE', '/users'));
+
+        self::assertSame(405, $response->getStatusCode());
+        $allowed = array_map('trim', explode(',', $response->getHeaderLine('Allow')));
+        self::assertSame(['POST', 'GET'], $allowed);
+    }
+
+    public function test_each_handled_request_gets_an_independent_request_scope(): void
+    {
+        $kernel = $this->kernel();
+
+        $first = $kernel->handle(new ServerRequest('GET', '/users/1'));
+        $second = $kernel->handle(new ServerRequest('GET', '/users/2'));
+
+        self::assertSame(['id' => 1], json_decode((string) $first->getBody(), true));
+        self::assertSame(['id' => 2], json_decode((string) $second->getBody(), true));
+    }
+
+    public function test_handles_a_body_dto_with_an_asymmetric_visibility_property(): void
+    {
+        $request = new ServerRequest('PATCH', '/users/1/status', body: json_encode(['status' => 'active']));
+
+        $response = $this->kernel()->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['id' => 1, 'status' => 'active'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_serves_the_openapi_document_at_openapi_json(): void
+    {
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi.json'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
+
+        $spec = json_decode((string) $response->getBody(), true);
+        self::assertSame('3.1.0', $spec['openapi']);
+        self::assertArrayHasKey('/users', $spec['paths']);
+    }
+
+    public function test_serves_the_swagger_ui_page_at_docs(): void
+    {
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('text/html', $response->getHeaderLine('Content-Type'));
+        self::assertStringContainsString('swagger-ui', (string) $response->getBody());
+    }
+
+    /**
+     * The page loads Swagger UI from a CDN, so an application-wide
+     * `script-src 'self'` would block it. It carries its own policy
+     * instead, and the nonce in that policy has to be the nonce on the
+     * inline script that starts the viewer — a mismatch is a page that
+     * silently does nothing.
+     */
+    public function test_the_docs_page_carries_a_policy_matching_its_own_inline_script(): void
+    {
+        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi'));
+        $csp = $response->getHeaderLine('Content-Security-Policy');
+        $body = (string) $response->getBody();
+
+        self::assertMatchesRegularExpression("/script-src 'nonce-[^']+' https:\/\/cdn\.jsdelivr\.net/", $csp);
+        self::assertStringContainsString('https://cdn.jsdelivr.net', $csp);
+        // The viewer fetches /openapi.json, and nothing else.
+        self::assertStringContainsString("connect-src 'self'", $csp);
+
+        preg_match("/script-src 'nonce-([^']+)'/", $csp, $m);
+        self::assertNotEmpty($m[1] ?? '');
+        self::assertStringContainsString('nonce="' . $m[1] . '"', $body);
+    }
+
+    public function test_each_docs_request_gets_a_fresh_nonce(): void
+    {
+        $kernel = $this->kernel(exposeOpenApi: true);
+
+        $first = $kernel->handle(new ServerRequest('GET', '/openapi'))->getHeaderLine('Content-Security-Policy');
+        $second = $kernel->handle(new ServerRequest('GET', '/openapi'))->getHeaderLine('Content-Security-Policy');
+
+        self::assertNotSame($first, $second);
+    }
+
+    /**
+     * The whole point: an application that sets a strict policy keeps it
+     * everywhere except this one page, which would otherwise be broken
+     * by the framework's own security guidance.
+     */
+    public function test_an_application_wide_policy_does_not_override_the_docs_page(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config([
+            'APP_ENV' => 'development',
+            'OPENAPI_ENVIRONMENTS' => 'development',
+            'SECURITY_CSP' => "default-src 'self'; script-src 'self'",
+        ]));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+        $kernel = new Kernel($app, $router);
+
+        $docs = $kernel->handle(new ServerRequest('GET', '/openapi'));
+        self::assertStringContainsString('cdn.jsdelivr.net', $docs->getHeaderLine('Content-Security-Policy'));
+
+        // Every other route still gets the application's own policy.
+        $route = $kernel->handle(new ServerRequest('GET', '/users/1'));
+        self::assertSame("default-src 'self'; script-src 'self'", $route->getHeaderLine('Content-Security-Policy'));
+    }
+
+    public function test_openapi_routes_can_be_disabled(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: false);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+
+        self::assertSame(404, $response->getStatusCode());
+    }
+
+    /**
+     * @param array<string, string> $config
+     */
+    private function kernelWithConfig(array $config): Kernel
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config($config));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        return new Kernel($app, $router);
+    }
+
+    public function test_openapi_routes_are_blocked_when_no_environments_are_configured(): void
+    {
+        foreach (['/openapi.json', '/openapi'] as $path) {
+            $response = $this->kernelWithConfig(['APP_ENV' => 'development'])->handle(new ServerRequest('GET', $path));
+
+            // 404 rather than 403: a blocked path falls through to
+            // routing, so nothing confirms it would exist elsewhere.
+            self::assertSame(404, $response->getStatusCode(), $path);
+        }
+    }
+
+    public function test_openapi_routes_are_served_in_an_environment_the_configuration_names(): void
+    {
+        $kernel = $this->kernelWithConfig([
+            'APP_ENV' => 'staging',
+            'OPENAPI_ENVIRONMENTS' => 'development, staging',
+        ]);
+
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi'))->getStatusCode());
+    }
+
+    public function test_openapi_routes_stay_blocked_in_an_environment_the_configuration_omits(): void
+    {
+        $kernel = $this->kernelWithConfig([
+            'APP_ENV' => 'production',
+            'OPENAPI_ENVIRONMENTS' => 'development',
+        ]);
+
+        self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    /**
+     * AppEnvironment::detect() reads an absent APP_ENV as production, so
+     * naming production has to cover a deployment that sets nothing.
+     */
+    public function test_an_absent_app_env_counts_as_production(): void
+    {
+        $kernel = $this->kernelWithConfig(['OPENAPI_ENVIRONMENTS' => 'production']);
+
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    public function test_environment_names_are_matched_ignoring_case_and_surrounding_space(): void
+    {
+        $kernel = $this->kernelWithConfig([
+            'APP_ENV' => 'Staging',
+            'OPENAPI_ENVIRONMENTS' => "  STAGING ,\tdevelopment",
+        ]);
+
+        self::assertSame(200, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    /**
+     * An empty or comma-only list names no environment, which must not
+     * collapse into "matches the one whose name is also empty".
+     */
+    public function test_a_list_that_names_nothing_blocks_everywhere(): void
+    {
+        foreach (['', '   ', ',', ' , '] as $list) {
+            $kernel = $this->kernelWithConfig(['APP_ENV' => 'production', 'OPENAPI_ENVIRONMENTS' => $list]);
+
+            self::assertSame(
+                404,
+                $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode(),
+                var_export($list, true),
+            );
+        }
+    }
+
+    public function test_an_explicit_argument_wins_over_the_configuration(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(['APP_ENV' => 'production', 'OPENAPI_ENVIRONMENTS' => 'production']));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: false);
+
+        self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+    }
+
+    public function test_forces_a_gc_cycle_at_the_end_of_a_request_when_persistent(): void
+    {
+        $GLOBALS['kinetisGcCollectCyclesCallCount'] = 0;
+
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(UserController::class);
+
+        (new Kernel($app, $router, isPersistent: true))->handle(new ServerRequest('GET', '/users/1'));
+
+        self::assertSame(1, $GLOBALS['kinetisGcCollectCyclesCallCount']);
+    }
+
+    public function test_does_not_force_a_gc_cycle_when_not_persistent(): void
+    {
+        $GLOBALS['kinetisGcCollectCyclesCallCount'] = 0;
+
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(UserController::class);
+
+        (new Kernel($app, $router, isPersistent: false))->handle(new ServerRequest('GET', '/users/1'));
+
+        self::assertSame(0, $GLOBALS['kinetisGcCollectCyclesCallCount']);
+    }
+
+    public function test_dispatch_uses_the_compiled_binding_plan_end_to_end(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $compiler = new Compiler();
+        $compiled = $compiler->compile($router);
+
+        $kernel = new Kernel($app, $router, httpCache: $compiled->http);
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(
+            ['name' => 'Alon', 'email' => 'alon@noy.cc'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    protected function setUp(): void
+    {
+        RecordingMiddleware::$log = [];
+    }
+
+    public function test_global_middleware_runs_for_a_matched_route(): void
+    {
+        $app = new AppScope();
+        $app->middleware(GlobalMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        (new Kernel($app, $router))->handle(new ServerRequest('GET', '/users/1'));
+
+        self::assertSame([GlobalMiddleware::class], RecordingMiddleware::$log);
+    }
+
+    public function test_global_middleware_runs_even_for_a_request_that_matches_no_route(): void
+    {
+        $app = new AppScope();
+        $app->middleware(GlobalMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/does-not-exist'));
+
+        self::assertSame(404, $response->getStatusCode());
+        self::assertSame([GlobalMiddleware::class], RecordingMiddleware::$log);
+    }
+
+    public function test_discovered_global_middleware_runs_for_a_matched_route(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $kernel = new Kernel($app, $router, discoveredGlobalMiddleware: [DiscoveredGlobalMiddleware::class]);
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+
+        self::assertSame([DiscoveredGlobalMiddleware::class], RecordingMiddleware::$log);
+    }
+
+    public function test_explicit_global_middleware_runs_more_outer_than_discovered_middleware(): void
+    {
+        $app = new AppScope();
+        $app->middleware(GlobalMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $kernel = new Kernel($app, $router, discoveredGlobalMiddleware: [DiscoveredGlobalMiddleware::class]);
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+
+        self::assertSame([GlobalMiddleware::class, DiscoveredGlobalMiddleware::class], RecordingMiddleware::$log);
+    }
+
+    public function test_a_class_registered_both_explicitly_and_as_discovered_runs_only_once(): void
+    {
+        $app = new AppScope();
+        $app->middleware(GlobalMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        // The exact same class both explicitly registered and reported as
+        // discovered — GlobalMiddlewareDiscovery would produce this if the
+        // class also happened to carry #[AsGlobalMiddleware]. Discovery
+        // must never add a second copy of a class already explicit.
+        $kernel = new Kernel($app, $router, discoveredGlobalMiddleware: [GlobalMiddleware::class]);
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+
+        self::assertSame([GlobalMiddleware::class], RecordingMiddleware::$log);
+    }
+
+    public function test_route_middleware_runs_class_level_then_method_level_after_global_middleware(): void
+    {
+        $app = new AppScope();
+        $app->middleware(GlobalMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            [GlobalMiddleware::class, ClassLevelMiddleware::class, MethodLevelMiddleware::class],
+            RecordingMiddleware::$log,
+        );
+    }
+
+    public function test_route_middleware_does_not_run_for_a_different_route_on_the_same_controller(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test/short-circuit'));
+
+        // #[Middleware(ClassLevelMiddleware::class)] is on the controller,
+        // so it still runs here too — only MethodLevelMiddleware (attached
+        // to a different method) must be absent.
+        self::assertSame([ClassLevelMiddleware::class], RecordingMiddleware::$log);
+    }
+
+    public function test_a_route_middleware_can_short_circuit_before_the_controller_runs(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test/short-circuit'));
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertSame(['error' => 'short-circuited'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_an_uncaught_exception_from_a_controller_becomes_a_500_instead_of_propagating(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test/throws'));
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertSame(
+            ['error' => 'Internal server error.'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    public function test_a_consumer_registered_logger_receives_the_exception_end_to_end(): void
+    {
+        $logger = new InMemoryLogger();
+
+        $app = new AppScope();
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test/throws'));
+
+        self::assertCount(1, $logger->records);
+        self::assertSame('error', $logger->records[0]['level']);
+    }
+
+    public function test_an_http_status_exception_from_a_controller_becomes_its_own_status_end_to_end(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test/throws-http-status'));
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(['error' => 'bad input'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_middleware_can_register_a_current_user_the_controller_then_receives(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(CurrentUserController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/me'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['userId' => 'user-42'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_controller_can_dispatch_an_event_a_registered_listener_receives(): void
+    {
+        $registry = new EventListenerRegistry();
+        $registry->register(SendOrderConfirmationListener::class);
+
+        $log = new EventLog();
+
+        $app = new AppScope();
+        $app->instance(EventListenerRegistry::class, $registry);
+        $app->instance(EventLog::class, $log);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(EventDispatchingController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('POST', '/orders'));
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame([42], $log->orderIds);
+    }
+
+    /**
+     * @return array<string, list<class-string>>
+     */
+    private function middlewareGroups(): array
+    {
+        return ['admin' => [GroupedAuthMiddleware::class, GroupedAdminMiddleware::class]];
+    }
+
+    public function test_a_group_reference_runs_every_member_in_the_groups_own_order(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareGroupController::class);
+
+        $kernel = new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+        $response = $kernel->handle(new ServerRequest('GET', '/groups/admin'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            [GroupedAuthMiddleware::class, GroupedAdminMiddleware::class],
+            RecordingMiddleware::$log,
+        );
+    }
+
+    public function test_a_group_expands_in_place_preserving_declaration_order_around_it(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareGroupController::class);
+
+        $kernel = new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+        $kernel->handle(new ServerRequest('GET', '/groups/mixed'));
+
+        // #[Middleware(MethodLevelMiddleware::class)] is declared before
+        // #[Middleware('@admin')], so it runs first and the group's own
+        // members follow, in the group's order.
+        self::assertSame(
+            [MethodLevelMiddleware::class, GroupedAuthMiddleware::class, GroupedAdminMiddleware::class],
+            RecordingMiddleware::$log,
+        );
+    }
+
+    public function test_a_reference_to_an_undeclared_group_fails_when_the_kernel_is_constructed(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UnknownMiddlewareGroupController::class);
+
+        // Thrown at construction, not on the request that happens to hit
+        // the offending route — the whole point of validating up front.
+        $this->expectException(UnknownMiddlewareGroupException::class);
+
+        new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+    }
+
+    public function test_the_unknown_group_error_names_the_group_and_the_route_that_referenced_it(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UnknownMiddlewareGroupController::class);
+
+        try {
+            new Kernel($app, $router, middlewareGroups: $this->middlewareGroups());
+            self::fail('Expected an UnknownMiddlewareGroupException.');
+        } catch (UnknownMiddlewareGroupException $e) {
+            self::assertStringContainsString('does-not-exist', $e->getMessage());
+            self::assertStringContainsString('UnknownMiddlewareGroupController', $e->getMessage());
+            self::assertStringContainsString('unknown', $e->getMessage());
+        }
+    }
+
+    public function test_routes_with_no_group_references_need_no_groups_configured_at_all(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MiddlewareTestController::class);
+
+        // No middlewareGroups argument — plain class-string references
+        // are unaffected by the feature existing.
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/middleware-test'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            [ClassLevelMiddleware::class, MethodLevelMiddleware::class],
+            RecordingMiddleware::$log,
+        );
+    }
+
+    public function test_discovered_openapi_middleware_runs_for_both_openapi_json_and_docs_only(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: true, discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+        self::assertSame([], RecordingMiddleware::$log);
+    }
+
+    /**
+     * The explicit counterpart to the discovered case above.
+     * AppScope::openApiMiddleware() registrations are invisible to
+     * discovery, so Kernel folds them into the same `openapi` group the
+     * controller references — without that, an explicitly registered
+     * class would silently never run.
+     */
+    public function test_explicitly_registered_openapi_middleware_runs_on_the_documentation_routes(): void
+    {
+        $app = new AppScope();
+        $app->openApiMiddleware(OpenApiScopedMiddleware::class);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $kernel = new Kernel($app, $router, exposeOpenApi: true);
+
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+        self::assertSame([OpenApiScopedMiddleware::class], RecordingMiddleware::$log);
+
+        // And nowhere else.
+        RecordingMiddleware::$log = [];
+        $kernel->handle(new ServerRequest('GET', '/users/1'));
+        self::assertSame([], RecordingMiddleware::$log);
+    }
+}

@@ -1,0 +1,45 @@
+name: Semgrep
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per branch at a time: a superseded PR push cancels the older
+# run outright; on main nothing is cancelled, but stacked pushes queue
+# as at most one pending run instead of piling their whole job matrix
+# behind each other's. release.yml deliberately has no such block — a
+# release in progress must never be cancelled or superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run Semgrep
+        # --error makes a real finding fail the build — .semgrepignore
+        # already covers the two known false positives (see that file's
+        # own comments), confirmed clean (0 findings) before adding this.
+        run: semgrep scan --config=p/php --config=p/security-audit --config=p/secrets --error --sarif --output=semgrep.sarif
+
+      - name: Upload SARIF to code scanning
+        # Requires GitHub Code Security enabled on the repo to work while
+        # private (free automatically once public) — soft-fails until
+        # then rather than reddening every run over a dashboard step.
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif

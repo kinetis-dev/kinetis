@@ -1,0 +1,12 @@
+parameters:
+    level: 8
+    paths:
+        - src
+        - bootstrap.php
+        - public/index.php
+
+services:
+    -
+        class: Kinetis\Linting\NoStaticPropertiesRule
+        tags:
+            - phpstan.rules.rule

@@ -1,0 +1,31 @@
+<?php
+
+declare(strict_types=1);
+
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Migrations\Migration;
+
+// MySQL version. Copy this file into your own migrations/ directory (see
+// kinetis/migrations), renaming it with a timestamp prefix, e.g.
+// 20260817090000_create_kinetis_sessions_table.php.
+// Required by Kinetis\Session\Store\SqlSessionStore.
+
+return new class implements Migration {
+    public function up(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute(<<<'SQL'
+            CREATE TABLE kinetis_sessions (
+                id VARCHAR(64) PRIMARY KEY,
+                payload TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                INDEX kinetis_sessions_expires_at_index (expires_at)
+            )
+            SQL);
+    }
+
+    public function down(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute('DROP TABLE IF EXISTS kinetis_sessions');
+    }
+};

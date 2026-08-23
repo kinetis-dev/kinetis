@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache">
+    <testsuites>
+        <testsuite name="Kinetis">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <!--
+            NamespaceScannerTest deliberately exercises the "no PSR-4 root
+            found" warning path, which calls error_log() — writing to
+            STDERR by default. Infection's own InitialTestsRunner stops
+            the initial PHPUnit run on the very first byte it sees on
+            STDERR (Process::ERR), treating any STDERR output at all as a
+            fatal signal, so that intentional, expected warning otherwise
+            kills Infection's baseline run with exit 143 depending on
+            random test order. Redirecting error_log()'s destination here
+            only affects this PHPUnit run; a real consumer's own
+            error_log() behavior is controlled by their own runtime
+            environment, not this file.
+        -->
+        <ini name="error_log" value="/dev/null"/>
+    </php>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+</phpunit>
