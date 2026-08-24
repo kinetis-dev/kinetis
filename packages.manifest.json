@@ -181,7 +181,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "framework"
             ],
@@ -396,10 +396,10 @@
         },
         "pingpong": {
             "name": "kinetis/pingpong",
-            "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over Soketi.",
+            "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -414,13 +414,14 @@
                 "query-builder",
                 "queue",
                 "mcp",
-                "queue-redis"
+                "queue-redis",
+                "broadcasting",
+                "revolt-http-client"
             ],
             "require": {
                 "league/plates": "^3.6.0",
                 "monolog/monolog": "^3.10.0",
-                "psr/http-message": "^2.0",
-                "pusher/pusher-php-server": "^7.3.0"
+                "psr/http-message": "^2.0"
             }
         },
         "skeleton": {
@@ -518,6 +519,24 @@
                 "spiral/roadrunner-cli": "^2.6"
             },
             "kinetis": []
+        },
+        "broadcasting": {
+            "name": "kinetis/broadcasting",
+            "description": "Real-time broadcasting for Kinetis over the Pusher Channels protocol (Soketi, Laravel Reverb, or Pusher itself) - attribute-based private/presence channel authorization and a non-blocking driver over kinetis/revolt-http-client.",
+            "namespace": "Kinetis\\Broadcasting\\",
+            "testNamespace": "Kinetis\\Broadcasting\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework",
+                "revolt-http-client"
+            ],
+            "require": {
+                "psr/http-message": "^2.0"
+            },
+            "kinetis": {
+                "scan": "Kinetis\\Broadcasting\\Http\\",
+                "bootstrap": "Kinetis\\Broadcasting\\PackageBootstrap"
+            }
         }
     }
 }

@@ -43,9 +43,9 @@ services:
   soketi:
     image: quay.io/soketi/soketi:1.4-16-debian
     environment:
-      SOKETI_DEFAULT_APP_ID: ${SOKETI_APP_ID:-app-id}
-      SOKETI_DEFAULT_APP_KEY: ${SOKETI_KEY:-app-key}
-      SOKETI_DEFAULT_APP_SECRET: ${SOKETI_SECRET:-app-secret}
+      SOKETI_DEFAULT_APP_ID: ${BROADCAST_APP_ID:-app-id}
+      SOKETI_DEFAULT_APP_KEY: ${BROADCAST_KEY:-app-key}
+      SOKETI_DEFAULT_APP_SECRET: ${BROADCAST_SECRET:-app-secret}
     ports:
       - "6001:6001"
 

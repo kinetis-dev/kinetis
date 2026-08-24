@@ -82,7 +82,7 @@ once `boot()` has run, so a double registered from a test body would be
 too late.
 
 `kinetis/pingpong`'s own controller test is this in practice — it
-replaces the Soketi publisher and the queue, which leaves a real MySQL
+replaces the broadcaster and the queue, which leaves a real MySQL
 as the only thing it needs, and the suite runs against a bare database
 rather than only inside the full compose stack.
 

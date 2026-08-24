@@ -1,0 +1,57 @@
+{
+    "name": "kinetis/broadcasting",
+    "description": "Real-time broadcasting for Kinetis over the Pusher Channels protocol (Soketi, Laravel Reverb, or Pusher itself) - attribute-based private/presence channel authorization and a non-blocking driver over kinetis/revolt-http-client.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/framework": "dev-main",
+        "kinetis/revolt-http-client": "dev-main",
+        "psr/http-message": "^2.0"
+    },
+    "require-dev": {
+        "infection/infection": "^0.35.0",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^12.5.33",
+        "vimeo/psalm": "^6.16.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\Broadcasting\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\Broadcasting\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "kinetis": {
+            "scan": "Kinetis\\Broadcasting\\Http\\",
+            "bootstrap": "Kinetis\\Broadcasting\\PackageBootstrap"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../framework"
+        },
+        {
+            "type": "path",
+            "url": "../revolt-http-client"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

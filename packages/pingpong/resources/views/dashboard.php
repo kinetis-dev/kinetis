@@ -51,9 +51,16 @@
     <div class="log-header">&gt; last 10 messages</div>
     <ul id="log-list"></ul>
   </section>
+
+  <section class="log private-log">
+    <div class="log-header">&gt; private-notifications
+      <span class="private-tag">&#128274; authorized via /broadcasting/auth</span>
+    </div>
+    <ul id="private-log-list"></ul>
+  </section>
 </div>
 
-<script id="soketi-config" type="application/json"><?= json_encode($soketiConfig, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP) ?></script>
+<script id="broadcast-config" type="application/json"><?= json_encode($broadcastConfig, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP) ?></script>
 <script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
 <script src="/dashboard.js"></script>
 </body>
