@@ -129,10 +129,17 @@ dependencies:
 | [`kinetis/queue-redis`](https://kinetis.dev/docs/queue-redis.html) | A Redis backend for `kinetis/queue` |
 | [`kinetis/queue-sql`](https://kinetis.dev/docs/queue-sql.html) | A MySQL/Postgres backend for `kinetis/queue` |
 | [`kinetis/queue-sqs`](https://kinetis.dev/docs/queue-sqs.html) | An Amazon SQS backend for `kinetis/queue` — non-blocking via `kinetis/revolt-http-client` |
+| [`kinetis/queue-rabbitmq`](https://kinetis.dev/docs/queue-rabbitmq.html) | A RabbitMQ backend for `kinetis/queue` |
+| [`kinetis/session`](https://kinetis.dev/docs/session.html) | Cookie-backed sessions and CSRF protection — file, cache, or SQL storage |
 | [`kinetis/storage`](https://kinetis.dev/docs/storage.html) | File storage on `League\Flysystem` — a genuinely non-blocking, `Amp\File`-backed local adapter |
 | [`kinetis/storage-s3`](https://kinetis.dev/docs/storage-s3.html) | S3 (and S3-compatible) storage for `kinetis/storage`'s `FILESYSTEM_DRIVER=s3` — non-blocking via `kinetis/revolt-http-client` |
 | [`kinetis/mailer`](https://kinetis.dev/docs/mailer.html) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via `kinetis/revolt-http-client` |
+| [`kinetis/broadcasting`](https://kinetis.dev/docs/broadcasting.html) | Real-time broadcasting over the Pusher Channels protocol — private/presence channel authorization, non-blocking via `kinetis/revolt-http-client` |
+| [`kinetis/search-opensearch`](https://kinetis.dev/docs/search-opensearch.html) | Non-blocking OpenSearch client construction, via `kinetis/revolt-http-client` |
+| [`kinetis/telemetry`](https://kinetis.dev/docs/telemetry.html) | OpenTelemetry tracing — request spans, SQL/queue instrumentation |
 | [`kinetis/revolt-http-client`](https://kinetis.dev/docs/revolt-http-client.html) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
+| [`kinetis/aws-sigv4`](https://kinetis.dev/docs/aws-sigv4.html) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone, no Kinetis required |
+| [`kinetis/mcp`](https://kinetis.dev/docs/mcp.html) | The native Model Context Protocol server — stdio and Streamable HTTP |
 | `kinetis/bref-adapter` | AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs |
 | `kinetis/roadrunner-adapter` | RoadRunner runtime adapter — a persistent worker over RoadRunner's own Goridge/`PSR7Worker` protocol |
 
