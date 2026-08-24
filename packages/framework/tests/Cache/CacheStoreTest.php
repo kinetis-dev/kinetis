@@ -11,6 +11,7 @@ use Kinetis\Cache\CommandCache;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\EventCache;
 use Kinetis\Cache\HttpCache;
+use Kinetis\Cache\PluginCache;
 use PHPUnit\Framework\TestCase;
 
 final class CacheStoreTest extends TestCase
@@ -54,8 +55,13 @@ final class CacheStoreTest extends TestCase
             listeners: ['App\\SomeEvent' => [['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 50]]],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
+        $plugins = new PluginCache(
+            formatVersion: CacheFormat::VERSION,
+            data: ['App\\SomeRegistry' => ['x' => 1]],
+            compiledAt: '2026-01-01T00:00:00+00:00',
+        );
 
-        return new CompiledCache($http, $commands, $events);
+        return new CompiledCache($http, $commands, $events, $plugins);
     }
 
     public function test_exists_is_false_when_no_cache_files_exist(): void
@@ -72,6 +78,7 @@ final class CacheStoreTest extends TestCase
         self::assertNull($store->loadHttp());
         self::assertNull($store->loadCommands());
         self::assertNull($store->loadEvents());
+        self::assertNull($store->loadPlugins());
     }
 
     public function test_write_all_then_load_round_trips_each_artifact_independently(): void
@@ -85,6 +92,7 @@ final class CacheStoreTest extends TestCase
         self::assertEquals($cache->http, $store->loadHttp());
         self::assertEquals($cache->commands, $store->loadCommands());
         self::assertEquals($cache->events, $store->loadEvents());
+        self::assertEquals($cache->plugins, $store->loadPlugins());
     }
 
     public function test_a_normal_http_request_never_needs_to_read_the_other_artifacts(): void
@@ -110,6 +118,19 @@ final class CacheStoreTest extends TestCase
         self::assertNull($store->loadHttp());
     }
 
+    public function test_exists_is_false_when_plugins_php_is_missing_even_if_the_other_three_are_present(): void
+    {
+        // A partially-missing set (here: an old cache directory from
+        // before plugins.php existed) must be treated as "no cache" at
+        // all, not an inconsistent mix — the same guarantee already
+        // covered for the other three files.
+        $store = new CacheStore($this->directory);
+        $store->writeAll($this->compiledCache());
+        unlink($store->pluginsPath());
+
+        self::assertFalse($store->exists());
+    }
+
     public function test_write_all_leaves_no_stray_tmp_files_behind_after_success(): void
     {
         $store = new CacheStore($this->directory);
@@ -118,7 +139,7 @@ final class CacheStoreTest extends TestCase
         $files = glob($this->directory . '/*') ?: [];
         sort($files);
 
-        $expected = [$store->commandsPath(), $store->eventsPath(), $store->httpPath()];
+        $expected = [$store->commandsPath(), $store->eventsPath(), $store->httpPath(), $store->pluginsPath()];
         sort($expected);
 
         self::assertSame($expected, $files);
@@ -155,6 +176,7 @@ final class CacheStoreTest extends TestCase
                 $http,
                 $this->compiledCache()->commands,
                 $this->compiledCache()->events,
+                $this->compiledCache()->plugins,
             ));
             self::fail('Expected a CacheWriteException.');
         } catch (CacheWriteException $e) {

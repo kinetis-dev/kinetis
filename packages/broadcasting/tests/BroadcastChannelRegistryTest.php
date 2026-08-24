@@ -6,12 +6,14 @@ namespace Kinetis\Broadcasting\Tests;
 
 use Kinetis\Broadcasting\BroadcastChannelRegistry;
 use Kinetis\Broadcasting\Exception\InvalidChannelAuthorizerException;
+use Kinetis\Broadcasting\Tests\DiscoveryFixtureProject\DiscoveredChannelAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\DuplicatePatternAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\NonStringParameterAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\OrderChannelAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\TeamPresenceAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\WrongParameterCountAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\WrongParameterNameAuthorizer;
+use Kinetis\Cache\CacheableDiscoveryInterface;
 use PHPUnit\Framework\TestCase;
 
 final class BroadcastChannelRegistryTest extends TestCase
@@ -133,5 +135,21 @@ final class BroadcastChannelRegistryTest extends TestCase
         self::assertSame($original->class, $roundTripped->class);
         self::assertSame($original->method, $roundTripped->method);
         self::assertSame($original->params, $roundTripped->params);
+    }
+
+    public function test_implements_the_frameworks_cacheable_discovery_interface(): void
+    {
+        self::assertInstanceOf(CacheableDiscoveryInterface::class, new BroadcastChannelRegistry());
+    }
+
+    public function test_compile_delegates_to_discovery_and_reduces_it_to_plain_data(): void
+    {
+        $data = BroadcastChannelRegistry::compile(__DIR__ . '/DiscoveryFixtureProject');
+
+        $reloaded = BroadcastChannelRegistry::fromArray($data);
+        $match = $reloaded->match('discovered.7');
+
+        self::assertNotNull($match);
+        self::assertSame(DiscoveredChannelAuthorizer::class, $match->class);
     }
 }

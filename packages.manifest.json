@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.1.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -525,7 +525,7 @@
             "description": "Real-time broadcasting for Kinetis over the Pusher Channels protocol (Soketi, Laravel Reverb, or Pusher itself) - attribute-based private/presence channel authorization and a non-blocking driver over kinetis/revolt-http-client.",
             "namespace": "Kinetis\\Broadcasting\\",
             "testNamespace": "Kinetis\\Broadcasting\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.1.1",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -535,7 +535,8 @@
             },
             "kinetis": {
                 "scan": "Kinetis\\Broadcasting\\Http\\",
-                "bootstrap": "Kinetis\\Broadcasting\\PackageBootstrap"
+                "bootstrap": "Kinetis\\Broadcasting\\PackageBootstrap",
+                "discovery": "Kinetis\\Broadcasting\\BroadcastChannelRegistry"
             }
         }
     }

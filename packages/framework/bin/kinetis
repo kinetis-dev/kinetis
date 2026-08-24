@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Cache\RoutesFile;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
@@ -73,8 +74,10 @@ if ($env->isProduction()) {
         $store->writeAll($compiled);
         $commandCache = $compiled->commands;
         $eventCache = $compiled->events;
+        $pluginCache = $compiled->plugins;
     } else {
         $eventCache = $store->loadEvents();
+        $pluginCache = $store->loadPlugins();
     }
 
     $registry = CommandRegistry::fromArray($commandCache->commands);
@@ -89,6 +92,8 @@ if ($env->isProduction()) {
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
     // null = discover the package bootstrap list live, alongside the rest.
     $packageBootstraps = null;
+    // Same sentinel PluginDiscovery::bind() reads as "discover live".
+    $pluginCache = null;
 }
 
 $commandName = $argv[1] ?? null;
@@ -140,6 +145,10 @@ if ($definition->bootstrap) {
 }
 
 $app->instance(EventListenerRegistry::class, $listenerRegistry);
+// Every installed package's own CacheableDiscoveryInterface data, bound
+// directly into AppScope before the bootstrap chain runs — see this
+// file's twin in public/index.php.
+PluginDiscovery::bind($app, $projectRoot, $pluginCache?->data);
 $app->boot();
 
 $scope = $app->createRequestScope();

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Cache\RoutesFile;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
@@ -39,6 +40,7 @@ $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
 
 $httpCache = null;
+$pluginCache = null;
 
 // Computed before boot(): EventListenerRegistry has to be $app->instance()'d
 // below, and instance() is locked after boot() the same as bind()/
@@ -57,8 +59,10 @@ if ($env->isProduction()) {
         $store->writeAll($compiled);
         $httpCache = $compiled->http;
         $eventCache = $compiled->events;
+        $pluginCache = $compiled->plugins;
     } else {
         $eventCache = $store->loadEvents();
+        $pluginCache = $store->loadPlugins();
     }
 
     $router = Router::fromArray($httpCache->routes);
@@ -97,6 +101,8 @@ if ($env->isProduction()) {
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
     // null = discover the package bootstrap list live, alongside the rest.
     $packageBootstraps = null;
+    // $pluginCache stays null from its declaration above — the same
+    // sentinel PluginDiscovery::bind() reads as "discover live" below.
     $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
 }
 
@@ -112,6 +118,11 @@ RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
 $phases['bootstrap.services'] = [$phaseStart, microtime(true)];
 
 $app->instance(EventListenerRegistry::class, $listenerRegistry);
+// Every installed package's own CacheableDiscoveryInterface data, bound
+// directly into AppScope before the bootstrap chain runs — a package's
+// own PackageBootstrap never touches this at all. null (development, or
+// production with nothing cached yet) means "discover live instead."
+PluginDiscovery::bind($app, $projectRoot, $pluginCache?->data);
 $app->boot();
 
 // Reported only now: these phases ran before any telemetry backend

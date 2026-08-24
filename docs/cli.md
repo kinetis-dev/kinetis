@@ -204,13 +204,14 @@ uses. A package declares its participation in its `composer.json` under
     "extra": {
         "kinetis": {
             "scan": "Acme\\Reports\\Console\\",
-            "bootstrap": "Acme\\Reports\\PackageBootstrap"
+            "bootstrap": "Acme\\Reports\\PackageBootstrap",
+            "discovery": "Acme\\Reports\\ReportRegistry"
         }
     }
 }
 ```
 
-Both keys are optional. `scan` is a comma-separated list of PSR-4
+All three keys are optional. `scan` is a comma-separated list of PSR-4
 namespace prefixes (each must sit at or below one of the package's own
 declared PSR-4 roots); every class under them joins the same
 attribute-driven discovery as your application's own code — `#[Command]`
@@ -224,6 +225,18 @@ $app, Config $config)` runs before your application's own
 alone, and anything your `bootstrap.php` registers afterward wins over a
 package's binding for the same id. A package bootstrap should stay inert
 when its configuration is absent — wiring, not side effects.
+
+`discovery` names a class implementing
+`Kinetis\Cache\CacheableDiscoveryInterface` — a package's own
+compile-time-discoverable data, folded into the shared AOT cache
+alongside routes/commands/events (see {doc}`caching`). The package
+supplies only `compile(string $projectRoot): array` (live discovery,
+reduced to plain data) and `fromArray(array $data): static`
+(reconstruction); the framework owns everything else — calling
+`compile()` to build the cache, writing/loading it, and binding the
+reconstructed instance into the container *before* any
+`PackageBootstrapInterface::register()` call runs, package bootstraps
+included. A package's own bootstrap never touches this data at all.
 
 Installing a package is what opts it in — there is no separate
 allow-list. If you install a package, you trust what it registers, the

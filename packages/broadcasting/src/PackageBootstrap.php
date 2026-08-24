@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kinetis\Broadcasting;
 
-use Composer\InstalledVersions;
 use Kinetis\Broadcasting\Driver\PusherBroadcaster;
 use Kinetis\Broadcasting\Exception\BroadcastingException;
 use Kinetis\Config\Config;
@@ -21,13 +20,10 @@ use Kinetis\RevoltHttpClient\Http;
  * `bootstrap.php` runs after this and wins on either binding, the same
  * override shape every other `extra.kinetis` package already gives.
  *
- * {@see BroadcastChannelRegistry} is discovered live here rather than
- * carried through the AOT cache — deliberately out of scope for this
- * pass: channel-authorizer discovery is a small, single-purpose scan
- * (mirroring `EventListenerRegistry`'s own registration cost, not
- * `Router`'s), and folding it into `Kinetis\Cache\Compiler`'s output
- * would touch a shared artifact every consumer's `bin/kinetis build`
- * produces, for a package most of them don't install.
+ * {@see BroadcastChannelRegistry} is not bound here at all — it's
+ * declared as this package's own `extra.kinetis` `discovery` class
+ * instead, so the framework itself compiles, caches, and binds it before
+ * this method ever runs (see `Kinetis\Cache\PluginDiscovery`).
  */
 final class PackageBootstrap implements PackageBootstrapInterface
 {
@@ -52,32 +48,5 @@ final class PackageBootstrap implements PackageBootstrapInterface
         };
 
         $app->instance(BroadcasterInterface::class, $broadcaster);
-
-        // Discovery itself stays lazy: nothing needs the channel registry
-        // except BroadcastAuthController, so a request that never hits
-        // /broadcasting/auth never pays for the scan.
-        $app->bind(
-            BroadcastChannelRegistry::class,
-            static fn (): BroadcastChannelRegistry => BroadcastChannelDiscovery::discover(self::projectRoot()),
-        );
-    }
-
-    /**
-     * The consumer project's own root — what discovery scans.
-     * Kinetis\Runtime\ProjectRoot::detect() only works from a file one
-     * level below the real project root (public/index.php, bin/kinetis's
-     * real bin-proxy) — never true of this class, which runs from
-     * wherever Composer happens to install this package (a symlinked
-     * path repository during development, an arbitrary vendor/ depth
-     * otherwise). Composer's own runtime API reports the root package's
-     * install path directly, regardless of either — the same mechanism
-     * kinetis/mcp's own PackageBootstrap already uses for its /mcp route,
-     * mirrored here rather than reinventing it.
-     */
-    private static function projectRoot(): string
-    {
-        $root = InstalledVersions::getRootPackage()['install_path'];
-
-        return rtrim($root, '/');
     }
 }

@@ -26,5 +26,8 @@ final class CacheFormat
     //     HttpCache lost mcpMiddleware, so an older http.php would hit
     //     an undefined key instead of the clean fall-back-and-recompile
     //     this version check exists for.
-    public const int VERSION = 11;
+    // 12: PluginCache/plugins.php introduced — every installed package's
+    //     own CacheableDiscoveryInterface data, declared via
+    //     extra.kinetis's "discovery" key.
+    public const int VERSION = 12;
 }

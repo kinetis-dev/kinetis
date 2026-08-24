@@ -15,7 +15,8 @@ namespace Kinetis\Cache;
  *     "extra": {
  *         "kinetis": {
  *             "scan": "Vendor\\Package\\Console\\,Vendor\\Package\\Http\\",
- *             "bootstrap": "Vendor\\Package\\PackageBootstrap"
+ *             "bootstrap": "Vendor\\Package\\PackageBootstrap",
+ *             "discovery": "Vendor\\Package\\SomeCacheableRegistry"
  *         }
  *     }
  *
@@ -26,7 +27,10 @@ namespace Kinetis\Cache;
  * every attribute Kinetis discovers for application code works on these
  * roots identically. `bootstrap` names a
  * {@see \Kinetis\Container\PackageBootstrapInterface} implementation run
- * ahead of the application's own bootstrap.php.
+ * ahead of the application's own bootstrap.php. `discovery` names a
+ * {@see CacheableDiscoveryInterface} implementation whose own compile-time
+ * data gets folded into the shared AOT cache — see
+ * {@see PluginDiscovery}.
  *
  * Reads vendor/composer/installed.json — Composer's own generated record
  * of what is installed, the one place `extra` and each package's
@@ -114,6 +118,48 @@ final class PackageDiscovery
 
             /** @var class-string $bootstrap */
             $classes[] = $bootstrap;
+        }
+
+        return $classes;
+    }
+
+    /**
+     * Classes declared by installed packages implementing
+     * {@see CacheableDiscoveryInterface} — the entire package-side
+     * surface of the pluggable AOT-cache mechanism. Everything else
+     * (calling `compile()`, writing/loading the shared cache file,
+     * binding the reconstructed instance into `AppScope`) is the
+     * framework's own job; see {@see PluginDiscovery}.
+     *
+     * A declared class that doesn't exist or doesn't implement the
+     * interface is a package-author mistake — surfaced via error_log()
+     * and skipped, the same tolerance `scanRoots()`/`bootstrapClasses()`
+     * already give their own malformed declarations.
+     *
+     * @return list<class-string<CacheableDiscoveryInterface>>
+     */
+    public static function discoveryClasses(string $projectRoot): array
+    {
+        $classes = [];
+
+        foreach (self::participants($projectRoot) as $package) {
+            $discovery = $package['kinetis']['discovery'] ?? null;
+
+            if (!is_string($discovery) || $discovery === '') {
+                continue;
+            }
+
+            if (!class_exists($discovery) || !is_a($discovery, CacheableDiscoveryInterface::class, true)) {
+                error_log(
+                    "Kinetis\\Cache\\PackageDiscovery: package \"{$package['name']}\" declares discovery class "
+                    . "\"{$discovery}\" in extra.kinetis, but it does not implement CacheableDiscoveryInterface — skipped.",
+                );
+
+                continue;
+            }
+
+            /** @var class-string<CacheableDiscoveryInterface> $discovery */
+            $classes[] = $discovery;
         }
 
         return $classes;

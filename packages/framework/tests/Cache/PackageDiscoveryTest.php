@@ -9,6 +9,7 @@ use Kinetis\Config\Config;
 use Kinetis\Console\CommandDiscovery;
 use Kinetis\Cache\RoutesFile;
 use Kinetis\Container\AppScope;
+use Kinetis\Tests\Cache\Fixtures\AcmePackage\AcmeCacheableDiscovery;
 use Kinetis\Tests\Cache\Fixtures\AcmePackage\AcmeFixtureBootstrap;
 use Kinetis\Tests\Cache\Fixtures\AcmePackage\AcmeMarker;
 use Kinetis\Tests\Cache\Fixtures\AcmePackage\Console\AcmeFixtureCommand;
@@ -50,6 +51,26 @@ final class PackageDiscoveryTest extends TestCase
     {
         self::assertSame([], PackageDiscovery::scanRoots('/nonexistent-root'));
         self::assertSame([], PackageDiscovery::bootstrapClasses('/nonexistent-root'));
+        self::assertSame([], PackageDiscovery::discoveryClasses('/nonexistent-root'));
+    }
+
+    public function test_discovery_classes_come_from_extra_kinetis(): void
+    {
+        self::assertSame(
+            [AcmeCacheableDiscovery::class],
+            PackageDiscovery::discoveryClasses(self::FIXTURE_ROOT),
+        );
+    }
+
+    public function test_a_discovery_class_not_implementing_the_interface_is_skipped(): void
+    {
+        // acme/bad-discovery declares AcmeMarker, a plain value object —
+        // it doesn't implement CacheableDiscoveryInterface, so it
+        // contributes nothing rather than crashing every request.
+        self::assertSame(
+            [AcmeCacheableDiscovery::class],
+            PackageDiscovery::discoveryClasses(self::FIXTURE_ROOT),
+        );
     }
 
     public function test_command_discovery_finds_a_package_provided_command(): void
