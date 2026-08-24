@@ -382,5 +382,5 @@ set up again.
 - {doc}`routing-validation` — `Hydrator`/`JsonSchema`, the validation
   machinery MCP tool arguments share with HTTP request bodies.
 - {doc}`logging` — registering the logger `McpServer` uses.
-- {doc}`caching` — how `bin/kinetis mcp:serve` avoids re-reflecting every
-  registered tool on every single call in production.
+- {doc}`caching` — how tool/resource discovery is part of the AOT cache
+  in production, avoiding live reflection entirely.

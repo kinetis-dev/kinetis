@@ -48,10 +48,9 @@ Nine things get precomputed:
 project-wide scan for all three middleware attributes, not three — see
 {doc}`middleware`.
 
-MCP is not compiled here: `kinetis/mcp` discovers its tools and
-resources when something first resolves the server — once per worker
-under a persistent runtime, once per `/mcp` request under PHP-FPM, and
-never on a request that doesn't touch it. See {doc}`mcp`.
+MCP tools and resources are part of this cache too — `kinetis/mcp`'s
+`McpRegistry` is a `CacheableDiscoveryInterface` class like any other
+installed package's, one more entry in `plugins.php`. See {doc}`mcp`.
 
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.

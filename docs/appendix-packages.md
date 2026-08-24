@@ -46,18 +46,17 @@ only the classes with a real `amphp/redis` dependency moved.
 ## `packages/mcp` (`kinetis/mcp`)
 
 The Model Context Protocol server. Installing the package is the whole
-setup: its `extra.kinetis` declares a scan root covering the namespace
-and a bootstrap, so the `/mcp` route, `mcp:serve`, and the docs
-resources all appear with nothing to wire. Core has no MCP surface
-without it.
+setup: its `extra.kinetis` declares a scan root covering the namespace,
+a bootstrap, and a `discovery` class, so the `/mcp` route, `mcp:serve`,
+and the docs resources all appear with nothing to wire. Core has no MCP
+surface without it.
 
-- `PackageBootstrap` — lazy-binds `McpServer`: discovery
-  (`McpDiscovery::discover()`) runs when something first resolves the
-  server — once per worker under a persistent runtime, once per `/mcp`
-  request under PHP-FPM, never on a request that doesn't touch it. The
-  project root comes from Composer's own runtime API
-  (`InstalledVersions::getRootPackage()`), so the same code serves a
-  consumer install and this package's own development.
+- `PackageBootstrap` — lazy-binds `McpServer`, assembled around whatever
+  `McpRegistry` is already resolvable from the container. `McpRegistry`
+  is not discovered here at all — it's declared as this package's own
+  `extra.kinetis` `discovery` class instead, so the framework itself
+  compiles, caches, and binds it before this method ever runs (see
+  `Kinetis\Cache\PluginDiscovery`).
 - `Http\McpController` — `/mcp` as an ordinary route (`#[Post('/mcp')]`,
   `#[Middleware('@mcp')]`): parse-error handling, protocol-era
   detection, the mirrored-header checks (`MCP-Protocol-Version`/
@@ -79,12 +78,12 @@ without it.
   bootstrap's own `McpServer` binding and handing the transport the
   real `AppScope` for per-message scopes.
 - `McpServer` — handles one decoded JSON-RPC message; `handle()` takes an optional per-message scope threaded through to `McpDispatcher`. Supports the legacy (`2025-03-26`) `initialize` handshake and the modern (`2026-07-28`) stateless `server/discover` model side by side. `logger` param defaults to `NullLogger` (constructed directly, not through the container). A throwing tool reports `isError: true` with the fixed content string `Tool execution failed.`, the real exception going to the logger — a failed validation keeps its real `errors` map, since that's the argument feedback an agent retries on. `wrapModernResult()` adds `ttlMs`/`cacheScope` per `CACHEABLE_METHOD_SCOPES` (`server/discover`/`tools/list`/`resources/list` → `public`, `resources/read` → `private`, `tools/call` → neither, since it's an action not a cacheable read). The optional constructor `$instructions` is included on `server/discover` only when given, omitted entirely otherwise.
-- `McpRegistry` — `#[McpTool]`/`#[McpResource]` discovery, `toArray()`/`fromArray()` for the AOT cache.
+- `McpRegistry` — `#[McpTool]`/`#[McpResource]` discovery, `toArray()`/`fromArray()` for the AOT cache. Implements `Kinetis\Cache\CacheableDiscoveryInterface`; `compile()` delegates to `McpDiscovery::discover()`. `toArray()`/`fromArray()` also convert a tool's `inputSchema.properties` between `JsonSchema`'s live `(object) []` (empty properties, so it JSON-encodes as `{}` not `[]`) and a plain empty array — `var_export()` has no way to represent a `stdClass` instance that can be required back, a real gap only exposed once this data started going through the AOT cache.
 - `McpDispatcher` — the MCP analogue of `Http\Dispatcher`. `callTool()`/`readResource()` take an optional per-call scope the transports create per message; the controller and its dependencies resolve from it, falling back to the constructor's container when none is given (which is then not per-message-scoped).
 - `ProgressReporter` — injected by type into a tool method; `report()` streams a `notifications/progress` event when `_meta.progressToken` is present, a no-op otherwise.
 - `Transport\StdioTransport` — one JSON-RPC message per line on stdin/stdout. Given an `AppScope` (as `mcp:serve` passes), each line is a unit of work: fresh scope, the `TransactionGuard` rollback hook behind the same `class_exists()` gate `Kernel` uses, disposal once the response is written, then `gc_collect_cycles()` — a stdio server is a persistent process. Without one, messages share the dispatcher's own container, the pre-scope behavior.
 - `KinetisDocsResource` — registers every `docs/*.md` page as an MCP resource (`kinetis://docs/{slug}`) — the monorepo's own files when developing Kinetis, the published documentation otherwise. Lives under this package's scan root, so discovery always finds it on both transports; registering it manually (`$registry->register(KinetisDocsResource::class)`) is only needed for a hand-wired `McpRegistry` that never goes through discovery.
-- `McpDiscovery::discover(string $projectRoot, ?array $paths = null): McpRegistry` — builds a registry from every class found anywhere under a project's own PSR-4 root(s), plus `Kinetis\Mcp` itself (`NamespaceScanner`, see `Kinetis\Cache` below), rather than an explicit registration file. `$paths`, or `MCP_DISCOVERY_PATHS` when omitted, restricts the project-side scan.
+- `McpDiscovery::discover(string $projectRoot, ?array $paths = null): McpRegistry` — builds a registry from every class found anywhere under a project's own PSR-4 root(s), plus `Kinetis\Mcp` itself (`NamespaceScanner`, see `Kinetis\Cache` below), rather than an explicit registration file. `$paths`, or `MCP_DISCOVERY_PATHS` when omitted, restricts the project-side scan. This is the same live-discovery path `McpRegistry::compile()` calls for the AOT-cache build, not a separate mechanism.
 
 ## `packages/migrations` (`kinetis/migrations`)
 
