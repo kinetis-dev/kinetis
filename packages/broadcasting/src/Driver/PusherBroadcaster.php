@@ -67,6 +67,12 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
 
         $path = "/apps/{$this->appId}/events";
 
+        // md5() here is the Pusher REST API's own body_md5 parameter — a
+        // body-integrity checksum every trigger request carries, not a
+        // security control; the actual request authentication is the
+        // HMAC-SHA256 signature sign() computes below. Every Pusher-
+        // protocol server (Soketi, Reverb, Pusher's own) expects exactly
+        // this, so there's no algorithm to swap.
         $this->http
             ->send('POST', $this->baseUrl() . $this->signedQuery('POST', $path, ['body_md5' => md5($body)]), [
                 'body' => $body,
