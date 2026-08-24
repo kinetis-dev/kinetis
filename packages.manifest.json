@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -127,6 +127,19 @@
             ],
             "kinetis": []
         },
+        "authorization": {
+            "name": "kinetis/authorization",
+            "description": "Ability-based authorization for Kinetis — Gate wraps a callable Policy check, normalizing a bool/AuthorizationResponse result and turning a denial into a 403 through one registered middleware.",
+            "namespace": "Kinetis\\Authorization\\",
+            "testNamespace": "Kinetis\\Authorization\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework"
+            ],
+            "kinetis": {
+                "bootstrap": "Kinetis\\Authorization\\PackageBootstrap"
+            }
+        },
         "auth": {
             "name": "kinetis/auth",
             "description": "Bearer/opaque-token authentication middleware for Kinetis, built entirely on interfaces core already requires (PSR-7/PSR-15). See kinetis/auth-jwt for stateless JWT verification instead.",
@@ -181,7 +194,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "requires": [
                 "framework"
             ],

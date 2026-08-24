@@ -1,0 +1,50 @@
+{
+    "name": "kinetis/authorization",
+    "description": "Ability-based authorization for Kinetis — Gate wraps a callable Policy check, normalizing a bool/AuthorizationResponse result and turning a denial into a 403 through one registered middleware.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/framework": "dev-main"
+    },
+    "require-dev": {
+        "infection/infection": "^0.35.0",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^12.5.33",
+        "vimeo/psalm": "^6.16.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\Authorization\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\Authorization\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "kinetis": {
+            "bootstrap": "Kinetis\\Authorization\\PackageBootstrap"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../framework"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

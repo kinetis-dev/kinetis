@@ -176,6 +176,7 @@ queue-rabbitmq
 auth
 auth-jwt
 session
+authorization
 ```
 
 ```{toctree}

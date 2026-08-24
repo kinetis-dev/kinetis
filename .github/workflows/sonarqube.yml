@@ -184,7 +184,7 @@ jobs:
             } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
             echo "$pkg done"
           }
-          for pkg in framework persistence cache-redis auth auth-jwt bref-adapter roadrunner-adapter mailer broadcasting mcp migrations pingpong query-builder queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
+          for pkg in framework persistence cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp migrations pingpong query-builder queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
             run_pkg "$pkg" &
             while [ "$(jobs -rp | wc -l)" -ge 4 ]; do sleep 1; done
           done

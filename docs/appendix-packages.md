@@ -345,6 +345,22 @@ discovered as global middleware on install) and a `PackageBootstrap`.
   an install that only wants request spans. Own
   `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
+## `packages/authorization` (`kinetis/authorization`)
+
+Separate Composer package, not part of `kinetis/framework` core.
+Deliberately unopinionated: no attribute, no registry, no runtime
+type-based dispatch of any kind — an earlier design keyed a Policy
+lookup off a subject argument's own class, and was replaced with plain
+first-class callables before this package shipped, precisely to avoid
+that implicit resolution.
+
+- `Kinetis\Authorization\Gate` — `authorize(CurrentUserInterface $user, callable $check, mixed ...$arguments): void` (throws `Exception\AuthorizationException` on denial), `allows()`/`denies()` (both `bool`, never throw). All three are `@template TUser of CurrentUserInterface`, `$check` typed `callable(TUser, mixed...): bool|AuthorizationResponse` — a first-class callable reference to any method (`$policy->update(...)`) or a plain closure; the template lets a Policy method type-hint a concrete `CurrentUserInterface` implementation richer than the interface itself (`kinetis/auth-jwt`'s `JwtUser`, reading its already-decoded claims with no query) and still pass PHPStan level 8, confirmed directly rather than assumed — the un-templated signature rejects exactly this case as a contravariance violation. `Gate` resolves nothing itself and holds no state, so it's safe as a worker-lifetime autowired instance with no explicit binding needed.
+- `Kinetis\Authorization\AuthorizationResponse` — `allow()`/`deny(string $message = 'This action is unauthorized.')`/`fromBool(bool)`. A check returning a bare `bool` is normalized via `fromBool()`; one returning this directly can carry a denial-specific message instead of the generic default.
+- `Kinetis\Authorization\Exception\AuthorizationException` — thrown by `authorize()`, carrying whichever message the denying `AuthorizationResponse` resolved to.
+- `Kinetis\Authorization\AuthorizationExceptionMiddleware` — global PSR-15 middleware (stateless, safe as the shared instance every global middleware is), registered unconditionally by `PackageBootstrap`. Catches `AuthorizationException` specifically and returns `ErrorResponse::create(403, $e->getMessage())` — sitting inside `Kernel`'s own always-outermost `ExceptionHandlerMiddleware`, so the denial is caught here first, before that outer catch-all's generic `500`.
+- `Kinetis\Authorization\PackageBootstrap` — declared via `extra.kinetis`; its only job is `$app->middleware(AuthorizationExceptionMiddleware::class)`. No `scan`/`discovery` key — there's no attribute-discoverable resource in this package.
+- Depends on `kinetis/framework` only (via a `path` repository to this monorepo's root) — no dependency on `kinetis/auth`, `kinetis/auth-jwt`, or `kinetis/session`, since `Gate` only needs core's own `CurrentUserInterface`. No third-party dependency. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
+
 ## `packages/auth` (`kinetis/auth`)
 
 Separate Composer package, not part of `kinetis/framework` core.
