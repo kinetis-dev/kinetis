@@ -158,11 +158,11 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
         $paramNames = [];
         $regexParts = [];
 
-        $segments = preg_split('/(\{[A-Za-z_][A-Za-z0-9_]*\})/', $pattern, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
+        $segments = preg_split('/(\{[A-Za-z_]\w*\})/', $pattern, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY);
         assert($segments !== false);
 
         foreach ($segments as $segment) {
-            if (preg_match('/^\{([A-Za-z_][A-Za-z0-9_]*)\}$/', $segment, $match) === 1) {
+            if (preg_match('/^\{([A-Za-z_]\w*)\}$/', $segment, $match) === 1) {
                 $paramNames[] = $match[1];
                 $regexParts[] = '(?P<' . $match[1] . '>[^.]+)';
 

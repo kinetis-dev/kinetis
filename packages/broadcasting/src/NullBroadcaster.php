@@ -18,5 +18,6 @@ final class NullBroadcaster implements BroadcasterInterface
     #[\Override]
     public function broadcast(string $channel, string $event, array $payload): void
     {
+        // Intentionally empty — see the class docblock.
     }
 }
