@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -126,6 +126,19 @@
                 "persistence"
             ],
             "kinetis": []
+        },
+        "authorization": {
+            "name": "kinetis/authorization",
+            "description": "Ability-based authorization for Kinetis — Gate wraps a callable Policy check, normalizing a bool/AuthorizationResponse result and turning a denial into a 403 through one registered middleware.",
+            "namespace": "Kinetis\\Authorization\\",
+            "testNamespace": "Kinetis\\Authorization\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework"
+            ],
+            "kinetis": {
+                "bootstrap": "Kinetis\\Authorization\\PackageBootstrap"
+            }
         },
         "auth": {
             "name": "kinetis/auth",

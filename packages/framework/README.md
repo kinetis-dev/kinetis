@@ -123,6 +123,7 @@ dependencies:
 | [`kinetis/cache-redis`](https://kinetis.dev/docs/persistence.html) | Redis-backed PSR-16 `CacheInterface` — single-node, Cluster, and TLS |
 | [`kinetis/auth`](https://kinetis.dev/docs/auth.html) | Opaque Bearer-token authentication middleware |
 | [`kinetis/auth-jwt`](https://kinetis.dev/docs/auth-jwt.html) | Stateless JWT authentication (HS256/RS256), with optional per-token revocation |
+| [`kinetis/authorization`](https://kinetis.dev/docs/authorization.html) | Unopinionated ability-based authorization — `Gate` wraps any callable Policy check |
 | [`kinetis/migrations`](https://kinetis.dev/docs/migrations.html) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
 | [`kinetis/query-builder`](https://kinetis.dev/docs/query-builder.html) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |
 | [`kinetis/queue`](https://kinetis.dev/docs/queue.html) | A backend-agnostic background job queue — every backend lives in its own separate package |
