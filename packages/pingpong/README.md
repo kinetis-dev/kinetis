@@ -66,18 +66,18 @@ Copy `packages/pingpong/` out into a new project, point its
 `composer.json` at a real `kinetis/framework` install instead of the `path`
 repository this monorepo uses internally, and modify from there — every
 piece (`bootstrap.php`, the migration, the repository, the job, the
-scheduled command, the events, the Soketi publisher,
-`resources/views/dashboard.php`) is a small, plain file meant to be read
-end to end. Kinetis itself has no opinion on HTML templating —
-`HtmlResponse::create()` just takes a string — so `PingController::index()`
-shows one reasonable way to wire in a small templating library
-([`league/plates`](https://platesphp.com/)) instead of building the page
-as one large string. The logo (`public/logo.svg`), stylesheet
-(`public/dashboard.css`), and browser script (`public/dashboard.js`) are
-plain static files served directly, not template data — only the Soketi
-connection details are actually dynamic, passed to `dashboard.js`
-through a `type="application/json"` data island rather than any inline
-script of the template's own.
+scheduled command, the events, the broadcaster and its private-channel
+authorizer, `resources/views/dashboard.php`) is a small, plain file
+meant to be read end to end. Kinetis itself has no opinion on HTML
+templating — `HtmlResponse::create()` just takes a string — so
+`PingController::index()` shows one reasonable way to wire in a small
+templating library ([`league/plates`](https://platesphp.com/)) instead
+of building the page as one large string. The logo (`public/logo.svg`),
+stylesheet (`public/dashboard.css`), and browser script
+(`public/dashboard.js`) are plain static files served directly, not
+template data — only the Soketi connection details are actually
+dynamic, passed to `dashboard.js` through a `type="application/json"`
+data island rather than any inline script of the template's own.
 
 ## Learn by building the same thing yourself
 

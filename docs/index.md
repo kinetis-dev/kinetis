@@ -207,6 +207,7 @@ telemetry
 storage
 storage-s3
 mailer
+broadcasting
 revolt-http-client
 search-opensearch
 aws-sigv4

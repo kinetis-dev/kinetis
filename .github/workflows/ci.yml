@@ -105,6 +105,7 @@ jobs:
           - { name: queue-sqs, dir: packages/queue-sqs, phpunit: true }
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, phpunit: true }
           - { name: mailer, dir: packages/mailer, phpunit: true }
+          - { name: broadcasting, dir: packages/broadcasting, phpunit: true }
           - { name: search-opensearch, dir: packages/search-opensearch, phpunit: true }
           - { name: telemetry, dir: packages/telemetry, phpunit: true }
           - { name: session, dir: packages/session, phpunit: true }

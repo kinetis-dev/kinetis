@@ -6,10 +6,10 @@ namespace App\Tests\Unit;
 
 use App\Events\ActionEvent;
 use App\Listeners\ActionEventListener;
-use App\Services\SoketiPublisher;
+use Kinetis\Broadcasting\Broadcaster;
+use Kinetis\Broadcasting\BroadcasterInterface;
 use Kinetis\Events\Listener;
 use PHPUnit\Framework\TestCase;
-use Pusher\Pusher;
 use ReflectionMethod;
 
 /**
@@ -20,19 +20,61 @@ use ReflectionMethod;
  */
 final class ActionEventListenerTest extends TestCase
 {
-    public function test_republishes_the_event_to_soketi(): void
+    public function test_republishes_the_event_to_the_public_channel(): void
     {
-        $pusher = $this->createMock(Pusher::class);
-        $pusher->expects(self::once())
-            ->method('trigger')
+        $driver = $this->createMock(BroadcasterInterface::class);
+        $driver->expects(self::once())
+            ->method('broadcast')
             ->with(
-                SoketiPublisher::CHANNEL,
+                ActionEventListener::PUBLIC_CHANNEL,
                 'action',
-                ['stage' => 'socket', 'id' => 12, 'scenario' => 'queued'],
+                ['stage' => 'app', 'id' => 12, 'scenario' => 'queued'],
             );
 
-        new ActionEventListener(new SoketiPublisher($pusher))
+        new ActionEventListener(new Broadcaster($driver))
+            ->onActionEvent(new ActionEvent('app', 12, 'queued'));
+    }
+
+    /**
+     * A ponged ping additionally notifies the private channel — the one
+     * stage that means "this visitor's ping actually completed", which
+     * is also the demo for kinetis/broadcasting's private channels.
+     */
+    public function test_a_socket_stage_also_notifies_the_private_channel(): void
+    {
+        $calls = [];
+        $driver = $this->createMock(BroadcasterInterface::class);
+        $driver->expects(self::exactly(2))
+            ->method('broadcast')
+            ->willReturnCallback(function (string $channel, string $event, array $payload) use (&$calls): void {
+                $calls[] = [$channel, $event, $payload];
+            });
+
+        new ActionEventListener(new Broadcaster($driver))
             ->onActionEvent(new ActionEvent('socket', 12, 'queued'));
+
+        self::assertSame(
+            [ActionEventListener::PUBLIC_CHANNEL, 'action', ['stage' => 'socket', 'id' => 12, 'scenario' => 'queued']],
+            $calls[0],
+        );
+        self::assertSame(
+            [ActionEventListener::PRIVATE_CHANNEL, 'pong.notified', ['id' => 12, 'scenario' => 'queued']],
+            $calls[1],
+        );
+    }
+
+    /**
+     * The browser flashes a diagram node per stage; a stage with no row
+     * yet, or no scenario, still has to arrive rather than be dropped.
+     */
+    public function test_a_stage_without_an_id_or_scenario_is_still_published(): void
+    {
+        $driver = $this->createMock(BroadcasterInterface::class);
+        $driver->expects(self::once())
+            ->method('broadcast')
+            ->with(ActionEventListener::PUBLIC_CHANNEL, 'action', ['stage' => 'app', 'id' => null, 'scenario' => null]);
+
+        new ActionEventListener(new Broadcaster($driver))->onActionEvent(new ActionEvent('app'));
     }
 
     public function test_is_discoverable_as_a_listener_for_the_action_event(): void

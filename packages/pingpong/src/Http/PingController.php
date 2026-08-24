@@ -29,8 +29,8 @@ final readonly class PingController
 
     /**
      * Renders the dashboard page. The logo, stylesheet, and script are
-     * static files under public/ — only the Soketi connection details are
-     * actually dynamic, passed to the static dashboard.js via a
+     * static files under public/ — only the broadcast connection details
+     * are actually dynamic, passed to the static dashboard.js via a
      * type="application/json" data island rather than any inline script
      * logic of the template's own.
      */
@@ -41,10 +41,10 @@ final readonly class PingController
         $engine = new Engine(dirname(__DIR__, 2) . '/resources/views');
 
         return HtmlResponse::create($engine->render('dashboard', [
-            'soketiConfig' => [
-                'key' => $this->config->string('SOKETI_KEY', 'app-key'),
-                'host' => $this->config->string('SOKETI_BROWSER_HOST', 'localhost'),
-                'port' => $this->config->int('SOKETI_BROWSER_PORT', 6001),
+            'broadcastConfig' => [
+                'key' => $this->config->string('BROADCAST_KEY', 'app-key'),
+                'host' => $this->config->string('BROADCAST_BROWSER_HOST', 'localhost'),
+                'port' => $this->config->int('BROADCAST_BROWSER_PORT', 6001),
             ],
         ]));
     }

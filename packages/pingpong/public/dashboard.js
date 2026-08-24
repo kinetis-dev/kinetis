@@ -1,5 +1,5 @@
 (function () {
-  var soketiConfig = JSON.parse(document.getElementById('soketi-config').textContent);
+  var broadcastConfig = JSON.parse(document.getElementById('broadcast-config').textContent);
 
   var tally = { direct: 0, queued: 0, cron: 0 };
 
@@ -53,8 +53,7 @@
     if (el) el.textContent = String(tally[scenario]);
   }
 
-  function trimLog() {
-    var list = document.getElementById('log-list');
+  function trimLog(list) {
     while (list.children.length > 10) {
       list.removeChild(list.lastChild);
     }
@@ -70,23 +69,35 @@
     var tag = scenario ? scenario.toUpperCase() : '&hellip;';
     li.innerHTML = '#' + id + ' <span class="tag">[' + tag + ']</span> ping &hellip; <span class="waiting">waiting</span>';
     list.insertBefore(li, list.firstChild);
-    trimLog();
+    trimLog(list);
   }
 
   // Completes the log row for a ponged ping.
   function completeLogRow(id, scenario) {
+    var list = document.getElementById('log-list');
     var li = document.getElementById('log-row-' + id);
     if (!li) {
       li = document.createElement('li');
       li.id = 'log-row-' + id;
-      document.getElementById('log-list').insertBefore(li, document.getElementById('log-list').firstChild);
+      list.insertBefore(li, list.firstChild);
     }
     li.className = 'status-ponged';
     li.innerHTML = '#' + id + ' <span class="tag">[' + scenario.toUpperCase() + ']</span> ping &rarr; pong';
-    trimLog();
+    trimLog(list);
   }
 
-  // Sends a ping; the UI updates only once Soketi replies.
+  // A message delivered only to a subscriber pusher-js has already
+  // authorized against POST /broadcasting/auth — this list is proof the
+  // handshake succeeded, not merely that the public channel works.
+  function logPrivateNotification(id, scenario) {
+    var list = document.getElementById('private-log-list');
+    var li = document.createElement('li');
+    li.innerHTML = '#' + id + ' <span class="tag">[' + scenario.toUpperCase() + ']</span> your ping was ponged';
+    list.insertBefore(li, list.firstChild);
+    trimLog(list);
+  }
+
+  // Sends a ping; the UI updates only once the broadcast arrives.
   function sendPing(url) {
     flashNode('node-browser');
     fetch(url, { method: 'POST' });
@@ -129,13 +140,19 @@
   });
   startAutoPing();
 
-  var pusher = new Pusher(soketiConfig.key, {
-    wsHost: soketiConfig.host,
-    wsPort: soketiConfig.port,
+  var pusher = new Pusher(broadcastConfig.key, {
+    wsHost: broadcastConfig.host,
+    wsPort: broadcastConfig.port,
     forceTLS: false,
     enabledTransports: ['ws'],
-    cluster: 'kinetis'
+    cluster: 'kinetis',
+    // Only reached for the private-notifications subscription below —
+    // pusher-js calls this itself before a private/presence channel is
+    // allowed to subscribe. Kinetis\Broadcasting\Http\BroadcastAuthController
+    // is the server side of this handshake.
+    authEndpoint: '/broadcasting/auth'
   });
+
   var channel = pusher.subscribe('ping-pong');
   channel.bind('action', function (data) {
     var nodeId = stageToNode[data.stage];
@@ -149,5 +166,19 @@
       bumpTally(data.scenario);
       completeLogRow(data.id, data.scenario);
     }
+  });
+
+  // Demonstrates kinetis/broadcasting's private channels: subscribing
+  // here only succeeds once NotificationChannelAuthorizer has signed it
+  // off, through the real /broadcasting/auth round trip above.
+  var privateChannel = pusher.subscribe('private-notifications');
+  privateChannel.bind('pusher:subscription_succeeded', function () {
+    console.log('private-notifications: authorized and subscribed');
+  });
+  privateChannel.bind('pusher:subscription_error', function (status) {
+    console.error('private-notifications: authorization failed', status);
+  });
+  privateChannel.bind('pong.notified', function (data) {
+    logPrivateNotification(data.id, data.scenario);
   });
 })();

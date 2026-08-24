@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Tests\Http;
 
 use App\Repositories\PingRepository;
-use App\Services\SoketiPublisher;
 use App\Tests\Fixtures\RecordingQueue;
+use Kinetis\Broadcasting\BroadcasterInterface;
+use Kinetis\Broadcasting\NullBroadcaster;
 use Kinetis\Queue\QueueInterface;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
@@ -15,7 +16,6 @@ use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Testing\DatabaseTransactions;
 use Kinetis\Testing\ApplicationTestCase;
 use PHPUnit\Framework\Attributes\BeforeClass;
-use Pusher\Pusher;
 use Throwable;
 
 /**
@@ -86,16 +86,16 @@ final class PingControllerTest extends ApplicationTestCase
     }
 
     /**
-     * The controller announces every stage to Soketi and defers one
-     * scenario to a Redis-backed queue, neither of which this suite has
-     * any reason to need: these tests are about what reaches the
+     * The controller announces every stage to the broadcaster and defers
+     * one scenario to a Redis-backed queue, neither of which this suite
+     * has any reason to need: these tests are about what reaches the
      * database. Substituting both is what lets them run against a bare
      * MySQL rather than only inside the full stack.
      */
     #[\Override]
     protected function registerTestDoubles(AppScope $app, Config $config): void
     {
-        $app->instance(SoketiPublisher::class, new SoketiPublisher($this->createStub(Pusher::class)));
+        $app->instance(BroadcasterInterface::class, new NullBroadcaster());
         // Redis, for the same reason. A queue that holds the job rather
         // than running it is what keeps a queued ping pending, which is
         // what the test below asserts.

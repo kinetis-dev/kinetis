@@ -23,7 +23,8 @@ A tiny "ping/pong" API:
 - A scheduled command replies on its own, every few seconds, with no
   request involved at all.
 - A browser page watches every one of those happen in real time, over a
-  WebSocket.
+  public WebSocket channel, plus a private one it has to authorize
+  against first.
 
 Each piece is stored in a database, so `MySQL`, a migration, and the
 query builder come first — everything after that builds on having
@@ -709,30 +710,34 @@ docker compose up --build
 Watch `ping_messages` grow a new `cron`-scenario row, already `ponged`,
 every five seconds — with no request involved at all.
 
-## Making it real-time: events and Soketi
+## Making it real-time: events and kinetis/broadcasting
 
 Three scenarios work independently now. The last piece is watching all
 three happen live, in a browser, instead of checking the database by
 hand.
 
 ```{code-block} bash
-composer require pusher/pusher-php-server
+composer require kinetis/broadcasting
 ```
 
 ```{code-block} text
 :caption: .env (additions)
 
-SOKETI_APP_ID=app-id
-SOKETI_KEY=app-key
-SOKETI_SECRET=app-secret
+BROADCAST_DRIVER=pusher
+BROADCAST_APP_ID=app-id
+BROADCAST_KEY=app-key
+BROADCAST_SECRET=app-secret
 
 # Used by the PHP backend to publish, over the docker-compose network.
-SOKETI_HOST=soketi
-SOKETI_PORT=6001
+BROADCAST_HOST=soketi
+BROADCAST_PORT=6001
+BROADCAST_TLS=false
 
-# Used by the browser to subscribe, from outside the docker-compose network.
-SOKETI_BROWSER_HOST=localhost
-SOKETI_BROWSER_PORT=6001
+# Used by the browser to subscribe, from outside the docker-compose
+# network — app-level config, not part of kinetis/broadcasting's own
+# BROADCAST_* contract, since only the server ever talks to BROADCAST_HOST.
+BROADCAST_BROWSER_HOST=localhost
+BROADCAST_BROWSER_PORT=6001
 ```
 
 ```{code-block} yaml
@@ -741,9 +746,9 @@ SOKETI_BROWSER_PORT=6001
   soketi:
     image: quay.io/soketi/soketi:1.4-16-debian
     environment:
-      SOKETI_DEFAULT_APP_ID: ${SOKETI_APP_ID:-app-id}
-      SOKETI_DEFAULT_APP_KEY: ${SOKETI_KEY:-app-key}
-      SOKETI_DEFAULT_APP_SECRET: ${SOKETI_SECRET:-app-secret}
+      SOKETI_DEFAULT_APP_ID: ${BROADCAST_APP_ID:-app-id}
+      SOKETI_DEFAULT_APP_KEY: ${BROADCAST_KEY:-app-key}
+      SOKETI_DEFAULT_APP_SECRET: ${BROADCAST_SECRET:-app-secret}
     ports:
       - "6001:6001"
 ```
@@ -769,56 +774,13 @@ final readonly class ActionEvent
 }
 ```
 
-A class to publish it to Soketi:
-
-```{code-block} php
-:caption: src/Services/SoketiPublisher.php
-
-<?php
-
-declare(strict_types=1);
-
-namespace App\Services;
-
-use Kinetis\Config\Config;
-use Pusher\Pusher;
-
-final readonly class SoketiPublisher
-{
-    public const CHANNEL = 'ping-pong';
-
-    public function __construct(
-        private Pusher $pusher,
-    ) {}
-
-    public static function fromConfig(Config $config): self
-    {
-        $pusher = new Pusher(
-            $config->string('SOKETI_KEY', 'app-key'),
-            $config->string('SOKETI_SECRET', 'app-secret'),
-            $config->string('SOKETI_APP_ID', 'app-id'),
-            [
-                'host' => $config->string('SOKETI_HOST', 'soketi'),
-                'port' => $config->int('SOKETI_PORT', 6001),
-                'useTLS' => false,
-            ],
-        );
-
-        return new self($pusher);
-    }
-
-    public function actionOccurred(string $stage, ?int $id, ?string $scenario = null): void
-    {
-        $this->pusher->trigger(self::CHANNEL, 'action', [
-            'stage' => $stage,
-            'id' => $id,
-            'scenario' => $scenario,
-        ]);
-    }
-}
-```
-
-And a listener that republishes every `ActionEvent` it sees:
+Installing `kinetis/broadcasting` is the entire wiring — its own package
+bootstrap reads `BROADCAST_DRIVER` and binds `BroadcasterInterface`
+before your own `bootstrap.php` ever runs, the same "nothing to
+register" shape `kinetis/persistence` and `kinetis/queue` already have.
+There's no publisher class to write and no `bootstrap.php` needed for
+this. A listener that republishes every `ActionEvent` it sees just
+constructor-injects `Kinetis\Broadcasting\Broadcaster`:
 
 ```{code-block} php
 :caption: src/Listeners/ActionEventListener.php
@@ -830,45 +792,32 @@ declare(strict_types=1);
 namespace App\Listeners;
 
 use App\Events\ActionEvent;
-use App\Services\SoketiPublisher;
+use Kinetis\Broadcasting\Broadcaster;
 use Kinetis\Events\Listener;
 
 final readonly class ActionEventListener
 {
+    public const string CHANNEL = 'ping-pong';
+
     public function __construct(
-        private SoketiPublisher $soketi,
+        private Broadcaster $broadcaster,
     ) {}
 
     #[Listener]
     public function onActionEvent(ActionEvent $event): void
     {
-        $this->soketi->actionOccurred($event->stage, $event->id, $event->scenario);
+        $this->broadcaster->broadcast(self::CHANNEL, 'action', [
+            'stage' => $event->stage,
+            'id' => $event->id,
+            'scenario' => $event->scenario,
+        ]);
     }
 }
 ```
 
-`ActionEventListener` needs nothing registered for it — any class anywhere
-under your own PSR-4 root carrying a `#[Listener]` method is found
-automatically. `SoketiPublisher` is the first service that genuinely
-needs app-side wiring — the database and queue bindings come from their
-packages' own bootstraps — so create the optional `bootstrap.php` at the
-project root for it:
-
-```{code-block} php
-:caption: bootstrap.php
-
-<?php
-
-declare(strict_types=1);
-
-use App\Services\SoketiPublisher;
-use Kinetis\Config\Config;
-use Kinetis\Container\AppScope;
-
-return static function (AppScope $app, Config $config): void {
-    $app->instance(SoketiPublisher::class, SoketiPublisher::fromConfig($config));
-};
-```
+`ActionEventListener` needs nothing registered for it either — any class
+anywhere under your own PSR-4 root carrying a `#[Listener]` method is
+found automatically.
 
 `public/index.php` needs one more line, though — `EventDispatcher`
 resolves `EventListenerRegistry` through the container, which means it
@@ -1099,9 +1048,9 @@ final readonly class PingController
     #[Get('/')]
     public function index(): ResponseInterface
     {
-        $key = $this->config->string('SOKETI_KEY', 'app-key');
-        $host = $this->config->string('SOKETI_BROWSER_HOST', 'localhost');
-        $port = $this->config->int('SOKETI_BROWSER_PORT', 6001);
+        $key = $this->config->string('BROADCAST_KEY', 'app-key');
+        $host = $this->config->string('BROADCAST_BROWSER_HOST', 'localhost');
+        $port = $this->config->int('BROADCAST_BROWSER_PORT', 6001);
 
         return HtmlResponse::create(<<<HTML
             <!doctype html>
@@ -1156,6 +1105,173 @@ Open `http://localhost:8080/` and click either button. Each click logs
 `socket` a few seconds later once the worker picks it up. Leave the page
 open and watch a `cron`/`socket` pair appear on its own every five
 seconds, with nobody clicking anything.
+
+## Authorizing a private channel
+
+Every message above went over a public channel — anyone who knows the
+channel name can subscribe. A **private** channel additionally requires
+a signed authorization: the client calls `POST /broadcasting/auth`
+before it's allowed to join, and that endpoint needs a real identity to
+authorize against.
+
+`kinetis/broadcasting` doesn't ship an identity of its own — it reads
+`Kinetis\Http\CurrentUserInterface` off the request scope, the same
+contract a real auth package (see {doc}`auth` or {doc}`auth-jwt`) would
+register from its own middleware. This tutorial has no login, so bind a
+single, fixed visitor instead:
+
+```{code-block} php
+:caption: src/Broadcasting/DemoVisitor.php
+
+<?php
+
+declare(strict_types=1);
+
+namespace App\Broadcasting;
+
+use Kinetis\Http\CurrentUserInterface;
+
+final readonly class DemoVisitor implements CurrentUserInterface
+{
+    public function id(): string
+    {
+        return 'visitor';
+    }
+}
+```
+
+```{code-block} php
+:caption: bootstrap.php
+
+<?php
+
+declare(strict_types=1);
+
+use App\Broadcasting\DemoVisitor;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use Kinetis\Http\CurrentUserInterface;
+
+return static function (AppScope $app, Config $config): void {
+    $app->instance(CurrentUserInterface::class, new DemoVisitor());
+};
+```
+
+An `#[BroadcastChannel]` method authorizes the channel — discovered the
+same way as everything else, nothing to register:
+
+```{code-block} php
+:caption: src/Broadcasting/NotificationChannelAuthorizer.php
+
+<?php
+
+declare(strict_types=1);
+
+namespace App\Broadcasting;
+
+use Kinetis\Broadcasting\Attributes\BroadcastChannel;
+use Kinetis\Http\CurrentUserInterface;
+
+final class NotificationChannelAuthorizer
+{
+    #[BroadcastChannel('notifications')]
+    public function authorize(CurrentUserInterface $user): bool
+    {
+        return true;
+    }
+}
+```
+
+The pattern names the channel **without** its `private-` prefix — see
+{doc}`broadcasting` for the full authorization rules. `POST
+/broadcasting/auth` itself needs no route or controller of your own:
+installing `kinetis/broadcasting` already registers it, discovered the
+same way `RouteDiscovery` finds `PingController`.
+
+`ActionEventListener` broadcasts a second, private notification whenever
+a ping is actually ponged:
+
+```{code-block} php
+:caption: src/Listeners/ActionEventListener.php
+
+<?php
+
+declare(strict_types=1);
+
+namespace App\Listeners;
+
+use App\Events\ActionEvent;
+use Kinetis\Broadcasting\Broadcaster;
+use Kinetis\Events\Listener;
+
+final readonly class ActionEventListener
+{
+    public const string PUBLIC_CHANNEL = 'ping-pong';
+
+    public const string PRIVATE_CHANNEL = 'private-notifications';
+
+    public function __construct(
+        private Broadcaster $broadcaster,
+    ) {}
+
+    #[Listener]
+    public function onActionEvent(ActionEvent $event): void
+    {
+        $this->broadcaster->broadcast(self::PUBLIC_CHANNEL, 'action', [
+            'stage' => $event->stage,
+            'id' => $event->id,
+            'scenario' => $event->scenario,
+        ]);
+
+        if ($event->stage === 'socket') {
+            $this->broadcaster->broadcast(self::PRIVATE_CHANNEL, 'pong.notified', [
+                'id' => $event->id,
+                'scenario' => $event->scenario,
+            ]);
+        }
+    }
+}
+```
+
+Last, the browser subscribes to it — `authEndpoint` is the one new
+option; pusher-js calls it automatically before a `private-`/`presence-`
+subscription is allowed through:
+
+```{code-block} php
+:caption: src/Http/PingController.php (additions)
+
+            <ul id="log"></ul>
+            <ul id="private-log"></ul>
+            <script>
+              var pusher = new Pusher("{$key}", {
+                wsHost: "{$host}",
+                wsPort: {$port},
+                forceTLS: false,
+                enabledTransports: ['ws'],
+                cluster: 'kinetis',
+                authEndpoint: '/broadcasting/auth'
+              });
+              pusher.subscribe('ping-pong').bind('action', function (data) {
+                var li = document.createElement('li');
+                li.textContent = '#' + data.id + ' ' + data.stage + ' (' + data.scenario + ')';
+                document.getElementById('log').prepend(li);
+              });
+              pusher.subscribe('private-notifications').bind('pong.notified', function (data) {
+                var li = document.createElement('li');
+                li.textContent = '#' + data.id + ' your ping was ponged';
+                document.getElementById('private-log').prepend(li);
+              });
+            </script>
+```
+
+```{code-block} bash
+docker compose up --build
+```
+
+Click either button again. The public log still fills as before; the
+new `private-log` list only fills once the subscription above has
+actually been authorized — open the browser console and you'll see the
+`POST /broadcasting/auth` request that made it possible.
 
 ## Reporting statistics as a typed value
 
@@ -1397,11 +1513,12 @@ Four independent scenarios — an immediate reply, a delayed one, a
 scheduled one, and a live view of all three — built up one working piece
 at a time: a controller, a repository backed by a real database, a queued
 job, a scheduled command, and an event published to a browser over a
-WebSocket. Nothing here is scenario-specific plumbing either — the same
-`bootstrap.php` convention, the same query builder, the same queue and
-event dispatcher, apply to any Kinetis application. The same repository
-also fed a typed DTO to an HTTP route and, unchanged, to an MCP tool an AI
-agent can call directly over the same server.
+public and a private WebSocket channel. Nothing here is scenario-specific
+plumbing either — the same `bootstrap.php` convention, the same query
+builder, the same queue and event dispatcher, apply to any Kinetis
+application. The same repository also fed a typed DTO to an HTTP route
+and, unchanged, to an MCP tool an AI agent can call directly over the
+same server.
 
 (starting-from-kinetis-pingpong-instead)=
 ## Starting from `kinetis/pingpong` instead
@@ -1418,10 +1535,10 @@ docker compose up --build
 ```
 
 Everything from this tutorial — `bootstrap.php`, the migration, the
-repository, the job, the scheduled command, the events, the Soketi
-publisher, the statistics DTOs, and the MCP tool — is already there,
-under the same file layout this tutorial used, ready to read through and
-modify directly.
+repository, the job, the scheduled command, the events, the broadcaster
+and its private-channel authorizer, the statistics DTOs, and the MCP
+tool — is already there, under the same file layout this tutorial used,
+ready to read through and modify directly.
 
 Unlike this tutorial's own PHP-FPM setup above, `kinetis/pingpong`'s
 `docker-compose.yml` runs `app` under a genuine FrankenPHP persistent
@@ -1452,6 +1569,8 @@ persistent-worker runtime.
   named queues, and retry limits.
 - {doc}`events` — the event dispatcher used above, including stopping
   propagation and deferring a listener onto a queue.
+- {doc}`broadcasting` — the broadcaster, `ShouldBroadcast`, and
+  private/presence channel authorization used above, in full.
 - {doc}`mcp` — tools and resources, transports, and progress notifications
   in full.
 - {doc}`cli` — how `#[Command]` classes are discovered, and `kinetis build`

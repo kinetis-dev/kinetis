@@ -379,6 +379,23 @@ this package.
 | `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | One of the standard OTel sampler names; `traceidratio` variants read `OTEL_TRACES_SAMPLER_ARG`. |
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampling ratio for the `traceidratio` samplers, `0`–`1`. |
 
+### Broadcasting (`kinetis/broadcasting`) — scoped
+
+| Key | Default | Purpose |
+|---|---|---|
+| `BROADCAST_DRIVER` | `null` | `null` (`NullBroadcaster`, a silent no-op) or `pusher` — the wire protocol Soketi, Laravel Reverb, and Pusher's hosted service all share. |
+| `BROADCAST_APP_ID` | *(required for pusher)* | App ID. |
+| `BROADCAST_KEY` | *(required for pusher)* | App key — also the value a browser client subscribes with. |
+| `BROADCAST_SECRET` | *(required for pusher)* | App secret, used to sign trigger requests and private/presence channel authorizations. |
+| `BROADCAST_HOST` | `api.pusherapp.com` | Server host the backend publishes to. |
+| `BROADCAST_PORT` | `443` | Server port. |
+| `BROADCAST_TLS` | `true` | Connect over TLS. |
+
+A browser client only ever needs the app key, plus wherever the
+WebSocket server is reachable from outside the network your backend
+runs in — an app-level concern, not one of these keys, since `Config`
+never reads it. See {doc}`broadcasting`.
+
 ## See also
 
 - {doc}`container` — `AppScope`'s registration-lock discipline, and how
