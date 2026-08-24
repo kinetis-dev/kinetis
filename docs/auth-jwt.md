@@ -81,11 +81,15 @@ use Kinetis\Config\Config;
 $config = Config::fromEnvironment(); // or constructor-injected, wherever this runs
 $issuer = new JwtIssuer($config->required('JWT_SECRET'));
 
-$token = $issuer->issue($user->id());                                  // 1 hour expiry
-$token = $issuer->issue($user->id(), ['role' => 'admin']);             // extra claims
-$token = $issuer->issue($user->id(), ttlSeconds: 3600 * 24 * 30);       // 30 days
-$token = $issuer->issue($user->id(), ttlSeconds: null);                // never expires
+$token = $issuer->issue($user->id());                                    // 1 hour expiry
+$token = $issuer->issue($user->id(), ['roles' => ['editor', 'reviewer']]); // extra claims
+$token = $issuer->issue($user->id(), ttlSeconds: 3600 * 24 * 30);         // 30 days
+$token = $issuer->issue($user->id(), ttlSeconds: null);                  // never expires
 ```
+
+`$claims` is plain array data — whatever shape your application needs,
+not a fixed schema. `roles` above is a name this example chose, not one
+`kinetis/auth-jwt` defines or expects.
 
 `sub` (the subject — always your passed-in id, coerced to a string),
 `iat`, and `jti` (a random, unique token ID — see "Revoking tokens" below)
@@ -116,11 +120,18 @@ final readonly class OrderController
     {
         return [
             'userId' => $this->user->id(),
-            'role' => $this->user->claim('role'),
+            'roles' => $this->user->claim('roles'),
         ];
     }
 }
 ```
+
+`claims(): stdClass` exposes every claim at once, for reading something
+shaped like an array (`$user->claims()->roles`) or for passing `$user`
+itself to a check that needs more than one claim — see
+{doc}`authorization`'s "Reading claims or roles without a query" for a
+worked example checking a `roles` claim from inside an authorization
+Policy, with no query needed since the token already carried it.
 
 ## Revoking tokens: `RevocationStore`
 
@@ -483,3 +494,5 @@ never published; this only applies to the asymmetric algorithms.
 - {doc}`auth`'s "Preventing brute-force login attempts" section —
   `AttemptThrottle`, usable ahead of a login endpoint issuing a JWT the
   same way it's used ahead of one issuing an opaque token.
+- {doc}`authorization` — checking a `JwtUser`'s claims from inside a
+  Policy, with no query needed since the token already carried them.

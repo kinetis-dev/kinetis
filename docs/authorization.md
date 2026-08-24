@@ -157,7 +157,10 @@ resolves, and `Gate` passes the real object straight through untouched.
 `kinetis/auth-jwt`'s `JwtUser` is the clearest case — it already exposes
 every claim the token carried (`claim(string): mixed`, `claims(): stdClass`)
 with nothing to look up, since a verified JWT's claims are decoded once,
-in memory, at the moment the token is verified:
+in memory, at the moment the token is verified. `roles` here isn't a
+claim `kinetis/auth-jwt` defines or expects — it's plain data your own
+login endpoint chose to put there; see {doc}`auth-jwt`'s "Issuing
+tokens" section for setting it in the first place:
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwtUser;
