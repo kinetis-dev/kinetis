@@ -57,6 +57,7 @@ final class Compiler
      *
      * @param DiscoveredMiddleware $middleware
      * @param list<class-string> $packageBootstraps
+     * @param array<class-string, array<array-key, mixed>> $pluginData already-compiled, keyed by the CacheableDiscoveryInterface class that produced it — see PluginDiscovery::discover()
      */
     public function compile(
         Router $router,
@@ -64,6 +65,7 @@ final class Compiler
         ?EventListenerRegistry $listeners = null,
         array $middleware = [],
         array $packageBootstraps = [],
+        array $pluginData = [],
     ): CompiledCache {
         $compiledAt = (new DateTimeImmutable())->format(DATE_ATOM);
 
@@ -107,7 +109,13 @@ final class Compiler
             compiledAt: $compiledAt,
         );
 
-        return new CompiledCache($http, $commandsCache, $eventsCache);
+        $pluginsCache = new PluginCache(
+            formatVersion: CacheFormat::VERSION,
+            data: $pluginData,
+            compiledAt: $compiledAt,
+        );
+
+        return new CompiledCache($http, $commandsCache, $eventsCache, $pluginsCache);
     }
 
     /**
@@ -138,7 +146,10 @@ final class Compiler
      * result is handed to compile() whole rather than destructured per
      * bucket. MCP is kinetis/mcp's own concern: its bootstrap discovers
      * tools and resources when something first resolves the server, and
-     * nothing about it is compiled here.
+     * nothing about it is compiled here. A package declaring its own
+     * CacheableDiscoveryInterface class (see
+     * PackageDiscovery::discoveryClasses()) is compiled here, though —
+     * that's the whole point of the mechanism.
      */
     public function compileProject(string $projectRoot): CompiledCache
     {
@@ -151,7 +162,8 @@ final class Compiler
         $commands = CommandDiscovery::discover($projectRoot);
         $listeners = EventListenerDiscovery::discover($projectRoot);
         $packageBootstraps = PackageDiscovery::bootstrapClasses($projectRoot);
+        $pluginData = PluginDiscovery::discover($projectRoot);
 
-        return $this->compile($router, $commands, $listeners, $middleware, $packageBootstraps);
+        return $this->compile($router, $commands, $listeners, $middleware, $packageBootstraps, $pluginData);
     }
 }

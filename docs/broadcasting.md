@@ -102,7 +102,8 @@ protocol client library (pusher-js, Laravel Echo, `laravel-echo` on the
 JS side, Soketi's own SDKs) does this without being told to. Installing
 this package is the entire registration: the route is discovered the
 same way any `Kinetis\Http\Routing\RouteDiscovery`-found
-controller is.
+controller is, and every `#[BroadcastChannel]` method is itself part of
+the AOT cache — see {doc}`caching`.
 
 Authorize a channel with one attributed method:
 

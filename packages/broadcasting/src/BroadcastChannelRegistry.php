@@ -6,6 +6,7 @@ namespace Kinetis\Broadcasting;
 
 use Kinetis\Broadcasting\Attributes\BroadcastChannel;
 use Kinetis\Broadcasting\Exception\InvalidChannelAuthorizerException;
+use Kinetis\Cache\CacheableDiscoveryInterface;
 use Kinetis\Http\CurrentUserInterface;
 use Kinetis\Reflection\AttributeScope;
 use ReflectionMethod;
@@ -17,8 +18,15 @@ use ReflectionNamedType;
  * signature at registration time rather than at the first real request —
  * the same fail-fast discipline `EventListenerRegistry::register()`
  * already applies to `#[Listener]`.
+ *
+ * Implements `CacheableDiscoveryInterface` — declared as this package's
+ * `extra.kinetis` `discovery` class, so the framework itself compiles,
+ * caches, and binds an instance of this class before `PackageBootstrap`
+ * ever runs. `compile()` is the live-discovery path
+ * `BroadcastChannelDiscovery::discover()` already provides, reduced to
+ * plain data via `toArray()`.
  */
-final class BroadcastChannelRegistry
+final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
 {
     /** @var list<ChannelDefinition> */
     private array $definitions = [];
@@ -42,7 +50,7 @@ final class BroadcastChannelRegistry
             /** @var BroadcastChannel $attribute */
             $attribute = $attributes[0]->newInstance();
 
-            [$regex, $paramNames] = $this->compile($attribute->pattern);
+            [$regex, $paramNames] = $this->compilePattern($attribute->pattern);
             $usesCurrentUser = $this->assertSignature($class, $method, $attribute->pattern, $paramNames);
 
             foreach ($this->definitions as $existing) {
@@ -91,6 +99,18 @@ final class BroadcastChannelRegistry
     }
 
     /**
+     * The `CacheableDiscoveryInterface` half of the compile path —
+     * `fromArray()` below already satisfies the other half as-is, its
+     * existing `self` return type being interface-compatible with
+     * `static` for this `final` class.
+     */
+    #[\Override]
+    public static function compile(string $projectRoot): array
+    {
+        return BroadcastChannelDiscovery::discover($projectRoot)->toArray();
+    }
+
+    /**
      * @return list<array{pattern: string, regex: string, paramNames: list<string>, class: string, method: string, usesCurrentUser: bool}>
      */
     public function toArray(): array
@@ -111,7 +131,8 @@ final class BroadcastChannelRegistry
     /**
      * @param list<array{pattern: string, regex: string, paramNames: list<string>, class: string, method: string, usesCurrentUser: bool}> $data
      */
-    public static function fromArray(array $data): self
+    #[\Override]
+    public static function fromArray(array $data): static
     {
         $registry = new self();
 
@@ -132,7 +153,7 @@ final class BroadcastChannelRegistry
     /**
      * @return array{0: string, 1: list<string>}
      */
-    private function compile(string $pattern): array
+    private function compilePattern(string $pattern): array
     {
         $paramNames = [];
         $regexParts = [];

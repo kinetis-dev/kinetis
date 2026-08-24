@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Broadcasting\Tests;
 
 use Kinetis\Broadcasting\BroadcasterInterface;
-use Kinetis\Broadcasting\BroadcastChannelRegistry;
 use Kinetis\Broadcasting\Driver\PusherBroadcaster;
 use Kinetis\Broadcasting\Exception\BroadcastingException;
 use Kinetis\Broadcasting\NullBroadcaster;
@@ -52,14 +51,5 @@ final class PackageBootstrapTest extends TestCase
         $this->expectExceptionMessage('null", "pusher');
 
         new PackageBootstrap()->register(new AppScope(), new Config(['BROADCAST_DRIVER' => 'memcached']));
-    }
-
-    public function test_the_channel_registry_is_bound_and_resolvable(): void
-    {
-        $app = new AppScope();
-        new PackageBootstrap()->register($app, new Config([]));
-        $app->boot();
-
-        self::assertInstanceOf(BroadcastChannelRegistry::class, $app->get(BroadcastChannelRegistry::class));
     }
 }

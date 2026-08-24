@@ -25,7 +25,7 @@ root, or {doc}`config` for loading it from a `.env` file automatically.
 
 ## What gets cached
 
-Eight things get precomputed:
+Nine things get precomputed:
 
 - The route table.
 - Command definitions.
@@ -41,6 +41,8 @@ Eight things get precomputed:
 - DTO validation plans, and the installed packages' bootstrap-class list
   (declared via `extra.kinetis` — see {doc}`cli`), so production never
   re-reads `vendor/composer/installed.json` per request.
+- Every installed package's own `CacheableDiscoveryInterface` data —
+  declared via `extra.kinetis`'s `discovery` key, also see {doc}`cli`.
 
 `GlobalMiddlewareDiscovery::discoverAll()` performs exactly one
 project-wide scan for all three middleware attributes, not three — see
@@ -54,7 +56,7 @@ never on a request that doesn't touch it. See {doc}`mcp`.
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
 
-The on-disk result is three independent files:
+The on-disk result is four independent files:
 
 ```{code-block} text
 .kinetis-cache/
@@ -64,7 +66,9 @@ The on-disk result is three independent files:
 │                  package bootstrap-class list
 ├── commands.php   command definitions + the package bootstrap-class
 │                  list (repeated so `bin/kinetis` loads one file)
-└── events.php     event listeners, grouped by event class
+├── events.php     event listeners, grouped by event class
+└── plugins.php    every installed package's own CacheableDiscoveryInterface
+                   data, keyed by the class that produced it
 ```
 
 The OpenAPI document is deliberately not among these. It is generated
@@ -79,12 +83,13 @@ or DTOs runs `kinetis openapi:clear` alongside `kinetis build` — see
 
 ```{code-block} bash
 php vendor/bin/kinetis build
-# Compiled routes, commands, and event listeners written to
-# .kinetis-cache/
+# Compiled routes, commands, event listeners, and every installed
+# package's own plugin data written to .kinetis-cache/
 ```
 
 Run this as part of your deploy step. Routes, commands, global
-middleware, and event listeners are all found by namespace — see
+middleware, event listeners, and every installed package's own
+`CacheableDiscoveryInterface` data are all found by namespace — see
 {doc}`cli` for how.
 
 ### Lazy, on first request

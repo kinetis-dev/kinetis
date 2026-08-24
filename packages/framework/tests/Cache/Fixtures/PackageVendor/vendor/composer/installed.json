@@ -15,7 +15,8 @@
             "extra": {
                 "kinetis": {
                     "scan": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\Console\\",
-                    "bootstrap": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeFixtureBootstrap"
+                    "bootstrap": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeFixtureBootstrap",
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeCacheableDiscovery"
                 }
             }
         },
@@ -30,6 +31,20 @@
             "extra": {
                 "kinetis": {
                     "scan": "Totally\\Unrelated\\Namespace\\"
+                }
+            }
+        },
+        {
+            "name": "acme/bad-discovery",
+            "install-path": "../../../AcmePackage",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\": ""
+                }
+            },
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeMarker"
                 }
             }
         }

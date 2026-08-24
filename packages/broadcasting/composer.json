@@ -33,7 +33,8 @@
     "extra": {
         "kinetis": {
             "scan": "Kinetis\\Broadcasting\\Http\\",
-            "bootstrap": "Kinetis\\Broadcasting\\PackageBootstrap"
+            "bootstrap": "Kinetis\\Broadcasting\\PackageBootstrap",
+            "discovery": "Kinetis\\Broadcasting\\BroadcastChannelRegistry"
         }
     },
     "repositories": [

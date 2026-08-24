@@ -70,6 +70,23 @@ final class CompilerTest extends TestCase
         self::assertSame(['App\\RequestIdMiddleware'], $compiled->http->globalMiddleware);
     }
 
+    public function test_compile_carries_explicitly_passed_plugin_data_verbatim(): void
+    {
+        $compiled = (new Compiler())->compile(new Router(), pluginData: ['App\\SomeRegistry' => ['x' => 1]]);
+
+        self::assertSame(['App\\SomeRegistry' => ['x' => 1]], $compiled->plugins->data);
+    }
+
+    public function test_compile_project_discovers_a_packages_own_declared_discovery_class(): void
+    {
+        $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures/PackageVendor');
+
+        self::assertArrayHasKey(
+            'Kinetis\Tests\Cache\Fixtures\AcmePackage\AcmeCacheableDiscovery',
+            $compiled->plugins->data,
+        );
+    }
+
     public function test_compile_project_discovers_named_middleware_groups(): void
     {
         $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures');

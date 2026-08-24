@@ -7,16 +7,17 @@ namespace Kinetis\Cache;
 use Kinetis\Cache\Exception\CacheWriteException;
 
 /**
- * Reads/writes five independent, self-contained generated PHP files —
- * http.php, openapi.php, commands.php, events.php, each
+ * Reads/writes four independent, self-contained generated PHP files —
+ * http.php, commands.php, events.php, plugins.php, each
  * returning a literal array via var_export() — rather than one
  * monolithic artifact. A normal HTTP request only ever loads http.php;
- * the OpenAPI document (often the bulkiest of the four, and the least
- * frequently requested) is loaded lazily by Kernel only the instant
- * /openapi.json is actually hit; commands.php is used entirely by
- * bin/kinetis's own bootstrap, to find which class handles a given
- * command name; events.php is loaded wherever an EventDispatcher is
- * resolved, independent of the others.
+ * commands.php is used entirely by bin/kinetis's own bootstrap, to find
+ * which class handles a given command name; events.php is loaded
+ * wherever an EventDispatcher is resolved; plugins.php carries every
+ * installed package's own CacheableDiscoveryInterface data — each
+ * independent of the others. (The OpenAPI document is a separate
+ * artifact entirely, loaded lazily by Kernel only the instant
+ * /openapi.json is actually hit — not one of the four this class owns.)
  *
  * var_export()-PHP over JSON for the same reason as before: OPcache's
  * shared opcode cache is keyed by realpath and shared across every FPM
@@ -50,16 +51,22 @@ final class CacheStore
         return $this->directory . '/events.php';
     }
 
+    public function pluginsPath(): string
+    {
+        return $this->directory . '/plugins.php';
+    }
+
     /**
-     * True only when all five files are present — a Compiler run always
-     * produces all five together, so a partially-missing set (e.g. one
+     * True only when all four files are present — a Compiler run always
+     * produces all four together, so a partially-missing set (e.g. one
      * file deleted by hand, or an old cache directory from before
-     * events.php existed) is treated as "no cache" and triggers a full
-     * recompile of all five, rather than serving an inconsistent mix.
+     * plugins.php existed) is treated as "no cache" and triggers a full
+     * recompile of all four, rather than serving an inconsistent mix.
      */
     public function exists(): bool
     {
-        return is_file($this->httpPath()) && is_file($this->commandsPath()) && is_file($this->eventsPath());
+        return is_file($this->httpPath()) && is_file($this->commandsPath()) && is_file($this->eventsPath())
+            && is_file($this->pluginsPath());
     }
 
     public function loadHttp(): ?HttpCache
@@ -85,8 +92,15 @@ final class CacheStore
         return $data === null ? null : EventCache::fromArray($data);
     }
 
+    public function loadPlugins(): ?PluginCache
+    {
+        $data = $this->loadSection($this->pluginsPath());
+
+        return $data === null ? null : PluginCache::fromArray($data);
+    }
+
     /**
-     * Writes all five files. Each writer generates a uniquely-suffixed
+     * Writes all four files. Each writer generates a uniquely-suffixed
      * temp filename inside the same directory, writes the full content
      * there, then rename()s it onto the real target path — rename() within
      * one directory is atomic on POSIX (a directory-entry swap, not a data
@@ -104,6 +118,7 @@ final class CacheStore
         $this->writeSection($this->httpPath(), $cache->http->toArray());
         $this->writeSection($this->commandsPath(), $cache->commands->toArray());
         $this->writeSection($this->eventsPath(), $cache->events->toArray());
+        $this->writeSection($this->pluginsPath(), $cache->plugins->toArray());
     }
 
     /**
