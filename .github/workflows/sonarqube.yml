@@ -122,12 +122,15 @@ jobs:
       - name: Build the coverage image
         # One image for every package below. infection.yml can install
         # pcov per package because it is a matrix and each package gets
-        # its own runner; this job walks all twenty in sequence, so the
-        # same snippet would build the toolchain and reach pecl.php.net
-        # twenty times from one address — which is how a run failed on
-        # "No releases available for package pecl.php.net/pcov" with
-        # nothing wrong with the package it was building. Once is enough,
-        # and it retries after refreshing the channel.
+        # its own runner; this job walks all twenty in sequence, so
+        # building the toolchain once and reusing it is what matters here
+        # — not retrying against pecl.php.net specifically, since pcov is
+        # now installed via PIE (see infection.yml's own comment on the
+        # identical switch for the full reasoning: PECL's own channel is
+        # a real, recurring source of "No releases available" failures —
+        # this file's own previous retry-after-channel-update line was
+        # already working around that exact failure — and PIE resolves
+        # pcov via Packagist/GitHub releases instead).
         #
         # The database drivers are baked in rather than added per package:
         # persistence's and query-builder's env-gated tests/Integration
@@ -140,10 +143,11 @@ jobs:
           mkdir -p /tmp/coverage-image
           cat > /tmp/coverage-image/Dockerfile <<'DOCKERFILE'
           FROM php:8.4-cli-alpine
-          RUN apk add --no-cache gcc g++ make autoconf pkgconf re2c postgresql-dev \
+          RUN apk add --no-cache gcc g++ make autoconf pkgconf re2c postgresql-dev curl \
            && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql \
-           && (pecl install pcov || (pecl channel-update pecl.php.net && pecl install pcov)) \
-           && echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+           && curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar \
+           && chmod +x /usr/local/bin/pie.phar \
+           && php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
           DOCKERFILE
           docker build -q -t kinetis-coverage /tmp/coverage-image
 
