@@ -732,11 +732,12 @@ final class Hydrator
             'int', 'float' => self::numericMismatchMessage($value),
             'bool' => self::booleanMismatchMessage($value),
             // A plain `array` field (no #[ListOf] — that shape is handled
-            // entirely separately, by resolveListValue()) previously
-            // reached `new $className(...)` unchecked for any non-array
-            // value, surfacing as a raw TypeError instead of this same
-            // 422/validation-error contract every other builtin type
-            // already gets. `iterable` gets the identical check: JSON
+            // entirely separately, by resolveListValue()) needs this
+            // check for the same reason every other builtin type does:
+            // without it, a non-array value would reach `new $className(...)`
+            // unchecked, surfacing as a raw TypeError instead of the
+            // same 422/validation-error contract every other builtin
+            // type gets. `iterable` gets the identical check: JSON
             // input can only ever decode into an array, never a real
             // Traversable, and a plain PHP array genuinely satisfies
             // `iterable` — so the wire contract and the accepted shape

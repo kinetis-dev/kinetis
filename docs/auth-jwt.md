@@ -396,7 +396,13 @@ refresh token can never be redeemed twice — even by two requests racing
 each other, since the cache is required to implement
 `Kinetis\SimpleCache\AtomicConsumeInterface` (both `RedisSimpleCache`
 and `ClusteredRedisSimpleCache` do; construction throws otherwise, the
-same refusal `NullSimpleCache` already gets). `revoke()` invalidates one
+same refusal `NullSimpleCache` already gets). `redeem()` also returns
+`null` — the identical "invalid or expired" outcome the endpoint above
+already handles — for a token that's still on record but predates a
+`revokeAllForUser()` cutoff for its own subject (see "Logging out
+everywhere" below): a client sees no difference between "never existed,"
+"already used," or "revoked," which is the point — none of those are a
+distinction a refresh endpoint should leak. `revoke()` invalidates one
 token directly — a "log out this device" action — without needing to
 redeem it first:
 

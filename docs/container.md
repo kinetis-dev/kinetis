@@ -45,12 +45,14 @@ per-request state can't quietly become one shared object every request
 the worker ever serves. A service that should be one shared instance is
 registered with `bind()`/`instance()` before `boot()`.
 
-`boot()` itself registers six bindings for you, each only if you haven't
-already registered your own: `Kinetis\Runtime\AppEnvironment` → the
-detected environment (`APP_ENV`, defaulting to production);
-`Psr\Log\LoggerInterface` → an `error_log()`-backed logger in
-development, `Psr\Log\NullLogger` in production (see {doc}`logging`);
-`Kinetis\Config\Config` →
+`boot()` itself registers seven bindings for you, each only if you
+haven't already registered your own: `Kinetis\Runtime\AppEnvironment` →
+the detected environment (`APP_ENV`, defaulting to production);
+`Kinetis\Instrumentation\TelemetryInterface` → the process-wide
+`Telemetry::global()` holder, so app code can constructor-inject it too
+(see {doc}`appendix`); `Psr\Log\LoggerInterface` → an `error_log()`-backed
+logger in development, `Psr\Log\NullLogger` in production (see
+{doc}`logging`); `Kinetis\Config\Config` →
 `Config::fromEnvironment()` (see {doc}`config`);
 `Psr\SimpleCache\CacheInterface` → a Redis-backed cache when one's
 configured, else a null one that always misses (see {doc}`persistence`);
@@ -165,13 +167,13 @@ $scope->onDispose(function (): void {
 ```
 
 `onDispose()` is the generic mechanism the request lifecycle's cleanup
-hangs off of — `Kernel` uses it, unconditionally, on every request, to
-register `TransactionGuard::rollbackDangling()` (see {doc}`persistence`),
-so a transaction opened and never explicitly closed still gets rolled back
-before the scope disappears. `RequestScope` itself has no idea
-`TransactionGuard` or database transactions exist; it just runs whatever
-callbacks were registered, in registration order, when `dispose()` is
-called.
+hangs off of — `Kernel` uses it, on every request, to register
+`TransactionGuard::rollbackDangling()` (see {doc}`persistence`) whenever
+`kinetis/persistence` is installed, so a transaction opened and never
+explicitly closed still gets rolled back before the scope disappears.
+`RequestScope` itself has no idea `TransactionGuard` or database
+transactions exist; it just runs whatever callbacks were registered, in
+registration order, when `dispose()` is called.
 
 `dispose()`'s own contract, regardless of who calls it: every registered
 callback is attempted, even if an earlier one throws; the scope's

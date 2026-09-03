@@ -71,9 +71,10 @@ cache read/write-failure warnings, for one, see {doc}`appendix`. See
 
 ### `TransactionGuard::rollbackDangling()`
 
-Registered as an unconditional `RequestScope` dispose hook on every
-request (see {doc}`persistence`), so it runs whether or not a request
-ever opened a transaction. It logs a `warning` only once it has actually
+Registered as a `RequestScope` dispose hook on every request whenever
+`kinetis/persistence` is installed (see {doc}`persistence`), so it runs
+whether or not a request ever opened a transaction. It logs a `warning`
+only once it has actually
 rolled back an active transaction — the overwhelming majority of calls
 are a genuine no-op, and logging on every one of them regardless would
 turn a real anomaly signal into noise. If closing a transaction fails,

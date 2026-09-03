@@ -3,9 +3,15 @@
 This project's CI runs entirely on GitHub Actions — no separate CI
 service to configure. A reference map of what runs on every push/PR
 and what it checks, for the CI configuration itself, not the
-framework's own code. Five workflow files, `.github/workflows/`:
-`ci.yml`, `semgrep.yml`, `integration.yml`, `infection.yml`,
-`sonarqube.yml`, plus `.github/dependabot.yml`.
+framework's own code. Six workflow files run on every push/PR,
+`.github/workflows/`: `ci.yml`, `semgrep.yml`, `integration.yml`,
+`infection.yml`, `sonarqube.yml`, `monorepo-validate.yml` (see
+{doc}`appendix-contributing` for what it enforces), plus
+`.github/dependabot.yml`. Two more workflows exist but are out of this
+page's scope, since neither runs on an ordinary push/PR:
+`deploy-docs.yml` (publishes `docs/` to `kinetis.dev` on a push to
+`main`) and `release.yml` (splits and tags each package's own release
+repo on a push to `main` — see {doc}`appendix-contributing`).
 
 ## `ci.yml` — static checks and unit tests, per package
 

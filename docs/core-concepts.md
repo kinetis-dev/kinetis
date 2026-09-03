@@ -79,12 +79,15 @@ Every call to `Kernel::handle()` follows the same shape:
 
 1. A fresh `RequestScope` is created from the persistent `AppScope`
    container (see {doc}`container`).
-2. A `TransactionGuard` is resolved from that scope, and
-   `rollbackDangling()` is registered as a dispose hook — unconditionally,
-   for every request, whether or not it ever opens a database transaction.
-   If a request opens a transaction and something goes wrong before it's
-   explicitly committed or rolled back, this is the safety net that closes
-   it anyway. See {doc}`persistence`.
+2. When `kinetis/persistence` is installed, a `TransactionGuard` is
+   resolved from that scope and `rollbackDangling()` is registered as a
+   dispose hook — for every request, whether or not it ever opens a
+   database transaction (a genuine no-op when it doesn't). If a request
+   opens a transaction and something goes wrong before it's explicitly
+   committed or rolled back, this is the safety net that closes it
+   anyway. `kinetis/framework` alone has no database concept at all, so
+   this step is skipped entirely without the package installed. See
+   {doc}`persistence`.
 3. The router matches the request; a `Dispatcher` resolves the matched
    controller's parameters and invokes it.
 4. In a `finally` block — so it runs whether the request succeeded, threw,
