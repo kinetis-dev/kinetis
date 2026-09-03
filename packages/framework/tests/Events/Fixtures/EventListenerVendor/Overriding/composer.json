@@ -1,7 +1,7 @@
 {
     "autoload": {
         "psr-4": {
-            "Kinetis\\Tests\\Events\\Fixtures\\EventListenerVendor\\Overriding\\Src\\": "src/"
+            "Kinetis\\Tests\\Events\\Fixtures\\EventListenerVendor\\Overriding\\Src\\": "Src/"
         }
     }
 }

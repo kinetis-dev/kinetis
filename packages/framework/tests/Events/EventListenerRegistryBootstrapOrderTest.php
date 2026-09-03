@@ -65,23 +65,9 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
 
     public function test_a_discovered_listener_is_reachable_after_a_real_boot(): void
     {
-        // TEMPORARY CI DIAGNOSTIC — remove before merging.
-        fwrite(STDERR, "\n[DIAG] DISCOVERED_ROOT=" . self::DISCOVERED_ROOT . "\n");
-        fwrite(STDERR, '[DIAG] is_dir=' . var_export(is_dir(self::DISCOVERED_ROOT), true) . "\n");
-        fwrite(STDERR, '[DIAG] composer.json exists=' . var_export(is_file(self::DISCOVERED_ROOT . '/composer.json'), true) . "\n");
-        fwrite(STDERR, '[DIAG] composer.json content=' . (string) @file_get_contents(self::DISCOVERED_ROOT . '/composer.json') . "\n");
-        fwrite(STDERR, '[DIAG] src dir exists=' . var_export(is_dir(self::DISCOVERED_ROOT . '/src'), true) . "\n");
-        fwrite(STDERR, '[DIAG] listener file exists=' . var_export(is_file(self::DISCOVERED_ROOT . '/src/DiscoveredOrderListener.php'), true) . "\n");
-        $rawRegistry = \Kinetis\Events\EventListenerDiscovery::discover(self::DISCOVERED_ROOT);
-        fwrite(STDERR, '[DIAG] discover() toArray()=' . var_export($rawRegistry->toArray(), true) . "\n");
-        fwrite(STDERR, '[DIAG] class_exists(DiscoveredOrderListener)=' . var_export(class_exists('Kinetis\Tests\Events\Fixtures\EventListenerVendor\Discovered\Src\DiscoveredOrderListener'), true) . "\n");
-
         $application = TestApplication::boot(self::DISCOVERED_ROOT);
 
-        $result = $this->dispatchAndRecord($application->app);
-        fwrite(STDERR, '[DIAG] dispatch result=' . var_export($result, true) . "\n");
-
-        self::assertSame(['discovered'], $result);
+        self::assertSame(['discovered'], $this->dispatchAndRecord($application->app));
     }
 
     /**
