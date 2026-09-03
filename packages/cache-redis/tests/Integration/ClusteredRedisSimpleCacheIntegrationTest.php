@@ -1037,20 +1037,25 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         $seeds = explode(',', (string) getenv('REDIS_CLUSTER_SEEDS'));
         $seed = createRedisClient(RedisConfig::fromUri('tcp://' . trim($seeds[0])));
 
-        // 400 tries at 50ms is 20 real seconds of headroom. A single
-        // reassignment usually converges in well under a second, but
-        // real gossip propagation under genuine Docker CPU contention
-        // has been directly observed taking well past 5, and
-        // occasionally past 15, real seconds on this host — not a
-        // theoretical worst case, a measured one, across many repeated
-        // real runs. Reusing the same relative slot offset across
+        // 800 tries at 50ms is 40 real seconds of headroom — widened
+        // from an original 20s (400 tries) after that ceiling was
+        // directly observed being hit in real CI runs, not just
+        // theorized about: a single reassignment usually converges in
+        // well under a second, but real gossip propagation under
+        // genuine CI CPU contention has been measured taking well past
+        // 5, and occasionally past 15, real seconds — a worst case
+        // uncomfortably close to the original 20s cap, especially at
+        // this test file's one call site (see the two-slot test above)
+        // that waits on two separate reassignments sequentially in one
+        // finally block, each independently subject to that same
+        // worst-case risk. Reusing the same relative slot offset across
         // several tests would compound this further, racing against an
         // earlier test's still-settling gossip for the identical slot —
         // avoided at the call sites that need it via
         // emptySlotInLargestRange() and genuinely distinct offsets (see
         // that method's own docblock), so this margin exists purely for
         // genuine host-level slowness.
-        for ($i = 0; $i < 400; $i++) {
+        for ($i = 0; $i < 800; $i++) {
             $shards = $seed->execute('CLUSTER', 'SHARDS');
 
             foreach ($shards as $shard) {
