@@ -108,14 +108,16 @@ final readonly class CorsMiddleware implements MiddlewareInterface
             $response = $handler->handle($request);
 
             // A disallowed (or absent) origin gets no CORS headers — but
-            // when the configuration echoes specific origins, responses
-            // still vary by Origin, and a shared cache that stored this
-            // header-less response could otherwise serve it to an allowed
-            // origin. Vary: Origin marks the variance regardless of the
-            // verdict; a static-"*" configuration answers identically for
-            // every origin, so it stays unmarked.
-            if (!$this->staticWildcard()) {
-                $response = $response->withAddedHeader('Vary', 'Origin');
+            // the *presence* of an Origin header, and its value, still
+            // decide which branch of this method runs at all, so the
+            // response genuinely depends on Origin whenever CORS is
+            // configured to allow anything — see originVaries()'s own
+            // docblock for why this holds even for a literal "*"
+            // allow-list. Only a completely unconfigured middleware,
+            // where every request takes this exact branch regardless of
+            // Origin, is genuinely origin-independent.
+            if ($this->originVaries()) {
+                $response = self::withVary($response, 'Origin');
             }
 
             return $response;
@@ -125,7 +127,20 @@ final readonly class CorsMiddleware implements MiddlewareInterface
             return $this->preflightResponse($request, $origin);
         }
 
-        return $this->withCorsHeaders($handler->handle($request), $origin);
+        $response = $this->withCorsHeaders($handler->handle($request), $origin);
+
+        // For an OPTIONS request specifically (and only then — isPreflight()
+        // is unconditionally false for every other method, so this
+        // response can never differ from one that lacked the header),
+        // reaching this branch instead of preflightResponse() already
+        // depended on Access-Control-Request-Method's absence — a cache
+        // keyed only on method/URI/Origin cannot tell this response
+        // apart from a preflight one without this token.
+        if ($request->getMethod() === 'OPTIONS') {
+            $response = self::withVary($response, 'Access-Control-Request-Method');
+        }
+
+        return $response;
     }
 
     private function isPreflight(ServerRequestInterface $request): bool
@@ -134,14 +149,91 @@ final readonly class CorsMiddleware implements MiddlewareInterface
     }
 
     /**
-     * True when every response this middleware produces is identical
-     * regardless of the request's Origin: a literal "*" allow-list with
-     * no credentials. Everything else echoes (or withholds) headers per
-     * origin and must carry Vary: Origin.
+     * Whether Access-Control-Allow-Origin should echo the literal "*"
+     * instead of the specific requesting origin — a literal "*"
+     * allow-list with no credentials. This governs the *value* CORS
+     * headers carry, not whether the response varies by Origin — see
+     * originVaries() for that, a genuinely different question: even a
+     * static-wildcard configuration answers a no-Origin request (no
+     * Access-Control-Allow-Origin at all) differently from an
+     * Origin-bearing one (Access-Control-Allow-Origin: *), so "the value
+     * is always the literal string '*'" does not mean "the response is
+     * always identical."
      */
     private function staticWildcard(): bool
     {
         return in_array('*', $this->allowedOrigins, true) && !$this->allowCredentials;
+    }
+
+    /**
+     * Whether any response this middleware produces could differ based
+     * on the request's Origin header — true whenever this middleware is
+     * configured to allow anything at all ($allowedOrigins or
+     * $allowedOriginPatterns non-empty). A literal "*" allow-list is
+     * origin-dependent in exactly this sense despite always producing
+     * the same header *value*: a request with no Origin header takes the
+     * disallowed/absent branch (no CORS headers at all), while one
+     * carrying any Origin header takes the allowed branch
+     * (Access-Control-Allow-Origin: *) — two different response shapes a
+     * shared cache must be able to tell apart. Only a completely
+     * unconfigured middleware ($allowedOrigins === [] and
+     * $allowedOriginPatterns === []), where every request takes the same
+     * pass-through branch regardless of Origin, is genuinely
+     * origin-independent.
+     */
+    private function originVaries(): bool
+    {
+        return $this->allowedOrigins !== [] || $this->allowedOriginPatterns !== [];
+    }
+
+    /**
+     * Merges $tokens into $response's own Vary header as one canonical,
+     * deduplicated, case-insensitively-compared token set — never a
+     * blind withAddedHeader('Vary', ...) append, which would duplicate a
+     * token already present under different casing, split across
+     * multiple header lines, or already comma-joined with an
+     * application's own unrelated Vary dimensions (Accept-Encoding, for
+     * one). Deduplication applies to the existing tokens themselves too,
+     * not just between them and $tokens — an application response that
+     * already repeats a token (across lines or within one comma-separated
+     * value) comes out collapsed to one occurrence, keeping whichever
+     * casing appeared first. Never appends anything at all once an
+     * existing "*" token is present, since that already means "varies on
+     * everything" and a narrower-looking addition next to it would only
+     * invite a downstream cache to misread the field as a literal, finite
+     * list.
+     */
+    private static function withVary(ResponseInterface $response, string ...$tokens): ResponseInterface
+    {
+        $existing = [];
+
+        foreach ($response->getHeader('Vary') as $line) {
+            foreach (explode(',', $line) as $token) {
+                $token = trim($token);
+
+                if ($token !== '') {
+                    $existing[] = $token;
+                }
+            }
+        }
+
+        if (in_array('*', $existing, true)) {
+            return $response;
+        }
+
+        $merged = [];
+        $normalized = [];
+
+        foreach ([...$existing, ...$tokens] as $token) {
+            $lower = strtolower($token);
+
+            if (!in_array($lower, $normalized, true)) {
+                $merged[] = $token;
+                $normalized[] = $lower;
+            }
+        }
+
+        return $response->withHeader('Vary', implode(', ', $merged));
     }
 
     private function originAllowed(string $origin): bool
@@ -167,14 +259,32 @@ final readonly class CorsMiddleware implements MiddlewareInterface
 
     private function preflightResponse(ServerRequestInterface $request, string $origin): ResponseInterface
     {
-        $allowedHeaders = $this->allowedHeaders === ['*']
+        $reflectsRequestedHeaders = $this->allowedHeaders === ['*'];
+        $allowedHeaders = $reflectsRequestedHeaders
             ? $request->getHeaderLine('Access-Control-Request-Headers')
             : implode(', ', $this->allowedHeaders);
 
-        return $this->withCorsHeaders(new Response(204), $origin)
+        $response = $this->withCorsHeaders(new Response(204), $origin)
             ->withHeader('Access-Control-Allow-Methods', implode(', ', $this->allowedMethods))
             ->withHeader('Access-Control-Allow-Headers', $allowedHeaders)
             ->withHeader('Access-Control-Max-Age', (string) $this->maxAge);
+
+        // Every preflight response depends on Access-Control-Request-Method's
+        // presence — it's what routed the request here instead of the
+        // ordinary-OPTIONS branch, so a cache must be able to tell the two
+        // apart even for the identical method/URI/Origin. Access-Control-
+        // Request-Headers only actually matters when $allowedHeaders is
+        // ['*'] and this response is reflecting it back — a fixed
+        // allow-list produces the exact same Access-Control-Allow-Headers
+        // value no matter what was requested, so marking that dimension
+        // there would be variance a cache can never actually observe.
+        $varyTokens = ['Access-Control-Request-Method'];
+
+        if ($reflectsRequestedHeaders) {
+            $varyTokens[] = 'Access-Control-Request-Headers';
+        }
+
+        return self::withVary($response, ...$varyTokens);
     }
 
     /**
@@ -187,10 +297,12 @@ final readonly class CorsMiddleware implements MiddlewareInterface
      * at construction (see the constructor's own guard) rather than
      * silently overridden here — so by the time this method runs,
      * `$allowCredentials` and a wildcard `$allowedOrigins` never coexist.
-     * Echoing a specific origin means the response varies by request
-     * Origin, so Vary: Origin is added in that case (and only that case —
-     * a static "*" response is identical regardless of origin, so there's
-     * nothing for a cache to get wrong).
+     * Vary: Origin is added whenever originVaries() says the response
+     * genuinely depends on the request's Origin — see that method's own
+     * docblock for why this holds even for a literal "*" allow-list,
+     * where the header *value* never changes but reaching this method at
+     * all (as opposed to the disallowed/absent branch in process()) still
+     * depends on Origin having been present and allowed.
      */
     private function withCorsHeaders(ResponseInterface $response, string $origin): ResponseInterface
     {
@@ -198,8 +310,8 @@ final readonly class CorsMiddleware implements MiddlewareInterface
 
         $response = $response->withHeader('Access-Control-Allow-Origin', $wildcard ? '*' : $origin);
 
-        if (!$wildcard) {
-            $response = $response->withAddedHeader('Vary', 'Origin');
+        if ($this->originVaries()) {
+            $response = self::withVary($response, 'Origin');
         }
 
         if ($this->allowCredentials) {

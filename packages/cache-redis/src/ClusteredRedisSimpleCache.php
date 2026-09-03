@@ -16,6 +16,9 @@ use Kinetis\SimpleCache\AtomicConsumeInterface;
 use DateInterval;
 use DateTimeImmutable;
 use Kinetis\Config\Config;
+use Kinetis\SimpleCache\Cluster\ClusterEndpoint;
+use Kinetis\SimpleCache\Cluster\ClusterRedirect;
+use Kinetis\SimpleCache\Cluster\ClusterRedirectKind;
 use Kinetis\SimpleCache\Cluster\ClusterTopology;
 use Kinetis\SimpleCache\Cluster\Crc16;
 use Kinetis\SimpleCache\Connection\TlsRedisConnector;
@@ -52,10 +55,16 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
      * Requires REDIS_CLUSTER=true — returns null otherwise, the same
      * "Redis is optional" contract RedisSimpleCache::fromConfig() has, so
      * AppScope::boot() can try this first and fall back to the single-node
-     * class. REDIS_CLUSTER_SEEDS (comma-separated "host:port" entries) is
-     * required once REDIS_CLUSTER is set — a cluster needs more than one
-     * seed to bootstrap from in case any single one happens to be down,
-     * so there's no single-host fallback the way RedisSimpleCache has.
+     * class. REDIS_CLUSTER_SEEDS (comma-separated "host:port" or
+     * "[ipv6-address]:port" entries) is required once REDIS_CLUSTER is
+     * set — a cluster needs more than one seed to bootstrap from in case
+     * any single one happens to be down, so there's no single-host
+     * fallback the way RedisSimpleCache has. Every seed is parsed via
+     * ClusterEndpoint::parse() before any client is constructed, so a
+     * malformed or empty seed, or a port outside 1-65535, fails loudly
+     * here rather than surfacing later as a warning, a silent port 0, or
+     * an incidental URI-parsing error once a request actually tries to
+     * connect.
      */
     public static function fromConfig(Config $config, string $connection = 'default'): ?self
     {
@@ -63,12 +72,20 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
             return null;
         }
 
-        $seeds = array_map('trim', explode(',', $config->required(Config::scopedKey('REDIS_CLUSTER_SEEDS', $connection))));
-        $timeout = $config->float(Config::scopedKey('REDIS_TIMEOUT', $connection), RedisConfig::DEFAULT_TIMEOUT);
+        $rawSeeds = array_map('trim', explode(',', $config->required(Config::scopedKey('REDIS_CLUSTER_SEEDS', $connection))));
+        $seeds = array_map(ClusterEndpoint::parse(...), $rawSeeds);
+
+        $timeoutKey = Config::scopedKey('REDIS_TIMEOUT', $connection);
+        $timeout = $config->float($timeoutKey, RedisConfig::DEFAULT_TIMEOUT);
+
+        if ($timeout <= 0.0) {
+            throw new InvalidArgumentException("{$timeoutKey} must be a positive number of seconds, got {$timeout}.");
+        }
+
         $password = $config->get(Config::scopedKey('REDIS_PASSWORD', $connection));
 
-        $clientFactory = static function (string $host, int $port) use ($config, $connection, $timeout, $password): RedisClient {
-            $uri = "tcp://{$host}:{$port}";
+        $clientFactory = static function (ClusterEndpoint $endpoint) use ($config, $connection, $timeout, $password): RedisClient {
+            $uri = $endpoint->toUri();
             $redisConfig = RedisConfig::fromUri($uri, $timeout);
 
             if ($password !== null) {
@@ -86,7 +103,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     {
         self::assertValidKey($key);
 
-        $value = $this->guard('get', $key, fn (): ?string => $this->topology->nodeForSlot(Crc16::slotFor($key))->get($key));
+        $value = $this->guardKeyed('get', $key, fn (RedisClient $client): ?string => $client->get($key));
 
         return $value === null ? $default : $this->serializer->unserialize($value);
     }
@@ -100,7 +117,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     {
         self::assertValidKey($key);
 
-        $value = $this->guard('consume', $key, fn () => $this->topology->nodeForSlot(Crc16::slotFor($key))->eval(
+        $value = $this->guardKeyed('consume', $key, fn (RedisClient $client) => $client->eval(
             "local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v",
             [$key],
         ));
@@ -117,7 +134,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     {
         self::assertValidKey($key);
 
-        $value = $this->guard('increment', $key, fn () => $this->topology->nodeForSlot(Crc16::slotFor($key))->eval(
+        $value = $this->guardKeyed('increment', $key, fn (RedisClient $client) => $client->eval(
             "local v = redis.call('INCR', KEYS[1]) redis.call('EXPIRE', KEYS[1], ARGV[1]) return v",
             [$key],
             [(string) $ttlSeconds],
@@ -131,7 +148,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     {
         self::assertValidKey($key);
 
-        $value = $this->guard('count', $key, fn () => $this->topology->nodeForSlot(Crc16::slotFor($key))->get($key));
+        $value = $this->guardKeyed('count', $key, fn (RedisClient $client): ?string => $client->get($key));
 
         return is_numeric($value) ? (int) $value : 0;
     }
@@ -146,9 +163,9 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
             return $this->delete($key);
         }
 
-        $this->guard('set', $key, function () use ($key, $value, $seconds): void {
+        $this->guardKeyed('set', $key, function (RedisClient $client) use ($key, $value, $seconds): void {
             $options = $seconds !== null ? (new SetOptions())->withTtl($seconds) : null;
-            $this->topology->nodeForSlot(Crc16::slotFor($key))->set($key, $this->serializer->serialize($value), $options);
+            $client->set($key, $this->serializer->serialize($value), $options);
         });
 
         return true;
@@ -158,7 +175,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     public function delete(string $key): bool
     {
         self::assertValidKey($key);
-        $this->guard('delete', $key, fn (): int => $this->topology->nodeForSlot(Crc16::slotFor($key))->delete($key));
+        $this->guardKeyed('delete', $key, fn (RedisClient $client): int => $client->delete($key));
 
         return true;
     }
@@ -168,7 +185,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     {
         self::assertValidKey($key);
 
-        return $this->guard('has', $key, fn (): bool => $this->topology->nodeForSlot(Crc16::slotFor($key))->has($key));
+        return $this->guardKeyed('has', $key, fn (RedisClient $client): bool => $client->has($key));
     }
 
     /**
@@ -213,10 +230,10 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
         // Dispatched one GET per key instead, concurrently, each
         // independently guarded/retried.
         $rawValues = concurrently(array_map(
-            fn (string $key) => fn (): ?string => $this->guard(
+            fn (string $key) => fn (): ?string => $this->guardKeyed(
                 'getMultiple',
                 $key,
-                fn (): ?string => $this->topology->nodeForSlot(Crc16::slotFor($key))->get($key),
+                fn (RedisClient $client): ?string => $client->get($key),
             ),
             $keys,
         ));
@@ -271,10 +288,10 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
         }
 
         concurrently(array_map(
-            fn (string $key) => fn (): int => $this->guard(
+            fn (string $key) => fn (): int => $this->guardKeyed(
                 'deleteMultiple',
                 $key,
-                fn (): int => $this->topology->nodeForSlot(Crc16::slotFor($key))->delete($key),
+                fn (RedisClient $client): int => $client->delete($key),
             ),
             $keys,
         ));
@@ -283,14 +300,25 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     }
 
     /**
-     * Runs $operation; a MOVED reply (the cluster reports a slot has been
-     * reassigned since the last topology refresh) triggers exactly one
-     * full topology refresh and one retry of the whole operation from
-     * scratch — not a targeted patch of the one slot involved, since a
-     * single resharding event can move more than that one slot. $operation
-     * re-resolves nodes itself on every call (via Crc16::slotFor()/
-     * ClusterTopology::nodeForSlot()), so the retry genuinely uses the
-     * refreshed topology rather than a stale resolution.
+     * The maximum number of attempts a single guardKeyed() call
+     * makes in total before giving up — not one initial attempt plus
+     * this many retries, six attempts altogether. Bounded so a
+     * malformed or looping sequence of redirects fails cleanly rather
+     * than hanging — real cluster operation never legitimately needs
+     * more than a couple of hops (MOVED once, then at most one ASK for
+     * the same key), so this leaves generous headroom without being
+     * unbounded. A *repeated* redirect (the same kind and target seen
+     * twice for this one operation) is detected and rejected on its own
+     * terms well before this bound would otherwise be reached — see
+     * $seenRedirects below.
+     */
+    private const int MAX_REDIRECT_ATTEMPTS = 6;
+
+    /**
+     * Runs a non-keyed operation (clear()'s FLUSHDB fan-out) — no slot
+     * routing and no MOVED/ASK redirect to follow, since FLUSHDB is a
+     * database-scoped admin command with no key argument for Redis
+     * Cluster to redirect.
      *
      * @template T
      * @param callable(): T $operation
@@ -300,21 +328,212 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
     {
         try {
             return $operation();
-        } catch (QueryException $e) {
-            if (!str_starts_with($e->getMessage(), 'MOVED ')) {
-                throw CacheException::forOperation($operationName, $contextKey, $e);
+        } catch (RedisException $e) {
+            throw CacheException::forOperation($operationName, $contextKey, $e);
+        }
+    }
+
+    /**
+     * Resolves $key's owning node and runs $operation against it,
+     * following Redis Cluster's own bounded redirect protocol:
+     *
+     * - MOVED means the slot's stable owner has genuinely changed since
+     *   the last refresh. The topology is refreshed on a best-effort
+     *   basis — updating routing for *future* calls, since a single
+     *   resharding event can move more than the one slot involved, so a
+     *   targeted single-slot patch wouldn't be correct in general — but
+     *   the *current* retry goes straight to the redirect's own reported
+     *   target, resolved through the topology's memoized clientFor()
+     *   (the same auth/TLS-configured client factory every discovered
+     *   node already uses, and a deliberately shared/reused connection,
+     *   since a MOVED target is genuinely becoming the slot's new stable
+     *   owner — not the throwaway, never-shared connection ASK needs).
+     *   Retrying against the reply's own authoritative target, not
+     *   solely against whatever refresh() manages to discover, matters
+     *   because refresh() re-reads CLUSTER SHARDS from the first
+     *   *reachable* seed — during live ownership propagation that seed
+     *   can still be reporting the old (but internally self-consistent)
+     *   topology even though the node that just replied MOVED has
+     *   already authoritatively transitioned; relying on refresh() alone
+     *   could mean silently repeating the identical stale lookup for
+     *   every one of this call's attempts. A refresh() failure is
+     *   likewise never allowed to block this retry — the MOVED reply
+     *   itself already names a target with enough information to
+     *   proceed; a later, unrelated call gets its own chance to refresh
+     *   successfully. The redirect's own target is also recorded via
+     *   ClusterTopology::applyMovedOverride() — a durable correction,
+     *   not just routing for this one call: without it, a later
+     *   operation for the same slot would keep hitting the old owner
+     *   until $ranges itself eventually catches up, and allMasters()
+     *   (which clear() fans FLUSHDB out to) would have no way to know
+     *   the new owner exists, letting a value written through this very
+     *   retry silently survive a clear() call that reports success.
+     *   Durable specifically means it survives even a fresh, fully
+     *   valid topology discovery that happens to disagree with it — a
+     *   syntactically complete CLUSTER SHARDS reply from a
+     *   gossip-lagging seed is not automatically more current than a
+     *   MOVED reply this instance already received directly; see
+     *   ClusterTopology's own docblocks (particularly $movedOverlay and
+     *   applyShards()) for the full per-slot reconciliation model this
+     *   relies on, and invalidateMovedOverrideIfTarget() below for how a
+     *   dead override — one naming a node that's now genuinely
+     *   unreachable — avoids pinning every future operation for that
+     *   slot forever, without letting an unrelated failure (an ASK
+     *   client's own, in particular) erase a still-healthy one.
+     * - ASK means only this one key is mid-migration; the slot's stable
+     *   owner hasn't changed. The operation is retried directly against
+     *   the reported target — never installed as the slot's new owner,
+     *   the topology is never refreshed for it, and applyMovedOverride()
+     *   is never called for it either — preceded by ASKING on that
+     *   exact connection, per the protocol.
+     *
+     * A MOVED-then-ASK sequence (the slot moved since the last refresh,
+     * and the individual key is *also* still migrating out of the new
+     * owner — a real, valid scenario) is followed correctly: each hop
+     * re-enters the same loop rather than handling only one redirect
+     * total. Every parsed redirect's own slot is checked against
+     * Crc16::slotFor($key) before it's acted on at all — a redirect
+     * naming a different slot is malformed for *this* operation
+     * regardless of how well-formed the message otherwise is, and is
+     * rejected rather than blindly followed. $seenRedirects catches a
+     * repeating cycle (the identical kind+target redirect reported
+     * twice for this one call) the moment it repeats, rather than
+     * silently spending the whole MAX_REDIRECT_ATTEMPTS budget bouncing
+     * between the same two nodes — a distinct failure from simply
+     * exhausting the bound on a chain of genuinely different redirects.
+     * A malformed redirect, a slot mismatch, a detected loop, an ASKING
+     * failure, or exhausting MAX_REDIRECT_ATTEMPTS all wrap as
+     * CacheException with the same operation/key context as any other
+     * failure.
+     *
+     * The ASK target's client is always a fresh one from
+     * ClusterTopology::buildDedicatedClient(), never the topology's own
+     * memoized clientFor() — a shared, multiplexed connection would let
+     * an unrelated concurrent Fiber's command land on the wire between
+     * ASKING and the retried operation, breaking ASKING's one-shot
+     * "next command" contract. Confirmed against amphp/redis's own
+     * ReconnectingRedisLink: every execute() call is queued and matched
+     * to its response strictly in send order, with nothing preventing a
+     * second Fiber's send() from interleaving between two calls made by
+     * this one — a dedicated, never-shared connection is what actually
+     * guarantees the ordering, not merely calling the two in sequence.
+     *
+     * @template T
+     * @param callable(RedisClient): T $operation
+     * @return T
+     */
+    private function guardKeyed(string $operationName, string $key, callable $operation): mixed
+    {
+        $expectedSlot = Crc16::slotFor($key);
+        $client = $this->topology->nodeForSlot($expectedSlot);
+
+        /** @var array<string, true> $seenRedirects keyed by "{kind}:{target}", detects a repeating cycle */
+        $seenRedirects = [];
+
+        for ($attempt = 1; $attempt <= self::MAX_REDIRECT_ATTEMPTS; $attempt++) {
+            try {
+                return $operation($client);
+            } catch (QueryException $e) {
+                try {
+                    $redirect = ClusterRedirect::tryParse($e->getMessage());
+                } catch (RedisException $malformed) {
+                    throw CacheException::forOperation($operationName, $key, $malformed);
+                }
+
+                if ($redirect === null) {
+                    throw CacheException::forOperation($operationName, $key, $e);
+                }
+
+                if ($redirect->slot !== $expectedSlot) {
+                    throw CacheException::forOperation($operationName, $key, new RedisException(
+                        "{$redirect->kind->value} redirect names slot {$redirect->slot}, but \"{$key}\" hashes to slot {$expectedSlot}.",
+                    ));
+                }
+
+                $redirectSignature = $redirect->kind->value . ':' . $redirect->target->key();
+
+                if (isset($seenRedirects[$redirectSignature])) {
+                    throw CacheException::forOperation($operationName, $key, new RedisException(
+                        "Redirect loop detected: {$redirect->kind->value} to {$redirect->target->key()} was already followed for this operation.",
+                    ));
+                }
+
+                $seenRedirects[$redirectSignature] = true;
+
+                if ($redirect->kind === ClusterRedirectKind::Moved) {
+                    try {
+                        $this->topology->refresh();
+                    } catch (RedisException) {
+                        // Best-effort — see the method docblock: this
+                        // retry proceeds against the reply's own
+                        // authoritative target regardless, so a
+                        // transient refresh failure here must not block
+                        // an operation that can otherwise succeed.
+                    }
+
+                    // Recorded regardless of whether the refresh above
+                    // succeeded or failed — and regardless of whether a
+                    // successful refresh already agrees with it — a
+                    // MOVED reply is durable ownership information, not
+                    // just a routing hint for this one call: without
+                    // this, a later operation for the same slot would
+                    // keep hitting the old owner until $ranges itself
+                    // eventually catches up, and allMasters() (which
+                    // clear() fans FLUSHDB out to) would have no way to
+                    // know this target exists at all.
+                    $this->topology->applyMovedOverride($redirect->slot, $redirect->target);
+
+                    $client = $this->topology->clientFor($redirect->target);
+
+                    continue;
+                }
+
+                $askClient = $this->topology->buildDedicatedClient($redirect->target);
+
+                try {
+                    $askClient->execute('ASKING');
+                } catch (RedisException $askingFailed) {
+                    throw CacheException::forOperation($operationName, $key, $askingFailed);
+                }
+
+                $client = $askClient;
+            } catch (RedisException $e) {
+                // A connection-level failure, not a redirect reply —
+                // $client here is whichever one $operation() was
+                // actually called against on this attempt, and that's
+                // exactly what's passed through: the overlay's own
+                // memoized target after a MOVED reply, or the
+                // dedicated, never-memoized ASK client after a
+                // successful ASKING. invalidateMovedOverrideIfTarget()
+                // only ever removes this slot's override when $client
+                // genuinely *is* that override's own current target —
+                // an ASK-dedicated client's own failure can never match
+                // it, since it was never memoized as anything's target,
+                // so a transient failure retrying a single migrating
+                // key can never erase a separate, still-healthy durable
+                // override for this same slot. When $client *is* the
+                // override's target, this is the one direct signal that
+                // justifies giving up on it: ClusterTopology's own
+                // per-slot reconciliation only ever removes an override
+                // a fresh discovery actively confirms, never merely
+                // disagrees with, so without this a node that's
+                // genuinely gone would keep pinning every future
+                // operation for this slot to a connection that will
+                // never succeed again. A harmless no-op when this slot
+                // has no override at all, or when the current override
+                // no longer matches $client (already replaced by a
+                // later MOVED reply, possibly from another Fiber).
+                $this->topology->invalidateMovedOverrideIfTarget($expectedSlot, $client);
+
+                throw CacheException::forOperation($operationName, $key, $e);
             }
-        } catch (RedisException $e) {
-            throw CacheException::forOperation($operationName, $contextKey, $e);
         }
 
-        $this->topology->refresh();
-
-        try {
-            return $operation();
-        } catch (RedisException $e) {
-            throw CacheException::forOperation($operationName, $contextKey, $e);
-        }
+        throw CacheException::forOperation(
+            $operationName,
+            $key,
+            new RedisException('Exceeded ' . self::MAX_REDIRECT_ATTEMPTS . ' cluster redirect attempts.'),
+        );
     }
 
     private static function ttlInSeconds(null|int|DateInterval $ttl): ?int

@@ -51,32 +51,24 @@ final readonly class BuildCommand
         $projectRoot = $this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__));
         $cacheDirectory = $projectRoot . '/.kinetis-cache';
 
-        self::removeDirectory($cacheDirectory);
-
         if ($arguments->hasOption('destroy')) {
+            CacheStore::destroy($cacheDirectory);
             fwrite(STDOUT, "Removed {$cacheDirectory}/\n");
 
             return 0;
         }
 
+        // Compiles and stages a whole new generation before touching
+        // anything the previous one published — see CacheStore::
+        // writeAll()'s own docblock. A compile or write failure here
+        // leaves whatever was already active (if anything) exactly as
+        // it was; the cache directory itself is never removed as part
+        // of a plain rebuild.
         $compiled = (new Compiler())->compileProject($projectRoot);
         (new CacheStore($cacheDirectory))->writeAll($compiled);
 
         fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, and event listeners written to {$cacheDirectory}/\n");
 
         return 0;
-    }
-
-    private static function removeDirectory(string $directory): void
-    {
-        if (!is_dir($directory)) {
-            return;
-        }
-
-        foreach (glob($directory . '/*') ?: [] as $file) {
-            unlink($file);
-        }
-
-        rmdir($directory);
     }
 }

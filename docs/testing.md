@@ -96,13 +96,88 @@ $this->client->delete('/users/42', headers: ['Authorization' => 'Bearer test-tok
 ```
 
 `body` is a plain array, JSON-encoded automatically, with
-`Content-Type: application/json` set unless you pass your own. Every verb
-method calls `request()`, which is available directly for anything the
+`Content-Type: application/json` set unless you pass your own — and that
+override must itself be JSON-shaped (`application/json`, or a `+json`
+structured suffix for a vendor media type; a `; charset=...` parameter is
+fine, since only the bare media type is checked); anything else throws,
+rather than silently sending JSON bytes under a Content-Type that claims
+otherwise. The header is resolved case-insensitively (`content-type`
+works exactly like `Content-Type`): two differently-cased keys naming the
+same header with two different values throw rather than silently picking
+one, and two agreeing on the same value are collapsed into exactly one
+outgoing header rather than left as two (which a real HTTP client would
+otherwise combine into one comma-joined, invalid Content-Type value).
+This runs even on a request with no body at all — `get()`/`delete()`
+still catch a conflicting Content-Type in `headers`. Every verb method
+calls `request()`, which is available directly for anything the
 shorthands don't cover:
 
 ```{code-block} php
 $this->client->request('PATCH', '/users/42', body: $payload, headers: $headers);
 ```
+
+Query parameters, wherever you pass them (`get()`'s own `query:`, or
+`request()`'s), are encoded into the request URI's actual query string —
+`getQueryParams()` is parsed back out of that same string, so the two
+always agree, the same relationship a real incoming request has.
+
+**A JSON array is not the only body a route needs to see.** Four more
+methods send something genuinely different, never routed through JSON
+encoding at all:
+
+```{code-block} php
+// application/x-www-form-urlencoded — the raw bytes are exactly
+// http_build_query($form), and getParsedBody() is that same string
+// parsed back with parse_str() — not $form itself. A wire-format body
+// can't carry $form's original PHP types: every scalar comes back as a
+// string, a null value is omitted entirely, and a nested array is
+// re-encoded/re-parsed — the same lossy shape a real form post produces.
+$this->client->postForm('/login', ['email' => 'ada@example.com', 'password' => 'secret']);
+$this->client->putForm('/settings', ['theme' => 'dark']);
+$this->client->patchForm('/settings', ['theme' => 'dark']);
+
+// A raw string body, sent exactly as given — a webhook payload, binary
+// content, anything none of the above already cover. getParsedBody()
+// stays null.
+$this->client->raw('POST', '/webhooks/stripe', $rawPayload, ['Content-Type' => 'application/json']);
+```
+
+`postForm()`/`putForm()`/`patchForm()` exist specifically because
+`post()`/`put()`/`patch()` always send JSON — setting
+`Content-Type: application/x-www-form-urlencoded` on an array `$body`
+handed to those would create a request whose declared Content-Type
+disagreed with its actual bytes, which is exactly what these methods
+avoid: a route reading `getParsedBody()` (a form-encoded `_token` field
+CSRF protection checks, for one) needs a request built this way to be
+reachable in a test at all. Their own Content-Type default
+(`application/x-www-form-urlencoded`) can be overridden too — a
+`; charset=...` parameter is fine — but the override must itself be
+form-urlencoded-shaped; anything else (a stray `application/json`, say)
+throws, for the identical reason `request()`'s own override validation
+does.
+
+**`send()` is the direct escape hatch** — for a multipart/uploaded-file
+request, or anything else none of the methods above cover. This class
+deliberately never guesses a multipart boundary from a plain array; build
+the real PSR-7 request yourself and dispatch it through the same Kernel
+every other method here uses:
+
+```{code-block} php
+use Nyholm\Psr7\ServerRequest;
+use Nyholm\Psr7\Stream;
+use Nyholm\Psr7\UploadedFile;
+
+$avatar = new UploadedFile(Stream::create($fileContents), \strlen($fileContents), \UPLOAD_ERR_OK, 'avatar.png', 'image/png');
+$request = new ServerRequest('POST', '/avatars')
+    ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary')
+    ->withParsedBody(['name' => 'Ada'])
+    ->withUploadedFiles(['avatar' => $avatar]);
+
+$this->client->send($request)->assertOk();
+```
+
+Every method above is, underneath, just a convenience for building one of
+these requests and calling `send()`.
 
 ## Asserting on the response
 

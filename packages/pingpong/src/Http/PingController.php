@@ -8,6 +8,7 @@ use App\Dto\ScenarioCounts;
 use App\Events\ActionEvent;
 use App\Queue\PongJob;
 use App\Repositories\PingRepository;
+use InvalidArgumentException;
 use Kinetis\Config\Config;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\Http\Attributes\Get;
@@ -44,9 +45,27 @@ final readonly class PingController
             'broadcastConfig' => [
                 'key' => $this->config->string('BROADCAST_KEY', 'app-key'),
                 'host' => $this->config->string('BROADCAST_BROWSER_HOST', 'localhost'),
-                'port' => $this->config->int('BROADCAST_BROWSER_PORT', 6001),
+                'port' => self::browserPort($this->config),
             ],
         ]));
+    }
+
+    /**
+     * Extracted out of index() as its own testable seam: the smallest
+     * possible unit — a plain Config in, an int out — rather than
+     * needing a full controller construction (PingRepository/
+     * QueueInterface/EventDispatcher, none of which this check has
+     * anything to do with) just to exercise one config bound.
+     */
+    public static function browserPort(Config $config): int
+    {
+        $port = $config->int('BROADCAST_BROWSER_PORT', 6001);
+
+        if ($port < 1 || $port > 65535) {
+            throw new InvalidArgumentException("BROADCAST_BROWSER_PORT must be a valid TCP port (1-65535), got {$port}.");
+        }
+
+        return $port;
     }
 
     /**

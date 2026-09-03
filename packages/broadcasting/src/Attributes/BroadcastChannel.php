@@ -26,10 +26,15 @@ use Attribute;
  * named after one of the pattern's placeholders, in the pattern's own
  * order. Returning `bool` authorizes (or rejects) a private channel;
  * returning `array` authorizes a presence channel, and the array becomes
- * that subscriber's `channel_data` (conventionally at least a `user_id`
- * key) — {@see BroadcastChannelRegistry::register()} does not itself
- * enforce which shape a given pattern must return, since a channel is
- * free to serve both channel types under different prefixes.
+ * that subscriber's `channel_data` — {@see BroadcastChannelRegistry::register()}
+ * does not itself enforce which shape a given pattern must return, since
+ * a channel is free to serve both channel types under different
+ * prefixes, but {@see \Kinetis\Broadcasting\PusherProtocol::assertValidPresenceData()}
+ * does, at request time: a **required**, non-empty string `user_id` key
+ * of at most 128 bytes, plus an optional `user_info` and anything else,
+ * the whole thing encoding to at most 1024 bytes of JSON. A presence
+ * result that doesn't satisfy this is never signed — the subscription
+ * is rejected the same way a `false` private-channel result is.
  */
 #[Attribute(Attribute::TARGET_METHOD)]
 final readonly class BroadcastChannel

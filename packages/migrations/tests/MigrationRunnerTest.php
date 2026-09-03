@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations\Tests;
 
+use InvalidArgumentException;
 use Kinetis\Migrations\Exception\MigrationFileMissingException;
+use Kinetis\Migrations\Exception\MigrationLockReleaseException;
 use Kinetis\Migrations\Exception\MigrationLockTimeoutException;
 use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Migrations\Tests\Fixtures\FakeMysqlLink;
 use Kinetis\Migrations\Tests\Fixtures\FakePostgresLink;
 use Kinetis\Migrations\Tests\Fixtures\InMemoryMigrationRepository;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -317,7 +320,7 @@ final class MigrationRunnerTest extends TestCase
         self::assertSame(
             [
                 ['sql' => 'SELECT GET_LOCK(?, ?) AS acquired', 'params' => ['kinetis_migrations', 10]],
-                ['sql' => 'SELECT RELEASE_LOCK(?)', 'params' => ['kinetis_migrations']],
+                ['sql' => 'SELECT RELEASE_LOCK(?) AS released', 'params' => ['kinetis_migrations']],
             ],
             $link->calls,
         );
@@ -371,7 +374,7 @@ final class MigrationRunnerTest extends TestCase
         self::assertSame(
             [
                 'SELECT pg_try_advisory_lock(870124, 1)::int AS acquired',
-                'SELECT pg_advisory_unlock(870124, 1)',
+                'SELECT pg_advisory_unlock(870124, 1)::int AS released',
             ],
             $link->calls,
         );
@@ -409,6 +412,170 @@ final class MigrationRunnerTest extends TestCase
 
         $this->expectException(MigrationLockTimeoutException::class);
         $this->expectExceptionMessage('Could not acquire the migration lock');
+
+        $runner->migrate();
+    }
+
+    /**
+     * A negative timeout has backend-specific, undocumented-here
+     * semantics (MySQL's GET_LOCK() timeout parameter can mean "wait
+     * indefinitely"; Postgres's own poll loop would instead treat it as
+     * an already-past deadline) — rejected at construction, before
+     * either backend ever sees it.
+     */
+    public function test_construction_rejects_a_negative_lock_timeout(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new MigrationRunner(new FakeMysqlLink(), new InMemoryMigrationRepository(), $this->migrationsPath, lockTimeoutSeconds: -1);
+    }
+
+    public function test_construction_accepts_a_zero_lock_timeout(): void
+    {
+        $runner = new MigrationRunner(new FakeMysqlLink(), new InMemoryMigrationRepository(), $this->migrationsPath, lockTimeoutSeconds: 0);
+
+        self::assertSame([], $runner->migrate());
+    }
+
+    public function test_migrate_with_a_zero_second_mysql_timeout_passes_zero_to_get_lock(): void
+    {
+        $link = new FakeMysqlLink();
+        $this->writeMigration('20260101000000_first');
+        $runner = new MigrationRunner($link, new InMemoryMigrationRepository(), $this->migrationsPath, lockTimeoutSeconds: 0);
+
+        $runner->migrate();
+
+        self::assertSame(
+            ['sql' => 'SELECT GET_LOCK(?, ?) AS acquired', 'params' => ['kinetis_migrations', 0]],
+            $link->calls[0],
+        );
+    }
+
+    /**
+     * A zero-second timeout must still succeed when the lock happens to
+     * be immediately available on the very first probe — zero means "no
+     * waiting," not "always fail."
+     */
+    public function test_migrate_with_a_zero_second_postgres_timeout_succeeds_when_immediately_available(): void
+    {
+        $link = new FakePostgresLink(acquiresAfterAttempts: 1);
+        $this->writeMigration('20260101000000_first');
+        $runner = new MigrationRunner($link, new InMemoryMigrationRepository(), $this->migrationsPath, lockTimeoutSeconds: 0);
+
+        $applied = $runner->migrate();
+
+        self::assertSame(['20260101000000_first'], $applied);
+        self::assertCount(1, array_filter($link->calls, static fn (string $sql): bool => str_contains($sql, 'pg_try_advisory_lock')));
+    }
+
+    /**
+     * A zero-second timeout that fails to acquire must make exactly one
+     * probe and throw immediately — never retry, never sleep, never
+     * hang.
+     */
+    public function test_migrate_with_a_zero_second_postgres_timeout_makes_exactly_one_probe(): void
+    {
+        $link = new FakePostgresLink(acquiresAfterAttempts: 2);
+        $runner = new MigrationRunner($link, new InMemoryMigrationRepository(), $this->migrationsPath, lockTimeoutSeconds: 0);
+
+        try {
+            $runner->migrate();
+            self::fail('Expected MigrationLockTimeoutException.');
+        } catch (MigrationLockTimeoutException) {
+            // Expected.
+        }
+
+        self::assertCount(
+            1,
+            array_filter($link->calls, static fn (string $sql): bool => str_contains($sql, 'pg_try_advisory_lock')),
+            'A zero-second timeout must make exactly one immediate probe, never retry.',
+        );
+    }
+
+    /**
+     * The identical masking hazard Kinetis\Storage\AmpFileAdapter::
+     * readMimeTypeSample() already discloses and guards against, applied
+     * here: PHP's own finally semantics would otherwise make a
+     * releaseLock() failure the new outer exception, chaining the
+     * migration's own already-in-flight failure beneath it as previous
+     * — obscured one level deeper, not discarded. Both fail
+     * simultaneously; the exception that actually escapes migrate()
+     * must still be the migration's own, reported directly, not the
+     * release failure.
+     */
+    public function test_a_release_failure_never_masks_the_migrations_own_failure(): void
+    {
+        $link = new FakeMysqlLink();
+        $link->releaseShouldFail = true;
+        $this->writeThrowingMigration('20260101000000_boom');
+
+        try {
+            $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
+            self::fail("Expected the migration's own exception to propagate.");
+        } catch (RuntimeException $e) {
+            self::assertSame('deliberate failure', $e->getMessage());
+        }
+    }
+
+    /**
+     * A release failure with no migration failure in flight is not
+     * absorbed — releasing genuinely is part of what migrate() promises
+     * to do, the same "closing is part of the operation" precedent
+     * already established for Kinetis\Storage\AmpFileAdapter's own
+     * write()/writeStream().
+     */
+    public function test_a_release_failure_with_no_migration_failure_still_propagates(): void
+    {
+        $link = new FakeMysqlLink();
+        $link->releaseShouldFail = true;
+        $this->writeMigration('20260101000000_first');
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('simulated release failure');
+
+        $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
+    }
+
+    // --- releaseLock() checks the release call's own returned value —
+    // neither backend throws on its own when the current session didn't
+    // hold the lock at release time, so a successful query is not the
+    // same guarantee as a successful release. $releasedValue (distinct
+    // from $releaseShouldFail, which simulates the call itself
+    // throwing) forces the value MigrationRunner reads back. ---
+
+    /** MySQL's RELEASE_LOCK() returns 0 when a different session holds the lock. */
+    public function test_migrate_throws_when_mysql_release_lock_reports_the_session_did_not_hold_it(): void
+    {
+        $link = new FakeMysqlLink();
+        $link->releasedValue = 0;
+        $this->writeMigration('20260101000000_first');
+
+        $this->expectException(MigrationLockReleaseException::class);
+
+        $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
+    }
+
+    /** MySQL's RELEASE_LOCK() returns NULL when the lock was never acquired at all. */
+    public function test_migrate_throws_when_mysql_release_lock_reports_null(): void
+    {
+        $link = new FakeMysqlLink();
+        $link->releasedValue = null;
+        $this->writeMigration('20260101000000_first');
+
+        $this->expectException(MigrationLockReleaseException::class);
+
+        $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
+    }
+
+    /** Postgres's pg_advisory_unlock() returns false for the equivalent case. */
+    public function test_migrate_throws_when_postgres_unlock_reports_false(): void
+    {
+        $link = new FakePostgresLink();
+        $link->releasedValue = false;
+        $this->writeMigration('20260101000000_first');
+        $runner = new MigrationRunner($link, new InMemoryMigrationRepository(), $this->migrationsPath);
+
+        $this->expectException(MigrationLockReleaseException::class);
 
         $runner->migrate();
     }

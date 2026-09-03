@@ -36,7 +36,19 @@ interface CacheableDiscoveryInterface
      * loaded back out of a `var_export()`'d cache file, the result must
      * be identical either way.
      *
+     * When `$data` does not represent a valid instance, must throw
+     * something implementing
+     * {@see \Kinetis\Cache\Exception\CacheArtifactExceptionInterface} —
+     * this is the one exception category `BootSequence`'s cache-bundle
+     * loaders classify as "the cache is stale or corrupt, compile
+     * fresh instead." Anything else this method throws (an undefined
+     * method call, a dependency failure, an assertion — a genuine
+     * defect in this implementation, not a data-shape problem)
+     * propagates uncaught, exactly as any other uncontained exception
+     * would.
+     *
      * @param array<array-key, mixed> $data
+     * @throws \Kinetis\Cache\Exception\CacheArtifactExceptionInterface
      */
     public static function fromArray(array $data): static;
 }

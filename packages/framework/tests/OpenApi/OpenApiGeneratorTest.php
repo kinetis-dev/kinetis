@@ -6,14 +6,21 @@ namespace Kinetis\Tests\OpenApi;
 
 use Kinetis\Http\Routing\Router;
 use Kinetis\OpenApi\OpenApiGenerator;
+use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
 use Kinetis\Tests\Http\Fixtures\HiddenController;
+use Kinetis\Tests\Http\Fixtures\NullableFieldsController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
+use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
 use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
+use Kinetis\Tests\Http\Fixtures\UnsupportedBodyFieldController;
+use Kinetis\Tests\Http\Fixtures\UnsupportedCallableBodyFieldController;
+use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Reflection\Fixtures\HiddenChildOfRoutedBase;
+use Kinetis\Validation\Exception\JsonSchemaException;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/Fixtures/global_namespace_dto.php';
@@ -356,7 +363,12 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertArrayNotHasKey('total', $schema['properties']);
     }
 
-    public function test_a_paginator_without_the_attribute_keeps_the_bare_object_fallback(): void
+    /**
+     * KINETIS-76: a bare `array $data` property's own type is now the
+     * truthful `array`, not the `object` fallback every unmapped builtin
+     * used to collapse into.
+     */
+    public function test_a_paginator_without_the_attribute_keeps_the_bare_array_fallback(): void
     {
         $router = new Router();
         $router->register(PaginatedOrderController::class);
@@ -365,7 +377,7 @@ final class OpenApiGeneratorTest extends TestCase
         $ref = $spec['paths']['/orders/paginated-bare']['get']['responses']['200']['content']['application/json']['schema'];
 
         self::assertSame(['$ref' => '#/components/schemas/Paginator'], $ref);
-        self::assertSame(['type' => 'object'], $spec['components']['schemas']['Paginator']['properties']['data']);
+        self::assertSame(['type' => 'array'], $spec['components']['schemas']['Paginator']['properties']['data']);
     }
 
     /**
@@ -390,5 +402,214 @@ final class OpenApiGeneratorTest extends TestCase
 
         // The declaring class carries no #[Hidden]; the registered one does.
         self::assertSame([], $document['paths']);
+    }
+
+    // KINETIS-75: the full generator pipeline — request-body dedup into
+    // components/schemas included — must produce the identical nullable
+    // representation JsonSchemaTest already proves at the unit level.
+
+    public function test_a_nullable_body_field_is_widened_to_include_null_and_stays_required_without_a_default(): void
+    {
+        $router = new Router();
+        $router->register(NullableFieldsController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $ref = $document['paths']['/nullable-fields']['post']['requestBody']['content']['application/json']['schema'];
+        self::assertSame(['$ref' => '#/components/schemas/NullableFieldsRequest'], $ref);
+
+        $schema = $document['components']['schemas']['NullableFieldsRequest'];
+
+        self::assertSame(['type' => ['string', 'null']], $schema['properties']['requiredNullable']);
+        self::assertSame(['requiredNullable'], $schema['required'], 'only the defaultless field is required');
+    }
+
+    public function test_a_nullable_body_field_with_a_default_is_optional_and_widened(): void
+    {
+        $router = new Router();
+        $router->register(NullableFieldsController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $schema = $document['components']['schemas']['NullableFieldsRequest'];
+
+        self::assertSame(['type' => ['string', 'null']], $schema['properties']['optionalNullable']);
+        self::assertNotContains('optionalNullable', $schema['required']);
+    }
+
+    public function test_a_nullable_nested_dto_body_field_dedupes_to_an_any_of_wrapped_ref(): void
+    {
+        $router = new Router();
+        $router->register(NullableFieldsController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $schema = $document['components']['schemas']['NullableFieldsRequest'];
+
+        self::assertSame(
+            ['anyOf' => [['$ref' => '#/components/schemas/OrderItem'], ['type' => 'null']]],
+            $schema['properties']['optionalItem'],
+        );
+        self::assertArrayHasKey('OrderItem', $document['components']['schemas']);
+        self::assertNotContains('optionalItem', $schema['required']);
+    }
+
+    public function test_a_nullable_list_of_body_field_widens_the_arrays_own_type_and_keeps_a_ref_array(): void
+    {
+        $router = new Router();
+        $router->register(NullableFieldsController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $schema = $document['components']['schemas']['NullableFieldsRequest'];
+        $itemsSchema = $schema['properties']['optionalItems'];
+
+        self::assertSame(['array', 'null'], $itemsSchema['type']);
+        self::assertSame(['$ref' => '#/components/schemas/OrderItem'], $itemsSchema['items']);
+        self::assertNotContains('optionalItems', $schema['required']);
+    }
+
+    // KINETIS-76 follow-up: the complete, audited builtin-type policy —
+    // see JsonSchema::forType()'s own docblock — proven end-to-end
+    // through a real registered HTTP route's own generated OpenAPI
+    // document, not just via JsonSchema unit calls.
+
+    public function test_a_body_dto_schema_covers_every_supported_builtin_category(): void
+    {
+        $router = new Router();
+        $router->register(BuiltinCoverageController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $ref = $document['paths']['/builtin-coverage']['post']['requestBody']['content']['application/json']['schema'];
+        self::assertSame(['$ref' => '#/components/schemas/BuiltinCoverageRequest'], $ref);
+
+        $schema = $document['components']['schemas']['BuiltinCoverageRequest'];
+
+        self::assertSame(['type' => 'array'], $schema['properties']['tags']);
+        self::assertSame(['type' => 'array'], $schema['properties']['items'], 'iterable gets the identical array schema as plain array');
+        self::assertEquals((object) [], $schema['properties']['note'], 'mixed is the empty schema object, not the empty schema array');
+        self::assertSame(['type' => 'null'], $schema['properties']['marker']);
+        self::assertSame(['type' => 'boolean', 'const' => true], $schema['properties']['confirmed']);
+        self::assertSame(['type' => 'boolean', 'const' => false], $schema['properties']['declined']);
+        self::assertSame(['tags', 'items'], $schema['required']);
+    }
+
+    /**
+     * The real, serialized wire shape — not just object-identity on the
+     * in-memory schema array. A bare `[]` for `mixed`'s schema would
+     * json_encode() as an invalid JSON *array* (`"note":[]`) where JSON
+     * Schema requires an object; this pins the actual bytes so that
+     * regression can never silently reappear.
+     */
+    public function test_the_serialized_openapi_document_encodes_mixed_as_a_json_object_not_an_array(): void
+    {
+        $router = new Router();
+        $router->register(BuiltinCoverageController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $encoded = json_encode($document, JSON_THROW_ON_ERROR);
+
+        self::assertStringContainsString('"note":{}', $encoded);
+        self::assertStringNotContainsString('"note":[]', $encoded);
+    }
+
+    /**
+     * Schema generation still refuses to describe an `object`/`callable`-
+     * typed field, unchanged from before — but this is deliberately not
+     * the guarantee that keeps a real request from reaching the
+     * constructor unchecked; that guarantee is Hydrator::typeMismatchMessage(),
+     * proven at the runtime/dispatch level in DispatcherTest, which fires
+     * on every request regardless of whether generate() is ever called.
+     */
+    public function test_generate_still_throws_for_a_route_with_an_unsupported_builtin_body_field(): void
+    {
+        $router = new Router();
+        $router->register(UnsupportedBodyFieldController::class);
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('object');
+
+        (new OpenApiGenerator($router))->generate();
+    }
+
+    /**
+     * `callable`'s own equivalent of the `object` test above — the
+     * second rejected builtin category gets the identical breadth of
+     * coverage, not just direct Hydrator/JsonSchema unit calls.
+     */
+    public function test_generate_still_throws_for_a_route_with_an_unsupported_callable_body_field(): void
+    {
+        $router = new Router();
+        $router->register(UnsupportedCallableBodyFieldController::class);
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('callable');
+
+        (new OpenApiGenerator($router))->generate();
+    }
+
+    /**
+     * The requested end-to-end plain *nullable* array case — distinct
+     * from #[ListOf]'s own nullable-array schema coverage
+     * (test_a_nullable_list_of_body_field_widens_the_arrays_own_type_and_keeps_a_ref_array
+     * above): a plain array's own schema has no `items` shape at all,
+     * just the widened `type`.
+     */
+    public function test_a_nullable_plain_array_body_field_widens_its_type(): void
+    {
+        $router = new Router();
+        $router->register(PlainArrayFieldController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $schema = $document['components']['schemas']['PlainArrayFieldRequest'];
+
+        self::assertSame(['type' => 'array'], $schema['properties']['tags']);
+        self::assertSame(['type' => ['array', 'null']], $schema['properties']['optionalTags']);
+        self::assertSame(['tags'], $schema['required']);
+    }
+
+    // KINETIS-76 third follow-up: Dispatcher::resolveBodyFromPlan()
+    // branches purely on the real request's Content-Type header — any
+    // #[Body] DTO genuinely accepts application/json,
+    // application/x-www-form-urlencoded, and multipart/form-data alike,
+    // unconditionally — so the generated document must advertise all
+    // three, not just application/json.
+
+    public function test_a_body_route_advertises_every_content_type_it_genuinely_accepts(): void
+    {
+        $router = new Router();
+        $router->register(UserController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $content = $document['paths']['/users']['post']['requestBody']['content'];
+
+        self::assertSame(
+            ['application/json', 'application/x-www-form-urlencoded', 'multipart/form-data'],
+            array_keys($content),
+        );
+
+        // The identical schema (a $ref to the same component) under
+        // every content type — Dispatcher hydrates the exact same DTO
+        // class regardless of which of the three the client actually
+        // sent, so there is nothing content-type-specific to differ.
+        self::assertSame($content['application/json'], $content['application/x-www-form-urlencoded']);
+        self::assertSame($content['application/json'], $content['multipart/form-data']);
+    }
+
+    /**
+     * An UploadedFileInterface-typed #[Body] field has no constructor of
+     * its own to expand into a schema (it's an interface, not a class
+     * with fields) — {type: string, format: binary} is the real,
+     * correct OpenAPI convention for a file upload inside a
+     * multipart-serialized schema instead, telling a client the field's
+     * true shape rather than the generic {type: object} a bare
+     * "expand the constructor" fallback would otherwise produce.
+     */
+    public function test_an_uploaded_file_typed_body_field_gets_the_real_binary_string_schema(): void
+    {
+        $router = new Router();
+        $router->register(UploadController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $schema = $document['components']['schemas']['AvatarUploadRequest'];
+
+        self::assertSame(['type' => 'string', 'format' => 'binary'], $schema['properties']['avatar']);
+        self::assertSame(['name', 'avatar'], $schema['required']);
     }
 }

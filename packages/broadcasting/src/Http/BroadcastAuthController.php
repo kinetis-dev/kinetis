@@ -8,6 +8,8 @@ use Kinetis\Broadcasting\BroadcasterInterface;
 use Kinetis\Broadcasting\BroadcastChannelRegistry;
 use Kinetis\Broadcasting\Driver\PusherBroadcaster;
 use Kinetis\Broadcasting\Exception\BroadcastingException;
+use Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException;
+use Kinetis\Broadcasting\PusherProtocol;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Http\CurrentUserInterface;
@@ -59,6 +61,15 @@ final readonly class BroadcastAuthController
             return ErrorResponse::create(422, 'socket_id and channel_name are required.');
         }
 
+        // Checked before anything else touches $socketId/$channelName —
+        // including which authorizer (if any) is registered for the
+        // channel — so a malformed request never causes an application
+        // authorizer to run at all, not merely never causes its result
+        // to be trusted.
+        if (!PusherProtocol::isValidSocketId($socketId) || !PusherProtocol::isValidChannelName($channelName)) {
+            return ErrorResponse::create(422, 'socket_id or channel_name does not match the Pusher protocol grammar.');
+        }
+
         $isPresence = str_starts_with($channelName, 'presence-');
         $isPrivate = !$isPresence && str_starts_with($channelName, 'private-');
 
@@ -92,12 +103,16 @@ final readonly class BroadcastAuthController
                 return ErrorResponse::create(403, 'Not authorized.');
             }
 
-            $channelDataJson = json_encode($result, JSON_THROW_ON_ERROR);
-
-            return [
-                'auth' => $this->broadcaster->authorizePresenceChannel($socketId, $channelName, $channelDataJson),
-                'channel_data' => $channelDataJson,
-            ];
+            // A malformed presence result (a missing/non-string user_id,
+            // list-shaped data, an oversized payload) is the application
+            // authorizer's own bug, not a client-input problem — treated
+            // the same as any other "Not authorized" outcome rather than
+            // an uncaught exception, and never signed regardless.
+            try {
+                return $this->broadcaster->authorizePresenceChannel($socketId, $channelName, $result);
+            } catch (InvalidPusherProtocolValueException) {
+                return ErrorResponse::create(403, 'Not authorized.');
+            }
         }
 
         if ($result !== true) {
@@ -118,7 +133,16 @@ final readonly class BroadcastAuthController
             return $parsed;
         }
 
-        parse_str((string) $request->getBody(), $fallback);
+        // getContents(), never a (string) cast: MaxBodySizeMiddleware
+        // wraps this request's body in a SizeLimitedStream whose
+        // __toString() cannot throw and silently reports an empty
+        // string once the configured cap is exceeded — a string cast
+        // here would turn a real oversized-body rejection into a
+        // misleading 422 "required fields missing" response instead of
+        // the 413 that middleware exists to produce. Letting
+        // BodyTooLargeException propagate uncaught is what lets that
+        // middleware's own catch turn it into the real response.
+        parse_str($request->getBody()->getContents(), $fallback);
 
         $result = [];
 

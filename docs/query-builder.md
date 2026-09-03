@@ -167,11 +167,25 @@ skips whatever's left of that run: `WHERE $cursorColumn > ?` only
 excludes rows up to and including the value already seen, not "rows
 already seen."
 
-`cursorPaginate()` also always orders by `$cursorColumn` itself. Adding
-your own `orderBy()` call on a *different* column can make it skip or
-repeat rows for the same reason — the `WHERE $cursorColumn > ?`
-comparison only makes sense against the column the results are actually
-ordered by.
+`cursorPaginate()` also always orders by `$cursorColumn` itself, and owns
+the whole ordering: an `orderBy()`/`orderByRaw()` call already made on
+the `Query` — on `$cursorColumn` or any other column — throws
+`InvalidPaginationException` instead of silently compiling a
+`WHERE $cursorColumn > ?` that no longer describes the order results
+actually come back in. Pagination by a different or composite ordering
+needs its own cursor design, which this method doesn't provide; call it
+on a `Query` with no `orderBy()`/`orderByRaw()` calls of your own.
+
+The cursor is the *only* position `cursorPaginate()` tracks — it owns
+`offset()`/`limit()` too, not just ordering. A pre-existing `limit()`
+throws, since the method always computes its own from `perPage`. A
+pre-existing `offset()` greater than zero throws as well: it would be
+reapplied inside every cursor window on every call rather than applied
+once before the sequence starts, silently skipping rows the moment you
+advance past the first page. `offset(0)` is the one value with no such
+risk and is accepted. If you need to skip an initial run of rows, obtain
+a starting cursor for that position instead, or reach for offset-based
+`paginate()` if page-jumping is what you actually need.
 ```
 
 `nextCursor` always comes out of the same result as the rows you were
@@ -210,9 +224,10 @@ return new Query($this->db)->table('orders')
 
 The alias is appended to your projection, read back, and stripped from
 every returned row before you see them — so the rows still contain
-exactly `total` and `name`. Nothing else about the query changes: an
-alias an `orderBy()` depends on stays where you put it, and an
-`offset()` you set stays yours.
+exactly `total` and `name`. A pre-existing `orderBy()`/`orderByRaw()`,
+`limit()`, or `offset()` beyond zero is a different matter —
+`cursorPaginate()` owns all three, per the warning above, and rejects
+one outright rather than silently keeping or dropping it.
 
 Pass a qualified `$cursorColumn` without an alias and you get an
 `InvalidPaginationException` naming the parameter, not a silently wrong
@@ -253,6 +268,15 @@ for `?perPage=1000000` is passed straight through. Capping it, if your
 application needs one, is a normal application-level concern (clamp it in
 the controller before calling either method), the same way `Query`
 doesn't validate a `where()` value either.
+
+The one arithmetic bound both methods do enforce: `paginate()`'s
+`(page - 1) * perPage` offset and `cursorPaginate()`'s `perPage + 1`
+look-ahead must fit PHP's native integer range. A combination that would
+overflow it — `?page=9223372036854775807&perPage=2`, say — also throws
+`InvalidPaginationException`, checked before either method touches the
+database. This isn't the same thing as a reasonable-`perPage` cap: it's
+the floor under which the arithmetic itself stays valid, regardless of
+whether your own application layers a smaller cap on top.
 
 ### Describing the item shape in OpenAPI
 

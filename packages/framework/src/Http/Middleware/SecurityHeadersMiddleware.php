@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Middleware;
 
+use InvalidArgumentException;
 use Kinetis\Config\Config;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -120,7 +121,15 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
     {
         $maxAge = $config->int('SECURITY_HSTS_MAX_AGE', 0);
 
-        if ($maxAge <= 0) {
+        // 0 is a real, RFC 6797-meaningful value — "disable HSTS for this
+        // origin" — not something to reject; a *negative* max-age has no
+        // such meaning and is a real misconfiguration, not silently
+        // folded into the same "disabled" bucket as zero.
+        if ($maxAge < 0) {
+            throw new InvalidArgumentException("SECURITY_HSTS_MAX_AGE must not be negative, got {$maxAge}.");
+        }
+
+        if ($maxAge === 0) {
             return '';
         }
 

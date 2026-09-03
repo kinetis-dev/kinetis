@@ -10,14 +10,18 @@ use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\SimpleCache\Exception\SimpleCacheUnavailableException;
 use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
+use Kinetis\Tests\Fixtures\ThrowingLogger;
+use Kinetis\Tests\Fixtures\WriteFailingSimpleCache;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
+use RuntimeException;
 
 /**
  * The document is generated per request in development and cached
@@ -120,6 +124,16 @@ final class DocumentationControllerTest extends TestCase
      * the one an application that set REDIS_HOST without installing
      * kinetis/cache-redis gets. The document can always be regenerated,
      * so a broken cache must not take the endpoint down with it.
+     *
+     * UnavailableSimpleCache fails every operation, so this single
+     * request genuinely reaches *both* cached()'s and store()'s own
+     * catch — cached() catches the failed get() and returns null, so
+     * generate() falls through to generating fresh and calling store(),
+     * whose own set() then fails too. Both warnings are asserted
+     * precisely, in the deterministic order they're produced (the read
+     * warning first): this is what "both cache catch sites remain
+     * observable when logging works" actually means for this one
+     * fixture, not merely that at least one record exists.
      */
     public function test_a_failing_cache_degrades_to_generating_rather_than_failing_the_request(): void
     {
@@ -143,8 +157,104 @@ final class DocumentationControllerTest extends TestCase
         self::assertIsArray($document);
         self::assertArrayHasKey('/users', $document['paths']);
 
-        // Degraded, not silent.
-        self::assertNotSame([], $logger->records);
+        // Degraded, not silent — and precisely, not just non-empty.
+        self::assertCount(2, $logger->records);
+        self::assertSame('warning', $logger->records[0]['level']);
+        self::assertSame('Could not read the cached OpenAPI document; generating it instead.', $logger->records[0]['message']);
+        self::assertInstanceOf(SimpleCacheUnavailableException::class, $logger->records[0]['context']['exception']);
+        self::assertSame('warning', $logger->records[1]['level']);
+        self::assertSame('Could not cache the OpenAPI document; it will be regenerated per request.', $logger->records[1]['message']);
+        self::assertInstanceOf(SimpleCacheUnavailableException::class, $logger->records[1]['context']['exception']);
+    }
+
+    /**
+     * The write catch in isolation, unlike the dual-failure fixture
+     * above: WriteFailingSimpleCache reads cleanly (a miss), so exactly
+     * one record — the write warning — is ever produced, with nothing
+     * to disambiguate from a read warning by index.
+     */
+    public function test_a_failing_cache_write_is_logged_precisely_when_the_logger_is_healthy(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(self::config('production')));
+        $app->instance(CacheInterface::class, new WriteFailingSimpleCache());
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $logger = new InMemoryLogger();
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $response = new Kernel($app, $router)->handle(new ServerRequest('GET', '/openapi.json'));
+
+        self::assertSame(200, $response->getStatusCode());
+        $response->getBody()->rewind();
+        $document = json_decode($response->getBody()->getContents(), true);
+        self::assertIsArray($document);
+        self::assertArrayHasKey('/users', $document['paths']);
+
+        self::assertCount(1, $logger->records);
+        self::assertSame('warning', $logger->records[0]['level']);
+        self::assertSame('Could not cache the OpenAPI document; it will be regenerated per request.', $logger->records[0]['message']);
+        self::assertInstanceOf(RuntimeException::class, $logger->records[0]['context']['exception']);
+    }
+
+    /**
+     * The same recoverable-cache-outage fallback as above, but with a
+     * logger that itself throws while cached() tries to report the
+     * read failure — SafeLogger must keep that from turning a
+     * recoverable outage into an unrecoverable one.
+     */
+    public function test_a_failing_cache_read_with_a_throwing_logger_still_regenerates_and_returns_200(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(self::config('production')));
+        $app->instance(CacheInterface::class, new UnavailableSimpleCache());
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->instance(LoggerInterface::class, new ThrowingLogger());
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $response = new Kernel($app, $router)->handle(new ServerRequest('GET', '/openapi.json'));
+
+        self::assertSame(200, $response->getStatusCode());
+        $response->getBody()->rewind();
+        $document = json_decode($response->getBody()->getContents(), true);
+        self::assertIsArray($document);
+        self::assertArrayHasKey('/users', $document['paths']);
+    }
+
+    /**
+     * The write side of the same guarantee, isolated from the read side:
+     * a cache that reads cleanly (a miss) but fails to store what was
+     * just generated must still return that generated document, even
+     * though the warning about the failed write cannot be logged either.
+     */
+    public function test_a_failing_cache_write_with_a_throwing_logger_still_returns_the_generated_document(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(self::config('production')));
+        $app->instance(CacheInterface::class, new WriteFailingSimpleCache());
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->instance(LoggerInterface::class, new ThrowingLogger());
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DocumentationController::class);
+
+        $response = new Kernel($app, $router)->handle(new ServerRequest('GET', '/openapi.json'));
+
+        self::assertSame(200, $response->getStatusCode());
+        $response->getBody()->rewind();
+        $document = json_decode($response->getBody()->getContents(), true);
+        self::assertIsArray($document);
+        self::assertArrayHasKey('/users', $document['paths']);
     }
 
     public function test_both_paths_are_closed_when_no_environment_names_them(): void

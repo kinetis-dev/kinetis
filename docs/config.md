@@ -79,12 +79,43 @@ state, so there's nothing to keep re-reading for.
 An explicitly empty value (`DB_PORT=`) is treated the same as an unset
 one, falling back to the default — the same convention named-connection
 config already uses to turn a setting off. Anything else that doesn't
-parse throws `Kinetis\Config\Exception\InvalidConfigValueException`
-rather than silently taking whatever PHP's own cast would produce —
-`int()`/`intOrNull()`/`float()` require `is_numeric()`, and `bool()`
-accepts `"true"`/`"false"`, `"1"`/`"0"`, `"on"`/`"off"`, and `"yes"`/`"no"`
-(case-insensitively) and rejects anything else, rather than letting an
-unrecognized value like `"purple"` silently become `false`.
+parse, or doesn't fit, throws `Kinetis\Config\Exception\
+InvalidConfigValueException` rather than silently taking whatever a
+lossy cast would produce.
+
+`int()`/`intOrNull()` accept an optional sign followed by decimal digits
+only — leading zeroes (`"007"`) are fine, but a fraction, an exponent,
+surrounding whitespace, an alternate base (`"0x1A"`), or a grouping
+separator (`"1_000"`) all throw, as does anything outside the platform's
+representable integer range (a huge digit string that would otherwise
+silently saturate toward `PHP_INT_MAX`/`PHP_INT_MIN`).
+
+`float()` accepts ordinary decimal notation (`"5"`, `"5."`, `".5"`,
+`"5.5"`) with an optional scientific-notation exponent (`"5e3"`,
+`"5.5e-3"`) — a leading `+`, leading zeroes, and both a leading or
+trailing dot are all accepted the same way. Beyond syntax, two more
+things are checked rather than trusted to a plain `(float)` cast: an
+exponent large enough to overflow to infinity throws instead of quietly
+becoming `INF`, and a genuinely nonzero value whose magnitude
+*underflows* to exactly `0.0` (a huge negative exponent like `"1e-400"`)
+throws too — indistinguishable, once cast, from a deliberately
+configured zero, so returning it silently would mean the value on
+either side of that line reads identically to the caller.
+
+`bool()` accepts `"true"`/`"false"`, `"1"`/`"0"`, `"on"`/`"off"`, and
+`"yes"`/`"no"` (case-insensitively) and rejects anything else, rather
+than letting an unrecognized value like `"purple"` silently become
+`false`.
+
+`Config` validates syntax and representable range — it has no idea
+whether a given key means a TCP port, a positive duration, or a ratio
+between 0 and 1. That domain knowledge belongs to whichever factory or
+middleware actually reads the key: `SqlConnectionFactory` rejects a
+`DB_PORT` outside 1–65535, `MaxBodySizeMiddleware` rejects a
+non-positive `MAX_BODY_SIZE`, `TracerFactory` rejects an
+`OTEL_TRACES_SAMPLER_ARG` outside 0–1, and so on — each with a clear
+`InvalidArgumentException` naming the key, rather than clamping silently
+into range.
 
 `intOrNull()` exists for the config that means something different when
 it's genuinely absent than when it's zero — `DB_CONNECT_TIMEOUT` and
@@ -223,12 +254,12 @@ yours to invent and aren't listed here.
 |---|---|---|
 | `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache (see {doc}`caching`). Anything unrecognized means `production`. |
 | `OPENAPI_ENVIRONMENTS` | — | Comma-separated `APP_ENV` values where `/openapi.json` and `/openapi` are served. Unset means neither is reachable anywhere (see {doc}`routing-validation`). |
-| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read (see {doc}`middleware`). |
+| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read (see {doc}`middleware`); must be positive. |
 | `SECURITY_FRAME_OPTIONS` | `DENY` | `X-Frame-Options` value, or `off` to omit the header (see {doc}`middleware`). |
 | `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | `Referrer-Policy` value, or `off` to omit it. |
 | `SECURITY_CSP` | — | `Content-Security-Policy` value. Unset means the header is not sent. |
 | `SECURITY_PERMISSIONS_POLICY` | — | `Permissions-Policy` value. Unset means the header is not sent. |
-| `SECURITY_HSTS_MAX_AGE` | `0` | HSTS max-age in seconds. `0` means the header is not sent. |
+| `SECURITY_HSTS_MAX_AGE` | `0` | HSTS max-age in seconds. `0` means the header is not sent (an RFC 6797-meaningful value, not an error); a negative value throws. |
 | `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` when HSTS is sent. |
 | `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` when HSTS is sent. |
 | `SECURITY_COOP` | — | `Cross-Origin-Opener-Policy` value. Unset means the header is not sent. |
@@ -255,7 +286,7 @@ directory, for large applications that want a bounded scan (see
 |---|---|---|
 | `DB_CONNECTION` | *(required)* | `mysql` or `pgsql`. |
 | `DB_HOST` | `127.0.0.1` | Server host. |
-| `DB_PORT` | `3306` / `5432` | Per dialect. |
+| `DB_PORT` | `3306` / `5432` | Per dialect; must be a valid TCP port (1–65535). |
 | `DB_NAME` | `app` | Database name. |
 | `DB_USER` | `app` | User. |
 | `DB_PASSWORD` | *(required)* | Password. |
@@ -270,8 +301,7 @@ directory, for large applications that want a bounded scan (see
 | `DB_APP_NAME` | — | Postgres `application_name`. |
 | `DB_COMPRESSION` | — | MySQL protocol compression. |
 | `DB_MAX_CONNECTIONS` | `8` | Async drivers' pool width — per worker thread under FrankenPHP, per worker process under RoadRunner (see {doc}`performance-tuning`). |
-| `DB_WARM_CONNECTIONS` | `0` | Connections opened at boot instead of first use — load-bearing for the mysqli driver under worker mode. |
-| `DB_OPTIONS` | — | Legacy key=value string, translated where canonical equivalents exist. |
+| `DB_WARM_CONNECTIONS` | `0` | Connections opened at boot instead of first use — load-bearing for the mysqli driver under worker mode; must not be negative. |
 
 ### Redis (`kinetis/cache-redis`) — all scoped
 
@@ -282,15 +312,15 @@ simply off and `CacheInterface` binds to `NullSimpleCache`.
 |---|---|---|
 | `REDIS_URL` | — | Full `redis://` URI; wins over the discrete keys. |
 | `REDIS_HOST` | — | Server host. |
-| `REDIS_PORT` | `6379` | Port. |
+| `REDIS_PORT` | `6379` | Port; must be a valid TCP port (1–65535). |
 | `REDIS_PASSWORD` | — | Password. |
-| `REDIS_DATABASE` | `0` | Database index (single-node only; Cluster has no `SELECT`). |
-| `REDIS_TIMEOUT` | `5` | Connect timeout, seconds. |
+| `REDIS_DATABASE` | `0` | Database index (single-node only; Cluster has no `SELECT`); must not be negative. |
+| `REDIS_TIMEOUT` | `5` | Connect timeout, seconds; must be positive. |
 | `REDIS_TLS` | `false` | Connect over TLS. |
 | `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
 | `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
 | `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
-| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap. |
+| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap — `host:port`, or `[ipv6-address]:port` for an IPv6 node. |
 
 ### Queue (`kinetis/queue` + backend packages)
 
@@ -301,8 +331,8 @@ the backend-specific keys are scoped.
 |---|---|---|
 | `QUEUE_CONNECTION` | *(required)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
-| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries); a job's own `push(maxAttempts: ...)` wins. |
-| `QUEUE_POLL_TIMEOUT` | `5` | Seconds per `pop()` wait. |
+| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. |
+| `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a finite, positive number — `0` (or negative) is rejected, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
 | `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | `kinetis/queue-sql` only: reclaim a crashed worker's reserved job after this long; unset means never. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
 | `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). |
@@ -354,7 +384,7 @@ keys as persistence.
 | Key | Default | Purpose |
 |---|---|---|
 | `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset leaves the package inert — no store is bound. |
-| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write. |
+| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write; must be positive. Every write refreshes the browser cookie's `Max-Age` alongside the backend's own storage TTL, so the two never drift apart. |
 | `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
 | `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute: `Strict`, `Lax`, or `None`. `None` requires `SESSION_SECURE`. |
 | `SESSION_SECURE` | `true` | Cookie `Secure` attribute — `false` only for non-TLS local development. |
@@ -388,7 +418,7 @@ this package.
 | `BROADCAST_KEY` | *(required for pusher)* | App key — also the value a browser client subscribes with. |
 | `BROADCAST_SECRET` | *(required for pusher)* | App secret, used to sign trigger requests and private/presence channel authorizations. |
 | `BROADCAST_HOST` | `api.pusherapp.com` | Server host the backend publishes to. |
-| `BROADCAST_PORT` | `443` | Server port. |
+| `BROADCAST_PORT` | `443` | Server port; must be a valid TCP port (1–65535). |
 | `BROADCAST_TLS` | `true` | Connect over TLS. |
 
 A browser client only ever needs the app key, plus wherever the

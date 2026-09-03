@@ -139,7 +139,7 @@ final class ContainerParameterTest extends TestCase
         $request = new ServerRequest(
             'POST',
             '/scoped/7?sort=name',
-            body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']),
+            body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
         );
 
         $response = new Dispatcher($scope)->dispatch(

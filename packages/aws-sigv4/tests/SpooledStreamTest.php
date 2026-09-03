@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Kinetis\AwsSigV4\Tests;
 
+use Closure;
+use Kinetis\AwsSigV4\Exception\StreamException;
 use Kinetis\AwsSigV4\SpooledStream;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class SpooledStreamTest extends TestCase
@@ -149,5 +152,168 @@ final class SpooledStreamTest extends TestCase
         $resource = $stream->detach();
 
         self::assertIsResource($resource);
+    }
+
+    public function test_a_body_beyond_php_temps_in_memory_threshold_round_trips_intact(): void
+    {
+        // php://temp spills to a real temp file past ~2MB — this proves
+        // the constructor's own write loop delivers the full content
+        // through that boundary, not just for a small in-memory body.
+        $large = str_repeat('a', 3 * 1024 * 1024);
+        $stream = new SpooledStream($large);
+
+        self::assertSame(strlen($large), $stream->getSize());
+        self::assertSame($large, $stream->getContents());
+    }
+
+    // --- close()/detach() idempotency and post-detach behavior ---
+
+    public function test_close_is_safe_to_call_twice(): void
+    {
+        $stream = new SpooledStream('hello world');
+
+        $stream->close();
+        $stream->close();
+
+        self::addToAssertionCount(1);
+    }
+
+    public function test_detach_is_safe_to_call_twice_and_the_second_call_returns_null(): void
+    {
+        $stream = new SpooledStream('hello world');
+
+        $first = $stream->detach();
+        $second = $stream->detach();
+
+        self::assertIsResource($first);
+        self::assertNull($second);
+    }
+
+    public function test_detach_after_close_returns_null(): void
+    {
+        $stream = new SpooledStream('hello world');
+
+        $stream->close();
+
+        self::assertNull($stream->detach());
+    }
+
+    public function test_close_after_detach_does_not_close_the_already_detached_resource(): void
+    {
+        $stream = new SpooledStream('hello world');
+
+        $resource = $stream->detach();
+        \assert(\is_resource($resource));
+        $stream->close();
+
+        // The caller now owns $resource — close() must not have touched
+        // it, since it was already handed off by detach().
+        self::assertTrue(\is_resource($resource));
+        \fclose($resource);
+    }
+
+    public function test_get_size_is_null_after_close(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->close();
+
+        self::assertNull($stream->getSize());
+    }
+
+    public function test_get_size_is_null_after_detach(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->detach();
+
+        self::assertNull($stream->getSize());
+    }
+
+    public function test_capability_methods_are_false_after_close(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->close();
+
+        self::assertFalse($stream->isSeekable());
+        self::assertFalse($stream->isWritable());
+        self::assertFalse($stream->isReadable());
+    }
+
+    public function test_capability_methods_are_false_after_detach(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->detach();
+
+        self::assertFalse($stream->isSeekable());
+        self::assertFalse($stream->isWritable());
+        self::assertFalse($stream->isReadable());
+    }
+
+    public function test_get_metadata_after_detach_reports_nothing_rather_than_throwing(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->detach();
+
+        self::assertSame([], $stream->getMetadata());
+        self::assertNull($stream->getMetadata('uri'));
+    }
+
+    public function test_eof_is_true_after_detach(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->detach();
+
+        self::assertTrue($stream->eof());
+    }
+
+    public static function operationalMethodsAfterDetachProvider(): iterable
+    {
+        yield 'tell' => [static fn (SpooledStream $s) => $s->tell()];
+        yield 'seek' => [static fn (SpooledStream $s) => $s->seek(0)];
+        yield 'rewind' => [static fn (SpooledStream $s) => $s->rewind()];
+        yield 'write' => [static fn (SpooledStream $s) => $s->write('x')];
+        yield 'read' => [static fn (SpooledStream $s) => $s->read(1)];
+        // Zero/negative lengths must still throw once detached — the
+        // resource check has to run before the "nothing was asked for"
+        // short-circuit, not after it, or these two would silently
+        // return '' instead.
+        yield 'read zero length' => [static fn (SpooledStream $s) => $s->read(0)];
+        yield 'read negative length' => [static fn (SpooledStream $s) => $s->read(-1)];
+        yield 'getContents' => [static fn (SpooledStream $s) => $s->getContents()];
+    }
+
+    /**
+     * Every operational method must throw this package's own
+     * StreamException once the resource is gone — never a native
+     * TypeError/Error/warning from touching a null property.
+     *
+     * @param Closure(SpooledStream): mixed $operation
+     */
+    #[DataProvider('operationalMethodsAfterDetachProvider')]
+    public function test_operational_methods_throw_the_package_exception_after_detach(Closure $operation): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->detach();
+
+        $this->expectException(StreamException::class);
+        $operation($stream);
+    }
+
+    public function test_to_string_never_throws_after_close(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $stream->close();
+
+        self::assertSame('', (string) $stream);
+    }
+
+    public function test_to_string_never_throws_after_detach(): void
+    {
+        $stream = new SpooledStream('hello world');
+        $resource = $stream->detach();
+        \assert(\is_resource($resource));
+
+        self::assertSame('', (string) $stream);
+
+        \fclose($resource);
     }
 }

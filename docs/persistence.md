@@ -93,6 +93,64 @@ Kinetis's own `Kinetis\Persistence\Pool` is not used by this
 integration — it stays available as generic infrastructure for protocol
 clients that don't pool themselves.
 
+### `Pool`: ownership, disposal, and shutdown
+
+Every member `Pool` successfully creates is owned by the pool until it
+is permanently discarded, and at any moment is in exactly one of two
+states: idle (available to `acquire()`) or checked out (held by
+whichever single caller last acquired it). `release(object $connection)`
+only accepts the exact member it currently has checked out — a
+connection this pool never created, or one that's already idle, is
+rejected with `Exception\InvalidPoolReleaseException` rather than
+silently accepted, since either would let two callers end up holding the
+identical connection at once.
+
+```{code-block} php
+$pool = new Pool(
+    factory: static fn (): Connection => Connection::open(),
+    isHealthy: static fn (Connection $c): bool => $c->ping(),
+    maxSize: 10,
+    onDiscard: static fn (Connection $c): void => $c->close(),
+);
+
+$connection = $pool->acquire();
+// ... use $connection ...
+$pool->release($connection);
+```
+
+`onDiscard`, the last constructor parameter, covers exactly one thing:
+unhealthy eviction. It's invoked only from inside `acquire()`'s own
+idle-reuse loop, for a member that loop is already about to discard
+because `isHealthy` returned `false` or threw — never for one a caller
+still holds checked out, and never for an idle member simply sitting
+unused. A health check that throws still rethrows that same exception to
+the caller (the primary failure), even when `onDiscard` runs
+successfully; if `onDiscard` itself also throws, both failures reach the
+caller together via `Exception\PoolDisposalFailedException`
+(`healthCheckFailure()`/`disposalFailure()`), rather than the disposal
+failure silently replacing the real cause.
+
+```{warning}
+**`Pool` has no "close every idle member" method, and `onDiscard` cannot
+be used to build one.** It is private policy this class alone invokes —
+nothing lets a caller invoke it directly, enumerate what's currently
+idle, or force every idle member through it. Repeated
+`acquire()`/`release()` on its own doesn't visit them either: reuse is
+LIFO, so a caller doing that can keep cycling the same member back to
+itself forever without ever touching the rest. An idle member that's
+never unhealthy and never independently acquired again simply gets no
+`onDiscard` call at all — it's left to its own object/resource
+destructor, which runs once nothing (including `Pool`'s own idle list,
+once the pool itself goes out of scope) still holds a reference to it,
+the ordinary way PHP reclaims a resource when the pool becomes
+unreachable or the process exits. Deterministic, eager shutdown of every
+idle member is a real gap this class doesn't close yet.
+```
+
+`maxSize` must be at least `1`; anything less is rejected at
+construction with `Exception\InvalidPoolConfigurationException`, rather
+than only failing later, confusingly, as `PoolExhaustedException`.
+
 ```{note}
 A pooled connection the server closes (an idle socket past
 `wait_timeout`, an administrative `KILL`, a network drop) costs exactly
@@ -326,16 +384,6 @@ is unset — never the server's own default, since the native driver's
 client-side escaping is charset-dependent and must run against a known
 charset.
 
-The legacy `DB_OPTIONS` string is still accepted as a migration path:
-key=value pairs whose keys have canonical equivalents (`charset`,
-`collate`, `sslmode`, `sslrootcert`, `connect_timeout`,
-`applicationName`, `compress`, ...) are translated automatically, with a discrete key winning over a
-`DB_OPTIONS` spelling of the same option. Untranslatable keys pass
-through raw **only** to the Postgres drivers (libpq natively accepts
-free-form connection-string keys and validates them itself at connect
-time) and are rejected loudly by the MySQL drivers, which have no
-free-form surface to pass them to.
-
 **`$poolOptions`**, an optional `fromConfig()` argument, carries the one
 pool-level knob:
 
@@ -475,26 +523,88 @@ public function rollbackDangling(): void
 
 For the case the pattern above doesn't cover — a transaction begun
 directly via `beginTransaction()` and held open across multiple calls,
-that never reaches either `commit()` or `rollback()` before the request
-ends — `Kernel` registers `rollbackDangling()` as a `RequestScope` dispose
-hook, **unconditionally, on every request**:
+that never reaches either `commit()` or `rollback()` before the unit of
+work ends — `Kinetis\Container\TransactionGuardHook::registerIfAvailable()`
+registers `rollbackDangling()` as a `RequestScope` dispose hook:
 
 ```{code-block} php
-$scope->onDispose($scope->get(Kinetis\Persistence\TransactionGuard::class)->rollbackDangling(...));
+Kinetis\Container\TransactionGuardHook::registerIfAvailable($scope);
 ```
 
-This is a genuine no-op for the overwhelming majority of requests that
-never open a transaction at all — it costs nothing to wire in universally,
-which is exactly why it's unconditional rather than opt-in the way, say,
-MCP support is (see {doc}`mcp`). When it does find one to close, it logs
-a warning through whatever logger you've registered (see {doc}`logging`)
-— a genuine anomaly signal, since it means a transaction was left open
-somewhere it shouldn't have been.
+This is the one shared place every entry point that owns a `RequestScope`
+for one unit of work wires this in — a plain string class-name check
+(`class_exists('Kinetis\Persistence\TransactionGuard')`), so it costs
+nothing when `kinetis/persistence` isn't installed, and it's a genuine
+no-op for a unit of work that never opens a transaction even when it is.
+Every one of these calls it **unconditionally**, not opt-in the way, say,
+MCP support is (see {doc}`mcp`):
+
+- `Kernel`, for every HTTP request.
+- `bin/kinetis`, for every CLI command that hasn't declared
+  `#[Command(bootstrap: false)]` — a bootstrap-free command has no
+  database connection to guard in the first place.
+- `kinetis/mcp`'s `Transport\StdioTransport` and `Http\McpController`,
+  for every MCP message, over stdio and over HTTP alike.
+- `kinetis/queue`'s `QueueWorker`, for every popped job's own
+  `RequestScope`, and `SyncQueue`, for every `push()`'s own `RequestScope`
+  — a job that begins a transaction and returns or throws without closing
+  it does not leave that transaction open into whatever job the same
+  pooled/native connection serves next.
+
+When it does find something to close, it logs a warning through whatever
+logger you've registered (see {doc}`logging`) — a genuine anomaly signal,
+since it means a transaction was left open somewhere it shouldn't have
+been.
 
 Both `beginTransaction()` and `transaction()` work identically for MySQL
 and Postgres: all drivers implement the same `Contract\SqlLink`/
 `SqlTransaction` abstraction, so `TransactionGuard` never needs to know
 which one it's actually talking to.
+
+### What happens when cleanup itself fails
+
+Inspecting a transaction (`isActive()`) or closing one (`rollback()`) is
+itself a network call to a driver — it can fail, and this class is
+designed around that possibility rather than assuming it away.
+
+**`rollbackDangling()` is best-effort across the complete tracked set,
+not fail-fast.** One transaction's `isActive()` or `rollback()` throwing
+never prevents the rest from being attempted — a cleanup fault on one
+connection must not leak transactions/locks on every other tracked one.
+Tracking is cleared up front, before any transaction is touched, so a
+transaction this call already attempted — successfully or not — is never
+retried by a later call; this is a single, best-effort attempt per
+transaction, not an open-ended retry loop. The success warning is only
+ever logged once `rollback()` has genuinely succeeded, never ahead of the
+call. If one or more transactions failed to close, each failure is
+logged individually (`error`, not `warning`) and, once every tracked
+transaction has been attempted, a single
+`Kinetis\Persistence\Exception\TransactionException` is thrown carrying
+the first failure as its cause — safe to let propagate, since
+`RequestScope::dispose()` already runs every dispose callback to
+completion regardless of one throwing (see {doc}`container`), and
+rethrows only once all of them have finished.
+
+**`transaction()` never lets a rollback failure erase the failure that
+triggered cleanup.** If your callback (or `commit()`) throws, and the
+resulting rollback attempt *also* throws, the rollback failure is logged
+and the original exception — the one your code actually threw — is what
+propagates, unchanged. The transaction is untracked either way, whether
+the rollback attempt succeeded or failed: `transaction()` only ever makes
+one cleanup attempt of its own, and leaving a failed one tracked would
+defer a second attempt to `rollbackDangling()` at scope disposal — inside
+a `finally` block, where a second failure there would silently replace
+the exception already propagating from `transaction()`, undoing the same
+guarantee one level up.
+
+**None of this depends on the logger being healthy.** `Psr\Log\LoggerInterface`
+gives no no-throw guarantee, and a failing log handler — a broken remote
+sink, a full disk — is a real production scenario. Every log call this
+class makes is wrapped so an exception from the logger itself is
+discarded: it can never be misclassified as a rollback failure, never
+prevent a later tracked transaction from being attempted, and never
+replace an already-propagating exception the way an unprotected logger
+call could.
 
 ## Redis
 
@@ -654,7 +764,7 @@ production.
 ## Redis Cluster
 
 Set `REDIS_CLUSTER=true` and `REDIS_CLUSTER_SEEDS` (a comma-separated list
-of `host:port` addresses) instead of `REDIS_HOST`/`REDIS_URL`:
+of seed addresses) instead of `REDIS_HOST`/`REDIS_URL`:
 
 ```{code-block} sh
 REDIS_CLUSTER=true
@@ -668,6 +778,20 @@ actually owns it; `REDIS_TLS`/`REDIS_PASSWORD` apply to every node the
 same way. Redis Cluster only supports database 0, so there's no
 `REDIS_DATABASE` option here.
 
+Each seed is either `host:port` — a hostname or an IPv4 address, neither
+of which ever contains a colon itself — or `[ipv6-address]:port` for an
+IPv6 node, bracketed the same way a URL brackets one:
+
+```{code-block} sh
+REDIS_CLUSTER_SEEDS=[2001:db8::10]:6379,[2001:db8::11]:6379
+```
+
+An unbracketed IPv6 address (`2001:db8::10:6379`) is rejected rather than
+guessed at — its own colons make it genuinely ambiguous which one
+separates the address from the port. A malformed seed, an empty entry, or
+a port outside 1-65535 fails immediately when the cache is configured,
+before any connection is attempted.
+
 `CacheInterface` resolves to the same interface either way — application
 code never needs to know whether it's talking to a single node or a
 cluster.
@@ -678,6 +802,27 @@ commands concurrently internally. Don't call any of them from inside a
 task you're already running through `concurrently()` yourself — nesting
 one Fiber-driven event loop run inside another isn't supported.
 ```
+
+### Redirects during live resharding
+
+A running cluster can reshard slots between nodes without downtime, and
+two replies handle it: a node that no longer owns a slot at all replies
+`MOVED`, and a node mid-migration for one specific key replies `ASK`.
+Both are followed automatically — application code never sees either
+one.
+
+`MOVED` means the whole topology is stale, not just the one key
+involved: the cache refreshes its slot-to-node map from scratch and
+retries. `ASK` means only that one key has already moved while its
+slot's stable owner hasn't changed yet — the cache retries directly
+against the node the reply names, on a connection built specifically
+for that one retry and never reused, preceded by the `ASKING` command
+the protocol requires. A single operation can hit both in sequence (the
+slot moved since the last refresh, and the individual key is *also*
+still migrating out of the new owner) and both are followed correctly.
+A redirect loop that never resolves — a misbehaving or flapping node,
+not something a healthy cluster produces — fails with a clear error
+rather than retrying forever.
 
 ## See also
 

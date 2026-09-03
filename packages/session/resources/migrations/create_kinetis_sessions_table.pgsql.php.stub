@@ -16,6 +16,14 @@ use Kinetis\Migrations\Migration;
 return new class implements Migration {
     public function up(MysqlLink|PostgresLink $db): void
     {
+        // TIMESTAMP, deliberately not TIMESTAMPTZ: Postgres's plain
+        // TIMESTAMP (without time zone) already stores exactly the
+        // literal value SqlSessionStore binds, unaffected by the
+        // connection's session timezone, confirmed directly against a
+        // real server — the same behavior the MySQL stub's DATETIME
+        // (not TIMESTAMP) column is chosen for. TIMESTAMPTZ would
+        // reintroduce the same class of session-timezone dependency this
+        // schema is built to avoid on both databases.
         $db->execute(<<<'SQL'
             CREATE TABLE kinetis_sessions (
                 id VARCHAR(64) PRIMARY KEY,

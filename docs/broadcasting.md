@@ -105,6 +105,27 @@ same way any `Kinetis\Http\Routing\RouteDiscovery`-found
 controller is, and every `#[BroadcastChannel]` method is itself part of
 the AOT cache — see {doc}`caching`.
 
+The client sends `socket_id`/`channel_name` as
+`application/x-www-form-urlencoded` fields. The endpoint reads whatever
+runtime-parsed body is already available (`getParsedBody()`) and, only
+when that's empty, parses the raw request body itself — reading it via
+`getContents()`, not a plain string cast, which is what makes
+`MaxBodySizeMiddleware` (see {doc}`middleware`) reject an oversized
+request with a `413` on this fallback path too, exactly as it would for
+any other route.
+
+Both fields must also match the Pusher protocol's own grammar —
+`socket_id` a pair of digit runs joined by a dot (`1234.5678`),
+`channel_name` an optional leading `#` followed by one or more of
+`-a-zA-Z0-9_=@,.;` — checked by `Kinetis\Broadcasting\PusherProtocol`
+before anything else about the request is looked at, including whether
+an authorizer is even registered for the channel: a value that can't
+possibly reach a real Pusher/Soketi/Reverb broker never runs application
+authorization code at all, and gets a `422` instead.
+`PusherBroadcaster`'s own public signing methods enforce the identical
+grammar, so a direct call bypassing this controller entirely is held to
+the same rule.
+
 Authorize a channel with one attributed method:
 
 ```{code-block} php
@@ -147,10 +168,58 @@ public function authorizeTeam(CurrentUserInterface $user, string $teamId): array
 }
 ```
 
+The Pusher protocol **requires** a non-empty string `user_id` (at most
+128 bytes) in that array — `user_info` and anything else are optional,
+and the whole thing must encode to at most 1024 bytes of JSON. A result
+missing this, or exceeding either limit, is never signed: the
+subscription is rejected the same way a `false` private-channel result
+is, not a server error.
+
 A channel with no authorizer registered for it, or a request with no
 `CurrentUserInterface` on the request scope (register one from your own
 auth middleware first — see {doc}`auth` or {doc}`auth-jwt`), is rejected
 with `401`/`403` — never a silent subscribe.
+
+### Pattern grammar and precedence
+
+A dot-separated segment holds **at most one** `{name}` placeholder,
+with optional literal text directly before and/or after it —
+`orders`, `{orderId}`, and `order-{id}` are all valid segments;
+`{a}-{b}` (two placeholders in one segment) is not. A placeholder name
+must also be unique across the whole pattern — `orders.{id}.{id}` is
+rejected too. Both are enforced when the pattern is compiled, so a
+malformed pattern fails at registration (or when hydrating a compiled
+cache) rather than producing a broken match later.
+
+More than one `#[BroadcastChannel]` pattern can match the same channel
+name — `orders.admin` and `orders.{orderId}` both match the literal
+channel `orders.admin`. Which authorizer runs is decided by a fixed
+precedence, never by registration or discovery order: a channel-name
+segment that only satisfies a literal pattern's own exact text is
+always narrower than one that also satisfies an overlapping
+placeholder pattern in the same position, and between two placeholder
+segments, the one whose required prefix and/or suffix text is a
+strict extension of the other's is the narrower one — `orders.{id}-final-draft`
+always wins over `orders.{id}-draft` for a channel name both match,
+since every name ending in `-final-draft` also ends in `-draft`, but
+not the reverse. This holds regardless of which class was registered
+first or how a compiled cache artifact happens to list them.
+
+Two patterns that differ **only** in a placeholder's own name —
+`orders.{orderId}` and `orders.{id}` — match exactly the same channel
+names with identical specificity. Two patterns can also overlap
+without either one being narrower — `orders.archived-{id}` and
+`orders.{id}-2024` both match `orders.archived-2024`, but neither
+contains the other (`orders.archived-foo` matches only the first;
+`orders.bar-2024` matches only the second). Neither case has a
+principled winner, so registering both throws
+`InvalidChannelAuthorizerException` at registration time (or the
+equivalent classified cache-artifact exception when hydrating a
+compiled cache) rather than one silently winning. Patterns that only
+share the same *shape* without the same *literal* content —
+`orders.{orderId}` and `team.{teamId}` — are completely unaffected;
+they can never both match the same channel name, so there's nothing to
+disambiguate.
 
 ## Configuring
 

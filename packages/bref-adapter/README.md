@@ -18,6 +18,10 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 Polls the Lambda Runtime API and converts API Gateway v2 payloads to/from
 PSR-7, including `multipart/form-data` support — the one piece Lambda
 specifically needs that core's `FrankenPhpAdapter`/`FpmAdapter` don't.
@@ -31,7 +35,7 @@ core.
 composer require kinetis/bref-adapter
 ```
 
-Requires PHP 8.4+ and `kinetis/framework`. See
+Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). See
 [Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html) for how
 runtime detection works and what changes under Lambda specifically.
 

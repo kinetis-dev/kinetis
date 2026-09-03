@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Cache;
 
 use Kinetis\Cache\CacheFormat;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\HttpCache;
 use PHPUnit\Framework\TestCase;
 
@@ -14,12 +15,12 @@ final class HttpCacheTest extends TestCase
     {
         $cache = new HttpCache(
             formatVersion: CacheFormat::VERSION,
-            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200]],
+            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::index' => [
-                    ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => true, 'defaultValue' => 1, 'constraints' => []],
-                    ['name' => 'flag', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'bool', 'hasDefault' => true, 'defaultValue' => false, 'constraints' => []],
-                    ['name' => 'label', 'source' => 'default', 'dtoClass' => null, 'scalarType' => 'string', 'hasDefault' => true, 'defaultValue' => null, 'constraints' => []],
+                    ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => true, 'defaultValue' => 1, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'flag', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'bool', 'hasDefault' => true, 'defaultValue' => false, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'label', 'source' => 'default', 'dtoClass' => null, 'scalarType' => 'string', 'hasDefault' => true, 'defaultValue' => null, 'allowsNull' => true, 'constraints' => []],
                 ],
             ],
             hydrationPlans: [
@@ -27,9 +28,14 @@ final class HttpCacheTest extends TestCase
                     'className' => 'App\\Dto',
                     'hasConstructor' => true,
                     'parameters' => [
-                        ['name' => 'name', 'scalarType' => 'string', 'hasDefault' => false, 'defaultValue' => null, 'constraints' => [
-                            ['class' => 'Kinetis\\Validation\\Constraints\\MinLength', 'args' => [3]],
-                        ]],
+                        [
+                            'name' => 'name', 'scalarType' => 'string', 'dtoClass' => null, 'nestedPlan' => null,
+                            'listItemClass' => null, 'listItemPlan' => null, 'hasDefault' => false, 'defaultValue' => null,
+                            'allowsNull' => false,
+                            'constraints' => [
+                                ['class' => 'Kinetis\\Validation\\Constraints\\MinLength', 'args' => [3]],
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -75,5 +81,108 @@ final class HttpCacheTest extends TestCase
         } finally {
             unlink($tmpFile);
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validData(): array
+    {
+        return (new HttpCache(
+            formatVersion: CacheFormat::VERSION,
+            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
+            httpBindingPlans: [
+                'App\\C::m' => [
+                    ['name' => 'id', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
+                ],
+            ],
+            hydrationPlans: [
+                'App\\Dto' => [
+                    'className' => 'App\\Dto',
+                    'hasConstructor' => true,
+                    'parameters' => [
+                        [
+                            'name' => 'name', 'scalarType' => 'string', 'dtoClass' => null, 'nestedPlan' => null,
+                            'listItemClass' => null, 'listItemPlan' => null, 'hasDefault' => false, 'defaultValue' => null,
+                            'allowsNull' => false, 'constraints' => [],
+                        ],
+                    ],
+                ],
+            ],
+            globalMiddleware: [],
+            openApiMiddleware: [],
+            compiledAt: '2026-01-01T00:00:00+00:00',
+        ))->toArray();
+    }
+
+    public function test_from_array_rejects_an_unexpected_top_level_field(): void
+    {
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray([...$this->validData(), 'extra' => 'nope']);
+    }
+
+    public function test_from_array_rejects_a_route_entry_with_an_unexpected_extra_field(): void
+    {
+        $data = $this->validData();
+        $data['routes'][0]['extra'] = 'nope';
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_non_string_entry_in_global_middleware(): void
+    {
+        $data = $this->validData();
+        $data['globalMiddleware'] = [42];
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_middleware_group_whose_value_is_not_a_list(): void
+    {
+        $data = $this->validData();
+        $data['middlewareGroups'] = ['admin' => 'not-a-list'];
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_binding_plan_entry_missing_a_required_field(): void
+    {
+        $data = $this->validData();
+        unset($data['httpBindingPlans']['App\\C::m'][0]['allowsNull']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_hydration_plan_missing_a_required_field(): void
+    {
+        $data = $this->validData();
+        unset($data['hydrationPlans']['App\\Dto']['hasConstructor']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    /**
+     * The recursive case: a malformed *nested* plan, one level deep,
+     * must be caught too — not just the top-level shape.
+     */
+    public function test_from_array_rejects_a_malformed_nested_hydration_plan(): void
+    {
+        $data = $this->validData();
+        $data['hydrationPlans']['App\\Dto']['parameters'][0]['nestedPlan'] = ['className' => 'App\\Nested'];
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
     }
 }

@@ -18,10 +18,14 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 `Psr\SimpleCache\CacheInterface`, backed by `Amp\Redis\RedisClient` —
 non-blocking, Revolt-native, single-node or Cluster, with TLS support.
 This is the concrete Redis implementation `Kinetis\SimpleCache` (in
-`kinetis/framework` itself) leaves as an optional add-on: `NullSimpleCache`
+[`kinetis/framework`](https://github.com/kinetis-dev/framework) itself) leaves as an optional add-on: `NullSimpleCache`
 ships in core so the interface always has *something* bound, and this
 package supplies the real thing once you actually want it.
 
@@ -59,7 +63,7 @@ Redis is simply off and `CacheInterface` binds to `NullSimpleCache`.
 | `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
 | `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
 | `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
-| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap. |
+| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap — `host:port`, or `[ipv6-address]:port` for an IPv6 node. |
 
 Scoped keys follow the named-connection convention — the connection
 name inserts after the first segment: `REDIS_HOST` + `cache2` → `REDIS_CACHE2_HOST`.
@@ -72,7 +76,7 @@ Full reference across every package:
 composer require kinetis/cache-redis
 ```
 
-Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
+Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
 [kinetis.dev/docs/caching.html](https://kinetis.dev/docs/caching.html)
 and [kinetis.dev/docs/persistence.html](https://kinetis.dev/docs/persistence.html)
 (the Redis Cluster/TLS section).

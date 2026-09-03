@@ -7,7 +7,9 @@ namespace Kinetis\AuthJwt;
 use DomainException;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use Kinetis\AuthJwt\Exception\JwtAuthMiddlewareException;
 use Kinetis\Container\RequestScope;
+use Kinetis\Http\Auth\BearerCredentialParser;
 use Kinetis\Http\CurrentUserInterface;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -28,6 +30,12 @@ use UnexpectedValueException;
  * — constructor-injecting RequestScope directly has no singleton-safety
  * concern.
  *
+ * The `Authorization` header itself is parsed by
+ * Kinetis\Http\Auth\BearerCredentialParser — the exact accepted wire
+ * grammar is documented there once and shared with
+ * Kinetis\Auth\BearerAuthMiddleware, rather than duplicated and risking
+ * drift between the two.
+ *
  * No storage lookup for authentication itself: unlike
  * Kinetis\Auth\BearerAuthMiddleware, verifying a JWT's signature is the
  * entire authentication decision — there is no UserProviderInterface
@@ -38,7 +46,31 @@ use UnexpectedValueException;
  * lookups, opt-in, for the one thing a bare signature check structurally
  * cannot do — reject a token before it would otherwise expire, either
  * individually (isRevoked()) or as part of a "log out everywhere" for
- * its subject (isRevokedForUser()).
+ * its subject (isRevokedForUser()). Configuring it also tightens what
+ * counts as a valid token: `iat` and `jti` are otherwise optional per
+ * the JWT standard, but with a revocation store in place both must be
+ * present and well-formed (`iat` a plain integer, `jti` a non-empty
+ * string) before either revocation lookup runs — a token missing or
+ * malformed on just one of them is rejected outright, not silently
+ * exempted from the check it happens to be missing the claim for.
+ *
+ * $expectedIssuer/$acceptedAudiences are a second, independent opt-in
+ * boundary, closing a different gap than $revocationStore: a bare
+ * signature check alone can't tell "signed with a key I trust" apart
+ * from "issued for a context I trust" — two services sharing one HS256
+ * secret will otherwise each accept a token the other one issued, with
+ * nothing to stop it. When $expectedIssuer is set, a token's `iss`
+ * claim must be a non-empty string matching it exactly. When
+ * $acceptedAudiences is set, a token's `aud` claim — either a single
+ * string or the JWT standard's list-of-strings form — must contain at
+ * least one exact match against it. Either constraint rejects a
+ * missing or malformed claim the same way it rejects a mismatched one;
+ * unlike revocation, there's no "claim absent" exemption at all here,
+ * since an absent `iss`/`aud` is exactly what a token from an untrusted
+ * context looks like. Checked before revocation, scope registration, or
+ * the handler runs. Configure the matching values on JwtIssuer's own
+ * $issuer/$audience — not through $claims, which a caller could
+ * override the same way $claims can't override sub/iat/jti/exp.
  *
  * $key is the shared secret for a symmetric algorithm (HS256/HS384/
  * HS512), or the *public* half of a key pair (as a PEM string) for an
@@ -53,26 +85,32 @@ use UnexpectedValueException;
  * under its own kid — for rolling a signing key over without
  * invalidating every token issued under the previous one: a token's own
  * (unverified) kid header selects which entry to verify against. A
- * plain string keeps working exactly as before; $algorithm only applies
- * to that single-key form, since each Key in the array carries its own
- * algorithm already.
+ * plain string keeps working exactly as before. $algorithm has no
+ * effect at all on this form — deliberately, not an oversight: each
+ * Key in the array already carries its own algorithm, so the top-level
+ * $algorithm is never read once $key is an array, and construction
+ * never validates it in that case either (validating an argument with
+ * no effect on behavior would only risk rejecting an otherwise-valid
+ * construction over an unrelated, unused default).
+ *
+ * $algorithm and $key are validated at construction, via
+ * JwtKeyValidator — never on the first request. For the single-key
+ * (string) form: $algorithm must be one of the six this package
+ * supports, and $key must fit it (an HMAC secret at least as long as
+ * the algorithm's digest, or a parseable RSA public key of at least
+ * 2048 bits). For the key-map (array) form: the map must be non-empty,
+ * every kid a non-empty string, every value a genuine Firebase\JWT\Key,
+ * and every Key's own algorithm/key-material pair held to the identical
+ * rule. A misconfigured middleware throws immediately, naming what's
+ * wrong (never the key material itself) — not on the first request, and
+ * never as a client-facing 401 masking a server-side mistake, or an
+ * unrelated exception escaping from deep inside JWT::decode().
  *
  * A decode failure (expired, bad signature, malformed, wrong key), a
- * structurally valid but subject-less token, and a revoked token are all
- * treated identically — 401 with WWW-Authenticate: Bearer, matching
- * Kinetis\Auth\BearerAuthMiddleware's failure shape exactly. An empty or
- * malformed key is not caught here — that's a misconfiguration on this
- * app's own side, not a client-supplied bad token, and should surface
- * loudly rather than be silently swallowed into a 401. In practice this
- * means Config::required('JWT_SECRET') at construction time, not
- * Config::string('JWT_SECRET', '') with an empty-string default — the
- * empty string doesn't fail here at all; it reaches JWT::decode(), which
- * throws Firebase\JWT\InvalidArgumentException ("Key material must not
- * be empty") for a too-short/empty key. That's neither
- * UnexpectedValueException nor DomainException, so process()'s own catch
- * clause doesn't swallow it into a 401 either — it propagates uncaught,
- * surfacing as a generic 500 via ExceptionHandlerMiddleware, several
- * layers away from the actual missing-config root cause.
+ * structurally valid but subject-less token, a token failing an
+ * issuer/audience check, and a revoked token are all treated identically
+ * — 401 with WWW-Authenticate: Bearer, matching
+ * Kinetis\Auth\BearerAuthMiddleware's failure shape exactly.
  *
  * Deliberately not final — the same exception to this codebase's near-
  * universal final convention that Kinetis\Http\Middleware\RateLimitMiddleware
@@ -100,26 +138,87 @@ class JwtAuthMiddleware implements MiddlewareInterface
 {
     /**
      * @param string|array<string, Key> $key
+     * @param list<string>|null $acceptedAudiences
      */
     public function __construct(
         private string|array $key,
         private RequestScope $scope,
         private string $algorithm = 'HS256',
         private ?RevocationStore $revocationStore = null,
-    ) {}
+        private ?string $expectedIssuer = null,
+        private ?array $acceptedAudiences = null,
+    ) {
+        if (is_string($key)) {
+            JwtKeyValidator::assertSupportedAlgorithm(
+                $algorithm,
+                static fn () => JwtAuthMiddlewareException::unsupportedAlgorithm($algorithm),
+            );
+
+            JwtKeyValidator::assertKeyMaterial(
+                $algorithm,
+                $key,
+                'public',
+                static fn () => JwtKeyValidator::isHmacAlgorithm($algorithm)
+                    ? JwtAuthMiddlewareException::hmacSecretTooShort($algorithm)
+                    : JwtAuthMiddlewareException::invalidRsaPublicKey(),
+            );
+        } else {
+            if ($key === []) {
+                throw JwtAuthMiddlewareException::emptyKeyMap();
+            }
+
+            foreach ($key as $kid => $entry) {
+                if (!is_string($kid) || $kid === '') {
+                    throw JwtAuthMiddlewareException::invalidKeyMapKid();
+                }
+
+                if (!$entry instanceof Key) {
+                    throw JwtAuthMiddlewareException::invalidKeyMapValue($kid);
+                }
+
+                $entryAlgorithm = $entry->getAlgorithm();
+
+                JwtKeyValidator::assertSupportedAlgorithm(
+                    $entryAlgorithm,
+                    static fn () => JwtAuthMiddlewareException::unsupportedKeyMapAlgorithm($kid),
+                );
+
+                JwtKeyValidator::assertKeyMaterial(
+                    $entryAlgorithm,
+                    $entry->getKeyMaterial(),
+                    'public',
+                    static fn () => JwtAuthMiddlewareException::invalidKeyMapKeyMaterial($kid),
+                );
+            }
+        }
+
+        if ($expectedIssuer === '') {
+            throw JwtAuthMiddlewareException::emptyExpectedIssuer();
+        }
+
+        if ($acceptedAudiences !== null) {
+            if ($acceptedAudiences === []) {
+                throw JwtAuthMiddlewareException::emptyAcceptedAudiences();
+            }
+
+            if (!array_is_list($acceptedAudiences)) {
+                throw JwtAuthMiddlewareException::acceptedAudiencesNotAList();
+            }
+
+            foreach ($acceptedAudiences as $audience) {
+                if (!is_string($audience) || $audience === '') {
+                    throw JwtAuthMiddlewareException::invalidAcceptedAudience();
+                }
+            }
+        }
+    }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $header = $request->getHeaderLine('Authorization');
+        $token = BearerCredentialParser::parse($request);
 
-        if (!str_starts_with($header, 'Bearer ')) {
-            return $this->unauthorized();
-        }
-
-        $token = substr($header, 7);
-
-        if ($token === '') {
+        if ($token === null) {
             return $this->unauthorized();
         }
 
@@ -137,23 +236,88 @@ class JwtAuthMiddleware implements MiddlewareInterface
             return $this->unauthorized();
         }
 
-        if ($this->revocationStore !== null) {
-            $iat = $claims->iat ?? null;
+        if ($this->expectedIssuer !== null) {
+            $iss = $claims->iss ?? null;
 
-            if (is_numeric($iat) && $this->revocationStore->isRevokedForUser($sub, (int) $iat)) {
-                return $this->unauthorized();
-            }
-
-            $jti = $claims->jti ?? null;
-
-            if (is_string($jti) && $this->revocationStore->isRevoked($jti)) {
+            if (!is_string($iss) || $iss === '' || $iss !== $this->expectedIssuer) {
                 return $this->unauthorized();
             }
         }
 
-        $this->scope->instance(CurrentUserInterface::class, new JwtUser($claims));
+        if ($this->acceptedAudiences !== null) {
+            $aud = $claims->aud ?? null;
+
+            if (!$this->audienceMatches($aud, $this->acceptedAudiences)) {
+                return $this->unauthorized();
+            }
+        }
+
+        if ($this->revocationStore !== null) {
+            $iat = $claims->iat ?? null;
+            $jti = $claims->jti ?? null;
+
+            // Both claims are validated together, before either lookup
+            // runs — see this class's own docblock. A numeric-string,
+            // fractional, or missing iat, or a missing/empty jti, is
+            // rejected outright rather than silently skipping just the
+            // one check that claim would have driven.
+            if (!is_int($iat) || !is_string($jti) || $jti === '') {
+                return $this->unauthorized();
+            }
+
+            if ($this->revocationStore->isRevokedForUser($sub, $iat)) {
+                return $this->unauthorized();
+            }
+
+            if ($this->revocationStore->isRevoked($jti)) {
+                return $this->unauthorized();
+            }
+        }
+
+        // The same JwtUser instance under both ids — a controller that
+        // only needs the identity contract injects CurrentUserInterface,
+        // one that needs a specific claim (revocation's own jti, most
+        // commonly) injects the concrete JwtUser directly, per this
+        // class's own docs. RequestScope resolves exact ids only, so
+        // registering under one alone would leave the other
+        // unresolvable — worse, silently autowiring a *new*, disconnected
+        // JwtUser via its unresolvable stdClass $claims constructor
+        // parameter, not simply failing to find one.
+        $user = new JwtUser($claims);
+        $this->scope->instance(CurrentUserInterface::class, $user);
+        $this->scope->instance(JwtUser::class, $user);
 
         return $handler->handle($request);
+    }
+
+    /**
+     * A token's `aud` claim, per the JWT standard, may be either a single
+     * string or an array of strings — either shape matches as long as at
+     * least one value in it is present in $accepted. Anything else
+     * (missing, not a string, an empty string, an empty array, or an
+     * array containing a non-string/empty-string element) doesn't match
+     * — a malformed claim is rejected the same as one that just doesn't
+     * contain any accepted value, never partially validated.
+     *
+     * @param list<string> $accepted
+     */
+    private function audienceMatches(mixed $aud, array $accepted): bool
+    {
+        if (is_string($aud)) {
+            return $aud !== '' && in_array($aud, $accepted, true);
+        }
+
+        if (!is_array($aud) || $aud === []) {
+            return false;
+        }
+
+        foreach ($aud as $value) {
+            if (!is_string($value) || $value === '') {
+                return false;
+            }
+        }
+
+        return array_intersect($aud, $accepted) !== [];
     }
 
     private function unauthorized(): ResponseInterface

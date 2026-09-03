@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Events;
 
+use Kinetis\Container\RequestScope;
+
 /**
  * The seam a ShouldQueue listener's invocation is routed through instead
  * of being called directly. Core owns this interface and provides
@@ -14,15 +16,25 @@ namespace Kinetis\Events;
  * QueuedListenerInvoker, for one) without core ever depending on that
  * package — the dependency runs satellite-to-core only.
  *
- * $listener and $method are passed separately, not as a single `callable`
- * — a combined `[$listener, $method]` array callable is awkward for an
- * implementation to destructure safely (PHPStan can't narrow a `callable`
- * to a specific `array{object, string}` shape without an unsound cast),
- * and every real implementation needs both pieces separately anyway
- * (QueuedListenerInvoker serializes $listener::class and $method as
- * independent plain strings).
+ * $listenerClass is a class-string, not a resolved object — EventDispatcher
+ * checks the registry's own `queued` flag *before* ever constructing a
+ * listener, so a queued listener's constructor never runs in the process
+ * that dispatched the event at all. An implementation that genuinely needs
+ * a live instance (SynchronousListenerInvoker, running inline with no
+ * deferral) resolves it itself, from the given $scope; one that defers
+ * invocation elsewhere (QueuedListenerInvoker) never needs to construct
+ * one here, only to name it.
+ *
+ * $scope is the dispatching request's own RequestScope, the same
+ * container EventDispatcher itself resolves non-queued listeners from —
+ * handed through so a synchronous implementation can resolve
+ * $listenerClass from the exact same scope a direct call would have used,
+ * not a disconnected one.
  */
 interface ListenerInvokerInterface
 {
-    public function invoke(object $listener, string $method, object $event): void;
+    /**
+     * @param class-string $listenerClass
+     */
+    public function invoke(string $listenerClass, string $method, object $event, RequestScope $scope): void;
 }

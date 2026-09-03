@@ -19,12 +19,15 @@ use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Fixtures\NonAtomicCache;
 use Kinetis\Tests\Http\Fixtures\RateLimitedFixtureController;
+use Kinetis\Tests\Http\Fixtures\StrictRouteRateLimitedFixtureController;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\SimpleCache\CacheInterface;
+use ReflectionClassConstant;
+use ReflectionMethod;
 
 final class RateLimitMiddlewareTest extends TestCase
 {
@@ -427,5 +430,344 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->expectExceptionMessage('AtomicCounterInterface');
 
         new RateLimitMiddleware(new NonAtomicCache());
+    }
+
+    public function test_two_instances_with_different_configuration_do_not_share_a_bucket(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $strict = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60);
+        $generous = new RateLimitMiddleware($cache, maxAttempts: 2, windowSeconds: 60);
+
+        // Two real checks against $strict, over its own limit of 1 — a
+        // shared, unscoped counter would already sit at 2 afterward.
+        $strict->process($this->request(), $this->handler());
+        $rejected = $strict->process($this->request(), $this->handler());
+
+        // $generous's own first-ever check, against its own limit of 2.
+        // A shared counter polluted by $strict's two prior increments
+        // would already read 3 here — over $generous's own limit — and
+        // reject a request $generous has never actually seen before.
+        $stillOk = $generous->process($this->request(), $this->handler());
+
+        self::assertSame(429, $rejected->getStatusCode());
+        self::assertSame(200, $stillOk->getStatusCode());
+    }
+
+    /**
+     * Same class, maxAttempts, windowSeconds, and namespace — the only
+     * difference is $trustedProxies — exercised against a request whose
+     * REMOTE_ADDR is trusted by neither, so identifierFor() resolves to
+     * the identical raw IP for both. $trustedProxies still has to be
+     * part of the policy identity: it changes which identifier a
+     * *different* request would resolve to, which is real policy
+     * behavior, not merely cosmetic configuration.
+     */
+    public function test_two_instances_with_different_trusted_proxies_do_not_share_a_bucket_even_when_they_resolve_the_same_subject(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $first = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['10.0.0.0/8']);
+        $second = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['172.16.0.0/12']);
+
+        // 203.0.113.1 is trusted by neither range, so both resolve the
+        // same REMOTE_ADDR as the subject.
+        $first->process($this->request('203.0.113.1'), $this->handler());
+        $rejected = $first->process($this->request('203.0.113.1'), $this->handler());
+
+        $stillOk = $second->process($this->request('203.0.113.1'), $this->handler());
+
+        self::assertSame(429, $rejected->getStatusCode());
+        self::assertSame(200, $stillOk->getStatusCode());
+    }
+
+    /**
+     * Trust is a set-membership check — order and duplicate entries
+     * change nothing about which addresses are actually trusted, so two
+     * constructions of an equivalent list must map to the identical
+     * policy identity and share a bucket, unlike a genuinely different
+     * list (the previous test).
+     */
+    public function test_two_instances_with_a_reordered_or_duplicated_equivalent_trusted_proxies_list_share_a_bucket(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $first = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['10.0.0.0/8', '172.16.0.0/12']);
+        $second = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['172.16.0.0/12', '10.0.0.0/8', '172.16.0.0/12']);
+
+        $first->process($this->request('203.0.113.1'), $this->handler());
+        $rejected = $second->process($this->request('203.0.113.1'), $this->handler());
+
+        self::assertSame(429, $rejected->getStatusCode());
+    }
+
+    /**
+     * A shared, mutable, in-process clock closure — advanced directly
+     * between calls rather than by a real sleep(), so a real window
+     * boundary can be crossed deterministically, with no timing
+     * dependency at all.
+     *
+     * @return array{0: \Closure, 1: \Closure}
+     */
+    private function fakeClock(int $start): array
+    {
+        $now = $start;
+        $clock = static function () use (&$now): int {
+            return $now;
+        };
+        $advance = static function (int $seconds) use (&$now): void {
+            $now += $seconds;
+        };
+
+        return [$clock, $advance];
+    }
+
+    /**
+     * Deliberately crosses a real window boundary between the outer
+     * occurrence deciding and the inner occurrence running — the same
+     * thing a slow intervening middleware could do in a real pipeline —
+     * by advancing a shared fake clock in-process, deterministically, no
+     * real sleep(). Dedup must key on policy+subject alone, never on
+     * $window, or the two occurrences (each computing a different window
+     * independently) fail to recognize each other as the same check.
+     */
+    public function test_the_dedup_reuses_a_decision_even_if_a_window_boundary_passes_before_the_inner_policy_runs(): void
+    {
+        $cache = new InMemorySimpleCache();
+        [$clock, $advance] = $this->fakeClock(1_000_000);
+        $outer = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 1, clock: $clock);
+        $inner = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 1, clock: $clock); // the identical policy
+
+        $crossingHandler = new CallableRequestHandler(function (ServerRequestInterface $req) use ($inner, $advance) {
+            $advance(2); // crosses at least one 1-second window boundary
+            return $inner->process($req, $this->handler());
+        });
+
+        $response = $outer->process($this->request(), $crossingHandler);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('0', $response->getHeaderLine('X-RateLimit-Remaining'));
+
+        // If $inner had treated the boundary-crossed call as a
+        // genuinely separate check, it would already have consumed the
+        // new window's own budget of 1 — leaving nothing for this
+        // direct, undeduped call to $inner alone (still within that
+        // same new window) to be the *first* real increment against it.
+        $directToInner = $inner->process($this->request(), $this->handler());
+
+        self::assertSame(200, $directToInner->getStatusCode());
+        self::assertSame('0', $directToInner->getHeaderLine('X-RateLimit-Remaining'));
+    }
+
+    /**
+     * The real pipeline can never construct this input itself — a
+     * rejecting occurrence returns 429 without ever calling the next
+     * handler, so nothing downstream (including a second instance of the
+     * identical policy) ever actually observes a rejected decision
+     * through it. This drives the reuse branch directly, via a manually
+     * recorded rejection, to prove tooManyRequestsResponse() stays
+     * correct against the *original* window regardless — a real, if
+     * currently unreachable-through-the-pipeline, code path worth
+     * pinning on its own.
+     */
+    public function test_a_reused_rejection_reports_the_original_windows_retry_after_not_a_recomputed_one(): void
+    {
+        $cache = new InMemorySimpleCache();
+        [$clock, $advance] = $this->fakeClock(1_000_000);
+        $middleware = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 10, clock: $clock);
+
+        $dedupeKeyMethod = new ReflectionMethod(RateLimitMiddleware::class, 'dedupeKey');
+        $attributeName = (string) (new ReflectionClassConstant(RateLimitMiddleware::class, 'EXECUTED_ATTRIBUTE'))->getValue();
+
+        $request = $this->request();
+        $subject = $dedupeKeyMethod->invoke($middleware, $request);
+        $originalWindow = intdiv(1_000_000, 10);
+
+        $request = $request->withAttribute($attributeName, [
+            $subject => ['attempts' => 2, 'window' => $originalWindow],
+        ]);
+
+        // The clock has since moved well past that original window's
+        // own end. A correct reuse still resolves Retry-After against
+        // the *original* window — already expired by now, so 0,
+        // correctly clamped — never a fresh window resolved from the
+        // current, later clock reading, which would instead report a
+        // full, wrong 10-second wait.
+        $advance(1000);
+
+        $reused = $middleware->process($request, $this->handler());
+
+        self::assertSame(429, $reused->getStatusCode());
+        self::assertSame('0', $reused->getHeaderLine('Retry-After'));
+    }
+
+    public function test_two_instances_with_identical_configuration_but_different_namespaces_do_not_share_a_bucket(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $login = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, namespace: 'login');
+        $twoFactor = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, namespace: '2fa');
+
+        $login->process($this->request(), $this->handler());
+        $rejected = $login->process($this->request(), $this->handler());
+
+        $stillOk = $twoFactor->process($this->request(), $this->handler());
+
+        self::assertSame(429, $rejected->getStatusCode());
+        self::assertSame(200, $stillOk->getStatusCode());
+    }
+
+    /**
+     * Simulates the identical policy (same class, configuration, and no
+     * namespace) appearing twice in one request's pipeline — the actual
+     * shape a global registration plus a redundant route one takes.
+     * $second reads $first's already-recorded decision off the request
+     * instead of incrementing the shared counter a second time.
+     */
+    public function test_two_instances_of_the_identical_policy_processing_the_same_request_count_once(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $first = new RateLimitMiddleware($cache, maxAttempts: 2, windowSeconds: 60);
+        $second = new RateLimitMiddleware($cache, maxAttempts: 2, windowSeconds: 60);
+        $innerHandler = new CallableRequestHandler(
+            fn (ServerRequestInterface $req) => $second->process($req, $this->handler()),
+        );
+
+        $onlyOneRealRequest = $first->process($this->request(), $innerHandler);
+
+        self::assertSame(200, $onlyOneRealRequest->getStatusCode());
+        self::assertSame('1', $onlyOneRealRequest->getHeaderLine('X-RateLimit-Remaining'));
+
+        // A genuinely separate HTTP request still counts as a second
+        // real check — maxAttempts: 2 allows it, at exactly zero
+        // remaining — proving the dedup only ever applies within one
+        // request's own attribute chain, never across requests.
+        $secondRealRequest = $first->process($this->request(), $innerHandler);
+
+        self::assertSame(200, $secondRealRequest->getStatusCode());
+        self::assertSame('0', $secondRealRequest->getHeaderLine('X-RateLimit-Remaining'));
+    }
+
+    /**
+     * The outer policy here is generous and will not itself reject; the
+     * inner one is strict. Both wrap the same handler chain the way
+     * Kernel's own global-then-route pipelines do.
+     */
+    public function test_an_inner_policys_headers_survive_being_wrapped_by_an_outer_successful_policy(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $outer = new RateLimitMiddleware($cache, maxAttempts: 100, windowSeconds: 60);
+        $inner = new class ($cache) extends RateLimitMiddleware {
+            public function __construct(CacheInterface $cache)
+            {
+                parent::__construct($cache, maxAttempts: 1, windowSeconds: 60);
+            }
+        };
+        $innerHandler = new CallableRequestHandler(fn ($req) => $inner->process($req, $this->handler()));
+
+        $ok = $outer->process($this->request(), $innerHandler);
+
+        self::assertSame(200, $ok->getStatusCode());
+        self::assertSame('1', $ok->getHeaderLine('X-RateLimit-Limit'));
+        self::assertSame('0', $ok->getHeaderLine('X-RateLimit-Remaining'));
+
+        $rejected = $outer->process($this->request(), $innerHandler);
+
+        self::assertSame(429, $rejected->getStatusCode());
+        // The outer policy is still within its own generous budget and
+        // must not overwrite the inner, rejecting policy's real numbers
+        // with its own unrelated ones.
+        self::assertSame('1', $rejected->getHeaderLine('X-RateLimit-Limit'));
+        self::assertSame('0', $rejected->getHeaderLine('X-RateLimit-Remaining'));
+    }
+
+    /**
+     * A generous global policy (maxAttempts: 3) wraps a strict route
+     * policy (maxAttempts: 1, a different class — see
+     * StrictRouteRateLimitMiddleware) through a real Kernel — the exact
+     * composition a real application configures both policies through.
+     */
+    public function test_a_global_and_a_route_policy_compose_with_independent_counters_and_truthful_headers(): void
+    {
+        $app = new AppScope();
+        $cache = new InMemorySimpleCache();
+        $app->instance(CacheInterface::class, $cache);
+        $app->middleware(RateLimitMiddleware::class);
+        $app->bind(RateLimitMiddleware::class, static fn ($c) => new RateLimitMiddleware(
+            $c->get(CacheInterface::class),
+            maxAttempts: 3,
+            windowSeconds: 60,
+        ));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(StrictRouteRateLimitedFixtureController::class);
+        $kernel = new Kernel($app, $router);
+
+        $ip = ['REMOTE_ADDR' => '127.0.0.1'];
+
+        $first = $kernel->handle(new ServerRequest('GET', '/strict-limited', serverParams: $ip));
+
+        self::assertSame(200, $first->getStatusCode());
+        // The route's own strict limit (1), not the global's generous
+        // one (3), is what a successful response shows too.
+        self::assertSame('1', $first->getHeaderLine('X-RateLimit-Limit'));
+        self::assertSame('0', $first->getHeaderLine('X-RateLimit-Remaining'));
+
+        $second = $kernel->handle(new ServerRequest('GET', '/strict-limited', serverParams: $ip));
+
+        self::assertSame(429, $second->getStatusCode());
+        // The outer, still-within-budget global policy must not
+        // overwrite the rejecting route policy's own honest headers —
+        // the real defect this composes to catch.
+        self::assertSame('1', $second->getHeaderLine('X-RateLimit-Limit'));
+        self::assertSame('0', $second->getHeaderLine('X-RateLimit-Remaining'));
+
+        // The global counter's own budget (3) is independent of the
+        // route's own rejection: exactly two real requests have reached
+        // the global policy so far (both to /strict-limited), so one
+        // more, to an entirely unmatched path with no route middleware
+        // at all, is still allowed — and only the one after that is
+        // rejected by the global policy itself.
+        $third = $kernel->handle(new ServerRequest('GET', '/unmatched', serverParams: $ip));
+        self::assertSame(404, $third->getStatusCode());
+
+        $fourth = $kernel->handle(new ServerRequest('GET', '/unmatched', serverParams: $ip));
+        self::assertSame(429, $fourth->getStatusCode());
+    }
+
+    /**
+     * The identical class, configuration, and (absent) namespace
+     * registered both globally and, redundantly, on the matched route —
+     * RateLimitedFixtureController's own #[Middleware(RateLimitMiddleware::class)]
+     * alongside a global registration of the same, unconfigured class.
+     * One real request must still cost exactly one increment.
+     */
+    public function test_the_identical_policy_registered_both_globally_and_on_the_route_counts_once_per_request(): void
+    {
+        $app = new AppScope();
+        $cache = new InMemorySimpleCache();
+        $app->instance(CacheInterface::class, $cache);
+        $app->middleware(RateLimitMiddleware::class);
+        $app->bind(RateLimitMiddleware::class, static fn ($c) => new RateLimitMiddleware(
+            $c->get(CacheInterface::class),
+            maxAttempts: 2,
+            windowSeconds: 60,
+        ));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(RateLimitedFixtureController::class);
+        $kernel = new Kernel($app, $router);
+
+        $ip = ['REMOTE_ADDR' => '127.0.0.1'];
+
+        $first = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
+        $second = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
+        $third = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
+
+        // maxAttempts: 2 — if the identical policy present both
+        // globally and on the route counted twice per request, the
+        // budget would already be exhausted after the first real
+        // request. Deduped, exactly one increment happens per request.
+        self::assertSame(200, $first->getStatusCode());
+        self::assertSame(200, $second->getStatusCode());
+        self::assertSame(429, $third->getStatusCode());
     }
 }

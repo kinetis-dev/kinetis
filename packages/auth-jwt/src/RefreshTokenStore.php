@@ -63,13 +63,21 @@ final readonly class RefreshTokenStore
      */
     public function issue(string|int $subject, array $claims = [], int $ttlSeconds = 1_209_600): string
     {
+        if ($ttlSeconds <= 0) {
+            throw RefreshTokenUnavailableException::nonPositiveIssueTtl();
+        }
+
         $token = bin2hex(random_bytes(32));
 
-        $this->cache->set($this->key($token), [
+        $stored = $this->cache->set($this->key($token), [
             'subject' => $subject,
             'claims' => $claims,
             'issuedAt' => time(),
-        ], max(0, $ttlSeconds));
+        ], $ttlSeconds);
+
+        if (!$stored) {
+            throw RefreshTokenUnavailableException::issueFailed();
+        }
 
         return $token;
     }
@@ -94,12 +102,20 @@ final readonly class RefreshTokenStore
 
     public function revoke(string $token): void
     {
-        $this->cache->delete($this->key($token));
+        if (!$this->cache->delete($this->key($token))) {
+            throw RefreshTokenUnavailableException::revokeFailed();
+        }
     }
 
     public function revokeAllForUser(string|int $userId, int $ttlSeconds): void
     {
-        $this->cache->set($this->userKey($userId), time(), max(0, $ttlSeconds));
+        if ($ttlSeconds <= 0) {
+            throw RefreshTokenUnavailableException::nonPositiveRevokeAllForUserTtl();
+        }
+
+        if (!$this->cache->set($this->userKey($userId), time(), $ttlSeconds)) {
+            throw RefreshTokenUnavailableException::revokeAllForUserFailed();
+        }
     }
 
     private function isRevokedForSubject(string|int $subject, int $issuedAt): bool

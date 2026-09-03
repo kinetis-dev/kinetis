@@ -71,6 +71,18 @@ final class InMemorySimpleCache implements CacheInterface, AtomicCounterInterfac
         return $this->entries[$key]['expiresAt'] ?? null;
     }
 
+    /**
+     * Every real key ever stored, for a test that cares what a class
+     * actually sent to the cache — e.g. that a hashed key never leaks
+     * raw caller-supplied text or a PSR-16-reserved character.
+     *
+     * @return list<string>
+     */
+    public function keys(): array
+    {
+        return array_keys($this->entries);
+    }
+
     public function delete(string $key): bool
     {
         unset($this->entries[$key]);

@@ -47,7 +47,7 @@ function runLive(int $iterations): array
         $router = new Router();
         $router->register(UserController::class);
         $kernel = new Kernel($app, $router);
-        $kernel->handle(new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc'])));
+        $kernel->handle(new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com'])));
 
         $durationsMs[] = (hrtime(true) - $start) / 1_000_000;
     }
@@ -70,7 +70,7 @@ function runCached(int $iterations, string $cacheDir): array
         $httpCache = (new CacheStore($cacheDir))->loadHttp();
         $router = Router::fromArray($httpCache->routes);
         $kernel = new Kernel($app, $router, httpCache: $httpCache);
-        $kernel->handle(new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc'])));
+        $kernel->handle(new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com'])));
 
         $durationsMs[] = (hrtime(true) - $start) / 1_000_000;
     }
@@ -110,8 +110,4 @@ $compiled = (new Compiler())->compile($router);
 runCached(WARMUP, $cacheDir);
 report('CACHED (cold-start simulated)', runCached(ITERATIONS, $cacheDir));
 
-foreach (glob($cacheDir . '/*') ?: [] as $file) {
-    unlink($file);
-}
-
-rmdir($cacheDir);
+CacheStore::destroy($cacheDir);

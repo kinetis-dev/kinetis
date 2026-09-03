@@ -11,13 +11,17 @@ use Kinetis\Broadcasting\Exception\BroadcastingException;
 use Kinetis\Broadcasting\Http\BroadcastAuthController;
 use Kinetis\Broadcasting\NullBroadcaster;
 use Kinetis\Broadcasting\Tests\Fixtures\FakeCurrentUser;
+use Kinetis\Broadcasting\Tests\Fixtures\MalformedPresenceAuthorizer;
+use Kinetis\Broadcasting\Tests\Fixtures\NonEncodablePresenceAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\OrderChannelAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\TeamPresenceAuthorizer;
+use Kinetis\Broadcasting\Tests\Fixtures\TrackedChannelAuthorizer;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\CurrentUserInterface;
 use Kinetis\RevoltHttpClient\Http;
 use Nyholm\Psr7\ServerRequest;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\HttpClient\MockHttpClient;
@@ -79,6 +83,45 @@ final class BroadcastAuthControllerTest extends TestCase
         self::assertSame($expected, $result['auth']);
     }
 
+    /**
+     * The authorizer's own return value, not the client's request, is
+     * what's malformed here — never signed, treated the same as any
+     * other "Not authorized" outcome.
+     */
+    public function test_a_presence_authorizer_returning_data_with_no_user_id_is_rejected_with_403(): void
+    {
+        $scope = $this->scope(new FakeCurrentUser('7'), MalformedPresenceAuthorizer::class);
+        $controller = $scope->get(BroadcastAuthController::class);
+
+        $result = $controller->auth($this->formRequest([
+            'socket_id' => '1234.1234',
+            'channel_name' => 'presence-malformed.1',
+        ]));
+
+        self::assertInstanceOf(ResponseInterface::class, $result);
+        self::assertSame(403, $result->getStatusCode());
+    }
+
+    /**
+     * A valid `user_id` alongside a value `json_encode()` itself cannot
+     * encode (invalid UTF-8 here) must be rejected the same way as any
+     * other malformed presence result — a `403`, never an uncaught
+     * `JsonException` escaping as a `500`.
+     */
+    public function test_a_presence_authorizer_returning_non_encodable_data_is_rejected_with_403(): void
+    {
+        $scope = $this->scope(new FakeCurrentUser('7'), NonEncodablePresenceAuthorizer::class);
+        $controller = $scope->get(BroadcastAuthController::class);
+
+        $result = $controller->auth($this->formRequest([
+            'socket_id' => '1234.1234',
+            'channel_name' => 'presence-nonencodable.1',
+        ]));
+
+        self::assertInstanceOf(ResponseInterface::class, $result);
+        self::assertSame(403, $result->getStatusCode());
+    }
+
     public function test_no_current_user_registered_is_rejected_with_401(): void
     {
         $app = new AppScope();
@@ -137,6 +180,54 @@ final class BroadcastAuthControllerTest extends TestCase
 
         self::assertInstanceOf(ResponseInterface::class, $result);
         self::assertSame(422, $result->getStatusCode());
+    }
+
+    /**
+     * @return list<array{0: string, 1: string}>
+     */
+    public static function malformedSocketIdOrChannelNameProvider(): array
+    {
+        return [
+            'socket id with a space' => ['1234 1234', 'private-tracked.1'],
+            'socket id with a bad shape' => ['abc.def', 'private-tracked.1'],
+            'channel name with a space' => ['1234.1234', 'private-track ed.1'],
+            'channel name with a colon' => ['1234.1234', 'private-tracked:1'],
+            'channel name with CRLF' => ['1234.1234', "private-tracked\r\n.1"],
+        ];
+    }
+
+    /**
+     * The 422 fires before the request even reaches the point of
+     * looking up a registered authorizer — proven by using a channel
+     * name whose bare form (`tracked.1`) genuinely has one registered,
+     * so a 422 here can only come from the grammar check itself, not
+     * from "no authorizer found."
+     */
+    #[DataProvider('malformedSocketIdOrChannelNameProvider')]
+    public function test_a_malformed_socket_id_or_channel_name_is_rejected_with_422_before_any_authorizer_runs(
+        string $socketId,
+        string $channelName,
+    ): void {
+        $tracker = new TrackedChannelAuthorizer();
+        $app = new AppScope();
+        $registry = new BroadcastChannelRegistry();
+        $registry->register(TrackedChannelAuthorizer::class);
+        $app->instance(BroadcastChannelRegistry::class, $registry);
+        $app->instance(TrackedChannelAuthorizer::class, $tracker);
+        $app->instance(BroadcasterInterface::class, $this->pusher());
+        $app->boot();
+        $scope = $app->createRequestScope();
+
+        $controller = $scope->get(BroadcastAuthController::class);
+
+        $result = $controller->auth($this->formRequest([
+            'socket_id' => $socketId,
+            'channel_name' => $channelName,
+        ]));
+
+        self::assertInstanceOf(ResponseInterface::class, $result);
+        self::assertSame(422, $result->getStatusCode());
+        self::assertSame(0, $tracker->calls);
     }
 
     public function test_a_non_pusher_driver_cannot_sign_channel_authorization(): void

@@ -30,6 +30,16 @@ use Kinetis\Cache\PackageDiscovery;
  * responsible for discovering it first, via
  * GlobalMiddlewareDiscovery::discoverAll(), since this class has no
  * business knowing how a global middleware list is produced.
+ *
+ * No dedup bookkeeping here, deliberately: `Router::register()` is
+ * itself idempotent per class now (a repeat registration is a safe
+ * no-op), the same invariant `EventListenerDiscovery` already relies on
+ * `EventListenerRegistry::register()` for rather than keeping a second,
+ * external `$seen` set — the project root and framework root being the
+ * same repository (developing Kinetis itself) is exactly the case that
+ * makes a class under `Kinetis\Http` surface from both
+ * `classesInProject()` and `classesUnderFrameworkSegment()`, and
+ * `register()` alone is what makes that harmless now.
  */
 final class RouteDiscovery
 {
@@ -41,25 +51,11 @@ final class RouteDiscovery
     {
         $router = new Router();
 
-        // Deduped across both passes: when the project root and framework
-        // root are the same repository, a class under Kinetis\Http can
-        // surface from both classesInProject() and
-        // classesUnderFrameworkSegment(). Router::register() has no
-        // duplicate-name check, so without this a route would register
-        // twice.
-        /** @var array<class-string, true> $seen */
-        $seen = [];
-
         foreach ([
             ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
             ...NamespaceScanner::classesUnderFrameworkSegment('Http'),
             ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
         ] as $class) {
-            if (isset($seen[$class])) {
-                continue;
-            }
-
-            $seen[$class] = true;
             $router->register($class, $globalMiddleware);
         }
 

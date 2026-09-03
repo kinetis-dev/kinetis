@@ -35,6 +35,21 @@ final readonly class OrderController
 }
 ```
 
+## The accepted `Authorization` header
+
+`Kinetis\Http\Auth\BearerCredentialParser` (core) parses the header —
+the same class {doc}`auth-jwt`'s `JwtAuthMiddleware` uses, so both
+packages accept identical input rather than risking two independently-
+drifting parsers. The scheme (`Bearer`) is matched case-insensitively;
+the separator between scheme and credential must be one or more literal
+space characters (a tab or other whitespace doesn't count); the
+credential itself must consist only of the RFC 6750 `b64token`
+characters (`A-Za-z0-9-._~+/`) with `=` padding allowed only as a
+trailing run. A request with anything other than exactly one
+`Authorization` header line is rejected too — two lines are ambiguous,
+not a value to comma-join and hope. Any of this failing is
+indistinguishable from an unknown token: the same generic `401`.
+
 ## `UserProviderInterface`
 
 The one thing your app implements — resolving a raw token to a user, or
@@ -190,6 +205,28 @@ failure, so repeated attempts keep extending the lockout; `clear()` on a
 successful attempt removes it immediately. Identifiers aren't limited to
 emails — anything failure-prone and identifier-keyed works the same way,
 a 2FA code or an invite redemption included.
+
+Two `AttemptThrottle` instances with the same `maxAttempts`/`decaySeconds`
+guarding two different purposes for the same identifier — a login
+password check and a 2FA code check for the same email, say — share a
+bucket unless told otherwise: pass a distinct `namespace` to each.
+
+```{code-block} php
+$loginThrottle = new AttemptThrottle($cache, namespace: 'login');
+$twoFactorThrottle = new AttemptThrottle($cache, namespace: '2fa');
+```
+
+Two throttles that differ in `maxAttempts` or `decaySeconds` already get
+independent buckets with no `namespace` needed — that's the default.
+`namespace` only exists for the one case those alone can't distinguish.
+
+```{warning}
+**Changing `maxAttempts`, `decaySeconds`, or `namespace` changes the
+underlying cache key.** Deploying that change resets every identifier's
+lockout state — usually harmless (a clean slate, not a security gap),
+but worth knowing if you're relying on an active lockout surviving a
+deploy.
+```
 
 ````{note}
 **The cache must count atomically, and construction enforces it.**

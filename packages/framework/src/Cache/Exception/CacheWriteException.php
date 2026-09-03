@@ -23,6 +23,11 @@ final class CacheWriteException extends RuntimeException
         return new self("Could not publish compiled cache to \"{$path}\".");
     }
 
+    public static function couldNotRemove(string $path): self
+    {
+        return new self("Could not remove \"{$path}\" while destroying the cache directory.");
+    }
+
     public static function unexportableObject(string $file, string $keyPath, string $class): self
     {
         return new self(

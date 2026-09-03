@@ -20,7 +20,17 @@ final class GcCommandTest extends TestCase
         $store = new FileSessionStore($directory);
         $live = \bin2hex(\random_bytes(16));
         $store->write($live, ['keep' => true], 60);
-        $store->write(\bin2hex(\random_bytes(16)), ['gone' => true], -1);
+
+        // write() itself now rejects a negative $lifetimeSeconds (KINETIS-68)
+        // — an already-expired file is seeded directly, in the exact real
+        // envelope shape FileSessionStore's own write() produces, the same
+        // technique FileSessionStoreTest's own corrupt-file test already
+        // uses for writing a raw file outside write()'s own contract.
+        $dead = \bin2hex(\random_bytes(16));
+        \file_put_contents(
+            $directory . '/sess_' . $dead,
+            \json_encode(['expiresAt' => \time() - 1, 'data' => ['gone' => true]], JSON_THROW_ON_ERROR),
+        );
 
         [$exitCode, $output] = self::runCommand($store);
 

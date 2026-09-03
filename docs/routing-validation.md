@@ -45,13 +45,42 @@ freely mix routed actions with plain helper methods. Each `{placeholder}`
 in a path template is compiled to a named regex capture group once, when
 the route is registered — not on every request.
 
-Matching is first-match-wins in registration order, so two routes may
-overlap — `/users/{id:\d+}` alongside `/users/{id}`, or `/users/self`
-alongside `/users/{id}` — and the earlier registration takes the requests
-both match. A second route claiming *exactly* the same requests (the same
-method and path shape — placeholder names don't count, so `/users/{id}`
-and `/users/{userId}` collide) is rejected at registration with a
-`DuplicateRouteException`, since it could never run at all.
+Matching follows a stable, content-only specificity order — never
+registration or discovery-scan order, so live discovery and a compiled
+cache always agree on which route wins for the same set of routes. Each
+real `/`-delimited path segment ranks into one of four tiers, most to
+least specific: fully static (`self`, `report-2026.pdf`); a placeholder
+mixed with literal text in the same segment (`report-{id}.pdf`); a
+constrained placeholder occupying the whole segment (`{id:\d+}`); an
+unconstrained one (`{id}`). The tier always wins first — a mixed segment
+beats *any* pure placeholder, constrained or not — with a constrained
+placeholder only outranking an unconstrained one when they'd otherwise
+tie in the same tier. Once every shared segment ties, the route with more
+segments is treated as the deeper, more specific match. `/users/{id:\d+}`
+alongside `/users/{id}`, `/users/self` alongside `/users/{id}`, or
+`/files/report-{id}.pdf` alongside `/files/report-2026.pdf`, can
+therefore all be registered, in either order, and the more specific one
+always wins for a path it also matches. A second route claiming
+*exactly* the same requests (the same method and path shape — placeholder
+names don't count, so `/users/{id}` and `/users/{userId}` collide) is
+rejected at registration with a `DuplicateRouteException`, since it could
+never run at all.
+
+A method may carry more than one route attribute — `#[Get('/x')]` and
+`#[Post('/x')]` on the same method register two independent routes
+sharing that controller method and its middleware. Registering a
+controller is all-or-nothing: every one of its routes is reflected and
+checked for conflicts before any of them are committed, so a later
+method's bad path, or a conflict against an earlier one, leaves none of
+that controller's routes registered rather than just the ones reflected
+before the failure. Registering the same class a second time is a safe
+no-op *only* when the global-middleware context is identical to the one
+already used — the reason a class discovered through more than one scan
+(a project's own scan overlapping a package's `extra.kinetis` root, for
+instance) never ends up with its routes registered twice, since every
+such scan shares the one project-wide global-middleware list. A second
+registration under a genuinely different context is rejected instead of
+silently kept under the first one.
 
 ### Constraining a placeholder's shape
 
@@ -692,7 +721,8 @@ An empty body is treated as no data at all, so a DTO with only optional
 fields hydrates from its own defaults. A body that isn't valid JSON, or
 that decodes to something other than a JSON object (`null`, a bare
 string, a number, a boolean), is a `400` instead, before any field-level
-validation runs:
+validation runs — see "Scalar type checking" below for how a genuine JSON
+*array* body is handled once it reaches field-level validation:
 
 ```{code-block} json
 {
@@ -704,7 +734,15 @@ validation runs:
 
 Before a value is cast to a `#[Body]` field's, `#[Query]` parameter's, or
 path parameter's declared scalar type, its actual shape is checked
-first — casting only ever happens once that check passes:
+first — casting only ever happens once that check passes. This is the
+one check shared by every source of typed input: a `#[Body]` DTO field,
+a `#[Query]`/path parameter, and — since `Kinetis\Mcp\McpDispatcher`
+delegates to the identical `Hydrator::typeMismatchMessage()` method — an
+MCP tool's own top-level argument. Every builtin type PHP can attach to
+a constructor or method parameter gets one of the two policies below,
+never left to fall through silently:
+
+**Supported — checked, cast, and accepted:**
 
 - A `string`-typed field/parameter must actually be a string. An array,
   object, number, or boolean is rejected.
@@ -712,12 +750,183 @@ first — casting only ever happens once that check passes:
   numeric string (`"42"` for an `int` field is fine) — but rejects a
   non-numeric string, an array, or a boolean.
 - A `bool`-typed field/parameter accepts exactly `true`, `false`, `1`,
-  `0`, `"1"`, or `"0"` — nothing else.
+  `0`, `"1"`, or `"0"` for a `#[Body]`/MCP value — see "Query and path
+  values are raw strings" below for the different, source-specific
+  spellings a `#[Query]`/path value actually needs.
+- An `array`-typed field/parameter (no `#[ListOf]`) must be a real JSON
+  *array* (`[...]`), never a JSON object (`{...}`) — including the empty
+  object `{}`, and including one whose own keys happen to look
+  sequential (`{"0":"a","1":"b"}`). The request body is decoded with
+  `json_decode(..., associative: false)`, not `true`, specifically so
+  this distinction survives: every JSON object anywhere in the body is
+  marked before `array_is_list()` is ever consulted, so a map-shaped
+  value — of any shape, empty included — is always rejected with its own
+  message ("must be a JSON array, not a JSON object."), never silently
+  accepted. `#[ListOf]`'s own array (a real JSON array of nested DTOs)
+  gets the identical list-shape check.
+- An `iterable`-typed field/parameter gets the identical check as
+  `array` — decoded JSON input can only ever produce a PHP array, never
+  a real `Traversable`, and a plain array genuinely satisfies PHP's
+  `iterable` type, so the accepted shape and the wire contract are the
+  same as `array`'s.
+- `mixed` accepts anything, JSON `null` included — there's nothing to
+  check. Its own JSON Schema is the empty schema *object* (`{}`), never
+  a bare `[]` — PHP has no native empty-object type, so a naive empty
+  PHP array would otherwise serialize as the invalid JSON array `[]`
+  where JSON Schema requires an object.
+- A standalone `null`-typed field/parameter (PHP's own literal-null
+  type) accepts only a literal JSON `null` — any other value is
+  rejected. See "Query and path values are raw strings" below for why
+  this type can never be satisfied by a `#[Query]`/path source at all.
+- Standalone `true`/`false`-typed fields (PHP 8.2's literal-boolean
+  types) each accept exactly that one boolean value — narrower than
+  `bool`, which accepts either.
+
+**Rejected — no value is ever accepted, once one is actually supplied:**
+
+- `object`-typed fields/parameters are always rejected. A JSON object on
+  the wire is always either hydrated into a nested DTO (a class-typed
+  field) or, for a `mixed`/array-element field, unwrapped back into a
+  plain PHP array/scalar tree before it ever reaches application code —
+  never handed through as a raw PHP `object`, so there is no request
+  value that could ever truthfully construct a bare `object`-typed
+  parameter.
+- `callable`-typed fields/parameters are always rejected, for a
+  security reason as much as a representational one: a JSON string
+  handed to a `callable`-typed constructor parameter is exactly the
+  shape of an arbitrary-function-name-injection risk if that value is
+  ever invoked downstream, so it's refused outright rather than treated
+  as though it were safe.
+
+Both are also refused earlier, at OpenAPI-document/MCP-tool-schema
+generation time, since neither has a truthful JSON Schema representation
+this framework produces — but that generation step is optional
+(`/openapi.json`, `tools/list`) and never a prerequisite for a route or
+tool to register and dispatch real requests. The type-mismatch check
+above is what closes the gap for every deployment shape: it runs on
+every real request/tool call regardless of whether schema generation
+ever executes.
 
 A mismatch is a `422` with a message under that field's key, in the same
 `errors` structure a failed constraint produces — not a value silently
 coerced into something that happens to look plausible (an array becoming
-the literal string `"Array"`, a non-numeric string becoming `0`).
+the literal string `"Array"`, a non-numeric string becoming `0`), and
+never a raw `TypeError` escaping the constructor for a genuinely
+unsupported type. Every field's own errors are collected together before
+throwing once, so two independently-invalid fields in the same request —
+including two rejected-category fields at once — both surface in the
+same response, not just whichever one happened to be checked first. An
+MCP tool's own validation failure surfaces the same `{field: [messages]}`
+shape inside a `tools/call` result's `isError: true` content, rather than
+a JSON-RPC-level error — see {doc}`mcp`.
+
+### Query and path values are raw strings
+
+The type-mismatch check above is genuinely the same method regardless of
+source — but the *value* it checks is not. A `#[Body]`/MCP value is
+already a real, JSON-decoded PHP value (a genuine `bool`, `array`, ...);
+a `#[Query]`/path value only ever arrives as a raw string (or, for a
+`#[Query]` array-style parameter — `?tags[]=a&tags[]=b` — a PHP array).
+Two consequences follow directly from this:
+
+- **`bool`/`true`/`false` accept the OpenAPI-documented `"true"`/`"false"`
+  spelling too, not just `"1"`/`"0"`.** `Dispatcher` translates those two
+  literal string spellings into real PHP `true`/`false` before the shared
+  check runs — the one place a `#[Query]`/path *source* genuinely differs
+  from a JSON body, so the same check still receives a genuinely
+  equivalent value. `bool`'s own pre-existing `"1"`/`"0"` spellings are
+  unaffected.
+- **A standalone `null`-typed `#[Query]`/path parameter is rejected at
+  registration, not at request time.** There is no established, safe
+  string convention for "this means explicit null" the way `"true"`/
+  `"false"` is an established convention for booleans, so this
+  declaration is unconditionally impossible to satisfy: a `#[Query]`
+  parameter with no default fails "is required." when omitted and
+  "must be null, ... given." for any value actually sent; a path
+  parameter fails the same way *regardless* of any declared default,
+  since a matched route's own placeholder capture always supplies a
+  real, non-empty string — there is no "value missing" case a default
+  could ever be reached from. Both are rejected at `Router::register()`
+  itself — the one boundary every route passes through regardless of
+  deployment shape, so a route that could never succeed is rejected
+  before it can ever register, be advertised at `/openapi.json`, or
+  accept traffic, rather than only failing the first time a real client
+  actually dispatches to it — a `#[Query]` field genuinely optional at
+  this type needs a default (so omitting it is the only way to reach
+  it); a path parameter needs a different type, or to move to
+  `#[Body]`, where a real JSON `null` is representable.
+- **An `array`/`iterable`-typed path parameter is rejected at
+  registration too, unconditionally.** A `#[Query]` array works via the
+  bracket convention below, but a route placeholder is always exactly
+  one path segment — `Route::match()` captures it as a single string,
+  with no bracket, comma, or any other convention that could ever turn
+  it into an array. Move it to `#[Query]` (where an array-style
+  parameter is representable) or `#[Body]` instead.
+- **A `#[Query]` array-style parameter accepts OpenAPI 3.1's own
+  *default* query-array serialization** (`style: form`, `explode: true`
+  — never stated explicitly in the generated document, since it's the
+  spec default whenever neither is overridden): the repeated-key
+  spelling, `?tags=a&tags=b`. This is what a client generated strictly
+  from `/openapi.json` actually sends, and it genuinely works — parsed
+  directly from the request's own raw, unparsed query string, since PHP's
+  native `parse_str()` (what `getQueryParams()` is built from on every
+  runtime) cannot represent this form at all: a repeated, non-bracketed
+  key silently collapses to its last value there, with every earlier one
+  lost. PHP's own bracket convention, `?tags[]=a&tags[]=b`, still works
+  too, as a fallback used only when the repeated-key form isn't present —
+  so an existing bracket-style caller keeps working exactly as before,
+  alongside the now-genuinely-correct standard form.
+
+### Form-encoded and multipart bodies get the raw-string rules too
+
+A `multipart/form-data`/`application/x-www-form-urlencoded` `#[Body]`
+is read from `getParsedBody()`, not JSON-decoded — every field arrives
+exactly the way a `#[Query]`/path value does: a raw string (or a real
+PHP array, for a repeated/bracketed field name), never an
+already-typed JSON value. It shares its DTO class with the JSON-body
+path, though — the same `#[Body]` parameter type can receive either
+encoding depending on the client's own `Content-Type` — so `Dispatcher`
+only applies the `#[Query]`/path-style literal normalization when the
+request is genuinely form-encoded, never for a real JSON request
+reaching the identical DTO: `describeRequestBody()`'s advertised
+content types, `application/json` included, always apply, on the exact
+same route, based purely on which the client actually sent.
+
+Every `#[Body]`-reachable route also advertises
+`application/x-www-form-urlencoded` and `multipart/form-data` in its
+generated `requestBody` alongside `application/json` — the identical
+schema under all three, since `Dispatcher` hydrates the same DTO class
+regardless of which the client sent; the wire representation is what
+differs, laid out below.
+
+- `bool`/standalone `true`/`false` accept both the pre-existing
+  `"1"`/`"0"` spelling *and* the `"true"`/`"false"` spelling for a
+  form-encoded value — the identical normalization `#[Query]`/path
+  already has, applied here only when `Dispatcher` knows the whole
+  request body is form-encoded, so a real JSON request for the same
+  field still correctly rejects the JSON *string* `"true"` (as opposed
+  to the JSON boolean literal `true`) exactly as it always has.
+- Standalone `null` can never be satisfied by a form-encoded value at
+  all, for the identical reason a `#[Query]`/path value can't (there is
+  no established string convention for "this means explicit null") —
+  but since the *same* DTO class can also be reached via a genuine JSON
+  body on the same route, this is a per-request outcome, not a
+  registration-time impossibility the way a `#[Query]`/path parameter's
+  own type is: a route accepting a `#[Body]` DTO with a standalone-null
+  field still registers and works correctly over JSON, and only fails a
+  request that happens to arrive form-encoded instead.
+- `array`/`iterable` get the identical map-shaped-value rejection
+  documented above (a form-encoded field parsed into a genuinely
+  associative PHP array is rejected the same way a JSON object is), but
+  the numeric-keyed-object provenance tracking `JsonTree` provides for a
+  JSON body does not apply here — there is no JSON object to have lost
+  provenance from in the first place; a form-encoded array field's own
+  shape comes directly from PHP's parsed-body array, unchanged.
+- An `UploadedFileInterface`-typed field is described as `{type: string,
+  format: binary}` — OpenAPI's own real convention for a file upload
+  inside a multipart-serialized schema — genuinely satisfiable only via
+  `multipart/form-data`, the one content type of the three that can
+  actually carry a file.
 
 Missing and explicitly-null values get the same treatment, whether or not
 the field carries any constraint attributes: a `#[Body]` DTO field whose
@@ -725,6 +934,13 @@ key is absent from the request is `is required.` unless the constructor
 parameter has a default, and a field sent as JSON `null` whose declared
 type doesn't allow null is `must not be null.` — both under the field's
 key in the same `422`, never a raw `TypeError` from the constructor.
+Nullability and required presence are independent: a nullable field with
+no default (`?string $name`) still rejects an absent key, only accepting
+one explicitly present and set to `null` — the generated OpenAPI schema
+(and an MCP tool's `inputSchema`) states this exactly, listing that field
+in `required` and giving it `type: ["string", "null"]` rather than a bare
+`"string"`, so a client generated from the schema can't be misled into
+thinking the key is safe to omit.
 
 ### Asymmetric-visibility properties
 

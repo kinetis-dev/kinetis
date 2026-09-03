@@ -67,6 +67,37 @@ sits instead, since seeking one backward is impossible — supply a
 non-seekable body already positioned at its start for it to be signed and
 sent correctly.
 
+## Errors
+
+`SigV4SigningClient` implements `Psr\Http\Client\ClientInterface`, so
+any failure in its own processing — resolving credentials, resolving
+the request URI, capturing the body, or signing — before it ever
+delegates to the wrapped client throws
+`Kinetis\AwsSigV4\Exception\UnsignableRequestException`, which
+implements PSR-18's `RequestExceptionInterface` (itself a
+`ClientExceptionInterface`). Catch PSR-18 exceptions around
+`sendRequest()` the same way you would for any other PSR-18 client —
+this covers a failure produced by this decorator itself, not only one
+from the client it wraps.
+
+The exception's own message is a fixed, generic string — never the
+request's URI, its body, or anything credential-related — so it's
+always safe to log directly. The real cause (a missing credential, a
+request with no usable target, a body that failed to read, ...) is
+always available via `getPrevious()`, along with `getRequest()`
+returning the original request you passed to `sendRequest()`.
+
+A failure from the *wrapped* client's own `sendRequest()` call — a
+real network error, for instance — is never caught or reclassified: it
+reaches you completely unmodified, exactly as it would from any other
+PSR-18 client.
+
+`baseUri` validation is separate and happens at construction, not from
+`sendRequest()` — see [Amazon OpenSearch Service](#amazon-opensearch-service)
+below, where `baseUri` is introduced — so a malformed `baseUri` throws
+`Kinetis\AwsSigV4\Exception\SigningException` directly from
+`new SigV4SigningClient(...)`, not `UnsignableRequestException`.
+
 ## Amazon OpenSearch Service
 
 `OpenSearch\TransportFactory::setHttpClient()` (see {doc}`search-opensearch`)
@@ -103,6 +134,18 @@ path, and `baseUri` is what supplies the scheme and host for those.
 Leave it unset when the request you're signing already carries a full
 URI of its own (e.g. a plain `RequestInterface` you built directly for
 API Gateway).
+
+`baseUri` must be an absolute `http`/`https` authority — scheme and
+host, with an optional port and an optional path prefix (`/prod`, as
+above). It's parsed and validated once, at construction, so a
+misconfigured endpoint fails immediately rather than on the first
+request that happens to need it; userinfo, a query string, or a
+fragment in `baseUri` are rejected outright rather than silently
+dropped. A request's own path is joined to the configured path prefix
+with exactly one slash regardless of which side (if either) already
+supplies one, so a relative request path with no leading slash (e.g.
+`users`, which PSR-7 permits) still resolves to `/prod/users`, not a
+malformed `/produsers`.
 
 `OpenSearchClientFactory::fromConfig()` itself only ever builds the plain
 Basic-auth path — construct the client directly, as above, to use IAM/

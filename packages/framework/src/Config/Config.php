@@ -24,6 +24,28 @@ use Kinetis\Config\Exception\MissingConfigException;
 final readonly class Config
 {
     /**
+     * A plain decimal integer: an optional sign, then one or more decimal
+     * digits — nothing else. Leading zeroes are accepted (`"007"` is
+     * unambiguously seven in this grammar; there is no octal-literal
+     * concept here to make them surprising), but fractions, exponents,
+     * surrounding whitespace, alternate bases (`0x1A`), and grouping
+     * separators (`1_000`) are not — see {@see intOrNull()}.
+     */
+    private const string INT_PATTERN = '/^([+-]?)([0-9]+)$/D';
+
+    /**
+     * Ordinary decimal notation (`5`, `5.`, `.5`, `5.5`) with an optional
+     * scientific-notation exponent (`5e3`, `5.5e-3`). A leading `+`,
+     * leading zeroes, a trailing dot with nothing after it (`5.`), and a
+     * leading dot with nothing before it (`.5`) are all accepted — the
+     * same "unambiguous, so no reason to reject it" reasoning as the
+     * integer grammar's leading zeroes. Whitespace, a locale-specific
+     * decimal separator (`1,5`), and a malformed/partial form (`1.2.3`,
+     * `1e`, `e5`) are not — see {@see float()}.
+     */
+    private const string FLOAT_PATTERN = '/^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/D';
+
+    /**
      * @param array<string, string> $values
      */
     public function __construct(
@@ -57,11 +79,13 @@ final readonly class Config
      * An empty value is treated as unset, not as "configured but blank" —
      * the same "REDIS_HOST= is how a value gets turned off" convention
      * already established for named-connection config elsewhere. Anything
-     * else set to a string is_numeric() doesn't accept throws
-     * InvalidConfigValueException rather than silently taking whatever
-     * PHP's own (int) cast would produce from it — "5abc" becoming 5 is
-     * exactly the kind of plausible-but-wrong value this exists to catch
-     * before it reaches whatever the number configures.
+     * not matching {@see INT_PATTERN}, or outside the platform's
+     * representable integer range, throws InvalidConfigValueException
+     * rather than silently taking whatever a lossy cast would produce
+     * from it — "5abc" becoming 5, "1.9" truncating to 1, or a huge digit
+     * string saturating to PHP_INT_MAX are all exactly the kind of
+     * plausible-but-wrong value this exists to catch before it reaches
+     * whatever the number configures.
      */
     public function int(string $key, int $default): int
     {
@@ -74,6 +98,19 @@ final readonly class Config
      * SqlConnectionFactory's DB_CONNECT_TIMEOUT and kinetis/queue-sql's
      * QUEUE_VISIBILITY_TIMEOUT_SECONDS both mean "no timeout" only when
      * genuinely absent, not some literal integer standing in for it.
+     *
+     * Never casts before range validity is proven: a plain `(int)` cast
+     * of a decimal string that overflows the platform's integer range
+     * silently *saturates* toward PHP_INT_MAX/PHP_INT_MIN rather than
+     * erroring — a wrong, plausible-looking number is worse than no
+     * number at all for something that ends up sizing a pool or bounding
+     * a request body. One edge case a saturating cast still gets wrong
+     * even *after* range-checking is handled explicitly: a string whose
+     * magnitude is exactly `-PHP_INT_MIN` (one greater than
+     * `PHP_INT_MAX`, since two's-complement integers aren't symmetric)
+     * would still saturate under a plain `-(int) $digits` cast, so that
+     * one value is returned as the `PHP_INT_MIN` constant directly
+     * instead of being cast at all.
      */
     public function intOrNull(string $key): ?int
     {
@@ -83,13 +120,46 @@ final readonly class Config
             return null;
         }
 
-        if (!is_numeric($raw)) {
+        if (preg_match(self::INT_PATTERN, $raw, $matches) !== 1) {
             throw InvalidConfigValueException::notAnInteger($key, $raw);
         }
 
-        return (int) $raw;
+        $negative = $matches[1] === '-';
+        $digits = ltrim($matches[2], '0');
+        $digits = $digits === '' ? '0' : $digits;
+        $limit = $negative ? ltrim((string) PHP_INT_MIN, '-') : (string) PHP_INT_MAX;
+
+        if (strlen($digits) > strlen($limit) || (strlen($digits) === strlen($limit) && strcmp($digits, $limit) > 0)) {
+            throw InvalidConfigValueException::integerOutOfRange($key, $raw);
+        }
+
+        if ($negative && $digits === $limit) {
+            return PHP_INT_MIN;
+        }
+
+        return $negative ? -(int) $digits : (int) $digits;
     }
 
+    /**
+     * Ordinary decimal or scientific notation only — see
+     * {@see FLOAT_PATTERN} for the exact grammar, including which
+     * boundary forms it accepts. Beyond the syntax check, two more
+     * things a syntactically valid string can still get wrong:
+     *
+     * - **Overflow to infinity**: a huge exponent (`1e9999`) is
+     *   syntactically a real number, but casting it produces `INF`, not
+     *   a number — `is_finite()` catches this (and the symmetric `NAN`
+     *   case, though the grammar itself can never actually produce one).
+     * - **Underflow to exact zero**: a genuinely nonzero value whose
+     *   magnitude is smaller than a float can represent (`1e-400`) casts
+     *   to exactly `0.0` — indistinguishable, once cast, from a
+     *   deliberately-configured zero. {@see isZeroMantissa()} tells the
+     *   two apart from the *string* (every digit character is literally
+     *   `0`, independent of any exponent) before the cast ever throws
+     *   away the difference, so an underflowed nonzero value is rejected
+     *   rather than silently treated as "off"/"unlimited"/"immediate,"
+     *   whatever a real `0.0` happens to mean to the caller.
+     */
     public function float(string $key, float $default): float
     {
         $raw = $this->values[$key] ?? null;
@@ -98,11 +168,33 @@ final readonly class Config
             return $default;
         }
 
-        if (!is_numeric($raw)) {
+        if (preg_match(self::FLOAT_PATTERN, $raw) !== 1) {
             throw InvalidConfigValueException::notAFloat($key, $raw);
         }
 
-        return (float) $raw;
+        $value = (float) $raw;
+
+        if (!is_finite($value) || ($value === 0.0 && !self::isZeroMantissa($raw))) {
+            throw InvalidConfigValueException::floatOutOfRange($key, $raw);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Whether $raw — already confirmed to match {@see FLOAT_PATTERN} —
+     * is mathematically zero regardless of any exponent, checked from
+     * the string itself rather than the (potentially already-lossy) cast
+     * result: strip the exponent (a zero mantissa times any power of ten
+     * is still zero), then the sign and decimal point, and confirm every
+     * remaining character is the digit `0`.
+     */
+    private static function isZeroMantissa(string $raw): bool
+    {
+        $mantissa = preg_replace('/[eE].*$/', '', $raw) ?? $raw;
+        $digitsOnly = str_replace(['+', '-', '.'], '', $mantissa);
+
+        return $digitsOnly !== '' && trim($digitsOnly, '0') === '';
     }
 
     /**

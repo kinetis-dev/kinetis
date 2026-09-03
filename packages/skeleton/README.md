@@ -18,6 +18,10 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 One controller, one route, a welcome page — nginx + PHP-FPM, so a code
 change takes effect on your very next request with no container
 restart. Meant to be copied and grown from, not run as-is.
@@ -42,7 +46,7 @@ installation, runs inside the containers.
 ## Using this as a starting point
 
 Copy `packages/skeleton/` out into a new project, point its
-`composer.json` at a real `kinetis/framework` install instead of the `path`
+`composer.json` at a real [`kinetis/framework`](https://github.com/kinetis-dev/framework) install instead of the `path`
 repository this monorepo uses internally, and build from there. The
 whole app is `src/Http/WelcomeController.php` (one route) and
 `public/index.php` (the standard Kinetis entry point) — read both end to
@@ -51,7 +55,7 @@ discovers them automatically.
 
 Looking for a larger, more realistic example — a database, a queue,
 scheduled commands, real-time updates? See
-[`kinetis/pingpong`](../pingpong).
+[`kinetis/pingpong`](https://github.com/kinetis-dev/pingpong).
 
 ## License
 

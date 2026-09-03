@@ -18,10 +18,14 @@
 
 ---
 
-The same `League\Flysystem\FilesystemOperator` interface `kinetis/storage`
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
+The same `League\Flysystem\FilesystemOperator` interface [`kinetis/storage`](https://github.com/kinetis-dev/storage)
 gives local disk, backed by `AsyncAws\S3\S3Client` and
 `League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter` instead — genuinely
-non-blocking, via `kinetis/revolt-http-client`'s Revolt-native HTTP
+non-blocking, via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP
 transport injected into `S3Client`, not the SDK's default blocking one.
 
 ```php
@@ -64,7 +68,9 @@ or an IAM role, the standard AWS SDK convention.
 composer require kinetis/storage-s3
 ```
 
-Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
+[`kinetis/storage`](https://github.com/kinetis-dev/storage), and
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/storage-s3.html](https://kinetis.dev/docs/storage-s3.html).
 

@@ -23,6 +23,15 @@ final class FailingWriteStreamWrapper
 
     public static string $backingDirectory = '';
 
+    /**
+     * When true, unlink() reports failure while leaving the real file
+     * untouched on disk — the deterministic counterpart to a real ENOSPC/
+     * permission failure, for proving FileSessionStore::destroy() throws
+     * on a genuine deletion failure rather than only on the benign
+     * already-gone case.
+     */
+    public static bool $failUnlink = false;
+
     /** @var resource|null PHP sets this itself; declared to avoid the dynamic-property deprecation. */
     public $context;
 
@@ -79,8 +88,30 @@ final class FailingWriteStreamWrapper
         return @\stat($this->realPath($path)) ?: false;
     }
 
+    /**
+     * chmod() (STREAM_META_ACCESS) delegated onto the real backing path —
+     * the same translation every other method already applies, needed so
+     * FileSessionStore::write()'s own chmod(0600)/fileperms() checks see
+     * genuine results rather than failing because this wrapper never
+     * implemented stream_metadata() at all.
+     */
+    public function stream_metadata(string $path, int $option, mixed $value): bool
+    {
+        if ($option === \STREAM_META_ACCESS) {
+            \assert(\is_int($value));
+
+            return @\chmod($this->realPath($path), $value);
+        }
+
+        return false;
+    }
+
     public function unlink(string $path): bool
     {
+        if (self::$failUnlink) {
+            return false;
+        }
+
         return @\unlink($this->realPath($path));
     }
 

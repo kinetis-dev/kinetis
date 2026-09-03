@@ -25,6 +25,9 @@ final class FakePostgresLink implements PostgresLink
 
     public bool $lockReleased = false;
 
+    /** Simulates pg_advisory_unlock() itself throwing. */
+    public bool $releaseShouldFail = false;
+
     /**
      * Every query() call's own SQL, verbatim, in order — str_contains()
      * alone (what this fake's own dispatch already uses) can't tell a
@@ -38,6 +41,16 @@ final class FakePostgresLink implements PostgresLink
 
     /** Returned as the acquired flag's own value once a poll succeeds — an int by default, but overridable to prove a (int) cast actually matters. */
     public mixed $acquiredValue = 1;
+
+    /**
+     * Returned as the released flag's own value — an int by default,
+     * but overridable to false to simulate Postgres's own
+     * pg_advisory_unlock() reporting the session did not hold the
+     * lock, distinct from $releaseShouldFail (which simulates the
+     * query call itself throwing rather than returning a value at
+     * all).
+     */
+    public mixed $releasedValue = 1;
 
     public function __construct(
         private readonly int $acquiresAfterAttempts = 1,
@@ -55,9 +68,13 @@ final class FakePostgresLink implements PostgresLink
         }
 
         if (str_contains($sql, 'pg_advisory_unlock')) {
+            if ($this->releaseShouldFail) {
+                throw new LogicException('simulated release failure');
+            }
+
             $this->lockReleased = true;
 
-            return new BufferedSqlResult([['released' => 1]], 1, 1);
+            return new BufferedSqlResult([['released' => $this->releasedValue]], 1, 1);
         }
 
         throw new LogicException("FakePostgresLink does not execute queries: {$sql}");

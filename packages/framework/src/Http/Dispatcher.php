@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Http;
 
+use Kinetis\Cache\Exception\ArtifactValidation;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
+use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Exception\MalformedRequestBodyException;
@@ -15,6 +18,8 @@ use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Validation\Constraint;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
+use Kinetis\Validation\JsonObject;
+use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Response;
 use Kinetis\Container\Exception\CircularDependencyException;
 use Kinetis\Container\RequestScope;
@@ -70,6 +75,10 @@ use ReflectionType;
  */
 final class Dispatcher
 {
+    private const array BINDING_PLAN_KEYS = [
+        'name', 'source', 'dtoClass', 'scalarType', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+    ];
+
     public function __construct(
         private readonly ContainerInterface $container,
         /** @var array<string, list<HttpBindingPlan>> */
@@ -131,11 +140,62 @@ final class Dispatcher
     }
 
     /**
+     * Validates a compiled `array<string, list<HttpBindingPlan>>` map —
+     * this class is the one abstraction that owns `HttpBindingPlan`'s
+     * shape, so this is the one place that shape is ever checked,
+     * called by `Kinetis\Cache\HttpCache::fromArray()` rather than that
+     * class re-deriving the same rules itself. Every top-level key must
+     * be a real string (PHP silently coerces a numeric-looking array key
+     * to int); every value must be a list of entries, each with exactly
+     * the eight fields `derivePlan()` itself always produces, correctly
+     * typed. `defaultValue` is never checked beyond "the key is
+     * present" — it holds an arbitrary PHP default value, which has no
+     * single type to validate against.
+     *
+     * @param array<array-key, mixed> $plans
+     * @throws CacheArtifactExceptionInterface
+     */
+    public static function validateBindingPlans(array $plans): void
+    {
+        foreach ($plans as $key => $entries) {
+            if (!is_string($key)) {
+                throw InvalidCacheArtifactException::malformedEntry('HttpBindingPlan', 'a key that is not a string');
+            }
+
+            if (!is_array($entries) || !array_is_list($entries)) {
+                throw InvalidCacheArtifactException::wrongFieldType('HttpBindingPlan', $key, 'a list');
+            }
+
+            foreach ($entries as $entry) {
+                if (!is_array($entry)) {
+                    throw InvalidCacheArtifactException::malformedEntry('HttpBindingPlan', "a non-array entry for \"{$key}\"");
+                }
+
+                ArtifactValidation::exactKeys($entry, 'HttpBindingPlan', self::BINDING_PLAN_KEYS);
+
+                ArtifactValidation::string($entry, 'HttpBindingPlan', 'name');
+                ArtifactValidation::string($entry, 'HttpBindingPlan', 'source');
+                ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'dtoClass');
+                ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'scalarType');
+                ArtifactValidation::bool($entry, 'HttpBindingPlan', 'hasDefault');
+                ArtifactValidation::bool($entry, 'HttpBindingPlan', 'allowsNull');
+                // defaultValue's own presence is already guaranteed by
+                // exactKeys() above; its value holds an arbitrary PHP
+                // default with no single type to check further.
+                ArtifactValidation::listOfConstraintDescriptors($entry, 'HttpBindingPlan', 'constraints');
+            }
+        }
+    }
+
+    /**
      * Pure reflection -> plan; no request data involved, so the result is
      * identical for every call this route will ever receive. Used both by
      * the live per-request fallback above (when no compiled plan exists)
      * and by Kinetis\Cache\Compiler ahead of time — one derivation algorithm,
-     * not two that could drift apart.
+     * not two that could drift apart. Also where a required standalone-
+     * `null`-typed #[Query]/path parameter — impossible for any request to
+     * ever satisfy — is rejected; see
+     * UnresolvableParameterException::forImpossibleQueryOrPathNull().
      *
      * @return list<HttpBindingPlan>
      */
@@ -148,6 +208,40 @@ final class Dispatcher
             $name = $parameter->getName();
             $type = $parameter->getType();
             [$source, $dtoClass] = self::resolveSource($parameter, $name, $type, $pathParameterNames);
+            $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
+
+            // A standalone-`null`-typed #[Query]/path parameter can never
+            // be satisfied by any request: query/path values are always
+            // raw, non-empty strings when present, never PHP's real null.
+            // A `#[Query]` field is rejected only when defaultless — a
+            // defaulted one has a genuine working path, an *absent* query
+            // key. A path parameter has no such path regardless of
+            // whether it declares a default: a matched route's own
+            // placeholder capture always supplies a real string, so
+            // resolveScalarFromPlan()'s "value missing, use the default"
+            // branch is unreachable dead code for a path source — the
+            // rejection therefore applies unconditionally there. Either
+            // way, every possible request to the affected route fails —
+            // rejected here, at plan derivation, rather than silently
+            // shipping a route that can never dispatch successfully.
+            $nullQueryOrPathIsImpossible = $scalarType === 'null'
+                && (($source === 'query' && !$parameter->isDefaultValueAvailable()) || $source === 'path');
+
+            if ($nullQueryOrPathIsImpossible) {
+                throw UnresolvableParameterException::forImpossibleQueryOrPathNull($name, $source);
+            }
+
+            // An array/iterable-typed path parameter is equally
+            // impossible, unconditionally — unlike #[Query] (a real
+            // array-style query param, ?tags[]=a&tags[]=b, works, see
+            // "Query and path values are raw strings" in
+            // routing-validation.md), a route placeholder is always
+            // exactly one path segment, captured as a single string.
+            // There is no bracket (or any other) convention that could
+            // ever make a path segment become an array.
+            if (($scalarType === 'array' || $scalarType === 'iterable') && $source === 'path') {
+                throw UnresolvableParameterException::forImpossiblePathArray($name);
+            }
 
             $plan[] = [
                 'name' => $name,
@@ -157,7 +251,7 @@ final class Dispatcher
                 // special-casing here: none of those three types is ever
                 // isBuiltin(), so $scalarType is already null by the time
                 // any of those branches below is reached.
-                'scalarType' => $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null,
+                'scalarType' => $scalarType,
                 'hasDefault' => $parameter->isDefaultValueAvailable(),
                 'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
                 // An untyped parameter accepts anything, null included.
@@ -235,7 +329,7 @@ final class Dispatcher
                     'request' => $request,
                     'uploadedFile' => $this->resolveUploadedFileFromPlan($request->getUploadedFiles()[$name] ?? null, $name, $param),
                     'body' => $this->resolveBodyFromPlan($param, $request),
-                    'query' => $this->resolveScalarFromPlan($request->getQueryParams()[$name] ?? null, $name, $param),
+                    'query' => $this->resolveScalarFromPlan(self::rawQueryValue($request, $name, $param), $name, $param),
                     'path' => $this->resolveScalarFromPlan($match->pathParams[$name], $name, $param),
                     'container' => $this->resolveFromContainer($param),
                     default => $param['hasDefault'] ? $param['defaultValue'] : throw UnresolvableParameterException::forParameter($name),
@@ -272,7 +366,8 @@ final class Dispatcher
         // SizeLimitedStream enforces its cap by throwing, and
         // StreamInterface::__toString() is required to never throw —
         // only getContents() can actually surface an oversized body here.
-        $decoded = self::isFormEncoded($contentType)
+        $formEncoded = self::isFormEncoded($contentType);
+        $decoded = $formEncoded
             ? $this->parsedBodyAsArray($request)
             : $this->decodeJsonBody($request->getBody()->getContents());
 
@@ -290,7 +385,12 @@ final class Dispatcher
         $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
 
         try {
-            return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null);
+            // normalizeFormLiterals is scoped to genuinely form-encoded
+            // requests specifically — a JSON request for the identical
+            // DTO class must keep rejecting a real "true"/"false" JSON
+            // string the same way it always has; see Hydrator::hydrate()'s
+            // own docblock for the full reasoning.
+            return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null, normalizeFormLiterals: $formEncoded);
         } finally {
             Telemetry::global()->hydrationEnded($hydrationToken);
         }
@@ -310,6 +410,16 @@ final class Dispatcher
      * than a JSON object/array (null, a bare string, a bare number, a
      * bare bool), throws instead of silently becoming "no fields" too.
      *
+     * Decoded with `associative: false`, not `true`, and run through
+     * `JsonTree::convert()` — this is what lets `Hydrator::typeMismatchMessage()`'s
+     * array/iterable/`#[ListOf]` checks reject a JSON *object* wherever an
+     * array is declared, including one whose own keys happen to look
+     * sequential (`{"0":"a","1":"b"}`), which `array_is_list()` alone
+     * cannot distinguish from a real array once `associative: true` has
+     * already collapsed both into the identical PHP shape. The top level
+     * — a #[Body] DTO's own named fields — is always unwrapped back to a
+     * plain array here; only values *nested* inside it stay marked.
+     *
      * @return array<string, mixed>
      * @throws MalformedRequestBodyException
      */
@@ -319,17 +429,23 @@ final class Dispatcher
             return [];
         }
 
-        $decoded = json_decode($body, associative: true);
+        $decoded = json_decode($body, associative: false);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             throw MalformedRequestBodyException::invalidJson();
         }
 
-        if (!is_array($decoded)) {
+        $converted = JsonTree::convert($decoded);
+
+        if ($converted instanceof JsonObject) {
+            return $converted->toArray();
+        }
+
+        if (!is_array($converted)) {
             throw MalformedRequestBodyException::notAnObject();
         }
 
-        return $decoded;
+        return $converted;
     }
 
     /**
@@ -442,6 +558,93 @@ final class Dispatcher
     }
 
     /**
+     * OpenApiGenerator advertises an array/iterable-typed #[Query]
+     * parameter with the OpenAPI spec's own *default* array
+     * serialization (`style: form`, `explode: true` — never stated
+     * explicitly, since it's the spec default whenever neither is
+     * overridden) — the standard, interoperable repeated-key wire form,
+     * `?tags=a&tags=b`. PSR-7's own getQueryParams(), built by every
+     * runtime adapter from PHP's native `parse_str()`, cannot represent
+     * that form at all: `parse_str()` only ever accumulates PHP's own
+     * non-standard bracket convention (`?tags[]=a&tags[]=b`) into an
+     * array — a repeated, non-bracketed key silently collapses to its
+     * last value, with every earlier one lost and no error raised
+     * anywhere. Parsed directly from the request's own raw, unparsed
+     * query string here instead, via repeatedQueryValues() below —
+     * available identically on every runtime adapter through PSR-7's
+     * UriInterface, so this needs no per-adapter change to make what's
+     * advertised genuinely work, for every runtime.
+     *
+     * The bracket convention is still accepted too, as a fallback, when
+     * the repeated-key form isn't present at all — a real, deliberate
+     * choice, not an oversight: this is what lets an existing bracket-
+     * style caller keep working exactly as before, while making the
+     * standards-described, OpenAPI-advertised form the genuinely
+     * primary, correct one a generated client can actually rely on.
+     *
+     * @param HttpBindingPlan $param
+     */
+    private static function rawQueryValue(ServerRequestInterface $request, string $name, array $param): mixed
+    {
+        if ($param['scalarType'] === 'array' || $param['scalarType'] === 'iterable') {
+            $repeated = self::repeatedQueryValues($request->getUri()->getQuery(), $name);
+
+            return $repeated ?? $request->getQueryParams()[$name] ?? null;
+        }
+
+        return $request->getQueryParams()[$name] ?? null;
+    }
+
+    /**
+     * A minimal, standards-based parser for exactly the one thing
+     * PSR-7's getQueryParams() cannot represent: every value sent under
+     * the *same*, non-bracketed key, in order. Deliberately not a
+     * general query-string parser — it only ever collects values for
+     * the one `$name` the caller is resolving, ignoring every other key
+     * entirely, since that's the only thing an array/iterable-typed
+     * #[Query] parameter's own binding ever needs.
+     *
+     * Returns `null` — never an empty array — when the key never appears
+     * at all, so the caller's existing "value missing" branch (default,
+     * then allowsNull, then "is required.") is reached exactly as it is
+     * for any other absent #[Query] parameter. This never claims to
+     * solve a different case: an explicitly-empty array has no wire
+     * spelling in this convention at all (there's no way to distinguish
+     * "the key was never sent" from "it was sent with zero values"), so
+     * a caller wanting an always-populated empty array already gets one
+     * from the parameter's own default value instead.
+     *
+     * @return ?list<string>
+     */
+    private static function repeatedQueryValues(string $rawQuery, string $name): ?array
+    {
+        if ($rawQuery === '') {
+            return null;
+        }
+
+        $values = [];
+
+        foreach (explode('&', $rawQuery) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+
+            [$key, $value] = str_contains($pair, '=') ? explode('=', $pair, 2) : [$pair, ''];
+
+            // '+' means a literal space in a query string/form body
+            // (RFC 1866) — urldecode(), not rawurldecode(), is what
+            // PHP's own parse_str() applies internally too, so this
+            // agrees with getQueryParams() on every key it can already
+            // represent, and only adds the one it can't.
+            if (urldecode($key) === $name) {
+                $values[] = urldecode($value);
+            }
+        }
+
+        return $values === [] ? null : $values;
+    }
+
+    /**
      * Applies the identical declared-type-mismatch check
      * Hydrator::typeMismatchMessage() runs for #[Body] DTO fields, before
      * casting — a #[Query]/path value with the wrong shape (an array for a
@@ -450,6 +653,15 @@ final class Dispatcher
      * cast, the parameter's own Constraint attributes run against the
      * cast value — the same #[GreaterThan]/#[In]/etc. attributes that
      * work on a #[Body] DTO field, honored identically here.
+     *
+     * The check itself is genuinely the same method regardless of source
+     * — but a #[Query]/path *value* is not: it only ever arrives as a raw
+     * string (or, for a #[Query] array-style parameter, a PHP array —
+     * unaffected by the normalization below), never a real JSON-decoded
+     * bool the way a request body's own `true`/`false` literal is. This
+     * source-specific normalization step exists so the shared check still
+     * receives a genuinely equivalent value, not a string standing in for
+     * one; see normalizeQueryOrPathLiteral()'s own docblock.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException
@@ -473,6 +685,7 @@ final class Dispatcher
         }
 
         $scalarType = $param['scalarType'];
+        $raw = self::normalizeQueryOrPathLiteral($scalarType, $raw);
 
         if ($scalarType !== null) {
             $message = Hydrator::typeMismatchMessage($scalarType, $raw);
@@ -508,6 +721,37 @@ final class Dispatcher
         }
 
         return $value;
+    }
+
+    /**
+     * A #[Query]/path value is a raw string when present, never PHP's
+     * real `true`/`false` the way an already-decoded JSON body's own
+     * boolean literal is — but OpenAPI's own query-serialization
+     * convention for a boolean-shaped value documents exactly the
+     * literal spellings "true"/"false" (the same spelling a JSON
+     * boolean prints as), which is what a client generated from this
+     * route's own schema actually sends. Translating those two spellings
+     * into the real PHP `true`/`false` here — the one place a #[Query]/
+     * path *source* genuinely differs from a JSON body — is what lets
+     * Hydrator::typeMismatchMessage()'s shared check (built against
+     * genuinely JSON-decoded values) treat them correctly, for both
+     * `bool` and the narrower standalone `true`/`false` types. `bool`'s
+     * own pre-existing `"1"`/`"0"` spellings are untouched — they already
+     * pass typeMismatchMessage()'s check as raw strings, unaffected by
+     * this. Anything else — including the array a #[Query] array-style
+     * parameter (`?tags[]=a`) produces — passes through unchanged.
+     */
+    private static function normalizeQueryOrPathLiteral(?string $scalarType, mixed $raw): mixed
+    {
+        if (!in_array($scalarType, ['bool', 'true', 'false'], true) || !is_string($raw)) {
+            return $raw;
+        }
+
+        return match ($raw) {
+            'true' => true,
+            'false' => false,
+            default => $raw,
+        };
     }
 
     private function json(mixed $data, int $status): ResponseInterface

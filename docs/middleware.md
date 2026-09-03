@@ -450,12 +450,80 @@ straight from the response:
 Either way, the exception is also logged through whatever
 `Psr\Log\LoggerInterface` is bound — in development that's an
 `error_log()`-backed logger by default, so the trail exists even where
-the response body isn't visible. See {doc}`logging`.
+the response body isn't visible. See {doc}`logging`. That logging
+attempt is best-effort: a registered logger that itself throws cannot
+prevent the `500` this middleware exists to guarantee, and an exception
+message that is not valid UTF-8 still produces a valid JSON body rather
+than an uncaught encoding error — observability can never defeat this
+boundary.
 ```
 
 Middleware registration is a flat class-string list at both levels — a
 middleware needing a threshold or a config value takes it through the
 container via constructor injection, like anything else.
+
+### Mapping your own exceptions to a status
+
+An exception thrown from a controller (or anything further inside the
+pipeline) can declare its own HTTP status by implementing
+`Kinetis\Http\Exception\HttpStatusExceptionInterface`:
+
+```{code-block} php
+use Kinetis\Http\Exception\HttpStatusExceptionInterface;
+use RuntimeException;
+
+final class OutOfStockException extends RuntimeException implements HttpStatusExceptionInterface
+{
+    public function httpStatus(): int
+    {
+        return 409;
+    }
+}
+```
+
+`ExceptionHandlerMiddleware` returns the declared status with the
+exception's own `getMessage()` as the body, unlogged — a well-formed
+declared HTTP error, not a framework bug. This applies equally to a
+declared `4xx` (the caller did something wrong) and a declared `5xx`
+(the application chose to report a real server-side failure this way):
+both are returned exactly as declared with no framework error logging;
+only a malformed or throwing mapping — see below — is logged and falls
+back to a generic `500`.
+
+```{warning}
+**`httpStatus()` must return a value from 400 to 599 inclusive, and must
+not throw.** Both are enforced, not just documented: a status outside
+that range, or `httpStatus()` itself throwing, is treated as a broken
+implementation of this interface — logged and mapped to a generic `500`
+the same as any other uncaught exception, never a `1xx`/`2xx`/`3xx`
+response and never an exception escaping this middleware.
+```
+
+### A disposal failure never masks the real outcome
+
+`Kernel` disposes each request's `RequestScope` after `ExceptionHandlerMiddleware`'s
+own boundary has already decided the outcome — a route/controller
+`Throwable` already propagating, or a response that hasn't left the
+process yet — with an explicit precedence for what happens if that
+disposal itself then fails (see {doc}`container`'s own general
+explanation of why this matters):
+
+- **A route or controller failure was already in flight** — a declared
+  `HttpStatusExceptionInterface`, or any other uncaught exception — its
+  exact status, message, and identity are unaffected by a disposal
+  failure on top of it. The disposal failure is logged separately,
+  through `AppScope`'s own logger (the request's own scope is already
+  disposed, so it can't safely resolve one), and never appears as a
+  second response.
+- **The handler succeeded, and nothing has been returned to the client
+  yet** — a disposal failure here has nothing else to compete with, so it
+  legitimately becomes the ordinary generic `500` `ExceptionHandlerMiddleware`
+  produces for any other uncaught exception, logged exactly once, with
+  the same development-vs-production detail rules as any other failure.
+
+Either way, `RequestScope::dispose()`'s own contract still holds
+underneath this: every registered dispose callback runs, even if an
+earlier one throws.
 
 ## Built in: `SecurityHeadersMiddleware`
 
@@ -585,10 +653,17 @@ limit. A route that never reads the body (a `GET`, or one using only
 `#[Query]`/path parameters) is unaffected either way, since nothing tries
 to read past the limit in the first place.
 
-Only the raw JSON `#[Body]` path is capped this way — a
-`multipart/form-data` or `application/x-www-form-urlencoded` body is
-parsed before Kinetis code reads it, bounded by PHP's own
-`upload_max_filesize`/`post_max_size` instead.
+The actual-bytes-read cap applies to any code that reads the request
+body stream via `read()`/`getContents()`, not only `#[Body]`'s own JSON
+hydration — `kinetis/mcp`'s `/mcp` endpoint and
+`kinetis/broadcasting`'s `/broadcasting/auth` raw
+`application/x-www-form-urlencoded` fallback both read the body the
+same way and get the identical `413`. What it does *not* reach is a
+body a runtime already parsed into a ready-made array *before* Kinetis
+code ever sees it — a `multipart/form-data` or
+`application/x-www-form-urlencoded` body handed over pre-parsed is
+bounded by PHP's own `upload_max_filesize`/`post_max_size` instead, a
+separate boundary this middleware doesn't need to reach.
 
 ```{note}
 That SAPI-limit explanation is specific to FrankenPHP/PHP-FPM, where a
@@ -622,6 +697,15 @@ path with no registered `OPTIONS` route would never reach route
 middleware at all, since that only runs after a route has already
 matched successfully. Registering `CorsMiddleware` globally is what lets
 it see and answer the preflight before routing even runs.
+
+```{note}
+**Every response `CorsMiddleware` produces is marked for a shared
+cache.** See {ref}`cors-caching` below — this includes a wildcard
+`allowedOrigins: ['*']` configuration, which is not cache-static despite
+always answering with the literal `*` value: a request with no `Origin`
+header takes a different branch (no `Access-Control-Allow-Origin` at
+all) than one carrying any `Origin` at all does.
+```
 
 ```{code-block} php
 new CorsMiddleware(
@@ -658,10 +742,57 @@ combination has no safe fallback to silently apply, it's a
 misconfiguration to catch before it ships. Use a real allow-list (or
 `allowedOriginPatterns`) instead if you need credentialed cross-origin
 requests; with one configured, a credentialed response always echoes
-back the specific requesting origin rather than a static value, which
-also adds `Vary: Origin`, since the response then varies by request
-origin.
+back the specific requesting origin rather than a static value.
 ```
+
+(cors-caching)=
+
+### Response caching and `Vary`
+
+`CorsMiddleware` marks every response it produces with the `Vary`
+tokens a shared cache needs to key on, since the same method and URI
+can legitimately answer with several different representations
+depending on the request's CORS-relevant headers.
+
+`Vary: Origin` is added whenever the middleware is configured to allow
+anything at all (`allowedOrigins` or `allowedOriginPatterns`
+non-empty) — including the disallowed/absent-`Origin` pass-through
+response, and including a literal `allowedOrigins: ['*']` allow-list.
+A wildcard allow-list always answers with the literal `*` value once an
+`Origin` is present, but a request with no `Origin` header takes a
+different branch entirely (no `Access-Control-Allow-Origin` header at
+all) — two different response shapes a cache keyed only on method and
+URI cannot otherwise tell apart. Only a completely unconfigured
+`CorsMiddleware` (the deny-by-default `allowedOrigins: []` with no
+patterns either), where every request takes the same pass-through
+branch regardless of `Origin`, adds no `Vary` token at all.
+
+An `OPTIONS` request to an allowed origin adds `Vary:
+Access-Control-Request-Method` on both sides of the preflight boundary:
+a preflight (`Access-Control-Request-Method` present) is answered
+directly by `CorsMiddleware`, without routing ever running, while an
+ordinary `OPTIONS` request (the header absent) falls through to routing
+itself — most commonly a `405` if the path has other methods
+registered, or whatever an application's own `OPTIONS` route returns.
+Same method, same URI, same allowed `Origin`, genuinely different
+responses.
+
+`Vary: Access-Control-Request-Headers` is added on a preflight only
+when `allowedHeaders: ['*']`, since that's the only configuration where
+`Access-Control-Allow-Headers` actually reflects what was requested —
+a fixed `allowedHeaders` list answers identically no matter what
+`Access-Control-Request-Headers` asked for, so there is nothing for a
+cache to get wrong there.
+
+Every `Vary` token `CorsMiddleware` adds goes through one canonical
+merge: existing tokens (across one comma-separated value or several
+header lines) are parsed, compared case-insensitively, and deduplicated
+against both themselves and whatever `CorsMiddleware` is adding, folded
+into a single header line. An application response that already carries
+its own `Vary` dimension (`Vary: Accept-Encoding`, for one) keeps it
+alongside CORS's own tokens rather than having it overwritten or
+duplicated; an existing `Vary: *` is left untouched, since "varies on
+everything" already covers anything CORS could add.
 
 ### Matching a pattern of origins, not just a fixed list
 
@@ -861,6 +992,47 @@ the application has to remember to check.
 
 Implementing the interface yourself is two methods, `increment()` and
 `count()`, and worth it for any backend with a native atomic increment.
+
+### Composing more than one policy
+
+A global limiter and a route limiter can both be active for the same
+request — a generous whole-API limit plus a stricter one on a specific
+route, say. Two policies with the same class and the same `maxAttempts`/
+`windowSeconds`/`trustedProxies` guarding two genuinely *different*
+things (a login endpoint and a 2FA endpoint, for instance) look
+identical to `RateLimitMiddleware` unless told otherwise — pass a
+distinct `namespace` to each so they don't share a bucket:
+
+```{code-block} php
+new RateLimitMiddleware($cache, maxAttempts: 5, windowSeconds: 60, namespace: 'login');
+new RateLimitMiddleware($cache, maxAttempts: 5, windowSeconds: 60, namespace: '2fa');
+```
+
+Two policies that differ in class, `maxAttempts`, `windowSeconds`, or
+`trustedProxies` already get independent counters with no `namespace`
+needed — that's the default. `namespace` only exists for the one case
+those alone can't distinguish.
+
+The same policy accidentally registered twice for one request — globally
+and, redundantly, on the matched route — still counts as exactly one
+check, not two: `process()` records its decision as a request attribute,
+and a second instance of the identical policy reads it back instead of
+incrementing again. `X-RateLimit-Limit`/`X-RateLimit-Remaining` follow
+the same rule from the other direction — whichever policy actually ran
+closest to the controller is the one whose real numbers reach the
+client, success or `429` alike; an outer policy that's itself within
+budget never overwrites them with its own, unrelated ones.
+
+```{warning}
+**Changing a policy's class, `maxAttempts`, `windowSeconds`,
+`trustedProxies`, or `namespace` changes its cache key.** Deploying that
+change resets the counter for every subject already partway through a
+window — harmless for most policies, but during a rolling deploy, old
+and new worker processes briefly disagree about which key a given
+request counts against, effectively splitting one policy's quota across
+two keys until the older workers finish rolling off and the old key's
+own TTL expires.
+```
 
 ### Keying by the authenticated user instead of IP
 

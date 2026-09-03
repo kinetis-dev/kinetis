@@ -18,13 +18,17 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 Wraps any PSR-18 HTTP client and signs every outgoing request with AWS
 Signature Version 4 (SigV4) before delegating to it — the signing math
 itself is `AsyncAws\Core\Signer\SignerV4`, the same class every AsyncAws
 service client already uses internally, reused directly rather than
 reimplemented. Usable standalone with any PSR-18 client, not only
-`kinetis/revolt-http-client` — and usable outside Kinetis entirely, the
-same relationship `kinetis/revolt-http-client` already has with the wider
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) — and usable outside Kinetis entirely, the
+same relationship [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) already has with the wider
 PHP ecosystem.
 
 ```php
@@ -62,7 +66,7 @@ blocks the worker either.
 composer require kinetis/aws-sigv4
 ```
 
-Requires PHP 8.4+ and `kinetis/revolt-http-client`. Full documentation:
+Requires PHP 8.4+ and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation:
 [kinetis.dev/docs/aws-sigv4.html](https://kinetis.dev/docs/aws-sigv4.html).
 
 ## License

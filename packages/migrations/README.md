@@ -18,11 +18,15 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 Raw SQL `up()`/`down()` migrations, tracked in a `kinetis_migrations`
 table, run through `migrate*` commands registered on
 `vendor/bin/kinetis`. No fluent
 DDL builder, no schema-diffing — the same "thin, not an ORM" shape as
-[`kinetis/query-builder`](../query-builder).
+[`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder).
 
 ```php
 // migrations/20260810143000_create_orders_table.php
@@ -81,7 +85,7 @@ routes, middleware, event listeners it registers itself, or MCP tools.
 
 ## Configuration
 
-The `migrate*` commands read the same `DB_*` keys `kinetis/persistence`
+The `migrate*` commands read the same `DB_*` keys [`kinetis/persistence`](https://github.com/kinetis-dev/persistence)
 documents (`DB_CONNECTION`/`DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`/
 `DB_PORT`, ...) from the environment or `.env`, plus one key of this
 package's own:
@@ -99,7 +103,9 @@ Full reference across every package:
 composer require kinetis/migrations
 ```
 
-Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
+and [`kinetis/persistence`](https://github.com/kinetis-dev/persistence).
+Full documentation:
 [kinetis.dev/docs/migrations.html](https://kinetis.dev/docs/migrations.html).
 
 ## License

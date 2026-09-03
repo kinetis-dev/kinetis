@@ -12,6 +12,12 @@ docs/_templates/page.html
 # just from the PEM structure.
 packages/auth-jwt/tests/Fixtures/RsaKeyPair.php
 
+# The same reasoning, for a second synthetic key pair — this one
+# deliberately undersized (1024-bit, below JwtKeyValidator::RSA_MINIMUM_BITS)
+# to test that construction rejects an undersized-but-otherwise-genuine
+# RSA key. Not a real credential either.
+packages/auth-jwt/tests/Fixtures/UndersizedRsaKeyPair.php
+
 # A test-only reflection server (started by HttpTest via `php -S` on
 # 127.0.0.1, never deployed): echoing the request back as JSON is its
 # entire purpose, so tests can assert what the client actually sent from

@@ -18,6 +18,23 @@ final class InvalidConfigValueException extends RuntimeException
         return new self("Config value \"{$key}\" is not a valid number, got \"{$value}\".");
     }
 
+    public static function integerOutOfRange(string $key, string $value): self
+    {
+        return new self(
+            "Config value \"{$key}\" is a syntactically valid integer but outside the range this platform's "
+            . "integers can represent (" . PHP_INT_MIN . " to " . PHP_INT_MAX . "), got \"{$value}\".",
+        );
+    }
+
+    public static function floatOutOfRange(string $key, string $value): self
+    {
+        return new self(
+            "Config value \"{$key}\" is a syntactically valid number but cannot be represented as a real, "
+            . "finite float without losing all meaning — it either overflows to infinity, or is nonzero but "
+            . "underflows to exactly zero, got \"{$value}\".",
+        );
+    }
+
     public static function notABoolean(string $key, string $value): self
     {
         return new self(

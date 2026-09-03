@@ -18,9 +18,13 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 Builds a real `OpenSearch\Client` (from `opensearch-project/opensearch-php`)
 through OpenSearch's own `TransportFactory`/`HttpTransport` construction
-path, with `kinetis/revolt-http-client`'s Revolt-native HTTP transport
+path, with [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP transport
 injected as its PSR-18 client instead of the default blocking one. The
 returned object is the real, un-wrapped client — nothing Kinetis-specific
 sits on top of it.
@@ -68,7 +72,7 @@ balancer in front of a multi-node cluster instead.
 
 `fromConfig()`'s optional `$transportDecorator` parameter wraps the
 fully-configured PSR-18 client right before `TransportFactory` gets
-it — the seam `kinetis/telemetry`'s `TracingOpenSearchTransport` plugs
+it — the seam [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry)'s `TracingOpenSearchTransport` plugs
 into, without duplicating this method's own config-reading logic.
 
 ## Installation
@@ -77,7 +81,7 @@ into, without duplicating this method's own config-reading logic.
 composer require kinetis/search-opensearch
 ```
 
-Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/search-opensearch.html](https://kinetis.dev/docs/search-opensearch.html).
 

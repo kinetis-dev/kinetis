@@ -49,6 +49,7 @@ class AuthenticatedRateLimitMiddleware extends RateLimitMiddleware
 {
     /**
      * @param list<string> $trustedProxies see the parent class — forwarded unchanged.
+     * @param ?string $namespace see the parent class — forwarded unchanged.
      */
     public function __construct(
         CacheInterface $cache,
@@ -56,8 +57,10 @@ class AuthenticatedRateLimitMiddleware extends RateLimitMiddleware
         int $maxAttempts = 60,
         int $windowSeconds = 60,
         array $trustedProxies = [],
+        ?string $namespace = null,
+        ?\Closure $clock = null,
     ) {
-        parent::__construct($cache, $maxAttempts, $windowSeconds, $trustedProxies);
+        parent::__construct($cache, $maxAttempts, $windowSeconds, $trustedProxies, $namespace, $clock);
     }
 
     #[\Override]

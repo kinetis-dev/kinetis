@@ -25,9 +25,15 @@ use Psr\Http\Server\RequestHandlerInterface;
  *     #[Middleware(SessionMiddleware::class)]
  *     #[Middleware(CsrfMiddleware::class)]
  *
- * A missing or mismatched token is a 403 with a stable JSON body;
- * comparison is hash_equals(), so a byte-wise timing probe learns
- * nothing about the real token.
+ * A missing or mismatched token is a 403 with a stable JSON body; the
+ * comparison goes through {@see Session::verifyCsrfToken()}, never
+ * `Session::csrfToken()` — that method generates a token (and, for a
+ * cookie the store has never heard of, would allocate a whole session)
+ * on demand, so using it here would mean a submitted-but-wrong token
+ * could itself create and persist a session merely by being checked.
+ * verifyCsrfToken() never generates anything and compares via
+ * hash_equals(), so a byte-wise timing probe learns nothing about the
+ * real token either.
  */
 final readonly class CsrfMiddleware implements MiddlewareInterface
 {
@@ -57,7 +63,7 @@ final readonly class CsrfMiddleware implements MiddlewareInterface
         $session = $this->scope->get(Session::class);
         $submitted = $this->submittedToken($request);
 
-        if ($submitted === null || !\hash_equals($session->csrfToken(), $submitted)) {
+        if ($submitted === null || !$session->verifyCsrfToken($submitted)) {
             return ErrorResponse::create(403, 'CSRF token mismatch.');
         }
 

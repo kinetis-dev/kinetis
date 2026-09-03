@@ -18,6 +18,10 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 Kinetis is deliberately unopinionated about how your application
 organizes authorization checks — there's no required Policy convention,
 no ability-name registry, and nothing here inspects an object's class to
@@ -85,7 +89,7 @@ ordinary case; returning `AuthorizationResponse::deny('a specific reason')`
 lets a denial carry a message more useful than the generic default.
 
 `$check` may also be typed against a concrete `CurrentUserInterface`
-implementation richer than the interface itself — `kinetis/auth-jwt`'s
+implementation richer than the interface itself — [`kinetis/auth-jwt`](https://github.com/kinetis-dev/auth-jwt)'s
 `JwtUser`, say, whose `claim()`/`claims()` already carry everything the
 token decoded, with no query needed. `Gate`'s methods are generic over the
 user type (`@template TUser of CurrentUserInterface`) precisely so this
@@ -98,7 +102,8 @@ type-checks correctly. See
 composer require kinetis/authorization
 ```
 
-Requires PHP 8.4 or later. Documentation:
+Requires PHP 8.4 or later and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
+Documentation:
 [kinetis.dev/docs/authorization.html](https://kinetis.dev/docs/authorization.html)
 
 ## License

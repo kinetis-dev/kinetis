@@ -72,6 +72,50 @@ final class RedisSimpleCacheTest extends TestCase
         self::assertSame(2, $config->getDatabase());
     }
 
+    public function test_build_redis_config_rejects_a_port_outside_the_valid_tcp_range(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('REDIS_PORT must be a valid TCP port');
+
+        RedisSimpleCache::buildRedisConfig(new Config([
+            'REDIS_HOST' => 'cache.internal',
+            'REDIS_PORT' => '70000',
+        ]));
+    }
+
+    public function test_build_redis_config_rejects_a_negative_database_index(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('REDIS_DATABASE must not be negative');
+
+        RedisSimpleCache::buildRedisConfig(new Config([
+            'REDIS_HOST' => 'cache.internal',
+            'REDIS_DATABASE' => '-1',
+        ]));
+    }
+
+    public function test_build_redis_config_rejects_a_non_positive_timeout_via_discrete_host(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('REDIS_TIMEOUT must be a positive number of seconds');
+
+        RedisSimpleCache::buildRedisConfig(new Config([
+            'REDIS_HOST' => 'cache.internal',
+            'REDIS_TIMEOUT' => '0',
+        ]));
+    }
+
+    public function test_build_redis_config_rejects_a_non_positive_timeout_via_redis_url(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('REDIS_TIMEOUT must be a positive number of seconds');
+
+        RedisSimpleCache::buildRedisConfig(new Config([
+            'REDIS_URL' => 'redis://cache.internal:6379',
+            'REDIS_TIMEOUT' => '-1',
+        ]));
+    }
+
     public function test_build_redis_config_uses_sane_defaults_when_only_host_is_given(): void
     {
         $config = RedisSimpleCache::buildRedisConfig(new Config(['REDIS_HOST' => 'cache.internal']));

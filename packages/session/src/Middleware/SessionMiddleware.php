@@ -9,6 +9,7 @@ use Kinetis\Container\RequestScope;
 use Kinetis\Session\Exception\SessionException;
 use Kinetis\Session\Session;
 use Kinetis\Session\SessionStoreInterface;
+use Kinetis\Session\Support\SessionExpiry;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -29,7 +30,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  * persists and sets the cookie — but only when the session was actually
  * written to. A route that never touches its session performs no
  * storage round trip and sends no Set-Cookie, so attaching this
- * middleware broadly costs nothing on session-free requests.
+ * middleware broadly costs nothing on session-free requests. Every
+ * write — even one that leaves the id itself unchanged — sends a fresh
+ * Set-Cookie too, so the browser's own Max-Age keeps counting from the
+ * same moment {@see Session::commit()}'s store TTL does; a mutated
+ * session's two expirations never drift apart.
  *
  * Cookie attributes: HttpOnly always (script access to a session id has
  * no legitimate use), SameSite and Secure from configuration —
@@ -69,6 +74,7 @@ final readonly class SessionMiddleware implements MiddlewareInterface
 
     private bool $secure;
     private string $sameSite;
+    private int $lifetime;
 
     public function __construct(
         private RequestScope $scope,
@@ -78,6 +84,18 @@ final readonly class SessionMiddleware implements MiddlewareInterface
         $this->cookieName = $config->string('SESSION_COOKIE', 'kinetis_session');
         $this->secure = $config->bool('SESSION_SECURE', true);
         $this->sameSite = ucfirst(strtolower($config->string('SESSION_SAMESITE', 'Lax')));
+
+        $lifetime = $config->int('SESSION_LIFETIME', 7200);
+
+        // The full shared contract — not just "positive" — so a
+        // SESSION_LIFETIME too large for every backend this package
+        // ships to store fails here, at construction, before the
+        // handler ever runs: a request must never perform real
+        // application side effects only to have commit() throw
+        // afterward for a value that was already known bad.
+        SessionExpiry::assertValidLifetime($lifetime, 'SESSION_LIFETIME');
+
+        $this->lifetime = $lifetime;
 
         if (!\in_array($this->sameSite, self::SAME_SITE_VALUES, true)) {
             $accepted = implode(', ', self::SAME_SITE_VALUES);
@@ -142,19 +160,21 @@ final readonly class SessionMiddleware implements MiddlewareInterface
 
         $response = $handler->handle($request);
 
-        $lifetime = $this->config->int('SESSION_LIFETIME', 7200);
+        // commit() is what actually touches the store — for a destroyed
+        // session too, which is why this is unconditional rather than an
+        // isDestroyed() shortcut around it: skipping this call would skip
+        // the real deletion Session::commit() now performs.
+        $needsCookie = $session->commit($this->lifetime);
+
+        if (!$needsCookie) {
+            return $response;
+        }
 
         if ($session->isDestroyed()) {
             return $response->withAddedHeader('Set-Cookie', $this->cookie('', -1));
         }
 
-        $needsCookie = $session->commit($lifetime);
-
-        if ($needsCookie) {
-            return $response->withAddedHeader('Set-Cookie', $this->cookie($session->id(), $lifetime));
-        }
-
-        return $response;
+        return $response->withAddedHeader('Set-Cookie', $this->cookie($session->id(), $this->lifetime));
     }
 
     /**

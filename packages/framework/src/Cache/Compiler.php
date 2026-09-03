@@ -17,30 +17,38 @@ use DateTimeImmutable;
 use ReflectionMethod;
 
 /**
- * Walks every registered route/tool/resource/command, derives their
- * parameter-binding plans, discovers every DTO class reachable through
- * them, compiles a validation plan for each, generates the OpenAPI
- * document once, and carries the already-sorted list of
+ * Walks every registered route/command, derives their parameter-binding
+ * plans, discovers every DTO class reachable through them, compiles a
+ * validation plan for each, and carries the already-sorted list of
  * #[AsGlobalMiddleware]-discovered classes and #[Listener]-discovered
- * event listeners — producing five independent artifacts
- * (HttpCache/CommandCache/EventCache, grouped for
- * convenience as one CompiledCache) with zero live objects/closures
- * inside any of them.
+ * event listeners — producing four sections (HttpCache/CommandCache/
+ * EventCache/PluginCache, grouped for convenience as one CompiledCache)
+ * with zero live objects/closures inside any of them. PluginCache is
+ * populated by PluginDiscovery, which compiles whatever installed
+ * packages declare as their own CacheableDiscoveryInterface class —
+ * kinetis/mcp's McpRegistry (tool/resource definitions) among them,
+ * when that package is installed. CacheStore publishes all four
+ * together as one atomic generation — see its own docblock — so
+ * "independent" describes how each is *read* (a given entry point only
+ * ever loads the sections it needs — an HTTP boot loads
+ * http/events/plugins, the CLI loads commands/events/plugins), not how
+ * they're published.
  *
- * DTO discovery is tracked separately for HTTP and MCP (rather than one
- * shared bag) precisely so each artifact stays self-contained — a DTO
- * reachable from both a route and a tool ends up in both caches (harmless
- * duplication), never forcing one side to depend on the other's discovery
- * pass.
+ * DTO discovery here is HTTP-only — every #[Body]-bound DTO class
+ * reachable from a registered route. kinetis/mcp's own tool/resource
+ * parameter schemas are built entirely inside that package
+ * (McpDiscovery/JsonSchema, not Hydrator::compilePlan()) and reach
+ * PluginCache through the PluginDiscovery mechanism described above,
+ * never through this discovery pass.
  *
- * Discovery itself only ever walks the top-level #[Body]-bound DTO class
- * and each non-builtin MCP tool parameter's class — it does *not* recurse
- * into a DTO's own nested-DTO constructor parameters to find more classes
- * to compile plans for, even though Hydrator now supports nested-DTO
- * hydration. That's not a gap: Hydrator::compilePlan() is itself recursive
- * (see its own doc comment) and embeds every nested class's plan inline as
- * `nestedPlan`, so compiling a plan for just the top-level class already
- * produces a fully nested-inclusive result — there's no independent lookup
+ * Discovery itself only ever walks the top-level #[Body]-bound DTO
+ * class — it does *not* recurse into a DTO's own nested-DTO constructor
+ * parameters to find more classes to compile plans for, even though
+ * Hydrator now supports nested-DTO hydration. That's not a gap:
+ * Hydrator::compilePlan() is itself recursive (see its own doc comment)
+ * and embeds every nested class's plan inline as `nestedPlan`, so
+ * compiling a plan for just the top-level class already produces a
+ * fully nested-inclusive result — there's no independent lookup
  * anywhere by a nested DTO's class name for this discovery pass to feed.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
@@ -144,12 +152,16 @@ final class Compiler
      * GlobalMiddlewareDiscovery::discoverAll() performs exactly one scan
      * for all three middleware attributes rather than three, and its
      * result is handed to compile() whole rather than destructured per
-     * bucket. MCP is kinetis/mcp's own concern: its bootstrap discovers
-     * tools and resources when something first resolves the server, and
-     * nothing about it is compiled here. A package declaring its own
-     * CacheableDiscoveryInterface class (see
-     * PackageDiscovery::discoveryClasses()) is compiled here, though —
-     * that's the whole point of the mechanism.
+     * bucket. kinetis/mcp is one example of the pluggable mechanism
+     * below, not a special case this method knows anything about: its
+     * McpRegistry declares itself as that package's own
+     * CacheableDiscoveryInterface class, so PluginDiscovery::discover()
+     * compiles its tool/resource definitions into PluginCache here too.
+     * Any package declaring its own CacheableDiscoveryInterface class
+     * (see PackageDiscovery::discoveryClasses()) is compiled the same
+     * way — that's the whole point of the mechanism. Only with no cache
+     * published yet does anything discover live instead — see
+     * PluginDiscovery::bind()'s own docblock.
      */
     public function compileProject(string $projectRoot): CompiledCache
     {

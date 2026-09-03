@@ -45,12 +45,14 @@ per-request state can't quietly become one shared object every request
 the worker ever serves. A service that should be one shared instance is
 registered with `bind()`/`instance()` before `boot()`.
 
-`boot()` itself registers six bindings for you, each only if you haven't
-already registered your own: `Kinetis\Runtime\AppEnvironment` → the
-detected environment (`APP_ENV`, defaulting to production);
-`Psr\Log\LoggerInterface` → an `error_log()`-backed logger in
-development, `Psr\Log\NullLogger` in production (see {doc}`logging`);
-`Kinetis\Config\Config` →
+`boot()` itself registers seven bindings for you, each only if you
+haven't already registered your own: `Kinetis\Runtime\AppEnvironment` →
+the detected environment (`APP_ENV`, defaulting to production);
+`Kinetis\Instrumentation\TelemetryInterface` → the process-wide
+`Telemetry::global()` holder, so app code can constructor-inject it too
+(see {doc}`appendix`); `Psr\Log\LoggerInterface` → an `error_log()`-backed
+logger in development, `Psr\Log\NullLogger` in production (see
+{doc}`logging`); `Kinetis\Config\Config` →
 `Config::fromEnvironment()` (see {doc}`config`);
 `Psr\SimpleCache\CacheInterface` → a Redis-backed cache when one's
 configured, else a null one that always misses (see {doc}`persistence`);
@@ -81,11 +83,11 @@ $scope->dispose();
 ```
 
 `Kernel::handle()` creates exactly one `RequestScope` per incoming request
-and disposes it in a `finally` block, so a thrown exception partway through
-dispatch still can't leak that scope into the next request. You will
-almost never call `createRequestScope()`/`dispose()` yourself — this is
-`Kernel`'s job — but understanding what happens inside it is what the rest
-of this page is actually about.
+and always disposes it before the request finishes, so a thrown exception
+partway through dispatch still can't leak that scope into the next
+request. You will almost never call `createRequestScope()`/`dispose()`
+yourself — this is `Kernel`'s job — but understanding what happens inside
+it is what the rest of this page is actually about.
 
 ### Resolution order
 
@@ -165,13 +167,44 @@ $scope->onDispose(function (): void {
 ```
 
 `onDispose()` is the generic mechanism the request lifecycle's cleanup
-hangs off of — `Kernel` uses it, unconditionally, on every request, to
-register `TransactionGuard::rollbackDangling()` (see {doc}`persistence`),
-so a transaction opened and never explicitly closed still gets rolled back
-before the scope disappears. `RequestScope` itself has no idea
-`TransactionGuard` or database transactions exist; it just runs whatever
-callbacks were registered, in registration order, when `dispose()` is
-called.
+hangs off of — `Kernel` uses it, on every request, to register
+`TransactionGuard::rollbackDangling()` (see {doc}`persistence`) whenever
+`kinetis/persistence` is installed, so a transaction opened and never
+explicitly closed still gets rolled back before the scope disappears.
+`RequestScope` itself has no idea `TransactionGuard` or database
+transactions exist; it just runs whatever callbacks were registered, in
+registration order, when `dispose()` is called.
+
+`dispose()`'s own contract, regardless of who calls it: every registered
+callback is attempted, even if an earlier one throws; the scope's
+bindings are wiped and it's marked disposed either way; then, only after
+all of that has happened, the *first* callback's failure (if any) is
+rethrown to whoever called `dispose()`. A later callback throwing too is
+never silently lost — it just isn't the one `dispose()` itself surfaces.
+
+### A cleanup failure never replaces the real outcome
+
+PHP's own `finally` semantics are a trap here: a `Throwable` raised while
+disposing a scope inside a `finally` block silently *replaces* whatever
+exception or return value was already in flight from the code that
+`finally` block wraps. A route handler that threw a well-formed 404, or a
+queue job that already committed its outcome, would otherwise vanish
+behind an unrelated "cleanup failed" error the moment disposal itself had
+a problem — worse than the failure it was supposed to be reporting on.
+
+Every place in Kinetis that disposes a `RequestScope` — `Kernel`,
+`kinetis/queue`'s `QueueWorker`/`SyncQueue`, the MCP transports, and
+`bin/kinetis` — disposes it *outside* any `finally` that could still
+discard an already-decided outcome, and defines an explicit precedence
+instead: whatever the unit of work already produced (a response, a job's
+durable transition, a command's exit code) is preserved exactly, and a
+disposal failure on top of it is logged separately rather than allowed to
+overwrite it. Each owner's exact rule is documented on its own page —
+{doc}`routing-validation` for HTTP, {doc}`queue` for the worker/sync
+queue, {doc}`mcp` for the stdio and streamed HTTP transports, and
+{doc}`cli` for `bin/kinetis` — since what "the real outcome" means differs
+per owner (a response that hasn't left the process yet is not the same
+situation as a queue job whose `ack()` already ran).
 
 ## The singleton rewrite
 
