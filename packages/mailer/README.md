@@ -18,9 +18,13 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 A single DSN selects the transport — SMTP, or any of Symfony's own
 API-based bridges (Sendgrid, Mailgun, Postmark, SES, ...). API-based
-transports run through `kinetis/revolt-http-client`
+transports run through [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)
 instead of blocking.
 
 ```php
@@ -71,7 +75,7 @@ MAILER_DSN=sendgrid+api://KEY@default
 ```
 
 SMTP is not non-blocking — it opens a raw socket directly, with no
-Fiber-yield point. Send mail from a `kinetis/queue` job (constructor-inject
+Fiber-yield point. Send mail from a [`kinetis/queue`](https://github.com/kinetis-dev/queue) job (constructor-inject
 `Symfony\Component\Mailer\MailerInterface` in `handle()` — no extra code
 needed in either package) if that matters for your app.
 
@@ -81,7 +85,7 @@ needed in either package) if that matters for your app.
 composer require kinetis/mailer
 ```
 
-Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/mailer.html](https://kinetis.dev/docs/mailer.html).
 

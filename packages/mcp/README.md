@@ -18,6 +18,10 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 The [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Kinetis](https://github.com/kinetis-dev/kinetis) — tools and resources
 an AI agent can discover and call, declared with attributes and
@@ -83,7 +87,8 @@ Read from the environment (or `.env`) via `Kinetis\Config`:
 composer require kinetis/mcp
 ```
 
-Requires PHP 8.4 or later. Documentation:
+Requires PHP 8.4 or later and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
+Documentation:
 [kinetis.dev/docs/mcp.html](https://kinetis.dev/docs/mcp.html)
 
 ## License

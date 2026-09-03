@@ -18,10 +18,14 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 `Psr\SimpleCache\CacheInterface`, backed by `Amp\Redis\RedisClient` —
 non-blocking, Revolt-native, single-node or Cluster, with TLS support.
 This is the concrete Redis implementation `Kinetis\SimpleCache` (in
-`kinetis/framework` itself) leaves as an optional add-on: `NullSimpleCache`
+[`kinetis/framework`](https://github.com/kinetis-dev/framework) itself) leaves as an optional add-on: `NullSimpleCache`
 ships in core so the interface always has *something* bound, and this
 package supplies the real thing once you actually want it.
 
@@ -72,7 +76,7 @@ Full reference across every package:
 composer require kinetis/cache-redis
 ```
 
-Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
+Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
 [kinetis.dev/docs/caching.html](https://kinetis.dev/docs/caching.html)
 and [kinetis.dev/docs/persistence.html](https://kinetis.dev/docs/persistence.html)
 (the Redis Cluster/TLS section).

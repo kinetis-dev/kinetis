@@ -18,6 +18,10 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 A PSR-15 route middleware that verifies an `Authorization: Bearer <token>`
 header's signature and registers the decoded claims on the current
 request as both `CurrentUserInterface` and the concrete `JwtUser` (the
@@ -60,7 +64,7 @@ final readonly class OrderController
 ```
 
 Need opaque Bearer-token validation against your own storage instead?
-See [`kinetis/auth`](../auth).
+See [`kinetis/auth`](https://github.com/kinetis-dev/auth).
 
 ## Installation
 
@@ -68,7 +72,7 @@ See [`kinetis/auth`](../auth).
 composer require kinetis/auth-jwt
 ```
 
-Requires PHP 8.4+ and `kinetis/framework`. Full documentation:
+Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
 [kinetis.dev/docs/auth-jwt.html](https://kinetis.dev/docs/auth-jwt.html).
 
 ## License

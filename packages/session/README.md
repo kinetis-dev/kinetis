@@ -18,8 +18,12 @@
 
 ---
 
-The browser-application counterpart to the token-based `kinetis/auth`
-and `kinetis/auth-jwt` packages: one store interface, three storage
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
+The browser-application counterpart to the token-based [`kinetis/auth`](https://github.com/kinetis-dev/auth)
+and [`kinetis/auth-jwt`](https://github.com/kinetis-dev/auth-jwt) packages: one store interface, three storage
 drivers, and two route middlewares.
 
 ```php
@@ -64,7 +68,7 @@ Installing this package auto-registers, via `extra.kinetis`:
 - **A container binding** for `SessionStoreInterface`, driven by
   `SESSION_DRIVER` — `file` (one JSON file per session, suited to
   development), `cache` (sessions through the PSR-16 binding, which with
-  `kinetis/cache-redis` and `REDIS_HOST` configured means Redis-backed
+  [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) and `REDIS_HOST` configured means Redis-backed
   sessions with zero further code, cluster and TLS included), or `sql`
   (a `kinetis_sessions` table over the persistence contracts, migration
   stubs shipped in `resources/migrations/`). Unset means the package
@@ -97,7 +101,8 @@ form's `_token` field, with `hash_equals()` comparison.
 composer require kinetis/session
 ```
 
-Requires PHP 8.4+. Full documentation:
+Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
+Full documentation:
 [kinetis.dev/docs/session.html](https://kinetis.dev/docs/session.html).
 
 ## License

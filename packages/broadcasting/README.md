@@ -18,9 +18,13 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 One driver, speaking the wire protocol Soketi, Laravel Reverb, and
 Pusher's own hosted service all implement identically — non-blocking,
-over `kinetis/revolt-http-client`.
+over [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 
 ```php
 use Kinetis\Broadcasting\Broadcaster;
@@ -111,7 +115,7 @@ Scoped — `BROADCAST_KEY` + `notifications` →
 composer require kinetis/broadcasting
 ```
 
-Requires PHP 8.4+, `kinetis/framework`, and `kinetis/revolt-http-client`.
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/broadcasting.html](https://kinetis.dev/docs/broadcasting.html).
 

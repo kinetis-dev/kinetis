@@ -18,9 +18,13 @@
 
 ---
 
+Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
+API-first applications, developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
+
 A small, working application showing most of Kinetis at once:
-MySQL + [`kinetis/migrations`](../migrations) + [`kinetis/query-builder`](../query-builder),
-Redis-backed [`kinetis/queue`](../queue), `Kinetis\Events`, a
+MySQL + [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) + [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder),
+Redis-backed [`kinetis/queue`](https://github.com/kinetis-dev/queue), `Kinetis\Events`, a
 `Kinetis\Console` command run on a schedule, and real-time browser
 updates over [Soketi](https://soketi.app) — behind a monochrome-amber,
 old-CRT-styled dashboard rendered with [`league/plates`](https://platesphp.com/).
@@ -57,13 +61,13 @@ invisible until the `app` container restarts — there's no PHP-FPM-style
 "every request reboots the script" hot reload here. See
 [the CLI docs](https://kinetis.dev/docs/cli.html) for the full
 discovery/hot-reload tradeoff. Looking for that kind of instant-feedback
-loop instead? See [`kinetis/skeleton`](../skeleton), a much smaller demo
+loop instead? See [`kinetis/skeleton`](https://github.com/kinetis-dev/skeleton), a much smaller demo
 running on nginx + PHP-FPM for exactly that reason.
 
 ## Using this as a starting point
 
 Copy `packages/pingpong/` out into a new project, point its
-`composer.json` at a real `kinetis/framework` install instead of the `path`
+`composer.json` at a real [`kinetis/framework`](https://github.com/kinetis-dev/framework) install instead of the `path`
 repository this monorepo uses internally, and modify from there — every
 piece (`bootstrap.php`, the migration, the repository, the job, the
 scheduled command, the events, the broadcaster and its private-channel
