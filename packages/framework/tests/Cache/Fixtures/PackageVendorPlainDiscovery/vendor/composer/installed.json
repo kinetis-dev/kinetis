@@ -1,0 +1,19 @@
+{
+    "packages": [
+        {
+            "name": "acme/fixture",
+            "install-path": "../../../AcmePackage",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\": ""
+                }
+            },
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeCacheableDiscovery"
+                }
+            }
+        }
+    ],
+    "dev": true
+}

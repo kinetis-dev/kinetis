@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Cache;
 
+use Kinetis\Cache\Exception\ArtifactValidation;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
+
 /**
  * Every installed package's own `CacheableDiscoveryInterface`-declared
  * data, keyed by the class that produced it (see
@@ -15,6 +18,8 @@ namespace Kinetis\Cache;
  */
 final readonly class PluginCache
 {
+    private const array TOP_LEVEL_KEYS = ['formatVersion', 'data', 'compiledAt'];
+
     public function __construct(
         public int $formatVersion,
         /** @var array<class-string, array<array-key, mixed>> */
@@ -35,17 +40,27 @@ final readonly class PluginCache
     }
 
     /**
+     * Validates only that `data` is present and an array — each
+     * plugin's own entry is only ever validated by that plugin's own
+     * `CacheableDiscoveryInterface::fromArray()`, called separately by
+     * `PluginDiscovery::reconstruct()`.
+     *
      * @param array<string, mixed> $data
+     * @throws CacheArtifactExceptionInterface
      */
     public static function fromArray(array $data): self
     {
-        /** @var array<class-string, array<array-key, mixed>> $entries */
-        $entries = $data['data'];
+        ArtifactValidation::exactKeys($data, 'PluginCache', self::TOP_LEVEL_KEYS);
 
+        $formatVersion = ArtifactValidation::int($data, 'PluginCache', 'formatVersion');
+        $entries = ArtifactValidation::array($data, 'PluginCache', 'data');
+        $compiledAt = ArtifactValidation::string($data, 'PluginCache', 'compiledAt');
+
+        /** @var array<class-string, array<array-key, mixed>> $entries */
         return new self(
-            formatVersion: (int) $data['formatVersion'],
+            formatVersion: $formatVersion,
             data: $entries,
-            compiledAt: (string) $data['compiledAt'],
+            compiledAt: $compiledAt,
         );
     }
 }

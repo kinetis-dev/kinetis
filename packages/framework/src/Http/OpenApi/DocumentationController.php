@@ -9,6 +9,7 @@ use Kinetis\Http\Attributes\Hidden;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Logging\SafeLogger;
 use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\OpenApi\OpenApiGenerator;
 use Kinetis\OpenApi\SwaggerUiPage;
@@ -17,6 +18,7 @@ use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
 use Psr\SimpleCache\CacheInterface;
 use Throwable;
 
@@ -110,7 +112,10 @@ final readonly class DocumentationController
      * degrades to generating rather than failing the request, unlike
      * RateLimitMiddleware, which cannot do its job at all without one.
      * A Redis that is briefly unreachable should not take the API's own
-     * documentation down with it.
+     * documentation down with it — and the warning logged about it is
+     * diagnostic, not part of that guarantee: SafeLogger keeps a
+     * throwing logger from turning a recoverable cache outage into an
+     * unrecoverable one.
      *
      * @return array<string, mixed>|null
      */
@@ -119,7 +124,7 @@ final readonly class DocumentationController
         try {
             $cached = $this->cache->get(self::CACHE_KEY);
         } catch (Throwable $e) {
-            $this->logger->warning('Could not read the cached OpenAPI document; generating it instead.', ['exception' => $e]);
+            SafeLogger::log($this->logger, LogLevel::WARNING, 'Could not read the cached OpenAPI document; generating it instead.', ['exception' => $e]);
 
             return null;
         }
@@ -140,7 +145,10 @@ final readonly class DocumentationController
             // the API for however long it is set to.
             $this->cache->set(self::CACHE_KEY, $document);
         } catch (Throwable $e) {
-            $this->logger->warning('Could not cache the OpenAPI document; it will be regenerated per request.', ['exception' => $e]);
+            // SafeLogger — see cached()'s own docblock: the document was
+            // already generated and is returned regardless of whether
+            // this warning itself can be logged.
+            SafeLogger::log($this->logger, LogLevel::WARNING, 'Could not cache the OpenAPI document; it will be regenerated per request.', ['exception' => $e]);
         }
     }
 

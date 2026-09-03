@@ -21,7 +21,7 @@ it on:
 | Key | Default | Purpose |
 |---|---|---|
 | `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset means the package binds nothing. |
-| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable, counted from its last write. |
+| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable, counted from its last write — the browser cookie's own `Max-Age` and the backend's storage TTL both restart together on every write, never just one. |
 | `SESSION_COOKIE` | `kinetis_session` | The cookie name. A `__Host-`/`__Secure-` prefix is honoured — see [below](#cookie-name-prefixes). |
 | `SESSION_SAMESITE` | `Lax` | The cookie's `SameSite` attribute: `Strict`, `Lax`, or `None`, matched regardless of casing. `None` requires `SESSION_SECURE`. |
 | `SESSION_SECURE` | `true` | The cookie's `Secure` attribute — set `false` only for non-TLS local development. |
@@ -58,6 +58,40 @@ The three drivers:
 
   An expired session is invisible to reads but its row stays in the
   table until `session:gc` deletes it (see below).
+
+**A session is live only while its expiry is strictly in the future** —
+`expires_at > now` for `sql`, the identical boundary for `file`'s own
+`expiresAt`. A session expiring at exactly the current second is already
+expired on both, not one second short of it. `cache` has no boundary of
+its own to state: expiry is entirely the backend's own TTL semantics.
+
+**`$lifetimeSeconds` (`SESSION_LIFETIME`) is validated the same way
+everywhere the package uses it, regardless of driver** — zero or
+negative is rejected outright, and any value that would push the
+expiry past `9999-12-31 23:59:59 UTC` is rejected too: MySQL's own
+`DATETIME` column — the type this package's own MySQL migration stub
+uses — can't store a later date (confirmed directly against a real
+server — a value one second past this fails with a genuine `Incorrect
+datetime value` error, not a silent clamp), so this is the portable
+ceiling every driver enforces, even `cache`, which never computes an
+absolute timestamp of its own. `SESSION_LIFETIME` is checked at
+middleware construction — before the handler ever runs — so a
+misconfigured value never lets a request perform real work only to fail
+afterward when the session is written.
+
+The `sql` driver's migration stubs use `DATETIME` on MySQL and
+`TIMESTAMP` (without time zone) on Postgres, never MySQL's own
+`TIMESTAMP` type or Postgres's `TIMESTAMPTZ` — both store the exact
+literal UTC wall-clock value this package writes, unaffected by
+whatever timezone the database connection itself happens to be
+configured with. MySQL's `TIMESTAMP` type, by contrast, reinterprets a
+bound value through the connection's own session timezone, confirmed
+directly against a real server: the same literal string can be stored
+as a materially different absolute instant, or rejected outright even
+when comfortably within the range above, purely depending on that
+setting. Sessions are never expected to expire early — or fail to write
+at all — because of how a shared connection's session timezone happens
+to be configured.
 
 ### Cookie name prefixes
 
@@ -167,6 +201,56 @@ login. It gives the session a fresh id, keeps its data, and destroys
 the old id's payload, so a session id an attacker planted before login
 stops working. `destroy()` is logout: payload gone, cookie expired.
 
+Both are transactional with respect to the request actually succeeding:
+`regenerate()`/`destroy()` only ever change in-memory state, and the
+store is only ever mutated afterward, when `SessionMiddleware` calls
+`commit()` — which only happens once the handler has returned. If a
+controller or later middleware throws instead, neither the store nor
+the browser's cookie is touched, so the session the request started
+with is exactly as usable afterward as if `regenerate()`/`destroy()`
+had never been called. A regenerated id's replacement data is written
+before the old id is destroyed, so a store failure partway through
+`commit()` never loses a session that was still genuinely recoverable.
+
+### A presented cookie id is never trusted just for being wellformed
+
+`SessionMiddleware` filters a cookie value against the id shape
+(32 hex characters) before it ever reaches `Session` — a malformed
+value (wrong length, wrong characters) is treated as no cookie at all,
+and a fresh id is minted. That check is about *shape*, not
+*existence*: a wellformed id the store has never issued — fabricated,
+or one that genuinely expired — is exactly the session-fixation
+primitive `regenerate()` above defends against from a different angle.
+Kinetis closes it at the source instead of relying only on the
+application calling `regenerate()` correctly: on the first real access
+to the session in a request, the presented id is read from the store,
+and if nothing comes back, it is rotated to a fresh id before any
+state can be exposed or written under it. A genuinely stored id,
+including one whose payload happens to be an empty array, is left
+exactly as presented — only an id the store has never heard of is
+ever rotated.
+
+That rotation is lazy: it changes only in-memory state and persists
+nothing by itself. A read-only check against a rejected cookie —
+`get()`, `has()`, or a CSRF check — still performs the one genuine
+store read needed to learn the cookie is unknown (unlike the identical
+check against a brand-new session with no cookie at all, which touches
+the store not at all), but writes nothing and sends no cookie either
+way. Something that genuinely needs a
+stable identity still gets one, persisted under the already-rotated
+fresh id and never the rejected one — a mutation, an explicit call to
+`id()`, or generating a CSRF token via `csrfToken()`. This laziness is
+what keeps checking a submitted CSRF token — right or wrong — from
+being what allocates and persists a session in the first place: an
+attacker sending an unlimited number of wrong tokens against cookies
+the store has never heard of must not be able to force one stored
+session per request — see the next section.
+
+This closes the identifier itself; it says nothing about what an
+authenticated session is allowed to do before and after login shares
+one id, which is what `regenerate()` still exists for. Call it on
+every privilege change regardless.
+
 ## CSRF protection
 
 `CsrfMiddleware` enforces a synchronizer token on state-changing
@@ -184,9 +268,26 @@ final readonly class OrderController
 
 The token comes from `Session::csrfToken()` — render it into a form's
 `_token` field or hand it to a client that then sends the
-`X-CSRF-Token` header. A missing or mismatched token is a `403`;
-comparison uses `hash_equals()`, so it is not vulnerable to timing
-attacks.
+`X-CSRF-Token` header. `csrfToken()` generates one on first use, which
+is a real write; call it only where the response is actually going to
+carry the token (a form render, a bootstrap payload), not on every
+request. A missing or mismatched token is a `403`; the comparison goes
+through `Session::verifyCsrfToken()` instead, which is constant-time
+via `hash_equals()` and — the reason a separate method exists at all —
+never generates a token itself. Checking a submitted token, right or
+wrong, must never be what creates one, since `csrfToken()`'s own
+generate-on-first-use side effect would otherwise let a wrong token
+allocate and persist a whole session for a cookie the store has never
+heard of. A mismatch against a genuinely existing session leaves it
+completely untouched too — not just unwritten, but its flash data,
+TTL, and cookie exactly as they were before the request, even when
+that session happens to have flash data pending: checking the token
+alone never runs the ordinary per-request flash-aging a real access
+would. A *matching* token, by contrast, immediately enters the
+session's normal lifecycle — flash-generation-aging included — the
+moment it's confirmed, not only if the guarded handler happens to use
+`Session` again afterward: a route that does nothing but check CSRF
+still ages any flash data pending on that session correctly.
 
 JSON requests use the header: Kinetis decodes JSON bodies inside the
 dispatcher, so a `_token` field inside a JSON body is not seen by this
@@ -208,6 +309,19 @@ complete new one, never a partial one. That temporary file is named
 `.sess-tmp-*`, deliberately outside `gc()`'s own `sess_*` glob pattern —
 a session mid-write must never be collectable while it's still in
 progress.
+
+**The file store enforces confidentiality, not just intends it.** Its
+own session directory must have no group or world permissions at all —
+checked against the directory's real, current mode on every
+construction, so an already-existing, externally-provisioned directory
+is refused rather than silently narrowed; this store never changes the
+permissions of a directory it did not create itself. Every session
+file's real, resulting mode is verified as private (`0600`) before it
+is ever allowed to become the live session — a `chmod()` call reporting
+success is not trusted on its own, since the file's actual permissions
+are read back and compared directly. Either check failing, like every
+other write failure, cleans up the temporary file and throws rather
+than publishing something that was never confirmed private.
 
 (custom-stores)=
 ## Custom stores

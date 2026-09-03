@@ -33,25 +33,17 @@ final class EventListenerDiscovery
     {
         $registry = new EventListenerRegistry();
 
-        // Deduped across both passes: when the project root and framework
-        // root are the same repository, a class under Kinetis\Events can
-        // surface from both classesInProject() and
-        // classesUnderFrameworkSegment(). EventListenerRegistry::register()
-        // has no duplicate-name check, so without this a listener method
-        // would register twice.
-        /** @var array<class-string, true> $seen */
-        $seen = [];
-
+        // No deduplication needed here — a class can genuinely surface
+        // from more than one of these three passes (a project root and
+        // the framework root being the same repository, for instance),
+        // and EventListenerRegistry::register() is itself idempotent per
+        // class, so a repeated name across sources is simply a no-op on
+        // its second and later occurrences.
         foreach ([
             ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
             ...NamespaceScanner::classesUnderFrameworkSegment('Events'),
             ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
         ] as $class) {
-            if (isset($seen[$class])) {
-                continue;
-            }
-
-            $seen[$class] = true;
             $registry->register($class);
         }
 

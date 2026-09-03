@@ -32,4 +32,20 @@ final class InvalidRoutePathException extends RuntimeException
             $class,
         ));
     }
+
+    /**
+     * A path or prefix containing a control character (including a NUL
+     * byte) — never a real attribute-literal value, but a real risk once
+     * either can come from a compiled cache artifact. Left unrejected,
+     * a NUL byte or other control character would compile into a real
+     * PCRE pattern that matches on unexpected byte sequences rather than
+     * failing loudly.
+     */
+    public static function forControlCharacters(string $path): self
+    {
+        return new self(sprintf(
+            'A route path or prefix must not contain control characters: "%s".',
+            addcslashes($path, "\x00..\x1f\x7f"),
+        ));
+    }
 }

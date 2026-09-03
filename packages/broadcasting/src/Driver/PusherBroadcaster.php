@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Broadcasting\Driver;
 
+use InvalidArgumentException;
 use Kinetis\Broadcasting\BroadcasterInterface;
+use Kinetis\Broadcasting\PusherProtocol;
 use Kinetis\Config\Config;
 use Kinetis\RevoltHttpClient\Http;
 
@@ -41,13 +43,20 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
 
     public static function fromConfig(Config $config, Http $http, string $connection = 'default'): self
     {
+        $portKey = Config::scopedKey('BROADCAST_PORT', $connection);
+        $port = $config->int($portKey, 443);
+
+        if ($port < 1 || $port > 65535) {
+            throw new InvalidArgumentException("{$portKey} must be a valid TCP port (1-65535), got {$port}.");
+        }
+
         return new self(
             $http,
             $config->required(Config::scopedKey('BROADCAST_APP_ID', $connection)),
             $config->required(Config::scopedKey('BROADCAST_KEY', $connection)),
             $config->required(Config::scopedKey('BROADCAST_SECRET', $connection)),
             $config->string(Config::scopedKey('BROADCAST_HOST', $connection), 'api.pusherapp.com'),
-            $config->int(Config::scopedKey('BROADCAST_PORT', $connection), 443),
+            $port,
             $config->bool(Config::scopedKey('BROADCAST_TLS', $connection), true),
         );
     }
@@ -83,20 +92,49 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
 
     /**
      * The `auth` field a private-channel subscription response carries.
+     *
+     * @throws \Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException
+     *     when $socketId or $channelName doesn't match the Pusher
+     *     protocol's own grammar — checked here too, not only by
+     *     `BroadcastAuthController`, so a direct call to this method
+     *     can never sign a value no conforming Pusher/Soketi/Reverb
+     *     endpoint could ever accept.
      */
     public function authorizeChannel(string $socketId, string $channelName): string
     {
+        PusherProtocol::assertValidSocketId($socketId);
+        PusherProtocol::assertValidChannelName($channelName);
+
         return $this->key . ':' . $this->sign("{$socketId}:{$channelName}");
     }
 
     /**
-     * The `auth` field a presence-channel subscription response carries
-     * — signed over the socket id, channel name, and the already-encoded
-     * `channel_data` JSON string the caller will also send back verbatim.
+     * The presence-channel subscription response, signed over the
+     * socket id, channel name, and $channelData's own canonical
+     * encoding — {@see PusherProtocol::assertValidPresenceData()}
+     * computes that encoding and is what's actually signed over, so the
+     * returned `channel_data` is always the exact bytes the signature
+     * covers, never a caller's own separately re-encoded copy that
+     * could drift from it.
+     *
+     * @param array<array-key, mixed> $channelData
+     * @return array{auth: string, channel_data: string}
+     * @throws \Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException
+     *     when $socketId or $channelName doesn't match the Pusher
+     *     protocol's own grammar, or $channelData isn't a valid presence
+     *     identity — see `authorizeChannel()`'s own docblock for why
+     *     this is checked here too, not only by `BroadcastAuthController`.
      */
-    public function authorizePresenceChannel(string $socketId, string $channelName, string $channelDataJson): string
+    public function authorizePresenceChannel(string $socketId, string $channelName, array $channelData): array
     {
-        return $this->key . ':' . $this->sign("{$socketId}:{$channelName}:{$channelDataJson}");
+        PusherProtocol::assertValidSocketId($socketId);
+        PusherProtocol::assertValidChannelName($channelName);
+        $channelDataJson = PusherProtocol::assertValidPresenceData($channelData);
+
+        return [
+            'auth' => $this->key . ':' . $this->sign("{$socketId}:{$channelName}:{$channelDataJson}"),
+            'channel_data' => $channelDataJson,
+        ];
     }
 
     private function sign(string $stringToSign): string

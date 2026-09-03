@@ -95,7 +95,6 @@ is scoped.
 | `DB_COMPRESSION` | — | MySQL protocol compression. |
 | `DB_MAX_CONNECTIONS` | `8` | Async drivers' pool width — per worker thread under FrankenPHP, per worker process under RoadRunner. |
 | `DB_WARM_CONNECTIONS` | `0` | Connections opened at boot instead of first use — load-bearing for the mysqli driver under worker mode. |
-| `DB_OPTIONS` | — | Legacy key=value string, translated where canonical equivalents exist. |
 
 Scoped keys follow the named-connection convention — the connection
 name inserts after the first segment: `DB_HOST` + `reporting` → `DB_REPORTING_HOST`.

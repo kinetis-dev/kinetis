@@ -2,18 +2,17 @@
 
 declare(strict_types=1);
 
+use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\Compiler;
-use Kinetis\Cache\RoutesFile;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerDiscovery;
-use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
-use Kinetis\Http\Routing\Router;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\ProjectRoot;
@@ -39,31 +38,37 @@ $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
 
 $httpCache = null;
+$pluginInstances = null;
 
 // Same APP_ENV-gated cache-or-discover split as kinetis/framework's own
 // reference public/index.php — mirrored here rather than diverging from
 // it, so this app's routes and middleware actually benefit from
 // `bin/kinetis build` the way the caching docs describe. The /mcp
-// endpoint and this app's own tools need nothing here: kinetis/mcp's
-// bootstrap binds the server, and its controller is discovered like any
-// other route.
+// endpoint and this app's own tools need kinetis/mcp's own McpRegistry
+// bound via BootSequence::run()'s own PluginDiscovery::bindInstances()
+// call below: kinetis/mcp's PackageBootstrap only assembles McpServer
+// lazily around whatever McpRegistry is already resolvable, it never
+// discovers or binds the registry itself.
 if ($env->isProduction()) {
-    $httpCache = $store->loadHttp();
+    // BootSequence::resolveHttp() is the entire "use the cache, or
+    // compile fresh" decision: http.php, events.php, and plugins.php
+    // must all be present, the right format, and actually reconstruct
+    // into live objects — Router/EventListenerRegistry/every plugin
+    // instance included, not just the raw DTOs — or the whole
+    // generation is treated as absent and $compile runs exactly once,
+    // safely, even under concurrent workers racing to be "first" (see
+    // CacheStore::writeAll()'s own docblock: each racing writer
+    // publishes its own complete generation, never a partial or mixed
+    // one). See its own docblock.
+    $resolved = BootSequence::resolveHttp($store, static fn (): CompiledCache => (new Compiler())->compileProject($projectRoot));
 
-    if ($httpCache === null) {
-        $compiled = (new Compiler())->compileProject($projectRoot);
-        $store->writeAll($compiled);
-        $httpCache = $compiled->http;
-        $eventCache = $compiled->events;
-    } else {
-        $eventCache = $store->loadEvents();
-    }
-
-    $router = Router::fromArray($httpCache->routes);
+    $httpCache = $resolved['httpCache'];
+    $router = $resolved['router'];
+    $listenerRegistry = $resolved['listenerRegistry'];
+    $pluginInstances = $resolved['pluginInstances'];
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
     $middlewareGroups = $httpCache->middlewareGroups;
-    $listenerRegistry = EventListenerRegistry::fromArray($eventCache !== null ? $eventCache->listeners : []);
     $packageBootstraps = $httpCache->packageBootstraps;
 } else {
     $phaseStart = microtime(true);
@@ -84,19 +89,27 @@ if ($env->isProduction()) {
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
     // null = discover the package bootstrap list live, alongside the rest.
     $packageBootstraps = null;
+    // $pluginInstances stays null from its declaration above — the same
+    // sentinel BootSequence::run() reads as "discover and reconstruct
+    // live".
     $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
 }
 
-// The bootstrap chain: every installed package's declared
-// PackageBootstrapInterface first (kinetis/persistence binding MysqlLink,
-// kinetis/queue binding QueueInterface), then this application's own
-// bootstrap.php — which therefore always wins on a shared binding.
+// PluginDiscovery::bindInstances() (kinetis/mcp's McpRegistry included —
+// its own PackageBootstrap only assembles McpServer lazily around
+// whatever McpRegistry is already resolvable, it never discovers or
+// binds the registry itself) and the discovered EventListenerRegistry
+// both have to be bound before the bootstrap chain runs — bootstrap.php's
+// own last-write-wins override only actually wins if something is already
+// there to act on, not asserted again afterward. BootSequence::run() is
+// the one place this ordering lives, shared by every framework-managed
+// entry point (bin/kinetis, TestApplication, and kinetis/framework's own
+// reference public/index.php) so none of them can drift from the others
+// on it again — see its own docblock.
 $phaseStart = microtime(true);
-RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
-$phases['bootstrap.services'] = [$phaseStart, microtime(true)];
-
-$app->instance(EventListenerRegistry::class, $listenerRegistry);
+BootSequence::run($app, $projectRoot, $config, $listenerRegistry, $pluginInstances, $packageBootstraps);
 $app->boot();
+$phases['bootstrap.services'] = [$phaseStart, microtime(true)];
 
 // Reported only now: these phases ran before any telemetry backend
 // could exist, so they were measured with plain timestamps and are

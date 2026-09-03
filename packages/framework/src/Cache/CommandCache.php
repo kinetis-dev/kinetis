@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Cache;
 
+use Kinetis\Cache\Exception\ArtifactValidation;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
+
 /**
  * Every registered command's plain scalar fields. Unlike HttpCache/
  * HttpCache, there are no binding/hydration plans to carry here at all:
@@ -14,6 +17,12 @@ namespace Kinetis\Cache;
  */
 final readonly class CommandCache
 {
+    private const array TOP_LEVEL_KEYS = ['formatVersion', 'commands', 'packageBootstraps', 'compiledAt'];
+
+    private const array COMMAND_ENTRY_KEYS = [
+        'name', 'description', 'controllerClass', 'controllerMethod', 'takesArguments', 'bootstrap',
+    ];
+
     public function __construct(
         public int $formatVersion,
         /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> */
@@ -38,20 +47,44 @@ final readonly class CommandCache
 
     /**
      * @param array<string, mixed> $data
+     * @throws CacheArtifactExceptionInterface
      */
     public static function fromArray(array $data): self
     {
-        /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $commands */
-        $commands = $data['commands'];
+        ArtifactValidation::exactKeys($data, 'CommandCache', self::TOP_LEVEL_KEYS);
 
+        $formatVersion = ArtifactValidation::int($data, 'CommandCache', 'formatVersion');
+        $commands = ArtifactValidation::listOfArrays($data, 'CommandCache', 'commands');
+        $packageBootstraps = ArtifactValidation::listOfStrings($data, 'CommandCache', 'packageBootstraps');
+        $compiledAt = ArtifactValidation::string($data, 'CommandCache', 'compiledAt');
+
+        /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $commands */
+        $commands = array_map(self::validateCommandEntry(...), $commands);
         /** @var list<class-string> $packageBootstraps */
-        $packageBootstraps = $data['packageBootstraps'];
 
         return new self(
-            formatVersion: (int) $data['formatVersion'],
+            formatVersion: $formatVersion,
             commands: $commands,
-            compiledAt: (string) $data['compiledAt'],
+            compiledAt: $compiledAt,
             packageBootstraps: $packageBootstraps,
         );
+    }
+
+    /**
+     * @param array<array-key, mixed> $entry
+     * @return array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}
+     */
+    private static function validateCommandEntry(array $entry): array
+    {
+        ArtifactValidation::exactKeys($entry, 'CommandCache command', self::COMMAND_ENTRY_KEYS);
+
+        return [
+            'name' => ArtifactValidation::string($entry, 'CommandCache command', 'name'),
+            'description' => ArtifactValidation::string($entry, 'CommandCache command', 'description'),
+            'controllerClass' => ArtifactValidation::string($entry, 'CommandCache command', 'controllerClass'),
+            'controllerMethod' => ArtifactValidation::string($entry, 'CommandCache command', 'controllerMethod'),
+            'takesArguments' => ArtifactValidation::bool($entry, 'CommandCache command', 'takesArguments'),
+            'bootstrap' => ArtifactValidation::bool($entry, 'CommandCache command', 'bootstrap'),
+        ];
     }
 }

@@ -78,6 +78,24 @@ final class RecordingStreamWrapper
         return @\stat($this->realPath($path)) ?: false;
     }
 
+    /**
+     * chmod() (STREAM_META_ACCESS) delegated onto the real backing path,
+     * the same translation every other method already applies — needed
+     * so FileSessionStore::write()'s own chmod(0600)/fileperms() checks
+     * see genuine results rather than every chmod() silently failing
+     * because this wrapper never implemented stream_metadata() at all.
+     */
+    public function stream_metadata(string $path, int $option, mixed $value): bool
+    {
+        if ($option === \STREAM_META_ACCESS) {
+            \assert(\is_int($value));
+
+            return @\chmod($this->realPath($path), $value);
+        }
+
+        return false;
+    }
+
     public function rename(string $from, string $to): bool
     {
         return @\rename($this->realPath($from), $this->realPath($to));

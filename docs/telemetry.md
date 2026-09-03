@@ -285,6 +285,38 @@ no OTLP endpoint configured elsewhere, or drop them. The cache, session,
 and OpenSearch decorators have no hook equivalent — they're the only
 source of tracing for those three, not a second copy of anything.
 
+### A failing backend never changes what the application does
+
+`Kinetis\Instrumentation\Telemetry` — the holder every hook call site
+above actually calls — is a no-throw boundary. Every call into the
+installed backend is caught: a void hook (an end hook, `phase()`)
+completes normally on a backend failure instead of propagating it; a
+token-returning start hook (`routeMatchStarted()`, `queryDispatched()`,
+`jobPushStarted()`, and the rest) returns `null`, the same sentinel a
+real backend's own end hook already tolerates when nothing started;
+`jobPushMetadata()` falls back to an empty carrier. `swap()` itself is
+plain configuration, not a backend call, and is never guarded.
+
+This matters because a hook call sits inside real control flow, not
+beside it — `Kernel`/`Dispatcher` call an end hook from inside a
+`catch`, `concurrently()`'s batch/task hooks wrap a fiber-pooled task,
+and a queue producer's `push()` calls its ending hook right after a
+durable send has already succeeded. An unguarded backend failure in any
+of those positions would replace the real controller exception, corrupt
+`concurrently()`'s own completion bookkeeping, or make a producer report
+a job as failed — and therefore worth retrying — after it has already
+been sent once. None of that can happen: the worst a broken telemetry
+backend can do is stop producing telemetry.
+
+A contained failure is still reported once, to `error_log()`, naming
+only the hook, the backend's class, and the exception's class — never
+the exception's own message and never the hook's own call arguments. A
+backend's exception message is not framework-controlled content: it can
+legitimately carry SQL text, a job's metadata, a credential, or a
+controller argument the backend included while describing its own
+failure, so none of it is safe to write to a shared log. The diagnostic
+call is itself wrapped so it can never become a second failure.
+
 ## What stays out of scope
 
 The OTel *metrics* signal — counters and gauges exported on their own

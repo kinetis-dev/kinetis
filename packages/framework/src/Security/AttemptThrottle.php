@@ -39,6 +39,22 @@ use Psr\SimpleCache\CacheInterface;
  *
  * Identifiers are sha256-hashed before use (PSR-16 forbids `{}()/\@:`
  * in a key, and an email address contains `@`).
+ *
+ * **Every counter is scoped to the policy that owns it, not just the
+ * identifier being counted.** The default key folds in $maxAttempts and
+ * $decaySeconds alongside the (hashed) identifier, so two policies with
+ * different configuration never collide — but two policies with the
+ * *identical* configuration guarding different things (a login password
+ * check and a 2FA code check, both `AttemptThrottle($cache, 5, 900)`, for
+ * the same email) still would, since neither maxAttempts/decaySeconds
+ * nor the raw identifier says which purpose a failure belongs to.
+ * $namespace is the explicit escape hatch: pass a distinct string per
+ * purpose (`new AttemptThrottle($cache, namespace: 'login')`, `new
+ * AttemptThrottle($cache, namespace: '2fa')`) and each gets its own
+ * record/count/expiry/clear independent of the other, even for the same
+ * identifier and the same limits. See {doc}`auth`'s "Preventing
+ * brute-force login attempts" section for the deployment consequence of
+ * changing this on an already-running system.
  */
 final readonly class AttemptThrottle
 {
@@ -48,6 +64,7 @@ final readonly class AttemptThrottle
         private CacheInterface $cache,
         private int $maxAttempts = 5,
         private int $decaySeconds = 900,
+        private ?string $namespace = null,
     ) {
         if ($cache instanceof NullSimpleCache) {
             throw AttemptThrottleUnavailableException::nullCache();
@@ -108,13 +125,42 @@ final readonly class AttemptThrottle
         return $this->counter->count($this->key($identifier));
     }
 
+    /**
+     * A stable, unambiguous identity for this exact policy checking this
+     * exact identifier — every field that changes what actually gets
+     * counted, not just the raw identifier: `$maxAttempts`,
+     * `$decaySeconds`, `$namespace`, and `$identifier` itself.
+     *
+     * Each field is hashed on its own before being joined, then the
+     * joined, fixed-width result is hashed once more — not the fields
+     * concatenated directly. A plain delimited join of caller-controlled
+     * values has no safe delimiter: namespace `a`, maxAttempts 5,
+     * decaySeconds 900, identifier `7:x` joins to the exact same string
+     * as namespace `a:5`, maxAttempts 900, decaySeconds 7, identifier
+     * `x` — two genuinely different policies, one collided bucket.
+     * Hashing every field first fixes each one to the same width
+     * regardless of its own content, so no field's content can ever be
+     * mistaken for a delimiter or shift into a neighboring field.
+     */
+    private function policyIdentity(string $identifier): string
+    {
+        $fields = implode('|', [
+            hash('sha256', (string) $this->maxAttempts),
+            hash('sha256', (string) $this->decaySeconds),
+            hash('sha256', $this->namespace ?? ''),
+            hash('sha256', $identifier),
+        ]);
+
+        return hash('sha256', $fields);
+    }
+
     private function key(string $identifier): string
     {
-        return 'attempt-throttle.' . hash('sha256', $identifier);
+        return 'attempt-throttle.' . $this->policyIdentity($identifier);
     }
 
     private function expiryKey(string $identifier): string
     {
-        return 'attempt-throttle-expiry.' . hash('sha256', $identifier);
+        return 'attempt-throttle-expiry.' . $this->policyIdentity($identifier);
     }
 }

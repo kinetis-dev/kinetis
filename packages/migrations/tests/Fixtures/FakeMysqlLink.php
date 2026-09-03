@@ -30,6 +30,9 @@ final class FakeMysqlLink implements MysqlLink
     /** Simulates GET_LOCK() timing out instead of acquiring. */
     public bool $lockAcquireShouldTimeOut = false;
 
+    /** Simulates RELEASE_LOCK() itself throwing. */
+    public bool $releaseShouldFail = false;
+
     /**
      * Every execute() call's own SQL and bound params, verbatim, in
      * order — str_contains() alone (what this fake's own dispatch
@@ -44,6 +47,15 @@ final class FakeMysqlLink implements MysqlLink
 
     /** Returned as the acquired flag's own value — an int by default, but overridable to prove a (int) cast actually matters. */
     public mixed $acquiredValue = 1;
+
+    /**
+     * Returned as the released flag's own value — an int by default,
+     * but overridable to 0/NULL to simulate MySQL's own RELEASE_LOCK()
+     * reporting the session did not hold the lock, distinct from
+     * $releaseShouldFail (which simulates the query call itself
+     * throwing rather than returning a value at all).
+     */
+    public mixed $releasedValue = 1;
 
     public function query(string $sql): SqlResult
     {
@@ -65,9 +77,13 @@ final class FakeMysqlLink implements MysqlLink
         }
 
         if (str_contains($sql, 'RELEASE_LOCK')) {
+            if ($this->releaseShouldFail) {
+                throw new LogicException('simulated release failure');
+            }
+
             $this->lockReleased = true;
 
-            return new BufferedSqlResult([['released' => 1]], 1, 1);
+            return new BufferedSqlResult([['released' => $this->releasedValue]], 1, 1);
         }
 
         throw new LogicException("FakeMysqlLink does not execute queries: {$sql}");

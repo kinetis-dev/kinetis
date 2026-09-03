@@ -2,20 +2,18 @@
 
 declare(strict_types=1);
 
+use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\Compiler;
-use Kinetis\Cache\PluginDiscovery;
-use Kinetis\Cache\RoutesFile;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerDiscovery;
-use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Http\Routing\RouteDiscovery;
-use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\ProjectRoot;
 use Kinetis\Runtime\RuntimeDetector;
@@ -40,45 +38,33 @@ $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
 
 $httpCache = null;
-$pluginCache = null;
+$pluginInstances = null;
 
-// Computed before boot(): EventListenerRegistry has to be $app->instance()'d
-// below, and instance() is locked after boot() the same as bind()/
-// middleware() — unlike $router/$discoveredGlobalMiddleware, which are
-// plain constructor arguments Kernel takes directly and never touch
-// AppScope at all.
+// Computed before boot(): EventListenerRegistry is bound via
+// BootSequence::run() below, and instance() is locked after boot() the
+// same as bind()/middleware() — unlike $router/$discoveredGlobalMiddleware,
+// which are plain constructor arguments Kernel takes directly and never
+// touch AppScope at all.
 if ($env->isProduction()) {
-    // First request in this process to find no cache present compiles
-    // once and writes all four artifacts — safe under concurrent workers
-    // racing to be "first" (see CacheStore::writeAll()'s atomic tmp+rename).
-    // Every request after that, on any worker, just loads http.php here.
-    $httpCache = $store->loadHttp();
+    // BootSequence::resolveHttp() is the entire "use the cache, or
+    // compile fresh" decision: http.php, events.php, and plugins.php
+    // must all be present, the right format, and actually reconstruct
+    // into live objects — Router/EventListenerRegistry/every plugin
+    // instance included, not just the raw DTOs — or the whole
+    // generation is treated as absent and $compile runs exactly once,
+    // safe under concurrent workers racing to be "first" (see
+    // CacheStore::writeAll()'s own docblock: each racing writer
+    // publishes its own complete generation, never a partial or mixed
+    // one). See its own docblock.
+    $resolved = BootSequence::resolveHttp($store, static fn (): CompiledCache => (new Compiler())->compileProject($projectRoot));
 
-    if ($httpCache === null) {
-        $compiled = (new Compiler())->compileProject($projectRoot);
-        $store->writeAll($compiled);
-        $httpCache = $compiled->http;
-        $eventCache = $compiled->events;
-        $pluginCache = $compiled->plugins;
-    } else {
-        $eventCache = $store->loadEvents();
-        $pluginCache = $store->loadPlugins();
-    }
-
-    $router = Router::fromArray($httpCache->routes);
+    $httpCache = $resolved['httpCache'];
+    $router = $resolved['router'];
+    $listenerRegistry = $resolved['listenerRegistry'];
+    $pluginInstances = $resolved['pluginInstances'];
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
     $middlewareGroups = $httpCache->middlewareGroups;
-    // Another confirmed nullsafe.neverNull false positive (see
-    // AppScope::resolve()/RequestScope's own documented case, and this
-    // file's twin in bin/kinetis) — $eventCache is genuinely nullable
-    // here: the `else` branch above assigns it from
-    // CacheStore::loadEvents(): ?EventCache, which really can return null
-    // (a stale/foreign-format events.php, or one that simply doesn't
-    // exist yet). Verified directly with an isolated repro forcing that
-    // exact branch before trusting PHPStan's "always non-null" claim —
-    // removing the `?->` here would be a real, reachable fatal error.
-    $listenerRegistry = EventListenerRegistry::fromArray($eventCache?->listeners ?? []); // @phpstan-ignore nullsafe.neverNull
     $packageBootstraps = $httpCache->packageBootstraps;
 } else {
     $phaseStart = microtime(true);
@@ -101,29 +87,32 @@ if ($env->isProduction()) {
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
     // null = discover the package bootstrap list live, alongside the rest.
     $packageBootstraps = null;
-    // $pluginCache stays null from its declaration above — the same
-    // sentinel PluginDiscovery::bind() reads as "discover live" below.
+    // $pluginInstances stays null from its declaration above — the same
+    // sentinel BootSequence::run() reads as "discover and reconstruct
+    // live" below.
     $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
 }
 
-// The bootstrap chain: every installed package's declared
-// PackageBootstrapInterface first, then this application's own
-// bootstrap.php — which therefore always wins on a shared binding.
-// bootstrap.php registers anything package bootstraps don't cover, e.g.:
+// PluginDiscovery::bindInstances() and the discovered EventListenerRegistry
+// both have to be bound before the bootstrap chain runs — bootstrap.php's
+// own last-write-wins override (resolving and augmenting a discovered
+// instance, or replacing it outright) only actually wins if something
+// is already there to act on, not asserted again afterward.
+// BootSequence::run() is the one place this ordering lives, shared by
+// every framework-managed entry point (bin/kinetis, TestApplication, and
+// the identical reference copies in kinetis/skeleton/kinetis/pingpong)
+// so none of them can drift from the others on it again — see its own
+// docblock. null pluginInstances (development, or production with
+// nothing cached yet) means "discover and reconstruct live instead."
+// bootstrap.php itself registers anything package bootstraps don't
+// cover, e.g.:
 // return static function (Kinetis\Container\AppScope $app, Config $config): void {
 //     $app->instance(SomeConnectionPool::class, SomeConnectionPool::fromConfig($config));
 // };
 $phaseStart = microtime(true);
-RoutesFile::loadBootstrap($projectRoot, $packageBootstraps)($app, $config);
-$phases['bootstrap.services'] = [$phaseStart, microtime(true)];
-
-$app->instance(EventListenerRegistry::class, $listenerRegistry);
-// Every installed package's own CacheableDiscoveryInterface data, bound
-// directly into AppScope before the bootstrap chain runs — a package's
-// own PackageBootstrap never touches this at all. null (development, or
-// production with nothing cached yet) means "discover live instead."
-PluginDiscovery::bind($app, $projectRoot, $pluginCache?->data);
+BootSequence::run($app, $projectRoot, $config, $listenerRegistry, $pluginInstances, $packageBootstraps);
 $app->boot();
+$phases['bootstrap.services'] = [$phaseStart, microtime(true)];
 
 // Reported only now: these phases ran before any telemetry backend
 // could exist, so they were measured with plain timestamps and are

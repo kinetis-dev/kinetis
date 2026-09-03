@@ -41,8 +41,21 @@ touches its session performs no storage round trip and sends no cookie.
 Payloads are JSON, never PHP `serialize()` — a crafted payload can't
 become an object-injection vector. Concurrency is last-write-wins by
 design (no session locking to serialize a browser's parallel requests).
-`Session::regenerate()` is the session-fixation defense — call it on
-login.
+A cookie id that is wellformed but unknown to the store — fabricated,
+or expired — is never trusted as-is: the first real access rotates it
+to a fresh id before anything can be exposed or written under it. That
+rotation is itself lazy — a read-only check (including a CSRF token
+comparison) persists nothing and sets no cookie (though it still
+performs the one genuine store read needed to learn the cookie is
+unknown), so checking a token, right or wrong, can never itself be
+what allocates and persists a session. A mismatch against a genuinely
+existing session is equally inert — its data, flash generations, TTL,
+and cookie are left exactly as they were. Something that genuinely
+needs a stable identity — a mutation, an explicit `id()` call,
+generating a CSRF token — still gets one, persisted under the
+already-rotated fresh id. `Session::regenerate()` is the complementary
+session-fixation defense for a *known*, previously-issued id — call it
+on login.
 
 ## Provides
 
@@ -72,7 +85,7 @@ form's `_token` field, with `hash_equals()` comparison.
 | Key | Default | Purpose |
 |---|---|---|
 | `SESSION_DRIVER` | — | `file`, `cache`, or `sql`; unset = inert. |
-| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write. |
+| `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write — the cookie's `Max-Age` and the store's own TTL always refresh together. |
 | `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
 | `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute: `Strict`, `Lax`, or `None`, any casing. `None` requires `SESSION_SECURE`. |
 | `SESSION_SECURE` | `true` | Cookie `Secure` attribute — `false` only for non-TLS local dev. |

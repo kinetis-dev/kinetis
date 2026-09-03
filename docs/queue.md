@@ -49,6 +49,33 @@ survive being written to the queue and read back later by a worker
 process, which may not be the same process (or even the same machine)
 that pushed it.
 
+### What a constructor argument can hold
+
+`push()` runs every constructor argument through `Kinetis\Queue\JobSerializer`,
+which enforces one portable "wire value" contract regardless of backend —
+the same contract JSON itself can represent, since every durable backend
+stores the payload as JSON:
+
+- `null`, `bool`, `int`, a finite `float` (not `NAN`/`INF`), and a
+  valid-UTF-8 `string`.
+- A dense, zero-based `list` or a string-keyed map, either nested to any
+  depth — a sparse or mixed-key array is rejected, since it has no
+  lossless JSON representation.
+- A `BackedEnum` case and a `DateTimeImmutable` instance (the exact
+  class, not a subclass) — both round-trip to an equal value, not the
+  same object.
+
+Anything else — a resource, a `Closure`, an arbitrary object, invalid
+UTF-8 or raw binary data — is rejected at `push()` time with
+`Kinetis\Queue\Exception\UnserializableJobException`, naming the
+constructor argument and, for a nested value, its exact location (e.g.
+`items[3].name`) — never the value itself, since it may be sensitive.
+This is deliberately a `push()`-time failure, not something discovered
+later as a worker-side crash or a silently different value once actually
+deployed: `SyncQueue` (below) enforces the identical contract, so a job
+that can't survive the round trip fails the same way in local development
+too.
+
 ## Pushing and processing
 
 ```{code-block} php
@@ -78,6 +105,14 @@ through a fresh container scope, invoke it, then pop the next one. It
 keeps going until a shutdown signal arrives — see "Stopping a worker"
 below.
 
+That fresh scope gets the same transaction-safety net an HTTP request or
+CLI command does: if a job constructor-injects `TransactionGuard` (see
+{doc}`persistence`), begins a transaction, and returns or throws without
+closing it, the scope's own dispose hook rolls it back before the next
+job runs — so a leftover open transaction never leaks into whatever this
+same pooled/native connection serves next. `SyncQueue`'s inline `push()`
+gets the identical guarantee.
+
 ## Named and prioritized queues
 
 Every `push()` targets a named queue — `default` when none is given:
@@ -99,6 +134,55 @@ worker above drains everything on `high` before ever checking `default`.
 A queue name absent from `--queue` is invisible to that worker entirely —
 jobs pushed to `reports` sit untouched until some worker actually watches
 `reports`. Omitting `--queue` watches `default` only.
+
+### The `pop()` priority/timeout contract
+
+Every backend implements `pop($timeoutSeconds, $queues)` identically:
+
+- `$timeoutSeconds: 0` blocks with no deadline at all, until something's
+  available. A positive value blocks for up to that many seconds before
+  returning `null`. A negative value is rejected outright rather than
+  silently treated as either.
+- Every named queue gets an immediate, non-blocking check, in priority
+  order, before a backend is ever allowed to block waiting on one — a job
+  already waiting anywhere is always found before that, regardless of
+  which position it's in. Only once nothing is found anywhere does a
+  backend with a native blocking primitive (Redis, SQS) wait a short,
+  bounded slice of real time per queue, capped by both a small per-queue
+  limit and whatever's left of the overall deadline, before sweeping
+  again — a real deadline is never overshot by more than that one bounded
+  slice. A backend with none (RabbitMQ) paces retries the same way, via a
+  bounded pause between sweeps instead. `SqlQueue` gets this property for
+  free from a different shape entirely: its own single, priority-ordered
+  SQL query already checks every queue in one atomic operation, which
+  never had a per-queue loop to begin with.
+- A queue name must match `/^[A-Za-z0-9_-]{1,80}$/` — letters, digits,
+  hyphens, and underscores only, up to 80 characters (the same rule
+  Amazon SQS enforces on a standard queue's own name, adopted here as the
+  conservative grammar every backend can portably support), and the same
+  name may not appear twice in one `$queues` list — both are rejected
+  before any backend I/O, via `Kinetis\Queue\Exception\InvalidQueueNameException`.
+  This check runs everywhere a queue name is ever accepted, not just
+  `pop()`: `push()`, `size()`, `clear()`, and `QueuedJob`'s own
+  constructor (the one point `ack()`/`release()`/`fail()` ultimately
+  route through) all validate the same way, so a malformed or forged
+  name is rejected the same way regardless of which method receives it
+  first. An empty `$queues` list is the one deliberate exception: it
+  returns `null` immediately, since "nothing to check" is a legitimate
+  case, not malformed input. A negative `$timeoutSeconds` is rejected the
+  same way, via `Kinetis\Queue\Exception\InvalidPopTimeoutException`.
+
+```{note}
+Once a backend's own probe finds a job, it's returned immediately, with
+no attempt to re-check higher-priority queues first. Every backend
+reserves a job atomically the instant its own probe succeeds (Redis's
+move to a processing list, SQS's receive-triggered invisibility,
+RabbitMQ's `basic.get`, `SqlQueue`'s own row-level lock) — there is no
+"peek without reserving" primitive to recheck from on any of them, so a
+job arriving on a higher-priority queue while a lower one's own probe was
+still blocked is picked up on the very next full sweep instead, not
+necessarily immediately.
+```
 
 ## Choosing a backend
 
@@ -197,6 +281,18 @@ running. `queue:work` prints a warning at startup when it is missing,
 rather than leaving you to discover it during a deploy.
 ```
 
+`QUEUE_POLL_TIMEOUT` (default `5`) has to be a finite, positive number of
+seconds for the same reason: `pcntl_async_signals()` sets a flag when
+`SIGTERM`/`SIGINT` arrives, but nothing interrupts an in-flight call —
+the run loop only ever gets a chance to check that flag once its current
+poll returns. `QueueInterface::pop()` itself treats `0` as "block with no
+deadline at all, until something's available," which is a genuinely
+useful one-shot wait elsewhere, but handed to the worker's own loop it
+means a poll on an idle queue never returns at all: `queue:work` rejects
+`0` (and any negative value) at startup, before printing anything or
+touching the queue backend, rather than accepting a configuration that
+would leave the worker unkillable except by `SIGKILL`.
+
 ## Inspecting and clearing a queue
 
 `queue:stats` reports how many jobs are waiting:
@@ -284,6 +380,16 @@ a real worker, a failing job's exception isn't caught — it propagates
 straight to whatever called `push()`, so the point of running jobs
 synchronously (seeing the real error immediately) still holds.
 
+`push()` also runs the job through the exact same `JobSerializer::serialize()`
+then `deserializeJob()` round trip a durable backend's `push()`/worker pair
+does, and invokes the *reconstructed* instance, never the object the
+caller passed in. This is what makes "runs immediately, useful for local
+development" mean the same thing as "runs on a real worker later": a job
+whose constructor holds something that can't survive that round trip —
+see "What a constructor argument can hold" above — fails here too,
+at `push()` time, instead of silently working locally and only failing
+once actually deployed against a durable backend.
+
 Not selectable via `QUEUE_CONNECTION` — there's nothing for a worker
 process to do against a backend that never stores anything, so
 `SyncQueue` is constructed directly in application bootstrap code
@@ -291,6 +397,79 @@ instead. It accepts a `queue` argument on `push()` for
 signature compatibility with the other backends, but ignores it — there's
 only ever one "queue" (immediate execution), so a queue name has nothing
 to select between.
+
+### The `push()` argument contract
+
+Every backend validates `push($job, $delaySeconds, $queue, $maxAttempts)`
+identically, via `Kinetis\Queue\QueueContract::assertValidPushArguments()`
+— before telemetry, before serializing `$job`, before creating a request
+scope, before any backend I/O:
+
+- `$delaySeconds: 0` pushes immediately; a positive value delays by that
+  many seconds. A negative value is rejected outright, via
+  `Kinetis\Queue\Exception\InvalidDelaySecondsException`, rather than
+  reaching any backend at all.
+- `$queue` is validated the same way `pop()`'s own queue names are — see
+  above.
+- `$maxAttempts: null` defers to the processing worker's own default; `0`
+  or a positive value is the effective cap itself. A negative value is
+  rejected, via `Kinetis\Queue\Exception\InvalidMaxAttemptsException`,
+  rather than silently reaching `QueueWorker`, where a job's very first
+  real attempt would otherwise be misclassified as already exhausted.
+
+`SyncQueue` validates the identical way even though `$delaySeconds`/
+`$maxAttempts` have no effect there — a caller's mistake must not
+silently behave differently in local development than it would against a
+durable backend. SQS layers its own additional, narrower constraint on
+top of the shared floor check: a real 900-second upper bound, matching
+`SendMessage`'s own hard limit — see {doc}`queue-sqs`.
+
+## A malformed message never crashes the worker
+
+`push()`'s own argument validation (above) and `QueuedJob`'s own decode-
+time counter checks close off most ways a *pushed* value can be
+malformed — but a durable backend's own stored data can still be
+corrupted after the fact: a hand-edited Redis payload, a database row
+populated some other way, an AMQP header set by a non-Kinetis publisher.
+Every durable backend reserves a message from its own storage — moved to
+Redis's processing list, given a SQL `reserved_at`, made invisible by
+SQS, held as an unacked AMQP delivery — *before* it can be decoded into a
+`QueuedJob`, so a decode failure at that point (invalid JSON, a missing
+or wrong-shaped `class`/`args`/`metadata` field, an out-of-range counter)
+would otherwise leave a real reservation with nothing to release it: the
+message strands forever on a backend with no reservation-reclaim
+mechanism (Redis), or replays forever on one that has (SQL, SQS,
+RabbitMQ), since the identical malformed data crashes every retry the
+same way.
+
+Rather than let that exception escape `pop()` and crash the worker loop,
+every backend settles the malformed message permanently — using its own
+existing removal primitive (an exact-payload `LREM` off Redis's
+processing list, a SQL row `DELETE`, SQS's `DeleteMessage`, RabbitMQ's
+`nack(requeue: false)`) — before `pop()` throws
+`Kinetis\Queue\Exception\MalformedJobSettledException` instead of letting
+the original decode failure escape. `QueueWorker` catches this
+specifically, logs it, and moves straight on to the next job — no
+`RequestScope` is created and no job telemetry/lifecycle events fire,
+since there was never a real job to run any of that for.
+
+An *ordinary* transport or infrastructure failure — a dropped connection,
+a backend genuinely unreachable — is a different exception type entirely
+and is never caught by this containment; it propagates and stops the
+worker exactly as it always has. The distinction matters: only a failure
+while turning already-reserved data into a `QueuedJob` is ever treated as
+"this specific message is malformed."
+
+Settling means permanently deleting the message, so only a genuine data-
+validation failure ever triggers it — `Kinetis\Queue\Exception\MalformedQueuedJobDataException`
+specifically, not any exception a decode step happens to throw. An
+unexpected failure that isn't that type (a bug in a decoder, for
+instance) is never treated as malformed data and is never settled: it
+propagates and crashes the worker the same way an infrastructure failure
+does, leaving the reserved message exactly where the backend's own
+native recovery mechanism (a visibility timeout, a connection-drop
+requeue) can still reach it once the underlying bug is fixed, rather
+than destroying a message that may have been perfectly valid all along.
 
 ## Delayed jobs
 
@@ -368,6 +547,60 @@ than removed (dispatching `Events\JobReleased` instead). Its payload is
 still held by the backend at that point, so copying the arguments into
 the log would add nothing you couldn't already recover.
 
+### Observers never decide or rewrite the outcome
+
+Only `handle()` itself decides whether a job succeeded, gets retried, or
+is given up on — nothing that merely *describes* or *observes* that
+decision gets a vote in it, regardless of whether it runs before or
+after the transition. Starting telemetry and, on a failure, the log
+line above are both contained so they can never block
+`ack()`/`release()`/`fail()` from actually running; if either throws,
+it's reported through your logger and the transition still happens
+exactly as decided. The redaction behind that log line is contained the
+same way but through its own dedicated fallback rather than the logger —
+a reflection failure there falls back to every argument redacted, with
+no separate report of its own, since the real job failure is already
+what the log line exists to carry. Completion telemetry and the
+`JobSucceeded`/`JobReleased`/`JobFailedPermanently` dispatch run strictly
+*after* that transition — these are the ones that could otherwise be
+mistaken for a second, contradictory decision, and they're held to the
+identical reporting rule: a listener or telemetry backend that throws is
+reported through your logger and never allowed to trigger another
+transition or stop the worker. Every logger report here — before or
+after the transition — goes through the same best-effort mechanism, so
+even a broken logger can't affect
+anything here — and `processNext()` moves on to the next job regardless.
+
+### A disposal failure never rewrites the outcome or stops the worker
+
+Each job runs in its own `RequestScope`, disposed after the transition
+above (and its observers) have usually already run — see {doc}`container`'s
+own general explanation of why a `finally`-based dispose is unsafe here.
+"Usually," not "always": the same `finally` block is also reached if
+`ack()`/`release()`/`fail()` itself throws — a broken backend connection,
+for one — before the transition actually completes, and disposal is
+attempted the same way in that case too, without ever pretending a
+transition happened that didn't. Either way, a disposal failure is never
+allowed to trigger a second transition (nothing in the disposal path ever
+touches the queue backend) or escape `processNext()`/stop `run()`'s
+loop — the next job still runs regardless — and it's logged through
+`AppScope`'s own logger (the job's own scope is already disposed by then,
+so it can't safely resolve one) with the failing job's own class, queue,
+and attempt count, so the log line identifies which job it belongs to.
+What a disposal failure never does is replace whichever failure was
+already the real, in-flight outcome for that job — if `ack()`/`release()`/
+`fail()` itself threw, that exception is what escapes `processNext()`,
+same as it always would have; a disposal failure on top of it is
+reported separately, never instead.
+
+`SyncQueue::push()` has no worker loop to protect, so its rule is about
+which exception the caller actually sees: if the job's own `handle()`
+throws and disposal *also* fails afterward, `push()` rethrows the job's
+exact exception — never the disposal failure, which is logged separately
+instead. If only disposal fails (the job itself succeeded), that failure
+genuinely is the only thing that went wrong, so it propagates normally to
+the caller.
+
 ### Keeping sensitive arguments out of the log
 
 A job routinely carries a token, an email address, or customer data that
@@ -422,6 +655,19 @@ use Kinetis\Queue\QueuedListenerInvoker;
 
 $app->instance(ListenerInvokerInterface::class, new QueuedListenerInvoker($queue));
 ```
+
+The event's own constructor arguments go through the identical
+`JobSerializer` wire-value contract a job's own arguments do — see "What
+a constructor argument can hold" above — since a deferred listener's
+event has to survive the exact same round trip to a worker process a job
+does.
+
+`QueuedListenerInvoker` never constructs the listener itself — it
+receives only its class-string and pushes an `InvokeListenerJob`
+carrying that name, the method, and the event's own serialized data.
+The listener's own constructor, and anything it depends on, runs
+exactly once — on the worker that later pops and executes the job, not
+in the process that dispatched the event.
 
 See {doc}`events` for writing the listener itself.
 

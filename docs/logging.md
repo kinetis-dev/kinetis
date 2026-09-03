@@ -34,8 +34,8 @@ own registration wins in both environments.
 Nowhere by default on a successful request — logging every request
 regardless of outcome is something you opt into with your own
 {doc}`global middleware <middleware>`, not something the framework forces.
-The three places framework internals log on their own are all genuine
-anomaly signals, not routine chatter:
+Every place framework internals log on their own is a genuine anomaly
+signal, not routine chatter:
 
 ### `ExceptionHandlerMiddleware`
 
@@ -54,14 +54,36 @@ error: Unhandled exception while handling {method} {path}: {message}
 The `exception` context key follows PSR-3 convention — Monolog and other
 real loggers look for exactly that key to render a stack trace.
 
+A broken `Kinetis\Http\Exception\HttpStatusExceptionInterface`
+implementation — `httpStatus()` throwing, or returning a value outside
+the 400-599 range the interface requires (see {doc}`middleware`) — logs
+the same way, `exception` still the original, and one further context
+key, `mappingFailure`, holding a `Middleware\Exception\HttpStatusMappingException`
+describing what went wrong trying to map it, chaining the real secondary
+cause via `getPrevious()` when there was one.
+
+This log call is best-effort: a registered logger that itself throws
+cannot prevent the `500` this middleware exists to guarantee. The same
+is true wherever else a framework internal logs from inside a fallback
+it must still honor regardless — `Http\OpenApi\DocumentationController`'s
+cache read/write-failure warnings, for one, see {doc}`appendix`. See
+`Kinetis\Logging\SafeLogger`.
+
 ### `TransactionGuard::rollbackDangling()`
 
 Registered as an unconditional `RequestScope` dispose hook on every
 request (see {doc}`persistence`), so it runs whether or not a request
-ever opened a transaction. It logs a `warning` only when it actually
-finds an active transaction to roll back — the overwhelming majority of
-calls are a genuine no-op, and logging on every one of them regardless
-would turn a real anomaly signal into noise.
+ever opened a transaction. It logs a `warning` only once it has actually
+rolled back an active transaction — the overwhelming majority of calls
+are a genuine no-op, and logging on every one of them regardless would
+turn a real anomaly signal into noise. If closing a transaction fails,
+that's logged as an `error` instead, one line per failure — a strictly
+more severe signal than the routine `warning`, since it means a
+transaction survived the request. See {doc}`persistence`'s "What happens
+when cleanup itself fails" for the full failure behavior, including that
+this is all independent of the logger itself: an exception the logger
+throws is discarded rather than allowed to affect cleanup or misreport
+what actually happened.
 
 ### `McpServer`'s top-level exception handler
 
@@ -81,6 +103,28 @@ $mcp = new McpServer($registry, new McpDispatcher($app), logger: $app->get(Psr\L
 
 `bin/kinetis mcp:serve` already does this for you, pulling whatever's
 registered on its own `AppScope`.
+
+### `RequestScope` disposal failures
+
+Every owner that disposes a `RequestScope` after its own unit of work has
+already produced a real outcome — `Kernel`, `kinetis/queue`'s
+`QueueWorker`/`SyncQueue`, the MCP stdio and streamed-HTTP transports, and
+`bin/kinetis` — logs a disposal failure separately from that outcome,
+rather than letting it replace or suppress it (see {doc}`container`'s own
+general explanation of why, and each owner's own page —
+{doc}`middleware`, {doc}`queue`, {doc}`mcp`, {doc}`cli` — for its exact
+precedence rule). Every one of these calls goes through
+`Kinetis\Logging\SafeLogger::logFrom()`, not `log()`: `log()` alone only
+protects the resolved logger's own `log()` call, but
+`$container->get(LoggerInterface::class)` is itself evaluated as a plain
+argument expression before any containment is ever entered, so a
+throwing `LoggerInterface` binding would escape uncaught right at the
+point disposal tries to report its own failure. `logFrom()` takes the
+resolution itself as a callable instead, so a broken binding is
+contained the same way a broken logger's own `log()` call already is —
+the same best-effort discipline as every other log call on this page: a
+registered logger that itself throws, or fails to resolve at all, cannot
+affect the real outcome these calls report on.
 
 ## See also
 

@@ -158,7 +158,13 @@ final class OpenApiGenerator
                 $constraintPattern = $route->pathParameterPattern($name);
 
                 if ($constraintPattern !== null) {
-                    $schema['pattern'] = $constraintPattern;
+                    // schemaForScalar() can return a real stdClass (an
+                    // unconstrained `mixed`/untyped path parameter with no
+                    // Constraint attributes of its own) — `$schema['pattern']
+                    // = ...` array-write syntax throws on a plain object, so
+                    // an empty schema becomes a fresh array carrying only the
+                    // pattern rather than being mutated in place.
+                    $schema = $schema instanceof \stdClass ? ['pattern' => $constraintPattern] : [...$schema, 'pattern' => $constraintPattern];
                 }
 
                 $parameters[] = [
@@ -203,6 +209,16 @@ final class OpenApiGenerator
     }
 
     /**
+     * Dispatcher's own resolveBodyFromPlan() branches purely on the real
+     * request's Content-Type header — any #[Body] DTO can be submitted as
+     * `application/json`, `application/x-www-form-urlencoded`, or
+     * `multipart/form-data`, unconditionally, with no route-level opt-in
+     * required for any of the three. Every content type therefore gets
+     * the identical schema here too — an earlier version advertised only
+     * `application/json`, which was untruthful about the other two
+     * genuinely-working encodings a client following this document would
+     * have no way to discover.
+     *
      * @return array<string, mixed>|null
      */
     private function describeRequestBody(ReflectionParameter $parameter): ?array
@@ -215,13 +231,14 @@ final class OpenApiGenerator
 
         /** @var class-string $dtoClass */
         $dtoClass = $type->getName();
+        $schema = ['schema' => $this->schemaRefFor($dtoClass)];
 
         return [
             'required' => true,
             'content' => [
-                'application/json' => [
-                    'schema' => $this->schemaRefFor($dtoClass),
-                ],
+                'application/json' => $schema,
+                'application/x-www-form-urlencoded' => $schema,
+                'multipart/form-data' => $schema,
             ],
         ];
     }

@@ -20,13 +20,23 @@ final readonly class Command
         public string $name,
         public string $description = '',
         /**
-         * Whether bin/kinetis executes the application's bootstrap.php
-         * (and boots AppScope with everything it registers) before
-         * dispatching this command. Commands that only operate on the
-         * project's static shape — compiling caches, printing metadata —
-         * set this to false so they run without the configuration the
-         * application's own services demand (a CI pipeline pre-warming
-         * caches has no database credentials, and must not need them).
+         * Whether bin/kinetis runs the package-then-application
+         * bootstrap chain — every installed package's own
+         * PackageBootstrapInterface::register() as well as the
+         * project's bootstrap.php, both of which register services on
+         * AppScope — before dispatching this command. This is the only
+         * thing the flag gates: the command itself is always looked up
+         * from the discovered/cached command registry regardless (that
+         * happens before this flag is even consulted, since bin/kinetis
+         * needs the command's own definition to read this flag off it
+         * in the first place), and the discovered/cached
+         * EventListenerRegistry and plugin-discovery data always bind
+         * to AppScope either way. Commands that only operate on the
+         * project's static shape — compiling caches, printing metadata
+         * — set this to false so they run without the configuration any
+         * of the bootstrap chain's own registrations might demand (a CI
+         * pipeline pre-warming caches has no database credentials, and
+         * must not need them).
          */
         public bool $bootstrap = true,
     ) {}

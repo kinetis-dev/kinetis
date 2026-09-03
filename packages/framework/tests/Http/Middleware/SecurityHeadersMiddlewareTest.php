@@ -109,6 +109,21 @@ final class SecurityHeadersMiddlewareTest extends TestCase
         );
     }
 
+    public function test_a_zero_hsts_max_age_disables_the_header_rather_than_throwing(): void
+    {
+        // RFC 6797-meaningful: "disable HSTS for this origin," not an
+        // error.
+        self::assertFalse(self::process(['SECURITY_HSTS_MAX_AGE' => '0'])->hasHeader('Strict-Transport-Security'));
+    }
+
+    public function test_a_negative_hsts_max_age_throws_rather_than_being_silently_disabled(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('SECURITY_HSTS_MAX_AGE must not be negative');
+
+        self::process(['SECURITY_HSTS_MAX_AGE' => '-1']);
+    }
+
     /**
      * Sent over a plain-HTTP request too: a browser is required to
      * ignore HSTS from a non-secure transport, and a scheme check would

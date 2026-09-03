@@ -76,7 +76,7 @@ $api->withTimeout(30)->get('/reports/large'); // just this call
 | `withBaseUrl(string)` | prefixes relative URLs |
 | `withToken(string, string $scheme = 'Bearer')` | sets `Authorization` |
 | `withBasicAuth(string, string)` | HTTP basic credentials |
-| `withHeaders(array)` | adds headers, keeping ones already set |
+| `withHeaders(array)` | adds headers, overriding a same-named one already set |
 | `withQuery(array)` | query parameters added to every request |
 | `withTimeout(float)` | seconds to wait, total |
 | `withRetries(int $times = 3)` | retries 5xx, 429, and connection failures with backoff |
@@ -85,6 +85,24 @@ $api->withTimeout(30)->get('/reports/large'); // just this call
 Retries use Symfony's own retry strategy rather than a hand-rolled loop,
 and apply to the client's transport — build a retrying client once and
 reuse it rather than adding `withRetries()` per call.
+
+Headers merge by name case-insensitively, since HTTP field names are —
+a later `withHeaders()` call overrides an earlier one for the same
+name regardless of casing, and a per-call header passed to `get()`/
+`post()`/.../`send()` overrides a configured one the same way, never
+sending both as ambiguous duplicates:
+
+```{code-block} php
+$api = $http->withHeaders(['Authorization' => 'Bearer old-token']);
+
+// Overrides the configured Authorization, casing and all — only one
+// Authorization header is ever sent.
+$api->send('GET', '/orders', ['headers' => ['authorization' => 'Bearer new-token']]);
+```
+
+A header genuinely meant to carry more than one value survives
+untouched — only *different* header names, or the same name repeated
+with a different casing, ever interact with each other.
 
 ## Reading the response
 
@@ -98,6 +116,16 @@ $response->jsonPath('customer.email');  // one value, dot-delimited
 $response->body();                      // the raw string
 $response->header('X-Request-Id');
 ```
+
+`json()`/`jsonPath()` expect the response body to be a JSON object or
+array — anything a JSON API actually returns for a resource. A body
+that's valid JSON but whose top-level value is a bare string, number,
+boolean, or `null` (all syntactically valid JSON on their own) throws
+`HttpRequestException` the same way invalid JSON does, rather than
+returning that scalar or crashing — `getMessage()` reports only its
+type (`"a JSON body that decoded to a string, not an object or
+array"`), never the value itself; the raw body is still reachable via
+`diagnosticBody()` like any other diagnostic detail (see below).
 
 **An error status is not an exception.** A 404 from an API you are
 probing is information, and whether it should stop your code is your

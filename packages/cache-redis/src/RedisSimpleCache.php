@@ -87,7 +87,7 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
         $url = $config->get(Config::scopedKey('REDIS_URL', $connection));
 
         if ($url !== null) {
-            return RedisConfig::fromUri($url, $config->float(Config::scopedKey('REDIS_TIMEOUT', $connection), RedisConfig::DEFAULT_TIMEOUT));
+            return RedisConfig::fromUri($url, self::timeoutFromConfig($config, $connection));
         }
 
         $host = $config->get(Config::scopedKey('REDIS_HOST', $connection));
@@ -96,11 +96,14 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
             return null;
         }
 
-        $port = $config->int(Config::scopedKey('REDIS_PORT', $connection), RedisConfig::DEFAULT_PORT);
-        $redisConfig = RedisConfig::fromUri(
-            "tcp://{$host}:{$port}",
-            $config->float(Config::scopedKey('REDIS_TIMEOUT', $connection), RedisConfig::DEFAULT_TIMEOUT),
-        );
+        $portKey = Config::scopedKey('REDIS_PORT', $connection);
+        $port = $config->int($portKey, RedisConfig::DEFAULT_PORT);
+
+        if ($port < 1 || $port > 65535) {
+            throw new InvalidArgumentException("{$portKey} must be a valid TCP port (1-65535), got {$port}.");
+        }
+
+        $redisConfig = RedisConfig::fromUri("tcp://{$host}:{$port}", self::timeoutFromConfig($config, $connection));
 
         $password = $config->get(Config::scopedKey('REDIS_PASSWORD', $connection));
 
@@ -108,7 +111,32 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
             $redisConfig = $redisConfig->withPassword($password);
         }
 
-        return $redisConfig->withDatabase($config->int(Config::scopedKey('REDIS_DATABASE', $connection), 0));
+        $databaseKey = Config::scopedKey('REDIS_DATABASE', $connection);
+        $database = $config->int($databaseKey, 0);
+
+        if ($database < 0) {
+            throw new InvalidArgumentException("{$databaseKey} must not be negative, got {$database}.");
+        }
+
+        return $redisConfig->withDatabase($database);
+    }
+
+    /**
+     * Shared by both the REDIS_URL and discrete REDIS_HOST branches of
+     * {@see buildRedisConfig()}, so the connect-timeout bound is enforced
+     * identically regardless of which form a deployment uses to configure
+     * Redis.
+     */
+    private static function timeoutFromConfig(Config $config, string $connection): float
+    {
+        $timeoutKey = Config::scopedKey('REDIS_TIMEOUT', $connection);
+        $timeout = $config->float($timeoutKey, RedisConfig::DEFAULT_TIMEOUT);
+
+        if ($timeout <= 0.0) {
+            throw new InvalidArgumentException("{$timeoutKey} must be a positive number of seconds, got {$timeout}.");
+        }
+
+        return $timeout;
     }
 
     /**

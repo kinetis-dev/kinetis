@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\Http\Routing;
 
 use Kinetis\Http\Routing\Exception\InvalidRouteConstraintException;
+use Kinetis\Http\Routing\Exception\InvalidRouteDefinitionException;
+use Kinetis\Http\Routing\Exception\InvalidRoutePathException;
 
 /**
  * A single registered route: which controller method handles it, and the
@@ -79,6 +81,28 @@ final class Route
     /** Always canonical: a leading slash, no trailing one. See normalizePath(). */
     public readonly string $pathTemplate;
 
+    /**
+     * A normalized HTTP method token: one or more of RFC 9110's own
+     * `tchar` set (`!#$%&'*+-.^_`|~`, a digit, or a letter), restricted
+     * to uppercase letters only — the deliberate normalization rule this
+     * class has always enforced, kept even though the real token grammar
+     * itself is case-sensitive and permits lowercase. `A-Z` alone (this
+     * pattern's previous shape) rejected every real extension/WebDAV
+     * method carrying a digit or token punctuation — `M-SEARCH`,
+     * `VERSION-CONTROL` — which are genuinely valid HTTP method tokens,
+     * not malformed input.
+     */
+    private const string HTTP_METHOD_PATTERN = '/^[A-Z0-9!#$%&\'*+\-.^_`|~]+$/D';
+
+    /** A backslash-separated sequence of identifiers — a valid class-string shape. */
+    private const string CLASS_STRING_PATTERN = '/^\\\\?[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(\\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)*$/D';
+
+    /** A plain PHP identifier — a valid method-name shape. */
+    private const string IDENTIFIER_PATTERN = '/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*$/D';
+
+    /** A `@name` middleware group reference — see Kinetis\Http\Attributes\Middleware::GROUP_PREFIX. */
+    private const string GROUP_REFERENCE_PATTERN = '/^@[A-Za-z0-9_.-]+$/D';
+
     public function __construct(
         public readonly string $httpMethod,
         string $pathTemplate,
@@ -89,6 +113,8 @@ final class Route
         /** @var list<string> each entry is either a middleware class-string or a `@name` group reference — see Kinetis\Http\Attributes\Middleware */
         public readonly array $middleware = [],
     ) {
+        self::assertValidDefinition($httpMethod, $pathTemplate, $controllerClass, $controllerMethod, $status, $middleware);
+
         $this->pathTemplate = self::normalizePath($pathTemplate);
         $segments = self::parse($this->pathTemplate);
         $params = self::collectParams($segments, $this->pathTemplate);
@@ -97,6 +123,58 @@ final class Route
         $this->pattern = self::compile($segments);
 
         self::assertValidPattern($this->pattern, $this->pathTemplate, $this->paramPatterns);
+    }
+
+    /**
+     * Every real `RouteAttribute` implementation already returns a
+     * normalized method token and a real int status, so none of this is
+     * reachable from a genuine attribute in source code — it exists for
+     * data replayed from a compiled cache artifact, which carries no such
+     * guarantee, and this constructor is the one place both the live
+     * (`Router::register()`) and cached (`Router::fromArray()`) paths
+     * funnel through. `$pathTemplate` is checked for control characters
+     * (including a NUL byte) here, before normalization — left
+     * unrejected, either would compile into a real PCRE pattern matching
+     * on unexpected byte sequences rather than failing loudly.
+     *
+     * @param list<string> $middleware
+     */
+    private static function assertValidDefinition(
+        string $httpMethod,
+        string $pathTemplate,
+        string $controllerClass,
+        string $controllerMethod,
+        int $status,
+        array $middleware,
+    ): void {
+        if (preg_match(self::HTTP_METHOD_PATTERN, $httpMethod) !== 1) {
+            throw InvalidRouteDefinitionException::invalidHttpMethod($httpMethod);
+        }
+
+        if ($status < 100 || $status > 599) {
+            throw InvalidRouteDefinitionException::statusOutOfRange($status);
+        }
+
+        if (preg_match(self::CLASS_STRING_PATTERN, $controllerClass) !== 1) {
+            throw InvalidRouteDefinitionException::invalidControllerClass($controllerClass);
+        }
+
+        if (preg_match(self::IDENTIFIER_PATTERN, $controllerMethod) !== 1) {
+            throw InvalidRouteDefinitionException::invalidControllerMethod($controllerMethod);
+        }
+
+        foreach ($middleware as $reference) {
+            $isGroupReference = str_starts_with($reference, '@');
+
+            if ($isGroupReference ? preg_match(self::GROUP_REFERENCE_PATTERN, $reference) !== 1
+                : preg_match(self::CLASS_STRING_PATTERN, $reference) !== 1) {
+                throw InvalidRouteDefinitionException::invalidMiddlewareReference($reference);
+            }
+        }
+
+        if (preg_match('/[\x00-\x1f\x7f]/', $pathTemplate) === 1) {
+            throw InvalidRoutePathException::forControlCharacters($pathTemplate);
+        }
     }
 
     /**
@@ -238,6 +316,153 @@ final class Route
         }
 
         return $this->httpMethod . ' ' . $shape;
+    }
+
+    /**
+     * A stable, content-only ordering for `Router::match()`'s first-
+     * match-wins scan — never dependent on registration or reflection/
+     * scan order, so live discovery and a compiled-cache round trip
+     * always produce the identical match order for the identical set of
+     * routes.
+     *
+     * Compares real, `/`-delimited URL path segments position by
+     * position, most-specific-wins at the first point of difference. Each
+     * segment is ranked into one of four tiers, from most to least
+     * specific: fully literal (`self`, `report-2026.pdf`); mixed literal
+     * and placeholder content within the one segment
+     * (`report-{id}.pdf`); a constrained placeholder occupying the whole
+     * segment (`{id:\d+}`); an unconstrained one (`{id}`). The tier
+     * always dominates — a mixed segment beats *any* pure placeholder
+     * segment, constrained or not — with constrained-vs-unconstrained
+     * only breaking a tie *within* the mixed or pure-placeholder tier,
+     * never crossing a tier boundary. If every shared segment ties, the
+     * route with *more* segments is treated as more specific (a deeper,
+     * more concrete path). A route that still ties on every segment falls
+     * back to a fully content-based tiebreak — httpMethod, then
+     * pathTemplate, then controllerClass/controllerMethod — so two routes
+     * can never compare equal unless they're the exact same route.
+     *
+     * Segments are found via {@see urlSegmentGroups()}, which reuses
+     * {@see parse()}'s own brace-depth-aware scanner rather than a plain
+     * `explode('/', ...)` on the raw template — a constrained
+     * placeholder's pattern is unescaped, unanchored PCRE (`{path:a/b}`,
+     * or `.+` matching across a real `/`), and `/` carries no special
+     * meaning to it, so a literal `/` legitimately appears inside one
+     * without ending the placeholder or starting a new URL segment.
+     * `parse()`'s own token boundaries are what tell a literal `/`
+     * (a real segment separator) apart from one sitting inside a
+     * placeholder's own pattern text (never a separator, wherever it
+     * appears).
+     */
+    public static function compareForMatching(self $a, self $b): int
+    {
+        $segmentsA = self::urlSegmentGroups($a->pathTemplate);
+        $segmentsB = self::urlSegmentGroups($b->pathTemplate);
+        $shared = min(count($segmentsA), count($segmentsB));
+
+        for ($i = 0; $i < $shared; $i++) {
+            $bySpecificity = self::urlSegmentSpecificity($segmentsB[$i]) <=> self::urlSegmentSpecificity($segmentsA[$i]);
+
+            if ($bySpecificity !== 0) {
+                return $bySpecificity;
+            }
+        }
+
+        return (count($segmentsB) <=> count($segmentsA))
+            ?: ($a->httpMethod <=> $b->httpMethod)
+            ?: ($a->pathTemplate <=> $b->pathTemplate)
+            ?: ($a->controllerClass <=> $b->controllerClass)
+            ?: ($a->controllerMethod <=> $b->controllerMethod);
+    }
+
+    /**
+     * Regroups {@see parse()}'s flat literal/placeholder token list back
+     * into real, `/`-delimited URL segments — each returned group is the
+     * ordered list of tokens making up exactly one segment, e.g.
+     * `report-{id}.pdf` groups a literal token, a placeholder token, and
+     * another literal token together as one segment. Only a `/`
+     * appearing inside a *literal* token's own text is ever treated as a
+     * segment boundary — a placeholder token is always appended whole to
+     * whichever segment it belongs to, so a `/` inside its own pattern
+     * (legal, unescaped PCRE) can never be mistaken for one. A leading
+     * `/` (every normalized template has exactly one) always produces an
+     * empty leading group as a side effect of splitting on it; discarded
+     * unless it's the *only* group produced, which is what the root path
+     * (`/`) reduces to — one segment, an empty one, kept so the root path
+     * still orders consistently against every other route rather than
+     * comparing as zero shared segments against everything.
+     *
+     * @return list<list<PathSegment>>
+     */
+    private static function urlSegmentGroups(string $pathTemplate): array
+    {
+        /** @var list<list<PathSegment>> $groups */
+        $groups = [[]];
+
+        foreach (self::parse($pathTemplate) as $token) {
+            if ($token['type'] === 'placeholder') {
+                $groups[array_key_last($groups)][] = $token;
+
+                continue;
+            }
+
+            foreach (explode('/', $token['value']) as $index => $part) {
+                if ($index > 0) {
+                    $groups[] = [];
+                }
+
+                if ($part !== '') {
+                    /** @var PathSegment $literalPart */
+                    $literalPart = ['type' => 'literal', 'value' => $part];
+                    $groups[array_key_last($groups)][] = $literalPart;
+                }
+            }
+        }
+
+        return count($groups) > 1 ? array_slice($groups, 1) : $groups;
+    }
+
+    /**
+     * How specific one real URL segment is, as the group of tokens
+     * {@see urlSegmentGroups()} found for it. Four tiers, most to least
+     * specific: fully literal (no placeholder token at all) always
+     * outranks a mixed segment (at least one literal token alongside at
+     * least one placeholder token), which always outranks a segment that
+     * is a pure placeholder (no literal token at all) — the tier is a
+     * strict, primary ordering, never crossed by constraint status.
+     * Within the mixed and pure-placeholder tiers, a segment carrying at
+     * least one constrained placeholder outranks one where every
+     * placeholder is unconstrained, as a same-tier tiebreak only.
+     *
+     * @param list<PathSegment> $group
+     */
+    private static function urlSegmentSpecificity(array $group): int
+    {
+        $hasLiteral = false;
+        $hasPlaceholder = false;
+        $hasConstraint = false;
+
+        foreach ($group as $token) {
+            if ($token['type'] === 'literal') {
+                $hasLiteral = true;
+
+                continue;
+            }
+
+            $hasPlaceholder = true;
+            $hasConstraint = $hasConstraint || $token['pattern'] !== null;
+        }
+
+        if (!$hasPlaceholder) {
+            // Fully literal, including the empty root "segment" — no
+            // placeholder tier could ever outrank this regardless of its
+            // own constraint status.
+            return 6;
+        }
+
+        $tier = $hasLiteral ? 4 : 2;
+
+        return $tier + ($hasConstraint ? 1 : 0);
     }
 
     /**

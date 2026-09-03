@@ -55,20 +55,88 @@ installed package's, one more entry in `plugins.php`. See {doc}`mcp`.
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
 
-The on-disk result is four independent files:
+The on-disk result is four files, always published together as one
+*generation*:
 
 ```{code-block} text
 .kinetis-cache/
-├── http.php       routes + global/openapi middleware + named
-│                  middleware groups + HTTP binding plans + validation
-│                  plans for DTOs reachable from HTTP routes + the
-│                  package bootstrap-class list
-├── commands.php   command definitions + the package bootstrap-class
-│                  list (repeated so `bin/kinetis` loads one file)
-├── events.php     event listeners, grouped by event class
-└── plugins.php    every installed package's own CacheableDiscoveryInterface
-                   data, keyed by the class that produced it
+├── current                the published pointer — names which
+│                          generation below is active
+├── gen_1a2b3c4d5e6f7a8b/  one complete generation
+│   ├── http.php           routes + global/openapi middleware + named
+│   │                      middleware groups + HTTP binding plans +
+│   │                      validation plans for DTOs reachable from
+│   │                      HTTP routes + the package bootstrap-class
+│   │                      list
+│   ├── commands.php       command definitions + the package
+│   │                      bootstrap-class list (repeated here and
+│   │                      in http.php, so whichever one an entry
+│   │                      point reads already carries it, with no
+│   │                      extra section needed just for that)
+│   ├── events.php         event listeners, grouped by event class
+│   └── plugins.php        every installed package's own
+│                          CacheableDiscoveryInterface data, keyed by
+│                          the class that produced it
+└── gen_.../               an older, superseded generation — retained,
+                           not deleted (see "Publishing a generation
+                           atomically" below)
 ```
+
+Each entry point still reads only the sections it actually consumes, never
+all four — an HTTP boot reads `http.php`, `events.php`, and `plugins.php`
+(never `commands.php`); the CLI reads `commands.php`, `events.php`, and
+`plugins.php` (never `http.php`) — so this stays exactly as lazy as it
+looks. What's new is that every file inside one generation directory is
+guaranteed to have come from the *same* compile pass: `current` is what
+makes that guarantee possible.
+
+`current` is deliberately plain text, not a `.php` file like every
+section — the one place `require()` and OPcache would actively work
+against correctness rather than for it. Every section lives at a
+brand-new path per generation, so OPcache caching it forever
+(`opcache.validate_timestamps=0`, a common production setting) is
+exactly right — that path's content never changes once written. `current`
+is the opposite: the one path reused across every publish, rewritten via
+`rename()` each time. Under that same setting, OPcache never re-stats a
+`require()`d file to notice a rename happened, so a PHP pointer could
+silently keep serving the *first* compiled generation's content
+indefinitely, no matter how many times `kinetis build` reports success,
+until a process restart or an explicit OPcache invalidation. Reading it
+as plain data instead makes every read see the real, current bytes.
+
+### Publishing a generation atomically
+
+Four separate files being individually well-formed isn't the same as the
+*set* being safe to read piecemeal — a plain HTTP boot reads `http.php`
+first and, later in the same request, `events.php`/`plugins.php` too (see
+{doc}`appendix`'s `BootSequence` entry). If a rebuild could replace those
+files one at a time in place, a request could read routes from one
+compile pass and event listeners from a different one, mid-swap.
+
+`CacheStore::writeAll()` avoids this by never touching an already-
+published generation at all. A rebuild writes all four files into a
+brand-new, uniquely-named generation directory first; only once every one
+of them has succeeded does it atomically switch `current` to name that
+generation — the single moment any reader can learn it exists. A
+`CacheStore` instance resolves that pointer once, on its first read, and
+keeps using the same generation for every later read it makes — so the
+`http.php` a request loads and the `events.php`/`plugins.php` it loads
+afterward are always from the identical compile pass, even if another
+worker or deploy publishes a newer generation in between. A fresh
+instance — the next request, or the next `bin/kinetis` invocation —
+resolves independently and may see that newer one.
+
+An older generation is never deleted automatically: nothing tells
+`CacheStore` when the last reader still pinned to it has finished, so
+deleting on a schedule could remove a generation a long-lived persistent
+worker is still reading from. `.kinetis-cache/` therefore accumulates a
+generation directory per successful `kinetis build` until something
+explicitly clears it — `kinetis build --destroy` removes the whole
+directory, pointer and every generation alike. A rebuild that fails
+partway through (a compile error, an unwritable disk) never publishes at
+all: the partially-written generation is deleted before the error
+propagates, and whatever was previously active — if anything — is left
+exactly as it was.
 
 The OpenAPI document is deliberately not among these. It is generated
 per request in development and cached in whatever `CacheInterface` the
@@ -94,9 +162,13 @@ middleware, event listeners, and every installed package's own
 ### Lazy, on first request
 
 If `APP_ENV=production` and no cache exists yet, the very first request
-compiles and writes it — safely, even under concurrent PHP-FPM workers
-racing to be "first" against an empty cache directory. Every request after
-that, on any worker, just loads what's already there. Once the cache
+compiles and publishes it — safely, even under concurrent PHP-FPM workers
+racing to be "first" against an empty cache directory: each one that
+loses the race still publishes its own complete generation (see
+"Publishing a generation atomically" above), never a corrupted or partial
+one, and every worker's own read of that generation stays internally
+consistent regardless of which one "wins." Every request after that, on
+any worker, just loads what's already published. Once a generation
 exists, live discovery never runs again: your `Http`/`Console`/`Events`
 classes, and any `#[AsGlobalMiddleware]`-attributed class, aren't
 reflected again until the cache is rebuilt with `bin/kinetis build`.

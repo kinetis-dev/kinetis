@@ -6,6 +6,7 @@ namespace Kinetis\Session\Store;
 
 use Kinetis\Session\Exception\SessionException;
 use Kinetis\Session\SessionStoreInterface;
+use Kinetis\Session\Support\SessionExpiry;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
 
@@ -48,18 +49,41 @@ final readonly class CacheSessionStore implements SessionStoreInterface
     }
 
     /**
+     * PSR-16 allows `set()`/`delete()` to report failure via their own
+     * documented boolean return rather than throwing — checked here
+     * explicitly, since a silently-ignored `false` from `write()` would
+     * have `SessionMiddleware` send a cookie for state that was never
+     * actually persisted, and one from `destroy()` would leave the old
+     * session live through a logout or `regenerate()` while the browser
+     * cookie is expired/rotated regardless. A cache that throws instead
+     * of returning `false` is left alone — its own exception is what
+     * propagates, never replaced by a `SessionException` here.
+     *
+     * $lifetimeSeconds itself is validated via {@see SessionExpiry} —
+     * this store never computes an absolute expiry timestamp (the
+     * relative TTL goes straight to the cache backend, which computes
+     * its own), but a non-positive lifetime must be rejected here the
+     * same way the other stores reject it, rather than silently
+     * deferring to whatever the backend happens to do with one.
+     *
      * @param array<string, mixed> $data
      */
     #[\Override]
     public function write(string $id, array $data, int $lifetimeSeconds): void
     {
-        $this->cache->set(self::keyFor($id), $data, $lifetimeSeconds);
+        SessionExpiry::assertValidLifetime($lifetimeSeconds);
+
+        if (!$this->cache->set(self::keyFor($id), $data, $lifetimeSeconds)) {
+            throw new SessionException("Session data for \"{$id}\" could not be written to the cache.");
+        }
     }
 
     #[\Override]
     public function destroy(string $id): void
     {
-        $this->cache->delete(self::keyFor($id));
+        if (!$this->cache->delete(self::keyFor($id))) {
+            throw new SessionException("Session data for \"{$id}\" could not be deleted from the cache.");
+        }
     }
 
     private static function keyFor(string $id): string

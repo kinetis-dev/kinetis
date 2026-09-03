@@ -19,13 +19,24 @@ use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Http\StreamedResponse;
+use Kinetis\Instrumentation\NullTelemetry;
+use Kinetis\Instrumentation\Telemetry;
+use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
+use Kinetis\Tests\Fixtures\ThrowingLogger;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\CurrentUserController;
 use Kinetis\Tests\Http\Fixtures\DiscoveredGlobalMiddleware;
+use Kinetis\Tests\Http\Fixtures\DisposalRecorder;
 use Kinetis\Tests\Http\Fixtures\EventDispatchingController;
 use Kinetis\Tests\Http\Fixtures\EventLog;
+use Kinetis\Tests\Http\Fixtures\GenericThrowingControllerWithFailingDisposal;
 use Kinetis\Tests\Http\Fixtures\GlobalMiddleware;
+use Kinetis\Tests\Http\Fixtures\HttpStatusThrowingControllerWithFailingDisposal;
+use Kinetis\Tests\Http\Fixtures\InvalidUtf8ThrowingController;
+use Kinetis\Tests\Http\Fixtures\MalformedHttpStatusThrowingController;
+use Kinetis\Tests\Http\Fixtures\SucceedingControllerWithFailingDisposal;
+use Kinetis\Tests\Fixtures\ThrowsAfterFirstResolutionLogger;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\McpScopedMiddleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
@@ -36,12 +47,15 @@ use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\OpenApiScopedMiddleware;
 use Kinetis\Tests\Http\Fixtures\RecordingMiddleware;
 use Kinetis\Tests\Http\Fixtures\SendOrderConfirmationListener;
+use Kinetis\Tests\Http\Fixtures\TelemetryThrowingController;
 use Kinetis\Tests\Http\Fixtures\UnknownMiddlewareGroupController;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Tests\Instrumentation\ThrowingTelemetry;
 use Kinetis\Tests\Mcp\Fixtures\ProgressReportingController;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+use RuntimeException;
 
 require_once __DIR__ . '/Fixtures/gc_collect_cycles_spy.php';
 
@@ -61,13 +75,13 @@ final class KernelTest extends TestCase
 
     public function test_handles_a_registered_route_end_to_end(): void
     {
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $this->kernel()->handle($request);
 
         self::assertSame(201, $response->getStatusCode());
         self::assertSame(
-            ['name' => 'Alon', 'email' => 'alon@noy.cc'],
+            ['name' => 'Alon', 'email' => 'alon@example.com'],
             json_decode((string) $response->getBody(), true),
         );
     }
@@ -88,7 +102,7 @@ final class KernelTest extends TestCase
     {
         self::assertFalse(class_exists('Kinetis\Persistence\TransactionGuard'));
 
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $this->kernel()->handle($request);
 
@@ -116,7 +130,10 @@ final class KernelTest extends TestCase
 
         self::assertSame(405, $response->getStatusCode());
         $allowed = array_map('trim', explode(',', $response->getHeaderLine('Allow')));
-        self::assertSame(['POST', 'GET'], $allowed);
+        // Deterministic and deduplicated regardless of registration
+        // order — see Route::compareForMatching()'s own content-based
+        // tiebreak.
+        self::assertSame(['GET', 'POST'], $allowed);
     }
 
     public function test_each_handled_request_gets_an_independent_request_scope(): void
@@ -377,13 +394,13 @@ final class KernelTest extends TestCase
         $compiled = $compiler->compile($router);
 
         $kernel = new Kernel($app, $router, httpCache: $compiled->http);
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc']));
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $kernel->handle($request);
 
         self::assertSame(201, $response->getStatusCode());
         self::assertSame(
-            ['name' => 'Alon', 'email' => 'alon@noy.cc'],
+            ['name' => 'Alon', 'email' => 'alon@example.com'],
             json_decode((string) $response->getBody(), true),
         );
     }
@@ -391,6 +408,16 @@ final class KernelTest extends TestCase
     protected function setUp(): void
     {
         RecordingMiddleware::$log = [];
+    }
+
+    /**
+     * Telemetry::global() is a real per-process singleton — any test
+     * that swaps in a custom backend must restore a clean one afterward,
+     * or a later, unrelated test would silently observe it.
+     */
+    protected function tearDown(): void
+    {
+        Telemetry::global()->swap(new NullTelemetry());
     }
 
     public function test_global_middleware_runs_for_a_matched_route(): void
@@ -748,5 +775,314 @@ final class KernelTest extends TestCase
         RecordingMiddleware::$log = [];
         $kernel->handle(new ServerRequest('GET', '/users/1'));
         self::assertSame([], RecordingMiddleware::$log);
+    }
+
+    /**
+     * A real, successful request survives a failing telemetry backend —
+     * Telemetry itself (see Kernel::dispatchCore()'s routeMatchStarted()/
+     * routeMatchEnded() calls, and Dispatcher's own) contains every
+     * backend failure, so the real response comes through unaffected.
+     */
+    public function test_a_successful_response_survives_a_failing_telemetry_backend(): void
+    {
+        Telemetry::global()->swap(new ThrowingTelemetry());
+
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+
+        $response = $this->kernel()->handle($request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(
+            ['name' => 'Alon', 'email' => 'alon@example.com'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    /**
+     * A controller's own exception must survive too, not be replaced by
+     * the telemetry backend's own failure — Dispatcher's
+     * controllerInvoked()/controllerReturned() pair is exactly the call
+     * site this hazard threatens: controllerReturned($token, $e) runs
+     * inside the catch block, immediately before `throw $e;`.
+     */
+    public function test_a_controllers_own_exception_survives_a_failing_telemetry_backend(): void
+    {
+        Telemetry::global()->swap(new ThrowingTelemetry());
+
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Development);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(TelemetryThrowingController::class);
+
+        $kernel = new Kernel($app, $router);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/telemetry-throws'));
+
+        self::assertSame(500, $response->getStatusCode());
+
+        /** @var array{exception: string, message: string} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(RuntimeException::class, $body['exception']);
+        self::assertSame('the real controller failure', $body['message'], 'the real controller exception, not the telemetry backend\'s own failure, is what reached ExceptionHandlerMiddleware');
+    }
+
+    /**
+     * The real ExceptionHandlerMiddleware/Kernel boundary, not the
+     * middleware unit alone: a controller's own exception must still
+     * become the promised generic production 500 even when the
+     * consumer-registered LoggerInterface itself throws while
+     * ExceptionHandlerMiddleware tries to log it — see SafeLogger.
+     */
+    public function test_a_controllers_own_exception_still_becomes_a_production_500_when_the_logger_itself_throws(): void
+    {
+        $app = new AppScope();
+        $app->instance(LoggerInterface::class, new ThrowingLogger());
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(TelemetryThrowingController::class);
+
+        $kernel = new Kernel($app, $router);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/telemetry-throws'));
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * The development counterpart: the detailed 500 body must still come
+     * back, not an escaped exception from the logger, and not an escaped
+     * JsonException either.
+     */
+    public function test_a_controllers_own_exception_still_becomes_a_development_500_when_the_logger_itself_throws(): void
+    {
+        $app = new AppScope();
+        $app->instance(LoggerInterface::class, new ThrowingLogger());
+        $app->instance(AppEnvironment::class, AppEnvironment::Development);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(TelemetryThrowingController::class);
+
+        $kernel = new Kernel($app, $router);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/telemetry-throws'));
+
+        self::assertSame(500, $response->getStatusCode());
+
+        /** @var array{exception: string, message: string} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(RuntimeException::class, $body['exception']);
+        self::assertSame('the real controller failure', $body['message']);
+    }
+
+    /**
+     * A real exception message that is not valid UTF-8 must still
+     * produce a parseable development 500 body, not an uncaught
+     * JsonException from inside ExceptionHandlerMiddleware's own catch
+     * handler — the real end-to-end path, not ErrorResponse in
+     * isolation.
+     */
+    public function test_a_development_500_for_an_invalid_utf8_message_is_valid_json(): void
+    {
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Development);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(InvalidUtf8ThrowingController::class);
+
+        $kernel = new Kernel($app, $router);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/invalid-utf8-throws'));
+
+        self::assertSame(500, $response->getStatusCode());
+
+        $decoded = json_decode((string) $response->getBody(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($decoded);
+        self::assertSame(RuntimeException::class, $decoded['exception']);
+        // The exact, deterministic result of JSON_INVALID_UTF8_SUBSTITUTE
+        // — see ErrorResponseTest's own identical assertion for why this
+        // is the precise string, not an approximate one.
+        self::assertSame("bad: \u{FFFD}( end", $decoded['message']);
+    }
+
+    /**
+     * The real Kernel/ExceptionHandlerMiddleware boundary, not the
+     * middleware unit alone: a real HttpStatusExceptionInterface
+     * implementation whose own httpStatus() throws must still become
+     * the generic 500 rather than escaping Kernel::handle() entirely —
+     * the exact defect a naive pair of sibling catch clauses would
+     * reintroduce. Uses real application/fixture code implementing the
+     * interface, not a weakened stand-in.
+     */
+    public function test_a_broken_http_status_exception_cannot_escape_the_full_kernel_boundary(): void
+    {
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(MalformedHttpStatusThrowingController::class);
+
+        $kernel = new Kernel($app, $router);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/malformed-http-status-throws'));
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * A route/controller failure already in flight must never be replaced
+     * by a disposal failure on top of it — see Kernel::disposeScope()'s
+     * own docblock. A declared HttpStatusExceptionInterface's real status
+     * and message must survive intact; the disposal failure is logged
+     * separately, and RequestScope::dispose()'s own "every callback
+     * runs, even after an earlier one throws" guarantee still holds.
+     */
+    public function test_a_declared_http_status_is_retained_even_when_disposal_also_fails(): void
+    {
+        DisposalRecorder::$secondRan = false;
+        DisposalRecorder::$scope = null;
+
+        $logger = new InMemoryLogger();
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(HttpStatusThrowingControllerWithFailingDisposal::class);
+
+        $kernel = new Kernel($app, $router);
+        $response = $kernel->handle(new ServerRequest('GET', '/http-status-throws-with-failing-disposal'));
+
+        self::assertSame(400, $response->getStatusCode(), 'the declared status must survive a disposal failure on top of it');
+        self::assertSame(['error' => 'declared client error'], json_decode((string) $response->getBody(), true));
+
+        self::assertTrue(DisposalRecorder::$secondRan, 'a later dispose callback still ran despite an earlier one throwing');
+        self::assertNotNull(DisposalRecorder::$scope);
+        self::assertTrue(DisposalRecorder::$scope->isDisposed());
+
+        $errors = array_values(array_filter($logger->records, static fn (array $r): bool => $r['level'] === 'error'));
+        self::assertCount(1, $errors, 'a well-formed HttpStatusExceptionInterface is never logged as a framework failure — only the disposal failure is');
+        self::assertSame('dispose callback failed', $errors[0]['context']['message']);
+    }
+
+    /**
+     * A generic controller failure already in flight must remain the
+     * exception ExceptionHandlerMiddleware reports, even when disposal
+     * also fails — the disposal failure is logged separately, alongside
+     * the controller's own real failure, never replacing it.
+     */
+    public function test_a_generic_controller_failure_is_still_reported_even_when_disposal_also_fails(): void
+    {
+        DisposalRecorder::$secondRan = false;
+        DisposalRecorder::$scope = null;
+
+        $logger = new InMemoryLogger();
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(GenericThrowingControllerWithFailingDisposal::class);
+
+        $kernel = new Kernel($app, $router);
+        $response = $kernel->handle(new ServerRequest('GET', '/generic-throws-with-failing-disposal'));
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true), 'production keeps the generic body regardless of which failure produced it');
+
+        self::assertTrue(DisposalRecorder::$secondRan, 'a later dispose callback still ran despite an earlier one throwing');
+        self::assertNotNull(DisposalRecorder::$scope);
+        self::assertTrue(DisposalRecorder::$scope->isDisposed());
+
+        $errors = array_values(array_filter($logger->records, static fn (array $r): bool => $r['level'] === 'error'));
+        self::assertCount(2, $errors, 'one entry for the controller\'s own real failure, one for the disposal failure — neither replaces the other');
+        self::assertTrue(
+            array_any($errors, static fn (array $r): bool => ($r['context']['message'] ?? null) === 'the controller itself failed'),
+            'the controller\'s own real failure is still logged, not replaced by the disposal failure',
+        );
+        self::assertTrue(
+            array_any($errors, static fn (array $r): bool => ($r['context']['message'] ?? null) === 'dispose callback failed'),
+            'the disposal failure is logged separately',
+        );
+    }
+
+    /**
+     * No response has left the process yet at the point a successful
+     * handler's own disposal fails — this may legitimately become the
+     * ordinary generic 500, but must be logged exactly once (not twice,
+     * once here and once by ExceptionHandlerMiddleware) and must not
+     * leak any production detail about the disposal failure itself.
+     */
+    public function test_a_successful_handlers_disposal_failure_becomes_the_generic_500_logged_exactly_once(): void
+    {
+        DisposalRecorder::$secondRan = false;
+        DisposalRecorder::$scope = null;
+
+        $logger = new InMemoryLogger();
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $app->instance(LoggerInterface::class, $logger);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(SucceedingControllerWithFailingDisposal::class);
+
+        $kernel = new Kernel($app, $router);
+        $response = $kernel->handle(new ServerRequest('GET', '/succeeds-with-failing-disposal'));
+
+        self::assertSame(500, $response->getStatusCode(), 'no response has left the process yet, so a disposal failure legitimately becomes the ordinary generic 500');
+        self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true), 'production must not leak any detail about the disposal failure');
+
+        self::assertTrue(DisposalRecorder::$secondRan, 'a later dispose callback still ran despite an earlier one throwing');
+        self::assertNotNull(DisposalRecorder::$scope);
+        self::assertTrue(DisposalRecorder::$scope->isDisposed());
+
+        $errors = array_values(array_filter($logger->records, static fn (array $r): bool => $r['level'] === 'error'));
+        self::assertCount(1, $errors, 'the disposal failure must be logged exactly once');
+        self::assertSame('dispose callback failed', $errors[0]['context']['message']);
+    }
+
+    /**
+     * SafeLogger::log($this->app->get(LoggerInterface::class), ...) is
+     * not actually safe on its own: PHP evaluates that get() call before
+     * log() is ever entered, so a throwing LoggerInterface binding
+     * escapes uncaught, right where disposeScope()'s own resolution
+     * happens — replacing whatever it was trying to report on. This
+     * proves it doesn't: ExceptionHandlerMiddleware's own construction-
+     * time resolution succeeds (the fixture logger's first call), and
+     * the later resolution disposeScope() makes throws instead — the
+     * declared status must still survive that second failure.
+     */
+    public function test_a_declared_http_status_is_retained_even_when_the_logger_itself_cannot_be_resolved(): void
+    {
+        DisposalRecorder::$secondRan = false;
+        DisposalRecorder::$scope = null;
+
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Production);
+        $loggerFactory = new ThrowsAfterFirstResolutionLogger();
+        $app->bind(LoggerInterface::class, $loggerFactory(...), shared: false);
+        $app->boot();
+
+        $router = new Router();
+        $router->register(HttpStatusThrowingControllerWithFailingDisposal::class);
+
+        $kernel = new Kernel($app, $router);
+        $response = $kernel->handle(new ServerRequest('GET', '/http-status-throws-with-failing-disposal'));
+
+        self::assertSame(400, $response->getStatusCode(), 'the declared status must survive even when the logger itself cannot be resolved');
+        self::assertSame(['error' => 'declared client error'], json_decode((string) $response->getBody(), true));
+
+        self::assertTrue(DisposalRecorder::$secondRan, 'disposal is still fully attempted regardless of whether reporting its failure is even possible');
     }
 }

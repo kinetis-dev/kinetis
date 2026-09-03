@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Console;
 
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Console\CommandRegistry;
 use Kinetis\Console\Exception\InvalidCommandException;
 use Kinetis\Console\BuildCommand;
@@ -139,5 +140,40 @@ final class CommandRegistryTest extends TestCase
         $registry->register(RoutesListCommand::class);
 
         self::assertFalse($registry->findCommand('routes:list')?->bootstrap);
+    }
+
+    /**
+     * @return array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}
+     */
+    private function validCommandEntry(string $name = 'app:x'): array
+    {
+        return ['name' => $name, 'description' => '', 'controllerClass' => MaintenanceController::class, 'controllerMethod' => 'run', 'takesArguments' => false, 'bootstrap' => true];
+    }
+
+    public function test_from_array_rejects_an_entry_with_an_unexpected_extra_field(): void
+    {
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        CommandRegistry::fromArray([[...$this->validCommandEntry(), 'extra' => 'nope']]);
+    }
+
+    public function test_from_array_rejects_an_entry_missing_a_required_field(): void
+    {
+        $entry = $this->validCommandEntry();
+        unset($entry['bootstrap']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        CommandRegistry::fromArray([$entry]);
+    }
+
+    public function test_from_array_rejects_two_commands_sharing_a_name(): void
+    {
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        CommandRegistry::fromArray([
+            $this->validCommandEntry('app:x'),
+            $this->validCommandEntry('app:x'),
+        ]);
     }
 }

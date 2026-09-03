@@ -54,14 +54,20 @@ final readonly class EventDispatcher implements EventDispatcherInterface
                     break;
                 }
 
-                $instance = $this->scope->get($listener['class']);
                 $listenerToken = $telemetry->listenerInvoked($listener['class'], $listener['method']);
 
                 try {
-                    if ($instance instanceof ShouldQueue) {
-                        $this->listenerInvoker->invoke($instance, $listener['method'], $event);
+                    if ($listener['queued']) {
+                        // Never resolved here — the registry's own
+                        // metadata already says this listener is
+                        // ShouldQueue, so nothing about it is
+                        // constructed in this process at all until the
+                        // invoker itself decides to (SynchronousListenerInvoker
+                        // resolves it inline; QueuedListenerInvoker
+                        // never does).
+                        $this->listenerInvoker->invoke($listener['class'], $listener['method'], $event, $this->scope);
                     } else {
-                        $instance->{$listener['method']}($event);
+                        $this->scope->get($listener['class'])->{$listener['method']}($event);
                     }
 
                     $telemetry->listenerReturned($listenerToken, null);

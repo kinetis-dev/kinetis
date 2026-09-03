@@ -14,13 +14,20 @@ use Psr\SimpleCache\CacheInterface;
  *
  * Per-token — "log this session out" — keyed by a token's own `jti`
  * claim; JwtIssuer::issue() always includes one, so every token it
- * produces is revocable. Bounded, not ever-growing: revoke()'s
+ * produces is revocable. Bounded when the token itself is: revoke()'s
  * $ttlSeconds is the token's own remaining lifetime, not a fixed
  * duration — once the token would have expired naturally anyway, the
- * denylist entry has nothing left to revoke and can be dropped.
- * revokeToken() computes this automatically from the token's own `exp`
- * claim; call revoke() directly if you're revoking by `jti` alone
- * without a decoded token on hand.
+ * denylist entry has nothing left to revoke and can be dropped. A
+ * token issued with no expiry at all (JwtIssuer::issue() called with
+ * ttlSeconds: null) has no such natural point, so pass null instead —
+ * revoke() then writes the entry with no expiry of its own, a genuine
+ * indefinite revocation rather than a TTL standing in for "forever."
+ * revokeToken() derives this automatically from the token's own `exp`
+ * claim (or lack of one); call revoke() directly if you're revoking by
+ * `jti` alone without a decoded token on hand. Every TTL-accepting
+ * method here rejects zero or a negative value outright rather than
+ * clamping it — a non-positive TTL was never a real revocation, just
+ * one that looked like it succeeded.
  *
  * Per-user — "log out everywhere" — keyed by the user's own id, storing
  * a cutoff timestamp rather than any specific token. A token issued at
@@ -55,28 +62,68 @@ final readonly class RevocationStore
         }
     }
 
-    public function revoke(string $jti, int $ttlSeconds): void
+    /**
+     * $ttlSeconds is the entry's own remaining lifetime in seconds, or
+     * null to revoke with no expiry at all — routed straight through to
+     * the underlying cache's own null-TTL semantics (a genuinely
+     * permanent write against Kinetis\SimpleCache\RedisSimpleCache, for
+     * instance; see its own set()). Zero or negative is rejected
+     * outright rather than clamped — see this class's own docblock.
+     */
+    public function revoke(string $jti, ?int $ttlSeconds): void
     {
-        $this->cache->set($this->key($jti), true, max(0, $ttlSeconds));
+        if ($ttlSeconds !== null && $ttlSeconds <= 0) {
+            throw RevocationUnavailableException::nonPositiveRevokeTtl();
+        }
+
+        if (!$this->cache->set($this->key($jti), true, $ttlSeconds)) {
+            throw RevocationUnavailableException::revokeFailed();
+        }
     }
 
     /**
      * Revokes $user's own token, deriving the denylist entry's TTL from
-     * its `exp` claim. A token with no `exp` (JwtIssuer::issue() was
-     * called with ttlSeconds: null) has nothing to bound the entry by and
-     * is revoked for 0 seconds — effectively a no-op; a token you intend
-     * to revoke should carry a real expiry in the first place.
+     * its `exp` claim. A token with no `exp` at all (JwtIssuer::issue()
+     * was called with ttlSeconds: null) has no natural point at which
+     * the denylist entry could ever be safely dropped, so it's revoked
+     * indefinitely — see revoke()'s own $ttlSeconds: null. An `exp`
+     * that's already in the past needs no write at all: the token is
+     * already unusable on its own, and revoke() itself would reject the
+     * resulting non-positive TTL regardless.
+     *
+     * Throws when the token carries no usable `jti`, or an `exp` that's
+     * present but not a plain integer — never silently does nothing. A
+     * caller reporting a logout as successful while the token in hand
+     * remains fully valid is exactly the failure mode this store exists
+     * to prevent.
      */
     public function revokeToken(JwtUser $user): void
     {
         $jti = $user->claim('jti');
 
         if (!is_string($jti) || $jti === '') {
-            return;
+            throw RevocationUnavailableException::missingJti();
         }
 
         $exp = $user->claim('exp');
-        $ttlSeconds = is_numeric($exp) ? (int) $exp - time() : 0;
+
+        if ($exp === null) {
+            $this->revoke($jti, null);
+
+            return;
+        }
+
+        if (!is_int($exp)) {
+            throw RevocationUnavailableException::invalidExp();
+        }
+
+        $ttlSeconds = $exp - time();
+
+        if ($ttlSeconds <= 0) {
+            // Already expired — nothing left to protect against, and
+            // revoke() would reject this exact TTL anyway.
+            return;
+        }
 
         $this->revoke($jti, $ttlSeconds);
     }
@@ -94,7 +141,13 @@ final readonly class RevocationStore
      */
     public function revokeAllForUser(string|int $userId, int $ttlSeconds): void
     {
-        $this->cache->set($this->userKey($userId), time(), max(0, $ttlSeconds));
+        if ($ttlSeconds <= 0) {
+            throw RevocationUnavailableException::nonPositiveRevokeAllForUserTtl();
+        }
+
+        if (!$this->cache->set($this->userKey($userId), time(), $ttlSeconds)) {
+            throw RevocationUnavailableException::revokeAllForUserFailed();
+        }
     }
 
     public function isRevokedForUser(string|int $userId, int $issuedAt): bool

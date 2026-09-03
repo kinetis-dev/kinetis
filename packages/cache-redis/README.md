@@ -59,7 +59,7 @@ Redis is simply off and `CacheInterface` binds to `NullSimpleCache`.
 | `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
 | `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
 | `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
-| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap. |
+| `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap — `host:port`, or `[ipv6-address]:port` for an IPv6 node. |
 
 Scoped keys follow the named-connection convention — the connection
 name inserts after the first segment: `REDIS_HOST` + `cache2` → `REDIS_CACHE2_HOST`.

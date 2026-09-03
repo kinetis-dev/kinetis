@@ -14,11 +14,18 @@ use Kinetis\Migrations\Migration;
 return new class implements Migration {
     public function up(MysqlLink|PostgresLink $db): void
     {
+        // DATETIME, deliberately not TIMESTAMP: MySQL's TIMESTAMP
+        // reinterprets a bound literal through the connection's own
+        // session time_zone, confirmed directly against a real server to
+        // store a different absolute instant depending on that setting
+        // (and to reject an otherwise in-range value outright under a
+        // negative-offset session). DATETIME stores exactly the literal
+        // value SqlSessionStore binds, unaffected by session timezone.
         $db->execute(<<<'SQL'
             CREATE TABLE kinetis_sessions (
                 id VARCHAR(64) PRIMARY KEY,
                 payload TEXT NOT NULL,
-                expires_at TIMESTAMP NOT NULL,
+                expires_at DATETIME NOT NULL,
                 INDEX kinetis_sessions_expires_at_index (expires_at)
             )
             SQL);

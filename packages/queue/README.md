@@ -94,7 +94,7 @@ package to install.
 | `QUEUE_CONNECTION` | *(required)* | `redis`, `sql`, `sqs`, or `rabbitmq` — each needs its own package installed. |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named connection block the backend uses. |
 | `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries); a job's own `push(maxAttempts: ...)` wins. |
-| `QUEUE_POLL_TIMEOUT` | `5` | Seconds per `pop()` wait. |
+| `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be at least 1, so the worker can periodically check for a shutdown signal. |
 
 Full reference across every package:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).

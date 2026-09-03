@@ -22,6 +22,14 @@ final class MaxBodySizeMiddlewareTest extends TestCase
         return new CallableRequestHandler(static fn () => new Response(200));
     }
 
+    public function test_a_non_positive_max_body_size_throws_at_construction(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('MAX_BODY_SIZE must be a positive number of bytes');
+
+        new MaxBodySizeMiddleware(new Config(['MAX_BODY_SIZE' => '0']));
+    }
+
     public function test_a_request_under_the_limit_passes_through(): void
     {
         $middleware = new MaxBodySizeMiddleware(new Config(['MAX_BODY_SIZE' => '1000']));

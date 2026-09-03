@@ -8,6 +8,7 @@ use Kinetis\Cache\HttpCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
+use Kinetis\Container\TransactionGuardHook;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
@@ -18,10 +19,13 @@ use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Logging\SafeLogger;
 use Kinetis\OpenApi\OpenApiAccess;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
 use Throwable;
 
 /**
@@ -36,12 +40,11 @@ use Throwable;
  * this class intercepts — all it still owns is the access policy, which
  * folds $exposeOpenApi over OPENAPI_ENVIRONMENTS and is handed to that
  * controller through the request scope.
- * Every request also resolves a `Kinetis\Persistence\TransactionGuard`
- * from its RequestScope, registering `rollbackDangling()` as a dispose
- * hook whenever that class is available — referenced only as a
- * class-name string, `class_exists()`-gated so an application with no
- * database (and no `kinetis/persistence` installed) pays nothing for
- * this.
+ * Every request also runs {@see TransactionGuardHook::registerIfAvailable()}
+ * against its RequestScope — the shared hook that registers
+ * `Kinetis\Persistence\TransactionGuard::rollbackDangling()` as a dispose
+ * callback whenever that optional package is installed, and costs
+ * nothing when it is not.
  *
  * `$isPersistent` — set from the driving RuntimeAdapterInterface — gates
  * a `gc_collect_cycles()` call at the end of `handle()`, forcing cleanup
@@ -67,12 +70,6 @@ use Throwable;
  */
 final class Kernel
 {
-    // A plain string, not a `use` import — TransactionGuard lives in the
-    // separate kinetis/persistence package; see the class docblock above
-    // and RuntimeDetector::BREF_ADAPTER_CLASS for why referencing it this
-    // way never triggers autoloading on its own.
-    private const TRANSACTION_GUARD_CLASS = 'Kinetis\Persistence\TransactionGuard';
-
     private readonly OpenApiAccess $openApiAccess;
 
     /** @var array<string, list<class-string>> */
@@ -212,12 +209,30 @@ final class Kernel
         $scope->instance(Router::class, $this->router);
         $scope->instance(OpenApiAccess::class, $this->openApiAccess);
 
-        if (class_exists(self::TRANSACTION_GUARD_CLASS)) {
-            $transactionGuardClass = self::TRANSACTION_GUARD_CLASS;
-            $transactionGuard = $scope->get($transactionGuardClass);
-            $scope->onDispose($transactionGuard->rollbackDangling(...));
+        TransactionGuardHook::registerIfAvailable($scope);
+
+        try {
+            $response = $this->matchAndDispatch($scope, $request);
+        } catch (Throwable $e) {
+            // A route/controller failure is already the outcome — see
+            // disposeScope()'s own docblock for why a cleanup failure
+            // must never replace it.
+            $this->disposeScope($scope, $request, $e);
+
+            throw $e;
         }
 
+        // The handler succeeded, but $response has not left this process
+        // yet — disposeScope() may still legitimately turn this into the
+        // generic 500 every other uncaught exception produces, see its
+        // own docblock.
+        $this->disposeScope($scope, $request, null);
+
+        return $response;
+    }
+
+    private function matchAndDispatch(RequestScope $scope, ServerRequestInterface $request): ResponseInterface
+    {
         try {
             $telemetry = Telemetry::global();
             $matchToken = $telemetry->routeMatchStarted($request->getMethod(), $request->getUri()->getPath());
@@ -258,9 +273,67 @@ final class Kernel
             return $this->error(404, $e->getMessage());
         } catch (MethodNotAllowedException $e) {
             return $this->error(405, $e->getMessage(), ['Allow' => implode(', ', $e->allowedMethods)]);
-        } finally {
-            $scope->dispose();
+        }
+    }
 
+    /**
+     * Disposes $scope without letting a cleanup failure silently replace
+     * or suppress the real outcome dispatchCore() already has in hand.
+     *
+     * $primaryFailure is the route/controller Throwable already
+     * propagating, or null on the success path. PHP's own `finally`
+     * semantics would otherwise let a Throwable raised while disposing
+     * silently replace whichever one is currently in flight — exactly
+     * the defect this method exists to close: a declared
+     * HttpStatusExceptionInterface's real status, or a generic failure's
+     * real diagnostic, must never become a misleading "cleanup failed"
+     * 500 instead.
+     *
+     * - $primaryFailure !== null: dispose()'s own failure is logged here,
+     *   separately, through AppScope's own LoggerInterface — $scope is
+     *   already disposed by the time SafeLogger's own catch could run,
+     *   so it can no longer resolve one safely — and then discarded.
+     *   $primaryFailure itself is left completely untouched for the
+     *   caller to rethrow.
+     * - $primaryFailure === null: nothing has gone out to the client yet,
+     *   so it's safe (and correct, since something in cleanup is
+     *   genuinely broken) to let dispose()'s own failure propagate
+     *   normally — it reaches ExceptionHandlerMiddleware exactly like
+     *   any other uncaught exception, logged exactly once there, never
+     *   here too.
+     */
+    private function disposeScope(RequestScope $scope, ServerRequestInterface $request, ?Throwable $primaryFailure): void
+    {
+        try {
+            try {
+                $scope->dispose();
+            } catch (Throwable $disposeFailure) {
+                if ($primaryFailure === null) {
+                    throw $disposeFailure;
+                }
+
+                // logFrom(), not log(): SafeLogger::log($this->app->get(...), ...)
+                // would evaluate that get() call before log() is ever
+                // entered, so a throwing LoggerInterface binding/factory
+                // would escape uncaught right here and replace
+                // $primaryFailure anyway — exactly the defect this method
+                // exists to close, just moved one level up. Passing the
+                // resolution itself as a callable keeps it inside the
+                // same containment as the logger's own log() call.
+                SafeLogger::logFrom(
+                    fn (): LoggerInterface => $this->app->get(LoggerInterface::class),
+                    LogLevel::ERROR,
+                    'Request scope disposal failed while handling {method} {path}, after {originalClass} was already the outcome: {message}',
+                    [
+                        'method' => $request->getMethod(),
+                        'path' => (string) $request->getUri()->getPath(),
+                        'originalClass' => $primaryFailure::class,
+                        'message' => $disposeFailure->getMessage(),
+                        'exception' => $disposeFailure,
+                    ],
+                );
+            }
+        } finally {
             if ($this->isPersistent) {
                 gc_collect_cycles();
             }

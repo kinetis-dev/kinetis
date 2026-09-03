@@ -38,13 +38,17 @@ final readonly class AccountController
 
 Two transports: stdio (`kinetis mcp:serve` — how Claude Desktop, Cursor,
 and most local clients launch a server) and Streamable HTTP (`/mcp`, an
-ordinary route). Both protocol eras are supported side by side — the
-legacy `2025-03-26` handshake and the stateless `2026-07-28` per-request
-model. Every message is its own unit of work: a fresh request scope,
+ordinary route), both implementing the `2026-07-28` revision's
+stateless, per-request model. Every message is its own unit of work: a
+fresh request scope,
 transaction rollback for anything a tool leaves open, disposal once the
 response is written. The `mcp` middleware group authenticates the HTTP
 endpoint with the same middleware the auth packages ship for routes, and
-the identity they resolve reaches the tool.
+the identity they resolve reaches the tool. An unexpected exception — a
+tool, a resource, or the logger reporting either one — never crashes the
+server or reaches the client as anything more than a fixed, generic
+message; see the "Error handling" section at
+[kinetis.dev/docs/mcp.html](https://kinetis.dev/docs/mcp.html).
 
 ## Provides
 

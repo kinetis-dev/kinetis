@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace Kinetis\Testing;
 
-use Kinetis\Cache\RoutesFile;
+use Kinetis\Cache\BootSequence;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerDiscovery;
-use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
@@ -81,10 +80,18 @@ final class TestApplication
         $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
         $listeners = EventListenerDiscovery::discover($projectRoot);
 
-        // Package bootstraps first, then the application's own
-        // bootstrap.php — the same order, and the same last-write-wins
-        // override, every other entry point uses.
-        RoutesFile::loadBootstrap($projectRoot)($app, $config);
+        // PluginDiscovery::bindInstances() and the discovered
+        // EventListenerRegistry both have to be bound before the
+        // bootstrap chain runs — see BootSequence's own docblock, the
+        // one place this ordering lives now, shared by public/index.php,
+        // bin/kinetis, and the reference copies in kinetis/skeleton/
+        // kinetis/pingpong. null pluginInstances means "discover and
+        // reconstruct live," since this never consults a compiled cache,
+        // the same choice every other discovery call above already
+        // makes. Package bootstraps run first inside it, then this
+        // application's own bootstrap.php — the same last-write-wins
+        // order every other entry point uses.
+        BootSequence::run($app, $projectRoot, $config, $listeners, null, null);
 
         // Last, so a double registered here replaces whatever
         // bootstrap.php bound under the same id.
@@ -92,7 +99,6 @@ final class TestApplication
             $beforeBoot($app, $config);
         }
 
-        $app->instance(EventListenerRegistry::class, $listeners);
         $app->boot();
 
         $kernel = new Kernel(

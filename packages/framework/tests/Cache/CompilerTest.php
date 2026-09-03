@@ -120,11 +120,7 @@ final class CompilerTest extends TestCase
                 $reloaded->middlewareGroups,
             );
         } finally {
-            foreach (glob($directory . '/*') ?: [] as $file) {
-                unlink($file);
-            }
-
-            @rmdir($directory);
+            CacheStore::destroy($directory);
         }
     }
 
@@ -153,11 +149,7 @@ final class CompilerTest extends TestCase
             $router = Router::fromArray($reloaded->routes);
             self::assertSame('index', $router->match('GET', '/v1/users')->route->controllerMethod);
         } finally {
-            foreach (glob($directory . '/*') ?: [] as $file) {
-                unlink($file);
-            }
-
-            @rmdir($directory);
+            CacheStore::destroy($directory);
         }
     }
 
@@ -228,13 +220,7 @@ final class CompilerTest extends TestCase
 
             self::assertSame('1 Infinite Loop', $dto->shippingAddress->street);
         } finally {
-            foreach (glob($directory . '/*') ?: [] as $file) {
-                unlink($file);
-            }
-
-            if (is_dir($directory)) {
-                rmdir($directory);
-            }
+            CacheStore::destroy($directory);
         }
     }
 }

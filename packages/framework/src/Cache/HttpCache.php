@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Cache;
 
+use Kinetis\Cache\Exception\ArtifactValidation;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Validation\Hydrator;
 
@@ -60,36 +62,93 @@ final readonly class HttpCache
         ];
     }
 
+    private const array TOP_LEVEL_KEYS = [
+        'formatVersion', 'routes', 'httpBindingPlans', 'hydrationPlans',
+        'globalMiddleware', 'openApiMiddleware', 'middlewareGroups',
+        'packageBootstraps', 'compiledAt',
+    ];
+
+    private const array ROUTE_ENTRY_KEYS = [
+        'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware',
+    ];
+
     /**
+     * Validates every top-level field's presence, type, and — via
+     * `ArtifactValidation::exactKeys()` — that no *extra* field is
+     * present either, matching `toArray()`'s own shape exactly rather
+     * than merely tolerating a superset of it. Every route entry gets
+     * the identical treatment, matching the shape `Router::fromArray()`
+     * (next) actually consumes. `httpBindingPlans`/`hydrationPlans`
+     * are validated by `Kinetis\Http\Dispatcher::validateBindingPlans()`/
+     * `Kinetis\Validation\Hydrator::validatePlans()` — the abstractions
+     * that own those plan shapes — rather than re-deriving their own
+     * recursive validation rules a second time here.
+     *
      * @param array<string, mixed> $data
+     * @throws CacheArtifactExceptionInterface
      */
     public static function fromArray(array $data): self
     {
+        ArtifactValidation::exactKeys($data, 'HttpCache', self::TOP_LEVEL_KEYS);
+
+        $formatVersion = ArtifactValidation::int($data, 'HttpCache', 'formatVersion');
+        $routes = ArtifactValidation::listOfArrays($data, 'HttpCache', 'routes');
+        $httpBindingPlans = ArtifactValidation::array($data, 'HttpCache', 'httpBindingPlans');
+        $hydrationPlans = ArtifactValidation::array($data, 'HttpCache', 'hydrationPlans');
+        $globalMiddleware = ArtifactValidation::listOfStrings($data, 'HttpCache', 'globalMiddleware');
+        $openApiMiddleware = ArtifactValidation::listOfStrings($data, 'HttpCache', 'openApiMiddleware');
+        $middlewareGroups = ArtifactValidation::mapOfListOfStrings($data, 'HttpCache', 'middlewareGroups');
+        $packageBootstraps = ArtifactValidation::listOfStrings($data, 'HttpCache', 'packageBootstraps');
+        $compiledAt = ArtifactValidation::string($data, 'HttpCache', 'compiledAt');
+
+        Dispatcher::validateBindingPlans($httpBindingPlans);
+        Hydrator::validatePlans($hydrationPlans);
+
         /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> $routes */
-        $routes = $data['routes'];
+        $routes = array_map(self::validateRouteEntry(...), $routes);
         /** @var array<string, list<HttpBindingPlan>> $httpBindingPlans */
-        $httpBindingPlans = $data['httpBindingPlans'];
         /** @var array<string, HydrationPlan> $hydrationPlans */
-        $hydrationPlans = $data['hydrationPlans'];
         /** @var list<class-string> $globalMiddleware */
-        $globalMiddleware = $data['globalMiddleware'];
         /** @var list<class-string> $openApiMiddleware */
-        $openApiMiddleware = $data['openApiMiddleware'];
         /** @var array<string, list<class-string>> $middlewareGroups */
-        $middlewareGroups = $data['middlewareGroups'];
         /** @var list<class-string> $packageBootstraps */
-        $packageBootstraps = $data['packageBootstraps'];
 
         return new self(
-            formatVersion: (int) $data['formatVersion'],
+            formatVersion: $formatVersion,
             routes: $routes,
             httpBindingPlans: $httpBindingPlans,
             hydrationPlans: $hydrationPlans,
             globalMiddleware: $globalMiddleware,
             openApiMiddleware: $openApiMiddleware,
-            compiledAt: (string) $data['compiledAt'],
+            compiledAt: $compiledAt,
             middlewareGroups: $middlewareGroups,
             packageBootstraps: $packageBootstraps,
         );
+    }
+
+    /**
+     * @param array<array-key, mixed> $entry
+     * @return array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}
+     */
+    private static function validateRouteEntry(array $entry): array
+    {
+        ArtifactValidation::exactKeys($entry, 'HttpCache route', self::ROUTE_ENTRY_KEYS);
+
+        $httpMethod = ArtifactValidation::string($entry, 'HttpCache route', 'httpMethod');
+        $pathTemplate = ArtifactValidation::string($entry, 'HttpCache route', 'pathTemplate');
+        $controllerClass = ArtifactValidation::string($entry, 'HttpCache route', 'controllerClass');
+        $controllerMethod = ArtifactValidation::string($entry, 'HttpCache route', 'controllerMethod');
+        $status = ArtifactValidation::int($entry, 'HttpCache route', 'status');
+        $middleware = ArtifactValidation::listOfStrings($entry, 'HttpCache route', 'middleware');
+
+        /** @var class-string $controllerClass */
+        return [
+            'httpMethod' => $httpMethod,
+            'pathTemplate' => $pathTemplate,
+            'controllerClass' => $controllerClass,
+            'controllerMethod' => $controllerMethod,
+            'status' => $status,
+            'middleware' => $middleware,
+        ];
     }
 }

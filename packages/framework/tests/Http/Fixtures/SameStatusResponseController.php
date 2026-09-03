@@ -22,7 +22,7 @@ final readonly class SameStatusResponseController
     #[Response(404, description: 'Not found.')]
     public function echoUser(): UserResponse
     {
-        return new UserResponse(name: 'Alon', email: 'alon@noy.cc');
+        return new UserResponse(name: 'Alon', email: 'alon@example.com');
     }
 
     #[Post('/echo-created', status: 201)]
@@ -30,6 +30,6 @@ final readonly class SameStatusResponseController
     #[Response(422, description: 'Validation failed.')]
     public function createUser(): UserResponse
     {
-        return new UserResponse(name: 'Alon', email: 'alon@noy.cc');
+        return new UserResponse(name: 'Alon', email: 'alon@example.com');
     }
 }

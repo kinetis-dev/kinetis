@@ -94,6 +94,24 @@ through whatever `Psr\Log\LoggerInterface` you've registered (see
 {doc}`logging`), dispatches `Kinetis\Console\Events\CommandFailed` (see
 {doc}`events`), and also produces exit code `1`.
 
+That exit code is retained even if disposing the command's own
+`RequestScope` afterward also fails — see {doc}`container`'s own general
+explanation of why a `finally`-based dispose is unsafe here. `bin/kinetis`
+disposes the scope outside any `finally` that could still replace an
+already-decided exit code, and defines two cases explicitly:
+
+- **The command already threw, or returned a deliberate non-zero exit
+  code.** That outcome is exactly what gets returned; a disposal failure
+  on top of it is logged separately (through `AppScope`'s own logger, not
+  the now-disposed scope) and never changes the exit code.
+- **The command completed successfully with exit code `0`, and only
+  disposal then fails.** There is nothing else signaling a problem, but a
+  plain `0` would now be misleading, so `bin/kinetis` reports exit code
+  `70` — `EX_SOFTWARE` from BSD `sysexits.h` ("an internal software error
+  has been detected"), distinct from the `1` a genuine command failure
+  produces. Either way, `bin/kinetis` never fatals uncaught outside the
+  command boundary over a cleanup failure alone.
+
 MCP tools and resources (see {doc}`mcp`) and HTTP routes (see
 {doc}`routing-validation`) work the same way — discovered anywhere under
 your own PSR-4 roots, with no directory convention required.
@@ -104,27 +122,33 @@ your own PSR-4 roots, with no directory convention required.
 php vendor/bin/kinetis build
 ```
 
-Removes any existing `.kinetis-cache/` and compiles a fresh one —
-routing and validation plans, commands, and event listeners. Run this as
-part of your deploy pipeline
-to pre-warm the cache before real traffic arrives — see {doc}`caching`
-for exactly what gets written.
+Compiles a fresh cache — routing and validation plans, commands, and
+event listeners — and publishes it as a new, complete generation; a
+previously-published generation, if any, stays exactly as it was until
+that publish succeeds, so a failed compile or write never takes down a
+cache a previous build already produced. Run this as part of your deploy
+pipeline to pre-warm the cache before real traffic arrives — see
+{doc}`caching` for exactly what gets written and how publishing works.
 
 Always runs, regardless of `APP_ENV` — safe to run from a CI runner, a
 laptop, or any machine that hasn't set that variable. It also runs
-**without the application's own configuration**: `build` never executes
-`bootstrap.php`, so nothing your bootstrap registers — a database
-connection factory demanding `DB_PASSWORD`, a client demanding API keys
-— can make it fail. A CI pipeline pre-warms the cache with no
-production secrets present.
+**without the application's own configuration**: `build` never runs the
+bootstrap chain — neither an installed package's own
+`PackageBootstrapInterface::register()` nor your own `bootstrap.php` —
+so nothing either of them registers, a database connection factory
+demanding `DB_PASSWORD`, a client demanding API keys, can make it fail.
+A CI pipeline pre-warms the cache with no production secrets present.
 
 Your own commands get the same choice: `#[Command]` accepts
 `bootstrap: false` for any command that only operates on the project's
-static shape and shouldn't require the configuration the application's
-services demand. The default (`true`) executes `bootstrap.php` before
-dispatch, exactly what a command that talks to real services wants.
+static shape and shouldn't require the configuration a package's or
+your own bootstrap registers. The default (`true`) runs every installed
+package's `PackageBootstrapInterface::register()` first, then your own
+`bootstrap.php` last, before dispatch — exactly what a command that
+talks to real services wants.
 
-Pass `--destroy` to remove `.kinetis-cache/` without rebuilding it:
+Pass `--destroy` to remove `.kinetis-cache/` entirely — the active
+generation and every retained older one — without rebuilding it:
 
 ```{code-block} sh
 vendor/bin/kinetis build --destroy

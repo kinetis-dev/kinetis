@@ -164,6 +164,15 @@ use Kinetis\Queue\QueuedListenerInvoker;
 $app->instance(ListenerInvokerInterface::class, new QueuedListenerInvoker($queue));
 ```
 
+`EventDispatcher` decides whether a listener is `ShouldQueue` from the
+registry's own discovered metadata, before ever constructing anything —
+`ListenerInvokerInterface::invoke()` receives the listener by
+class-string, never a resolved instance, so a `ShouldQueue` listener's
+constructor genuinely never runs in the process that dispatched the
+event. `QueuedListenerInvoker` enqueues from that class-string alone;
+`SendOrderConfirmation` above is constructed exactly once, later, by
+whatever worker pops the resulting job.
+
 ## Events Kinetis itself dispatches
 
 Everything above is about events *you* define, like `OrderPlaced`. A
@@ -190,6 +199,16 @@ own request scope — the same one a job's `handle()` runs in — so a
 listener can constructor-inject anything that scope can resolve, exactly
 like the job itself can. The two migration events and `CommandFailed`
 work the same way through the command's own request scope.
+
+**The three queue events are dispatched only after `QueueWorker` has
+already committed to the outcome they describe** — `ack()`/`release()`/
+`fail()` has already run against the backend by the time
+`JobSucceeded`/`JobReleased`/`JobFailedPermanently` fires. A listener
+throwing is a best-effort observer failure, logged and otherwise
+ignored: it can never retroactively change what already happened to the
+job, and it can never stop the worker from processing the next one. See
+{doc}`queue`'s "Observers never decide or rewrite the outcome" for the
+full contract, which applies to telemetry instrumentation the same way.
 
 ## See also
 

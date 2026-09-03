@@ -6,6 +6,7 @@ namespace Kinetis\AuthJwt\Tests;
 
 use Kinetis\AuthJwt\Exception\RefreshTokenUnavailableException;
 use Kinetis\AuthJwt\RefreshTokenStore;
+use Kinetis\AuthJwt\Tests\Fixtures\FailingSimpleCache;
 use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\AuthJwt\Tests\Fixtures\NonAtomicSimpleCache;
 use Kinetis\SimpleCache\NullSimpleCache;
@@ -13,6 +14,86 @@ use PHPUnit\Framework\TestCase;
 
 final class RefreshTokenStoreTest extends TestCase
 {
+    /**
+     * A conforming PSR-16 cache may report a failed write by returning
+     * false rather than throwing — issue() must not hand back a token
+     * that was never actually stored.
+     */
+    public function test_issue_throws_when_the_cache_write_fails(): void
+    {
+        $store = new RefreshTokenStore(new FailingSimpleCache());
+        $secretSubject = 'super-secret-subject-must-never-leak-into-a-message';
+
+        try {
+            $store->issue($secretSubject);
+            self::fail('Expected a RefreshTokenUnavailableException.');
+        } catch (RefreshTokenUnavailableException $e) {
+            self::assertStringNotContainsString($secretSubject, $e->getMessage());
+        }
+    }
+
+    public function test_revoke_throws_when_the_cache_delete_fails(): void
+    {
+        $store = new RefreshTokenStore(new FailingSimpleCache());
+        $secretToken = 'super-secret-refresh-token-must-never-leak';
+
+        try {
+            $store->revoke($secretToken);
+            self::fail('Expected a RefreshTokenUnavailableException.');
+        } catch (RefreshTokenUnavailableException $e) {
+            self::assertStringNotContainsString($secretToken, $e->getMessage());
+        }
+    }
+
+    public function test_revoke_all_for_user_throws_when_the_cache_write_fails(): void
+    {
+        $store = new RefreshTokenStore(new FailingSimpleCache());
+        $secretUserId = 'super-secret-user-id-must-never-leak-into-a-message';
+
+        try {
+            $store->revokeAllForUser($secretUserId, 60);
+            self::fail('Expected a RefreshTokenUnavailableException.');
+        } catch (RefreshTokenUnavailableException $e) {
+            self::assertStringNotContainsString($secretUserId, $e->getMessage());
+        }
+    }
+
+    public function test_issue_rejects_a_zero_ttl(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $this->expectException(RefreshTokenUnavailableException::class);
+
+        $store->issue(42, ttlSeconds: 0);
+    }
+
+    public function test_issue_rejects_a_negative_ttl(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $this->expectException(RefreshTokenUnavailableException::class);
+
+        $store->issue(42, ttlSeconds: -60);
+    }
+
+    public function test_revoke_all_for_user_rejects_a_zero_ttl(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $this->expectException(RefreshTokenUnavailableException::class);
+
+        $store->revokeAllForUser(42, 0);
+    }
+
+    public function test_revoke_all_for_user_rejects_a_negative_ttl(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $this->expectException(RefreshTokenUnavailableException::class);
+
+        $store->revokeAllForUser(42, -60);
+    }
+
     public function test_a_freshly_issued_token_redeems_to_its_own_subject_and_claims(): void
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());

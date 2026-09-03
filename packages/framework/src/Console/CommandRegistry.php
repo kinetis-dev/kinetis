@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Console;
 
+use Kinetis\Cache\Exception\ArtifactValidation;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
+use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\Exception\InvalidCommandException;
 use Kinetis\Reflection\AttributeScope;
@@ -21,6 +24,10 @@ use ReflectionNamedType;
  */
 final class CommandRegistry
 {
+    private const array COMMAND_ENTRY_KEYS = [
+        'name', 'description', 'controllerClass', 'controllerMethod', 'takesArguments', 'bootstrap',
+    ];
+
     /** @var list<CommandDefinition> */
     private array $commands = [];
 
@@ -101,23 +108,46 @@ final class CommandRegistry
     /**
      * Reconstructs a CommandRegistry from toArray()'s output with zero
      * reflection — the compiled-cache load path's counterpart to
-     * register(). Duplicate-name checking doesn't need to run again here:
-     * toArray() only ever dumps a registry that already passed it once.
+     * register(). Re-checks the same duplicate-name invariant register()
+     * enforces rather than trusting a compiled artifact still holds it —
+     * a hand-edited or otherwise corrupt file could carry two commands
+     * sharing a name even though `toArray()` itself never would.
      *
      * @param list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $data
+     * @throws CacheArtifactExceptionInterface
      */
     public static function fromArray(array $data): self
     {
+        if (!array_is_list($data)) {
+            throw InvalidCacheArtifactException::wrongFieldType('CommandRegistry', 'commands', 'a list');
+        }
+
         $registry = new self();
 
         foreach ($data as $command) {
+            if (!is_array($command)) {
+                throw InvalidCacheArtifactException::malformedEntry('CommandRegistry command', 'a non-array entry');
+            }
+
+            ArtifactValidation::exactKeys($command, 'CommandRegistry command', self::COMMAND_ENTRY_KEYS);
+
+            $name = ArtifactValidation::string($command, 'CommandRegistry command', 'name');
+
+            // The same duplicate-name check register() applies at
+            // registration time — a compiled artifact carrying two
+            // commands sharing a name bypasses that live invariant
+            // otherwise.
+            if ($registry->findCommand($name) !== null) {
+                throw InvalidCacheArtifactException::malformedEntry('CommandRegistry', "duplicate command name \"{$name}\"");
+            }
+
             $registry->commands[] = new CommandDefinition(
-                name: $command['name'],
-                description: $command['description'],
-                controllerClass: $command['controllerClass'],
-                controllerMethod: $command['controllerMethod'],
-                takesArguments: $command['takesArguments'],
-                bootstrap: $command['bootstrap'],
+                name: $name,
+                description: ArtifactValidation::string($command, 'CommandRegistry command', 'description'),
+                controllerClass: ArtifactValidation::string($command, 'CommandRegistry command', 'controllerClass'),
+                controllerMethod: ArtifactValidation::string($command, 'CommandRegistry command', 'controllerMethod'),
+                takesArguments: ArtifactValidation::bool($command, 'CommandRegistry command', 'takesArguments'),
+                bootstrap: ArtifactValidation::bool($command, 'CommandRegistry command', 'bootstrap'),
             );
         }
 

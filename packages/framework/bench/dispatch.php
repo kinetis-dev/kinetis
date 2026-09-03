@@ -41,7 +41,7 @@ $scenarios = [
     'GET /users/{id} (path param)' => static fn (): ServerRequestInterface =>
         new ServerRequest('GET', '/users/42'),
     'POST /users (validated body DTO)' => static fn (): ServerRequestInterface =>
-        new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@noy.cc'])),
+        new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com'])),
 ];
 
 /**

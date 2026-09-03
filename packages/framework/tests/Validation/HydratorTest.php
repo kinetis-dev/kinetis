@@ -11,22 +11,32 @@ use Kinetis\Tests\Http\Fixtures\CreateUserRequest;
 use Kinetis\Tests\Http\Fixtures\HiddenRequest;
 use Kinetis\Tests\Http\Fixtures\RegisterAccountRequest;
 use Kinetis\Tests\Http\Fixtures\UpdateStatusRequest;
+use Kinetis\Tests\Validation\Fixtures\CallableFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\FalseTypedFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\IterableFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\NullTypedFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
+use Kinetis\Tests\Validation\Fixtures\PlainArrayFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
 use Kinetis\Tests\Validation\Fixtures\SelfReferencingListRequest;
 use Kinetis\Tests\Validation\Fixtures\SelfReferencingRequest;
+use Kinetis\Tests\Validation\Fixtures\TrueTypedFieldRequest;
+use Kinetis\Validation\Exception\UnsupportedScalarTypeException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
+use Kinetis\Validation\JsonObject;
+use Kinetis\Validation\JsonTree;
 use PHPUnit\Framework\TestCase;
 
 final class HydratorTest extends TestCase
 {
     public function test_hydrates_a_dto_from_valid_data(): void
     {
-        $dto = Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon', 'email' => 'alon@noy.cc']);
+        $dto = Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon', 'email' => 'alon@example.com']);
 
         self::assertSame('Alon', $dto->name);
-        self::assertSame('alon@noy.cc', $dto->email);
+        self::assertSame('alon@example.com', $dto->email);
     }
 
     public function test_hydrates_a_dto_with_an_asymmetric_visibility_property(): void
@@ -60,7 +70,7 @@ final class HydratorTest extends TestCase
     public function test_rejects_a_name_shorter_than_the_minimum_length(): void
     {
         try {
-            Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Al', 'email' => 'alon@noy.cc']);
+            Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Al', 'email' => 'alon@example.com']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
             self::assertArrayHasKey('name', $e->errors);
@@ -211,10 +221,10 @@ final class HydratorTest extends TestCase
     public function test_hydrating_from_a_compiled_plan_matches_the_live_path_on_success(): void
     {
         $plan = Hydrator::compilePlan(CreateUserRequest::class);
-        $dto = Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon', 'email' => 'alon@noy.cc'], $plan);
+        $dto = Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon', 'email' => 'alon@example.com'], $plan);
 
         self::assertSame('Alon', $dto->name);
-        self::assertSame('alon@noy.cc', $dto->email);
+        self::assertSame('alon@example.com', $dto->email);
     }
 
     public function test_hydrating_from_a_compiled_plan_matches_the_live_path_on_every_failure_mode(): void
@@ -384,6 +394,77 @@ final class HydratorTest extends TestCase
         $dto = Hydrator::hydrate(SelfReferencingRequest::class, ['label' => 'parent', 'child' => $child]);
 
         self::assertSame($child, $dto->child);
+    }
+
+    /**
+     * KINETIS-76 third follow-up: resolveNestedDtoValue()'s own guard
+     * branch (see its docblock) now unwraps the raw value it returns via
+     * JsonTree::unwrap() before handing it back — closing a real,
+     * structural marker-leak class matching resolveListValue()'s own
+     * identical, independently-observable fix (see the two tests above
+     * this one). SelfReferencingRequest's own `child` is honestly, and
+     * unavoidably, not the fixture that can observe *this* specific half
+     * of it directly: `dtoClass` is only ever set for a constructor
+     * parameter reflection reports as a single, strictly non-builtin
+     * `ReflectionNamedType` (never a union, and PHP represents
+     * `array|SelfReferencingRequest|null` as `ReflectionUnionType`, which
+     * `compileNesting()` deliberately never treats as a nested-DTO field
+     * at all) — so the *only* type shape that ever reaches this guard is
+     * one PHP's own constructor invocation already, unconditionally,
+     * rejects with a raw TypeError for any array value regardless of
+     * this fix, JsonObject-marked or not. This test proves that
+     * pre-existing, accepted, documented behavior (see
+     * test_a_self_referencing_dtos_child_field_accepts_an_already_built_instance()
+     * above) is unchanged by this round's Hydrator.php edit — a real
+     * regression check, not a demonstration of the fix itself, which
+     * this codebase has no reachable single-nested-DTO fixture that
+     * could demonstrate observably. The fix is kept anyway: defense in
+     * depth against a partially-converted tree ever reaching a typed
+     * constructor, matching what the reviewer's own remediation asked
+     * for directly ("do not pass partially converted trees into typed
+     * constructors"), independent of whether today's type system happens
+     * to intercept it first.
+     */
+    public function test_a_self_referencing_dtos_recursive_field_still_throws_a_type_error_for_a_real_nested_json_object(): void
+    {
+        $decoded = json_decode(
+            '{"label": "parent", "child": {"label": "nested", "child": {"label": "deepest", "child": null}}}',
+            associative: false,
+        );
+        $converted = JsonTree::convert($decoded);
+        self::assertInstanceOf(JsonObject::class, $converted);
+
+        $this->expectException(\TypeError::class);
+
+        Hydrator::hydrate(SelfReferencingRequest::class, $converted->toArray());
+    }
+
+    /**
+     * The identical leak, for #[ListOf]'s own self-referencing guard --
+     * see resolveListValue()'s docblock. SelfReferencingListRequest's
+     * `children` is loosely typed `array` (not `list<self>`, which PHP
+     * doesn't enforce natively), so it can receive the raw, unhydrated
+     * list directly without hitting a TypeError, letting this prove what
+     * that raw value actually contains, at every depth.
+     */
+    public function test_a_self_referencing_lists_own_elements_never_leak_a_json_object_marker(): void
+    {
+        $decoded = json_decode(
+            '{"label": "parent", "children": [{"label": "child-a", "children": []}, {"label": "child-b", "children": [{"label": "grandchild", "children": []}]}]}',
+            associative: false,
+        );
+        $converted = JsonTree::convert($decoded);
+        self::assertInstanceOf(JsonObject::class, $converted);
+
+        $dto = Hydrator::hydrate(SelfReferencingListRequest::class, $converted->toArray());
+
+        self::assertSame(
+            [
+                ['label' => 'child-a', 'children' => []],
+                ['label' => 'child-b', 'children' => [['label' => 'grandchild', 'children' => []]]],
+            ],
+            $dto->children,
+        );
     }
 
     public function test_hydrates_a_list_of_nested_dtos_from_a_list_of_arrays(): void
@@ -610,6 +691,24 @@ final class HydratorTest extends TestCase
         }
     }
 
+    /**
+     * #[ListOf]'s own JSON Schema claims `{type: 'array', items: ...}`
+     * exactly like a plain array field's — the same map-shaped-JSON-object
+     * bypass applies here too, not just to a bare array/iterable field.
+     */
+    public function test_a_map_shaped_value_for_a_listof_field_is_rejected_not_silently_iterated(): void
+    {
+        try {
+            Hydrator::hydrate(OrderWithItems::class, [
+                'customerName' => 'Alon',
+                'items' => ['key' => ['product' => 'widget', 'quantity' => 1]],
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items' => ['must be a JSON array, not a JSON object.']], $e->errors);
+        }
+    }
+
     public function test_an_explicit_null_for_a_non_nullable_field_is_a_validation_error_not_a_type_error(): void
     {
         try {
@@ -638,5 +737,240 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(['title' => ['must not be null.']], $e->errors);
         }
+    }
+
+    /**
+     * KINETIS-76: a plain `array` field (no #[ListOf]) previously reached
+     * `new $className(...)` unchecked for a non-array value, surfacing as
+     * a raw TypeError instead of the same 422/validation-error contract
+     * every other builtin type already gets.
+     */
+    public function test_a_non_array_value_for_a_plain_array_field_is_a_validation_error_not_a_type_error(): void
+    {
+        try {
+            Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => 'not-an-array']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['tags' => ['must be an array, value given.']], $e->errors);
+        }
+    }
+
+    public function test_a_real_array_value_for_a_plain_array_field_hydrates_normally(): void
+    {
+        $instance = Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => ['a', 'b']]);
+
+        self::assertSame(['a', 'b'], $instance->tags);
+    }
+
+    /**
+     * A plain `array` field's own JSON Schema claims `{type: 'array'}` —
+     * a real JSON *array*, not any array-shaped PHP value. This
+     * particular call is a *direct* Hydrator::hydrate() call with a
+     * hand-built PHP map — never JSON-decoded through Dispatcher/
+     * McpServer's own JsonTree pipeline at all, so there is no
+     * JsonObject marking involved here — the same map-shaped PHP array a
+     * `json_decode(..., associative: true)` call, or a form-decoded
+     * body, would also produce for a genuine JSON object. See
+     * JsonTreeTest for how a real request's own JSON object is
+     * distinguished from a real JSON array before either ever reaches
+     * this class, provenance-preserving even when its own keys happen
+     * to look sequential.
+     */
+    public function test_a_map_shaped_value_for_a_plain_array_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => ['key' => 'value']]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['tags' => ['must be a JSON array, not a JSON object.']], $e->errors);
+        }
+    }
+
+    public function test_an_empty_array_value_for_a_plain_array_field_hydrates_normally(): void
+    {
+        // A hand-built, empty PHP array passed directly to hydrate() —
+        // not a real JSON-decoded value at all, so there is nothing
+        // ambiguous about it: a genuinely empty JSON *object* reaching
+        // this same field through the real HTTP/MCP decode pipeline is
+        // rejected instead, proven directly by
+        // JsonTreeTest::test_an_empty_json_object_becomes_a_marker_wrapping_an_empty_array()
+        // and DispatcherTest::test_an_empty_json_object_is_still_rejected_for_a_plain_array_field().
+        $instance = Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => []]);
+
+        self::assertSame([], $instance->tags);
+    }
+
+    // KINETIS-76 follow-up: the complete, audited policy for every one of
+    // the twelve builtin type names PHP can attach to a parameter (see
+    // JsonSchema::forType()'s own docblock for how this list was derived).
+    // typeMismatchMessage() is the one boundary shared by #[Body] fields
+    // here, #[Query]/path parameters via Dispatcher, and MCP tool
+    // arguments via McpDispatcher — proving it here proves it everywhere.
+
+    public function test_iterable_gets_the_identical_array_check_as_plain_array(): void
+    {
+        try {
+            Hydrator::hydrate(IterableFieldRequest::class, ['items' => 'not-an-array']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items' => ['must be an array, value given.']], $e->errors);
+        }
+    }
+
+    public function test_a_real_array_value_for_an_iterable_field_hydrates_normally(): void
+    {
+        $instance = Hydrator::hydrate(IterableFieldRequest::class, ['items' => ['a', 'b']]);
+
+        self::assertSame(['a', 'b'], $instance->items);
+    }
+
+    public function test_a_map_shaped_value_for_an_iterable_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(IterableFieldRequest::class, ['items' => ['key' => 'value']]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items' => ['must be a JSON array, not a JSON object.']], $e->errors);
+        }
+    }
+
+    public function test_a_non_null_value_for_a_standalone_null_typed_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(NullTypedFieldRequest::class, ['marker' => 'not-null']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['marker' => ['must be null, value given.']], $e->errors);
+        }
+    }
+
+    public function test_an_explicit_null_value_for_a_standalone_null_typed_field_hydrates_normally(): void
+    {
+        $instance = Hydrator::hydrate(NullTypedFieldRequest::class, ['marker' => null]);
+
+        self::assertNull($instance->marker);
+    }
+
+    public function test_a_non_true_value_for_a_standalone_true_typed_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(TrueTypedFieldRequest::class, ['confirmed' => false]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['confirmed' => ['must be true, boolean given.']], $e->errors);
+        }
+    }
+
+    public function test_the_literal_true_value_for_a_standalone_true_typed_field_hydrates_normally(): void
+    {
+        $instance = Hydrator::hydrate(TrueTypedFieldRequest::class, ['confirmed' => true]);
+
+        self::assertTrue($instance->confirmed);
+    }
+
+    public function test_a_non_false_value_for_a_standalone_false_typed_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(FalseTypedFieldRequest::class, ['declined' => true]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['declined' => ['must be false, boolean given.']], $e->errors);
+        }
+    }
+
+    public function test_the_literal_false_value_for_a_standalone_false_typed_field_hydrates_normally(): void
+    {
+        $instance = Hydrator::hydrate(FalseTypedFieldRequest::class, ['declined' => false]);
+
+        self::assertFalse($instance->declined);
+    }
+
+    /**
+     * `object` has no truthful JSON representation this framework
+     * accepts — a decoded JSON body only ever produces arrays/scalars,
+     * never a real PHP object — so any real value supplied for it is
+     * rejected outright rather than reaching `new $className(...)`
+     * unchecked and surfacing as a raw TypeError.
+     */
+    public function test_any_value_for_an_object_typed_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(ObjectFieldRequest::class, ['extra' => ['a' => 1]]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['extra' => ['cannot be provided through JSON input — no request value can construct a plain object.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_an_omitted_object_typed_field_with_no_default_is_reported_as_required_not_rejected(): void
+    {
+        try {
+            Hydrator::hydrate(ObjectFieldRequest::class, []);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['extra' => ['is required.']], $e->errors);
+        }
+    }
+
+    /**
+     * `callable` is rejected unconditionally, not just because it has no
+     * truthful JSON shape but because it's a real security boundary: a
+     * JSON string reaching a callable-typed parameter is exactly the
+     * shape of an arbitrary-function-name-injection risk if the
+     * constructor ever invokes it. `"strtoupper"` is a genuinely valid
+     * PHP callable — proving this is rejected regardless of whether the
+     * attacker-supplied string happens to name something harmless.
+     */
+    public function test_any_value_for_a_callable_typed_field_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(CallableFieldRequest::class, ['handler' => 'strtoupper']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['handler' => ['cannot be provided through JSON input — callable values are not accepted.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_an_omitted_callable_typed_field_with_no_default_is_reported_as_required_not_rejected(): void
+    {
+        try {
+            Hydrator::hydrate(CallableFieldRequest::class, []);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['handler' => ['is required.']], $e->errors);
+        }
+    }
+
+    /**
+     * Every one of the twelve real builtin type names has its own arm in
+     * typeMismatchMessage() now (see the class docblock) — a genuinely
+     * unrecognized scalarType string can only reach the fail-closed
+     * default arm, which throws rather than silently returning null
+     * (accept-anything). This is the exact fail-open pattern that let
+     * object/callable/iterable/null/true/false all reach a raw
+     * constructor unchecked before this class's own audit gave each of
+     * them a real policy; a future/unknown type must not get the same
+     * silent treatment.
+     */
+    public function test_a_genuinely_unrecognized_scalar_type_fails_closed_not_open(): void
+    {
+        $this->expectException(UnsupportedScalarTypeException::class);
+        $this->expectExceptionMessage('not-a-real-builtin-type');
+
+        Hydrator::typeMismatchMessage('not-a-real-builtin-type', 'some value');
+    }
+
+    public function test_mixed_has_its_own_explicit_arm_and_accepts_any_non_null_value(): void
+    {
+        self::assertNull(Hydrator::typeMismatchMessage('mixed', 'anything'));
+        self::assertNull(Hydrator::typeMismatchMessage('mixed', 42));
+        self::assertNull(Hydrator::typeMismatchMessage('mixed', ['a', 'b']));
+        self::assertNull(Hydrator::typeMismatchMessage('mixed', true));
     }
 }

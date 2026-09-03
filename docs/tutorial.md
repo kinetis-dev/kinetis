@@ -819,15 +819,36 @@ final readonly class ActionEventListener
 anywhere under your own PSR-4 root carrying a `#[Listener]` method is
 found automatically.
 
-`public/index.php` needs one more line, though — `EventDispatcher`
-resolves `EventListenerRegistry` through the container, which means it
-has to be registered with `$app->instance()` *before* `boot()` locks
-bindings, the same requirement `Config` and anything from `bootstrap.php`
-already have. Skip this and nothing breaks loudly: `EventDispatcher`'s
+This is the one place the *hand-built* `public/index.php` this tutorial
+has been growing needs a real addition to support events. It is not a
+step every Kinetis application needs: the real, framework-managed entry
+points — `public/index.php`'s own full reference copy, `bin/kinetis`,
+and `kinetis/pingpong`'s own `public/index.php` (see the closing section
+of this tutorial) — already discover `EventListenerRegistry` themselves
+(live via `EventListenerDiscovery::discover()`, or reconstructed from a
+compiled cache via `fromArray()`) and hand the result to
+`Kinetis\Cache\BootSequence::run()`, the one piece of shared assembly all
+of them delegate to for actually *publishing* it — binding it into the
+container, before the bootstrap chain runs, with the right precedence —
+with nothing for you to write. This tutorial keeps its own
+`public/index.php` in a smaller, hand-assembled form on purpose (see the
+tip above), so it never picked either of those two steps up along the
+way — this is the point where that gap actually matters, and where it
+gets closed by hand instead.
+
+`EventDispatcher` resolves `EventListenerRegistry` through the
+container, which means it has to be registered with `$app->instance()`
+*before* `boot()` locks bindings, the same requirement `Config` and
+anything from `bootstrap.php` already have — and *before*
+`RoutesFile::loadBootstrap()` specifically, so `bootstrap.php` (yours, or
+a package's) can resolve and augment — or outright replace — whatever's
+already bound under that id, rather than have it silently reasserted
+afterward (see {doc}`appendix` for the full reasoning, under
+`BootSequence`). Skip this and nothing breaks loudly: `EventDispatcher`'s
 container resolution silently falls back to an empty
 `EventListenerRegistry` instead, so every `dispatch()` call still
 "succeeds" — it just never reaches any listener, with no error to tell
-you why:
+you why.
 
 ```{code-block} php
 :caption: public/index.php
@@ -840,8 +861,8 @@ use Kinetis\Events\EventListenerRegistry;
 $app = new AppScope();
 $config = Config::fromEnvironment();
 $app->instance(Config::class, $config);
-RoutesFile::loadBootstrap($projectRoot)($app, $config);
 $app->instance(EventListenerRegistry::class, EventListenerDiscovery::discover($projectRoot));
+RoutesFile::loadBootstrap($projectRoot)($app, $config);
 $app->boot();
 ```
 
