@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.2.5",
+            "version": "1.2.6",
             "bin": [
                 "bin/kinetis"
             ],
@@ -59,7 +59,7 @@
             "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework"
             ],
@@ -88,7 +88,7 @@
             "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.1.3",
             "requires": [
                 "framework"
             ],
@@ -162,7 +162,7 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.1.3",
             "requires": [
                 "framework"
             ],
@@ -195,7 +195,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.2.2",
+            "version": "1.2.3",
             "requires": [
                 "framework"
             ],
@@ -221,7 +221,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.1.3",
             "requires": [
                 "framework"
             ],
@@ -290,7 +290,7 @@
             "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
             "namespace": "Kinetis\\RevoltHttpClient\\",
             "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.1.3",
             "requiresDev": [
                 "framework"
             ],
@@ -455,7 +455,7 @@
             "description": "OpenTelemetry tracing for Kinetis — request spans, SQL and queue decorators, a traced HTTP transport, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -492,7 +492,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework"
             ],
@@ -540,7 +540,7 @@
             "description": "Real-time broadcasting for Kinetis over the Pusher Channels protocol (Soketi, Laravel Reverb, or Pusher itself) - attribute-based private/presence channel authorization and a non-blocking driver over kinetis/revolt-http-client.",
             "namespace": "Kinetis\\Broadcasting\\",
             "testNamespace": "Kinetis\\Broadcasting\\Tests\\",
-            "version": "1.2.2",
+            "version": "1.2.3",
             "requires": [
                 "framework",
                 "revolt-http-client"

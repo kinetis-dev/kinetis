@@ -23,6 +23,8 @@ final readonly class CommandCache
         'name', 'description', 'controllerClass', 'controllerMethod', 'takesArguments', 'bootstrap',
     ];
 
+    private const string ARTIFACT_COMPONENT = 'CommandCache command';
+
     public function __construct(
         public int $formatVersion,
         /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> */
@@ -76,15 +78,15 @@ final readonly class CommandCache
      */
     private static function validateCommandEntry(array $entry): array
     {
-        ArtifactValidation::exactKeys($entry, 'CommandCache command', self::COMMAND_ENTRY_KEYS);
+        ArtifactValidation::exactKeys($entry, self::ARTIFACT_COMPONENT, self::COMMAND_ENTRY_KEYS);
 
         return [
-            'name' => ArtifactValidation::string($entry, 'CommandCache command', 'name'),
-            'description' => ArtifactValidation::string($entry, 'CommandCache command', 'description'),
-            'controllerClass' => ArtifactValidation::string($entry, 'CommandCache command', 'controllerClass'),
-            'controllerMethod' => ArtifactValidation::string($entry, 'CommandCache command', 'controllerMethod'),
-            'takesArguments' => ArtifactValidation::bool($entry, 'CommandCache command', 'takesArguments'),
-            'bootstrap' => ArtifactValidation::bool($entry, 'CommandCache command', 'bootstrap'),
+            'name' => ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'name'),
+            'description' => ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'description'),
+            'controllerClass' => ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'controllerClass'),
+            'controllerMethod' => ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'controllerMethod'),
+            'takesArguments' => ArtifactValidation::bool($entry, self::ARTIFACT_COMPONENT, 'takesArguments'),
+            'bootstrap' => ArtifactValidation::bool($entry, self::ARTIFACT_COMPONENT, 'bootstrap'),
         ];
     }
 }

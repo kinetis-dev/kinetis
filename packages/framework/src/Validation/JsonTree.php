@@ -19,6 +19,7 @@ namespace Kinetis\Validation;
  */
 final class JsonTree
 {
+    // Never instantiated — every method here is static.
     private function __construct() {}
 
     /**

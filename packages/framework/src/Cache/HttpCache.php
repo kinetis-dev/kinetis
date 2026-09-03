@@ -72,6 +72,8 @@ final readonly class HttpCache
         'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware',
     ];
 
+    private const string ARTIFACT_COMPONENT = 'HttpCache route';
+
     /**
      * Validates every top-level field's presence, type, and — via
      * `ArtifactValidation::exactKeys()` — that no *extra* field is
@@ -132,14 +134,14 @@ final readonly class HttpCache
      */
     private static function validateRouteEntry(array $entry): array
     {
-        ArtifactValidation::exactKeys($entry, 'HttpCache route', self::ROUTE_ENTRY_KEYS);
+        ArtifactValidation::exactKeys($entry, self::ARTIFACT_COMPONENT, self::ROUTE_ENTRY_KEYS);
 
-        $httpMethod = ArtifactValidation::string($entry, 'HttpCache route', 'httpMethod');
-        $pathTemplate = ArtifactValidation::string($entry, 'HttpCache route', 'pathTemplate');
-        $controllerClass = ArtifactValidation::string($entry, 'HttpCache route', 'controllerClass');
-        $controllerMethod = ArtifactValidation::string($entry, 'HttpCache route', 'controllerMethod');
-        $status = ArtifactValidation::int($entry, 'HttpCache route', 'status');
-        $middleware = ArtifactValidation::listOfStrings($entry, 'HttpCache route', 'middleware');
+        $httpMethod = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'httpMethod');
+        $pathTemplate = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'pathTemplate');
+        $controllerClass = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'controllerClass');
+        $controllerMethod = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'controllerMethod');
+        $status = ArtifactValidation::int($entry, self::ARTIFACT_COMPONENT, 'status');
+        $middleware = ArtifactValidation::listOfStrings($entry, self::ARTIFACT_COMPONENT, 'middleware');
 
         /** @var class-string $controllerClass */
         return [

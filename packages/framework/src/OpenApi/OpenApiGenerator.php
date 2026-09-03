@@ -123,15 +123,18 @@ final class OpenApiGenerator
     }
 
     /**
+     * Dispatches each of $method's own parameters by which binding
+     * attribute it carries — #[Body] describes the request body,
+     * #[Query] and a route path parameter each become one `parameters`
+     * entry — building the two pieces describeOperation() assembles into
+     * its own final `operation` object.
+     *
      * @phpstan-impure mutates $this->componentSchemas/$this->schemaNamesByClass
-     *     (via schemaRefFor(), transitively through describeRequestBody()/
-     *     describeDefaultResponse()) — annotated so PHPStan doesn't assume
-     *     generate()'s $this->componentSchemas is still `[]` after this runs.
-     * @return array<string, mixed>
+     *     via schemaRefFor(), transitively through describeRequestBody().
+     * @return array{parameters: list<array<string, mixed>>, requestBody: ?array<string, mixed>}
      */
-    private function describeOperation(Route $route): array
+    private function describeParameters(ReflectionMethod $method, Route $route): array
     {
-        $method = new ReflectionMethod($route->controllerClass, $route->controllerMethod);
         $parameters = [];
         $requestBody = null;
 
@@ -175,6 +178,21 @@ final class OpenApiGenerator
                 ];
             }
         }
+
+        return ['parameters' => $parameters, 'requestBody' => $requestBody];
+    }
+
+    /**
+     * @phpstan-impure mutates $this->componentSchemas/$this->schemaNamesByClass
+     *     (via schemaRefFor(), transitively through describeRequestBody()/
+     *     describeDefaultResponse()) — annotated so PHPStan doesn't assume
+     *     generate()'s $this->componentSchemas is still `[]` after this runs.
+     * @return array<string, mixed>
+     */
+    private function describeOperation(Route $route): array
+    {
+        $method = new ReflectionMethod($route->controllerClass, $route->controllerMethod);
+        ['parameters' => $parameters, 'requestBody' => $requestBody] = $this->describeParameters($method, $route);
 
         $responses = [
             (string) $route->status => $this->describeDefaultResponse($method),

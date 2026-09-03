@@ -28,6 +28,8 @@ final class Router
         'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware',
     ];
 
+    private const string ARTIFACT_COMPONENT = 'Router route';
+
     /** @var list<Route> */
     private array $routes = [];
 
@@ -159,6 +161,36 @@ final class Router
                 : ConflictingRegistrationContextException::forClass($controllerClass);
         }
 
+        $pending = $this->reflectPendingRoutes($controllerClass, $globalMiddleware);
+
+        foreach ($pending as $route) {
+            $this->routesByConflictKey[$route->conflictKey()] = $route;
+            $this->routes[] = $route;
+        }
+
+        $this->registrationContexts[$controllerClass] = $contextSignature;
+
+        usort($this->routes, Route::compareForMatching(...));
+    }
+
+    /**
+     * Reflects $controllerClass for every RouteAttribute-carrying method,
+     * validating and building each candidate Route — no Router state is
+     * mutated here, so register() is what decides how to apply the result,
+     * and a throw partway through leaves nothing to roll back.
+     *
+     * A conflict is checked against both $this->routesByConflictKey
+     * (already-committed routes) and this batch's own pending routes so
+     * far — two methods on the same controller claiming the same
+     * {httpMethod, path} conflict with each other too, not only with an
+     * already-registered class.
+     *
+     * @param class-string $controllerClass
+     * @param list<class-string> $globalMiddleware
+     * @return list<Route>
+     */
+    private function reflectPendingRoutes(string $controllerClass, array $globalMiddleware): array
+    {
         $reflection = AttributeScope::reflect($controllerClass);
         $classMiddleware = self::middlewareClassesFor($reflection);
 
@@ -250,14 +282,7 @@ final class Router
             }
         }
 
-        foreach ($pending as $route) {
-            $this->routesByConflictKey[$route->conflictKey()] = $route;
-            $this->routes[] = $route;
-        }
-
-        $this->registrationContexts[$controllerClass] = $contextSignature;
-
-        usort($this->routes, Route::compareForMatching(...));
+        return $pending;
     }
 
     /**
@@ -372,17 +397,17 @@ final class Router
 
         foreach ($routes as $route) {
             if (!is_array($route)) {
-                throw InvalidCacheArtifactException::malformedEntry('Router route', 'a non-array entry');
+                throw InvalidCacheArtifactException::malformedEntry(self::ARTIFACT_COMPONENT, 'a non-array entry');
             }
 
-            ArtifactValidation::exactKeys($route, 'Router route', self::ROUTE_ENTRY_KEYS);
+            ArtifactValidation::exactKeys($route, self::ARTIFACT_COMPONENT, self::ROUTE_ENTRY_KEYS);
 
-            $httpMethod = ArtifactValidation::string($route, 'Router route', 'httpMethod');
-            $pathTemplate = ArtifactValidation::string($route, 'Router route', 'pathTemplate');
-            $controllerClass = ArtifactValidation::string($route, 'Router route', 'controllerClass');
-            $controllerMethod = ArtifactValidation::string($route, 'Router route', 'controllerMethod');
-            $status = ArtifactValidation::int($route, 'Router route', 'status');
-            $middleware = ArtifactValidation::listOfStrings($route, 'Router route', 'middleware');
+            $httpMethod = ArtifactValidation::string($route, self::ARTIFACT_COMPONENT, 'httpMethod');
+            $pathTemplate = ArtifactValidation::string($route, self::ARTIFACT_COMPONENT, 'pathTemplate');
+            $controllerClass = ArtifactValidation::string($route, self::ARTIFACT_COMPONENT, 'controllerClass');
+            $controllerMethod = ArtifactValidation::string($route, self::ARTIFACT_COMPONENT, 'controllerMethod');
+            $status = ArtifactValidation::int($route, self::ARTIFACT_COMPONENT, 'status');
+            $middleware = ArtifactValidation::listOfStrings($route, self::ARTIFACT_COMPONENT, 'middleware');
 
             try {
                 /** @var class-string $controllerClass */
@@ -443,7 +468,7 @@ final class Router
                     throw $e;
                 }
 
-                throw InvalidCacheArtifactException::malformedEntry('Router route', $e->getMessage());
+                throw InvalidCacheArtifactException::malformedEntry(self::ARTIFACT_COMPONENT, $e->getMessage());
             }
         }
 

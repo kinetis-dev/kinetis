@@ -148,6 +148,23 @@ class JwtAuthMiddleware implements MiddlewareInterface
         private ?string $expectedIssuer = null,
         private ?array $acceptedAudiences = null,
     ) {
+        self::assertValidKey($key, $algorithm);
+        self::assertValidIssuerAndAudiences($expectedIssuer, $acceptedAudiences);
+    }
+
+    /**
+     * A given array $key must be a non-empty map of non-empty string kid
+     * to a real Key instance — checked below, never declared here as
+     * array<string, Key>, since this method's own body is what
+     * establishes that guarantee for a caller; declaring it already-true
+     * on entry would make the validation that enforces it look like
+     * unreachable code. mixed is a real, if unhelpful, answer to
+     * PHPStan's own "specify the array's value type" requirement.
+     *
+     * @param string|array<mixed> $key
+     */
+    private static function assertValidKey(string|array $key, string $algorithm): void
+    {
         if (is_string($key)) {
             JwtKeyValidator::assertSupportedAlgorithm(
                 $algorithm,
@@ -162,53 +179,63 @@ class JwtAuthMiddleware implements MiddlewareInterface
                     ? JwtAuthMiddlewareException::hmacSecretTooShort($algorithm)
                     : JwtAuthMiddlewareException::invalidRsaPublicKey(),
             );
-        } else {
-            if ($key === []) {
-                throw JwtAuthMiddlewareException::emptyKeyMap();
-            }
 
-            foreach ($key as $kid => $entry) {
-                if (!is_string($kid) || $kid === '') {
-                    throw JwtAuthMiddlewareException::invalidKeyMapKid();
-                }
-
-                if (!$entry instanceof Key) {
-                    throw JwtAuthMiddlewareException::invalidKeyMapValue($kid);
-                }
-
-                $entryAlgorithm = $entry->getAlgorithm();
-
-                JwtKeyValidator::assertSupportedAlgorithm(
-                    $entryAlgorithm,
-                    static fn () => JwtAuthMiddlewareException::unsupportedKeyMapAlgorithm($kid),
-                );
-
-                JwtKeyValidator::assertKeyMaterial(
-                    $entryAlgorithm,
-                    $entry->getKeyMaterial(),
-                    'public',
-                    static fn () => JwtAuthMiddlewareException::invalidKeyMapKeyMaterial($kid),
-                );
-            }
+            return;
         }
 
+        if ($key === []) {
+            throw JwtAuthMiddlewareException::emptyKeyMap();
+        }
+
+        foreach ($key as $kid => $entry) {
+            if (!is_string($kid) || $kid === '') {
+                throw JwtAuthMiddlewareException::invalidKeyMapKid();
+            }
+
+            if (!$entry instanceof Key) {
+                throw JwtAuthMiddlewareException::invalidKeyMapValue($kid);
+            }
+
+            $entryAlgorithm = $entry->getAlgorithm();
+
+            JwtKeyValidator::assertSupportedAlgorithm(
+                $entryAlgorithm,
+                static fn () => JwtAuthMiddlewareException::unsupportedKeyMapAlgorithm($kid),
+            );
+
+            JwtKeyValidator::assertKeyMaterial(
+                $entryAlgorithm,
+                $entry->getKeyMaterial(),
+                'public',
+                static fn () => JwtAuthMiddlewareException::invalidKeyMapKeyMaterial($kid),
+            );
+        }
+    }
+
+    /**
+     * @param ?list<string> $acceptedAudiences
+     */
+    private static function assertValidIssuerAndAudiences(?string $expectedIssuer, ?array $acceptedAudiences): void
+    {
         if ($expectedIssuer === '') {
             throw JwtAuthMiddlewareException::emptyExpectedIssuer();
         }
 
-        if ($acceptedAudiences !== null) {
-            if ($acceptedAudiences === []) {
-                throw JwtAuthMiddlewareException::emptyAcceptedAudiences();
-            }
+        if ($acceptedAudiences === null) {
+            return;
+        }
 
-            if (!array_is_list($acceptedAudiences)) {
-                throw JwtAuthMiddlewareException::acceptedAudiencesNotAList();
-            }
+        if ($acceptedAudiences === []) {
+            throw JwtAuthMiddlewareException::emptyAcceptedAudiences();
+        }
 
-            foreach ($acceptedAudiences as $audience) {
-                if (!is_string($audience) || $audience === '') {
-                    throw JwtAuthMiddlewareException::invalidAcceptedAudience();
-                }
+        if (!array_is_list($acceptedAudiences)) {
+            throw JwtAuthMiddlewareException::acceptedAudiencesNotAList();
+        }
+
+        foreach ($acceptedAudiences as $audience) {
+            if (!is_string($audience) || $audience === '') {
+                throw JwtAuthMiddlewareException::invalidAcceptedAudience();
             }
         }
     }

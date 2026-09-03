@@ -80,6 +80,39 @@ final class EventListenerRegistry
             return;
         }
 
+        $pending = self::reflectPendingListeners($class);
+
+        // Nothing is appended, and $class is not marked registered, until
+        // every attributed method has been validated successfully above —
+        // a thrown InvalidListenerException leaves $listeners/
+        // $registeredClasses exactly as they were before this call, so a
+        // later register() call for the same still-invalid class reaches
+        // this same reflection path again rather than short-circuiting.
+        foreach ($pending as $item) {
+            $this->listeners[$item['eventClass']][] = $item['entry'];
+
+            usort(
+                $this->listeners[$item['eventClass']],
+                static fn (array $a, array $b): int => $b['priority'] <=> $a['priority']
+                    ?: $a['class'] <=> $b['class']
+                    ?: $a['method'] <=> $b['method'],
+            );
+        }
+
+        $this->registeredClasses[$class] = true;
+    }
+
+    /**
+     * Reflects $class for every #[Listener] method and validates each
+     * one's signature — no state is mutated here, so a throw partway
+     * through leaves register() with nothing to roll back.
+     *
+     * @param class-string $class
+     * @return list<array{eventClass: class-string, entry: array{class: class-string, method: string, priority: int, queued: bool}}>
+     * @throws InvalidListenerException
+     */
+    private static function reflectPendingListeners(string $class): array
+    {
         $reflection = AttributeScope::reflect($class);
         $queued = is_a($class, ShouldQueue::class, true);
 
@@ -117,24 +150,7 @@ final class EventListenerRegistry
             ];
         }
 
-        // Nothing is appended, and $class is not marked registered, until
-        // every attributed method has been validated successfully above —
-        // a thrown InvalidListenerException leaves $listeners/
-        // $registeredClasses exactly as they were before this call, so a
-        // later register() call for the same still-invalid class reaches
-        // this same reflection path again rather than short-circuiting.
-        foreach ($pending as $item) {
-            $this->listeners[$item['eventClass']][] = $item['entry'];
-
-            usort(
-                $this->listeners[$item['eventClass']],
-                static fn (array $a, array $b): int => $b['priority'] <=> $a['priority']
-                    ?: $a['class'] <=> $b['class']
-                    ?: $a['method'] <=> $b['method'],
-            );
-        }
-
-        $this->registeredClasses[$class] = true;
+        return $pending;
     }
 
     /**
@@ -206,55 +222,82 @@ final class EventListenerRegistry
                 throw InvalidListenerException::forInvalidEventKey($eventClass);
             }
 
-            if (!is_array($entries) || !array_is_list($entries)) {
-                throw InvalidListenerException::forNonListEntries($eventClass);
-            }
+            $result = self::validateEventEntries($eventClass, $entries);
 
-            /** @var array<string, true> $seenInEvent */
-            $seenInEvent = [];
-            $validated = [];
+            /** @var list<array{class: class-string, method: string, priority: int, queued: bool}> $validated */
+            $validated = $result['validated'];
+            $registry->listeners[$eventClass] = $validated;
 
-            foreach ($entries as $entry) {
-                if (!is_array($entry) || !self::hasExactListenerKeys($entry)) {
-                    throw InvalidListenerException::forMalformedCacheEntry($eventClass);
-                }
-
-                $class = $entry['class'];
-                $method = $entry['method'];
-                $priority = $entry['priority'];
-                $queued = $entry['queued'];
-
-                if (
-                    !is_string($class) || preg_match(self::CLASS_STRING_PATTERN, $class) !== 1
-                    || !is_string($method) || preg_match(self::IDENTIFIER_PATTERN, $method) !== 1
-                    || !is_int($priority)
-                    || !is_bool($queued)
-                ) {
-                    throw InvalidListenerException::forMalformedCacheEntry($eventClass);
-                }
-
-                $key = $class . '::' . $method;
-
-                if (isset($seenInEvent[$key])) {
-                    throw InvalidListenerException::forDuplicateCacheEntry($eventClass, $class, $method);
-                }
-
-                $seenInEvent[$key] = true;
-                $validated[] = ['class' => $class, 'method' => $method, 'priority' => $priority, 'queued' => $queued];
+            foreach ($result['classes'] as $class) {
+                /** @var class-string $class */
                 $registry->registeredClasses[$class] = true;
             }
-
-            usort(
-                $validated,
-                static fn (array $a, array $b): int => $b['priority'] <=> $a['priority']
-                    ?: $a['class'] <=> $b['class']
-                    ?: $a['method'] <=> $b['method'],
-            );
-
-            $registry->listeners[$eventClass] = $validated;
         }
 
         return $registry;
+    }
+
+    /**
+     * Validates one event class's own entries, in isolation — no
+     * EventListenerRegistry state is touched here, so fromArray() is what
+     * decides how to apply the result (its own $listeners/$registeredClasses
+     * assignments below).
+     *
+     * @return array{
+     *     validated: list<array{class: string, method: string, priority: int, queued: bool}>,
+     *     classes: list<string>,
+     * }
+     * @throws InvalidListenerException
+     */
+    private static function validateEventEntries(string $eventClass, mixed $entries): array
+    {
+        if (!is_array($entries) || !array_is_list($entries)) {
+            throw InvalidListenerException::forNonListEntries($eventClass);
+        }
+
+        /** @var array<string, true> $seenInEvent */
+        $seenInEvent = [];
+        $validated = [];
+        $classes = [];
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry) || !self::hasExactListenerKeys($entry)) {
+                throw InvalidListenerException::forMalformedCacheEntry($eventClass);
+            }
+
+            $class = $entry['class'];
+            $method = $entry['method'];
+            $priority = $entry['priority'];
+            $queued = $entry['queued'];
+
+            if (
+                !is_string($class) || preg_match(self::CLASS_STRING_PATTERN, $class) !== 1
+                || !is_string($method) || preg_match(self::IDENTIFIER_PATTERN, $method) !== 1
+                || !is_int($priority)
+                || !is_bool($queued)
+            ) {
+                throw InvalidListenerException::forMalformedCacheEntry($eventClass);
+            }
+
+            $key = $class . '::' . $method;
+
+            if (isset($seenInEvent[$key])) {
+                throw InvalidListenerException::forDuplicateCacheEntry($eventClass, $class, $method);
+            }
+
+            $seenInEvent[$key] = true;
+            $validated[] = ['class' => $class, 'method' => $method, 'priority' => $priority, 'queued' => $queued];
+            $classes[] = $class;
+        }
+
+        usort(
+            $validated,
+            static fn (array $a, array $b): int => $b['priority'] <=> $a['priority']
+                ?: $a['class'] <=> $b['class']
+                ?: $a['method'] <=> $b['method'],
+        );
+
+        return ['validated' => $validated, 'classes' => $classes];
     }
 
     /**

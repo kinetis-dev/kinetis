@@ -222,6 +222,8 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
 
     private const array CHANNEL_ENTRY_KEYS = ['pattern', 'regex', 'paramNames', 'class', 'method', 'usesCurrentUser'];
 
+    private const string ARTIFACT_COMPONENT = 'BroadcastChannelRegistry channel';
+
     /**
      * Validates every entry's own six required fields (and that no
      * *extra* field is present either) via
@@ -290,17 +292,17 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
                 throw InvalidCacheArtifactException::malformedEntry('BroadcastChannelRegistry', 'a non-array entry');
             }
 
-            ArtifactValidation::exactKeys($entry, 'BroadcastChannelRegistry channel', self::CHANNEL_ENTRY_KEYS);
+            ArtifactValidation::exactKeys($entry, self::ARTIFACT_COMPONENT, self::CHANNEL_ENTRY_KEYS);
 
-            $pattern = ArtifactValidation::string($entry, 'BroadcastChannelRegistry channel', 'pattern');
+            $pattern = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'pattern');
             // Shape-checked, deliberately unused beyond that — see this
             // method's own docblock.
-            ArtifactValidation::string($entry, 'BroadcastChannelRegistry channel', 'regex');
-            ArtifactValidation::listOfStrings($entry, 'BroadcastChannelRegistry channel', 'paramNames');
+            ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'regex');
+            ArtifactValidation::listOfStrings($entry, self::ARTIFACT_COMPONENT, 'paramNames');
 
-            $class = ArtifactValidation::string($entry, 'BroadcastChannelRegistry channel', 'class');
-            $method = ArtifactValidation::string($entry, 'BroadcastChannelRegistry channel', 'method');
-            $usesCurrentUser = ArtifactValidation::bool($entry, 'BroadcastChannelRegistry channel', 'usesCurrentUser');
+            $class = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'class');
+            $method = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'method');
+            $usesCurrentUser = ArtifactValidation::bool($entry, self::ARTIFACT_COMPONENT, 'usesCurrentUser');
 
             try {
                 [$regex, $paramNames] = self::compilePattern($pattern);
