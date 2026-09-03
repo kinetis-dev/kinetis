@@ -434,69 +434,7 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
             try {
                 return $operation($client);
             } catch (QueryException $e) {
-                try {
-                    $redirect = ClusterRedirect::tryParse($e->getMessage());
-                } catch (RedisException $malformed) {
-                    throw CacheException::forOperation($operationName, $key, $malformed);
-                }
-
-                if ($redirect === null) {
-                    throw CacheException::forOperation($operationName, $key, $e);
-                }
-
-                if ($redirect->slot !== $expectedSlot) {
-                    throw CacheException::forOperation($operationName, $key, new RedisException(
-                        "{$redirect->kind->value} redirect names slot {$redirect->slot}, but \"{$key}\" hashes to slot {$expectedSlot}.",
-                    ));
-                }
-
-                $redirectSignature = $redirect->kind->value . ':' . $redirect->target->key();
-
-                if (isset($seenRedirects[$redirectSignature])) {
-                    throw CacheException::forOperation($operationName, $key, new RedisException(
-                        "Redirect loop detected: {$redirect->kind->value} to {$redirect->target->key()} was already followed for this operation.",
-                    ));
-                }
-
-                $seenRedirects[$redirectSignature] = true;
-
-                if ($redirect->kind === ClusterRedirectKind::Moved) {
-                    try {
-                        $this->topology->refresh();
-                    } catch (RedisException) {
-                        // Best-effort — see the method docblock: this
-                        // retry proceeds against the reply's own
-                        // authoritative target regardless, so a
-                        // transient refresh failure here must not block
-                        // an operation that can otherwise succeed.
-                    }
-
-                    // Recorded regardless of whether the refresh above
-                    // succeeded or failed — and regardless of whether a
-                    // successful refresh already agrees with it — a
-                    // MOVED reply is durable ownership information, not
-                    // just a routing hint for this one call: without
-                    // this, a later operation for the same slot would
-                    // keep hitting the old owner until $ranges itself
-                    // eventually catches up, and allMasters() (which
-                    // clear() fans FLUSHDB out to) would have no way to
-                    // know this target exists at all.
-                    $this->topology->applyMovedOverride($redirect->slot, $redirect->target);
-
-                    $client = $this->topology->clientFor($redirect->target);
-
-                    continue;
-                }
-
-                $askClient = $this->topology->buildDedicatedClient($redirect->target);
-
-                try {
-                    $askClient->execute('ASKING');
-                } catch (RedisException $askingFailed) {
-                    throw CacheException::forOperation($operationName, $key, $askingFailed);
-                }
-
-                $client = $askClient;
+                $client = $this->resolveRedirectClient($operationName, $key, $expectedSlot, $e, $seenRedirects);
             } catch (RedisException $e) {
                 // A connection-level failure, not a redirect reply —
                 // $client here is whichever one $operation() was
@@ -534,6 +472,85 @@ final class ClusteredRedisSimpleCache implements CacheInterface, AtomicCounterIn
             $key,
             new RedisException('Exceeded ' . self::MAX_REDIRECT_ATTEMPTS . ' cluster redirect attempts.'),
         );
+    }
+
+    /**
+     * Parses $e as a cluster redirect and returns the client guardKeyed()'s
+     * own retry loop should use next — or throws a CacheException for every
+     * outcome that ends the whole operation instead (a malformed or
+     * wrong-slot redirect, a detected redirect loop, a failed ASKING
+     * handshake). $seenRedirects accumulates across the caller's own loop
+     * iterations, by reference, so a repeating redirect is caught here
+     * exactly like the inline version this was extracted from.
+     *
+     * @param array<string, true> $seenRedirects keyed by "{kind}:{target}", detects a repeating cycle
+     */
+    private function resolveRedirectClient(
+        string $operationName,
+        string $key,
+        int $expectedSlot,
+        QueryException $e,
+        array &$seenRedirects,
+    ): RedisClient {
+        try {
+            $redirect = ClusterRedirect::tryParse($e->getMessage());
+        } catch (RedisException $malformed) {
+            throw CacheException::forOperation($operationName, $key, $malformed);
+        }
+
+        if ($redirect === null) {
+            throw CacheException::forOperation($operationName, $key, $e);
+        }
+
+        if ($redirect->slot !== $expectedSlot) {
+            throw CacheException::forOperation($operationName, $key, new RedisException(
+                "{$redirect->kind->value} redirect names slot {$redirect->slot}, but \"{$key}\" hashes to slot {$expectedSlot}.",
+            ));
+        }
+
+        $redirectSignature = $redirect->kind->value . ':' . $redirect->target->key();
+
+        if (isset($seenRedirects[$redirectSignature])) {
+            throw CacheException::forOperation($operationName, $key, new RedisException(
+                "Redirect loop detected: {$redirect->kind->value} to {$redirect->target->key()} was already followed for this operation.",
+            ));
+        }
+
+        $seenRedirects[$redirectSignature] = true;
+
+        if ($redirect->kind === ClusterRedirectKind::Moved) {
+            try {
+                $this->topology->refresh();
+            } catch (RedisException) {
+                // Best-effort — see guardKeyed()'s own docblock: this
+                // retry proceeds against the reply's own authoritative
+                // target regardless, so a transient refresh failure here
+                // must not block an operation that can otherwise succeed.
+            }
+
+            // Recorded regardless of whether the refresh above succeeded
+            // or failed — and regardless of whether a successful refresh
+            // already agrees with it — a MOVED reply is durable ownership
+            // information, not just a routing hint for this one call:
+            // without this, a later operation for the same slot would
+            // keep hitting the old owner until $ranges itself eventually
+            // catches up, and allMasters() (which clear() fans FLUSHDB
+            // out to) would have no way to know this target exists at
+            // all.
+            $this->topology->applyMovedOverride($redirect->slot, $redirect->target);
+
+            return $this->topology->clientFor($redirect->target);
+        }
+
+        $askClient = $this->topology->buildDedicatedClient($redirect->target);
+
+        try {
+            $askClient->execute('ASKING');
+        } catch (RedisException $askingFailed) {
+            throw CacheException::forOperation($operationName, $key, $askingFailed);
+        }
+
+        return $askClient;
     }
 
     private static function ttlInSeconds(null|int|DateInterval $ttl): ?int

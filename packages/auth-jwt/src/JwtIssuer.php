@@ -85,6 +85,14 @@ final readonly class JwtIssuer
                 : JwtIssuerException::invalidRsaPrivateKey(),
         );
 
+        self::assertValidKidIssuerAudience($kid, $issuer, $audience);
+    }
+
+    /**
+     * @param string|array<mixed>|null $audience
+     */
+    private static function assertValidKidIssuerAudience(?string $kid, ?string $issuer, string|array|null $audience): void
+    {
         if ($kid === '') {
             throw JwtIssuerException::emptyKid();
         }

@@ -420,6 +420,65 @@ final class ClusteredRedisSimpleCacheTest extends TestCase
     }
 
     /**
+     * The redirect signature must include the *kind*, not just the
+     * target — MOVED and ASK to the same node are two genuinely
+     * distinct events, and conflating them would incorrectly flag the
+     * second, different-kind redirect as a repeat of the first.
+     */
+    public function test_guard_keyed_moved_then_ask_to_the_same_target_is_not_flagged_as_a_repeated_redirect(): void
+    {
+        [, $cache] = $this->cacheWithPreSeededTopology();
+        $guardKeyed = new ReflectionMethod($cache, 'guardKeyed');
+        $realSlot = Crc16::slotFor('some-key');
+        $calls = 0;
+
+        try {
+            $guardKeyed->invoke($cache, 'get', 'some-key', function (RedisClient $client) use (&$calls, $realSlot): never {
+                $calls++;
+
+                // Same target both times — 127.0.0.1:1 — only the kind
+                // differs.
+                throw new QueryException($calls === 1 ? "MOVED {$realSlot} 127.0.0.1:1" : "ASK {$realSlot} 127.0.0.1:1");
+            });
+
+            self::fail('Expected a CacheException.');
+        } catch (CacheException $e) {
+            self::assertStringNotContainsString(
+                'Redirect loop detected',
+                $e->getMessage(),
+                'MOVED then ASK to the same target must not be treated as a repeated redirect',
+            );
+        }
+
+        self::assertSame(2, $calls, 'both redirects must actually be attempted, not short-circuited by a false loop detection');
+    }
+
+    /**
+     * Once ASKING itself has failed, the whole operation must stop
+     * there — never falling through to retry the caller's own operation
+     * against a client that was never actually confirmed ready.
+     */
+    public function test_guard_keyed_a_failed_asking_handshake_stops_before_ever_retrying_the_operation(): void
+    {
+        [, $cache] = $this->cacheWithPreSeededTopology();
+        $guardKeyed = new ReflectionMethod($cache, 'guardKeyed');
+        $realSlot = Crc16::slotFor('some-key');
+        $calls = 0;
+
+        $this->expectException(CacheException::class);
+
+        $guardKeyed->invoke($cache, 'get', 'some-key', function (RedisClient $client) use (&$calls, $realSlot): never {
+            $calls++;
+
+            if ($calls > 1) {
+                self::fail('the operation must never run again once ASKING itself has failed');
+            }
+
+            throw new QueryException("ASK {$realSlot} 127.0.0.1:1");
+        });
+    }
+
+    /**
      * The counterpart to the loop-detection test above: a chain of
      * MAX_REDIRECT_ATTEMPTS genuinely *distinct* redirects (a different
      * target every time) must still exhaust the bound cleanly — the

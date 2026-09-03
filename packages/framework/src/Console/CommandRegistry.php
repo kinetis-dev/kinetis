@@ -28,6 +28,8 @@ final class CommandRegistry
         'name', 'description', 'controllerClass', 'controllerMethod', 'takesArguments', 'bootstrap',
     ];
 
+    private const string ARTIFACT_COMPONENT = 'CommandRegistry command';
+
     /** @var list<CommandDefinition> */
     private array $commands = [];
 
@@ -126,12 +128,12 @@ final class CommandRegistry
 
         foreach ($data as $command) {
             if (!is_array($command)) {
-                throw InvalidCacheArtifactException::malformedEntry('CommandRegistry command', 'a non-array entry');
+                throw InvalidCacheArtifactException::malformedEntry(self::ARTIFACT_COMPONENT, 'a non-array entry');
             }
 
-            ArtifactValidation::exactKeys($command, 'CommandRegistry command', self::COMMAND_ENTRY_KEYS);
+            ArtifactValidation::exactKeys($command, self::ARTIFACT_COMPONENT, self::COMMAND_ENTRY_KEYS);
 
-            $name = ArtifactValidation::string($command, 'CommandRegistry command', 'name');
+            $name = ArtifactValidation::string($command, self::ARTIFACT_COMPONENT, 'name');
 
             // The same duplicate-name check register() applies at
             // registration time — a compiled artifact carrying two
@@ -143,11 +145,11 @@ final class CommandRegistry
 
             $registry->commands[] = new CommandDefinition(
                 name: $name,
-                description: ArtifactValidation::string($command, 'CommandRegistry command', 'description'),
-                controllerClass: ArtifactValidation::string($command, 'CommandRegistry command', 'controllerClass'),
-                controllerMethod: ArtifactValidation::string($command, 'CommandRegistry command', 'controllerMethod'),
-                takesArguments: ArtifactValidation::bool($command, 'CommandRegistry command', 'takesArguments'),
-                bootstrap: ArtifactValidation::bool($command, 'CommandRegistry command', 'bootstrap'),
+                description: ArtifactValidation::string($command, self::ARTIFACT_COMPONENT, 'description'),
+                controllerClass: ArtifactValidation::string($command, self::ARTIFACT_COMPONENT, 'controllerClass'),
+                controllerMethod: ArtifactValidation::string($command, self::ARTIFACT_COMPONENT, 'controllerMethod'),
+                takesArguments: ArtifactValidation::bool($command, self::ARTIFACT_COMPONENT, 'takesArguments'),
+                bootstrap: ArtifactValidation::bool($command, self::ARTIFACT_COMPONENT, 'bootstrap'),
             );
         }
 

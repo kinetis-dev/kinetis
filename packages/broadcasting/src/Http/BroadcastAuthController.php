@@ -37,6 +37,8 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final readonly class BroadcastAuthController
 {
+    private const string NOT_AUTHORIZED = 'Not authorized.';
+
     public function __construct(
         private RequestScope $scope,
         private BroadcastChannelRegistry $channels,
@@ -100,7 +102,7 @@ final readonly class BroadcastAuthController
 
         if ($isPresence) {
             if (!is_array($result)) {
-                return ErrorResponse::create(403, 'Not authorized.');
+                return ErrorResponse::create(403, self::NOT_AUTHORIZED);
             }
 
             // A malformed presence result (a missing/non-string user_id,
@@ -111,12 +113,12 @@ final readonly class BroadcastAuthController
             try {
                 return $this->broadcaster->authorizePresenceChannel($socketId, $channelName, $result);
             } catch (InvalidPusherProtocolValueException) {
-                return ErrorResponse::create(403, 'Not authorized.');
+                return ErrorResponse::create(403, self::NOT_AUTHORIZED);
             }
         }
 
         if ($result !== true) {
-            return ErrorResponse::create(403, 'Not authorized.');
+            return ErrorResponse::create(403, self::NOT_AUTHORIZED);
         }
 
         return ['auth' => $this->broadcaster->authorizeChannel($socketId, $channelName)];

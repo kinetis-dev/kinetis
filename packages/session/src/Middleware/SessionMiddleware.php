@@ -79,7 +79,7 @@ final readonly class SessionMiddleware implements MiddlewareInterface
     public function __construct(
         private RequestScope $scope,
         private SessionStoreInterface $store,
-        private Config $config,
+        Config $config,
     ) {
         $this->cookieName = $config->string('SESSION_COOKIE', 'kinetis_session');
         $this->secure = $config->bool('SESSION_SECURE', true);

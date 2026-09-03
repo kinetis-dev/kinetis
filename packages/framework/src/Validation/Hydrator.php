@@ -113,6 +113,8 @@ final class Hydrator
 {
     private const string GIVEN_SUFFIX = ' given.';
 
+    private const string NOT_A_JSON_ARRAY = 'must be a JSON array, not a JSON object.';
+
     private const array HYDRATION_PLAN_KEYS = ['className', 'hasConstructor', 'parameters'];
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
@@ -616,7 +618,7 @@ final class Hydrator
         // rejects one for a plain array/iterable field, regardless of
         // what its own keys happen to look like.
         if ($value instanceof JsonObject) {
-            return [null, [$name => ['must be a JSON array, not a JSON object.']]];
+            return [null, [$name => [self::NOT_A_JSON_ARRAY]]];
         }
 
         if (is_array($value)) {
@@ -624,7 +626,7 @@ final class Hydrator
             // marked at all — a direct Hydrator::hydrate() call, or a
             // form-decoded body) gets the identical rejection.
             if (!array_is_list($value)) {
-                return [null, [$name => ['must be a JSON array, not a JSON object.']]];
+                return [null, [$name => [self::NOT_A_JSON_ARRAY]]];
             }
         } elseif (is_scalar($value)) {
             return [null, [$name => ['must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
@@ -821,7 +823,7 @@ final class Hydrator
         // cannot tell them apart below; this check runs first,
         // specifically so it doesn't have to.
         if ($value instanceof JsonObject) {
-            return 'must be a JSON array, not a JSON object.';
+            return self::NOT_A_JSON_ARRAY;
         }
 
         if (is_array($value) && array_is_list($value)) {
@@ -835,7 +837,7 @@ final class Hydrator
             // into via associative:true — distinguished from "not an
             // array at all" so the message names the real problem, not
             // describeType()'s own generic 'array' label for either shape.
-            return 'must be a JSON array, not a JSON object.';
+            return self::NOT_A_JSON_ARRAY;
         }
 
         return 'must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX;
