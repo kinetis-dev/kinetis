@@ -500,8 +500,10 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
             self::assertNull($this->adminClientFor($target1)->get($key1), 'clear() must reach target1');
             self::assertNull($this->adminClientFor($target2)->get($key2), 'clear() must reach target2');
         } finally {
-            $this->waitForGossipConvergence($slot1, $target1['id']);
-            $this->waitForGossipConvergence($slot2, $target2['id']);
+            $this->waitForGossipConvergenceOfAll([
+                ['slot' => $slot1, 'ownerId' => $target1['id']],
+                ['slot' => $slot2, 'ownerId' => $target2['id']],
+            ]);
             $this->adminClientFor($target1)->delete($key1);
             $this->adminClientFor($target2)->delete($key2);
         }
@@ -1034,6 +1036,31 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
      */
     private function waitForGossipConvergence(int $slot, string $expectedOwnerId): void
     {
+        $this->waitForGossipConvergenceOfAll([['slot' => $slot, 'ownerId' => $expectedOwnerId]]);
+    }
+
+    /**
+     * The combined form of waitForGossipConvergence() — polls once,
+     * checking every {slot, ownerId} pair on each iteration, returning
+     * only once all of them are satisfied. This is not just a
+     * convenience over calling waitForGossipConvergence() once per pair
+     * sequentially: real gossip propagation for reassignments made
+     * close together in time genuinely happens *in parallel* across the
+     * cluster, so waiting on all of them together only ever needs to
+     * wait for the slowest one, not their sum. A sequential-calls
+     * version of the two-slot test below independently waited on each
+     * slot's own full budget one after another — up to double the real
+     * wall-clock risk for no correctness benefit, and directly observed
+     * failing in CI (specifically under kinetis/framework's own
+     * sonarqube.yml coverage step, which runs this suite as one of
+     * ~26 sequential packages sharing a single runner — genuinely
+     * heavier contention than a dedicated job) even after the per-call
+     * budget below was already widened once.
+     *
+     * @param list<array{slot: int, ownerId: string}> $expectations
+     */
+    private function waitForGossipConvergenceOfAll(array $expectations): void
+    {
         $seeds = explode(',', (string) getenv('REDIS_CLUSTER_SEEDS'));
         $seed = createRedisClient(RedisConfig::fromUri('tcp://' . trim($seeds[0])));
 
@@ -1043,44 +1070,69 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         // theorized about: a single reassignment usually converges in
         // well under a second, but real gossip propagation under
         // genuine CI CPU contention has been measured taking well past
-        // 5, and occasionally past 15, real seconds — a worst case
-        // uncomfortably close to the original 20s cap, especially at
-        // this test file's one call site (see the two-slot test above)
-        // that waits on two separate reassignments sequentially in one
-        // finally block, each independently subject to that same
-        // worst-case risk. Reusing the same relative slot offset across
-        // several tests would compound this further, racing against an
-        // earlier test's still-settling gossip for the identical slot —
+        // 5, and occasionally past 15, real seconds. This margin is
+        // shared by every pair in $expectations together (see this
+        // method's own docblock for why that's correct, not just
+        // convenient), so it exists purely for genuine host-level
+        // slowness, not for the number of pairs being waited on.
+        // Reusing the same relative slot offset across several tests
+        // would compound this further, racing against an earlier
+        // test's still-settling gossip for the identical slot —
         // avoided at the call sites that need it via
         // emptySlotInLargestRange() and genuinely distinct offsets (see
-        // that method's own docblock), so this margin exists purely for
-        // genuine host-level slowness.
+        // that method's own docblock).
         for ($i = 0; $i < 800; $i++) {
             $shards = $seed->execute('CLUSTER', 'SHARDS');
+            $remaining = [];
 
-            foreach ($shards as $shard) {
-                $shardMap = self::pairsToAssoc($shard);
-                $slots = $shardMap['slots'];
-
-                for ($j = 0, $c = count($slots); $j < $c; $j += 2) {
-                    if ($slot < $slots[$j] || $slot > $slots[$j + 1]) {
-                        continue;
-                    }
-
-                    foreach ($shardMap['nodes'] as $node) {
-                        $nodeMap = self::pairsToAssoc($node);
-
-                        if ($nodeMap['role'] === 'master' && $nodeMap['id'] === $expectedOwnerId) {
-                            return;
-                        }
-                    }
+            foreach ($expectations as $expectation) {
+                if (!self::shardsReportOwner($shards, $expectation['slot'], $expectation['ownerId'])) {
+                    $remaining[] = $expectation;
                 }
             }
+
+            if ($remaining === []) {
+                return;
+            }
+
+            $expectations = $remaining;
 
             usleep(50000);
         }
 
-        throw new RuntimeException("Gossip never converged: seeds[0] still doesn't report {$expectedOwnerId} as slot {$slot}'s owner.");
+        $descriptions = array_map(
+            static fn (array $e): string => "slot {$e['slot']} -> {$e['ownerId']}",
+            $expectations,
+        );
+
+        throw new RuntimeException('Gossip never converged: seeds[0] still doesn\'t report ' . implode(', ', $descriptions) . '.');
+    }
+
+    /**
+     * @param mixed $shards a raw CLUSTER SHARDS reply
+     */
+    private static function shardsReportOwner(mixed $shards, int $slot, string $expectedOwnerId): bool
+    {
+        foreach ($shards as $shard) {
+            $shardMap = self::pairsToAssoc($shard);
+            $slots = $shardMap['slots'];
+
+            for ($j = 0, $c = count($slots); $j < $c; $j += 2) {
+                if ($slot < $slots[$j] || $slot > $slots[$j + 1]) {
+                    continue;
+                }
+
+                foreach ($shardMap['nodes'] as $node) {
+                    $nodeMap = self::pairsToAssoc($node);
+
+                    if ($nodeMap['role'] === 'master' && $nodeMap['id'] === $expectedOwnerId) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private function firstWordOfReplyError(callable $operation): string
