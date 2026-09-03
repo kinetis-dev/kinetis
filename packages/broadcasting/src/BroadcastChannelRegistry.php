@@ -554,10 +554,22 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
         }
 
         if ($a['type'] === 'literal') {
+            // $b can only be the placeholder-shaped member here — the
+            // both-literal combination already returned above — but
+            // PHPStan doesn't carry that cross-branch elimination into
+            // this call's own argument type, only into $b's type for
+            // code reached after this whole if/elseif chain. Narrowed
+            // locally, for this one call, rather than by adding an extra
+            // condition to the if itself, which would cost PHPStan that
+            // later, real narrowing for $a and $b below instead.
+            /** @var array{type: 'placeholder', prefix: string, suffix: string, name: string} $b */
             return self::literalSatisfies($a['value'], $b) ? 'a_narrower' : 'disjoint';
         }
 
         if ($b['type'] === 'literal') {
+            // Same reasoning, mirrored: $a is the placeholder-shaped
+            // member here.
+            /** @var array{type: 'placeholder', prefix: string, suffix: string, name: string} $a */
             return self::literalSatisfies($b['value'], $a) ? 'b_narrower' : 'disjoint';
         }
 
@@ -672,7 +684,6 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
                 throw InvalidChannelAuthorizerException::tooManyPlaceholdersInSegment($pattern, $segment);
             }
 
-            /** @var string $name */
             $name = $matches[1][0][0];
 
             if (isset($seenNames[$name])) {
@@ -681,9 +692,7 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
 
             $seenNames[$name] = true;
 
-            /** @var int $offset */
             $offset = $matches[0][0][1];
-            /** @var string $fullMatch */
             $fullMatch = $matches[0][0][0];
 
             $segments[] = [

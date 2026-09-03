@@ -254,7 +254,6 @@ final readonly class TestClient
 
         $request = self::buildRequest($method, $uri, $headers, $encoded);
 
-        /** @var array<string, mixed> $parsedBody */
         return $this->send($request->withParsedBody($parsedBody));
     }
 
@@ -397,7 +396,6 @@ final readonly class TestClient
         // independently of it.
         \parse_str($request->getUri()->getQuery(), $queryParams);
 
-        /** @var array<string, mixed> $queryParams */
         return $request->withQueryParams($queryParams);
     }
 }

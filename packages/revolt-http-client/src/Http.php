@@ -408,7 +408,7 @@ final class Http
             // value(s) kept as-is; every earlier occurrence for this
             // name is dropped, never combined with it.
             $winner = $entries[count($entries) - 1];
-            $resolved[$lowercaseName] = ['name' => $winner['name'], 'values' => $winner['values']];
+            $resolved[$lowercaseName] = ['name' => $winner['name'], 'values' => array_values($winner['values'])];
         }
 
         return $resolved;

@@ -324,6 +324,9 @@ final class SigV4SigningClient implements ClientInterface
         return $headers;
     }
 
+    /**
+     * @param array<string, string> $foldedHeaders
+     */
     private function toAwsRequest(RequestInterface $request, array $foldedHeaders): AwsRequest
     {
         // $request's body is always a SpooledStream by this point (see

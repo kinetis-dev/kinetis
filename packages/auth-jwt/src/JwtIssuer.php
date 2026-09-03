@@ -53,7 +53,16 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
 final readonly class JwtIssuer
 {
     /**
-     * @param string|list<string>|null $audience
+     * A given array $audience must be list-shaped and every element a
+     * non-empty string — checked below, never declared here as
+     * array<string> or list<string>, since this constructor's own body
+     * is what establishes that stronger guarantee for a caller;
+     * declaring it already-true on entry would make the validation that
+     * enforces it look like unreachable code. mixed is a real, if
+     * unhelpful, answer to PHPStan's own "specify the array's value
+     * type" requirement — deliberately not a more specific one.
+     *
+     * @param string|array<mixed>|null $audience
      */
     public function __construct(
         private string $key,

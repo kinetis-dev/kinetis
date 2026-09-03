@@ -398,10 +398,11 @@ final class Route
     {
         /** @var list<list<PathSegment>> $groups */
         $groups = [[]];
+        $currentGroup = 0;
 
         foreach (self::parse($pathTemplate) as $token) {
             if ($token['type'] === 'placeholder') {
-                $groups[array_key_last($groups)][] = $token;
+                $groups[$currentGroup][] = $token;
 
                 continue;
             }
@@ -409,12 +410,13 @@ final class Route
             foreach (explode('/', $token['value']) as $index => $part) {
                 if ($index > 0) {
                     $groups[] = [];
+                    $currentGroup++;
                 }
 
                 if ($part !== '') {
                     /** @var PathSegment $literalPart */
                     $literalPart = ['type' => 'literal', 'value' => $part];
-                    $groups[array_key_last($groups)][] = $literalPart;
+                    $groups[$currentGroup][] = $literalPart;
                 }
             }
         }

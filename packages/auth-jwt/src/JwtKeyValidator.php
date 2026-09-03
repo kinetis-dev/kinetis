@@ -61,6 +61,9 @@ final class JwtKeyValidator
      */
     public const int RSA_MINIMUM_BITS = 2048;
 
+    /**
+     * @phpstan-assert-if-true 'HS256'|'HS384'|'HS512' $algorithm
+     */
     public static function isHmacAlgorithm(string $algorithm): bool
     {
         return isset(self::HMAC_MINIMUM_KEY_BYTES[$algorithm]);

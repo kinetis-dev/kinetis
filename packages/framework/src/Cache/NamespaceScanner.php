@@ -211,6 +211,17 @@ final class NamespaceScanner
     }
 
     /**
+     * Sorted by pathname before yielding a single class name — POSIX
+     * gives no ordering guarantee for a directory's own readdir()
+     * result, and it can genuinely differ between filesystems (a bind
+     * mount vs. a native one, for instance). Every caller of this class
+     * (RouteDiscovery, CommandDiscovery, McpDiscovery,
+     * EventListenerDiscovery, GlobalMiddlewareDiscovery) needs discovery
+     * order to be reproducible across environments, not just within one
+     * — a plain directory walk has nothing else to sort by until every
+     * file's own path is known, so the whole subtree is enumerated up
+     * front rather than yielded lazily as it's found.
+     *
      * @return iterable<class-string>
      */
     private static function classesInDirectory(string $namespacePrefix, string $directory): iterable
@@ -223,16 +234,22 @@ final class NamespaceScanner
             new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
         );
 
+        $paths = [];
+
         foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
+            if ($file->isFile() && $file->getExtension() === 'php') {
+                $paths[] = $file->getPathname();
+            }
+        }
+
+        sort($paths);
+
+        foreach ($paths as $path) {
+            if (!self::fileHasAnyAttribute($path)) {
                 continue;
             }
 
-            if (!self::fileHasAnyAttribute($file->getPathname())) {
-                continue;
-            }
-
-            $relative = substr($file->getPathname(), strlen($directory) + 1, -4);
+            $relative = substr($path, strlen($directory) + 1, -4);
             $className = $namespacePrefix . str_replace(DIRECTORY_SEPARATOR, '\\', $relative);
 
             // Discovery skips what registration would reject: an abstract

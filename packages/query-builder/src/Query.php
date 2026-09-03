@@ -441,6 +441,14 @@ final class Query
         // runs, against the same arithmetic offset() will receive.
         $offset = ($page - 1) * $perPage;
 
+        // PHPStan's own arithmetic modeling doesn't represent integer
+        // overflow at all — it infers $offset stays int purely from
+        // $page/$perPage's own static int types, with no way to know PHP
+        // itself would silently widen an overflowing product to float.
+        // This is exactly the real case the comment above exists to
+        // guard against, so the check stays even though PHPStan can't
+        // see why it's ever reachable.
+        // @phpstan-ignore-next-line function.alreadyNarrowedType
         if (!is_int($offset)) {
             throw InvalidPaginationException::offsetOverflow($page, $perPage);
         }
@@ -628,6 +636,10 @@ final class Query
         // otherwise throw a raw TypeError only after where()/
         // selectColumns have already been mutated below. Checked here,
         // against the same arithmetic the look-ahead fetch will receive.
+        // PHPStan infers $perPage + 1 stays int purely from $perPage's own
+        // static range type, with no model of real integer overflow — see
+        // the identical reasoning on paginate()'s own overflow check above.
+        // @phpstan-ignore-next-line function.alreadyNarrowedType
         if (!is_int($perPage + 1)) {
             throw InvalidPaginationException::lookaheadOverflow($perPage);
         }

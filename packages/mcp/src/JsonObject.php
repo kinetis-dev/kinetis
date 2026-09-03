@@ -60,6 +60,7 @@ final readonly class JsonObject implements JsonSerializable
      * intact, in one call, with no risk of a nested value being
      * double-encoded.
      */
+    #[\Override]
     public function jsonSerialize(): object
     {
         return (object) $this->properties;

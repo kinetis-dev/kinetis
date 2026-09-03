@@ -95,6 +95,19 @@ final class ClusterTopology
         if ($this->ranges === []) {
             $this->refresh();
 
+            // Psalm's own call-graph analysis sees refresh() -> applyShards()
+            // only ever unset()ing $movedOverlay entries, never adding one —
+            // so it concludes this re-check can never see anything the first
+            // isset() above didn't already rule out, and flags the return
+            // below as unreachable (NoValue). That's only true in a
+            // single-threaded model: refresh() awaits a real network round
+            // trip, and another Fiber sharing this same instance can call
+            // applyMovedOverride() for this exact slot while this one is
+            // suspended waiting on it — Psalm has no model of that
+            // interleaving. This re-check is what makes nodeForSlot()
+            // correct under that real race rather than falling through to a
+            // stale $ranges lookup.
+            /** @psalm-suppress NoValue */
             if (isset($this->movedOverlay[$slot])) {
                 return $this->clientFor($this->movedOverlay[$slot]);
             }

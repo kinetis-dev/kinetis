@@ -514,10 +514,13 @@ final readonly class AmpFileAdapter implements FilesystemAdapter
 
     /**
      * Reads up to MIME_TYPE_SAMPLE_BYTES from $location for mimeType()'s
-     * own detection. File::read() is a ReadableStream operation and can
-     * throw Amp\ByteStream\StreamException, not just
-     * Amp\File\FilesystemException — mimeType() catches both alike, so
-     * either propagating from here is caught correctly.
+     * own detection. File::read() is a ReadableStream operation — the
+     * concrete driver actually in play here (ParallelFile, confirmed
+     * directly against its own source) only ever raises
+     * Amp\ByteStream\StreamException (or its ClosedException subtype)
+     * from read() itself, never Amp\File\FilesystemException, so only
+     * StreamException is caught around it; mimeType()'s own catch still
+     * lists both, since close() below genuinely can raise either.
      *
      * A close() failure while a read failure is already propagating is
      * absorbed here rather than allowed to take its place: PHP does
@@ -542,7 +545,7 @@ final readonly class AmpFileAdapter implements FilesystemAdapter
 
         try {
             return $handle->read(length: self::MIME_TYPE_SAMPLE_BYTES) ?? '';
-        } catch (FilesystemException|StreamException $e) {
+        } catch (StreamException $e) {
             $primaryFailure = $e;
 
             throw $e;

@@ -1,5 +1,13 @@
 parameters:
     level: 8
+    # A compiled cache artifact's own PHPDoc shape is what a *correct*
+    # build produces — never a guarantee about what's actually on disk. A
+    # hand-edited, stale-version, or otherwise corrupted file is exactly
+    # what ArtifactValidation/CacheStore's own fromArray() paths exist to
+    # catch, so the array_is_list()/is_array()/is_string() checks guarding
+    # them are load-bearing runtime validation, not dead code PHPStan can
+    # prove unreachable from the PHPDoc alone.
+    treatPhpDocTypesAsCertain: false
     paths:
         - src
         - bin/kinetis

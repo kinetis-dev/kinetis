@@ -371,6 +371,9 @@ final class QueueContract
      * caller's own push() actually passed one), where absence is already
      * the normal, legitimate state.
      */
+    /**
+     * @param array<string, mixed> $envelope
+     */
     public static function assertFieldPresent(array $envelope, string $field): void
     {
         if (!\array_key_exists($field, $envelope)) {

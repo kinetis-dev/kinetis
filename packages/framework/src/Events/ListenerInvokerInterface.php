@@ -33,5 +33,8 @@ use Kinetis\Container\RequestScope;
  */
 interface ListenerInvokerInterface
 {
+    /**
+     * @param class-string $listenerClass
+     */
     public function invoke(string $listenerClass, string $method, object $event, RequestScope $scope): void;
 }
