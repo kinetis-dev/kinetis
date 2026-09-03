@@ -157,10 +157,28 @@ jobs:
             fi
             DIFF_ARGS="--git-diff-filter=AM --git-diff-base=origin/$BASE_REF --ignore-msi-with-no-mutations"
           fi
+          # pcov is installed via PIE (the PHP Foundation's official
+          # successor to PECL, distributed as a standalone .phar, pinned
+          # to an exact release like every other version in this project)
+          # rather than `pecl install pcov`: PECL's own channel
+          # (pecl.php.net) is a real, recurring source of "No releases
+          # available" failures in this exact CI, confirmed rather than
+          # assumed — sonarqube.yml already carries a channel-update retry
+          # working around the identical failure. PIE resolves pcov via
+          # Packagist (backed by pecl/pcov's real GitHub releases)
+          # instead, and its own --auto-install-build-tools/
+          # --auto-install-system-dependencies flags replace the manual
+          # `apk add gcc g++ make autoconf pkgconf re2c` this used to need
+          # — confirmed directly against a real php:8.4-cli-alpine and
+          # php:8.5-cli-alpine container with none of those packages
+          # pre-installed. PIE also writes and enables the extension's own
+          # ini file itself, so the old `echo 'extension=pcov.so' > ...`
+          # step is gone too, not just moved.
           docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:8.4-cli-alpine sh -c "
-            apk add --no-cache git gcc g++ make autoconf pkgconf re2c
+            apk add --no-cache git curl
             git config --global safe.directory '*'
-            pecl install pcov
-            echo 'extension=pcov.so' > /usr/local/etc/php/conf.d/pcov.ini
+            curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar
+            chmod +x /usr/local/bin/pie.phar
+            php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
             php -d memory_limit=512M vendor/bin/infection --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 $DIFF_ARGS
           "
