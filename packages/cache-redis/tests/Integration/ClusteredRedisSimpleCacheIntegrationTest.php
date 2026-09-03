@@ -1064,13 +1064,21 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         $seeds = explode(',', (string) getenv('REDIS_CLUSTER_SEEDS'));
         $seed = createRedisClient(RedisConfig::fromUri('tcp://' . trim($seeds[0])));
 
-        // 800 tries at 50ms is 40 real seconds of headroom — widened
-        // from an original 20s (400 tries) after that ceiling was
-        // directly observed being hit in real CI runs, not just
-        // theorized about: a single reassignment usually converges in
-        // well under a second, but real gossip propagation under
-        // genuine CI CPU contention has been measured taking well past
-        // 5, and occasionally past 15, real seconds. This margin is
+        // 2000 tries at 50ms is 100 real seconds of headroom — widened a
+        // second time, from 40s (800 tries), after that ceiling was
+        // *also* directly hit in real CI runs: three separate first
+        // attempts (across two different PRs, then again on main right
+        // after merge) all failed on this exact test, each landing
+        // right around the 40s mark, even after the sequential-vs-
+        // combined-wait fix above (confirmed correct by the resulting
+        // failure message naming only the one slot still pending, never
+        // a wrong or garbled one) — meaning a single slot's own real
+        // convergence, on its own, has been observed exceeding 40s more
+        // than once, not just occasionally brushing against it. Every
+        // one of those three failures cleared on a plain retry with no
+        // code change, which is what rules out a permanent hang and
+        // makes a wider bounded budget the right fix rather than a
+        // deeper investigation into cluster internals. This margin is
         // shared by every pair in $expectations together (see this
         // method's own docblock for why that's correct, not just
         // convenient), so it exists purely for genuine host-level
@@ -1081,7 +1089,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         // avoided at the call sites that need it via
         // emptySlotInLargestRange() and genuinely distinct offsets (see
         // that method's own docblock).
-        for ($i = 0; $i < 800; $i++) {
+        for ($i = 0; $i < 2000; $i++) {
             $shards = $seed->execute('CLUSTER', 'SHARDS');
             $remaining = [];
 
