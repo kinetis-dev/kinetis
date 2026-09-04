@@ -22,9 +22,15 @@ vendor/bin/kinetis queue:work --queue=high,default
 ```
 
 Every SQS call this backend makes, including a worker waiting for the
-next job, runs without blocking the rest of your application — a worker
-watching several queues stays responsive to all of them at once rather
-than getting stuck waiting on one.
+next job, suspends rather than blocking the process. A worker given
+several queue names does not watch them simultaneously: it sweeps them
+in priority order, giving each an immediate non-blocking check first,
+and only then long-polls one queue at a time for a bounded slice — at
+most five seconds per queue, and never past the deadline it was given.
+So a job on a lower-priority queue is never missed while a higher one is
+quiet, and a job arriving on a higher-priority queue mid-slice is picked
+up on the next sweep rather than instantly. {doc}`queue` has the full
+`pop()` contract.
 
 ## Configuring
 
@@ -57,6 +63,45 @@ before pushing or popping against it.
 
 Only standard SQS queues are supported — FIFO queues (queue names ending
 in `.fifo`) are not.
+
+## Emptying a queue is an infrastructure operation
+
+`SqsQueue` implements `QueueInterface` and not
+`Kinetis\Queue\ClearableQueueInterface`, so it has no `clear()` and
+`kinetis queue:clear` names the backend and stops. Nothing SQS offers
+meets that contract:
+
+- `PurgeQueue` deletes the messages a worker currently holds in flight
+  along with the waiting ones, and keeps deleting messages sent during
+  the up-to-60-second window it takes to finish — so it destroys both
+  work that was reserved and work pushed after the call. It reports no
+  count, and is rate-limited to once per 60 seconds per queue. This
+  backend never calls it.
+- `size()` could not stand in for that count either: it reports
+  `ApproximateNumberOfMessages` plus the delayed count, which excludes
+  in-flight work and is an estimate besides.
+- Assembling the operation out of `ReceiveMessage`/`DeleteMessage` is
+  not possible: a delayed message stays invisible until its delay
+  elapses, so nothing can receive it in order to delete it.
+
+Empty an SQS queue the same way you created it — `aws sqs purge-queue`,
+or recreating it — accepting `PurgeQueue`'s real semantics explicitly
+rather than through a method whose name promises narrower ones. See
+{doc}`queue`'s "Clearing is a separate capability" for the cross-backend
+picture.
+
+## What a receipt handle can and cannot prove
+
+`QueuedJob::$handle` is the message's `ReceiptHandle`, which SQS scopes
+to the receive that produced it. A settlement against a handle whose
+visibility window has passed — or whose message has since been
+redelivered — is answered by SQS itself, and this backend raises no
+`Kinetis\Queue\Exception\StaleJobHandleException` of its own: it has
+no way to tell that answer apart from any other API error, so whatever
+SQS returns propagates as itself. A worker therefore learns about a lost
+delivery here only as a failure, if at all — see {doc}`queue`'s "When a
+settlement is lost", and keep handlers idempotent, since SQS can
+redeliver a message independently of anything this package does.
 
 ## Delayed jobs
 

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Tests\Fixtures;
 
+use Kinetis\Queue\ClearableQueueInterface;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\QueuedJob;
-use Kinetis\Queue\QueueInterface;
 
 /**
  * Accepts a job and holds it, so a test can assert something was queued
@@ -14,7 +14,7 @@ use Kinetis\Queue\QueueInterface;
  * SyncQueue would, turning a ping the test expects to find pending into
  * one already ponged.
  */
-final class RecordingQueue implements QueueInterface
+final class RecordingQueue implements ClearableQueueInterface
 {
     /** @var list<Job> */
     public array $pushed = [];

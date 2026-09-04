@@ -106,7 +106,7 @@ keeps going until a shutdown signal arrives — see "Stopping a worker"
 below.
 
 That fresh scope gets the same transaction-safety net an HTTP request or
-CLI command does: if a job constructor-injects `TransactionGuard` (see
+CLI command does: if a job's `handle()` takes a `TransactionGuard` (see
 {doc}`persistence`), begins a transaction, and returns or throws without
 closing it, the scope's own dispose hook rolls it back before the next
 job runs — so a leftover open transaction never leaks into whatever this
@@ -163,7 +163,8 @@ Every backend implements `pop($timeoutSeconds, $queues)` identically:
   name may not appear twice in one `$queues` list — both are rejected
   before any backend I/O, via `Kinetis\Queue\Exception\InvalidQueueNameException`.
   This check runs everywhere a queue name is ever accepted, not just
-  `pop()`: `push()`, `size()`, `clear()`, and `QueuedJob`'s own
+  `pop()`: `push()`, `size()`, `clear()` on the backends that offer it
+  (see "Clearing is a separate capability" below), and `QueuedJob`'s own
   constructor (the one point `ack()`/`release()`/`fail()` ultimately
   route through) all validate the same way, so a malformed or forged
   name is rejected the same way regardless of which method receives it
@@ -205,6 +206,11 @@ Picking a `QUEUE_CONNECTION` value without its package installed fails
 clearly, naming the package to install — see
 `Kinetis\Queue\Exception\QueueUnavailableException`.
 
+Every backend implements `QueueInterface` identically. Clearing a queue
+is the one operation not every backend can perform to the same contract,
+so it lives on its own interface — see "Clearing is a separate
+capability" below for which backends declare it.
+
 Setting `QUEUE_CONNECTION` is also all the container wiring there is:
 this package's bootstrap class (declared via `extra.kinetis`, see
 {doc}`cli`) binds `QueueInterface` to the selected backend before
@@ -226,12 +232,11 @@ REDIS_CACHE2_HOST=127.0.0.1
 
 ### How `release()` behaves across backends
 
-Every backend delivers a job at least once and every backend's `push()`/
-`ack()`/`fail()` are each a single atomic operation. `release()` — what
-runs when a job fails and gets a retry — is where the backends actually
-differ, because it means one entry leaves the in-flight set at the same
-moment a replacement enters the retry set, and not every backend has a
-primitive that can do both as one step:
+Every backend's `push()`, `ack()` and `fail()` are each a single atomic
+operation. `release()` — what runs when a job fails and gets a retry —
+is where the backends actually differ, because it means one entry leaves
+the in-flight set at the same moment a replacement enters the retry set,
+and not every backend has a primitive that can do both as one step:
 
 | Backend | `release()` mechanism | Duplication window |
 |---|---|---|
@@ -240,22 +245,57 @@ primitive that can do both as one step:
 | `kinetis/queue-sqs` | One `ChangeMessageVisibility` call | None from `release()` itself — but SQS's own at-least-once delivery model can redeliver independently of anything this package does |
 | `kinetis/queue-rabbitmq` | Two separate AMQP operations — publish the replacement, wait for the broker to acknowledge it, then nack the original — since AMQP 0-9-1 has no cross-message transaction to make them one | Real: a crash between the two publishes a replacement *and* leaves the original to be redelivered once the connection drops, so the job can be delivered twice. A publish the broker never acknowledges settles nothing at all, so that direction loses no job — see {doc}`queue-rabbitmq` |
 
-A job handler should be idempotent under retry regardless of backend —
-every backend can redeliver a job that was already fully processed if a
-worker crashes after finishing the work but before calling `ack()` — but
-`kinetis/queue-rabbitmq` is the one backend where `release()` itself,
-not just a crash at an unrelated point in the cycle, can produce a
-duplicate.
+Every backend can produce a duplicate when a worker crashes at the wrong
+moment — "Scaling out" below covers that, and what it asks of a handler.
+`kinetis/queue-rabbitmq` is the one where `release()` itself can, with
+nothing having gone wrong.
 
 ## Scaling out: multiple workers
 
 `kinetis queue:work` is safe to run as any number of separate,
-concurrent processes against the same backend — a plain horizontal-scaling
-lever, not something that needs coordinating by hand. Every backend
-guarantees a job is handed to exactly one worker, so two workers running
-at once never both pick up the same job. Workers don't need to agree on
-anything beyond which queue names they watch — start as many as you want,
-on as many machines as you want, pointed at the same backend.
+concurrent processes against the same backend — a plain
+horizontal-scaling lever, not something that needs coordinating by hand.
+Workers don't need to agree on anything beyond which queue names they
+watch: start as many as you want, on as many machines as you want,
+pointed at the same backend.
+
+What every backend guarantees is **reservation**, not exclusivity for
+all time. A `pop()` takes the job out of reach of every other worker in
+one atomic step — Redis moves it to a processing list, `SqlQueue` claims
+the row under a row lock, SQS makes the message invisible, RabbitMQ
+holds it as an unacked delivery — so two workers popping at the same
+instant never both come back with the same job. What that reservation
+does *not* promise is that the job runs only once, ever:
+
+- SQS redelivers a message whose visibility timeout expires, and its own
+  delivery model can redeliver independently of anything this package
+  does.
+- `SqlQueue` under `QUEUE_VISIBILITY_TIMEOUT_SECONDS` reclaims a
+  reservation older than that timeout, which is the same event seen from
+  the other side: a worker still running a slow job can find its row
+  handed to someone else.
+- Every backend can redeliver a job that already finished, whenever a
+  worker crashes between the work completing and `ack()` reaching the
+  backend.
+
+**So a job handler has to be idempotent** — running twice, or
+concurrently with itself, must not corrupt anything. That requirement is
+the same one retries already place on a handler; concurrency across
+workers only makes it easier to hit.
+
+Crash recovery is the mirror of that, and it is backend-specific rather
+than uniform:
+
+| Backend | A worker that dies mid-job |
+|---|---|
+| `kinetis/queue-redis` | The job stays in the processing list. There is no reaper, so nothing returns it to `pending` — it is stranded, not lost, and no other worker picks it up |
+| `kinetis/queue-sql` | Reclaimed once the reservation passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS`; with the timeout unset, the row stays reserved indefinitely |
+| `kinetis/queue-sqs` | Redelivered once the message's visibility timeout expires — SQS's own, configured on the queue |
+| `kinetis/queue-rabbitmq` | Redelivered as soon as the connection drops, since an unacked delivery is requeued by the broker |
+
+Each backend's own page has the detail, and "When a settlement is lost"
+below covers what a worker does when a reservation it was holding turns
+out to be gone.
 
 ## Stopping a worker: deploys and restarts
 
@@ -317,6 +357,78 @@ reads its own queue by queue rather than at a single instant (see
 {doc}`queue-rabbitmq`) — both fine for the question this answers:
 whether a queue is draining or backing up.
 
+### Clearing is a separate capability
+
+`QueueInterface` carries only the operations every backend performs
+identically, and clearing is not one of them. It lives on
+`Kinetis\Queue\ClearableQueueInterface`, which extends `QueueInterface`
+— clearing is a queue operation, so one instance still pushes, pops and
+reports size — and which a backend declares when it can discard exactly
+the jobs waiting on a queue and report how many it removed:
+
+| Backend | Clearing |
+|---|---|
+| `kinetis/queue-redis` | Yes |
+| `kinetis/queue-sql` | Yes |
+| `kinetis/queue-rabbitmq` | Yes |
+| `Kinetis\Queue\SyncQueue` | Yes — always 0, since nothing is ever stored |
+| `kinetis/queue-sqs` | No |
+
+What "waiting" means, and what the return value is worth:
+
+- Delayed jobs count, the same as they do for `size()`.
+- A job a worker has reserved is never removed and never counted. A
+  `SqlQueue` reservation past `QUEUE_VISIBILITY_TIMEOUT_SECONDS` is
+  reclaimable by `pop()` and counted by `size()`, but `clear()` still
+  leaves it alone: the worker holding it may simply be slow, and it is
+  still going to settle.
+- The number returned is what that call removed — not a `size()` taken
+  alongside it. A queue accepts pushes throughout, so those are two
+  observations of a moving number and they are not expected to agree.
+
+Amazon SQS has no operation that meets this contract. `PurgeQueue`
+deletes in-flight messages a worker already holds, keeps deleting
+messages sent during the up-to-60-second window it takes to finish, and
+reports no count; `SqsQueue` never calls it, and `size()` — which
+excludes in-flight work — could not honestly report what it destroyed
+either. Emptying an SQS queue stays an infrastructure step;
+{doc}`queue-sqs` has the reasoning and what to run instead.
+
+Reaching the capability, in the three places it comes up:
+
+- **Application code** names `ClearableQueueInterface` in its own
+  constructor. With `QUEUE_CONNECTION` set, this package's bootstrap
+  binds it to whatever `QueueInterface` finally resolves to — including
+  a queue your own `bootstrap.php` bound in place of the configured one,
+  since that runs afterwards and wins. Resolution succeeds where
+  clearing works and raises
+  `Kinetis\Queue\Exception\QueueNotClearableException`, naming the
+  backend, where it does not. Anything that only pushes and processes
+  jobs keeps taking `QueueInterface` and works against every backend.
+- **A custom backend** declares `ClearableQueueInterface`, which extends
+  `QueueInterface` — one `implements` clause covers both.
+- **A traced queue** is built with `TracingQueue::wrap()`, or
+  `TracingQueue::wrapClearable()` where the backend's own type already
+  says it clears (see {doc}`telemetry`), so the decorator keeps the
+  capability the backend has. Constructing `TracingQueue` directly
+  around a clearable backend hides it.
+
+```{code-block} php
+use Kinetis\Queue\ClearableQueueInterface;
+
+final readonly class ImportsMaintenance
+{
+    public function __construct(
+        private ClearableQueueInterface $queue,
+    ) {}
+
+    public function discardPendingImports(): int
+    {
+        return $this->queue->clear('imports');
+    }
+}
+```
+
 `queue:clear` discards waiting jobs, and requires `--force` because there
 is no dead-letter copy to restore from:
 
@@ -324,8 +436,13 @@ is no dead-letter copy to restore from:
 vendor/bin/kinetis queue:clear --queue=default --force
 ```
 
-Jobs a worker has already reserved are untouched — they belong to that
-worker until it finishes with them.
+Against a backend that does not declare the capability, the command
+names that backend and the interface it lacks, then exits 1 without
+touching any queue. Every name in `--queue` is validated as one list
+before the first queue is cleared, under the same rule the rest of this
+page's queue names follow, so a mistyped or repeated name in the middle
+of a list leaves every queue in it untouched rather than clearing the
+ones ahead of it first.
 
 ## Multiple backends
 
@@ -648,17 +765,84 @@ travel to the queue backend, because the worker needs them to run the job
 — so a backend holding sensitive payloads wants the same access control
 as the database.
 
+## When a settlement is lost
+
+`QueuedJob::$handle` is a **delivery receipt**: it identifies one exact
+delivery of a job, not the logical job. The same job body reaching a
+worker again — after a retry, or after a reservation expired and the
+backend handed the work to someone else — is a different delivery with a
+different handle. A backend that can tell a live reservation from a
+finished delivery settles only the first, and answers the second with
+`Kinetis\Queue\Exception\StaleJobHandleException` rather than acking,
+releasing or failing whatever delivery holds the job now. The exception
+carries which settlement was attempted, as a `Kinetis\Queue\JobSettlement`
+on its `$operation` property.
+
+`QueueWorker` catches that on all three settlement paths. The loop keeps
+running, since losing a delivery is a normal outcome of the reservation
+model ("Scaling out" above) rather than a reason to stop serving every
+job behind this one.
+Nothing the worker asked for was written, so none of
+`JobSucceeded`/`JobReleased`/`JobFailedPermanently` is dispatched — each
+of those asserts a durable transition that did not happen. Instead:
+
+- `Kinetis\Queue\Events\JobSettlementLost` is dispatched, carrying the
+  job class, queue, attempt number, the attempted operation, the stale
+  exception, and — on the release and fail paths — the job's own
+  exception.
+- A warning-level log line reports the same thing for an application
+  with no listener registered.
+- The job's telemetry span still closes, because an unclosed span is
+  worse than one carrying the wrong exception. A lost `ack()` closes as
+  a settlement failure carrying the stale exception; a lost
+  `release()`/`fail()` keeps the job's own exception, which is what the
+  span was opened to describe.
+
+Read `JobSettlementLost` as "another worker may run, or may already have
+run, this same job" — the same idempotency requirement "Scaling out"
+above already places on a handler, made visible.
+
+Only a stale settlement is treated this way. Any other exception from
+`ack()`/`release()`/`fail()` — a dropped connection, a backend refusing
+writes — propagates and stops the worker, since that is not a settled
+job and a supervisor restarting the process is the right answer to it.
+
+Whether a backend can tell a live reservation from a finished delivery
+at all is a property of its transport, so which settlements raise this
+varies:
+
+| Backend | Fenced settlements |
+|---|---|
+| `kinetis/queue-redis` | `ack()`, `release()` and `fail()` — each reads back whether its own `LREM` found the reserved entry |
+| `kinetis/queue-sql` | None. A settlement addresses a row by id, and the row carries no token identifying which reservation wrote it |
+| `kinetis/queue-sqs` | None of ours. SQS answers an expired or already-used receipt with its own error, which propagates as itself |
+| `kinetis/queue-rabbitmq` | None of ours. A delivery tag is scoped to its channel, and reusing one is a channel-level protocol error rather than an answer this package can read |
+
+Where a backend raises nothing, a lost delivery is invisible to the
+worker rather than reported — the job still runs twice, but only the
+handler's own idempotency stands between that and a duplicate effect.
+
 ## Deferring an event listener onto the queue
 
-`Kinetis\Queue\QueuedListenerInvoker` implements core's
-`Kinetis\Events\ListenerInvokerInterface` — a listener marked
-`Kinetis\Events\ShouldQueue` runs as a real queued job instead of inline:
+Setting `QUEUE_CONNECTION` is all it takes: this package's bootstrap
+binds `Kinetis\Events\ListenerInvokerInterface` to
+`Kinetis\Queue\QueuedListenerInvoker`, so a listener marked
+`Kinetis\Events\ShouldQueue` runs as a real queued job rather than
+inline. There is no second stanza to remember, and no `QUEUE_CONNECTION`
+means core's synchronous default stands and a `ShouldQueue` listener
+still runs — just inline.
+
+The invoker resolves `QueueInterface` the first time a queued listener
+is dispatched, not at bootstrap, so it always pushes onto whichever
+queue the application ends up with. Binding either interface in your own
+`bootstrap.php` overrides this, since that runs afterwards:
 
 ```{code-block} php
 use Kinetis\Events\ListenerInvokerInterface;
-use Kinetis\Queue\QueuedListenerInvoker;
+use Kinetis\Events\SynchronousListenerInvoker;
 
-$app->instance(ListenerInvokerInterface::class, new QueuedListenerInvoker($queue));
+// Configured queue, but these listeners run inline anyway.
+$app->instance(ListenerInvokerInterface::class, new SynchronousListenerInvoker());
 ```
 
 The event's own constructor arguments go through the identical
@@ -669,10 +853,19 @@ does.
 
 `QueuedListenerInvoker` never constructs the listener itself — it
 receives only its class-string and pushes an `InvokeListenerJob`
-carrying that name, the method, and the event's own serialized data.
-The listener's own constructor, and anything it depends on, runs
-exactly once — on the worker that later pops and executes the job, not
-in the process that dispatched the event.
+carrying that name, the method, and the event's own serialized data. The
+listener's own constructor, and anything it depends on, runs on the
+worker that pops the resulting job, not in the process that dispatched
+the event. A retry runs it again: the listener is constructed and
+invoked once per processing attempt, so it needs the same idempotency
+any other job handler does.
+
+A queued listener also cannot stop the dispatch it came from.
+Propagation is decided in the producer process, by
+`isPropagationStopped()` on the event object that process holds (see
+{doc}`events`); the queued listener runs later, on a worker, against a
+reconstructed copy — so a listener that has to halt propagation must run
+inline rather than being marked `ShouldQueue`.
 
 See {doc}`events` for writing the listener itself.
 

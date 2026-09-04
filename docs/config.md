@@ -325,7 +325,16 @@ simply off and `CacheInterface` binds to `NullSimpleCache`.
 ### Queue (`kinetis/queue` + backend packages)
 
 Read by `kinetis queue:work` and `kinetis/queue`'s package bootstrap;
-the backend-specific keys are scoped.
+the backend-specific keys are scoped. Setting `QUEUE_CONNECTION` does
+two things beyond selecting a backend. It decides which capabilities the
+bound backend has beyond `QueueInterface` — `redis`, `sql`, and
+`rabbitmq` can clear a queue and `sqs` cannot, so `kinetis queue:clear`
+refuses under `QUEUE_CONNECTION=sqs`, see {doc}`queue`'s "Clearing is a
+separate capability". And it is what makes a listener marked
+`Kinetis\Events\ShouldQueue` actually queue: the bootstrap binds
+`ListenerInvokerInterface` to the queued invoker, where leaving
+`QUEUE_CONNECTION` unset leaves core's inline default in place (see
+{doc}`events`).
 
 | Key | Default | Purpose |
 |---|---|---|

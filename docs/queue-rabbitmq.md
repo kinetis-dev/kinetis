@@ -43,6 +43,24 @@ queues and exchanges alongside it, described below and declared the same
 way; every one of their names contains a `.`, which a queue name of your
 own can never contain, so nothing you name can collide with them.
 
+## Clearing a queue
+
+`RabbitMqQueue` declares `Kinetis\Queue\ClearableQueueInterface` (see
+{doc}`queue`'s "Clearing is a separate capability"). Clearing purges the
+queue itself and every delay tier, reporting the total the broker says
+it removed. `queue.purge` leaves messages already delivered to a
+consumer and not yet acked in place — the broker's own rule, which
+happens to be exactly the contract's.
+
+A delivery tag is scoped to the channel that produced it, and reusing
+one is a channel-level protocol error rather than an answer this package
+can read back, so it raises no
+`Kinetis\Queue\Exception\StaleJobHandleException` of its own. An
+unacked delivery is requeued the moment the connection drops, so a
+worker that dies mid-job has its work redelivered rather than stranded —
+and a handler has to be idempotent to survive that. See {doc}`queue`'s
+"When a settlement is lost".
+
 ## Delayed jobs
 
 ```{code-block} php
