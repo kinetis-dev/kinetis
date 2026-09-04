@@ -176,6 +176,62 @@ final class RefreshTokenStoreTest extends TestCase
         self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
     }
 
+    /**
+     * A subject reaches issue() and revokeAllForUser() as string|int and
+     * the type is part of the identity, so an integer subject and its
+     * numeric string form are two different users — revoking either
+     * leaves the other's outstanding tokens redeemable.
+     */
+    public function test_revoke_all_for_an_int_user_id_does_not_affect_its_numeric_string_form(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue('42');
+        $store->revokeAllForUser(42, 60);
+
+        self::assertSame(['subject' => '42', 'claims' => []], $store->redeem($token));
+    }
+
+    public function test_revoke_all_for_a_numeric_string_user_id_does_not_affect_its_int_form(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue(42);
+        $store->revokeAllForUser('42', 60);
+
+        self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
+    }
+
+    public function test_revoke_all_for_a_string_user_id_invalidates_that_subjects_tokens(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $token = $store->issue('42');
+        $store->revokeAllForUser('42', 60);
+
+        self::assertNull($store->redeem($token));
+    }
+
+    /**
+     * issue() places no emptiness requirement on a subject, so an empty
+     * string is an id like any other here: it keys only its own tokens,
+     * and an integer 0 subject keys only its own.
+     */
+    public function test_an_empty_string_subject_is_its_own_identity(): void
+    {
+        $store = new RefreshTokenStore(new InMemorySimpleCache());
+
+        $unaffected = $store->issue('');
+        $store->revokeAllForUser(0, 60);
+
+        self::assertSame(['subject' => '', 'claims' => []], $store->redeem($unaffected));
+
+        $revoked = $store->issue('');
+        $store->revokeAllForUser('', 60);
+
+        self::assertNull($store->redeem($revoked));
+    }
+
     public function test_construction_over_a_null_cache_throws_instead_of_silently_issuing_unredeemable_tokens(): void
     {
         try {

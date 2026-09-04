@@ -324,6 +324,15 @@ longest-lived token can stay valid (matching whatever `ttlSeconds` you
 pass to `JwtIssuer::issue()`); anything shorter risks the cutoff itself
 expiring while an old token is technically still unexpired.
 
+The user id this is keyed by is a `string|int`, and its type counts: the
+integer `42` and the string `'42'` are two different users, on both
+stores' `revokeAllForUser()`. `CurrentUserInterface::id()` hands back
+whichever type your own user identity carries, so passing it straight
+through — as the controller above does — keeps every call on one
+identity. Casting it at some call sites and not others is what splits a
+user in two, leaving a "log out everywhere" that revokes an identity
+nobody's tokens were issued to.
+
 ## Refresh tokens
 
 An access token's short expiry is what keeps a leaked one from being
