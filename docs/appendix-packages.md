@@ -350,6 +350,18 @@ Participates in `extra.kinetis`: a scan root covering
 `Kinetis\Telemetry\Middleware\` (so `RequestSpanMiddleware` is
 discovered as global middleware on install) and a `PackageBootstrap`.
 
+Every decorator and hook below routes an operation's own inputs through
+one `@internal` policy class, `Kinetis\Telemetry\Redaction`, with no
+configuration switch to bypass it: a fingerprint (scoped to a
+`FingerprintDomain`, so identical bytes in two contexts never share a
+digest), a count, a fixed-vocabulary descriptor, or the scheme, host
+and port naming which service was addressed crosses into a span, and
+the statement, key, path, URL userinfo, query string or fragment,
+session id, exception message or stack trace it stands for does not.
+{doc}`telemetry`'s "What never reaches a span" states the rule and
+carries the table; the entries below name only what each decorator puts
+on its spans.
+
 - `Kinetis\Telemetry\PackageBootstrap` — binds
   `OpenTelemetry\API\Trace\TracerProviderInterface` on `AppScope`: the
   OTLP-exporting provider when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, a
@@ -368,19 +380,26 @@ discovered as global middleware on install) and a `PackageBootstrap`.
   than blocks. `null` when no endpoint is configured.
 - `Kinetis\Telemetry\Middleware\RequestSpanMiddleware` —
   `#[AsGlobalMiddleware(priority: 90)]`, a server span per request:
-  method as the span name (route templates aren't visible to global
-  middleware and raw paths would explode name cardinality), `url.path`,
-  `http.response.status_code`, `php.memory.usage`, error status on 5xx
-  or an exception, `traceparent` extraction for distributed traces. The
-  span is active while the handler runs — the parent for everything
-  below.
+  the method as the span name, `http.response.status_code`,
+  `php.memory.usage`, error status on 5xx or an exception,
+  `traceparent` extraction for distributed traces. No form of the
+  request target travels on it — a path's segments are the identifiers
+  a request is addressed by, and the route template that would replace
+  them belongs to the router, which runs inside the handler this
+  middleware wraps; the hooks below put that template on `route.match`,
+  a child span, as `http.route`. The span is active while the handler
+  runs — the parent for everything below.
 - `Kinetis\Telemetry\Persistence\TracingMysqlLink`/`TracingPostgresLink`
   (and the `TracingMysqlTransaction`/`TracingPostgresTransaction` their
   `beginTransaction()` hands back, plus the `TracingSqlLinkBase`/
   `TracingSqlTransactionBase` abstract bases) — a client span per
-  `query()`/`execute()` named by the SQL's first keyword, `db.system.name`
-  and `db.query.text` attributes, bound parameter values deliberately
-  never recorded. `COMMIT`/`ROLLBACK` spanned too. Each decorator
+  `query()`/`execute()` named by the SQL's opening keyword, carrying
+  `db.system.name`, `db.operation.name`,
+  `kinetis.db.query_fingerprint`, and `kinetis.db.parameter_count` for
+  `execute()` alone (`query()` binds none by construction, which the
+  absent attribute says and a `0` would not). The statement, its inline
+  literals and its parameter values reach `$inner` untouched and a span
+  never at all. `COMMIT`/`ROLLBACK` spanned too. Each decorator
   implements its dialect marker, so query-builder dialect detection is
   unaffected. Query spans are never activated — they read the current
   context as parent and end immediately, so concurrent queries can't
@@ -396,40 +415,60 @@ discovered as global middleware on install) and a `PackageBootstrap`.
 - `Kinetis\Telemetry\HttpClient\TracingHttpClient`/`TracingResponse` —
   a client span per outgoing request with `traceparent` injection
   (appended in Symfony's `"Name: value"` string form, coexisting with
-  any existing header shape). The span ends when the response is
-  consumed — `getContent()`/`toArray()`, an error, `cancel()`, or
-  destruct as the safety net — never when `request()` returns, since
-  requests through this transport complete later by design.
-  `stream()` unwraps to the inner client's own responses (Symfony
-  clients only stream responses they created), so stream consumers get
-  destruct-time span timing.
+  any existing header shape), carrying `http.request.method` from the
+  method vocabulary, `url.scheme`/`server.address`/`server.port` and
+  `kinetis.http.url_fingerprint` — never the URL's userinfo, path,
+  query string or fragment, each of which routinely holds a credential
+  or an identifier, while `$inner` is handed the URL and the method
+  exactly as the caller wrote them. The span
+  ends when the response is consumed — `getContent()`/`toArray()`, an
+  error, `cancel()`, or destruct as the safety net — never when
+  `request()` returns, since requests through this transport complete
+  later by design. `stream()` unwraps to the inner client's own
+  responses (Symfony clients only stream responses they created), so
+  stream consumers get destruct-time span timing.
 - `Kinetis\Telemetry\Logging\TraceAwareLogger` — PSR-3 decorator adding
   `trace_id`/`span_id` to entry context when a span is recording;
   caller-supplied keys win.
 - `Kinetis\Telemetry\SimpleCache\TracingSimpleCache` — wraps any PSR-16
   `CacheInterface`. A client span per method (`get`/`set`/`delete`/`has`/
   `clear`/`getMultiple`/`setMultiple`/`deleteMultiple`), named by the
-  operation, `db.system.name: redis` and every key touched as `db.keys`
-  — values are never recorded.
+  operation, `db.system.name: redis`, a
+  `kinetis.cache.key_fingerprint` over the operation's ordered key list
+  and `db.operation.batch.size` on the three multi-key methods. Neither
+  the keys nor the values are recorded: a key is built from whatever
+  identifies the cached thing, so it is as sensitive as the value.
 - `Kinetis\Telemetry\Session\TracingSessionStore` — wraps any
   `SessionStoreInterface`. A span per `read`/`write`/`destroy`; the
-  session id never travels verbatim (it's a bearer credential), only a
-  12-character SHA-256 prefix as `kinetis.session.id_fingerprint`. The
-  payload is never recorded.
+  session id never travels verbatim (it's a bearer credential), only
+  its fingerprint as `kinetis.session.id_fingerprint`. The payload is
+  never recorded.
 - `Kinetis\Telemetry\Search\TracingOpenSearchTransport` — wraps any
   PSR-18 `ClientInterface`, meant for
   `OpenSearchClientFactory::fromConfig()`'s `$transportDecorator`
   parameter. A client span per call, named from the request's method
-  and its last `_`-prefixed path segment (`POST _search`, `GET _doc`)
-  rather than parsing the query DSL; `db.system.name: opensearch`.
-  PSR-18's `sendRequest()` always returns a complete response, so
-  unlike `TracingHttpClient` there's no deferred span lifecycle to
-  manage.
+  and the action its path performs (`POST _search`, `GET _doc`) rather
+  than parsing the query DSL, both drawn from fixed vocabularies; a
+  path naming no listed action gives `request`. Carries
+  `db.system.name: opensearch`, `db.operation.name` (the same action)
+  and `kinetis.search.path_fingerprint` — index names, aliases and
+  document ids identify the records a call touched, so no segment of
+  the path names a span or reaches an attribute. PSR-18's
+  `sendRequest()` always returns a complete response, so unlike
+  `TracingHttpClient` there's no deferred span lifecycle to manage.
 - `Kinetis\Telemetry\Instrumentation\OtelTelemetry` — implements core's
   `Kinetis\Instrumentation\TelemetryInterface`, turning the framework's
   hooks into spans; `PackageBootstrap` swaps it into
-  `Telemetry::global()` whenever the OTLP endpoint is configured. Which
-  hooks *activate* their span (parenting whatever starts next) is the
+  `Telemetry::global()` whenever the OTLP endpoint is configured. Its
+  query hook reports the same keyword, `db.operation.name` and
+  `kinetis.db.query_fingerprint` the SQL decorator does, and ends a
+  hook pair by recording the failure's type alone, so the
+  auto-registered path exports no more than the opt-in one. Its
+  `route.match` span carries the method and, once the router answers,
+  the matched template as `http.route` — never the request target the
+  hook is handed. The MCP tool name and resource URI it does export are
+  registry-resolved definitions rather than caller-supplied text.
+  Which hooks *activate* their span (parenting whatever starts next) is the
   load-bearing choice: only strictly-nested single-fiber pairs do —
   middleware, controller, event/listener, the `concurrently()` batch,
   MCP tool calls, worker jobs. Query and per-task spans never activate:
