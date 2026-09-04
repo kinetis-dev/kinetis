@@ -33,6 +33,8 @@ use Psr\SimpleCache\CacheInterface;
  * revocation already documents. $ttlSeconds must cover the longest
  * lifetime any of this user's currently-outstanding refresh tokens
  * could still have; once it elapses, the cutoff itself is forgotten.
+ * Both stores derive that per-subject key through SubjectKey, so a
+ * subject id's type is part of the identity here too.
  *
  * Built against plain Psr\SimpleCache\CacheInterface, but requires the
  * cache to also implement AtomicConsumeInterface — NullSimpleCache is
@@ -157,6 +159,6 @@ final readonly class RefreshTokenStore
 
     private function userKey(string|int $userId): string
     {
-        return 'jwt-refresh-user.' . hash('sha256', (string) $userId);
+        return 'jwt-refresh-user.' . SubjectKey::digest($userId);
     }
 }

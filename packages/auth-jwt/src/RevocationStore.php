@@ -42,7 +42,9 @@ use Psr\SimpleCache\CacheInterface;
  * second after the call, the overwhelmingly common case, is unaffected
  * either way. Unlike revokeToken(), $ttlSeconds on revokeAllForUser()
  * has no single token to derive from — pass your own app's longest
- * token lifetime.
+ * token lifetime. A subject id's type is part of the identity being
+ * revoked, so `42` and `'42'` are two separate users here — see
+ * SubjectKey for the framing that holds them apart.
  *
  * Built against plain Psr\SimpleCache\CacheInterface, the same "don't
  * hard-couple to Redis specifically" reasoning
@@ -164,6 +166,6 @@ final readonly class RevocationStore
 
     private function userKey(string|int $userId): string
     {
-        return 'jwt-revoked-user.' . hash('sha256', (string) $userId);
+        return 'jwt-revoked-user.' . SubjectKey::digest($userId);
     }
 }

@@ -255,7 +255,7 @@ final class RevocationStoreTest extends TestCase
         $store = new RevocationStore($cache);
         $store->revokeAllForUser('user-42', 60);
 
-        $cutoff = $cache->get('jwt-revoked-user.' . hash('sha256', 'user-42'));
+        $cutoff = $cache->get('jwt-revoked-user.' . hash('sha256', 's:user-42'));
         self::assertIsInt($cutoff);
 
         self::assertTrue($store->isRevokedForUser('user-42', $cutoff));
@@ -280,6 +280,69 @@ final class RevocationStoreTest extends TestCase
         $store->revokeAllForUser(42, 60);
 
         self::assertTrue($store->isRevokedForUser(42, $issuedAt));
+    }
+
+    /**
+     * revokeAllForUser() and isRevokedForUser() both accept string|int,
+     * and the type is part of the identity: an app keying users by
+     * integer id and one keying them by string id are both served here,
+     * but 42 and '42' are not the same user in either. Sharing one key
+     * between them would make "log out everywhere" for one identity log
+     * out an unrelated other.
+     */
+    public function test_an_int_user_id_and_its_numeric_string_form_are_separate_identities(): void
+    {
+        $store = new RevocationStore(new InMemorySimpleCache());
+        $issuedAt = time() - 10;
+
+        $store->revokeAllForUser(42, 60);
+
+        self::assertTrue($store->isRevokedForUser(42, $issuedAt));
+        self::assertFalse($store->isRevokedForUser('42', $issuedAt));
+    }
+
+    public function test_a_numeric_string_user_id_and_its_int_form_are_separate_identities(): void
+    {
+        $store = new RevocationStore(new InMemorySimpleCache());
+        $issuedAt = time() - 10;
+
+        $store->revokeAllForUser('42', 60);
+
+        self::assertTrue($store->isRevokedForUser('42', $issuedAt));
+        self::assertFalse($store->isRevokedForUser(42, $issuedAt));
+    }
+
+    /**
+     * The type tag a subject id is framed with before hashing is part of
+     * the hashed material, so a string carrying that tag's own shape is
+     * still just a string — it can't be framed into the integer's key.
+     */
+    public function test_a_string_user_id_shaped_like_an_int_framing_stays_separate(): void
+    {
+        $store = new RevocationStore(new InMemorySimpleCache());
+        $issuedAt = time() - 10;
+
+        $store->revokeAllForUser(42, 60);
+
+        self::assertFalse($store->isRevokedForUser('i:42', $issuedAt));
+    }
+
+    /**
+     * An empty string is a valid id as far as this store's own contract
+     * goes — string|int with no emptiness check, unlike the non-empty
+     * `jti` revokeToken() insists on — so it gets a key of its own like
+     * any other value rather than collapsing onto 0 or ''-adjacent ids.
+     */
+    public function test_an_empty_string_user_id_is_its_own_identity(): void
+    {
+        $store = new RevocationStore(new InMemorySimpleCache());
+        $issuedAt = time() - 10;
+
+        $store->revokeAllForUser('', 60);
+
+        self::assertTrue($store->isRevokedForUser('', $issuedAt));
+        self::assertFalse($store->isRevokedForUser(0, $issuedAt));
+        self::assertFalse($store->isRevokedForUser('0', $issuedAt));
     }
 
     public function test_construction_over_a_null_cache_throws_instead_of_silently_not_revoking(): void
