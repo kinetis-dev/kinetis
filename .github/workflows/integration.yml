@@ -505,23 +505,8 @@ jobs:
       fail-fast: false
       matrix:
         php-version: ['8.4', '8.5']
-    # A genuine multi-node Redis Cluster, not a single-node stand-in —
-    # grokzen/redis-cluster runs 3 masters + 3 replicas as real,
-    # independent redis-server processes inside one container, bootstrapped
-    # via the real `redis-cli --cluster create`. This is the one
-    # integration job that needs the job itself wrapped in `container:`
-    # rather than running on the bare runner like every job above: Redis
-    # Cluster nodes advertise their own container-internal IP (via
-    # CLUSTER NODES/SHARDS) for node-to-node gossip and for a client's own
-    # MOVED-redirect targets, and only a job attached to the *same* Docker
-    # bridge network the service container runs on can reach that address
-    # directly — a bare runner reaching only the service's published
-    # `localhost:<port>` mapping never sees a route to it. Confirmed
-    # directly (not assumed) against a manually reproduced GHA-equivalent
-    # network topology before writing this job. Because of this, PHP/
-    # Composer run directly inside this step rather than via a nested
-    # `docker run` the way every other job here invokes them — there's no
-    # Docker-in-Docker socket available inside a job container by default.
+    # Redis advertises container-internal addresses for cluster redirects.
+    # The PHP job therefore joins the service container's Docker network.
     container:
       image: php:${{ matrix.php-version }}-cli-alpine
     services:
@@ -530,35 +515,11 @@ jobs:
     env:
       REDIS_CLUSTER_SEEDS: redis-cluster:7000,redis-cluster:7001,redis-cluster:7002
     steps:
-      # php:*-cli-alpine has no git binary — without it, actions/checkout
-      # silently falls back to downloading the repo as a tarball via the
-      # GitHub REST API instead of a real `git clone`. That tarball is
-      # generated server-side via `git archive`, which — unlike a real
-      # clone — does respect .gitattributes' export-ignore directives,
-      # so composer.lock and any export-ignored test fixtures would
-      # simply be missing from the checkout. Installing git here first
-      # makes checkout behave identically to every other job in this file.
+      # actions/checkout needs git to preserve export-ignored test files.
       - name: Install git
         run: apk add --no-cache git
 
-      # grokzen/redis-cluster's own entrypoint bootstraps in two phases:
-      # first `--cluster create` with all 6 nodes as independent
-      # single-node masters (cluster_state already reports "ok" here,
-      # since all 16384 slots are already covered), then a second pass
-      # that attaches 3 of them as replicas of the other 3. Querying
-      # CLUSTER SHARDS/NODES during that second phase — confirmed
-      # directly by polling a real container every 0.5s from the moment
-      # it starts — can see a node still labeled "master" that's a
-      # replica moments later, which is exactly what made the very first
-      # real run of this job (once the checkout fix above let it get
-      # this far) fail with a real Redis "READONLY" error on a node
-      # ClusteredRedisSimpleCache::clear() treated as a master. Waiting
-      # for cluster_state:ok alone is insufficient — confirmed by the
-      # same polling that state flips to "ok" ~4-5s in, several seconds
-      # before the master/replica split settles. The real, stable signal
-      # is the final 3-master/3-replica split itself, confirmed to hold
-      # from the moment it first appears through 20+ more seconds of
-      # polling, never flipping back.
+      # The image reports cluster_state:ok before it finishes assigning replicas.
       - name: Wait for Redis Cluster to finish bootstrapping
         run: |
           apk add --no-cache redis
@@ -570,7 +531,7 @@ jobs:
               echo "Cluster ready: 3 masters, 3 replicas."
               exit 0
             fi
-            echo "Not ready yet (masters=$masters replicas=$replicas), waiting..."
+            echo "Not ready yet (attempt $i/30, masters=$masters replicas=$replicas), waiting..."
             sleep 2
           done
           echo "Cluster did not reach a stable 3-master/3-replica split in time." >&2
@@ -581,10 +542,13 @@ jobs:
       - name: Install Composer
         run: |
           apk add --no-cache curl
-          php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-          php composer-setup.php --quiet
-          mv composer.phar /usr/local/bin/composer
-          rm composer-setup.php
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 15 --max-time 120 \
+            --output /usr/local/bin/composer \
+            https://github.com/composer/composer/releases/latest/download/composer.phar
+          chmod +x /usr/local/bin/composer
+          composer --version
 
       - name: Cache Composer downloads
         uses: actions/cache@v6
@@ -596,25 +560,15 @@ jobs:
         working-directory: packages/cache-redis
         run: composer install --no-interaction --prefer-dist
 
-      - name: Run integration tests
+      - name: Run integration tests twice against the same cluster
         # REDIS_CLUSTER_SEEDS comes from the job-level env above. The
         # single-node tests in the same suite skip here, since REDIS_HOST
-        # is deliberately unset.
-        #
-        # Deliberately a single invocation, never a same-container retry:
-        # this suite's reserved-slot-offset scheme (see the test file's
-        # TEST_SLOT_OFFSET_* constants and reservedSlotFor()) is only
-        # exclusive for the duration of *one* bootstrap of the
-        # redis-cluster service container, and at least one test (the
-        # ASK-migration/durable-overlay test) permanently reassigns its
-        # own reserved slot as part of a successful run — a second
-        # `phpunit` in the same job runs that test against a cluster its
-        # own first pass already mutated, producing a real, different
-        # failure (a raw MOVED protocol error) rather than a clean pass.
-        # A job-level re-run (`gh run rerun --failed`, or GitHub's own
-        # UI) gets a fresh service container.
+        # is unset. The second run verifies that the first restored every
+        # slot it changed.
         working-directory: packages/cache-redis
-        run: vendor/bin/phpunit
+        run: |
+          vendor/bin/phpunit
+          vendor/bin/phpunit
 
   localstack:
     name: queue-sqs + storage-s3 (LocalStack, PHP ${{ matrix.php-version }})

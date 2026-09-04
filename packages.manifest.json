@@ -88,7 +88,7 @@
             "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) via amphp/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
-            "version": "1.1.8",
+            "version": "1.1.9",
             "requires": [
                 "framework"
             ],
