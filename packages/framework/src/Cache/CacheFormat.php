@@ -55,5 +55,14 @@ final class CacheFormat
     //     McpRegistry::fromArray()'s own exactKeys() check as a
     //     confusing "malformed entry" error instead of the clean
     //     fall-back-and-recompile this version check exists for.
-    public const int VERSION = 15;
+    // 16: kinetis/mcp's McpRegistry carries a tool's inputSchema as its
+    //     own JSON text (`inputSchemaJson`) — the one notation that
+    //     tells an empty schema object apart from an empty schema list,
+    //     and plain data the artifact format can carry. A generation
+    //     from before this version carries `inputSchema` plus an
+    //     `inputSchemaObjectPaths` companion instead, which would reach
+    //     McpRegistry::fromArray()'s own exactKeys() check as a
+    //     confusing "malformed entry" error rather than the clean
+    //     fall-back-and-recompile this version check exists for.
+    public const int VERSION = 16;
 }

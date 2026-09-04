@@ -52,6 +52,24 @@ MCP tools and resources are part of this cache too — `kinetis/mcp`'s
 `McpRegistry` is a `CacheableDiscoveryInterface` class like any other
 installed package's, one more entry in `plugins.php`. See {doc}`mcp`.
 
+A tool's generated `inputSchema` is the one place this format needs a
+little care. JSON Schema distinguishes the empty object `{}` from the
+empty array `[]` — an empty `properties` map is one, an empty `required`
+list the other — and a PHP array expresses only the second, so
+`JsonSchema` spells `{}` as a live `stdClass`. A compiled artifact
+carries plain data only, and the build refuses a live object anywhere
+in one. `McpRegistry` therefore stores the schema as its own JSON text,
+in `inputSchemaJson`: a plain string, and the one notation that already
+carries the distinction, so every empty object and every empty array
+comes back the type it went in as, at any depth. That text is the
+cache's own representation of the schema, not the bytes a transport
+puts on the wire. Text that will not parse, or a document whose root is
+not a JSON object, is rejected as an invalid artifact, like a malformed
+route entry: the boot falls back to live discovery and recompiles,
+rather than serving a tool schema that no longer matches what the
+application declares. The full rule is in {doc}`appendix-packages`'s
+`McpRegistry` entry.
+
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
 
