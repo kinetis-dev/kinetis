@@ -21,6 +21,7 @@ use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
 use Kinetis\Tests\Http\Fixtures\QueryLiteralController;
 use Kinetis\Tests\Http\Fixtures\RawRequestController;
+use Kinetis\Tests\Http\Fixtures\RequiredTagSearchController;
 use Kinetis\Tests\Http\Fixtures\TagSearchController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedBodyFieldController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedCallableBodyFieldController;
@@ -1240,14 +1241,13 @@ final class DispatcherTest extends TestCase
         $router->register(ImpossiblePathArrayController::class);
     }
 
-    // KINETIS-76 third follow-up: OpenApiGenerator advertises an
-    // array/iterable-typed #[Query] parameter with the OpenAPI spec's
-    // own default array serialization — the repeated-key wire form,
-    // `?tags=a&tags=b` — which PSR-7's own getQueryParams() (built from
-    // PHP's native parse_str()) cannot represent at all. Proven here
-    // through a real dispatched request built from a raw URI query
-    // string, not withQueryParams() already containing the PHP array
-    // shape the fix is meant to stop being the *only* way in.
+    // An array/iterable-typed #[Query] parameter is bound from the
+    // repeated-key wire form, `?tags=a&tags=b` — the OpenAPI spec's own
+    // default array serialization, and the one form that satisfies it.
+    // PSR-7's getQueryParams() (built from PHP's native parse_str())
+    // cannot represent that form at all, so every check below dispatches
+    // a real request built from a raw URI query string rather than
+    // seeding withQueryParams() with an already-shaped PHP array.
 
     public function test_a_query_array_parameter_accepts_the_openapi_standard_repeated_key_form(): void
     {
@@ -1276,24 +1276,42 @@ final class DispatcherTest extends TestCase
     }
 
     /**
-     * The bracket convention still works too — a deliberate fallback,
-     * not a regression: this is what PSR-7's getQueryParams() already
-     * gives every runtime adapter for free from PHP's own native
-     * parse_str(), and an existing bracket-style caller must keep
-     * working exactly as before, alongside the now-primary standard form
-     * proven above.
+     * PHP's bracket spelling sends a different key — the name on the
+     * wire is `tags[]`, not `tags` — so it satisfies no #[Query('tags')]
+     * parameter: the value is missing, and the parameter's own default
+     * is what the controller sees, exactly as for a request that never
+     * mentioned the key at all.
      */
-    public function test_a_query_array_parameter_still_accepts_the_php_bracket_form_as_a_fallback(): void
+    public function test_a_bracketed_query_key_does_not_satisfy_an_array_query_parameter(): void
     {
         $router = new Router();
         $router->register(TagSearchController::class);
         $match = $router->match('GET', '/tag-search');
 
-        $request = (new ServerRequest('GET', '/tag-search'))->withQueryParams(['tags' => ['a', 'b']]);
+        $request = new ServerRequest('GET', '/tag-search?tags%5B%5D=a&tags%5B%5D=b');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame(['tags' => ['a', 'b']], json_decode((string) $response->getBody(), true));
+        self::assertSame(['tags' => []], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * The same rejection with nothing to fall back on: a defaultless
+     * array #[Query] parameter given only the bracket spelling fails
+     * validation as an absent required value, rather than binding the
+     * PHP array parse_str() would have built from it.
+     */
+    public function test_a_bracketed_query_key_leaves_a_required_array_query_parameter_missing(): void
+    {
+        $router = new Router();
+        $router->register(RequiredTagSearchController::class);
+        $match = $router->match('GET', '/required-tag-search');
+
+        $request = new ServerRequest('GET', '/required-tag-search?tags%5B%5D=a');
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+        self::assertStringContainsString('tags', (string) $response->getBody());
     }
 
     public function test_an_omitted_query_array_parameter_uses_its_default(): void

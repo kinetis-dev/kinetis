@@ -826,7 +826,7 @@ The type-mismatch check above is genuinely the same method regardless of
 source — but the *value* it checks is not. A `#[Body]`/MCP value is
 already a real, JSON-decoded PHP value (a genuine `bool`, `array`, ...);
 a `#[Query]`/path value only ever arrives as a raw string (or, for a
-`#[Query]` array-style parameter — `?tags[]=a&tags[]=b` — a PHP array).
+`#[Query]` array-style parameter — `?tags=a&tags=b` — a list of them).
 Two consequences follow directly from this:
 
 - **`bool`/`true`/`false` accept the OpenAPI-documented `"true"`/`"false"`
@@ -857,25 +857,26 @@ Two consequences follow directly from this:
   `#[Body]`, where a real JSON `null` is representable.
 - **An `array`/`iterable`-typed path parameter is rejected at
   registration too, unconditionally.** A `#[Query]` array works via the
-  bracket convention below, but a route placeholder is always exactly
+  repeated-key form below, but a route placeholder is always exactly
   one path segment — `Route::match()` captures it as a single string,
-  with no bracket, comma, or any other convention that could ever turn
-  it into an array. Move it to `#[Query]` (where an array-style
+  with no repetition, comma, or any other convention that could ever
+  turn it into an array. Move it to `#[Query]` (where an array-style
   parameter is representable) or `#[Body]` instead.
 - **A `#[Query]` array-style parameter accepts OpenAPI 3.1's own
   *default* query-array serialization** (`style: form`, `explode: true`
   — never stated explicitly in the generated document, since it's the
   spec default whenever neither is overridden): the repeated-key
   spelling, `?tags=a&tags=b`. This is what a client generated strictly
-  from `/openapi.json` actually sends, and it genuinely works — parsed
-  directly from the request's own raw, unparsed query string, since PHP's
-  native `parse_str()` (what `getQueryParams()` is built from on every
-  runtime) cannot represent this form at all: a repeated, non-bracketed
-  key silently collapses to its last value there, with every earlier one
-  lost. PHP's own bracket convention, `?tags[]=a&tags[]=b`, still works
-  too, as a fallback used only when the repeated-key form isn't present —
-  so an existing bracket-style caller keeps working exactly as before,
-  alongside the now-genuinely-correct standard form.
+  from `/openapi.json` actually sends, and it is the only form that
+  binds — parsed directly from the request's own raw, unparsed query
+  string, since PHP's native `parse_str()` (what `getQueryParams()` is
+  built from on every runtime) cannot represent it at all: a repeated,
+  non-bracketed key silently collapses to its last value there, with
+  every earlier one lost. PHP's bracket spelling, `?tags[]=a`, sends a
+  different key — the name on the wire is `tags[]`, not `tags` — so it
+  satisfies no `#[Query('tags')]` parameter: the value is missing, and
+  the parameter's own default, `null`, or an "is required." `422`
+  follows, exactly as for a request that never mentioned the key.
 
 ### Form-encoded and multipart bodies get the raw-string rules too
 

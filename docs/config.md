@@ -252,7 +252,7 @@ yours to invent and aren't listed here.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache (see {doc}`caching`). Anything unrecognized means `production`. |
+| `APP_ENV` | `production` | `development` — the exact name, ignoring case — selects live discovery; unset or any other name selects the AOT cache (see {doc}`caching`). |
 | `OPENAPI_ENVIRONMENTS` | — | Comma-separated `APP_ENV` values where `/openapi.json` and `/openapi` are served. Unset means neither is reachable anywhere (see {doc}`routing-validation`). |
 | `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read (see {doc}`middleware`); must be positive. |
 | `SECURITY_FRAME_OPTIONS` | `DENY` | `X-Frame-Options` value, or `off` to omit the header (see {doc}`middleware`). |

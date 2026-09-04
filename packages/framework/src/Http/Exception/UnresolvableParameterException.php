@@ -80,13 +80,13 @@ final class UnresolvableParameterException extends RuntimeException
 
     /**
      * An `array`/`iterable`-typed path parameter — genuinely unsatisfiable,
-     * unconditionally, unlike a `#[Query]` array (`?tags[]=a&tags[]=b`
-     * works there, see {doc}`routing-validation`'s "Query and path
-     * values are raw strings" section): a route placeholder is always
-     * exactly one path segment, captured by `Route::match()` as a single
-     * string — there is no bracket, comma, or any other convention that
-     * could ever let a path segment become an array. Thrown from the
-     * same `Router::register()`-time boundary as
+     * unconditionally, unlike a `#[Query]` array (`?tags=a&tags=b` works
+     * there, see {doc}`routing-validation`'s "Query and path values are
+     * raw strings" section): a route placeholder is always exactly one
+     * path segment, captured by `Route::match()` as a single string —
+     * there is no repetition, comma, or any other convention that could
+     * ever let a path segment become an array. Thrown from the same
+     * `Router::register()`-time boundary as
      * forImpossibleQueryOrPathNull().
      */
     public static function forImpossiblePathArray(string $name): self

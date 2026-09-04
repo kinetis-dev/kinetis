@@ -106,7 +106,7 @@ via `Kinetis\Config`:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `APP_ENV` | `production` | `development` or `production` — selects live discovery vs. the AOT cache. Anything unrecognized means `production`. |
+| `APP_ENV` | `production` | `development` — the exact name, ignoring case — selects live discovery; unset or any other name selects the AOT cache. |
 | `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read. |
 | `ROUTE_DISCOVERY_PATHS` | — | Restricts the HTTP-controller scan to comma-separated sub-paths, relative to each PSR-4 base directory. |
 | `COMMAND_DISCOVERY_PATHS` | — | The same, for CLI commands. |

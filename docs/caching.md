@@ -19,9 +19,11 @@ $env = AppEnvironment::detect(); // reads getenv('APP_ENV')
 APP_ENV=development php -S localhost:8080 public/index.php
 ```
 
-Unset or unrecognized values default to `Production`. Local development
-sets `APP_ENV=development` explicitly — see `.env.example` at the project
-root, or {doc}`config` for loading it from a `.env` file automatically.
+Only the exact name `development`, ignoring case, selects `Development`.
+An unset `APP_ENV` and every other name — a deployment's own `staging`
+included — is `Production`. Local development sets `APP_ENV=development`
+explicitly — see `.env.example` at the project root, or {doc}`config` for
+loading it from a `.env` file automatically.
 
 ## What gets cached
 
