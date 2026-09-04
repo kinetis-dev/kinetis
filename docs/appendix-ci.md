@@ -72,11 +72,13 @@ disguised PHPUnit test.
   `SqlQueue`: push/pop/ack/release/fail, attempts, priority queues.
 - **`queue-rabbitmq`** (RabbitMQ) — `RabbitMqQueue`: push/pop/ack/
   release/fail, `maxAttempts` round-tripping through message headers,
-  priority cycling across two real queues, and a real (not just
-  configured) delay via the dead-letter-exchange mechanism. Its own
-  dedicated job, never sharing a process with anything else — the one
-  precondition `RabbitMqQueue`'s own disclosed `concurrently()`
-  limitation actually needs.
+  priority cycling across two real queues, real delays through the delay
+  ladder (a three-second delay pushed behind a ten-minute one coming due
+  on its own wait, `size()`/`clear()` reaching both from a connection
+  that never pushed them, and the delay ceiling rejected), and
+  `release()` leaving a job unacked when the broker doesn't confirm the
+  replacement. Its own dedicated job, never sharing a process with
+  anything else.
 - **`persistence-and-cache-redis`** (MySQL 8.4, MariaDB 11.4, Postgres 16,
   Redis 7) — `kinetis/persistence`'s `TransactionGuard`: commit/
   rollback/`rollbackDangling()`; `kinetis/cache-redis`'s
