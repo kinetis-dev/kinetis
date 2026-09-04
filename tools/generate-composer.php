@@ -16,15 +16,14 @@ declare(strict_types=1);
  *                                               Exit 1 if anything's
  *                                               stale.
  *   php tools/generate-composer.php --bump=<key>[,<key>,...]|all
- *       (--major|--minor|--patch|--set-version=<key>=<version>)
- *                                               Force-bump one or more
+ *       --minor|--patch                         Move one or more
  *                                               packages' version field
- *                                               only — nothing else in
- *                                               the manifest changes.
- *                                               --major is general
- *                                               SemVer mechanics this
- *                                               repo's own version
- *                                               policy never uses.
+ *                                               one step — nothing else
+ *                                               in the manifest changes.
+ *   php tools/generate-composer.php --set-version=<key>=<version>
+ *                                               The same move, written
+ *                                               as an explicit target
+ *                                               rather than a size.
  *   php tools/generate-composer.php --release=<key>[,<key>,...]
  *                                               Print each package's
  *                                               release-mode composer.json
@@ -38,25 +37,38 @@ declare(strict_types=1);
  *                                               packages/<key>/composer.json
  *                                               instead of printed.
  *
+ * Both version modes obey tools/version-policy.php, the same policy
+ * validate-manifest.php checks a push against — there is no mode here
+ * that writes a version the validator would then reject.
+ *
+ * Every manifest read runs through tools/manifest-schema.php first, so
+ * nothing below writes a file from an entry that hasn't been validated.
+ *
  * Never runs `composer` itself — see tools/README.md for the full
  * edit-manifest -> regenerate -> composer update -> commit flow.
  */
 
-const PROJECT_ROOT = __DIR__ . '/..';
-const MANIFEST_PATH = PROJECT_ROOT . '/packages.manifest.json';
+require_once __DIR__ . '/manifest-schema.php';
+require_once __DIR__ . '/checked-write.php';
 
-/** @return array<string, mixed> */
-function loadManifest(): array
+/**
+ * Reads and validates the manifest, or returns the reason it can't be
+ * used. Reading, decoding and schema failures all arrive the same way,
+ * and only the three entry-point functions turn one into a message and
+ * an exit code — nothing deeper exits, and nothing has written a file or
+ * contacted a remote by the time this returns.
+ *
+ * @return array<string, mixed>|null
+ */
+function loadManifestOrReport(?string $projectRoot = null): ?array
 {
-    $json = file_get_contents(MANIFEST_PATH);
+    $loaded = loadValidatedManifest($projectRoot ?? PROJECT_ROOT);
 
-    if ($json === false) {
-        fwrite(STDERR, "Could not read " . MANIFEST_PATH . "\n");
-        exit(1);
+    foreach ($loaded['problems'] as $problem) {
+        fwrite(STDERR, "[manifest] {$problem}\n");
     }
 
-    /** @var array<string, mixed> */
-    return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+    return $loaded['manifest'];
 }
 
 /**
@@ -69,7 +81,11 @@ function loadManifest(): array
  */
 function siblingConstraint(string $version): string
 {
-    $v = parseSemver($version);
+    $v = parseVersion($version);
+
+    if ($v === null) {
+        throw new InvalidArgumentException("Not a canonical X.Y.Z version: {$version}");
+    }
 
     return "^{$v['major']}.{$v['minor']}.{$v['patch']}";
 }
@@ -225,16 +241,18 @@ function generateRelease(array $manifest, array $keys): array
     return $generated;
 }
 
-function composerJsonPath(string $key, ?string $projectRoot = null): string
-{
-    return ($projectRoot ?? PROJECT_ROOT) . "/packages/{$key}/composer.json";
-}
-
 /** @param array<string, mixed> $manifest */
 function runWrite(array $manifest): int
 {
     foreach (generateAll($manifest) as $key => $content) {
-        file_put_contents(composerJsonPath($key), $content);
+        try {
+            writeFileChecked(composerJsonPath($key), $content);
+        } catch (CheckedWriteFailure $e) {
+            fwrite(STDERR, $e->getMessage() . "\n");
+
+            return 1;
+        }
+
         echo "wrote packages/{$key}/composer.json\n";
     }
 
@@ -277,7 +295,14 @@ function runReleaseWrite(array $manifest, string $keysArg, ?string $projectRoot 
     }
 
     foreach (generateRelease($manifest, $keys) as $key => $content) {
-        file_put_contents(composerJsonPath($key, $projectRoot), $content);
+        try {
+            writeFileChecked(composerJsonPath($key, $projectRoot), $content);
+        } catch (CheckedWriteFailure $e) {
+            fwrite(STDERR, $e->getMessage() . "\n");
+
+            return 1;
+        }
+
         echo "wrote release-mode packages/{$key}/composer.json\n";
     }
 
@@ -310,106 +335,264 @@ function runCheck(array $manifest): int
     $stale = findStalePackages($manifest);
 
     if ($stale === []) {
-        echo "All " . count($manifest['packages']) . " packages match the manifest.\n";
+        echo 'All ' . count($manifest['packages']) . " packages match the manifest.\n";
 
         return 0;
     }
 
-    fwrite(STDERR, "Stale composer.json for: " . implode(', ', $stale) . "\n");
+    fwrite(STDERR, 'Stale composer.json for: ' . implode(', ', $stale) . "\n");
     fwrite(STDERR, "Run: php tools/generate-composer.php\n");
 
     return 1;
 }
 
-/** @return array{major: int, minor: int, patch: int} */
-function parseSemver(string $version): array
+/**
+ * Resolves every requested version move against the shared policy before
+ * any of them is applied, so a rejected key leaves the manifest whole
+ * rather than half-bumped.
+ *
+ * @param array<string, mixed> $manifest
+ * @param array<string, string> $targets package key => requested version
+ * @return array{versions: array<string, string>, problems: list<string>}
+ */
+function planVersionMoves(array $manifest, array $targets): array
 {
-    if (preg_match('/^(\d+)\.(\d+)\.(\d+)$/', $version, $m) !== 1) {
-        fwrite(STDERR, "Not a plain X.Y.Z version: {$version}\n");
-        exit(1);
+    $versions = [];
+    $problems = [];
+
+    foreach ($targets as $key => $target) {
+        if (!isset($manifest['packages'][$key])) {
+            $problems[] = "Unknown package: {$key}";
+
+            continue;
+        }
+
+        $current = $manifest['packages'][$key]['version'];
+        $problem = versionTransitionProblem($current, $target);
+
+        if ($problem !== null) {
+            $problems[] = "{$key}: {$problem}";
+
+            continue;
+        }
+
+        $versions[$key] = $target;
     }
 
-    return ['major' => (int) $m[1], 'minor' => (int) $m[2], 'patch' => (int) $m[3]];
+    return ['versions' => $versions, 'problems' => $problems];
 }
 
-function bumpVersion(string $current, string $component): string
+/**
+ * The whole invocation, checked before any of it runs.
+ *
+ * Every mode below writes a file, so an argument list that could mean
+ * two things has to be rejected rather than resolved by whichever branch
+ * happens to be tested first. A repeated --bump, two size flags, a size
+ * flag with nothing to size, --check alongside a mode that writes: each
+ * is a different intent than any single reading of it.
+ *
+ * @param list<string> $args
+ * @return array{
+ *     mode: 'write'|'check'|'version'|'release'|'release-write',
+ *     bump: ?string,
+ *     size: ?string,
+ *     setVersions: array<string, string>,
+ *     keys: ?string,
+ *     problems: list<string>,
+ * }
+ */
+function parseGeneratorArguments(array $args): array
 {
-    $v = parseSemver($current);
+    $bump = null;
+    $size = null;
+    $setVersions = [];
+    $keys = null;
+    $modes = [];
+    $problems = [];
+    $seen = ['--bump' => 0, 'size' => 0, '--release' => 0, '--release-write' => 0, '--check' => 0];
 
-    return match ($component) {
-        'major' => ($v['major'] + 1) . '.0.0',
-        'minor' => "{$v['major']}." . ($v['minor'] + 1) . '.0',
-        'patch' => "{$v['major']}.{$v['minor']}." . ($v['patch'] + 1),
-        default => throw new InvalidArgumentException("Unknown bump component: {$component}"),
-    };
+    foreach ($args as $arg) {
+        if ($arg === '--check') {
+            $seen['--check']++;
+            $modes['check'] = true;
+        } elseif (str_starts_with($arg, '--bump=')) {
+            $seen['--bump']++;
+            $bump = substr($arg, strlen('--bump='));
+            $modes['version'] = true;
+        } elseif ($arg === '--minor' || $arg === '--patch') {
+            $seen['size']++;
+
+            if ($size !== null && $size !== substr($arg, 2)) {
+                $problems[] = 'Pick one of --minor or --patch, not both.';
+            }
+
+            $size = substr($arg, 2);
+        } elseif (str_starts_with($arg, '--set-version=')) {
+            $modes['version'] = true;
+            $assignment = substr($arg, strlen('--set-version='));
+
+            if (!str_contains($assignment, '=')) {
+                $problems[] = "--set-version needs <key>=<version>, got '{$assignment}'";
+
+                continue;
+            }
+
+            [$key, $version] = explode('=', $assignment, 2);
+
+            if (array_key_exists($key, $setVersions)) {
+                $problems[] = "--set-version names {$key} more than once.";
+
+                continue;
+            }
+
+            $setVersions[$key] = $version;
+        } elseif (str_starts_with($arg, '--release=')) {
+            $seen['--release']++;
+            $keys = substr($arg, strlen('--release='));
+            $modes['release'] = true;
+        } elseif (str_starts_with($arg, '--release-write=')) {
+            $seen['--release-write']++;
+            $keys = substr($arg, strlen('--release-write='));
+            $modes['release-write'] = true;
+        } else {
+            $problems[] = "Unknown option: {$arg}";
+        }
+    }
+
+    foreach (['--bump', '--release', '--release-write', '--check'] as $option) {
+        if ($seen[$option] > 1) {
+            $problems[] = "{$option} is given more than once.";
+        }
+    }
+
+    if ($seen['size'] > 1 && $size !== null) {
+        $problems[] = 'A bump size is given more than once.';
+    }
+
+    if ($size !== null && $bump === null) {
+        $problems[] = "--{$size} sizes a --bump, which this invocation doesn't have.";
+    }
+
+    if ($bump !== null && $size === null) {
+        $problems[] = '--bump requires --minor or --patch.';
+    }
+
+    if (count($modes) > 1) {
+        $named = array_keys($modes);
+        sort($named);
+        $problems[] = 'These modes cannot run together: ' . implode(', ', $named) . '.';
+    }
+
+    return [
+        'mode' => array_key_first($modes) ?? 'write',
+        'bump' => $bump,
+        'size' => $size,
+        'setVersions' => $setVersions,
+        'keys' => $keys,
+        'problems' => array_values(array_unique($problems)),
+    ];
+}
+
+/**
+ * The version each named package is asked to move to. Runs after
+ * parseGeneratorArguments() has accepted the invocation, so the only
+ * failures left are about the packages themselves.
+ *
+ * @param array<string, mixed> $manifest
+ * @param array{bump: ?string, size: ?string, setVersions: array<string, string>} $parsed
+ * @return array{targets: array<string, string>, problems: list<string>}
+ */
+function versionTargets(array $manifest, array $parsed): array
+{
+    $targets = $parsed['setVersions'];
+    $problems = [];
+
+    foreach (array_keys($targets) as $key) {
+        if (!isset($manifest['packages'][$key])) {
+            $problems[] = "Unknown package: {$key}";
+            unset($targets[$key]);
+        }
+    }
+
+    if ($parsed['bump'] === null || $parsed['size'] === null) {
+        return ['targets' => $targets, 'problems' => $problems];
+    }
+
+    $keys = $parsed['bump'] === 'all'
+        ? array_map(strval(...), array_keys($manifest['packages']))
+        : explode(',', $parsed['bump']);
+
+    foreach ($keys as $key) {
+        if (!isset($manifest['packages'][$key])) {
+            $problems[] = "Unknown package: {$key}";
+
+            continue;
+        }
+
+        if (isset($targets[$key])) {
+            $problems[] = "{$key}: --bump and --set-version both name it; pick one";
+
+            continue;
+        }
+
+        if (!canStep($manifest['packages'][$key]['version'], $parsed['size'])) {
+            $problems[] = "{$key}: a {$parsed['size']} step from {$manifest['packages'][$key]['version']} "
+                . 'exceeds the largest version component this tool represents';
+
+            continue;
+        }
+
+        $targets[$key] = nextVersion($manifest['packages'][$key]['version'], $parsed['size']);
+    }
+
+    return ['targets' => $targets, 'problems' => $problems];
 }
 
 /**
  * @param array<string, mixed> $manifest
- * @param list<string> $argv
+ * @param array{bump: ?string, size: ?string, setVersions: array<string, string>} $parsed
  */
-function runBump(array $manifest, array $argv): int
+function runBump(array $manifest, array $parsed): int
 {
-    $bumpArg = null;
-    $component = null;
-    $setVersions = [];
+    $requested = versionTargets($manifest, $parsed);
+    $plan = planVersionMoves($manifest, $requested['targets']);
+    $problems = [...$requested['problems'], ...$plan['problems']];
 
-    foreach ($argv as $arg) {
-        if (str_starts_with($arg, '--bump=')) {
-            $bumpArg = substr($arg, strlen('--bump='));
-        } elseif (in_array($arg, ['--major', '--minor', '--patch'], true)) {
-            $component = substr($arg, 2);
-        } elseif (str_starts_with($arg, '--set-version=')) {
-            [$key, $version] = explode('=', substr($arg, strlen('--set-version=')), 2);
-            $setVersions[$key] = $version;
+    if ($problems !== []) {
+        foreach ($problems as $problem) {
+            fwrite(STDERR, "{$problem}\n");
         }
+
+        return 1;
     }
 
-    if ($bumpArg === null && $setVersions === []) {
-        fwrite(STDERR, "Usage: --bump=<key>[,<key>,...]|all --major|--minor|--patch\n");
+    if ($plan['versions'] === []) {
+        fwrite(STDERR, "Usage: --bump=<key>[,<key>,...]|all --minor|--patch\n");
         fwrite(STDERR, "   or: --set-version=<key>=<version>\n");
 
         return 1;
     }
 
-    if ($bumpArg !== null) {
-        if ($component === null) {
-            fwrite(STDERR, "--bump requires --major, --minor, or --patch.\n");
+    $moves = [];
 
-            return 1;
-        }
-
-        $keys = $bumpArg === 'all' ? array_keys($manifest['packages']) : explode(',', $bumpArg);
-
-        foreach ($keys as $key) {
-            if (!isset($manifest['packages'][$key])) {
-                fwrite(STDERR, "Unknown package: {$key}\n");
-
-                return 1;
-            }
-
-            $current = $manifest['packages'][$key]['version'];
-            $next = bumpVersion($current, $component);
-            $manifest['packages'][$key]['version'] = $next;
-            echo "{$key}: {$current} -> {$next}\n";
-        }
-    }
-
-    foreach ($setVersions as $key => $version) {
-        if (!isset($manifest['packages'][$key])) {
-            fwrite(STDERR, "Unknown package: {$key}\n");
-
-            return 1;
-        }
-
-        parseSemver($version); // validates shape, exits on failure
-        $current = $manifest['packages'][$key]['version'];
+    foreach ($plan['versions'] as $key => $version) {
+        $moves[] = "{$key}: {$manifest['packages'][$key]['version']} -> {$version}";
         $manifest['packages'][$key]['version'] = $version;
-        echo "{$key}: {$current} -> {$version}\n";
     }
 
-    file_put_contents(MANIFEST_PATH, encodeComposerJson($manifest));
-    echo "Wrote " . MANIFEST_PATH . "\n";
+    try {
+        writeFileChecked(MANIFEST_PATH, encodeComposerJson($manifest));
+    } catch (CheckedWriteFailure $e) {
+        fwrite(STDERR, $e->getMessage() . "\n");
+
+        return 1;
+    }
+
+    foreach ($moves as $move) {
+        echo "{$move}\n";
+    }
+
+    echo 'Wrote ' . MANIFEST_PATH . "\n";
 
     return 0;
 }
@@ -434,40 +617,37 @@ function runRelease(array $manifest, string $keysArg): int
 /** @param list<string> $argv */
 function generatorMain(array $argv): int
 {
-    $manifest = loadManifest();
-    $args = array_slice($argv, 1);
+    $parsed = parseGeneratorArguments(array_slice($argv, 1));
 
-    if (in_array('--check', $args, true)) {
-        return runCheck($manifest);
-    }
-
-    foreach ($args as $arg) {
-        if (str_starts_with($arg, '--release-write=')) {
-            return runReleaseWrite($manifest, substr($arg, strlen('--release-write=')));
+    if ($parsed['problems'] !== []) {
+        foreach ($parsed['problems'] as $problem) {
+            fwrite(STDERR, "{$problem}\n");
         }
 
-        if (str_starts_with($arg, '--release=')) {
-            return runRelease($manifest, substr($arg, strlen('--release=')));
-        }
+        return 1;
     }
 
-    if (array_filter($args, static fn (string $a): bool => str_starts_with($a, '--bump=') || str_starts_with($a, '--set-version=')) !== []) {
-        return runBump($manifest, $args);
+    $manifest = loadManifestOrReport();
+
+    if ($manifest === null) {
+        return 1;
     }
 
-    return runWrite($manifest);
+    return match ($parsed['mode']) {
+        'check' => runCheck($manifest),
+        'version' => runBump($manifest, $parsed),
+        'release' => runRelease($manifest, (string) $parsed['keys']),
+        'release-write' => runReleaseWrite($manifest, (string) $parsed['keys']),
+        'write' => runWrite($manifest),
+    };
 }
 
-// get_included_files()[0] is always the true entry-point script,
-// regardless of whether $argv is populated — unlike realpath($argv[0]),
-// this works reliably under PHPUnit's own CLI invocation too, where
-// $argv isn't set the way a plain `php generate-composer.php` gives it.
-// Psalm flags this as a ParadoxicalCondition — a real, confirmed false
-// positive, not a bug: its own static analysis of get_included_files()
-// doesn't match real runtime behavior, verified directly with an
-// isolated repro (a standalone script correctly reporting itself as
-// the sole included file) and by this exact guard already behaving
-// correctly both ways in real CLI runs and under PHPUnit.
+// get_included_files()[0] is the entry-point script whether or not $argv
+// is populated, which realpath($argv[0]) is not: PHPUnit's own CLI
+// invocation leaves $argv unset. Psalm reads get_included_files() as
+// never returning __FILE__ here and reports a ParadoxicalCondition; its
+// model of that function does not match runtime, so the suppression
+// stays.
 /** @psalm-suppress ParadoxicalCondition */
 if (current(get_included_files()) === __FILE__) {
     exit(generatorMain($argv ?? []));

@@ -1,22 +1,23 @@
 # Monorepo tooling
 
-Three scripts. The first two are driven by `packages.manifest.json`
-(repo root) — the canonical source of truth for every
-`packages/*/composer.json`; the third is unrelated, standalone.
+Four entry points, plus the four modules three of them share. Those
+three are driven by `packages.manifest.json` (repo root) — the canonical
+source of truth for every `packages/*/composer.json`; the fourth,
+`setup-docs-mcp.sh`, is unrelated and standalone.
 
 - `generate-composer.php` — generates each package's `composer.json`
   from the manifest. Three usages: default (writes every package),
   `--check` (regenerates in memory, diffs, never writes — what CI
-  runs), `--bump` (force-bumps one or more packages' `version` field
-  only).
-- `validate-manifest.php` — the six checks CI runs on every PR and
-  push to `main`: cycle detection, cross-manifest version consistency,
-  generated-file drift, version-bump completeness (manifest entries),
-  content-bump completeness — a change to any of a package's own
-  tracked files (its root `composer.lock` excepted) requires a version
-  bump, since an unbumped version means the release pipeline never tags
-  the new content and the split repo silently stays on the old tag —
-  and workflow coverage: every package needs a `ci.yml` and an
+  runs), and the version modes `--bump`/`--set-version`, which write one
+  or more packages' `version` field and nothing else.
+- `validate-manifest.php` — the checks CI runs on every PR and push to
+  `main`: manifest schema, cycle detection, cross-manifest version
+  consistency, generated-file drift, version-bump completeness (manifest
+  entries), content-bump completeness — a change to any of a package's
+  own tracked files (its root `composer.lock` excepted) requires a
+  version bump, since an unbumped version means the release pipeline
+  never tags the new content and the split repo silently stays on the
+  old tag — and workflow coverage: every package needs a `ci.yml` and an
   `infection.yml` job, and every job in those two must map back to a
   package. Absences are named in `INFECTION_EXEMPT`/`WORKFLOW_ONLY` with
   a reason, so one is a decision rather than an oversight. The same check
@@ -24,7 +25,34 @@ Three scripts. The first two are driven by `packages.manifest.json`
   `reportPaths` to name the same packages — a package in one but not the
   other writes a report nobody reads, and shows as 0% covered while its
   tests pass.
+- `release-plan.php` — computes what this round's push would release,
+  read-only. Every fact it needs it either establishes or fails on: a
+  tag lookup that can't reach its remote, a comparison base it can't
+  read, or a dependency graph with no total order all end the run rather
+  than producing a plan that leaves work out. See "Cutting a release" in
+  `docs/appendix-contributing.md`.
 - `setup-docs-mcp.sh` — see "Setting up the docs MCP server" below.
+
+The shared modules, each used by more than one of the three
+manifest-driven entry points:
+
+- `version-policy.php` — the one version-transition rule. The generator
+  writes only moves it allows and the validator accepts only moves it
+  allows, so the two can't disagree.
+- `manifest-schema.php` — the strict boundary every manifest crosses
+  before anything reads it, writes a file, or contacts a remote.
+- `checked-write.php` — the checked, atomic file replacement every
+  generated file is written through. It writes into a private temporary
+  file beside the target, proves the bytes landed, gives the file the
+  mode the target should have (an existing file's own mode, `0644` for a
+  new one), and only then renames. A target that is not a regular file —
+  a symlink, a directory — is refused rather than replaced.
+- `git-history.php` — reads the comparison base and the file-level diff
+  against it, distinguishing "nothing to compare against" from "git
+  couldn't read it". Every git call runs under a deadline, after which
+  the child is killed and reaped; an answer that arrives incomplete — a
+  failed read, output past the capture cap, a child whose reap could not
+  be established — is a failure rather than a shorter success.
 
 Never hand-edit a `packages/*/composer.json` directly for anything the
 manifest controls (`require`, `require-dev`, `autoload`, `bin`, ...) —
@@ -34,9 +62,7 @@ it in the manifest instead.
 
 ## Editing a package's dependencies — the full flow
 
-Real, step-by-step — this is exactly the sequence used to fix a real
-cross-manifest inconsistency (`storage`'s `league/flysystem` constraint
-tightened to match `storage-s3`'s):
+Step by step, from the manifest edit to the commit:
 
 1. Edit `packages.manifest.json` — change whatever `require`/
    `requires`/`requiresDev`/etc. entry needs to change.
@@ -78,10 +104,27 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
 ```
 
-Runs all six checks locally — the exact same thing CI runs. `git`
+Runs every check locally — the exact same thing CI runs. `git`
 needs installing inside the container every time; the base
 `php:8.4-cli-alpine` image doesn't ship it (CI does the same install
 step).
+
+Add `--base=<ref>` to compare against something other than the previous
+commit. A feature branch wants its merge base with `main`, so the whole
+branch is judged as one change:
+
+```sh
+BASE=$(git merge-base HEAD refs/remotes/origin/main)
+docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+  "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
+```
+
+A `--base` git can't read fails the run, and so does a base that isn't a
+full commit id or a plain ref name — a value carrying option, path or
+range syntax, or no value at all, is refused before git sees it. The
+version and content checks skip only in the two states named in
+`docs/appendix-contributing.md`, and each says which; anything else that
+leaves history unreadable, a shallow checkout included, fails.
 
 ## Force-bumping a version with no other change
 
@@ -93,18 +136,30 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-com
   --bump=<key>[,<key>,...]|all --minor|--patch
 ```
 
-Each named package bumps *relative to its own current version* —
-`--minor` lands a package at `1.4.2` on `1.5.0` and one at `1.1.0` on
-`1.2.0`, not one identical string forced onto every package regardless
-of where it started. The script implements general SemVer mechanics and
-accepts `--major` too; no change in this repo uses it, since Kinetis
-stays on `1.x` throughout incubation. For an explicit target version
-instead of a relative bump:
+Each named package bumps *relative to its own current version*: with
+`--minor`, a package at `1.4.2` moves to `1.5.0` and one at `1.1.0`
+moves to `1.2.0`, rather than one identical string being forced onto
+both. Those two sizes are the whole set — Kinetis stays on `1.x`
+throughout incubation, so there is no major bump to ask for.
+
+For an explicit target version instead of a relative bump:
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php \
   --set-version=<key>=<version>
 ```
+
+`--set-version` is a spelling of the same move, not a way around it: it
+goes through `version-policy.php` exactly as `--bump` does, so anything
+`--bump` can't produce it can't write — a major, a skipped patch or
+minor, a downgrade, a noncanonical spelling such as `1.4.03`, or the
+current version again. A rejected key leaves the manifest untouched,
+including the keys named alongside it.
+
+The whole invocation is checked before any of it runs. An unknown
+option, a repeated `--bump`, two size flags, a size flag with no
+`--bump`, or `--check` alongside a mode that writes: each is refused
+rather than resolved to whichever reading the code reaches first.
 
 Either form only ever writes the `version` field(s) — nothing else in
 the manifest changes, which is exactly the "version-only change" case
@@ -112,20 +167,18 @@ the version-bump check always allows without further validation.
 
 ## The cross-manifest version consistency escape hatch
 
-If two packages genuinely need different constraints for the same
-external dependency (a deliberate exception, not an oversight), add
-both fields to the package's manifest entry:
+When two packages need different constraints for the same external
+dependency, exempt that one dependency in the package's manifest entry:
 
 ```json
-"allowVersionDrift": true,
-"driftReason": "why this package deliberately differs"
+"versionDriftExemptions": {
+    "league/flysystem": "why this package differs"
+}
 ```
 
-This is meant to be rare. The default is that every package sharing an
-external dependency declares the same constraint for it — the whole
-point of the check is to catch the case where two packages drift apart
-silently, since neither one failing to install on its own would ever
-reveal it.
+`docs/appendix-contributing.md` states the rule the exemption is held to.
+A missing or blank reason, or a dependency the package does not require,
+fails the schema check.
 
 ## Setting up the docs MCP server
 
@@ -183,10 +236,11 @@ existing install directory and re-registers the server.
 
 ## Running the tools test suite
 
-The suite shells out to `git` (the version-bump check compares the
-manifest against `HEAD^`), which `php:8.4-cli-alpine` doesn't ship —
-install it in the container first, the same step the
-`validate-manifest.php` invocation above already uses:
+The suite shells out to `git` — the version and content checks compare
+against a real commit, and several tests build a scratch repository to
+exercise that — which `php:8.4-cli-alpine` doesn't ship. Install it in
+the container first, the same step the `validate-manifest.php`
+invocation above already uses:
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app/tools composer:2 install

@@ -16,6 +16,10 @@
     findUnusedCode="false"
 >
     <projectFiles>
+        <file name="version-policy.php" />
+        <file name="checked-write.php" />
+        <file name="manifest-schema.php" />
+        <file name="git-history.php" />
         <file name="generate-composer.php" />
         <file name="validate-manifest.php" />
         <file name="release-plan.php" />

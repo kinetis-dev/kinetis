@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Tools\Tests;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use ReleasePlanFailure;
 
 require_once __DIR__ . '/../release-plan.php';
 
@@ -224,6 +226,84 @@ final class ReleasePlanTest extends TestCase
         self::assertContains('unrelated', $order);
     }
 
+    /**
+     * The failure this proof exists for. Kahn's algorithm can order
+     * nothing at all in a cycle, and filtering that empty order down to
+     * the candidates reads as a clean "nothing to release": the two
+     * packages whose versions changed vanish from the plan,
+     * and release.yml publishes neither while going green.
+     */
+    public function test_a_cycle_fails_the_plan_instead_of_emptying_it(): void
+    {
+        $manifest = ['packages' => [
+            'a' => ['requires' => ['b'], 'version' => '1.0.0'],
+            'b' => ['requires' => ['a'], 'version' => '1.0.0'],
+        ]];
+
+        self::assertSame([], topologicalOrder(buildGraph($manifest['packages'])), 'the precondition: nothing orders');
+
+        try {
+            publishOrder($manifest, ['a', 'b']);
+            self::fail('a cyclic graph must fail the plan');
+        } catch (ReleasePlanFailure $e) {
+            self::assertStringContainsString('no publish order', $e->getMessage());
+        }
+    }
+
+    public function test_a_cycle_among_packages_that_are_not_candidates_still_fails_the_plan(): void
+    {
+        // The order is computed over the whole graph, so a cycle
+        // anywhere in it means no candidate's position can be trusted.
+        $manifest = ['packages' => [
+            'a' => ['requires' => [], 'version' => '1.0.0'],
+            'b' => ['requires' => ['c'], 'version' => '1.0.0'],
+            'c' => ['requires' => ['b'], 'version' => '1.0.0'],
+        ]];
+
+        $this->expectException(ReleasePlanFailure::class);
+
+        publishOrder($manifest, ['a']);
+    }
+
+    public function test_a_dependency_on_a_package_that_does_not_exist_fails_the_plan(): void
+    {
+        $manifest = ['packages' => [
+            'a' => ['requires' => ['ghost'], 'version' => '1.0.0'],
+        ]];
+
+        try {
+            publishOrder($manifest, ['a']);
+            self::fail('an unknown dependency must fail the plan');
+        } catch (ReleasePlanFailure $e) {
+            self::assertStringContainsString('a requires ghost', $e->getMessage());
+        }
+    }
+
+    public function test_a_candidate_that_is_not_a_manifest_package_fails_the_plan(): void
+    {
+        $manifest = ['packages' => ['a' => ['requires' => [], 'version' => '1.0.0']]];
+
+        try {
+            publishOrder($manifest, ['a', 'ghost']);
+            self::fail('a candidate outside the manifest must fail the plan');
+        } catch (ReleasePlanFailure $e) {
+            self::assertStringContainsString('ghost is not a package', $e->getMessage());
+        }
+    }
+
+    public function test_a_valid_graph_orders_every_candidate_it_was_given(): void
+    {
+        $manifest = ['packages' => [
+            'framework' => ['requires' => [], 'version' => '1.0.0'],
+            'persistence' => ['requires' => ['framework'], 'version' => '1.0.0'],
+            'queue' => ['requires' => ['framework', 'persistence'], 'version' => '1.0.0'],
+        ]];
+
+        $order = publishOrder($manifest, ['queue', 'framework', 'persistence']);
+
+        self::assertSame(['framework', 'persistence', 'queue'], $order);
+    }
+
     public function test_check_resolution_reports_a_problem_for_each_sibling_whose_tag_is_missing(): void
     {
         $manifest = ['packages' => [
@@ -358,17 +438,358 @@ final class ReleasePlanTest extends TestCase
     }
 
     /**
-     * Real network call, against the real, currently tag-less
-     * kinetis-dev/kinetis repo — confirms tagExistsOnGitHub() correctly
-     * reports false rather than being hardcoded to always report true or
-     * throwing. The positive ("a real tag is found") path is verified
-     * separately, by hand, against a well-known tagged public repo — not
-     * committed here, since asserting on another project's own tag
-     * history is fragile and not this project's concern to keep passing.
+     * @param array{exitCode?: int, stdout?: string, stderr?: string, timedOut?: bool, truncated?: bool} $result
+     * @return callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool}
      */
-    public function test_tag_exists_on_github_reports_false_for_a_tag_that_really_does_not_exist(): void
+    private function gitReturning(array $result): callable
     {
-        self::assertFalse(tagExistsOnGitHub('kinetis', 'v999.999.999'));
+        return static fn (array $args): array => [
+            'exitCode' => $result['exitCode'] ?? 0,
+            'stdout' => $result['stdout'] ?? '',
+            'stderr' => $result['stderr'] ?? '',
+            'timedOut' => $result['timedOut'] ?? false,
+            'truncated' => $result['truncated'] ?? false,
+        ];
+    }
+
+    public function test_a_matching_ref_means_the_tag_is_there(): void
+    {
+        $found = tagLookup('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => "9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/tags/v1.2.3\n",
+        ]));
+
+        self::assertTrue($found);
+    }
+
+    public function test_a_successful_lookup_with_no_matching_ref_means_the_tag_is_absent(): void
+    {
+        self::assertFalse(tagLookup('queue', 'v1.2.3', $this->gitReturning([])));
+    }
+
+    public function test_the_lookup_asks_the_split_repo_for_the_exact_tag_ref(): void
+    {
+        $seen = [];
+        tagLookup('queue', 'v1.2.3', function (array $args) use (&$seen): array {
+            $seen = $args;
+
+            return ['exitCode' => 0, 'stdout' => '', 'stderr' => '', 'timedOut' => false, 'truncated' => false];
+        });
+
+        self::assertContains('https://github.com/kinetis-dev/queue.git', $seen);
+        self::assertContains('refs/tags/v1.2.3', $seen);
+        self::assertContains('--end-of-options', $seen);
+    }
+
+    /**
+     * Absence has to mean one thing. A remote that refuses the
+     * connection is not evidence that a tag is missing, and reading it
+     * that way makes every package a candidate and republishes tags that
+     * already exist.
+     *
+     * @return iterable<string, array{array{exitCode?: int, stdout?: string, stderr?: string, timedOut?: bool, truncated?: bool}, string}>
+     */
+    public static function lookupFailures(): iterable
+    {
+        yield 'git could not start' => [
+            ['exitCode' => -1, 'stderr' => 'git could not be started'],
+            'Could not reach',
+        ];
+        yield 'the repository is missing' => [
+            ['exitCode' => 128, 'stderr' => "remote: Repository not found.\nfatal: repository not found"],
+            'Could not reach',
+        ];
+        yield 'authentication was refused' => [
+            ['exitCode' => 128, 'stderr' => 'fatal: Authentication failed'],
+            'Could not reach',
+        ];
+        yield 'the network is unreachable' => [
+            ['exitCode' => 128, 'stderr' => 'fatal: unable to access: Could not resolve host'],
+            'Could not reach',
+        ];
+        yield 'the read stalled' => [
+            ['exitCode' => -1, 'timedOut' => true, 'stderr' => 'git did not finish within 30s'],
+            'did not finish in time',
+        ];
+    }
+
+    /** @param array{exitCode?: int, stdout?: string, stderr?: string, timedOut?: bool, truncated?: bool} $result */
+    #[DataProvider('lookupFailures')]
+    public function test_a_lookup_that_establishes_nothing_aborts_rather_than_reporting_absence(
+        array $result,
+        string $expected,
+    ): void {
+        try {
+            tagLookup('queue', 'v1.2.3', $this->gitReturning($result));
+            self::fail('a failed lookup must not answer the question');
+        } catch (ReleasePlanFailure $e) {
+            self::assertStringContainsString($expected, $e->getMessage());
+            self::assertStringContainsString('kinetis-dev/queue', $e->getMessage());
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function indeterminateLookupOutput(): iterable
+    {
+        yield 'a different tag' => ["9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/tags/v9.9.9\n"];
+        yield 'a tag the wanted one is a prefix of' => ["9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/tags/v1.2.30\n"];
+        yield 'a branch' => ["9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/heads/main\n"];
+        yield 'a warning' => ["warning: redirecting to somewhere else\n"];
+        yield 'a record with no object id' => ["notasha\trefs/tags/v1.2.3\n"];
+        yield 'a ref with no object id' => ["refs/tags/v1.2.3\n"];
+        yield 'html' => ["<html><body>login</body></html>\n"];
+    }
+
+    /**
+     * Output that names no matching ref answers nothing. Reading it as
+     * absence would republish a tag that already exists; reading it as
+     * presence would skip one that does not.
+     */
+    #[DataProvider('indeterminateLookupOutput')]
+    public function test_output_that_names_no_matching_ref_leaves_the_lookup_indeterminate(string $stdout): void
+    {
+        try {
+            tagLookup('queue', 'v1.2.3', $this->gitReturning(['stdout' => $stdout]));
+            self::fail('output naming no matching ref must not answer the question');
+        } catch (ReleasePlanFailure $e) {
+            self::assertStringContainsString('names no such ref', $e->getMessage());
+        }
+    }
+
+    public function test_the_peeled_record_of_an_annotated_tag_still_counts_as_present(): void
+    {
+        $sha = '9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8';
+        $found = tagLookup('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => "{$sha}\trefs/tags/v1.2.3\n{$sha}\trefs/tags/v1.2.3^{}\n",
+        ]));
+
+        self::assertTrue($found);
+    }
+
+    public function test_a_matching_record_among_other_lines_still_counts_as_present(): void
+    {
+        $sha = '9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8';
+        $found = tagLookup('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => "{$sha}\trefs/tags/v9.9.9\n{$sha}\trefs/tags/v1.2.3\n",
+        ]));
+
+        self::assertTrue($found);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function emptyLookupOutput(): iterable
+    {
+        yield 'nothing' => [''];
+        yield 'a newline' => ["\n"];
+        yield 'whitespace' => ["  \n\n"];
+    }
+
+    #[DataProvider('emptyLookupOutput')]
+    public function test_only_an_empty_successful_lookup_reports_the_tag_absent(string $stdout): void
+    {
+        self::assertFalse(tagLookup('queue', 'v1.2.3', $this->gitReturning(['stdout' => $stdout])));
+    }
+
+    public function test_a_lookup_failure_does_not_repeat_the_token_it_was_given(): void
+    {
+        try {
+            tagLookup('queue', 'v1.2.3', $this->gitReturning([
+                'exitCode' => 128,
+                'stderr' => 'fatal: could not read from '
+                    . 'https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz@github.com/kinetis-dev/queue.git',
+            ]));
+            self::fail('a failed lookup must throw');
+        } catch (ReleasePlanFailure $e) {
+            self::assertStringNotContainsString('ghp_abcdefghijklmnopqrstuvwxyz', $e->getMessage());
+            self::assertStringContainsString('***@github.com', $e->getMessage());
+        }
+    }
+
+    /**
+     * Candidate discovery and sibling resolution ask about the same
+     * repo/tag pairs, and each question is a network round trip.
+     */
+    public function test_the_same_repo_and_tag_are_looked_up_once_per_run(): void
+    {
+        $calls = 0;
+        $tagExists = memoizeTagLookups(function (string $repo, string $tag) use (&$calls): bool {
+            $calls++;
+
+            return $repo === 'framework';
+        });
+
+        self::assertTrue($tagExists('framework', 'v1.0.0'));
+        self::assertTrue($tagExists('framework', 'v1.0.0'));
+        self::assertFalse($tagExists('queue', 'v1.0.0'));
+        self::assertFalse($tagExists('queue', 'v1.0.0'));
+        self::assertSame(2, $calls);
+    }
+
+    public function test_different_tags_on_one_repo_are_still_asked_separately(): void
+    {
+        $seen = [];
+        $tagExists = memoizeTagLookups(function (string $repo, string $tag) use (&$seen): bool {
+            $seen[] = $tag;
+
+            return false;
+        });
+
+        $tagExists('queue', 'v1.0.0');
+        $tagExists('queue', 'v1.0.1');
+
+        self::assertSame(['v1.0.0', 'v1.0.1'], $seen);
+    }
+
+    public function test_a_lookup_failure_propagates_through_the_memo_rather_than_being_cached_as_absence(): void
+    {
+        $tagExists = memoizeTagLookups(
+            static fn (string $repo, string $tag): bool => throw new ReleasePlanFailure('the remote refused'),
+        );
+
+        $this->expectException(ReleasePlanFailure::class);
+
+        $tagExists('queue', 'v1.0.0');
+    }
+
+    /**
+     * A requires sibling that is also a candidate is ordered earlier by
+     * publishOrder(), which proves its result covers every candidate, so
+     * it is resolved by the time the dependent's turn comes.
+     */
+    public function test_a_same_round_requires_sibling_is_ordered_before_the_package_that_needs_it(): void
+    {
+        $manifest = ['packages' => [
+            'framework' => ['requires' => [], 'version' => '1.0.0'],
+            'queue' => ['requires' => ['framework'], 'version' => '1.0.0'],
+        ]];
+
+        self::assertSame(['framework', 'queue'], publishOrder($manifest, ['queue', 'framework']));
+        self::assertSame([], checkResolution(
+            $manifest,
+            'queue',
+            candidateSet: ['framework' => true, 'queue' => true],
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        ));
+    }
+
+    /**
+     * A re-run after a mid-round failure: the sibling the first attempt
+     * published has dropped out of the candidate set, so it is checked
+     * against a real tag rather than assumed.
+     */
+    public function test_a_sibling_published_by_an_earlier_attempt_is_checked_against_its_real_tag(): void
+    {
+        $manifest = ['packages' => [
+            'framework' => ['requires' => [], 'version' => '1.0.0'],
+            'queue' => ['requires' => ['framework'], 'version' => '1.0.0'],
+        ]];
+
+        $seen = [];
+        $problems = checkResolution($manifest, 'queue', candidateSet: ['queue' => true], tagExists: function (string $repo, string $tag) use (&$seen): bool {
+            $seen[] = [$repo, $tag];
+
+            return true;
+        });
+
+        self::assertSame([['framework', 'v1.0.0']], $seen);
+        self::assertSame([], $problems);
+    }
+
+    public function test_a_sibling_that_no_attempt_published_is_reported_unresolved(): void
+    {
+        $manifest = ['packages' => [
+            'framework' => ['requires' => [], 'version' => '1.0.0'],
+            'queue' => ['requires' => ['framework'], 'version' => '1.0.0'],
+        ]];
+
+        $problems = checkResolution(
+            $manifest,
+            'queue',
+            candidateSet: ['queue' => true],
+            tagExists: static fn (string $repo, string $tag): bool => false,
+        );
+
+        self::assertCount(1, $problems);
+        self::assertStringContainsString('queue requires framework (v1.0.0)', $problems[0]);
+    }
+
+    /**
+     * The dev graph has cycles, so no total order over it exists and
+     * publishOrder() does not attempt one. A same-round dev sibling is
+     * skipped because a dev dependency is absent from what a consumer
+     * installs, not because anything orders it first.
+     */
+    public function test_the_dev_graph_the_dev_skip_covers_has_no_total_order_to_rely_on(): void
+    {
+        $devGraph = [
+            'framework' => [],
+            'persistence' => ['framework', 'queue'],
+            'queue' => ['framework', 'persistence'],
+        ];
+
+        self::assertNotSame(
+            count($devGraph),
+            count(topologicalOrder($devGraph)),
+            'requires-plus-dev edges cannot be ordered, which is why only requires edges are',
+        );
+    }
+
+    public function test_publish_order_ignores_dev_edges_so_a_dev_cycle_does_not_block_a_release(): void
+    {
+        $manifest = ['packages' => [
+            'framework' => ['requires' => [], 'version' => '1.0.0'],
+            'persistence' => ['requires' => ['framework'], 'requiresDev' => ['queue'], 'version' => '1.0.0'],
+            'queue' => ['requires' => ['framework'], 'requiresDev' => ['persistence'], 'version' => '1.0.0'],
+        ]];
+
+        $order = publishOrder($manifest, ['framework', 'persistence', 'queue']);
+
+        self::assertSame(['framework', 'persistence', 'queue'], $order);
+    }
+
+    /** @return iterable<string, array{list<string>, string}> */
+    public static function invalidPlanInvocations(): iterable
+    {
+        yield 'an unknown option' => [['--dry-run'], 'Unknown option: --dry-run'];
+        yield 'an empty base' => [['--base='], '--base needs a commit id or a ref name.'];
+        yield 'a whitespace base' => [['--base=   '], '--base needs a commit id or a ref name.'];
+        yield 'a repeated base' => [['--base=main', '--base=other'], '--base is given more than once.'];
+        yield 'a repeated json flag' => [['--json', '--json'], '--json is given more than once.'];
+    }
+
+    /**
+     * An empty --base read as "no override" would compare against HEAD^
+     * instead — a different question than the one asked, answered
+     * silently.
+     *
+     * @param list<string> $args
+     */
+    #[DataProvider('invalidPlanInvocations')]
+    public function test_an_invalid_plan_invocation_is_refused(array $args, string $expected): void
+    {
+        $problems = parsePlanArguments($args)['problems'];
+
+        self::assertNotSame([], $problems);
+        self::assertStringContainsString($expected, implode(' | ', $problems));
+    }
+
+    public function test_a_valid_plan_invocation_carries_its_base_through(): void
+    {
+        $parsed = parsePlanArguments(['--json', '--base=origin/main']);
+
+        self::assertSame([], $parsed['problems']);
+        self::assertTrue($parsed['json']);
+        self::assertSame('origin/main', $parsed['base']);
+    }
+
+    /**
+     * The whole invocation is judged before the manifest is read, so a
+     * bad argument cannot reach a remote lookup or the split loop.
+     */
+    public function test_an_invalid_invocation_stops_the_run_before_it_reads_anything(): void
+    {
+        $exitCode = main(['tools/release-plan.php', '--base=']);
+
+        self::assertSame(1, $exitCode);
     }
 
     public function test_print_json_reports_ok_true_and_the_full_plan_when_every_candidate_resolves(): void
