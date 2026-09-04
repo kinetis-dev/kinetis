@@ -49,12 +49,12 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine \
   php tools/generate-composer.php --bump=<pkg1>,<pkg2>,... --patch
 ```
 
-Use `--patch` by default (matches this repo's own precedent for
-docblock/comment/small-fix passes — "Text cleanup"-class changes). If
-the diff clearly adds a new capability or changes public behavior in a
-way a consumer would notice, use `--minor` instead and say so in the
-final report rather than silently picking one — don't guess at
-`--major`; ask first if a change looks breaking.
+Use `--patch` by default — fixes, maintenance, docblock/comment/small-fix
+passes. Use `--minor` when the diff adds a new capability *or* breaks
+public behavior a consumer depends on; both are one minor bump under this
+repo's version policy (`docs/appendix-contributing.md`), which keeps every
+package on `1.x` through incubation. Never `--major`. Say in the final
+report which size was picked and why, rather than picking one silently.
 
 ## 2. Regenerate composer.json
 
