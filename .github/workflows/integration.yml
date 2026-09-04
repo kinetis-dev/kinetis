@@ -600,6 +600,19 @@ jobs:
         # REDIS_CLUSTER_SEEDS comes from the job-level env above. The
         # single-node tests in the same suite skip here, since REDIS_HOST
         # is deliberately unset.
+        #
+        # Deliberately a single invocation, never a same-container retry:
+        # this suite's reserved-slot-offset scheme (see the test file's
+        # TEST_SLOT_OFFSET_* constants and reservedSlotFor()) is only
+        # exclusive for the duration of *one* bootstrap of the
+        # redis-cluster service container, and at least one test (the
+        # ASK-migration/durable-overlay test) permanently reassigns its
+        # own reserved slot as part of a successful run — a second
+        # `phpunit` in the same job runs that test against a cluster its
+        # own first pass already mutated, producing a real, different
+        # failure (a raw MOVED protocol error) rather than a clean pass.
+        # A job-level re-run (`gh run rerun --failed`, or GitHub's own
+        # UI) gets a fresh service container.
         working-directory: packages/cache-redis
         run: vendor/bin/phpunit
 
