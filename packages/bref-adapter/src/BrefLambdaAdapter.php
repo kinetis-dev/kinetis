@@ -6,6 +6,7 @@ namespace Kinetis\BrefAdapter;
 
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
+use Kinetis\Http\MediaType;
 use Kinetis\Http\Responses\ErrorResponse;
 use LogicException;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
@@ -299,11 +300,11 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     {
         $contentType = $request->getHeaderLine('Content-Type');
 
-        if (!self::isFormEncoded($contentType)) {
+        if (!MediaType::isFormEncoded($contentType)) {
             return $request;
         }
 
-        [$parsedBody, $uploadedFiles] = self::isMultipart($contentType)
+        [$parsedBody, $uploadedFiles] = MediaType::isMultipartFormData($contentType)
             ? self::parseMultipart($contentType, $body)
             : self::parseUrlEncoded($body);
 
@@ -389,17 +390,6 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     private static function isValidUtf8(string $value): bool
     {
         return preg_match('//u', $value) === 1;
-    }
-
-    private static function isFormEncoded(string $contentType): bool
-    {
-        return self::isMultipart($contentType)
-            || str_starts_with($contentType, 'application/x-www-form-urlencoded');
-    }
-
-    private static function isMultipart(string $contentType): bool
-    {
-        return str_starts_with($contentType, 'multipart/form-data');
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Runtime;
 
+use Kinetis\Http\MediaType;
 use Kinetis\Http\Responses\ErrorResponse;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Nyholm\Psr7Server\ServerRequestCreator;
@@ -73,7 +74,7 @@ final class SuperglobalsBridge
         // double-consumption of php://input. fromArrays() never touches
         // php://input itself when $body is omitted, so rebuilding through
         // it here is safe regardless of what fromGlobals() already read.
-        if ($request->getParsedBody() === null && self::isFormEncoded($request->getHeaderLine('Content-Type'))) {
+        if ($request->getParsedBody() === null && MediaType::isFormEncoded($request->getHeaderLine('Content-Type'))) {
             [$post, $files] = request_parse_body();
 
             $request = $creator->fromArrays(
@@ -87,12 +88,6 @@ final class SuperglobalsBridge
         }
 
         return $request;
-    }
-
-    private static function isFormEncoded(string $contentType): bool
-    {
-        return str_starts_with($contentType, 'multipart/form-data')
-            || str_starts_with($contentType, 'application/x-www-form-urlencoded');
     }
 
     public static function emit(ResponseInterface $response): void

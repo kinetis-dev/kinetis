@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -105,7 +105,7 @@
             "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework"
             ],
@@ -518,7 +518,7 @@
             "description": "RoadRunner runtime adapter for Kinetis — speaks the PSR7Worker/Goridge protocol and converts to/from PSR-7, including multipart/form-data support.",
             "namespace": "Kinetis\\RoadRunnerAdapter\\",
             "testNamespace": "Kinetis\\RoadRunnerAdapter\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework"
             ],
