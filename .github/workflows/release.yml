@@ -30,7 +30,13 @@ jobs:
 
       - name: Compute this round's release plan
         id: plan
+        # pipefail so a plan that fails — a malformed manifest, a base
+        # commit git can't read, a graph with no publish order — takes
+        # the step down with it. Without it, tee's own success is the
+        # pipeline's exit status and the failure reaches jq as an empty
+        # file.
         run: |
+          set -o pipefail
           docker run --rm \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             -e GITHUB_EVENT_BEFORE="${{ github.event.before }}" \
@@ -40,7 +46,7 @@ jobs:
 
       - name: Nothing to release
         if: steps.plan.outputs.count == '0'
-        run: echo "No version changes since the last commit — nothing to release."
+        run: echo "No version changed since the comparison base — nothing to release."
 
       - name: Fail — a candidate's sibling requirement isn't published yet
         # Two packages bumped together in one commit, but their sibling

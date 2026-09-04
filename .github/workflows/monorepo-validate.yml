@@ -22,32 +22,45 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Check 4 (version-bump completeness) diffs the manifest against
+          # The version-bump and content-bump checks diff the manifest
+          # against a base commit: the PR's own base on a pull request,
           # GITHUB_EVENT_BEFORE (what main pointed to before this push) on
-          # the push trigger, falling back to HEAD^ otherwise — see
-          # tools/validate-manifest.php's oldManifestRef(). A multi-commit
-          # push (this project's own normal workflow, not an edge case)
-          # can put that ref arbitrarily far back, so full history is
-          # needed here, matching sonarqube.yml's own fetch-depth: 0 for
-          # the same class of need — a shallow fetch-depth: 2 only ever
-          # covers a single-commit push correctly.
+          # a push — see tools/git-history.php. Either can land
+          # arbitrarily far back on a multi-commit branch or push (this
+          # project's own normal workflow, not an edge case), so full
+          # history is needed here, matching sonarqube.yml's own
+          # fetch-depth: 0 for the same class of need. A base the
+          # checkout can't reach fails the run rather than skipping those
+          # two checks, so a shallow fetch here would not fail quietly —
+          # it would just fail.
           fetch-depth: 0
 
-      - name: Validate packages.manifest.json (cycles, version consistency, generated-file drift, version-bump completeness)
-        # php:*-cli-alpine has no git binary, and validate-manifest.php's
-        # own version-bump check needs it (git show <ref>:packages.manifest.json)
+      - name: Validate packages.manifest.json
+        # php:*-cli-alpine has no git binary, and the version and content
+        # checks need it (git show <ref>:packages.manifest.json, git diff)
         # — same gotcha already documented in the redis-cluster job above.
         # GIT_CONFIG_* works around "detected dubious ownership": the
         # container runs as a different UID than the host checkout it
-        # bind-mounts. GITHUB_EVENT_BEFORE is only meaningful for the push
-        # trigger (github.event.before doesn't exist on a pull_request
-        # payload, so this renders empty there — oldManifestRef() falls
-        # back to HEAD^ in that case, same as a local run).
+        # bind-mounts.
+        #
+        # The two triggers name their base differently and only one of
+        # them is ever set: github.event.before exists on push,
+        # pull_request.base.sha on a pull request. Passing the PR base
+        # explicitly measures the whole branch as one change, rather than
+        # leaning on the merge commit's first parent happening to be the
+        # base tip.
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          base_arg=""
+          if [ -n "$PR_BASE_SHA" ]; then
+            base_arg="--base=$PR_BASE_SHA"
+          fi
           docker run --rm \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-            -e GITHUB_EVENT_BEFORE="${{ github.event.before }}" \
-            -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
+            -e GITHUB_EVENT_BEFORE \
+            -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php $base_arg"
 
       - name: composer validate --strict (every package)
         # Not matrixed — each check is near-instant and there's no build

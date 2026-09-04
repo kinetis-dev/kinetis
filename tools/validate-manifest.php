@@ -3,35 +3,33 @@
 declare(strict_types=1);
 
 /**
- * Six checks against packages.manifest.json — see CLAUDE.md and the
- * monorepo packaging plan for the full design:
+ * The checks CI runs against packages.manifest.json — see CLAUDE.md and
+ * the monorepo packaging plan for the full design:
  *
- *   1. Cycle detection over the requires graph.
- *   2. Cross-manifest version consistency for shared external deps.
- *   3. Generated-file drift (reuses tools/generate-composer.php).
- *   4. Version-bump completeness — the release trigger's own integrity
- *      check, comparing the current manifest against its state at
- *      GITHUB_EVENT_BEFORE (what main pointed to before this push,
- *      when running as the push trigger) or HEAD^ otherwise — see
- *      oldManifestRef(). Requires the checkout to have that ref's
- *      history available (fetch-depth: 2 or 0, or deeper if
- *      GITHUB_EVENT_BEFORE is more than one commit back) — if it isn't,
- *      this check is skipped, not failed, since there's nothing to diff
- *      against.
- *   5. Content-bump completeness — the counterpart check 4 can't see:
- *      check 4 only compares manifest *entries*, so a change to a
+ *   1. Manifest schema — tools/manifest-schema.php's strict boundary.
+ *      Runs first and alone: every check below indexes into the manifest,
+ *      so an invalid one is rejected before anything reads it.
+ *   2. Cycle detection over the requires graph.
+ *   3. Cross-manifest version consistency for shared external deps,
+ *      with per-dependency exemptions that each carry a reason.
+ *   4. Generated-file drift (reuses tools/generate-composer.php).
+ *   5. Version-bump completeness — the release trigger's own integrity
+ *      check, comparing the current manifest against its state at the
+ *      comparison base (see tools/git-history.php) and holding every
+ *      change to tools/version-policy.php's one-step transition rule.
+ *   6. Content-bump completeness — the counterpart check 5 can't see:
+ *      check 5 only compares manifest *entries*, so a change to a
  *      package's own files with no manifest change (a compose file, a
  *      bootstrap, a README) is invisible to it — and an unbumped
  *      version means the release pipeline never tags the new content
  *      at all, so the split repo silently stays on the old tag. This
- *      check diffs each package's tracked files against the same old
- *      ref and requires a version change whenever anything besides
+ *      check diffs each package's tracked files against the same base
+ *      and requires a version change whenever anything besides
  *      composer.lock changed (the lock is deleted from release commits
- *      and refreshes constantly without semantic change). Same
- *      skip-when-no-history behavior as check 4. Uncommitted brand-new
- *      files are invisible to a local run (git diff only sees tracked
- *      paths); the post-push CI run sees everything.
- *   6. Workflow coverage — every package in the manifest has a job in
+ *      and refreshes constantly without semantic change). Uncommitted
+ *      brand-new files are invisible to a local run (git diff only sees
+ *      tracked paths); the post-push CI run sees everything.
+ *   7. Workflow coverage — every package in the manifest has a job in
  *      ci.yml and in infection.yml, and every job in those two maps
  *      back to a package. Adding a package without wiring it into CI
  *      leaves it untested while everything still passes, which is how
@@ -44,14 +42,25 @@ declare(strict_types=1);
  *      in one but not the other produces a coverage report nobody reads,
  *      or names a report nobody writes, and reads as 0% either way.
  *
+ * Checks 5 and 6 compare against a base commit that has to be readable.
+ * tools/git-history.php decides which states skip them and which fail
+ * the run; a historical manifest that fails the schema fails here too.
+ *
  * A separate check — does each package's committed composer.lock
  * still match its composer.json — is just `composer validate --strict`,
  * run directly, no new code needed for it.
  *
- * Usage: php tools/validate-manifest.php
+ * Usage: php tools/validate-manifest.php [--base=<ref>]
+ *
+ * --base pins the comparison explicitly, which is what a feature branch
+ * needs: passing the merge base with the integration branch checks the
+ * branch as one whole change, so an early commit's bump is what the
+ * later commits are measured against rather than each commit re-deciding
+ * from HEAD.
  */
 
 require_once __DIR__ . '/generate-composer.php';
+require_once __DIR__ . '/git-history.php';
 
 /**
  * @param array<string, array<string, mixed>> $packages
@@ -112,6 +121,12 @@ function checkCycles(array $manifest): ?string
 }
 
 /**
+ * Two packages sharing an external dependency declare the same
+ * constraint for it. An exemption names the one dependency it covers and
+ * why, so it can never widen to the rest of the package's dependencies
+ * the way a package-wide flag does — every other shared dependency of an
+ * exempted package is still checked.
+ *
  * @param array<string, mixed> $manifest
  * @return list<string>
  */
@@ -120,11 +135,13 @@ function checkVersionConsistency(array $manifest): array
     $seen = [];
 
     foreach ($manifest['packages'] as $key => $pkg) {
-        if (!empty($pkg['allowVersionDrift'])) {
-            continue;
-        }
+        $exemptions = $pkg['versionDriftExemptions'] ?? [];
 
         foreach ($pkg['require'] ?? [] as $extName => $constraint) {
+            if (array_key_exists($extName, $exemptions)) {
+                continue;
+            }
+
             $seen[$extName][$constraint][] = $key;
         }
     }
@@ -149,83 +166,8 @@ function checkVersionConsistency(array $manifest): array
 }
 
 /**
- * The ref check 4 diffs the current manifest against. HEAD^ only ever
- * looks one commit back — correct for a single-commit push, but wrong
- * for a direct multi-commit push to main (this project's own normal
- * workflow, not an edge case): HEAD^ then lands on some commit *within*
- * that same push, not on whatever main pointed to before it, silently
- * hiding a downgrade introduced earlier in the same push. GITHUB_EVENT_BEFORE
- * — set by the workflow only for the push trigger, from github.event.before
- * — is the actual answer to "what did main point to before this push,"
- * used when it's present and not the all-zero SHA GitHub sends for a
- * branch's very first push. Absent (a local run, or the pull_request
- * trigger, where actions/checkout's default merge-commit checkout
- * already makes HEAD^ resolve to the PR's base branch tip regardless of
- * commit count) falls back to HEAD^ unchanged.
- */
-function oldManifestRef(): string
-{
-    $before = getenv('GITHUB_EVENT_BEFORE');
-
-    if ($before === false || $before === '' || $before === str_repeat('0', 40)) {
-        return 'HEAD^';
-    }
-
-    return $before;
-}
-
-/** @return array<string, mixed>|null */
-function loadManifestAtRef(string $ref): ?array
-{
-    $descriptorSpec = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $process = proc_open(
-        ['git', 'show', "{$ref}:packages.manifest.json"],
-        $descriptorSpec,
-        $pipes,
-        PROJECT_ROOT,
-    );
-
-    if (!is_resource($process)) {
-        return null;
-    }
-
-    $output = stream_get_contents($pipes[1]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    $exitCode = proc_close($process);
-
-    if ($exitCode !== 0 || $output === false || trim($output) === '') {
-        return null;
-    }
-
-    try {
-        /** @var array{defaults: array<string, mixed>, packages: array<string, array<string, mixed>>} */
-        return json_decode($output, true, flags: JSON_THROW_ON_ERROR);
-    } catch (JsonException) {
-        return null;
-    }
-}
-
-/** @return list<string> */
-function validateVersionBump(string $key, ?string $old, string $new): array
-{
-    if (preg_match('/^\d+\.\d+\.\d+$/', $new) !== 1) {
-        return ["{$key}: version '{$new}' is not valid SemVer (X.Y.Z)"];
-    }
-
-    if ($old === null) {
-        return [];
-    }
-
-    if (version_compare($new, $old, '<=')) {
-        return ["{$key}: version must strictly increase — was {$old}, now {$new}"];
-    }
-
-    return [];
-}
-
-/**
- * @param array<string, mixed>|null $oldManifest
+ * @param array<string, mixed>|null $oldManifest null when there is
+ *        nothing to compare against
  * @param array<string, mixed> $newManifest
  * @return list<string>
  */
@@ -240,7 +182,17 @@ function checkVersionBumpCompleteness(?array $oldManifest, array $newManifest): 
     foreach ($newManifest['packages'] as $key => $newPkg) {
         $oldPkg = $oldManifest['packages'][$key] ?? null;
 
-        if ($oldPkg === null || $oldPkg === $newPkg) {
+        if ($oldPkg === null) {
+            $problem = versionTransitionProblem(null, $newPkg['version']);
+
+            if ($problem !== null) {
+                $problems[] = "{$key}: {$problem}";
+            }
+
+            continue;
+        }
+
+        if ($oldPkg === $newPkg) {
             continue;
         }
 
@@ -257,7 +209,11 @@ function checkVersionBumpCompleteness(?array $oldManifest, array $newManifest): 
         }
 
         if ($versionChanged) {
-            $problems = [...$problems, ...validateVersionBump($key, $oldPkg['version'] ?? null, $newPkg['version'])];
+            $problem = versionTransitionProblem($oldPkg['version'] ?? null, $newPkg['version']);
+
+            if ($problem !== null) {
+                $problems[] = "{$key}: {$problem}";
+            }
         }
     }
 
@@ -265,44 +221,18 @@ function checkVersionBumpCompleteness(?array $oldManifest, array $newManifest): 
 }
 
 /**
- * Tracked files under packages/ that differ between $ref and the
- * working tree. Null when git can't produce the diff (missing history,
- * no git available) — the caller skips the check rather than failing.
- *
- * @return list<string>|null
- */
-function changedPackageFiles(string $ref): ?array
-{
-    $descriptorSpec = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $process = proc_open(
-        ['git', 'diff', '--name-only', $ref, '--', 'packages'],
-        $descriptorSpec,
-        $pipes,
-        PROJECT_ROOT,
-    );
-
-    if (!is_resource($process)) {
-        return null;
-    }
-
-    $output = stream_get_contents($pipes[1]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    $exitCode = proc_close($process);
-
-    if ($exitCode !== 0 || $output === false) {
-        return null;
-    }
-
-    return array_values(array_filter(explode("\n", trim($output)), static fn (string $line): bool => $line !== ''));
-}
-
-/**
- * Check 5: a package whose own files changed needs a version bump,
+ * Check 6: a package whose own files changed needs a version bump,
  * whether or not its manifest entry moved. composer.lock is the one
  * exclusion — deleted from release commits, refreshed constantly
  * without semantic change. A package with no old manifest entry is
- * brand new and exempt, matching check 4's own rule.
+ * brand new and exempt, matching check 5's own rule.
+ *
+ * A file moved between packages arrives here as two paths — a deletion
+ * under the package that lost it and an addition under the one that
+ * gained it — because changedPackagePaths() turns git's rename detection
+ * off. Both packages are attributed, and both need their own bump: the
+ * source package's next release drops that file, which is a change its
+ * consumers see.
  *
  * @param array<string, mixed>|null $oldManifest
  * @param array<string, mixed> $newManifest
@@ -489,9 +419,100 @@ function checkWorkflowCoverage(array $manifest, array $ciPackages, array $infect
     return $problems;
 }
 
-function validatorMain(): int
+/**
+ * @param list<string> $argv
+ * @return array{base: ?string, problems: list<string>}
+ */
+function parseValidatorArguments(array $argv): array
 {
-    $manifest = loadManifest();
+    $base = null;
+    $problems = [];
+    $seen = 0;
+
+    foreach ($argv as $arg) {
+        if (!str_starts_with($arg, '--base=')) {
+            $problems[] = "Unknown option: {$arg}";
+
+            continue;
+        }
+
+        $seen++;
+        $value = trim(substr($arg, strlen('--base=')));
+
+        // An empty --base is a base that was meant to be there. Reading
+        // it as "no override" would quietly compare against HEAD^
+        // instead, which is a different question than the one asked.
+        if ($value === '') {
+            $problems[] = '--base needs a commit id or a ref name.';
+
+            continue;
+        }
+
+        $base = $value;
+    }
+
+    if ($seen > 1) {
+        $problems[] = '--base is given more than once.';
+    }
+
+    return ['base' => $base, 'problems' => $problems];
+}
+
+/**
+ * Checks 5 and 6 together, so the base is resolved and read once. Each
+ * keeps its own problem list: they answer different questions and the
+ * report names them separately.
+ *
+ * @param array<string, mixed> $manifest
+ * @return array{versionBump: list<string>, contentBump: list<string>, skipped: ?string}
+ * @throws HistoryUnavailable
+ */
+function checkAgainstHistory(array $manifest, ?string $baseOverride, string $projectRoot): array
+{
+    $base = resolveComparisonBase(
+        static fn (string $ref): string => gitResolveCommit($ref, $projectRoot),
+        static fn (string $ref): bool => gitCommitExists($ref, $projectRoot),
+        static fn (): bool => gitIsShallow($projectRoot),
+        $baseOverride,
+    );
+
+    if ($base->commit === null) {
+        return ['versionBump' => [], 'contentBump' => [], 'skipped' => $base->reason];
+    }
+
+    $oldManifest = readManifestAtCommit($base->commit, $projectRoot);
+    $changedFiles = changedPackagePaths($base->commit, $projectRoot);
+
+    return [
+        'versionBump' => checkVersionBumpCompleteness($oldManifest, $manifest),
+        'contentBump' => checkContentBumpCompleteness($oldManifest, $manifest, $changedFiles),
+        'skipped' => null,
+    ];
+}
+
+/** @param list<string> $argv */
+function validatorMain(array $argv = []): int
+{
+    $arguments = parseValidatorArguments(array_slice($argv, 1));
+
+    if ($arguments['problems'] !== []) {
+        foreach ($arguments['problems'] as $problem) {
+            fwrite(STDERR, "{$problem}\n");
+        }
+
+        return 1;
+    }
+
+    // Nothing below can index safely into a manifest that hasn't been
+    // through the schema, so this check both runs first and stops the
+    // run on its own.
+    $manifest = loadManifestOrReport();
+
+    if ($manifest === null) {
+        return 1;
+    }
+
+    echo "[manifest-schema] OK.\n";
     $ok = true;
 
     $cycle = checkCycles($manifest);
@@ -524,39 +545,30 @@ function validatorMain(): int
         echo "[generated-drift] OK.\n";
     }
 
-    $oldManifest = loadManifestAtRef(oldManifestRef());
+    try {
+        $history = checkAgainstHistory($manifest, $arguments['base'], PROJECT_ROOT);
+    } catch (HistoryUnavailable $e) {
+        fwrite(STDERR, '[version-bump] ' . $e->getMessage() . "\n");
 
-    if ($oldManifest === null) {
-        echo "[version-bump] Skipped — no previous commit's manifest available (shallow checkout or first commit).\n";
+        return 1;
+    }
+
+    if ($history['skipped'] !== null) {
+        echo "[version-bump] Skipped — {$history['skipped']}\n";
+        echo "[content-bump] Skipped — {$history['skipped']}\n";
     } else {
-        $bumpProblems = checkVersionBumpCompleteness($oldManifest, $manifest);
+        foreach (['version-bump' => $history['versionBump'], 'content-bump' => $history['contentBump']] as $label => $problems) {
+            if ($problems === []) {
+                echo "[{$label}] OK.\n";
 
-        if ($bumpProblems !== []) {
-            foreach ($bumpProblems as $p) {
-                fwrite(STDERR, "[version-bump] {$p}\n");
+                continue;
+            }
+
+            foreach ($problems as $p) {
+                fwrite(STDERR, "[{$label}] {$p}\n");
             }
 
             $ok = false;
-        } else {
-            echo "[version-bump] OK.\n";
-        }
-
-        $changedFiles = changedPackageFiles(oldManifestRef());
-
-        if ($changedFiles === null) {
-            echo "[content-bump] Skipped — git couldn't diff against the previous ref.\n";
-        } else {
-            $contentProblems = checkContentBumpCompleteness($oldManifest, $manifest, $changedFiles);
-
-            if ($contentProblems !== []) {
-                foreach ($contentProblems as $p) {
-                    fwrite(STDERR, "[content-bump] {$p}\n");
-                }
-
-                $ok = false;
-            } else {
-                echo "[content-bump] OK.\n";
-            }
         }
     }
 
@@ -584,10 +596,9 @@ function validatorMain(): int
     return $ok ? 0 : 1;
 }
 
-// See generate-composer.php for why this checks get_included_files()
-// rather than $argv[0], and for the confirmed-false-positive reasoning
-// behind the Psalm suppression below.
+// See generate-composer.php for the entry-point guard and the Psalm
+// suppression it carries.
 /** @psalm-suppress ParadoxicalCondition */
 if (current(get_included_files()) === __FILE__) {
-    exit(validatorMain());
+    exit(validatorMain($argv ?? []));
 }

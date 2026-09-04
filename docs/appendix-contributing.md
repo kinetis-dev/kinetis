@@ -166,12 +166,12 @@ change lands, not from who typed it.
 just a description of it: a project-scoped
 [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills)
 encoding the exact pre-push checklist this repo runs by hand — scope
-from the real diff, bump versions, regenerate `composer.json`, lint,
-test and analyse every affected package (not just the one touched — it
-walks the manifest's dependency graph), rebuild the docs if touched,
-validate the manifest — stopping at the first failure and never
-staging, committing, or pushing on its own. Any Claude Code session
-working in this repo picks it up automatically; ask it whether a
+from the diff against the integration base, bump versions, regenerate
+`composer.json`, lint, test and analyse every affected package (not just
+the one touched — it walks the manifest's dependency graph), rebuild the
+docs if touched, validate the manifest — stopping at the first failure
+and never staging, committing, or pushing on its own. Any Claude Code
+session working in this repo picks it up automatically; ask it whether a
 change is ready to push, or run `/push-ready` directly. A human
 contributor can read the same file at
 `.claude/skills/push-ready/SKILL.md` and run the identical commands by
@@ -194,9 +194,19 @@ picks up later minors on the same major line, so a break reaches
 consumers through the minor that carries it, called out in that
 release's notes rather than in the version number.
 
-`tools/generate-composer.php` implements general SemVer mechanics and so
-accepts `--major` alongside `--minor`/`--patch`. The flag exists; no
-change in this repo uses it under the policy above.
+A version also moves **one step at a time**. From `1.m.p` the only
+versions a package can reach are `1.m.(p+1)` and `1.(m+1).0`, and a
+package being added starts at `1.0.0`. Jumping `1.2.3` to `1.2.5` would
+leave `1.2.4` permanently unreleased with its content folded into
+`1.2.5`'s tag, since only what lands on `main` is ever tagged. That rule
+lives in `tools/version-policy.php`, and both the tooling that writes a
+version and the CI check that reads one go through it, so neither can
+accept a move the other rejects. `--minor` and `--patch` are the whole
+set of bump sizes the tooling offers.
+
+The comparison is made end to end across everything being merged, not
+commit by commit, so two bumps spread over two commits on one branch
+read as the single jump they are and fail.
 
 ## Changing a package's dependencies — the manifest tooling
 
@@ -215,6 +225,17 @@ keys* (not full Composer names — `"framework"`, not `"kinetis/framework"`),
 per-package fields (`bin`, `autoloadFiles`, `namespace`/`testNamespace`,
 `requireDevExtra`/`requireDevOverride`) cover the differences between
 packages.
+
+`bin` and `autoloadFiles` are package-relative paths, and the manifest
+checks hold them to one spelling that every supported platform reads the
+same way — these values ship in the published `composer.json` and are
+resolved by whichever machine installs the package. Forward slashes
+only, no leading separator, no `.` or `..` segment, no drive letter and
+no backslash (a separator on Windows, an ordinary character elsewhere).
+Also rejected are the characters `:`, `<`, `>`, `"`, `|`, `?` and `*`,
+segments reserved as Windows device names (`con`, `nul`, `com1` and the
+rest, with or without an extension), and a segment ending in a dot or a
+space, since Windows strips those and turns one spelling into another.
 
 The full flow:
 
@@ -264,26 +285,35 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-com
   --bump=<key>[,<key>,...]|all --minor|--patch
 ```
 
-Each named package bumps relative to *its own* current version — a
-`--minor` bump lands a package at `1.4.2` on `1.5.0` and one at `1.1.0`
-on `1.2.0`, rather than forcing one identical string onto both. For an
-exact target version instead of a relative bump, use
-`--set-version=<key>=<version>`.
+Each named package bumps relative to *its own* current version: with
+`--minor`, a package at `1.4.2` moves to `1.5.0` and one at `1.1.0`
+moves to `1.2.0`, rather than one identical string being forced onto
+both. For an exact target version instead of a relative bump, use
+`--set-version=<key>=<version>`; it is held to the same one-step policy,
+so it can only ever spell out a move `--bump` would have made.
 
 ### The cross-manifest version-consistency check
 
 CI also fails if two packages declare different version constraints for
-the same external dependency. If a difference is genuinely deliberate,
-not an oversight, add both fields to the affected package's manifest
-entry rather than working around the check:
+the same external dependency. Where a difference is intended, exempt
+that one dependency in the affected package's manifest entry rather than
+working around the check:
 
 ```json
-"allowVersionDrift": true,
-"driftReason": "why this package deliberately differs"
+"versionDriftExemptions": {
+    "league/flysystem": "why this package differs"
+}
 ```
 
+The exemption names one dependency and carries a reason that cannot be
+blank. Every other shared dependency that package declares stays
+checked, so a second drift cannot ride in on the first one's reason, and
+the dependency named has to be one the package requires — otherwise the
+entry exempts nothing and the schema check says so.
+
 This is meant to be rare — the default is that every package sharing an
-external dependency declares the same constraint for it.
+external dependency declares the same constraint for it, which is what
+makes two of them drifting apart visible at all.
 
 ## Branching, PRs, and CI
 
@@ -296,22 +326,31 @@ change:
   audit`, PHPUnit, PHPStan, and Psalm, one job per package (matrixed
   across PHP 8.4 and 8.5), plus a separate job building the Sphinx docs
   with `-W` (a broken docs page fails the build the same as broken code).
-- **`monorepo-validate.yml`** — the six `packages.manifest.json` checks
-  (cycle detection, cross-manifest version consistency, generated-file
-  drift, version-bump completeness, content-bump completeness — a
-  changed file under a package requires a version change in the same
-  commit — and workflow coverage, which requires every package to have a
-  `ci.yml` and `infection.yml` job, and `sonarqube.yml`'s coverage loop
-  to name the same packages as `sonar-project.properties` reads reports
-  for) plus `composer validate --strict` across every package. This is the one that enforces everything in
-  the "changing a package's dependencies" section above — skip a
-  version bump, forget to regenerate, or introduce a dependency cycle,
-  and this is what catches it. Run it locally before pushing:
+- **`monorepo-validate.yml`** — the `packages.manifest.json` checks
+  (manifest schema, cycle detection, cross-manifest version consistency,
+  generated-file drift, version-bump completeness, content-bump
+  completeness — a changed file under a package requires a version
+  change in the same commit — and workflow coverage, which requires
+  every package to have a `ci.yml` and `infection.yml` job, and
+  `sonarqube.yml`'s coverage loop to name the same packages as
+  `sonar-project.properties` reads reports for) plus `composer validate
+  --strict` across every package. This is the one that enforces
+  everything in the "changing a package's dependencies" section above —
+  skip a version bump, forget to regenerate, or introduce a dependency
+  cycle, and this is what catches it. On a pull request it compares
+  against the PR's base commit, so the branch is judged as one change.
+  Run it locally against your own branch's base the same way:
   ```sh
+  BASE=$(git merge-base HEAD refs/remotes/origin/main)
   docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     -v "$PWD":/app -w /app php:8.4-cli-alpine \
-    sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
+    sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
   ```
+  A base commit git cannot read fails the run rather than passing with
+  the version checks quietly skipped, and so does a shallow checkout with
+  no base named, whose HEAD reports no parent whether or not one exists.
+  Two states are reported as skips that name themselves: a full checkout
+  whose HEAD has no parent, and a ref's first push.
 - **`integration.yml`**, **`infection.yml`**, **`sonarqube.yml`**,
   **`semgrep.yml`** — real-backend verification, mutation testing,
   SonarQube Cloud static analysis, and pattern-based security scanning.
@@ -358,12 +397,23 @@ docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_
   sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/release-plan.php"
 ```
 
-It diffs the manifest at `HEAD` against `HEAD^`; every package whose
-`version` differs is a release candidate, printed in dependency-respecting
-publish order (a package always releases after every sibling it requires,
-never before). For each candidate, it also checks that every sibling it
-depends on already has a matching tag on that sibling's own split repo,
-via real `git ls-remote` lookups against GitHub, not Packagist.
+It diffs the manifest at `HEAD` against the comparison base — what
+`main` pointed to before this push on CI, `HEAD^` locally; every package
+whose `version` differs is a release candidate, printed in
+dependency-respecting publish order (a package always releases after
+every sibling it requires, never before). For each candidate, it also
+checks that every sibling it depends on already has a matching tag on
+that sibling's own split repo, via real `git ls-remote` lookups against
+GitHub, not Packagist.
+
+The plan validates the manifest before any of that and proves its own
+publish order contains every candidate it found. A cycle, a sibling
+reference to a package that isn't there, or any other graph fault stops
+the run and says so — a nonempty candidate set never becomes an empty
+plan that reads as "nothing to release". A tag lookup answers "absent"
+only when `ls-remote` reached the remote and matched nothing; a refused
+connection, a failed authentication or a stalled read ends the run,
+since none of them are evidence about a tag.
 
 ## See also
 

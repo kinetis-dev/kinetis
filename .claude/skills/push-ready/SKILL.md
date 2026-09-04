@@ -1,6 +1,6 @@
 ---
 name: push-ready
-description: Verifies the Kinetis monorepo's working tree is actually ready to push — scopes every check from the real git diff, bumps package versions, regenerates composer.json, lints/tests/analyses every touched-or-dependent package, rebuilds the docs if touched, and runs the manifest validator. Use this whenever the user asks to check if changes are ready to push, wants a pre-push or pre-commit verification pass, says something like "did I forget anything" or "is this ready," or after making edits to files under packages/ or docs/ that haven't been verified yet. Do not use this for the full CI-only suite (Infection, SonarQube, real-backend integration tests, Semgrep) — those run in CI, never locally.
+description: Verifies the Kinetis monorepo's working tree is ready to push — scopes every check from the git diff against the branch's integration base, bumps package versions once per branch, regenerates composer.json, lints/tests/analyses every touched-or-dependent package, rebuilds the docs if touched, and runs the manifest validator. Use this whenever the user asks to check if changes are ready to push, wants a pre-push or pre-commit verification pass, says something like "did I forget anything" or "is this ready," or after making edits to files under packages/ or docs/ that haven't been verified yet. Do not use this for the full CI-only suite (Infection, SonarQube, real-backend integration tests, Semgrep) — those run in CI, never locally.
 ---
 
 # push-ready
@@ -9,18 +9,52 @@ Runs the same checklist this session has hand-run before every push, in
 order, stopping at the first failure. It never stages, commits, or
 pushes — it only proves the tree is ready, then hands control back.
 
-Everything is scoped from the real diff — never ask the user which
-packages to check; derive it.
+Everything is scoped from the diff against the integration base — never
+ask the user which packages to check; derive it.
 
-## 0. Establish the diff
+## 0. Establish the base ref
+
+Every version decision below is made against **one** base ref: the
+commit the complete feature branch will be integrated onto. Not `HEAD^`,
+which moves with every commit and re-decides the bump from whatever the
+last commit happened to leave behind.
+
+```sh
+BASE_REF="${KINETIS_BASE_REF:-refs/remotes/origin/main}"
+
+git rev-parse --is-shallow-repository        # must print false
+git rev-parse --verify --quiet "$BASE_REF^{commit}"
+git merge-base HEAD "$BASE_REF"
+```
+
+Take the `git merge-base` output as `$BASE` and use it everywhere below.
+
+**The first must print `false`, the other two must exit zero, and the
+whole checklist stops otherwise.** A shallow clone, a base ref that
+doesn't resolve, an ambiguous name (`--verify` fails on one rather than
+picking a side), or no common ancestor all mean the branch cannot be
+measured as a whole — and a version decision made without that
+measurement is the one this skill exists to prevent. Say which command
+failed and stop; do not fall back to `HEAD^`, and do not guess a
+different ref. If the repository has no integration branch here, the
+user has to name one via `KINETIS_BASE_REF`.
+
+`refs/remotes/origin/main` is spelled in full because a bare
+`origin/main` can collide with a local branch or tag of the same name;
+`--verify` then fails rather than silently choosing one.
+
+## 1. Establish the diff
 
 ```sh
 git status --short
-git diff --name-only HEAD
-git diff --name-only --cached
+git diff --no-renames --name-only "$BASE"
+git diff --no-renames --name-only --cached
 ```
 
-Union staged + unstaged + untracked. From this, derive:
+Union the diff against `$BASE` with anything staged or untracked.
+`--no-renames` is what makes a file moved between two packages appear
+under both — the package that lost it needs its own bump just as much as
+the one that gained it. From this, derive:
 
 - **Touched packages**: every distinct `packages/<name>/` directory
   appearing in the diff.
@@ -31,18 +65,28 @@ If the diff touches nothing under `packages/`, `docs/`, or
 `packages.manifest.json`, say so and stop — there is nothing for this
 skill to verify.
 
-## 1. Version bump
+## 2. Version bump
 
-For every touched package, a version bump must exist in
-`packages.manifest.json` covering this change (this repo's own
-`content-bump-completeness` rule: any tracked file changing under a
-package requires a bump, or the release pipeline never tags the new
-content — this has been the single most common thing actually forgotten
-before a push this session).
+For every touched package, exactly **one** version bump must exist
+relative to `$BASE` — no more and no less. Any tracked file changing
+under a package requires a bump, or the release pipeline never tags the
+new content; two bumps on one branch leave the intermediate version
+permanently unreleased, since only what lands on `main` is ever tagged.
 
-Check whether `packages.manifest.json`'s diff already bumped every
-touched package's `version`. If any touched package's version is
-unchanged since the last commit, bump it:
+For each touched package, compare its manifest `version` at `$BASE`
+against the working tree:
+
+```sh
+git show "$BASE:packages.manifest.json" | grep -A3 '"<pkg>"'
+```
+
+- **Already changed since `$BASE`** — an earlier commit on this branch
+  made the bump. Leave it alone. Later review commits touching more
+  files in that same package are covered by it; bumping again here is
+  the mistake this step exists to prevent. If those later commits turned
+  a fix into a new capability, replace that one bump with the minor —
+  `--set-version=<pkg>=1.<m+1>.0` — rather than adding a second one.
+- **Unchanged since `$BASE`** — bump it once:
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine \
@@ -53,10 +97,17 @@ Use `--patch` by default — fixes, maintenance, docblock/comment/small-fix
 passes. Use `--minor` when the diff adds a new capability *or* breaks
 public behavior a consumer depends on; both are one minor bump under this
 repo's version policy (`docs/appendix-contributing.md`), which keeps every
-package on `1.x` through incubation. Never `--major`. Say in the final
-report which size was picked and why, rather than picking one silently.
+package on `1.x` through incubation. Say in the final report which size
+was picked and why, rather than picking one silently.
 
-## 2. Regenerate composer.json
+There is no third size. `tools/version-policy.php` is the one
+implementation of the rule and `docs/appendix-contributing.md` states
+it; the generator writes only moves it allows and step 12 accepts only
+moves it allows. So a missed bump, a doubled bump, or a skipped version
+fails there rather than reaching a push — don't re-derive the arithmetic
+by hand here.
+
+## 3. Regenerate composer.json
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine \
@@ -67,11 +118,11 @@ Always safe to run — only packages whose manifest entry actually
 changed will show a diff. **Never hand-edit a `packages/*/composer.json`
 directly** for anything the manifest controls.
 
-## 3. If a dependency itself changed
+## 4. If a dependency itself changed
 
-Only if `packages.manifest.json`'s diff touches a `requires`/
-`requiresDev`/`requiresDevExtra`/`suggest` block: refresh that
-package's lock with a **scoped** update (never bare) naming every
+Only if `packages.manifest.json`'s diff against `$BASE` touches a
+`requires`/`requiresDev`/`requiresDevExtra`/`suggest` block: refresh
+that package's lock with a **scoped** update (never bare) naming every
 current dependency, then validate:
 
 ```sh
@@ -81,7 +132,9 @@ docker run --rm -v "$PWD":/app -w /app/packages/<pkg> composer:2 \
   validate --strict
 ```
 
-## 4. Lint every touched PHP file
+## 5. Lint every touched PHP file
+
+Every `.php` file in step 1's diff, `tools/` included.
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php -l <file>
@@ -89,7 +142,7 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php -l <file>
 
 Stop immediately on any syntax error.
 
-## 5. Compute the affected-package set
+## 6. Compute the affected-package set
 
 Not just the touched packages — also every package that reaches a
 touched one through a `path` repository, since edits there run live
@@ -114,7 +167,7 @@ deps = {
     for name, entry in packages.items()
 }
 
-touched = {"<pkg1>", "<pkg2>"}  # fill in from step 0
+touched = {"<pkg1>", "<pkg2>"}  # fill in from step 1
 
 affected = set(touched)
 changed = True
@@ -144,7 +197,7 @@ list into one iteration with no error. Prefer a bash array
 (`PACKAGES=(...)`, `for pkg in "${PACKAGES[@]}"`) over an unquoted
 space-separated string regardless.
 
-## 6. Test every affected package
+## 7. Test every affected package
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
@@ -155,14 +208,14 @@ Stop at the first package whose suite fails or errors. A `SKIPPED`
 result (real-backend integration tests with no live service configured)
 is expected and not a failure.
 
-## 7. PHPStan every affected package
+## 8. PHPStan every affected package
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
   php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 ```
 
-## 8. Psalm every affected package
+## 9. Psalm every affected package
 
 Only for packages that have a `psalm.xml` (not every package does —
 check first):
@@ -174,7 +227,7 @@ docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
   sh -c "php vendor/bin/psalm --no-progress --taint-analysis"
 ```
 
-## 9. Docs build, only if docs touched
+## 10. Docs build, only if docs touched
 
 ```sh
 docker run --rm -v "$PWD/docs":/app -w /app python:3.12-slim \
@@ -183,13 +236,13 @@ docker run --rm -v "$PWD/docs":/app -w /app python:3.12-slim \
 
 Must say `build succeeded` with zero warnings treated as errors.
 
-## 10. New/changed docs or README code examples
+## 11. New/changed docs or README code examples
 
 Check whether any fenced code block actually changed, not just prose
 around it:
 
 ```sh
-git diff -- docs packages/*/README.md | grep -E "^\+.*\`\`\`|^-.*\`\`\`"
+git diff "$BASE" -- docs packages/*/README.md | grep -E "^\+.*\`\`\`|^-.*\`\`\`"
 ```
 
 If that's non-empty, actually execute or lint the changed example —
@@ -200,29 +253,41 @@ standalone `php -l` or a real run against a throwaway fixture is
 enough; reading it and assuming it's right is not. Empty output means
 skip this step.
 
-## 11. Manifest validation
+## 12. Manifest validation
 
-Run last, after 1–3 have actually landed, so it's checking the real
-settled state:
+Run last, after 2–4 have landed, so it checks the settled state. Pass
+the same `$BASE` step 0 established, so the branch is judged as one
+change rather than one commit:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
-  "apk add --no-cache git >/dev/null 2>&1 && git config --global --add safe.directory /app && php tools/validate-manifest.php"
+docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+  -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+  "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
-All six checks (`cycle`, `version-consistency`, `generated-drift`,
-`version-bump`, `content-bump`, `workflow-coverage`) must read `OK`.
+Every check must read `OK`: `manifest-schema`, `cycle`,
+`version-consistency`, `generated-drift`, `version-bump`,
+`content-bump`, `workflow-coverage`.
 
-## 12. Writing-rule and duplication pass
+`version-bump` and `content-bump` are the two that read `$BASE`. Between
+them they enforce the whole rule step 2 works to: every touched package
+bumped, each by exactly one step of `tools/version-policy.php`. A
+`--base` git cannot read fails the run rather than skipping those two,
+and so does an empty one — the same fail-closed behavior step 0 has. If
+they report `Skipped` here, `$BASE` was never set; fix the invocation
+rather than accepting the pass.
 
-Re-read the diff itself (not the whole repo — that's a separate,
-heavier sweep, not part of this checklist) for two things:
+## 13. Writing-rule and duplication pass
+
+Re-read the branch's own diff against `$BASE` (not the whole repo —
+that's a separate, heavier sweep, not part of this checklist) for two
+things:
 
 **Was/now narration, hedging tone, other-framework mentions** — added
 lines only:
 
 ```sh
-git diff -- docs packages | grep '^+' | grep -viE '^\+\+\+' | grep -niE \
+git diff "$BASE" -- docs packages | grep '^+' | grep -viE '^\+\+\+' | grep -niE \
   "previously|used to be|no longer opens|was reverted|the previous |reversed from|deprecated in favor|used to (drop|lose|close|skip|throw|return|require|need)|honest caveat|to be fair|admittedly|unfortunately|sadly|Laravel|Symfony's own|Django|CodeIgniter|CakePHP"
 ```
 
@@ -242,7 +307,7 @@ behavioral claim, then checking `docs/appendix.md`,
 `docs/appendix-packages.md`, and the relevant docs page/README for a
 second copy of it.
 
-## 13. Final safety review
+## 14. Final safety review
 
 ```sh
 git status --short
@@ -252,7 +317,7 @@ git diff
 Look for anything unintended: a stray debug file, an accidentally
 included secret, a file that shouldn't be part of this change.
 
-## 14. Report and stop
+## 15. Report and stop
 
 Summarize what was checked and what passed/was skipped-and-why. **Do
 not stage, commit, or push anything** — that's the user's call, made
