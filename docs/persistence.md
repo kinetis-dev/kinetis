@@ -235,29 +235,77 @@ interpolation on native MySQL (whose async mode has no bind step; the
 client pins the connection charset explicitly so escaping is always
 performed against a known charset).
 
-The two native drivers scan the SQL text itself to find each `?`
-placeholder — a dialect-aware pass recognizing `'...'`/`"..."`/`` `...` ``
-quoting, `--`/`#`/`/* */` comments, and Postgres's `$$...$$`/`$tag$...$tag$`
-dollar-quoted strings, so a `?` inside any of those is data, never a
-slot. Postgres's own jsonb containment/existence operators (`?`, `?|`,
-`?&`) are lexically identical to a placeholder at the position they
-appear — write `??`, `??|`, `??&` under `native`/`DB_DRIVER=auto` to mean
-the literal operator rather than a bind slot (the PDO driver has no such
-ambiguity, since it never scans the SQL text itself).
+Every parameterized call passes one **pre-flight** first — before the
+driver opens a telemetry span, asks its pool for a connection, opens one,
+sets that connection's charset and collation, or prepares a statement.
+Keying, count and value kind are all settled there, so an argument list
+outside the contract costs the caller one `Exception\QueryException` and
+nothing else: nothing is sent to a server, and nothing is opened to send
+it to. A cold or unreachable client refuses the call exactly as a warm
+one does.
+
+That ordering is itself the contract, not an optimization. A driver
+checking on its way through execution would answer a caller's own
+mistake with a `ConnectionException` from a server it was never going to
+send to, and would answer the identical call differently depending on
+whether its pool happened to be warm already. Transactions run the same
+pre-flight, ahead of anything reaching their pinned connection.
+
+`execute()` takes exactly one argument per `?` placeholder, on every
+driver: a call carrying more or fewer throws naming both counts. That is
+a contract rather than an incidental check on the PDO drivers, whose
+prepared statements are memoized (below): a reused statement still
+holds what was last bound to it, so a short argument list without the
+check would silently execute against the previous call's leftover value
+in the position it omitted.
+
+Those arguments are a **list** — keys `0..n-1`, in the order the
+placeholders appear. An associative or sparse array is rejected rather
+than reindexed: `pdo` binds by iteration order while `native` indexes by
+position, so the two would read `['b' => 2, 'a' => 1]` as two different
+queries. Reindexing it here would settle that disagreement on an
+argument list the call site never wrote, which is the mistake worth
+seeing.
+
+Each argument is one of five kinds: `null`, `bool`, `int`, a **finite**
+`float`, or `string`. Anything else — an array, a resource, an object,
+`INF`, `NAN` — throws `Exception\QueryException` naming the position and
+the type, with the whole list read before a single value is encoded or
+bound, so a refused call leaves no position bound. The narrower set is
+the one all four drivers agree on, so the same call is refused the same
+way whichever driver `DB_DRIVER` picked. Format a `DateTimeInterface`,
+an enum or a JSON payload at the call site, where the shape is your
+decision rather than the driver's.
+
+Which `?` is a placeholder is decided by one dialect-aware scan of the
+SQL text, shared by every driver — the native drivers substitute each
+one they find, the PDO drivers count them for the argument check above.
+It recognizes `'...'`/`"..."`/`` `...` `` quoting, `--`/`#`/`/* */`
+comments, and Postgres's `$$...$$`/`$tag$...$tag$` dollar-quoted strings,
+so a `?` inside any of those is data, never a slot. Postgres's own jsonb
+containment/existence operators (`?`, `?|`, `?&`) are lexically identical
+to a placeholder at the position they appear — write `??`, `??|`, `??&`
+to mean the literal operator rather than a bind slot. A `$` that
+continues the identifier to its left opens nothing: `col$tag$` is one
+Postgres identifier, and a dollar-quoted literal following an identifier
+or a keyword has to be separated from it (`col $tag$`), the same way the
+server lexes it. A dollar-quote tag is spelled with Postgres's own
+unquoted-identifier bytes, non-ASCII included, so `$é$ ... $é$` quotes
+its contents exactly as `$body$ ... $body$` does.
 
 Two comment rules match real MySQL rather than a generic reading of the
-syntax. `--` only opens a comment under `native`/`DB_DRIVER=auto` against
-MySQL when the second dash is followed by whitespace, a control
-character, or the end of the string — `5--?` is `5 - - ?`, not a comment
-(Postgres has no such condition; a bare `--` always opens one there). And
-MySQL/MariaDB's *executable* comments (`/*! ... */`, `/*M! ... */`) are
-copied through verbatim, left for the connected server to interpret on
-its own — whether one is even live SQL depends on its version gate
-against that server's actual version (and, for `/*M!`, whether it's
-MariaDB at all), which Kinetis has no way to check client-side. A `?`
-inside one is rejected outright rather than guessed at, on `native` and
-`pdo` alike: the two would otherwise silently require a different number
-of bound parameters for the same query depending on the connected
+syntax. `--` only opens a comment against MySQL when the second dash is
+followed by whitespace, a control character, or the end of the string —
+`5--?` is `5 - - ?`, not a comment (Postgres has no such condition; a
+bare `--` always opens one there). And MySQL/MariaDB's *executable*
+comments (`/*! ... */`, `/*M! ... */`) are copied through verbatim, left
+for the connected server to interpret on its own — whether one is even
+live SQL depends on its version gate against that server's actual
+version (and, for `/*M!`, whether it's MariaDB at all), which Kinetis has
+no way to check client-side. A `?` inside one is rejected outright rather
+than guessed at, on `native` and `pdo` alike, inside a transaction as
+much as outside one: the two would otherwise silently require a different
+number of bound parameters for the same query depending on the connected
 server's version, since `pdo`'s native prepare defers the question to
 the real server while `native`'s own scanner never could. Move a bound
 value outside the comment instead.
@@ -277,7 +325,8 @@ trips instead of 2N; against a sub-millisecond database that's the
 difference between paying the network once or twice per query. The cache holds at most 256 statements (workloads that
 interpolate values into their SQL text instead of binding reset it on
 overflow rather than growing it forever) and is dropped with the
-connection on `close()`.
+connection on `close()`. A transaction owns its handle for its own
+lifetime and keeps a cache of its own.
 
 ```{warning}
 Server-side prepared statements are scoped to a **database connection**
