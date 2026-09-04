@@ -549,6 +549,12 @@ a body the environment can't parse — whose fixed message is
 `RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE`) runs against yours
 with no further test code.
 
+An adapter that parses form bodies itself, the way `kinetis/bref-adapter`
+and `kinetis/roadrunner-adapter` do, decides which bodies those are with
+`Kinetis\Http\MediaType` rather than its own comparison — that is what
+keeps the accepted spellings identical under every runtime; see
+{ref}`multipart-form-data-file-uploads`.
+
 You can also construct any adapter directly if you want to force a
 specific one instead of relying on automatic detection:
 

@@ -6,6 +6,7 @@ namespace Kinetis\Testing;
 
 use InvalidArgumentException;
 use Kinetis\Http\Kernel;
+use Kinetis\Http\MediaType;
 use Nyholm\Psr7\ServerRequest;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -47,24 +48,22 @@ use Psr\Http\Message\ServerRequestInterface;
  *
  * `delete()` takes no body at all, matching the method's own convention.
  *
- * Every Content-Type this class inspects or sets is resolved
- * case-insensitively (HTTP field names are, per RFC 7230, and so are
- * media types, per RFC 6838) and compared on the bare media type — the
- * part before any `;` parameter (`charset=UTF-8`, for one) — never the
- * literal header string, so `Application/JSON; charset=UTF-8` is
- * recognized exactly like `application/json`. A caller supplying the
- * header under more than one letter-case with two different values gets
- * a clear exception rather than one silently winning; two differently-
- * cased keys agreeing on the same value are collapsed to exactly one
- * canonical entry, never left as two — Nyholm's own header storage
- * treats two differently-cased keys as one *repeated* header and
- * combines their values into a single comma-joined field
- * (`"application/json, application/json"`), corrupting even a
- * same-value "harmless" duplicate if both were left in place. This
- * resolution runs regardless of whether the current call has a body to
- * validate a shape against, so a header-only conflict (or duplicate) on
- * `get()`/`delete()`, or `request()` with an empty array `$body`, is
- * caught the same way a body-carrying call's is.
+ * Every Content-Type this class inspects or sets is found under any
+ * letter-case of the header name (HTTP field names carry no case
+ * meaning, per RFC 7230) and classified through {@see MediaType}, so
+ * `Application/JSON; charset=UTF-8` is recognized exactly like
+ * `application/json`. A caller supplying the header under more than one
+ * letter-case with two different values gets a clear exception rather
+ * than one silently winning; two differently-cased keys agreeing on the
+ * same value are collapsed to exactly one canonical entry, never left
+ * as two — Nyholm's own header storage treats two differently-cased
+ * keys as one *repeated* header and combines their values into a single
+ * comma-joined field (`"application/json, application/json"`),
+ * corrupting even a same-value "harmless" duplicate if both were left
+ * in place. This resolution runs regardless of whether the current call
+ * has a body to validate a shape against, so a header-only conflict (or
+ * duplicate) on `get()`/`delete()`, or `request()` with an empty array
+ * `$body`, is caught the same way a body-carrying call's is.
  *
  * Query parameters (`get()`'s `$query`, or `request()`'s own) are merged
  * into the request URI's own query component via `UriInterface::withQuery()`
@@ -284,7 +283,7 @@ final readonly class TestClient
             return $headers;
         }
 
-        if (!$isAllowed(self::mediaType($contentType))) {
+        if (!$isAllowed(MediaType::of($contentType))) {
             throw new InvalidArgumentException(
                 "Content-Type \"{$contentType}\" is not {$describeAllowed}. {$methodHint}",
             );
@@ -345,16 +344,6 @@ final readonly class TestClient
         return [$headers, $value];
     }
 
-    /**
-     * The bare media type a Content-Type header names — before any
-     * `;`-delimited parameter (`charset=UTF-8`, for one) — lowercased,
-     * since media types are themselves case-insensitive (RFC 6838).
-     */
-    private static function mediaType(string $contentType): string
-    {
-        return \strtolower(\trim(\explode(';', $contentType, 2)[0]));
-    }
-
     private static function isJsonMediaType(string $mediaType): bool
     {
         return $mediaType === 'application/json' || \str_ends_with($mediaType, '+json');
@@ -362,7 +351,7 @@ final readonly class TestClient
 
     private static function isFormUrlencodedMediaType(string $mediaType): bool
     {
-        return $mediaType === 'application/x-www-form-urlencoded';
+        return $mediaType === MediaType::FORM_URLENCODED;
     }
 
     /**

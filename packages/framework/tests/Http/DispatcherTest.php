@@ -148,6 +148,49 @@ final class DispatcherTest extends TestCase
         self::assertSame('Url Encoded', json_decode((string) $response->getBody(), true)['name']);
     }
 
+    /**
+     * A media type is case-insensitive on its type/subtype, so a client
+     * spelling the header this way is sending a form body and has to be
+     * read as one.
+     */
+    public function test_a_mixed_case_form_content_type_is_read_from_parsed_body(): void
+    {
+        $router = $this->uploadRouter();
+        $match = $router->match('POST', '/avatars');
+
+        $avatar = new UploadedFile(Stream::create('x'), 1, UPLOAD_ERR_OK, 'a.png', 'image/png');
+        $request = (new ServerRequest('POST', '/avatars'))
+            ->withHeader('Content-Type', 'Application/X-WWW-Form-Urlencoded; charset=UTF-8')
+            ->withParsedBody(['name' => 'Mixed Case'])
+            ->withUploadedFiles(['avatar' => $avatar]);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame('Mixed Case', json_decode((string) $response->getBody(), true)['name']);
+    }
+
+    /**
+     * A longer media type that merely starts with a form one is a
+     * different media type, and its body is whatever it says it is —
+     * decoded as JSON here, the default for anything not form-encoded,
+     * with getParsedBody() ignored.
+     */
+    public function test_a_content_type_that_only_looks_like_a_form_type_is_json_decoded(): void
+    {
+        $router = $this->uploadRouter();
+        $match = $router->match('POST', '/avatars');
+
+        $avatar = new UploadedFile(Stream::create('x'), 1, UPLOAD_ERR_OK, 'a.png', 'image/png');
+        $request = (new ServerRequest('POST', '/avatars', body: '{"name":"From the body"}'))
+            ->withHeader('Content-Type', 'application/x-www-form-urlencodedevil')
+            ->withParsedBody(['name' => 'From the parsed body'])
+            ->withUploadedFiles(['avatar' => $avatar]);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame('From the body', json_decode((string) $response->getBody(), true)['name']);
+    }
+
     public function test_an_uploaded_file_typed_parameter_receives_it_directly_without_body(): void
     {
         $router = $this->uploadRouter();

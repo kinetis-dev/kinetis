@@ -171,6 +171,62 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
         $this->assertMultipartParsed('PATCH');
     }
 
+    /**
+     * A media type's type and subtype are case-insensitive (RFC 9110
+     * §8.3.1), so a client spelling the header this way is sending a
+     * form body — and every environment here has to read it as one,
+     * whether the parsing is the SAPI's own or the adapter's.
+     */
+    final public function test_a_mixed_case_form_content_type_is_parsed(): void
+    {
+        $outcome = $this->dispatch(new WireRequest(
+            'POST',
+            '/forms',
+            headers: [['Content-Type', 'Application/X-WWW-Form-Urlencoded; charset=UTF-8']],
+            body: 'name=Mixed+Case',
+        ));
+
+        self::assertSame(['name' => 'Mixed Case'], $this->observed($outcome)->parsedBody);
+    }
+
+    final public function test_a_mixed_case_multipart_content_type_is_parsed(): void
+    {
+        $boundary = 'KinetisConformanceBoundary';
+        $body = "--{$boundary}\r\n"
+            . "Content-Disposition: form-data; name=\"name\"\r\n\r\n"
+            . "Alon\r\n"
+            . "--{$boundary}--\r\n";
+
+        $outcome = $this->dispatch(new WireRequest(
+            'POST',
+            '/avatars',
+            headers: [['Content-Type', "Multipart/Form-Data; boundary={$boundary}"]],
+            body: $body,
+        ));
+
+        self::assertSame(['name' => 'Alon'], $this->observed($outcome)->parsedBody);
+    }
+
+    /**
+     * A longer media type that merely begins with a form one is a
+     * different media type: its body stays raw bytes for the
+     * application to read, exactly as any other unrecognized content
+     * type's does.
+     */
+    final public function test_a_content_type_that_only_looks_like_a_form_type_is_left_unparsed(): void
+    {
+        $outcome = $this->dispatch(new WireRequest(
+            'POST',
+            '/forms',
+            headers: [['Content-Type', 'application/x-www-form-urlencodedevil']],
+            body: 'name=Not+A+Form',
+        ));
+
+        $observed = $this->observed($outcome);
+        self::assertNull($observed->parsedBody);
+        self::assertSame('name=Not+A+Form', $observed->body);
+    }
+
     final public function test_a_json_body_is_left_for_the_application_to_decode(): void
     {
         $outcome = $this->dispatch(WireRequest::json('POST', '/users', '{"name":"Alon"}', ['X-Trace-Id' => 't-1']));

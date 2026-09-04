@@ -42,12 +42,12 @@ use ReflectionType;
  * parameter pulled from the request's uploaded-files bag by name), invokes
  * it, and encodes the return value as a JSON PSR-7 response. A #[Body] DTO
  * is decoded as JSON by default, or read from getParsedBody() for
- * multipart/form-data and application/x-www-form-urlencoded — an
- * UploadedFileInterface-typed constructor parameter on that same DTO needs
- * no special handling in Hydrator itself, since the files bag is merged
- * into the data array before hydration. A failed #[Body] validation
- * short-circuits into a 422 response instead of ever reaching the
- * controller.
+ * multipart/form-data and application/x-www-form-urlencoded, as
+ * {@see MediaType} classifies them — an UploadedFileInterface-typed
+ * constructor parameter on that same DTO needs no special handling in
+ * Hydrator itself, since the files bag is merged into the data array
+ * before hydration. A failed #[Body] validation short-circuits into a
+ * 422 response instead of ever reaching the controller.
  *
  * $bindingPlans/$hydrationPlans are optional, compiled-ahead-of-time
  * replacements for what derivePlan()/Hydrator::compilePlan() would otherwise
@@ -366,7 +366,7 @@ final class Dispatcher
         // SizeLimitedStream enforces its cap by throwing, and
         // StreamInterface::__toString() is required to never throw —
         // only getContents() can actually surface an oversized body here.
-        $formEncoded = self::isFormEncoded($contentType);
+        $formEncoded = MediaType::isFormEncoded($contentType);
         $decoded = $formEncoded
             ? $this->parsedBodyAsArray($request)
             : $this->decodeJsonBody($request->getBody()->getContents());
@@ -394,12 +394,6 @@ final class Dispatcher
         } finally {
             Telemetry::global()->hydrationEnded($hydrationToken);
         }
-    }
-
-    private static function isFormEncoded(string $contentType): bool
-    {
-        return str_starts_with($contentType, 'multipart/form-data')
-            || str_starts_with($contentType, 'application/x-www-form-urlencoded');
     }
 
     /**

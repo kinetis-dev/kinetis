@@ -456,6 +456,18 @@ from the request's `Content-Type`:
 | `multipart/form-data` | `getParsedBody()` |
 | `application/x-www-form-urlencoded` | `getParsedBody()` |
 
+A `Content-Type` is matched on its type and subtype alone — everything
+before the first `;`, so a `charset` or a multipart `boundary` parameter
+changes nothing — and compared ASCII-case-insensitively, as RFC 9110
+§8.3.1 requires: `Application/X-WWW-Form-Urlencoded; charset=UTF-8`
+lands on the same row as `application/x-www-form-urlencoded`. The match
+is exact, so a longer media type that merely begins with one of them —
+`application/x-www-form-urlencodedevil` — is a different media type and
+takes the first row. `Kinetis\Http\MediaType` is that classification,
+and every adapter parsing a form body itself reads a request's
+`Content-Type` through it, so an application gets the same answer under
+every runtime (see {doc}`runtime-adapters`).
+
 A `#[Body]` DTO can mix ordinary fields with an `UploadedFileInterface`-typed
 constructor parameter — no special handling needed in the DTO itself:
 
