@@ -42,11 +42,19 @@ further configuration.
 
 `RequestSpanMiddleware` is discovered as global middleware the moment
 the package is installed — nothing to register. Every request gets a
-server span carrying the method, `url.path`, response status, and
+server span carrying the method, response status, and
 `php.memory.usage` — under a persistent worker, a slow upward drift of
 that last attribute across one worker's spans is the memory-leak
 detector. An incoming `traceparent` header makes the span a child of
 the caller's own trace.
+
+No form of the request target travels on that span. A path's segments
+are the user ids, email addresses, document ids and single-use tokens a
+request is addressed by, and the one shape of it that stays safe — the
+matched route template — belongs to the router, which runs inside the
+handler this middleware wraps. The framework hooks below are where that
+template surfaces: with them active, `route.match` is a child of the
+request span carrying the template as `http.route`.
 
 The request span is *active* while the request runs, which is what
 parents every other span below under it automatically — including
@@ -76,10 +84,13 @@ decorated link exactly like the real one, and both wrap the transactions
 they begin — `COMMIT` and `ROLLBACK` get spans too, which is where fsync
 cost becomes visible.
 
-Each query span is named by the query's first keyword (`SELECT`,
-`INSERT`) and carries the full SQL as `db.query.text`. Bound parameter
-values are never recorded — they are exactly the data most likely to be
-sensitive.
+Each query span is named by the query's opening keyword (`SELECT`,
+`INSERT`) and carries `db.operation.name`, a
+`kinetis.db.query_fingerprint` that groups every execution of the same
+statement, and — for `execute()` — `kinetis.db.parameter_count`. The
+statement itself does not travel; see
+{ref}`telemetry-data-minimization` for why, and for what the rest of
+this package does with the inputs it sees.
 
 ## Queue spans
 
@@ -141,6 +152,16 @@ When composing with `Http::withRetries()`, wrap the tracing transport
 first and add retries on top — each attempt then gets its own span, so
 the failure that triggered a retry stays visible.
 
+The span carries `url.scheme`, `server.address` and `server.port`, plus
+a `kinetis.http.url_fingerprint` covering the whole URL. An outgoing
+URL is caller-supplied and holds a credential often enough that nothing
+else in it travels — `https://user:pass@host/`, an API key or a
+signature as a query parameter, a token in the fragment, a reset token
+or a document id as a path segment — and a general-purpose client has
+no route template to reduce a path to. The wrapped client is handed the
+URL and the method exactly as written; the span names the method from a
+fixed vocabulary, `HTTP` for anything outside it.
+
 ## Cache spans
 
 Wraps any PSR-16 `CacheInterface`, {doc}`persistence`'s
@@ -165,10 +186,12 @@ $app->instance(CacheInterface::class, new TracingSimpleCache(
 
 Each PSR-16 method (`get`, `set`, `delete`, `has`, `clear`,
 `getMultiple`, `setMultiple`, `deleteMultiple`) gets its own span,
-named by the operation and carrying every key it touched as `db.keys`.
-Keys are structured identifiers (`user:123:profile`), not free-text
-input, so they travel on the span; values never do, the same
-discipline SQL bound parameters get.
+named by the operation and carrying a
+`kinetis.cache.key_fingerprint` over the keys it touched — plus
+`db.operation.batch.size` for the three multi-key methods. A cache key
+is built from whatever identifies the thing being cached, which is
+routinely a user id, a tenant, a session id, or a password-reset token,
+so the key is as sensitive as the value and neither travels.
 
 ## Session spans
 
@@ -193,10 +216,10 @@ $app->bind(SessionStoreInterface::class, static fn (): TracingSessionStore => ne
 
 `read`, `write`, and `destroy` each get a span. A session id is a
 bearer credential — whoever holds it can present the cookie and act as
-that session — so it never reaches a span verbatim: a short SHA-256
-prefix travels instead, enough to correlate every span for one session
-without handing a trace reader the credential itself. The payload
-never travels at all.
+that session — so it never reaches a span verbatim: its fingerprint
+travels instead, enough to correlate every span for one session without
+handing a trace reader the credential itself. The payload never travels
+at all.
 
 ## OpenSearch spans
 
@@ -219,12 +242,86 @@ $client = OpenSearchClientFactory::fromConfig(
 ```
 
 OpenSearch's REST API is path-based (`POST /orders/_search`,
-`GET /orders/_doc/42`), so each span is named from the request's own
-method and its last `_`-prefixed action segment (`POST _search`,
-`GET _doc`) rather than needing to parse the request body's query DSL.
+`GET /orders/_doc/42`), so each span is named from the request's method
+and the action its path performs (`POST _search`, `GET _doc`) rather
+than needing to parse the request body's query DSL. Both halves come
+from a fixed vocabulary: a path segment names a span only when it is
+one of OpenSearch's own actions, and a path that names none — or names
+one this package does not list — produces `request` instead. The rest
+of such a path is index names, aliases and document ids, which say
+which records a call touched rather than what it did, so the path
+travels only as `kinetis.search.path_fingerprint`.
+
 PSR-18's `sendRequest()` always hands back a complete response, so
 unlike the outgoing-HTTP decorator above there is no deferred span
 lifecycle here — the span starts and ends around one call.
+
+(telemetry-data-minimization)=
+
+## What never reaches a span
+
+A trace is exported to a third-party backend, retained there, and
+readable by everyone with access to it — a wider audience than the
+database, cache, or upstream service an operation's input was addressed
+to. So a span here describes an operation and never the data it
+carried. Every decorator and hook in this package routes an operation's
+inputs through one internal policy point, and there is no setting that
+turns it off: a switch for the raw value would put the choice in a
+configuration file, where the consequence of getting it wrong is a
+credential sitting in an APM backend.
+
+| Never exported | Exported instead |
+|---|---|
+| A SQL statement, its literal values, its bound parameters | The opening keyword from a fixed vocabulary, `kinetis.db.query_fingerprint`, `kinetis.db.parameter_count` |
+| A cache key, single or batched, and every cached value | `kinetis.cache.key_fingerprint` over the operation's key list, `db.operation.batch.size` for the multi-key methods |
+| A URL's userinfo, path, query string, and fragment | `url.scheme`, `server.address`, `server.port`, `kinetis.http.url_fingerprint` |
+| An incoming request's path or query string | `http.request.method`, and `http.route` on the `route.match` span once the router resolves a template |
+| An OpenSearch index name, document id or alias | The action from a fixed vocabulary as the span name and `db.operation.name`, `kinetis.search.path_fingerprint` |
+| A session id, and the session payload | `kinetis.session.id_fingerprint` |
+| A failure's message and stack trace | The exception's type — its own class, or an anonymous subclass's nearest named ancestor — as the span status description and as an `exception` event's `exception.type` |
+
+A fingerprint is a 128-bit SHA-256 prefix, written as 32 hex
+characters. Two spans covering the same statement, key list, URL or
+path carry the same one, so a backend groups them exactly as it would
+have grouped the raw value, and neither span carries the value. A
+digest covers the kind of input as well as the input itself, so one
+byte sequence arriving as a cache key and as a URL fingerprints
+differently in each place, and the two can never be joined by comparing
+digests. It is pseudonymous correlation data rather than a secret: the
+digest is unkeyed, so anyone holding a candidate value can confirm it
+by hashing it, and a value drawn from an enumerable set stays
+guessable. What the fingerprint guarantees is that the value is absent
+from the trace.
+
+Every span name, and every attribute that says what an operation did,
+comes from a closed vocabulary for a second reason on top of that one —
+a name assembled from caller-supplied text is both an export of that
+text and an unbounded number of distinct names for a backend to group.
+A statement opening outside the SQL keyword list is named `SQL`, a
+method outside the HTTP method list is `HTTP` on the name and `_OTHER`
+on `http.request.method`, and an OpenSearch path naming no known action
+is `request`.
+
+`url.scheme`, `server.address` and `server.port` are the one exported
+shape that is open-ended rather than drawn from a vocabulary. They name
+which service a call was addressed to — a deployment's own topology
+decides those — while everything the call said to that service stays
+behind, so what they add to a backend's grouping is the number of hosts
+an application talks to.
+
+The exception rule is the one that reads as a loss and is not. A
+driver's error message quotes the statement it rejected and the value
+that caused the rejection; a client's quotes the URL it could not
+reach; a stack trace carries the arguments each frame was called with.
+The type that does travel is a name PHP declared rather than a
+location: an anonymous subclass is named after the file and line it was
+declared at, so a span carries its nearest named ancestor instead.
+The exception still propagates unchanged, so an application that wants
+the message logs it where its own redaction policy applies — and
+`TraceAwareLogger`, below, puts the trace id on that log line, which is
+what joins the two back together. Core makes the same call for the same
+reason when it reports a contained backend failure, described under
+"A failing backend never changes what the application does".
 
 ## Log correlation
 
@@ -260,10 +357,11 @@ report becomes a span with zero configuration beyond the same
   time between a request span and its query spans is attributed to
   these, not left as an unnamed gap.
 - **Queries, split at the pool boundary** — a span per query from
-  inside the drivers, with a `server.started` event marking the moment
-  it actually went to the server: everything before that event is time
-  spent waiting for a free pooled connection, the number that is
-  invisible from outside.
+  inside the drivers, carrying the keyword and statement fingerprint
+  the SQL decorator carries and no more, with a `server.started` event
+  marking the moment it actually went to the server: everything before
+  that event is time spent waiting for a free pooled connection, the
+  number that is invisible from outside.
 - **Transactions** — begin to `COMMIT`/`ROLLBACK`, with the outcome as
   an attribute.
 - **`concurrently()`** — a span for the batch and one per task, so
