@@ -232,13 +232,13 @@ final class Dispatcher
             }
 
             // An array/iterable-typed path parameter is equally
-            // impossible, unconditionally — unlike #[Query] (a real
-            // array-style query param, ?tags[]=a&tags[]=b, works, see
-            // "Query and path values are raw strings" in
-            // routing-validation.md), a route placeholder is always
-            // exactly one path segment, captured as a single string.
-            // There is no bracket (or any other) convention that could
-            // ever make a path segment become an array.
+            // impossible, unconditionally — unlike #[Query] (a repeated
+            // query key, ?tags=a&tags=b, works, see "Query and path
+            // values are raw strings" in routing-validation.md), a route
+            // placeholder is always exactly one path segment, captured as
+            // a single string. There is no repetition (or any other)
+            // convention that could ever make a path segment become an
+            // array.
             if (($scalarType === 'array' || $scalarType === 'iterable') && $source === 'path') {
                 throw UnresolvableParameterException::forImpossiblePathArray($name);
             }
@@ -558,38 +558,36 @@ final class Dispatcher
     }
 
     /**
-     * OpenApiGenerator advertises an array/iterable-typed #[Query]
-     * parameter with the OpenAPI spec's own *default* array
-     * serialization (`style: form`, `explode: true` — never stated
-     * explicitly, since it's the spec default whenever neither is
-     * overridden) — the standard, interoperable repeated-key wire form,
-     * `?tags=a&tags=b`. PSR-7's own getQueryParams(), built by every
-     * runtime adapter from PHP's native `parse_str()`, cannot represent
-     * that form at all: `parse_str()` only ever accumulates PHP's own
-     * non-standard bracket convention (`?tags[]=a&tags[]=b`) into an
-     * array — a repeated, non-bracketed key silently collapses to its
-     * last value, with every earlier one lost and no error raised
-     * anywhere. Parsed directly from the request's own raw, unparsed
-     * query string here instead, via repeatedQueryValues() below —
-     * available identically on every runtime adapter through PSR-7's
-     * UriInterface, so this needs no per-adapter change to make what's
-     * advertised genuinely work, for every runtime.
+     * An array/iterable-typed #[Query] parameter is satisfied by exactly
+     * one wire form: the repeated-key spelling `?tags=a&tags=b`, OpenAPI
+     * 3.1's own *default* array serialization (`style: form`,
+     * `explode: true` — never stated explicitly in the generated
+     * document, since it's the spec default whenever neither is
+     * overridden), which is what OpenApiGenerator advertises and what a
+     * client generated from that document sends.
      *
-     * The bracket convention is still accepted too, as a fallback, when
-     * the repeated-key form isn't present at all — a real, deliberate
-     * choice, not an oversight: this is what lets an existing bracket-
-     * style caller keep working exactly as before, while making the
-     * standards-described, OpenAPI-advertised form the genuinely
-     * primary, correct one a generated client can actually rely on.
+     * PSR-7's own getQueryParams(), built by every runtime adapter from
+     * PHP's native `parse_str()`, cannot represent that form at all: a
+     * repeated, non-bracketed key silently collapses to its last value
+     * there, with every earlier one lost and no error raised anywhere.
+     * The values are parsed directly from the request's own raw,
+     * unparsed query string instead, via repeatedQueryValues() below —
+     * available identically on every runtime adapter through PSR-7's
+     * UriInterface, so what's advertised works on every runtime with no
+     * per-adapter change.
+     *
+     * PHP's bracket spelling, `?tags[]=a`, sends a different key: the
+     * name on the wire is `tags[]`, not `tags`, so it satisfies no
+     * #[Query('tags')] parameter and reaches the ordinary "value
+     * missing" branch (default, then allowsNull, then "is required.")
+     * like any other absent key.
      *
      * @param HttpBindingPlan $param
      */
     private static function rawQueryValue(ServerRequestInterface $request, string $name, array $param): mixed
     {
         if ($param['scalarType'] === 'array' || $param['scalarType'] === 'iterable') {
-            $repeated = self::repeatedQueryValues($request->getUri()->getQuery(), $name);
-
-            return $repeated ?? $request->getQueryParams()[$name] ?? null;
+            return self::repeatedQueryValues($request->getUri()->getQuery(), $name);
         }
 
         return $request->getQueryParams()[$name] ?? null;
@@ -633,9 +631,9 @@ final class Dispatcher
 
             // '+' means a literal space in a query string/form body
             // (RFC 1866) — urldecode(), not rawurldecode(), is what
-            // PHP's own parse_str() applies internally too, so this
-            // agrees with getQueryParams() on every key it can already
-            // represent, and only adds the one it can't.
+            // PHP's own parse_str() applies internally too, so a value
+            // read here decodes exactly the way the same bytes would
+            // under getQueryParams().
             if (urldecode($key) === $name) {
                 $values[] = urldecode($value);
             }
@@ -738,8 +736,8 @@ final class Dispatcher
      * `bool` and the narrower standalone `true`/`false` types. `bool`'s
      * own pre-existing `"1"`/`"0"` spellings are untouched — they already
      * pass typeMismatchMessage()'s check as raw strings, unaffected by
-     * this. Anything else — including the array a #[Query] array-style
-     * parameter (`?tags[]=a`) produces — passes through unchanged.
+     * this. Anything else — including the list a #[Query] array-style
+     * parameter (`?tags=a&tags=b`) produces — passes through unchanged.
      */
     private static function normalizeQueryOrPathLiteral(?string $scalarType, mixed $raw): mixed
     {

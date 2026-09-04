@@ -7,10 +7,15 @@ namespace Kinetis\Runtime;
 /**
  * Gates production-only behavior (AOT caching — see Kinetis\Cache) behind an
  * explicit signal rather than guessing from RuntimeAdapterInterface, since
- * dev/prod is an orthogonal axis to persistent/boot-and-die: FPM can run in
- * prod, FrankenPHP could run in dev.
+ * the development/production axis is orthogonal to persistent/boot-and-die:
+ * FPM can serve production, FrankenPHP can serve development.
  *
- * Unset or unrecognized APP_ENV defaults to Production.
+ * Only the exact name `development`, ignoring case, selects Development.
+ * An unset APP_ENV and every other name — a deployment's own `staging`
+ * included — is Production, so the cheaper, safer-to-be-wrong side of the
+ * gate is what an unfamiliar name lands on. A deployment that needs its
+ * own environment names distinguished by name matches the raw APP_ENV
+ * string itself, the way {@see \Kinetis\OpenApi\OpenApiAccess} does.
  */
 enum AppEnvironment: string
 {
@@ -28,7 +33,7 @@ enum AppEnvironment: string
         $appEnv ??= getenv('APP_ENV') ?: null;
 
         return match (strtolower((string) $appEnv)) {
-            'development', 'dev' => self::Development,
+            'development' => self::Development,
             default => self::Production,
         };
     }
