@@ -99,10 +99,10 @@ disguised PHPUnit test.
   write/read/exists/list/delete.
 - **`redis-cluster`** (`grokzen/redis-cluster`, 3 masters + 3 replicas) —
   `ClusteredRedisSimpleCache`/`ClusterTopology`: the full PSR-16 surface
-  routed across every node, `clear()` fanning out to every shard, and a
-  real forced slot reassignment producing a genuine `-MOVED` reply that
-  `guard()` must catch, refresh its topology from, and retry — not a
-  simulated redirect.
+  routed across every node, `clear()` fanning out to every shard, and
+  forced migrations exercising `-ASK`, `-MOVED`, chained redirects, and
+  concurrent traffic. Each case restores the slots it changes. The job
+  runs the suite twice against one cluster to enforce that isolation.
 - **`runtime-conformance`** (matrix: a `dunglas/frankenphp` worker behind
   Caddy; `php:8.4-fpm-alpine` behind `nginx:alpine`) — the shared runtime
   adapter conformance suite (`Kinetis\Testing\Runtime`, see
