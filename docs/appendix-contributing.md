@@ -177,6 +177,27 @@ contributor can read the same file at
 `.claude/skills/push-ready/SKILL.md` and run the identical commands by
 hand.
 
+## Version policy
+
+Every package moves along its own SemVer line, and every one of them
+stays on `1.x` for the duration of incubation. Two bump sizes cover
+every change:
+
+- **Patch** — a fix, a maintenance pass, a no-behavior-change constraint
+  tightening, a comment or README edit.
+- **Minor** — a new capability, or a breaking change. Both land as a
+  single minor bump.
+
+No package is bumped to `2.0.0` during incubation. Folding breaking
+changes into a minor bump is what keeps that true: a caret constraint
+picks up later minors on the same major line, so a break reaches
+consumers through the minor that carries it, called out in that
+release's notes rather than in the version number.
+
+`tools/generate-composer.php` implements general SemVer mechanics and so
+accepts `--major` alongside `--minor`/`--patch`. The flag exists; no
+change in this repo uses it under the policy above.
+
 ## Changing a package's dependencies — the manifest tooling
 
 **Never hand-edit a `packages/*/composer.json` for anything the manifest
@@ -202,9 +223,7 @@ The full flow:
 2. Bump that package's `version` field in the same edit — required
    whenever any other field in its manifest entry changes; CI's
    version-bump-completeness check fails a PR that doesn't. Pick the
-   bump that fits — patch for a fix or a no-behavior-change constraint
-   tightening, minor for a backward-compatible addition, major for a
-   breaking change.
+   size from the version policy above.
 3. Regenerate every package's `composer.json` from the manifest:
    ```sh
    docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php
@@ -242,13 +261,14 @@ field(s):
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php \
-  --bump=<key>[,<key>,...]|all --major|--minor|--patch
+  --bump=<key>[,<key>,...]|all --minor|--patch
 ```
 
 Each named package bumps relative to *its own* current version — a
-`--major` bump on a package at `1.4.2` and another at `1.1.0` both
-correctly land on `2.0.0`. For an exact target version instead of a
-relative bump, use `--set-version=<key>=<version>`.
+`--minor` bump lands a package at `1.4.2` on `1.5.0` and one at `1.1.0`
+on `1.2.0`, rather than forcing one identical string onto both. For an
+exact target version instead of a relative bump, use
+`--set-version=<key>=<version>`.
 
 ### The cross-manifest version-consistency check
 
@@ -325,8 +345,9 @@ messages, so there's nothing merge-strategy-specific to worry about.
 
 Kinetis doesn't tag the monorepo itself, and doesn't release on a fixed
 schedule or in lockstep across packages. Each package has its own
-independent SemVer line; the trigger is the `version` field in
-`packages.manifest.json` changing on `main`.
+independent SemVer line, bumped per the version policy above; the
+trigger is the `version` field in `packages.manifest.json` changing on
+`main`.
 
 `tools/release-plan.php` computes what this round's push would release,
 without writing, tagging, or pushing anything — it's a read-only report:

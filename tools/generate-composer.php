@@ -21,6 +21,10 @@ declare(strict_types=1);
  *                                               packages' version field
  *                                               only — nothing else in
  *                                               the manifest changes.
+ *                                               --major is general
+ *                                               SemVer mechanics this
+ *                                               repo's own version
+ *                                               policy never uses.
  *   php tools/generate-composer.php --release=<key>[,<key>,...]
  *                                               Print each package's
  *                                               release-mode composer.json

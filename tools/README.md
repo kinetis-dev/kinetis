@@ -44,9 +44,8 @@ tightened to match `storage-s3`'s):
    whenever any other field in its manifest entry changes — enforced
    by `validate-manifest.php`'s version-bump-completeness check, which
    fails a PR that changes a dependency without also bumping the
-   version. Pick the bump that fits: patch for a fix or a
-   no-behavior-change constraint tightening, minor for a backward-
-   compatible addition, major for a breaking change.
+   version. Pick the size from the version policy in
+   `docs/appendix-contributing.md`.
 3. Regenerate:
    ```sh
    docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php
@@ -87,19 +86,19 @@ step).
 ## Force-bumping a version with no other change
 
 For a release where nothing else in a package's manifest entry
-changed — its source code changed but not its declared dependencies,
-or a coordinated move to a new major version line across many
-packages at once:
+changed — its source code changed but not its declared dependencies:
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php \
-  --bump=<key>[,<key>,...]|all --major|--minor|--patch
+  --bump=<key>[,<key>,...]|all --minor|--patch
 ```
 
 Each named package bumps *relative to its own current version* —
-`--major` on a package at `1.4.2` and another at `1.1.0` both
-correctly land on `2.0.0`, not one identical string forced onto every
-package regardless of where it started. For an explicit target version
+`--minor` lands a package at `1.4.2` on `1.5.0` and one at `1.1.0` on
+`1.2.0`, not one identical string forced onto every package regardless
+of where it started. The script implements general SemVer mechanics and
+accepts `--major` too; no change in this repo uses it, since Kinetis
+stays on `1.x` throughout incubation. For an explicit target version
 instead of a relative bump:
 
 ```sh
