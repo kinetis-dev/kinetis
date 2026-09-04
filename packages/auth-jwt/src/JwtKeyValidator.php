@@ -9,43 +9,33 @@ use OpenSSLCertificate;
 use Throwable;
 
 /**
- * The one place this package's cryptographic configuration is actually
- * validated — shared by JwtIssuer, JwtAuthMiddleware, and JwkSet, so the
- * supported-algorithm set and key-material rules exist once rather than
- * as three independently-driftable copies.
+ * The one place this package's cryptographic configuration is
+ * validated — shared by JwtIssuer, JwtAuthMiddleware, JwkSet,
+ * ParsedJwkSet, and JoseHeader, so the supported-algorithm set, the
+ * key-material rules, and the rule for what may name a key exist once
+ * rather than as independently-driftable copies.
  *
- * Exactly six algorithms are supported — the ones this package's docs
- * have always named: HS256/HS384/HS512 (a shared HMAC secret) and
- * RS256/RS384/RS512 (an RSA key pair). firebase/php-jwt itself also
- * implements ES256/ES256K/ES384/PS256/EdDSA; those are deliberately out
- * of scope here, not silently unsupported — elliptic-curve and Ed25519
- * keys need entirely different validation (curve/point checks, not an
- * HMAC byte length or an RSA modulus size), and JwkSet has no
- * representation for any of them.
+ * Six algorithms are supported: HS256/HS384/HS512 (a shared HMAC
+ * secret) and RS256/RS384/RS512 (an RSA key pair). firebase/php-jwt
+ * also implements ES256/ES256K/ES384/PS256/EdDSA, which are out of
+ * scope here — elliptic-curve and Ed25519 keys need curve and point
+ * checks rather than an HMAC byte length or an RSA modulus size, and
+ * JwkSet has no representation for any of them.
  *
  * An HMAC secret must be at least as long, in bytes, as the algorithm's
- * own digest output — RFC 7518 §3.2's stated minimum ("A key of the
- * same size as the hash output... or larger MUST be used"): 32/48/64
- * bytes for HS256/HS384/HS512. An RSA key must parse as a genuine RSA
- * key of at least 2048 bits — smaller is considered broken by current
- * cryptographic guidance, not merely discouraged.
+ * own digest output — RFC 7518 §3.2's stated minimum: 32/48/64 bytes
+ * for HS256/HS384/HS512. An RSA key must parse as an RSA key of at
+ * least RSA_MINIMUM_BITS, which current cryptographic guidance treats
+ * as a floor rather than a recommendation.
  *
- * Every assertion here takes the caller's own exception factory rather
- * than throwing a shared exception type, so each of the three callers
- * keeps its own package-appropriate, named exception, and so no message
- * here ever risks embedding the secret or key material itself — the
- * factory closure decides what to say, this class only decides whether
- * to say it.
+ * Every assertion takes the caller's own exception factory rather than
+ * throwing a shared type, so each caller keeps its own named exception
+ * and no message here can embed the secret or key material.
  *
- * Both assertions are total, standalone-safe public methods: neither
- * assumes a caller already validated anything beforehand.
- * assertKeyMaterial() checks $algorithm and $role itself (an
- * unsupported algorithm, or a $role outside the literal 'public'/
- * 'private', both throw), rather than trusting that
- * assertSupportedAlgorithm() ran first or that $role was spelled
- * correctly — a caller of assertKeyMaterial() alone must never see a
- * silent false-valid result for an algorithm or role this class
- * doesn't actually recognize.
+ * Both assertions are total: assertKeyMaterial() checks $algorithm and
+ * $role itself rather than assuming assertSupportedAlgorithm() ran
+ * first, so calling it alone cannot return a false-valid result for an
+ * algorithm or role this class does not recognize.
  */
 final class JwtKeyValidator
 {
@@ -60,6 +50,51 @@ final class JwtKeyValidator
      * minimum, rather than duplicating the number.
      */
     public const int RSA_MINIMUM_BITS = 2048;
+
+    /**
+     * Far longer than any real key ID, and finite: a kid crosses this
+     * package in a JOSE header a sender controls.
+     */
+    public const int MAXIMUM_KID_LENGTH = 256;
+
+    /**
+     * The one rule for what may name a key here: a non-blank string of
+     * at most MAXIMUM_KID_LENGTH bytes that is valid UTF-8. Every side
+     * of a rotation holds to it — JwtIssuer stamping a `kid` header,
+     * JwkSet publishing one, ParsedJwkSet and JwtAuthMiddleware
+     * selecting against one — so no side can name a key another would
+     * refuse.
+     *
+     * UTF-8 is part of it because a kid travels as JSON both ways:
+     * json_encode() fails on invalid bytes and json_decode() never
+     * produces them, so a kid outside UTF-8 names a key no document
+     * could carry.
+     *
+     * Takes a string, since a caller holding configuration already has
+     * one; isUsableKidValue() is the same rule for a caller that does
+     * not.
+     */
+    public static function isUsableKid(string $kid): bool
+    {
+        return trim($kid) !== ''
+            && strlen($kid) <= self::MAXIMUM_KID_LENGTH
+            && preg_match('//u', $kid) === 1;
+    }
+
+    /**
+     * The same rule, for a kid whose stringness is itself in question:
+     * a `kid` member read out of a decoded JOSE header or JWK, where a
+     * sender writes any JSON value it likes, and a configured key map's
+     * own array key, which PHP hands back as an int for a kid spelled
+     * in canonical decimal form. Neither names a key here, so the check
+     * answers false and hands a caller past it the string type.
+     *
+     * @phpstan-assert-if-true string $kid
+     */
+    public static function isUsableKidValue(mixed $kid): bool
+    {
+        return is_string($kid) && self::isUsableKid($kid);
+    }
 
     /**
      * @phpstan-assert-if-true 'HS256'|'HS384'|'HS512' $algorithm
@@ -88,9 +123,8 @@ final class JwtKeyValidator
      * Validates $material against $algorithm's own requirements. $role
      * ('private'|'public') only matters for an RSA algorithm, where it
      * selects which half is expected — an HMAC secret serves both roles
-     * identically, so $role is ignored there, but is still required to
-     * be one of the two recognized values regardless of algorithm, so a
-     * typo'd role can never silently pass as though it meant something.
+     * identically, so $role is ignored there but still has to be one of
+     * the two recognized values, so a misspelled role cannot pass.
      *
      * @param callable(): Throwable $exceptionFactory
      */
@@ -130,34 +164,22 @@ final class JwtKeyValidator
     }
 
     /**
-     * Resolves $material to an OpenSSLAsymmetricKey matching $role,
-     * without ever routing an already-parsed key object through
-     * openssl_pkey_get_public()/openssl_pkey_get_private() — confirmed
-     * directly that calling the role-specific function on a key object
-     * whose own role doesn't match (a private key object handed to the
-     * public-role path, most concretely) emits a genuine E_WARNING
-     * before returning false. A PHP error handler that converts
-     * warnings to exceptions (a common, legitimate pattern) would let
-     * that warning escape as an unrelated exception instead of this
-     * class's own controlled failure — a real contract leak, not a
-     * hypothetical one.
+     * Resolves $material to an OpenSSLAsymmetricKey matching $role.
      *
-     * Firebase\JWT\JWK::parseKeySet() itself hands back exactly this
-     * shape — an already-parsed OpenSSLAsymmetricKey, not a PEM string —
-     * for every RSA key in a JWKS (confirmed directly by reading its
-     * source), so this case is the realistic, expected one for
-     * JwtAuthMiddleware's own key map, not a rare edge case: a Key
-     * built from a parsed JWKS is exactly what this method must handle
-     * warning-free.
+     * An already-parsed key object never goes through
+     * openssl_pkey_get_public()/openssl_pkey_get_private(): those emit
+     * an E_WARNING, not only a failed return, when the object's own
+     * role doesn't match the one asked for, and an error handler that
+     * turns warnings into exceptions would let that escape in place of
+     * this class's own failure. Firebase\JWT\JWK::parseKeySet() hands
+     * back exactly that shape for every RSA key in a JWKS, so it is the
+     * ordinary input here.
      *
-     * openssl_pkey_get_details() introspects any key object safely
-     * regardless of its own role — used here to determine whether an
-     * already-parsed object genuinely carries a private component (the
-     * "d" field, present only when it does), and that's compared
-     * against $role directly, matching what the role-specific OpenSSL
-     * functions would have rejected anyway for a string, just without
-     * their warning side effect: a private-key object is still refused
-     * for the 'public' role, and a public-only object for 'private'.
+     * openssl_pkey_get_details() reads any key object regardless of
+     * role, so an object's role comes from whether it carries a private
+     * "d" component and is compared against $role directly — refusing a
+     * private-key object for 'public' and a public-only object for
+     * 'private', the same outcome without the warning.
      */
     private static function resolveRsaKey(
         string|OpenSSLAsymmetricKey|OpenSSLCertificate $material,
@@ -168,9 +190,8 @@ final class JwtKeyValidator
         }
 
         if ($material instanceof OpenSSLCertificate) {
-            // A certificate only ever carries a public key — extracting
-            // it never risks the role-mismatch warning above, since
-            // there's no "wrong role" a certificate could be holding.
+            // A certificate carries only a public key, so there is no
+            // role for it to mismatch.
             return $role === 'private' ? false : openssl_pkey_get_public($material);
         }
 

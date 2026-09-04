@@ -4,46 +4,78 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt\Exception;
 
+use Kinetis\AuthJwt\JwtKeyValidator;
 use RuntimeException;
 
+/**
+ * Every way PublishedRsaKey and JwkSet::fromRsaPublicKeys() can refuse
+ * to publish a JWK Set.
+ *
+ * A kid is named here where one is known. Unlike a kid arriving in a
+ * fetched document (see ParsedJwkSetException), a kid on this side is
+ * an application's own configuration, and naming it is what makes the
+ * failure actionable; key material itself is never rendered.
+ */
 final class JwkSetException extends RuntimeException
 {
     /**
-     * $publicKeysByKid was empty — a JWKS with no keys can never verify
-     * anything, so this is rejected outright rather than producing a
-     * syntactically valid but useless {"keys": []}.
+     * $keys held nothing, so the JWKS would carry no keys at all.
      */
-    public static function emptyKeySet(): self
+    public static function emptyKeyList(): self
     {
         return new self(
-            'JwkSet::fromRsaPublicKeys() requires at least one key — an empty map would produce a '
-            . 'JWKS that can never verify anything.',
+            'JwkSet::fromRsaPublicKeys() requires at least one PublishedRsaKey — publishing an empty '
+            . '"keys" array advertises a key set nothing can verify against.',
         );
     }
 
     /**
-     * A $publicKeysByKid array key (kid) isn't a non-empty string —
-     * either a non-string array key (PHP allows an int) or an empty
-     * string. $kid is included when it's safe to render (a scalar);
-     * kid is a public identifier, never secret.
+     * $keys is an array but not a list (array_is_list() false). Its
+     * documented type is list<PublishedRsaKey>; a map keyed by kid
+     * would look correct while those keys went unread, so the shape is
+     * enforced rather than tolerated.
      */
-    public static function invalidKid(mixed $kid): self
+    public static function keysNotAList(): self
     {
-        $shown = is_scalar($kid) ? var_export($kid, true) : gettype($kid);
-
         return new self(
-            "JwkSet::fromRsaPublicKeys()'s keys (kid) must each be a non-empty string — got {$shown}.",
+            'JwkSet::fromRsaPublicKeys()\'s $keys must be a list (sequential integer keys starting at 0) '
+            . 'of PublishedRsaKey values — an associative or sparse array does not match that shape.',
+        );
+    }
+
+    public static function notAPublishedKey(): self
+    {
+        return new self(
+            'JwkSet::fromRsaPublicKeys() accepts only PublishedRsaKey values — a kid belongs in one of '
+            . 'those, not in a PHP array key.',
         );
     }
 
     /**
-     * A $publicKeysByKid value isn't a string — never renders the value
-     * itself, only that it's the wrong type.
+     * A kid is outside JwtKeyValidator::isUsableKid(). The offending
+     * value is rendered only when it is valid UTF-8, so a message never
+     * carries bytes nothing downstream could encode.
      */
-    public static function invalidPublicKeyType(string $kid): self
+    public static function invalidKid(string $kid): self
+    {
+        $maximum = JwtKeyValidator::MAXIMUM_KID_LENGTH;
+        $shown = preg_match('//u', $kid) === 1 ? var_export($kid, true) : 'bytes that are not valid UTF-8';
+
+        return new self(
+            "A PublishedRsaKey's kid must be non-blank, valid UTF-8, and at most {$maximum} bytes — "
+            . "got {$shown}.",
+        );
+    }
+
+    /**
+     * Two entries claim one kid, so a token naming it would select
+     * neither key in particular.
+     */
+    public static function duplicateKid(string $kid): self
     {
         return new self(
-            "JwkSet::fromRsaPublicKeys()'s value for kid \"{$kid}\" must be a PEM-format string.",
+            "JwkSet::fromRsaPublicKeys() was given more than one key under the kid \"{$kid}\" — a token "
+            . 'naming it would select no one key.',
         );
     }
 
@@ -71,15 +103,17 @@ final class JwkSetException extends RuntimeException
     }
 
     /**
-     * The public key given for $kid is a genuine RSA key, but smaller
-     * than the 2048-bit minimum — publishing it would advertise a key
-     * every verifier using JwtKeyValidator's own rule will refuse.
+     * The public key given for $kid parses as RSA but is smaller than
+     * JwtKeyValidator::RSA_MINIMUM_BITS, so publishing it would
+     * advertise a key every verifier using that rule refuses.
      */
     public static function undersizedRsaKey(string $kid): self
     {
+        $minimumBits = JwtKeyValidator::RSA_MINIMUM_BITS;
+
         return new self(
             "The public key given for kid \"{$kid}\" is a valid RSA key but smaller than the required "
-            . '2048-bit minimum.',
+            . "{$minimumBits}-bit minimum.",
         );
     }
 }

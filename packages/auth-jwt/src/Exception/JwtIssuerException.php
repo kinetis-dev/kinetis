@@ -28,18 +28,17 @@ final class JwtIssuerException extends RuntimeException
     }
 
     /**
-     * $kid was the empty string rather than a real key ID or null — an
-     * empty string is not a valid non-empty kid under either
-     * JwtAuthMiddleware's own key-map form or JwkSet, both of which
-     * reject an empty kid outright. Issuing a token with an empty `kid`
-     * header would produce a token no rotation/JWKS configuration this
-     * package supports could ever represent or select.
+     * $kid is outside JwtKeyValidator::isUsableKid() — blank, or longer
+     * than a kid may be. Stamping one would issue a token no rotation
+     * or JWKS configuration this package supports could select.
      */
-    public static function emptyKid(): self
+    public static function invalidKid(): self
     {
+        $maximum = JwtKeyValidator::MAXIMUM_KID_LENGTH;
+
         return new self(
-            'JwtIssuer\'s $kid must be a non-empty string, or null to omit the "kid" header entirely — '
-            . 'an empty string would produce a token no key map or JWKS entry could ever match.',
+            "JwtIssuer's \$kid must be non-blank, valid UTF-8, and at most {$maximum} bytes, or null to "
+            . 'omit the "kid" header entirely — anything else names a key no verifier could match.',
         );
     }
 

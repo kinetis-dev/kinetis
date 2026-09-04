@@ -63,6 +63,13 @@ final readonly class OrderController
 }
 ```
 
+Rotating signing keys: `JwkSet` publishes `PublishedRsaKey` values as an
+RFC 7517 JWK Set for a `.well-known/jwks.json` route, and
+`ParsedJwkSet::fromJson()` parses raw JWKS JSON back into the key set
+`JwtAuthMiddleware` verifies against — kids carried and matched as the
+exact strings the document published, every key validated before the set
+exists.
+
 Need opaque Bearer-token validation against your own storage instead?
 See [`kinetis/auth`](https://github.com/kinetis-dev/auth).
 

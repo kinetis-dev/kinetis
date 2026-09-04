@@ -8,6 +8,7 @@ use ErrorException;
 use Firebase\JWT\JWK;
 use Kinetis\AuthJwt\JwkSet;
 use Kinetis\AuthJwt\JwtKeyValidator;
+use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\UndersizedRsaKeyPair;
 use OpenSSLAsymmetricKey;
@@ -363,7 +364,7 @@ final class JwtKeyValidatorTest extends TestCase
      */
     public function test_assertKeyMaterial_accepts_a_real_parsed_jwks_public_key_under_a_warning_to_exception_handler(): void
     {
-        $set = JwkSet::fromRsaPublicKeys(['current' => RsaKeyPair::PUBLIC_KEY]);
+        $set = JwkSet::fromRsaPublicKeys([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]);
         $keys = JWK::parseKeySet($set);
         $material = $keys['current']->getKeyMaterial();
         self::assertInstanceOf(OpenSSLAsymmetricKey::class, $material);

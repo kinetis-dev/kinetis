@@ -529,18 +529,27 @@ requires the **private** half, `JwtAuthMiddleware` the **public** half;
 handing either class the wrong half of the pair is rejected the same way.
 
 A `kid => Key` map (see "Rotating keys" below) is validated per entry,
-the same way: the map itself must be non-empty, every kid a non-empty
-string, every value a real `Firebase\JWT\Key`, and every `Key`'s own
-`getAlgorithm()`/key material held to the identical rules above.
+the same way: the map itself must be non-empty, every value a real
+`Firebase\JWT\Key`, and every `Key`'s own `getAlgorithm()`/key material
+held to the identical rules above.
 `JwtAuthMiddleware`'s own top-level `$algorithm` constructor argument has
-no effect at all once `$key` is a map — each `Key` already carries its
-own algorithm, so the top-level value is never read (and never
+no effect at all once `$key` selects by kid — each `Key` already carries
+its own algorithm, so the top-level value is never read (and never
 validated) in that case; leave it at its default rather than trying to
-make it agree with anything in the map. `JwtIssuer`'s own `$kid` is held
-to the matching requirement — `null` (no `kid` header at all) or a
-non-empty string; an empty string throws at construction, since a token
-issued with one could never be represented by a map entry or a JWKS
-entry either.
+make it agree with anything in the map. A `ParsedJwkSet` (see "Verifying
+against a published JWKS" below) already carries the same guarantee:
+every key in it passed these identical rules before the set could exist,
+so construction re-checks nothing there.
+
+Every side of a rotation applies one rule to a kid, and
+`Kinetis\AuthJwt\JwtKeyValidator::isUsableKid()` is where it lives: a
+non-blank string of at most 256 bytes that is valid UTF-8. `JwtIssuer`'s
+`$kid` (`null` to omit the header entirely), the kids in a `kid => Key`
+map, the kids `JwkSet` publishes, and the `kid` a token's own header
+carries are all held to it, so no side of a rotation can name a key
+another side would refuse to select. UTF-8 is part of it because a kid
+travels as JSON both ways: `json_encode()` fails on invalid bytes and
+`json_decode()` never produces them.
 
 `Key`'s own key material may be a raw PEM string, or already an
 `OpenSSLAsymmetricKey`/`OpenSSLCertificate` object — the shape
@@ -560,13 +569,64 @@ ever including the key or secret itself.
 
 ```{note}
 `Kinetis\AuthJwt\JwkSet::fromRsaPublicKeys()` (see "Publishing public
-keys as a JWKS" below) validates the identical way: an empty key set, a
-non-string/empty kid, a non-string/unparseable/non-RSA/undersized
-public key, or an `$algorithm` outside `RS256`/`RS384`/`RS512` all throw
+keys as a JWKS" below) validates the identical way: an empty list, a
+`$keys` that isn't a list at all, an entry that isn't a
+`PublishedRsaKey`, two entries claiming one kid, an
+unparseable/non-RSA/undersized public key, or an `$algorithm` outside
+`RS256`/`RS384`/`RS512` all throw
 `Exception\JwkSetException` before any output is produced — a published
 JWKS can never advertise a key or algorithm this package's own verifier
 would refuse.
 ```
+
+## What a token must be before verification starts
+
+A JOSE header arrives unsigned, shaped however whoever sent the token
+chose to shape it. `JwtAuthMiddleware` reads and validates it — through
+`Kinetis\AuthJwt\JoseHeader` — before any of the token reaches
+`JWT::decode()`, because `firebase/php-jwt` types `alg` and `kid` only
+where it happens to use them: a header naming either as a JSON array or
+object raises a `TypeError` from inside the library rather than a decode
+failure, and a `TypeError` isn't something a middleware can answer with
+a `401` without also swallowing bugs it should surface.
+
+To reach verification at all, a token has to be exactly three base64url
+segments within a fixed length limit, each in the single unpadded
+spelling its own bytes encode to, with a header segment
+decoding to a JSON object that names no member twice, an `alg` that is a
+string among the six algorithms this page documents, and — when `$key`
+selects by kid — a `kid` accepted by `JwtKeyValidator::isUsableKid()`. A
+`kid` that is present is held to that rule whether or not the configured
+`$key` would have read it.
+
+Two rules there are about ambiguity rather than shape. A header naming
+`alg` twice is refused rather than resolved to whichever value
+`json_decode()` kept last, and a segment spelled with unused base64 pad
+bits set is refused rather than decoded like its canonical spelling: a
+JWS signs the encoded text of its own header and payload, so what a
+verifier acts on has to be the one document the sender sent.
+
+Two protected-header members are refused outright, because both change
+what verification means and `firebase/php-jwt` reads neither:
+
+- **`crit`** ([RFC 7515 §4.1.11](https://www.rfc-editor.org/rfc/rfc7515#section-4.1.11))
+  names header members a verifier must understand or else reject the
+  token over. This package implements no critical extension, so the only
+  conformant answer to any `crit` is to refuse.
+- **`b64`** ([RFC 7797](https://www.rfc-editor.org/rfc/rfc7797)) makes
+  the payload sign unencoded, changing the signing input. Verification
+  here signs the compact encoded form, so a token declaring `b64` — with
+  or without the `crit` RFC 7797 requires alongside it — is asking for
+  semantics this boundary doesn't implement.
+
+Every other header member is left unread: `typ`, and anything else an
+issuer stamps, carries no weight in this package's verification
+decision.
+
+Everything outside all of that is the same generic `401` as an expired
+or badly-signed token — the handler never runs, and neither
+`CurrentUserInterface` nor `JwtUser` is registered on the request.
+Nothing in the response says which rule the token broke.
 
 ## Rotating keys
 
@@ -616,6 +676,7 @@ API gateways expect at a `.well-known/jwks.json`-style URL:
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwkSet;
+use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Hidden;
 
@@ -626,8 +687,8 @@ final readonly class JwksController
     public function jwks(): array
     {
         return JwkSet::fromRsaPublicKeys([
-            '2025-key' => file_get_contents('/path/to/2025-public.pem'),
-            '2026-key' => file_get_contents('/path/to/2026-public.pem'),
+            new PublishedRsaKey('2025-key', file_get_contents('/path/to/2025-public.pem')),
+            new PublishedRsaKey('2026-key', file_get_contents('/path/to/2026-public.pem')),
         ]);
     }
 }
@@ -637,6 +698,84 @@ A plain array return, JSON-encoded automatically like any other route —
 nothing registers this endpoint for you, the same way nothing registers
 a login or refresh endpoint either. An `HS256` key is symmetric and is
 never published; this only applies to the asymmetric algorithms.
+
+Each key is a `PublishedRsaKey`, holding its kid as a string property
+rather than as a position in a `kid => PEM` map, because a PHP array key
+cannot hold every kid this package supports: `'0'` used as one is the
+integer `0`, which is a different name from the one the document is
+meant to publish. Carrying the kid as a value is what lets `JwkSet`
+publish exactly the kids `ParsedJwkSet` reads back.
+
+### Verifying against a published JWKS
+
+`Kinetis\AuthJwt\ParsedJwkSet::fromJson()` is the other direction: raw
+JWKS JSON, whatever a `.well-known/jwks.json` URL answers with, parsed
+into the key set `JwtAuthMiddleware` verifies against. It's the
+supported way to configure multi-key verification from a published
+document; the `kid => Key` map stays for a deployment holding PEM files
+directly, and cannot express a kid PHP reads as a number.
+
+Parse once, at boot, and hand the result to the middleware —
+`fromJson()` runs OpenSSL over every key in the document, which is not
+work to repeat per request:
+
+```{code-block} php
+// bootstrap.php
+use Kinetis\AuthJwt\ParsedJwkSet;
+
+$app->instance(ParsedJwkSet::class, ParsedJwkSet::fromJson(
+    (string) file_get_contents('/path/to/jwks.json'),
+));
+```
+
+```{code-block} php
+use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\ParsedJwkSet;
+use Kinetis\Container\RequestScope;
+
+final class AppJwtAuthMiddleware extends JwtAuthMiddleware
+{
+    public function __construct(RequestScope $scope, ParsedJwkSet $keys)
+    {
+        parent::__construct($keys, $scope);
+    }
+}
+```
+
+`ParsedJwkSet` belongs on `AppScope`: it needs no `RequestScope` of its
+own, and the middleware above is still resolved through the request's
+own scope, which reaches `AppScope` for it — so the warning in
+"Supplying your own secret" doesn't apply to registering the key set
+itself.
+
+A kid is matched as the exact string the document published, so `"0"`,
+`"00"` and `"zero"` are three separately selectable keys.
+
+`fromJson()` either returns a set whose every key is usable or throws
+`Exception\ParsedJwkSetException` — never a partial set with the
+failing keys quietly dropped. It refuses a document that isn't a JSON
+object or that names a member twice at any depth; a `keys` member that
+isn't a non-empty JSON array; a key that isn't an object; a `kty` other
+than `RSA`; RSA private members (`d`, `p`, `q`, `dp`, `dq`, `qi`,
+`oth`) or a symmetric `k`, which a published document must never carry;
+a `kid` outside the rule above, or one a previous key already claimed;
+an `alg` outside `RS256`/`RS384`/`RS512`; a `use` other than `sig`;
+`key_ops` other than exactly `["verify"]`; an `n` or `e` that isn't the
+canonical unpadded base64url spelling of an unsigned integer of the
+expected size; and a key that doesn't compose into an RSA public key
+meeting the 2048-bit minimum stated above. Sizes are bounded as well —
+64 KiB of raw JSON, 32 keys, and per-field limits — since a JWKS fetched
+over the network is untrusted input.
+
+Members outside that list are ignored, at the root and inside a key, as
+[RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5) requires
+of a reader that doesn't understand them — so a provider's `x5c`,
+`x5t`, `x5t#S256` or `x5u` alongside a key, or its own metadata beside
+`keys`, changes nothing about the keys the set yields.
+
+An exception from here names the rule and the position of the offending
+key within the document, never the document, a kid, or key material, and
+chains no OpenSSL or `firebase/php-jwt` cause behind itself.
 
 ## See also
 

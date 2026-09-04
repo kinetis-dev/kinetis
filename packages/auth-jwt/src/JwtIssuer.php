@@ -44,11 +44,10 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
  * with JwtAuthMiddleware's own multi-key `$key` support to roll a
  * signing key over without invalidating every token issued under the
  * previous one: publish both keys, each under its own kid, during the
- * overlap window. Must be `null` (no `kid` header at all) or a
- * non-empty string — an empty string throws at construction, since
- * neither JwtAuthMiddleware's key-map form nor JwkSet can represent or
- * select an empty kid either, and a token issued with one could never
- * be verified through either.
+ * overlap window. Must be `null` (no `kid` header at all) or a kid
+ * JwtKeyValidator::isUsableKid() accepts — the same rule every other
+ * side of a rotation applies, so this class cannot stamp a kid its own
+ * verifier would then refuse to select.
  */
 final readonly class JwtIssuer
 {
@@ -93,8 +92,8 @@ final readonly class JwtIssuer
      */
     private static function assertValidKidIssuerAudience(?string $kid, ?string $issuer, string|array|null $audience): void
     {
-        if ($kid === '') {
-            throw JwtIssuerException::emptyKid();
+        if ($kid !== null && !JwtKeyValidator::isUsableKid($kid)) {
+            throw JwtIssuerException::invalidKid();
         }
 
         if ($issuer === '') {

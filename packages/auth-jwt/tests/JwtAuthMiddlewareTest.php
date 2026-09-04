@@ -8,9 +8,14 @@ use ErrorException;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use Kinetis\AuthJwt\Exception\JwtAuthMiddlewareException;
+use Kinetis\AuthJwt\JoseHeader;
+use Kinetis\AuthJwt\JwkSet;
 use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtIssuer;
+use Kinetis\AuthJwt\JwtKeyValidator;
 use Kinetis\AuthJwt\JwtUser;
+use Kinetis\AuthJwt\ParsedJwkSet;
+use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\AuthJwt\Tests\Fixtures\DualBindingFixtureController;
 use Kinetis\AuthJwt\Tests\Fixtures\FixtureJwtAuthMiddleware;
@@ -22,6 +27,7 @@ use Kinetis\AuthJwt\Tests\Fixtures\RecordingSimpleCache;
 use Kinetis\AuthJwt\Tests\Fixtures\RevocationCheckedFixtureController;
 use Kinetis\AuthJwt\Tests\Fixtures\RevocationCheckingFixtureMiddleware;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
+use Kinetis\AuthJwt\Tests\Fixtures\SecondRsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\UndersizedRsaKeyPair;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
@@ -1141,6 +1147,14 @@ final class JwtAuthMiddlewareTest extends TestCase
         new JwtAuthMiddleware([0 => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $this->scope());
     }
 
+    public function test_construction_throws_for_a_key_map_with_a_kid_outside_utf8(): void
+    {
+        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectExceptionMessage('valid UTF-8');
+
+        new JwtAuthMiddleware(["key-\xFF" => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $this->scope());
+    }
+
     public function test_construction_throws_for_a_key_map_with_an_empty_string_kid(): void
     {
         $this->expectException(JwtAuthMiddlewareException::class);
@@ -1310,5 +1324,388 @@ final class JwtAuthMiddlewareTest extends TestCase
         $rsaResponse = $rsaMiddleware->process($this->requestWithToken($rsaToken), $this->handler());
         self::assertSame(200, $rsaResponse->getStatusCode());
         self::assertSame('user-99', $rsaScope->get(CurrentUserInterface::class)->id());
+    }
+
+    /**
+     * A JWK Set published by JwkSet, serialized the way a
+     * `.well-known/jwks.json` route serializes it, and parsed back.
+     *
+     * @param list<PublishedRsaKey> $keys
+     */
+    private static function publishedKeySet(array $keys): ParsedJwkSet
+    {
+        return ParsedJwkSet::fromJson((string) json_encode(JwkSet::fromRsaPublicKeys($keys), JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Two kids under two different key pairs, so which one a token
+     * reaches is observable.
+     */
+    private static function keySetWithKids(string $firstKid, string $secondKid): ParsedJwkSet
+    {
+        return self::publishedKeySet([
+            new PublishedRsaKey($firstKid, RsaKeyPair::PUBLIC_KEY),
+            new PublishedRsaKey($secondKid, SecondRsaKeyPair::publicKey()),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $header
+     */
+    private function tokenWithHeader(array $header): string
+    {
+        $segments = [
+            JWT::urlsafeB64Encode((string) JWT::jsonEncode($header)),
+            JWT::urlsafeB64Encode((string) JWT::jsonEncode(['sub' => 'user-42'])),
+        ];
+        $segments[] = JWT::urlsafeB64Encode(hash_hmac('sha256', implode('.', $segments), self::SECRET, true));
+
+        return implode('.', $segments);
+    }
+
+    private function countingHandler(int &$calls): CallableRequestHandler
+    {
+        return new CallableRequestHandler(static function () use (&$calls): Response {
+            ++$calls;
+
+            return new Response(200);
+        });
+    }
+
+    private function assertRejectedWithoutTouchingTheRequest(
+        JwtAuthMiddleware $middleware,
+        RequestScope $scope,
+        string $token,
+    ): void {
+        $calls = 0;
+        $response = $middleware->process($this->requestWithToken($token), $this->countingHandler($calls));
+
+        self::assertSame(401, $response->getStatusCode());
+        self::assertSame('Bearer', $response->getHeaderLine('WWW-Authenticate'));
+        self::assertSame(0, $calls);
+        self::assertFalse($scope->isRegistered(CurrentUserInterface::class));
+        self::assertFalse($scope->isRegistered(JwtUser::class));
+    }
+
+    public function test_a_published_key_set_verifies_a_token_signed_under_a_matching_kid(): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            self::keySetWithKids('2025-key', '2026-key'),
+            $scope,
+        );
+        $token = new JwtIssuer(SecondRsaKeyPair::privateKey(), algorithm: 'RS256', kid: '2026-key')->issue('user-42');
+
+        $response = $middleware->process($this->requestWithToken($token), $this->handler());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
+    }
+
+    /**
+     * Each kid selects its own published key and no other. "0" and
+     * "00" are the pair a PHP array key cannot hold apart (see
+     * ParsedJwkSet); "ordinary" shares its key pair with "0", so a
+     * token verifying under one of them is a fact about the kid the
+     * document published, not about which key happens to be in the set.
+     *
+     * @return array<string, array{string, string, bool}>
+     */
+    public static function publishedKidSelections(): array
+    {
+        return [
+            'kid 0 under its own key' => ['0', RsaKeyPair::PRIVATE_KEY, true],
+            'kid 00 under its own key' => ['00', SecondRsaKeyPair::privateKey(), true],
+            'an ordinary kid under its own key' => ['ordinary', RsaKeyPair::PRIVATE_KEY, true],
+            'kid 0 under the key published as 00' => ['0', SecondRsaKeyPair::privateKey(), false],
+            'kid 00 under the key published as 0' => ['00', RsaKeyPair::PRIVATE_KEY, false],
+            'an ordinary kid under the key published as 00' => ['ordinary', SecondRsaKeyPair::privateKey(), false],
+        ];
+    }
+
+    #[DataProvider('publishedKidSelections')]
+    public function test_a_published_kid_selects_its_own_key_through_the_whole_path(
+        string $kid,
+        string $signingKey,
+        bool $verifies,
+    ): void {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            self::publishedKeySet([
+                new PublishedRsaKey('0', RsaKeyPair::PUBLIC_KEY),
+                new PublishedRsaKey('00', SecondRsaKeyPair::publicKey()),
+                new PublishedRsaKey('ordinary', RsaKeyPair::PUBLIC_KEY),
+            ]),
+            $scope,
+        );
+        $token = new JwtIssuer($signingKey, algorithm: 'RS256', kid: $kid)->issue('user-42');
+
+        if (!$verifies) {
+            $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
+
+            return;
+        }
+
+        $response = $middleware->process($this->requestWithToken($token), $this->handler());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
+    }
+
+    /**
+     * Publisher, parser, issuer and header boundary hold a kid to the
+     * one rule, so the longest kid JwkSet will emit is one the rest of
+     * the path still accepts.
+     */
+    public function test_the_longest_publishable_kid_survives_the_whole_path(): void
+    {
+        $kid = str_repeat('k', JwtKeyValidator::MAXIMUM_KID_LENGTH);
+        $scope = $this->scope();
+        $keySet = self::publishedKeySet([new PublishedRsaKey($kid, RsaKeyPair::PUBLIC_KEY)]);
+
+        self::assertSame([$kid], $keySet->kids());
+
+        $middleware = new JwtAuthMiddleware($keySet, $scope);
+        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: $kid)->issue('user-42');
+
+        $response = $middleware->process($this->requestWithToken($token), $this->handler());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
+    }
+
+    public function test_a_published_key_set_rejects_an_unrecognized_kid(): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
+            $scope,
+        );
+        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'retired')->issue('user-42');
+
+        $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
+    }
+
+    public function test_a_published_key_set_rejects_a_token_carrying_no_kid_at_all(): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
+            $scope,
+        );
+        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256')->issue('user-42');
+
+        $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
+    }
+
+    /**
+     * Matches the `array<string, Key>` form: $algorithm goes unread, and
+     * so unvalidated, once $key selects by kid.
+     */
+    public function test_construction_over_a_published_key_set_leaves_the_unused_algorithm_alone(): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
+            $scope,
+            'not-an-algorithm',
+        );
+        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');
+
+        $response = $middleware->process($this->requestWithToken($token), $this->handler());
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    /**
+     * Header shapes JWT::decode() reaches by a path that raises a raw
+     * TypeError rather than a decode failure — see JoseHeader.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     */
+    public static function tokenControlledHeaderShapes(): array
+    {
+        return [
+            'alg as an array' => [['alg' => ['RS256'], 'kid' => 'current']],
+            'alg as an object' => [['alg' => ['name' => 'RS256'], 'kid' => 'current']],
+            'alg as an integer' => [['alg' => 256, 'kid' => 'current']],
+            'alg as a boolean' => [['alg' => true, 'kid' => 'current']],
+            'alg as null' => [['alg' => null, 'kid' => 'current']],
+            'no alg at all' => [['typ' => 'JWT', 'kid' => 'current']],
+            'an algorithm this package does not support' => [['alg' => 'ES256', 'kid' => 'current']],
+            'the none algorithm' => [['alg' => 'none', 'kid' => 'current']],
+            'kid as an array' => [['alg' => 'RS256', 'kid' => ['current']]],
+            'kid as an object' => [['alg' => 'RS256', 'kid' => ['name' => 'current']]],
+            'kid as an integer' => [['alg' => 'RS256', 'kid' => 0]],
+            'kid as a boolean' => [['alg' => 'RS256', 'kid' => true]],
+            'kid as null' => [['alg' => 'RS256', 'kid' => null]],
+            'a blank kid' => [['alg' => 'RS256', 'kid' => "  \t"]],
+            'a kid past the length limit' => [
+                ['alg' => 'RS256', 'kid' => str_repeat('k', JwtKeyValidator::MAXIMUM_KID_LENGTH + 1)],
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $header
+     */
+    #[DataProvider('tokenControlledHeaderShapes')]
+    public function test_a_token_controlled_header_shape_is_rejected_without_reaching_the_handler(array $header): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
+            $scope,
+        );
+
+        $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $this->tokenWithHeader($header));
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function malformedCompactTokens(): array
+    {
+        $header = JWT::urlsafeB64Encode('{"alg":"HS256"}');
+        $payload = JWT::urlsafeB64Encode('{"sub":"user-42"}');
+        $signature = JWT::urlsafeB64Encode('signature');
+
+        // Both of these encode a length whose final character carries
+        // unused bits, so setting one leaves a different spelling of
+        // the identical bytes.
+        $spacedHeader = JWT::urlsafeB64Encode('{"alg": "HS256"}');
+        $longSignature = JWT::urlsafeB64Encode('signatures');
+
+        return [
+            'two segments' => ["{$header}.{$payload}"],
+            'four segments' => ["{$header}.{$payload}.{$signature}.{$signature}"],
+            'an empty header segment' => [".{$payload}.{$signature}"],
+            'an empty signature segment' => ["{$header}.{$payload}."],
+            'a padded signature segment' => ["{$header}.{$payload}.{$signature}=="],
+            'a header segment of an impossible length' => ["{$header}A.{$payload}.{$signature}"],
+            'a header segment that is not base64url' => ["a+b.{$payload}.{$signature}"],
+            'a header that is not JSON' => [JWT::urlsafeB64Encode('nonsense') . ".{$payload}.{$signature}"],
+            'a header that is a JSON array' => [JWT::urlsafeB64Encode('[1,2,3]') . ".{$payload}.{$signature}"],
+            'a header that is a JSON string' => [JWT::urlsafeB64Encode('"HS256"') . ".{$payload}.{$signature}"],
+            'a header naming alg twice' => [
+                JWT::urlsafeB64Encode('{"alg":"HS256","alg":"none"}') . ".{$payload}.{$signature}",
+            ],
+            'a header naming kid twice' => [
+                JWT::urlsafeB64Encode('{"alg":"HS256","kid":"a","kid":"b"}') . ".{$payload}.{$signature}",
+            ],
+            'a token past the length limit' => [
+                str_repeat('a', JoseHeader::MAXIMUM_TOKEN_LENGTH) . ".{$payload}.{$signature}",
+            ],
+            'a header segment past its own length limit' => [
+                str_repeat('a', JoseHeader::MAXIMUM_HEADER_SEGMENT_LENGTH + 1) . ".{$payload}.{$signature}",
+            ],
+            'a non-canonical header spelling' => [
+                self::withUnusedBitsSet($spacedHeader) . ".{$payload}.{$signature}",
+            ],
+            'a non-canonical signature spelling' => [
+                "{$spacedHeader}.{$payload}." . self::withUnusedBitsSet($longSignature),
+            ],
+        ];
+    }
+
+    /**
+     * Rewrites a base64url string into a second spelling of the same
+     * bytes — see Base64Url.
+     */
+    private static function withUnusedBitsSet(string $base64Url): string
+    {
+        $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+        $index = strpos($alphabet, $base64Url[strlen($base64Url) - 1]);
+        self::assertIsInt($index);
+        $tampered = substr($base64Url, 0, -1) . $alphabet[$index + 1];
+
+        self::assertSame(
+            base64_decode(strtr($base64Url, '-_', '+/')),
+            base64_decode(strtr($tampered, '-_', '+/')),
+        );
+
+        return $tampered;
+    }
+
+    #[DataProvider('malformedCompactTokens')]
+    public function test_a_malformed_compact_token_is_rejected_without_reaching_the_handler(string $token): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
+
+        $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
+    }
+
+    /**
+     * A single-key middleware never reads `kid`: JWT::decode() returns
+     * the one key it holds before the lookup that would use it. A
+     * malformed `kid` is refused anyway.
+     */
+    public function test_a_single_key_middleware_refuses_a_malformed_kid_it_would_never_read(): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
+
+        $this->assertRejectedWithoutTouchingTheRequest(
+            $middleware,
+            $scope,
+            $this->tokenWithHeader(['alg' => 'HS256', 'kid' => ['current']]),
+        );
+    }
+
+    /**
+     * firebase/php-jwt reads neither `crit` nor `b64`, so each of these
+     * tokens decodes there ignoring its declaration; the test asserts
+     * that before requiring this package's boundary to refuse it.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     */
+    public static function unimplementedProtectedHeaders(): array
+    {
+        return [
+            'crit naming an extension' => [['crit' => ['http://example.test/exp']]],
+            'crit naming b64' => [['crit' => ['b64'], 'b64' => false]],
+            'an empty crit' => [['crit' => []]],
+            'crit that is not a list' => [['crit' => 'b64']],
+            'b64 false without crit' => [['b64' => false]],
+            'b64 true without crit' => [['b64' => true]],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $header
+     */
+    #[DataProvider('unimplementedProtectedHeaders')]
+    public function test_a_header_declaring_semantics_this_package_does_not_implement_is_refused(
+        array $header,
+    ): void {
+        $token = $this->tokenWithHeader($header + ['alg' => 'HS256']);
+
+        $claims = JWT::decode($token, new Key(self::SECRET, 'HS256'));
+        self::assertSame('user-42', $claims->sub);
+
+        $scope = $this->scope();
+
+        $this->assertRejectedWithoutTouchingTheRequest(new JwtAuthMiddleware(self::SECRET, $scope), $scope, $token);
+    }
+
+    /**
+     * The ordinary case: a token whose header names a supported
+     * algorithm and an ordinary kid verifies against the key that kid
+     * selects.
+     */
+    public function test_an_ordinary_kid_still_verifies_through_the_header_boundary(): void
+    {
+        $scope = $this->scope();
+        $middleware = new JwtAuthMiddleware(
+            ['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')],
+            $scope,
+        );
+        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');
+
+        $response = $middleware->process($this->requestWithToken($token), $this->handler());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
     }
 }

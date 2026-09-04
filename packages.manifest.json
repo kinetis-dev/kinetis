@@ -162,7 +162,7 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.1.4",
+            "version": "1.2.0",
             "requires": [
                 "framework"
             ],

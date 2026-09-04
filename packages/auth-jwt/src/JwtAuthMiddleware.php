@@ -81,17 +81,21 @@ use UnexpectedValueException;
  * up the other way) means the private key needed to stay secret is
  * sitting in code that only ever needs to verify tokens.
  *
- * $key also accepts an array<string, Key> — one or more keys, each
- * under its own kid — for rolling a signing key over without
- * invalidating every token issued under the previous one: a token's own
- * (unverified) kid header selects which entry to verify against. A
- * plain string keeps working exactly as before. $algorithm has no
- * effect at all on this form — deliberately, not an oversight: each
- * Key in the array already carries its own algorithm, so the top-level
- * $algorithm is never read once $key is an array, and construction
- * never validates it in that case either (validating an argument with
- * no effect on behavior would only risk rejecting an otherwise-valid
- * construction over an unrelated, unused default).
+ * $key also accepts more than one key at once, each under its own kid,
+ * for rolling a signing key over without invalidating every token
+ * issued under the previous one: a token's own (unverified) kid header
+ * selects which entry to verify against. ParsedJwkSet is the form to
+ * configure that from a published JWK Set, and the only one that can
+ * hold every kid JwkSet publishes — see that class for why a PHP array
+ * key cannot. An array<string, Key> is the other accepted form, for a
+ * deployment holding PEM files rather than a JWKS.
+ *
+ * $algorithm has no effect at all on either multi-key form: each Key
+ * already carries its own algorithm, so the top-level $algorithm is
+ * never read once $key is anything but a string, and construction never
+ * validates it in that case either — validating an argument with no
+ * effect on behavior would only risk rejecting an otherwise-valid
+ * construction over an unrelated, unused default.
  *
  * $algorithm and $key are validated at construction, via
  * JwtKeyValidator — never on the first request. For the single-key
@@ -99,12 +103,19 @@ use UnexpectedValueException;
  * supports, and $key must fit it (an HMAC secret at least as long as
  * the algorithm's digest, or a parseable RSA public key of at least
  * 2048 bits). For the key-map (array) form: the map must be non-empty,
- * every kid a non-empty string, every value a genuine Firebase\JWT\Key,
- * and every Key's own algorithm/key-material pair held to the identical
- * rule. A misconfigured middleware throws immediately, naming what's
- * wrong (never the key material itself) — not on the first request, and
- * never as a client-facing 401 masking a server-side mistake, or an
- * unrelated exception escaping from deep inside JWT::decode().
+ * every value a Firebase\JWT\Key held to that identical rule, and every
+ * kid accepted by JwtKeyValidator::isUsableKid(). A ParsedJwkSet passed
+ * all of that before it could exist, so construction re-checks nothing
+ * there. A misconfigured middleware
+ * throws immediately, naming what's wrong (never the key material
+ * itself) — not on the first request, and never as a client-facing 401
+ * masking a server-side mistake, or an unrelated exception escaping
+ * from deep inside JWT::decode().
+ *
+ * A token's JOSE header is read and validated by JoseHeader before any
+ * of it reaches JWT::decode() — see that class for what a header must
+ * be. A token failing there becomes the same 401 as any other unusable
+ * token.
  *
  * A decode failure (expired, bad signature, malformed, wrong key), a
  * structurally valid but subject-less token, a token failing an
@@ -137,11 +148,11 @@ use UnexpectedValueException;
 class JwtAuthMiddleware implements MiddlewareInterface
 {
     /**
-     * @param string|array<string, Key> $key
+     * @param string|array<string, Key>|ParsedJwkSet $key
      * @param list<string>|null $acceptedAudiences
      */
     public function __construct(
-        private string|array $key,
+        private string|array|ParsedJwkSet $key,
         private RequestScope $scope,
         private string $algorithm = 'HS256',
         private ?RevocationStore $revocationStore = null,
@@ -161,10 +172,17 @@ class JwtAuthMiddleware implements MiddlewareInterface
      * unreachable code. mixed is a real, if unhelpful, answer to
      * PHPStan's own "specify the array's value type" requirement.
      *
-     * @param string|array<mixed> $key
+     * A ParsedJwkSet needs nothing checked here — see this class's own
+     * docblock.
+     *
+     * @param string|array<mixed>|ParsedJwkSet $key
      */
-    private static function assertValidKey(string|array $key, string $algorithm): void
+    private static function assertValidKey(string|array|ParsedJwkSet $key, string $algorithm): void
     {
+        if ($key instanceof ParsedJwkSet) {
+            return;
+        }
+
         if (is_string($key)) {
             JwtKeyValidator::assertSupportedAlgorithm(
                 $algorithm,
@@ -188,7 +206,7 @@ class JwtAuthMiddleware implements MiddlewareInterface
         }
 
         foreach ($key as $kid => $entry) {
-            if (!is_string($kid) || $kid === '') {
+            if (!JwtKeyValidator::isUsableKidValue($kid)) {
                 throw JwtAuthMiddlewareException::invalidKeyMapKid();
             }
 
@@ -249,10 +267,25 @@ class JwtAuthMiddleware implements MiddlewareInterface
             return $this->unauthorized();
         }
 
-        $keyOrKeyArray = is_string($this->key) ? new Key($this->key, $this->algorithm) : $this->key;
+        $header = JoseHeader::parse($token, kidRequired: !is_string($this->key));
+
+        if ($header === null) {
+            return $this->unauthorized();
+        }
+
+        // Resolving the kid here, rather than leaving it to
+        // JWT::decode()'s own lookup, keeps an unknown kid a rejection
+        // this class made: ParsedJwkSet::has() compares the exact
+        // string the document published, with no PHP array key between
+        // the token's kid and the key it selects.
+        if ($this->key instanceof ParsedJwkSet && ($header->kid === null || !$this->key->has($header->kid))) {
+            return $this->unauthorized();
+        }
+
+        $keyOrKeySet = is_string($this->key) ? new Key($this->key, $this->algorithm) : $this->key;
 
         try {
-            $claims = JWT::decode($token, $keyOrKeyArray);
+            $claims = JWT::decode($token, $keyOrKeySet);
         } catch (UnexpectedValueException|DomainException) {
             return $this->unauthorized();
         }
