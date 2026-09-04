@@ -238,7 +238,7 @@ primitive that can do both as one step:
 | `kinetis/queue-redis` | One Lua script, gated on the source entry actually being found and removed | None — a crash anywhere during release() either leaves the job exactly where it was or completes the swap; a stale/duplicate release() call is rejected rather than enqueuing a second copy |
 | `kinetis/queue-sql` | One `UPDATE` statement (clears the reservation, increments the attempt count) | None |
 | `kinetis/queue-sqs` | One `ChangeMessageVisibility` call | None from `release()` itself — but SQS's own at-least-once delivery model can redeliver independently of anything this package does |
-| `kinetis/queue-rabbitmq` | Two separate AMQP operations — publish the replacement, then nack the original — since AMQP 0-9-1 has no cross-message transaction to make them one | Real: a crash between the two publishes a replacement *and* leaves the original to be redelivered once the connection drops, so the job can be delivered twice — see {doc}`queue-rabbitmq` |
+| `kinetis/queue-rabbitmq` | Two separate AMQP operations — publish the replacement, wait for the broker to acknowledge it, then nack the original — since AMQP 0-9-1 has no cross-message transaction to make them one | Real: a crash between the two publishes a replacement *and* leaves the original to be redelivered once the connection drops, so the job can be delivered twice. A publish the broker never acknowledges settles nothing at all, so that direction loses no job — see {doc}`queue-rabbitmq` |
 
 A job handler should be idempotent under retry regardless of backend —
 every backend can redeliver a job that was already fully processed if a
@@ -312,8 +312,10 @@ total    15
 The count covers jobs waiting to be popped, including ones still inside
 their `push()` delay. Jobs a worker currently holds are excluded — those
 are being worked, not waiting. Amazon SQS reports these numbers as
-estimates rather than exact figures (see {doc}`queue-sqs`), which is fine
-for the question this answers: whether a queue is draining or backing up.
+estimates rather than exact figures (see {doc}`queue-sqs`), and RabbitMQ
+reads its own queue by queue rather than at a single instant (see
+{doc}`queue-rabbitmq`) — both fine for the question this answers:
+whether a queue is draining or backing up.
 
 `queue:clear` discards waiting jobs, and requires `--force` because there
 is no dead-letter copy to restore from:
@@ -483,8 +485,11 @@ firing at the exact moment the delay ends, so a delayed job can run
 slightly later than its exact target time — typically by a few seconds,
 not less. SQS's own delay is native (`SendMessage`'s own `DelaySeconds`,
 no polling-based promotion at all) but capped at 900 seconds (15 minutes)
-— see {doc}`queue-sqs`. RabbitMQ's delay is also broker-driven, with no
-such cap — see {doc}`queue-rabbitmq`.
+— see {doc}`queue-sqs`. RabbitMQ's delay is broker-driven too, with a
+much higher cap of 4,194,303 seconds (about 48 days) — the longest
+queue TTL its AMQP client can encode as a signed 32-bit millisecond
+value, not a limit of the broker. Like every backend here it is a floor
+rather than a firing time — see {doc}`queue-rabbitmq`.
 
 ## A failing job
 
