@@ -34,7 +34,131 @@ use function Kinetis\Async\concurrently;
  */
 final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
 {
+    /**
+     * Every reservedSlotFor() call site in this file names one of these
+     * explicitly — 600 slots apart, comfortably inside any master's
+     * ~5461-slot original range even with all eight reservations drawn
+     * from the same one.
+     *
+     * Two properties matter. Offsets clustered within a few slots of
+     * each other fragment one neighborhood of a master's slot map into
+     * many single-slot pieces, which measurably slows gossip for
+     * whichever test reassigns there last — hence the spacing. And an
+     * offset relative to whatever range a master *currently* reports is
+     * a moving target, since every earlier reservation changes it —
+     * hence reservedSlotFor() resolving each offset against the frozen
+     * original split in $originalMasterRangeStarts, never live range
+     * data.
+     */
+    private const int TEST_SLOT_OFFSET_A = 100;
+    private const int TEST_SLOT_OFFSET_B = 700;
+    private const int TEST_SLOT_OFFSET_C = 1300;
+    private const int TEST_SLOT_OFFSET_D = 1900;
+    private const int TEST_SLOT_OFFSET_E = 2500;
+    private const int TEST_SLOT_OFFSET_F = 3100;
+    private const int TEST_SLOT_OFFSET_G = 3700;
+    private const int TEST_SLOT_OFFSET_H = 4300;
+
+    /**
+     * Captured once, in setUpBeforeClass() — before any test has had a
+     * chance to reassign a single slot — mapping each master's own node
+     * id to the start of its original, contiguous range. Every
+     * reservedSlotFor() call reads from this frozen snapshot rather than
+     * a live discoverMasters() call: a live call reflects whatever
+     * fragmentation every *earlier* test in the same run has already
+     * caused, and reservedSlotFor() exists so no test has to reason
+     * about that.
+     *
+     * The guarantee holds for one PHPUnit invocation against one
+     * freshly bootstrapped cluster, never across two. At least one test
+     * (test_a_generic_failure_on_an_ask_targets_retry_does_not_erase_a_separate_slots_durable_overlay)
+     * permanently reassigns its own reserved slot through
+     * finalizeMigration() as part of a passing run, so a second
+     * invocation against the same service container snapshots a split
+     * in which that slot is already elsewhere, and the test's direct
+     * write to the node it expects to own the slot fails with a raw
+     * MOVED error. A retry of this suite therefore needs a fresh service
+     * container — a job-level re-run — never a second `phpunit` in the
+     * same job; integration.yml's redis-cluster job and sonarqube.yml's
+     * cache-redis coverage step both run a single invocation for this
+     * reason.
+     *
+     * @var array<string, int>
+     */
+    private static array $originalMasterRangeStarts = [];
+
     private ClusteredRedisSimpleCache $cache;
+
+    public static function setUpBeforeClass(): void
+    {
+        $seeds = \getenv('REDIS_CLUSTER_SEEDS');
+
+        if ($seeds === false || $seeds === '') {
+            return; // setUp()'s own per-test check is what actually skips each test; nothing to snapshot here without a real cluster.
+        }
+
+        $masters = self::discoverMasters();
+
+        foreach ($masters as $master) {
+            self::$originalMasterRangeStarts[$master['id']] = $master['ranges'][0][0];
+        }
+
+        // Redis defaults latency-monitor-threshold to 0 (disabled), so
+        // LATENCY HISTORY/LATEST report nothing unless it is raised
+        // beforehand. Enabled once per class, on every master, so that
+        // a gossip-convergence timeout (see
+        // waitForGossipConvergenceOfAll()) can show whether the target
+        // node's own command or fork processing was slow during the run.
+        // 100ms is well above this suite's normal command latencies and
+        // well below any convergence delay worth diagnosing, so it
+        // records nothing under normal conditions.
+        foreach ($masters as $master) {
+            try {
+                createRedisClient(RedisConfig::fromUri("tcp://{$master['host']}:{$master['port']}"))
+                    ->execute('CONFIG', 'SET', 'latency-monitor-threshold', '100');
+            } catch (\Throwable) {
+                // Diagnostics are best-effort — a master this couldn't
+                // reach here would already be failing every real test
+                // against it, loudly, on its own terms.
+            }
+        }
+
+        // Randomized, not left at a fixed 0 — see $masterRotation's own
+        // docblock for why a fixed starting point defeats the entire
+        // point of rotating at all.
+        self::$masterRotation = random_int(0, PHP_INT_MAX);
+    }
+
+    /**
+     * The slot this file reserves for one specific test, deterministic
+     * regardless of how many earlier tests have already reassigned
+     * slots elsewhere in the cluster (see $originalMasterRangeStarts
+     * and the TEST_SLOT_OFFSET_* constants' own docblocks for why that
+     * guarantee is the entire point). $owner can be any master this
+     * file discovered — its *current* ranges are never consulted here,
+     * only its node id, which reservedSlotFor() uses to look up that
+     * master's frozen original starting boundary.
+     *
+     * A slot has to hold zero keys before Redis permits an abrupt
+     * CLUSTER SETSLOT ... NODE ownership change (the server refuses
+     * otherwise: "Can't assign hashslot ... while I still hold keys").
+     * Every offset this file reserves stays well inside a master's
+     * original range and 600 slots apart from every other reservation,
+     * so the returned slot is always empty regardless of what earlier
+     * tests have done elsewhere in the cluster.
+     *
+     * @param array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>} $owner
+     */
+    private function reservedSlotFor(array $owner, int $offset): int
+    {
+        self::assertArrayHasKey(
+            $owner['id'],
+            self::$originalMasterRangeStarts,
+            'setUpBeforeClass() never snapshotted this master — was it added to the cluster after this test class started running?',
+        );
+
+        return self::$originalMasterRangeStarts[$owner['id']] + $offset;
+    }
 
     protected function setUp(): void
     {
@@ -258,7 +382,9 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     public function test_a_real_moved_redirect_triggers_a_topology_refresh_and_succeeds(): void
     {
         [$oldOwner, $newOwner] = $this->requireTwoDistinctMasters();
-        $slot = $this->emptySlotIn($oldOwner);
+        // A widely-spaced offset — see the TEST_SLOT_OFFSET_* docblock
+        // for why reservations are kept 600 slots apart.
+        $slot = $this->reservedSlotFor($oldOwner, self::TEST_SLOT_OFFSET_A);
         $key = $this->findKeyInSlot($slot);
 
         $staleCache = ClusteredRedisSimpleCache::fromConfig($this->clusterConfig());
@@ -302,19 +428,17 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
      * propagation that seed can still be reporting the old (but
      * internally self-consistent) topology even though the node the
      * stale client actually contacted has already authoritatively
-     * transitioned. Reproduced for real: seed[0] is deliberately a
-     * *third*, uninvolved master, kept genuinely unaware of the
-     * reassignment (confirmed directly against its own CLUSTER SHARDS
-     * reply before the operation runs, not assumed) by touching only
-     * $oldOwner and $newOwner directly — never calling
-     * waitForGossipConvergence(), unlike every other test in this file.
-     * A cache instance that discovered its topology through that exact
-     * stale seed still succeeds immediately.
+     * transitioned. Here the client discovers its topology through a
+     * *third*, uninvolved master before the reassignment and keeps that
+     * snapshot until a MOVED reply refreshes it — so its first write
+     * after the move is routed on stale information by construction,
+     * however far gossip has spread by then. That write still succeeds
+     * immediately.
      */
     public function test_a_real_moved_redirect_succeeds_immediately_without_waiting_for_gossip_convergence(): void
     {
         [$oldOwner, $newOwner, $staleSeed] = $this->requireThreeDistinctMasters();
-        $slot = $this->emptySlotIn($oldOwner);
+        $slot = $this->reservedSlotFor($oldOwner, self::TEST_SLOT_OFFSET_B);
         $key = $this->findKeyInSlot($slot);
 
         $config = new Config([
@@ -328,43 +452,12 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
 
         // Reassign ownership on $oldOwner and $newOwner only — deliberately
         // NOT via reassignEmptySlot(), which waits for seed[0]'s own view
-        // to converge; $staleSeed is never told at all here.
-        $this->adminClientFor($oldOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
-        $this->adminClientFor($newOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
-
-        // The real precondition this test exists to prove: seed[0] is
-        // genuinely still unaware, checked immediately (before any other
-        // round trip widens the window) rather than assumed. Real gossip
-        // propagation timing can't be forced deterministically — an
-        // already-converged seed here means the environment settled
-        // faster than this run could observe, not a bug, so this skips
-        // rather than reporting a false failure.
-        $stillStaleOwnerId = null;
-
-        foreach ($this->adminClientFor($staleSeed)->execute('CLUSTER', 'SHARDS') as $shard) {
-            $shardMap = self::pairsToAssoc($shard);
-            $slots = $shardMap['slots'];
-
-            for ($i = 0, $c = count($slots); $i < $c; $i += 2) {
-                if ($slot < $slots[$i] || $slot > $slots[$i + 1]) {
-                    continue;
-                }
-
-                foreach ($shardMap['nodes'] as $node) {
-                    $nodeMap = self::pairsToAssoc($node);
-
-                    if ($nodeMap['role'] === 'master') {
-                        $stillStaleOwnerId = $nodeMap['id'];
-                    }
-                }
-            }
-        }
-
-        if ($stillStaleOwnerId !== $oldOwner['id']) {
-            $this->waitForGossipConvergence($slot, $newOwner['id']);
-            $this->adminClientFor($newOwner)->delete($key);
-            self::markTestSkipped('seed[0] already converged before this run could observe it stale — gossip propagated faster than this environment could catch.');
-        }
+        // to converge. The staleness this test exercises is the
+        // *client's*: $staleCache locked its topology from $staleSeed
+        // above, before the move, and nothing refreshes it until a MOVED
+        // reply does — so its first write below is guaranteed to be
+        // routed on stale information whatever any seed reports by now.
+        $this->assignSlot($oldOwner, $newOwner, $slot);
 
         try {
             self::assertSame(
@@ -401,7 +494,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     public function test_clear_after_a_moved_routed_write_does_not_leave_data_behind(): void
     {
         [$oldOwner, $newOwner, $staleSeed] = $this->requireThreeDistinctMasters();
-        $slot = $this->emptySlotIn($oldOwner);
+        $slot = $this->reservedSlotFor($oldOwner, self::TEST_SLOT_OFFSET_C);
         $key = $this->findKeyInSlot($slot);
 
         $config = new Config([
@@ -413,8 +506,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         self::assertInstanceOf(ClusteredRedisSimpleCache::class, $staleCache);
         $staleCache->has($key); // discovers via seed[0] = $staleSeed: $oldOwner owns $slot
 
-        $this->adminClientFor($oldOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
-        $this->adminClientFor($newOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
+        $this->assignSlot($oldOwner, $newOwner, $slot);
 
         try {
             self::assertSame(
@@ -459,19 +551,11 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     public function test_two_slots_moved_to_different_targets_both_survive_a_shared_pre_gossip_window(): void
     {
         [$oldOwner, $target1, $target2] = $this->requireThreeDistinctMasters();
-        // emptySlotInLargestRange(), offset 9/11 — not emptySlotIn()'s
-        // default first-range/offset-1 shape: several earlier tests
-        // already reassign masters[0]'s own small-offset slots, and by
-        // the time this test runs its "first range" may already be a
-        // stray leftover fragment from one of those rather than
-        // masters[0]'s own main range (see emptySlotInLargestRange()'s
-        // own docblock); picking from the largest range at genuinely
-        // unused offsets sidesteps both a wrong-range read and a
-        // same-slot gossip race in one step — both measurably observed
-        // causes of this test's own convergence failing under real
-        // Docker CPU contention, not hypothetical concerns.
-        $slot1 = $this->emptySlotInLargestRange($oldOwner, offset: 9);
-        $slot2 = $this->emptySlotInLargestRange($oldOwner, offset: 11); // a second, distinct empty slot in the same owner's range
+        // Two distinct TEST_SLOT_OFFSET_* constants, same $oldOwner —
+        // see the constants' docblock for why they are spaced apart and
+        // resolved against the frozen original split.
+        $slot1 = $this->reservedSlotFor($oldOwner, self::TEST_SLOT_OFFSET_D);
+        $slot2 = $this->reservedSlotFor($oldOwner, self::TEST_SLOT_OFFSET_E); // a second, distinct empty slot in the same owner's range
         $key1 = $this->findKeyInSlot($slot1);
         $key2 = $this->findKeyInSlot($slot2);
 
@@ -479,10 +563,8 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         self::assertInstanceOf(ClusteredRedisSimpleCache::class, $staleCache);
         $staleCache->has($key1); // locks in: oldOwner owns both slots, before either move happens
 
-        $this->adminClientFor($oldOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot1, 'NODE', $target1['id']);
-        $this->adminClientFor($target1)->execute('CLUSTER', 'SETSLOT', (string) $slot1, 'NODE', $target1['id']);
-        $this->adminClientFor($oldOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot2, 'NODE', $target2['id']);
-        $this->adminClientFor($target2)->execute('CLUSTER', 'SETSLOT', (string) $slot2, 'NODE', $target2['id']);
+        $this->assignSlot($oldOwner, $target1, $slot1);
+        $this->assignSlot($oldOwner, $target2, $slot2);
 
         try {
             self::assertSame('MOVED', $this->firstWordOfReplyError(fn () => $this->adminClientFor($oldOwner)->get($key1)));
@@ -521,7 +603,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     public function test_a_real_moved_then_ask_sequence_is_followed_correctly_in_one_call(): void
     {
         [$original, $intermediate, $final] = $this->requireThreeDistinctMasters();
-        $slot = $this->emptySlotIn($original);
+        $slot = $this->reservedSlotFor($original, self::TEST_SLOT_OFFSET_F);
         $key = $this->findKeyInSlot($slot);
 
         $staleCache = ClusteredRedisSimpleCache::fromConfig($this->clusterConfig());
@@ -566,13 +648,10 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     public function test_a_generic_failure_on_an_ask_targets_retry_does_not_erase_a_separate_slots_durable_overlay(): void
     {
         [$stableOldOwner, $stableNewOwner, $migrationSource] = $this->requireThreeDistinctMasters();
-        // emptySlotInLargestRange(), not emptySlotIn(): several earlier
-        // tests reassign masters[0]'s own small-offset slots, and by
-        // the time this test runs either role here may have already
-        // accumulated a stray single-slot fragment from one of those —
-        // picking from the largest range sidesteps both that and this
-        // file's usual 1/3 offset collisions in one step.
-        $stableSlot = $this->emptySlotInLargestRange($stableOldOwner, offset: 5);
+        // Resolved against the frozen original split, so whatever either
+        // role has already accumulated elsewhere in the cluster by now
+        // does not affect it — see the TEST_SLOT_OFFSET_* docblock.
+        $stableSlot = $this->reservedSlotFor($stableOldOwner, self::TEST_SLOT_OFFSET_G);
         $stableKey = $this->findKeyInSlot($stableSlot);
 
         $cache = ClusteredRedisSimpleCache::fromConfig($this->clusterConfig());
@@ -582,14 +661,16 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         // A real, pre-gossip MOVED redirect below installs a genuine,
         // durable override for $stableSlot — not a synthetic one — the
         // exact mechanism this whole regression is actually about.
-        $this->adminClientFor($stableOldOwner)->execute('CLUSTER', 'SETSLOT', (string) $stableSlot, 'NODE', $stableNewOwner['id']);
-        $this->adminClientFor($stableNewOwner)->execute('CLUSTER', 'SETSLOT', (string) $stableSlot, 'NODE', $stableNewOwner['id']);
+        $this->assignSlot($stableOldOwner, $stableNewOwner, $stableSlot);
 
         // $stableOldOwner is otherwise uninvolved once the reassignment
         // above already moved $stableSlot away from it, so it's free to
         // also serve as a real, live ASK migration target for a
-        // completely different slot without either role overlapping.
-        $migrationSlot = $this->emptySlotInLargestRange($migrationSource, offset: 1);
+        // completely different slot without either role overlapping —
+        // and TEST_SLOT_OFFSET_H keeps it out of every other test's own
+        // reserved neighborhood too (see the two-slot test's own
+        // docblock for why that matters).
+        $migrationSlot = $this->reservedSlotFor($migrationSource, self::TEST_SLOT_OFFSET_H);
         $migrationKey = $this->findKeyInSlot($migrationSlot);
         $this->adminClientFor($migrationSource)->set($migrationKey, 'irrelevant-migrating-value');
 
@@ -802,15 +883,41 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     /**
      * @return list<array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}>
      */
-    private function discoverMasters(): array
+    private static function discoverMasters(): array
+    {
+        return array_map(static fn (array $shard): array => $shard['master'], self::discoverShards());
+    }
+
+    /**
+     * @return array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}
+     */
+    private static function masterById(string $id): array
+    {
+        foreach (self::discoverMasters() as $master) {
+            if ($master['id'] === $id) {
+                return $master;
+            }
+        }
+
+        throw new RuntimeException("No master with id {$id} in seeds[0]'s CLUSTER SHARDS.");
+    }
+
+    /**
+     * Every shard as seeds[0]'s CLUSTER SHARDS reports it: its one
+     * master plus every replica of it, all carrying the shard's slot
+     * ranges. Replicas are needed by waitForReplicasToMirrorTheirMasters()
+     * alone; everything else in this class only ever wants the masters.
+     *
+     * @return list<array{master: array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}, replicas: list<array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}>}>
+     */
+    private static function discoverShards(): array
     {
         $seeds = explode(',', (string) getenv('REDIS_CLUSTER_SEEDS'));
         $admin = createRedisClient(RedisConfig::fromUri('tcp://' . trim($seeds[0])));
-        $shards = $admin->execute('CLUSTER', 'SHARDS');
 
-        $masters = [];
+        $result = [];
 
-        foreach ($shards as $shard) {
+        foreach ($admin->execute('CLUSTER', 'SHARDS') as $shard) {
             $shardMap = self::pairsToAssoc($shard);
             $slots = $shardMap['slots'];
             $ranges = [];
@@ -819,21 +926,33 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
                 $ranges[] = [$slots[$i], $slots[$i + 1]];
             }
 
+            $master = null;
+            $replicas = [];
+
             foreach ($shardMap['nodes'] as $node) {
                 $nodeMap = self::pairsToAssoc($node);
+                $entry = [
+                    'id' => $nodeMap['id'],
+                    'host' => $nodeMap['ip'],
+                    'port' => $nodeMap['port'],
+                    'ranges' => $ranges,
+                ];
 
                 if ($nodeMap['role'] === 'master') {
-                    $masters[] = [
-                        'id' => $nodeMap['id'],
-                        'host' => $nodeMap['ip'],
-                        'port' => $nodeMap['port'],
-                        'ranges' => $ranges,
-                    ];
+                    $master = $entry;
+                } else {
+                    $replicas[] = $entry;
                 }
             }
+
+            if ($master === null) {
+                continue; // a shard mid-failover with no master yet has nothing this class can address
+            }
+
+            $result[] = ['master' => $master, 'replicas' => $replicas];
         }
 
-        return $masters;
+        return $result;
     }
 
     /**
@@ -852,15 +971,50 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
     }
 
     /**
+     * Shared by requireTwoDistinctMasters()/requireThreeDistinctMasters()
+     * — incremented on every call to either, never reset between tests.
+     * discoverMasters()'s CLUSTER SHARDS-derived ordering is stable call
+     * to call, and every test in this file destructures the *first*
+     * returned element as its reservation owner ("$oldOwner"/
+     * "$original"/"$stableOldOwner"), so without rotation every
+     * reservation in the suite lands on the one master that sorts
+     * first, however far apart the TEST_SLOT_OFFSET_* values are —
+     * concentrating every reassignment on one node's slot map.
+     *
+     * setUpBeforeClass() seeds this randomly rather than at 0. PHPUnit's
+     * test execution order is stable run to run, so from a fixed
+     * starting point any given test reaches requireXDistinctMasters()
+     * after the same number of prior calls every run — the same
+     * rotation offset, the same physical master, every time. A random
+     * seed is what makes the master a given test draws vary between
+     * runs, not only between tests within one run.
+     */
+    private static int $masterRotation = 0;
+
+    /**
+     * @param list<array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}> $masters
+     * @return list<array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}>
+     */
+    private static function rotated(array $masters): array
+    {
+        $offset = self::$masterRotation % count($masters);
+        self::$masterRotation++;
+
+        return [...array_slice($masters, $offset), ...array_slice($masters, 0, $offset)];
+    }
+
+    /**
      * @return array{0: array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}, 1: array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>}}
      */
     private function requireTwoDistinctMasters(): array
     {
-        $masters = $this->discoverMasters();
+        $masters = self::discoverMasters();
 
         if (count($masters) < 2) {
             self::markTestSkipped('Needs at least 2 real master nodes to exercise a real slot redirect.');
         }
+
+        $masters = self::rotated($masters);
 
         return [$masters[0], $masters[1]];
     }
@@ -870,11 +1024,13 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
      */
     private function requireThreeDistinctMasters(): array
     {
-        $masters = $this->discoverMasters();
+        $masters = self::discoverMasters();
 
         if (count($masters) < 3) {
             self::markTestSkipped('Needs at least 3 real master nodes to exercise a real MOVED-then-ASK sequence.');
         }
+
+        $masters = self::rotated($masters);
 
         return [$masters[0], $masters[1], $masters[2]];
     }
@@ -886,8 +1042,8 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
 
     /**
      * Searches every range $master currently owns, not just the first —
-     * an earlier test's own emptySlotIn()/reassignEmptySlot() call can
-     * permanently fragment a master's original single wide range into
+     * an earlier test's own reservedSlotFor()/reassignEmptySlot() call
+     * can permanently fragment a master's original single wide range into
      * several disjoint ones (moving one slot away from the middle or
      * edge of it), and the *first* of those fragments can end up no
      * wider than the one slot $excluding names, with genuinely no room
@@ -916,7 +1072,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
 
     private function findKeyInRange(int $start, int $end, ?int $excluding = null): string
     {
-        // A single-slot range (start === end, as every emptySlotIn()/
+        // A single-slot range (start === end, as every reservedSlotFor()/
         // findKeyInSlot() call needs) has roughly 1-in-16384 odds of a
         // match per try, so this needs real headroom, not a round
         // number: 300,000 tries brings the odds of finding none down to
@@ -932,51 +1088,6 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         }
 
         throw new RuntimeException("Could not find a key hashing into slots {$start}-{$end}.");
-    }
-
-    /**
-     * A slot genuinely has to hold zero keys before Redis permits an
-     * abrupt CLUSTER SETSLOT ... NODE ownership change — confirmed
-     * directly: the server refuses otherwise ("Can't assign hashslot
-     * ... while I still hold keys"). $oldOwner's own first range is
-     * used, since a fresh cluster's default slot assignment starts with
-     * genuinely empty ranges before any test in this file writes to
-     * them.
-     *
-     * @param array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>} $owner
-     */
-    private function emptySlotIn(array $owner, int $offset = 1): int
-    {
-        return $owner['ranges'][0][0] + $offset;
-    }
-
-    /**
-     * emptySlotIn()'s own ranges[0][0] assumption can point at the
-     * wrong thing once a master has accumulated a stray single-slot
-     * fragment from an earlier, unrelated test's own finalized
-     * migration onto it — real Redis Cluster lists a shard's ranges in
-     * ascending slot order, so a tiny leftover fragment (slot 1, say)
-     * sorts *ahead of* the master's own large, original range and
-     * silently becomes ranges[0] instead, feeding emptySlotIn() a slot
-     * number that isn't actually within the master's main range at
-     * all — confirmed as a real, observed cause of a raw SETSLOT/write
-     * failing with a genuine server-side MOVED, not a hypothetical.
-     * This picks the *largest* range instead, which a small leftover
-     * fragment can never be, sidestepping the ambiguity entirely.
-     *
-     * @param array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>} $owner
-     */
-    private function emptySlotInLargestRange(array $owner, int $offset = 1): int
-    {
-        $largest = $owner['ranges'][0];
-
-        foreach ($owner['ranges'] as $range) {
-            if ($range[1] - $range[0] > $largest[1] - $largest[0]) {
-                $largest = $range;
-            }
-        }
-
-        return $largest[0] + $offset;
     }
 
     /**
@@ -1004,9 +1115,254 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
      */
     private function finalizeMigration(array $source, array $target, int $slot): void
     {
+        // Redis bumps the importing node's epoch itself on this SETSLOT,
+        // with the same tie-loses-the-collision gap assignSlot()
+        // documents — a target that loses the collision leaves the
+        // source's replica attributing the slot to the source with
+        // nothing higher ever claiming it. Same ordering as assignSlot(),
+        // for the same reasons.
+        $this->waitForReplicasToMirrorTheirMasters();
+        $this->raiseEpochAboveEveryOtherMaster($target);
         $this->adminClientFor($source)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $target['id']);
         $this->adminClientFor($target)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $target['id']);
+        $this->waitForReplicasToMirrorTheirMasters();
         $this->waitForGossipConvergence($slot, $target['id']);
+    }
+
+    /**
+     * The one way this file reassigns a slot directly (no IMPORTING/
+     * MIGRATING handshake). A node learning a slot claim via gossip
+     * accepts it only if the claimant's configEpoch is *higher* than
+     * that of the node it currently attributes the slot to, and a bare
+     * `SETSLOT <slot> NODE` never raises the new owner's epoch (Redis
+     * bumps it only when the slot was in IMPORTING state). Every node
+     * starts at its bootstrap epoch (1-3 on this six-node image), so a
+     * lower-epoch new owner's claim applies locally — the node answers
+     * "mine" when asked directly — and is rejected by every third party
+     * until something else raises that node's epoch. Against this
+     * image, a third party still attributes such a slot to the old
+     * owner 24s after the SETSLOT pair and switches within 1s of a
+     * BUMPEPOCH; in the favorable direction (lower-epoch owner to
+     * higher-epoch target) it switches within 1s with no bump.
+     *
+     * The bump is verified, not fired and forgotten — see
+     * raiseEpochAboveEveryOtherMaster() for the tie case a single
+     * BUMPEPOCH gets wrong.
+     *
+     * @param array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>} $oldOwner
+     * @param array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>} $newOwner
+     */
+    private function assignSlot(array $oldOwner, array $newOwner, int $slot): void
+    {
+        // Order matters; each step closes one way the old owner can take
+        // the slot back:
+        //
+        // 1. A replica advertises its *master's* slot bitmap and epoch
+        //    in its own gossip, from a local copy that lags the master
+        //    by up to a gossip round. A replica of the old owner still
+        //    advertising the pre-SETSLOT bitmap re-assigns the slot to
+        //    the old owner in any table where the old owner's epoch is
+        //    the higher one — including the new owner's own table, which
+        //    then answers MOVED back to the old owner while the old
+        //    owner answers MOVED to the new one: a redirect loop. So no
+        //    epoch moves while any stale bitmap exists anywhere.
+        // 2. The new owner's epoch is raised strictly above every other
+        //    master's *before* it takes the slot, so its claim outranks
+        //    every copy of the old bitmap from the first PING it sends.
+        // 3. Ownership changes hands.
+        // 4. This does not return until every replica mirrors its master
+        //    again — until the old owner's replica holds the new claim.
+        //    Waiting only at the start of the *next* reassignment leaves
+        //    a hole: that reassignment can raise the old owner's epoch
+        //    while its replica still advertises the old bitmap, which
+        //    then out-ranks the new owner in the new owner's own table —
+        //    a slot no master claims.
+        //
+        // The MOVED tests' pre-gossip window is the *client's* cached
+        // topology, locked before this call, which waiting on replicas
+        // here does not touch.
+        $this->waitForReplicasToMirrorTheirMasters();
+        $this->raiseEpochAboveEveryOtherMaster($newOwner);
+        $this->adminClientFor($oldOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
+        $this->adminClientFor($newOwner)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
+        $this->waitForReplicasToMirrorTheirMasters();
+    }
+
+    /**
+     * Blocks until every replica's local copy of its master's slot
+     * bitmap matches what that master itself reports — the state in
+     * which no node in the cluster is still advertising a bitmap that
+     * predates the most recent reassignment. See assignSlot() for the
+     * steal-back this closes. Each side is read from the node that owns
+     * the answer: the master's ranges from the master, the replica's
+     * view of them from the replica.
+     *
+     * A slot claim reaches a given node only through a *direct* PING or
+     * PONG from the claiming owner — the gossip section of a message
+     * relays other nodes' addresses and flags, never their slot bitmaps.
+     * Each node pings one random peer per second, plus any peer it has
+     * not heard from within cluster-node-timeout/2 (7.5s at the
+     * default), so one specific pair can go several seconds without
+     * exchanging a ping at all. 30s sits well above that worst case;
+     * bounded so a cluster that never settles fails with every lagging
+     * replica named.
+     */
+    private function waitForReplicasToMirrorTheirMasters(): void
+    {
+        $lagging = [];
+
+        for ($attempt = 0; $attempt < 300; $attempt++) {
+            $lagging = [];
+
+            foreach (self::discoverShards() as $shard) {
+                $master = $shard['master'];
+                $expected = self::rangesOfNodeAccordingTo($this->adminClientFor($master), $master['id']);
+
+                foreach ($shard['replicas'] as $replica) {
+                    $seen = self::rangesOfNodeAccordingTo($this->adminClientFor($replica), $master['id']);
+
+                    if ($seen !== $expected) {
+                        $lagging[] = "{$replica['host']}:{$replica['port']} sees {$master['id']} as [{$seen}], master reports [{$expected}]";
+                    }
+                }
+            }
+
+            if ($lagging === []) {
+                return;
+            }
+
+            usleep(100000);
+        }
+
+        // Every node's own full table — epochs (7th column) and slot
+        // attribution as *that* node believes them — is the only way to
+        // tell, after the fact, which claim each lagging replica is
+        // rejecting and why.
+        $tables = '';
+
+        foreach (self::discoverShards() as $shard) {
+            foreach ([$shard['master'], ...$shard['replicas']] as $node) {
+                $tables .= "\n--- CLUSTER NODES as seen by {$node['host']}:{$node['port']} ---\n"
+                    . (string) $this->adminClientFor($node)->execute('CLUSTER', 'NODES');
+            }
+        }
+
+        throw new RuntimeException(
+            "Replicas never caught up with their masters' slot bitmaps within 30s:\n" . implode("\n", $lagging) . "\n" . $tables,
+        );
+    }
+
+    /**
+     * The slot ranges $client's own CLUSTER NODES table attributes to
+     * $nodeId, as one normalized string — empty when the table has no
+     * ranges for it. This is one node's *view* of another (or of
+     * itself), which is exactly the distinction
+     * waitForReplicasToMirrorTheirMasters() needs to compare.
+     */
+    private static function rangesOfNodeAccordingTo(RedisClient $client, string $nodeId): string
+    {
+        foreach (explode("\n", (string) $client->execute('CLUSTER', 'NODES')) as $line) {
+            $fields = explode(' ', trim($line));
+
+            if (($fields[0] ?? null) !== $nodeId) {
+                continue;
+            }
+
+            $ranges = array_values(array_filter(
+                array_slice($fields, 8),
+                static fn (string $f): bool => $f !== '' && !str_starts_with($f, '['),
+            ));
+            sort($ranges);
+
+            return implode(' ', $ranges);
+        }
+
+        return '';
+    }
+
+    /**
+     * Leaves $master's configEpoch strictly greater than every other
+     * master's — the condition under which its slot claims are accepted
+     * by every third party — with every master's epoch pairwise
+     * distinct. A single `CLUSTER BUMPEPOCH` guarantees neither: it
+     * replies STILL and changes nothing when the node already *ties*
+     * for the cluster maximum, and Redis then resolves the tie itself by
+     * bumping whichever of the two colliding masters has the smaller
+     * node id — the old owner about half the time, whose claim then
+     * outranks the new owner's.
+     *
+     * Each pass bumps, then reads every master's own epoch from that
+     * master itself (`CLUSTER INFO`, never seeds[0]'s possibly stale
+     * view). A tie resolves within a gossip round: either $master won
+     * the collision (done) or the other side did, in which case $master
+     * no longer ties for the maximum and the next BUMPEPOCH raises it
+     * above. Bounded so a cluster that never settles fails with every
+     * epoch named instead of hanging.
+     *
+     * @param array{id: string, host: string, port: int, ranges: list<array{0: int, 1: int}>} $master
+     */
+    private function raiseEpochAboveEveryOtherMaster(array $master): void
+    {
+        $client = $this->adminClientFor($master);
+        $seen = [];
+
+        // 30s: a tie resolves only once the two colliding masters
+        // exchange a direct ping, on the per-pair schedule
+        // waitForReplicasToMirrorTheirMasters() documents.
+        for ($attempt = 0; $attempt < 300; $attempt++) {
+            $client->execute('CLUSTER', 'BUMPEPOCH');
+
+            $own = self::ownEpochOf($client);
+            $others = [];
+
+            foreach (self::discoverMasters() as $other) {
+                if ($other['id'] !== $master['id']) {
+                    $others[$other['id']] = self::ownEpochOf($this->adminClientFor($other));
+                }
+            }
+
+            // Two *other* masters at an equal epoch is a latent tie, not
+            // harmless just because both sit below $master: whenever
+            // those two next ping each other, Redis's collision handler
+            // bumps one of them to currentEpoch+1 — above the epoch
+            // $master was just raised to — and if that node's replica
+            // still advertises a pre-move bitmap, $master's claim is
+            // rejected there from then on. Break the tie now (bump one
+            // side; it lands above $master, and the next pass raises
+            // $master again) rather than leaving it to fire later.
+            $tied = array_keys(array_filter(array_count_values($others), static fn (int $n): bool => $n > 1));
+
+            if ($tied !== []) {
+                $tiedId = array_search($tied[0], $others, true);
+                $this->adminClientFor(self::masterById((string) $tiedId))->execute('CLUSTER', 'BUMPEPOCH');
+            } elseif ($others === [] || $own > max($others)) {
+                return;
+            }
+
+            $seen = ['own' => $own] + $others;
+            usleep(100000);
+        }
+
+        throw new RuntimeException(
+            "Could not raise {$master['id']}'s configEpoch above every other master's within 30s: "
+                . json_encode($seen, JSON_THROW_ON_ERROR),
+        );
+    }
+
+    /**
+     * The epoch a node reports for itself — authoritative for that
+     * node, unlike the copy any other node holds about it, which is only
+     * as fresh as the last gossip message that carried it.
+     */
+    private static function ownEpochOf(RedisClient $client): int
+    {
+        $info = (string) $client->execute('CLUSTER', 'INFO');
+
+        if (preg_match('/^cluster_my_epoch:(\d+)/m', $info, $matches) !== 1) {
+            throw new RuntimeException("CLUSTER INFO reply carried no cluster_my_epoch line:\n{$info}");
+        }
+
+        return (int) $matches[1];
     }
 
     /**
@@ -1015,10 +1371,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
      */
     private function reassignEmptySlot(array $oldOwner, array $newOwner, int $slot): void
     {
-        foreach ([$oldOwner, $newOwner] as $master) {
-            $this->adminClientFor($master)->execute('CLUSTER', 'SETSLOT', (string) $slot, 'NODE', $newOwner['id']);
-        }
-
+        $this->assignSlot($oldOwner, $newOwner, $slot);
         $this->waitForGossipConvergence($slot, $newOwner['id']);
     }
 
@@ -1064,32 +1417,37 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
         $seeds = explode(',', (string) getenv('REDIS_CLUSTER_SEEDS'));
         $seed = createRedisClient(RedisConfig::fromUri('tcp://' . trim($seeds[0])));
 
-        // 2000 tries at 50ms is 100 real seconds of headroom — widened a
-        // second time, from 40s (800 tries), after that ceiling was
-        // *also* directly hit in real CI runs: three separate first
-        // attempts (across two different PRs, then again on main right
-        // after merge) all failed on this exact test, each landing
-        // right around the 40s mark, even after the sequential-vs-
-        // combined-wait fix above (confirmed correct by the resulting
-        // failure message naming only the one slot still pending, never
-        // a wrong or garbled one) — meaning a single slot's own real
-        // convergence, on its own, has been observed exceeding 40s more
-        // than once, not just occasionally brushing against it. Every
-        // one of those three failures cleared on a plain retry with no
-        // code change, which is what rules out a permanent hang and
-        // makes a wider bounded budget the right fix rather than a
-        // deeper investigation into cluster internals. This margin is
-        // shared by every pair in $expectations together (see this
-        // method's own docblock for why that's correct, not just
-        // convenient), so it exists purely for genuine host-level
-        // slowness, not for the number of pairs being waited on.
+        // 500 tries at 200ms is 100 seconds of headroom for one pair,
+        // plus 750 more tries (150s) for every *additional* simultaneous
+        // pair. Convergence takes about a second on this image; the
+        // ceiling is wide so that a failure is unmistakably a failure,
+        // never a close call.
+        //
+        // A convergence that never arrives is not slowness: gossip
+        // rejects a slot claim from a node whose configEpoch is not
+        // higher than the current owner's, and a rejected claim stays
+        // rejected until something raises that node's epoch. assignSlot()
+        // prevents that on every direct reassignment. The diagnostics
+        // gathered below on timeout — the expected owner's own answer,
+        // its CPU/fork/latency stats, every node's pong_recv and epoch —
+        // are what separate that from resource contention or a dead
+        // cluster-bus link, which present the same symptom.
+        //
+        // This margin is shared by every pair together for as long as
+        // any remain unconverged (see this method's own docblock for why
+        // that's correct, not just convenient) — the per-pair scaling
+        // only changes the total ceiling, never how the pairs are
+        // checked.
         // Reusing the same relative slot offset across several tests
         // would compound this further, racing against an earlier
-        // test's still-settling gossip for the identical slot —
-        // avoided at the call sites that need it via
-        // emptySlotInLargestRange() and genuinely distinct offsets (see
-        // that method's own docblock).
-        for ($i = 0; $i < 2000; $i++) {
+        // test's still-settling gossip for the identical slot, or
+        // accumulating real slot-map fragmentation in one neighborhood
+        // — avoided by every call site naming one of this file's own
+        // widely-spaced TEST_SLOT_OFFSET_* constants explicitly (see
+        // their docblock).
+        $maxTries = 500 + (max(0, count($expectations) - 1) * 750);
+
+        for ($i = 0; $i < $maxTries; $i++) {
             $shards = $seed->execute('CLUSTER', 'SHARDS');
             $remaining = [];
 
@@ -1105,7 +1463,7 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
 
             $expectations = $remaining;
 
-            usleep(50000);
+            usleep(200000);
         }
 
         $descriptions = array_map(
@@ -1113,7 +1471,168 @@ final class ClusteredRedisSimpleCacheIntegrationTest extends TestCase
             $expectations,
         );
 
-        throw new RuntimeException('Gossip never converged: seeds[0] still doesn\'t report ' . implode(', ', $descriptions) . '.');
+        // Raw CLUSTER NODES from seeds[0], appended on timeout only —
+        // this is the one place this class ever surfaces the unparsed
+        // wire reply, deliberately: it carries the exact per-node
+        // ping/pong timestamps and any migrating/importing markers that
+        // CLUSTER SHARDS collapses away, which is the only way to tell
+        // "gossip is still converging, just slowly" apart
+        // from "this node's own state never actually changed at all"
+        // after the fact, without a live debugging session. Never
+        // parsed or asserted on here — this method's own contract stays
+        // exactly what it already was; this is diagnostic text only, on
+        // the one path that already means the test is about to fail.
+        $rawNodes = (string) $seed->execute('CLUSTER', 'NODES');
+
+        // Why, not only that — gathered from seeds[0] (the node this
+        // wait polls) and from every still-unconverged expectation's
+        // expected owner (its host:port parsed out of $rawNodes, the one
+        // place this method has it; CLUSTER SHARDS never carries it).
+        // seeds[0] is the node whose command loop this polling competes
+        // with; the expected owner is the node whose PING/PONG handling
+        // propagates the change. A CPU- or fork-starved node shows it
+        // here directly — a command-latency spike, a slow fork(), a
+        // background save in progress.
+        $diagnostics = ["seeds[0]" => self::gatherNodeDiagnostics($seed)];
+
+        foreach ($expectations as $expectation) {
+            $target = self::hostPortForNodeId($rawNodes, $expectation['ownerId']);
+
+            if ($target === null) {
+                continue; // the raw dump itself doesn't even mention this id — nothing to connect to.
+            }
+
+            $label = "expected owner of slot {$expectation['slot']} ({$expectation['ownerId']})";
+
+            try {
+                $targetClient = createRedisClient(RedisConfig::fromUri("tcp://{$target['host']}:{$target['port']}"));
+
+                // The check that separates a propagation delay from a
+                // SETSLOT that never took local effect: ask the target
+                // *directly* whether it believes it owns this slot,
+                // rather than only asking seeds[0] what it has heard via
+                // gossip. seeds[0]'s pong_recv timestamps in the raw
+                // dump above show whether the cluster-bus link itself is
+                // alive; if the target's own answer is "no," the problem
+                // is not propagation.
+                $selfClaims = self::shardsReportOwner(
+                    $targetClient->execute('CLUSTER', 'SHARDS'),
+                    $expectation['slot'],
+                    $expectation['ownerId'],
+                );
+
+                $diagnostics[$label] = 'target itself claims this slot (queried directly): '
+                    . ($selfClaims ? 'YES' : 'NO')
+                    . "\n\n" . self::gatherNodeDiagnostics($targetClient);
+            } catch (\Throwable $e) {
+                $diagnostics[$label] = 'could not connect: ' . $e->getMessage();
+            }
+        }
+
+        $diagnosticsText = '';
+
+        foreach ($diagnostics as $label => $text) {
+            $diagnosticsText .= "\n--- {$label} ---\n{$text}";
+        }
+
+        throw new RuntimeException(
+            'Gossip never converged: seeds[0] still doesn\'t report ' . implode(', ', $descriptions)
+                . ".\nRaw CLUSTER NODES from seeds[0]:\n" . $rawNodes
+                . "\n" . $diagnosticsText,
+        );
+    }
+
+    /**
+     * The subset of a node's own diagnostics that distinguishes "this
+     * server process was busy or stalled" from "nothing here explains
+     * it" — never parsed or asserted on, for a human reading a failure.
+     * Best-effort throughout: one failed sub-command (one this Redis
+     * build doesn't support, say) degrades to a labeled error line
+     * rather than losing every other section, since this runs only on a
+     * path that is already failing for its own reason.
+     */
+    private static function gatherNodeDiagnostics(RedisClient $client): string
+    {
+        $sections = [];
+
+        try {
+            $info = (string) $client->execute('INFO');
+            $wanted = [
+                'connected_clients', 'blocked_clients', 'used_memory_human',
+                'mem_fragmentation_ratio', 'loading', 'rdb_bgsave_in_progress',
+                'aof_rewrite_in_progress', 'latest_fork_usec',
+                'instantaneous_ops_per_sec', 'used_cpu_sys', 'used_cpu_user',
+                'total_commands_processed', 'total_net_input_bytes',
+            ];
+            $lines = [];
+
+            foreach (explode("\n", $info) as $line) {
+                $line = rtrim($line, "\r");
+                $key = explode(':', $line, 2)[0] ?? '';
+
+                if (in_array($key, $wanted, true)) {
+                    $lines[] = $line;
+                }
+            }
+
+            $sections[] = "INFO (selected fields):\n" . implode("\n", $lines);
+        } catch (\Throwable $e) {
+            $sections[] = 'INFO failed: ' . $e->getMessage();
+        }
+
+        foreach (['command', 'fast-command', 'fork', 'expire-cycle'] as $event) {
+            try {
+                $history = $client->execute('LATENCY', 'HISTORY', $event);
+                $sections[] = "LATENCY HISTORY {$event}:\n" . json_encode($history, JSON_THROW_ON_ERROR);
+            } catch (\Throwable $e) {
+                $sections[] = "LATENCY HISTORY {$event} failed: " . $e->getMessage();
+            }
+        }
+
+        try {
+            $slowlog = $client->execute('SLOWLOG', 'GET', '10');
+            $sections[] = 'SLOWLOG GET 10:' . "\n" . json_encode($slowlog, JSON_THROW_ON_ERROR);
+        } catch (\Throwable $e) {
+            $sections[] = 'SLOWLOG GET failed: ' . $e->getMessage();
+        }
+
+        return implode("\n\n", $sections);
+    }
+
+    /**
+     * Pulled from a raw CLUSTER NODES reply — the one place any of this
+     * class's own methods still have a given node id's real host:port
+     * once CLUSTER SHARDS (which never carries the wire-format
+     * "id ip:port@busport ..." line) has already been consulted. `null`
+     * for an id the raw text doesn't mention at all, which
+     * gatherNodeDiagnostics()'s own caller treats as nothing to connect
+     * to rather than an error.
+     *
+     * @return array{host: string, port: int}|null
+     */
+    private static function hostPortForNodeId(string $rawNodes, string $nodeId): ?array
+    {
+        foreach (explode("\n", $rawNodes) as $line) {
+            $fields = explode(' ', trim($line));
+
+            if (($fields[0] ?? null) !== $nodeId) {
+                continue;
+            }
+
+            $addr = explode('@', $fields[1] ?? '')[0] ?? '';
+            $colon = strrpos($addr, ':');
+
+            if ($colon === false) {
+                return null;
+            }
+
+            return [
+                'host' => substr($addr, 0, $colon),
+                'port' => (int) substr($addr, $colon + 1),
+            ];
+        }
+
+        return null;
     }
 
     /**
