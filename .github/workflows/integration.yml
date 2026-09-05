@@ -760,12 +760,20 @@ jobs:
           docker network create conformance
           mkdir -p .conformance-state && chmod 777 .conformance-state
           FIXTURES=/app/packages/framework/tests/Runtime/Conformance/Fixtures
+          # The policy the SAPI is served under: the private ranges a
+          # container on this network connects from, so the shared
+          # forwarded-identity case runs against a real trusted edge —
+          # SuperglobalsDriver::against() declares the same thing. The
+          # runner's own address is assigned by Docker, so the range is
+          # what can be named ahead of time, not the address.
+          CONFORMANCE_TRUSTED_PROXIES='127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
           case "${{ matrix.sapi.name }}" in
             frankenphp)
               docker run -d --name sapi --network conformance \
                 -v "$PWD":/app \
                 -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
                 -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
+                -e TRUSTED_PROXIES="$CONFORMANCE_TRUSTED_PROXIES" \
                 dunglas/frankenphp:latest \
                 frankenphp php-server --listen :8080 --root "$FIXTURES" --worker "$FIXTURES/index.php"
               ;;
@@ -774,6 +782,7 @@ jobs:
                 -v "$PWD":/app \
                 -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
                 -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
+                -e TRUSTED_PROXIES="$CONFORMANCE_TRUSTED_PROXIES" \
                 php:8.4-fpm-alpine
               docker run -d --name sapi --network conformance \
                 -v "$PWD":/app:ro \
@@ -871,21 +880,16 @@ jobs:
           php vendor/bin/rr get-binary --no-config --no-interaction -o linux -a amd64
           chmod +x rr
 
-      # Two tests in the shared suite are excluded here, by name, both
-      # real and both disclosed in RoadRunnerAdapter's own class
-      # docblock rather than hidden: a purely-numeric header name is
-      # deterministically dropped by an upstream spiral/roadrunner-http
-      # bug before this adapter ever sees the request, and cookie order
-      # is occasionally (~1 in 10 real runs) not preserved because
-      # RoadRunner represents cookies as a Go map on the way to PHP,
-      # whose iteration order Go randomizes by design. Neither is
-      # reachable from inside this package's own code. The full,
-      # unfiltered suite still runs — and still shows both, honestly —
-      # for anyone running it directly against a real binary; this gate
-      # only needs to be reliable.
+      # The whole suite, unfiltered. The two behaviors this environment
+      # cannot deliver — a purely-numeric header name, which
+      # spiral/roadrunner-http's own request decoding drops before this
+      # adapter exists, and cookie order, which RoadRunner loses to a Go
+      # map on the way to PHP — are declared by RoadRunnerDriver and
+      # asserted in both directions by the shared suite, so they are
+      # covered here rather than skipped.
       - name: Run the runtime conformance suite against it
         working-directory: packages/roadrunner-adapter
-        run: php vendor/bin/phpunit --filter '^(?!.*(test_a_purely_numeric_header_name_survives|test_cookies_reach_both_the_cookie_header_and_cookie_params)$).*$' tests/RoadRunnerConformanceTest.php
+        run: php vendor/bin/phpunit tests/RoadRunnerConformanceTest.php
 
   search-opensearch:
     name: search-opensearch (OpenSearch, PHP ${{ matrix.php-version }})

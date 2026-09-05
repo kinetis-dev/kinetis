@@ -19,11 +19,13 @@ use RuntimeException;
  *
  * - {@see spawn()} starts `php -S` itself on a free port — the committed
  *   suite. A real server is not a preference here: `php://input` cannot
- *   be fed from inside the test process, and `request_parse_body()`'s
- *   failure modes only reproduce in a genuine SAPI request context.
- *   RuntimeDetector picks FpmAdapter under the CLI server, so this is
- *   the bridge plus FpmAdapter::run(), under `php -S`'s superglobal
- *   population.
+ *   be fed from inside the test process, and the settings the bridge
+ *   holds an environment to — `enable_post_data_reading`,
+ *   `max_input_vars`, `arg_separator.input` — are `PHP_INI_PERDIR`, so
+ *   the only way to serve a request under another value is to start a
+ *   process with it. RuntimeDetector picks FpmAdapter under the CLI
+ *   server, so this is the bridge plus FpmAdapter::run(), under
+ *   `php -S`'s superglobal population.
  * - {@see against()} targets a server something else started — the
  *   integration job's FrankenPHP worker and nginx+PHP-FPM containers,
  *   the real SAPIs. The fixture writes each observed request to a
@@ -38,6 +40,16 @@ use RuntimeException;
  */
 final class SuperglobalsDriver implements RuntimeAdapterDriver
 {
+    /**
+     * The proxy policy a spawned fixture is served under. Loopback only
+     * — exactly the peer this driver connects from, and nothing else —
+     * so the shared forwarded-identity case runs against a real trusted
+     * edge rather than against a policy that trusts everything.
+     * `SuperglobalsConformanceTest` spawns its own servers with other
+     * policies for the cases this one cannot show.
+     */
+    public const string TRUSTED_PROXIES = '127.0.0.1/32,::1/128';
+
     /** @var resource|null */
     private $server = null;
 
@@ -46,14 +58,48 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
         private readonly string $stateDir,
         private readonly bool $ownsStateDir,
         private readonly string $clientIp,
+        private readonly string $trustedProxies,
+        private readonly bool $postDataReading,
+        private readonly ?int $maxInputVars,
+        private readonly ?string $argSeparatorInput,
     ) {}
 
-    public static function spawn(): self
-    {
+    /**
+     * @param string $trustedProxies the `TRUSTED_PROXIES` the fixture is
+     *     served under
+     * @param bool $postDataReading `enable_post_data_reading`, which the
+     *     bridge requires to be off — spawnable as `true` only so the
+     *     refusal that produces can be proven
+     * @param ?int $maxInputVars this server's own `max_input_vars`.
+     *     Null leaves PHP's default (1000, above the contract's own
+     *     ceiling); a lower value is a runtime configured below the
+     *     contract, which is spawnable only so the refusal that produces
+     *     can be proven against a real `parse_str()`
+     * @param ?string $argSeparatorInput this server's own
+     *     `arg_separator.input`. Null leaves PHP's default, `&`, which
+     *     is the one `Kinetis\Http\Form\FormPairs` will run under; any
+     *     other value is spawnable only so the refusal that produces can
+     *     be proven against a real `parse_str()`
+     */
+    public static function spawn(
+        string $trustedProxies = self::TRUSTED_PROXIES,
+        bool $postDataReading = false,
+        ?int $maxInputVars = null,
+        ?string $argSeparatorInput = null,
+    ): self {
         $stateDir = sys_get_temp_dir() . '/kinetis-conformance-' . bin2hex(random_bytes(8));
         mkdir($stateDir);
 
-        return new self('127.0.0.1:' . FreePort::reserve(), $stateDir, ownsStateDir: true, clientIp: '127.0.0.1');
+        return new self(
+            '127.0.0.1:' . FreePort::reserve(),
+            $stateDir,
+            ownsStateDir: true,
+            clientIp: '127.0.0.1',
+            trustedProxies: $trustedProxies,
+            postDataReading: $postDataReading,
+            maxInputVars: $maxInputVars,
+            argSeparatorInput: $argSeparatorInput,
+        );
     }
 
     /**
@@ -65,10 +111,34 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
      */
     public static function against(string $hostPort, string $stateDir, string $clientIp): self
     {
-        return new self($hostPort, $stateDir, ownsStateDir: false, clientIp: $clientIp);
+        return new self(
+            $hostPort,
+            $stateDir,
+            ownsStateDir: false,
+            clientIp: $clientIp,
+            // The container was started with the same policy, in
+            // Fixtures/php-conformance.ini and the integration job's own
+            // environment; this process only records what that is.
+            // Not this process's choice: the container was started with
+            // a policy covering the private range it is reached from
+            // (integration.yml's own CONFORMANCE_TRUSTED_PROXIES). This
+            // only records that a policy is in force, which is what the
+            // shared forwarded-identity case asserts against.
+            trustedProxies: self::TRUSTED_PROXIES,
+            postDataReading: false,
+            maxInputVars: null,
+            argSeparatorInput: null,
+        );
     }
 
-    public function start(): void
+    /**
+     * @param bool $waitForReady poll `/__conformance/ready` until the
+     *     whole adapter path answers 204. False only for a server
+     *     configured, on purpose, so that no request can succeed — where
+     *     never becoming ready is the behavior under test, not a
+     *     failure to wait for.
+     */
+    public function start(bool $waitForReady = true): void
     {
         if ($this->ownsStateDir) {
             $server = proc_open(
@@ -76,16 +146,21 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
                     'php',
                     // The same values Fixtures/php-conformance.ini gives the
                     // containers — see that file for why.
-                    '-d', 'post_max_size=2K',
-                    '-d', 'upload_max_filesize=1K',
+                    '-d', 'enable_post_data_reading=' . ($this->postDataReading ? '1' : '0'),
                     '-d', 'output_buffering=0',
+                    ...($this->maxInputVars === null ? [] : ['-d', 'max_input_vars=' . $this->maxInputVars]),
+                    ...($this->argSeparatorInput === null ? [] : ['-d', 'arg_separator.input=' . $this->argSeparatorInput]),
                     '-S', $this->hostPort,
                     __DIR__ . '/Fixtures/index.php',
                 ],
                 [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
                 $pipes,
                 null,
-                [...getenv(), 'KINETIS_CONFORMANCE_STATE_DIR' => $this->stateDir],
+                [
+                    ...getenv(),
+                    'KINETIS_CONFORMANCE_STATE_DIR' => $this->stateDir,
+                    'TRUSTED_PROXIES' => $this->trustedProxies,
+                ],
             );
 
             if ($server === false) {
@@ -95,7 +170,15 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
             $this->server = $server;
         }
 
-        $this->waitForServerReady();
+        if ($waitForReady) {
+            $this->waitForServerReady();
+
+            return;
+        }
+
+        // Still has to be listening before anything is sent to it; the
+        // fixture's own answer is what this caller is not waiting for.
+        $this->waitForListener();
     }
 
     public function stop(): void
@@ -149,16 +232,41 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     #[\Override]
     public function unparseableFormRequest(): WireRequest
     {
-        // Far past post_max_size=2K. PUT, not POST: the SAPI handles an
-        // oversized POST body itself (an empty $_POST and a warning, no
-        // exception), whereas PUT reaches request_parse_body(), the one
-        // call in the bridge that can throw.
+        // A multipart content type with no boundary parameter names no
+        // delimiter at all, so there is nothing to split the body on —
+        // the same trigger every other driver uses, because with
+        // enable_post_data_reading off this environment runs the same
+        // Kinetis\Http\Form parser they do rather than PHP's.
         return new WireRequest(
-            'PUT',
+            'POST',
             '/',
-            headers: [['Content-Type', 'multipart/form-data; boundary=----XYZ']],
-            body: '------XYZ' . str_repeat('A', 5_000) . '------XYZ--',
+            headers: [['Content-Type', 'multipart/form-data']],
+            body: 'not a multipart body at all',
         );
+    }
+
+    #[\Override]
+    public function expectedScheme(): string
+    {
+        return 'http';
+    }
+
+    #[\Override]
+    public function preservesNumericHeaderNames(): bool
+    {
+        return true;
+    }
+
+    #[\Override]
+    public function preservesCookieOrder(): bool
+    {
+        return true;
+    }
+
+    #[\Override]
+    public function trustsTheConnectingClient(): bool
+    {
+        return $this->trustedProxies !== '';
     }
 
     /**
@@ -256,15 +364,27 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     private function rawHttpRequest(WireRequest $request, ResponseSpec $response, string $id): string
     {
         $target = $request->path . ($request->queryString !== '' ? '?' . $request->queryString : '');
+
+        // The client's own Host when it declared one, this driver's
+        // listener otherwise. One Host header either way: two is a
+        // malformed request, and a request that declares an authority is
+        // exactly how the suite checks the adapter reads it from the
+        // request rather than from wherever it happens to be listening.
+        $host = self::declaredHost($request) ?? $this->hostPort;
+
         $lines = [
             "{$request->method} {$target} HTTP/1.1",
-            "Host: {$this->hostPort}",
+            "Host: {$host}",
             'Connection: close',
             "X-Conformance-Id: {$id}",
             'X-Conformance-Response: ' . base64_encode(json_encode($response->toArray(), JSON_THROW_ON_ERROR)),
         ];
 
         foreach ($request->headers as [$name, $value]) {
+            if (strcasecmp($name, 'Host') === 0) {
+                continue;
+            }
+
             $lines[] = "{$name}: {$value}";
         }
 
@@ -282,6 +402,17 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
         }
 
         return implode("\r\n", $lines) . "\r\n\r\n" . $request->body;
+    }
+
+    private static function declaredHost(WireRequest $request): ?string
+    {
+        foreach ($request->headers as [$name, $value]) {
+            if (strcasecmp($name, 'Host') === 0) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     private static function parseResponse(string $wire, ?float $bodyArrivalSpan): WireResponse
@@ -361,6 +492,25 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
      * PHP-FPM pool behind it is up (a 502 for the first real request).
      * Polls the fixture's own /__conformance/ready until it says 204.
      */
+    private function waitForListener(): void
+    {
+        $deadline = microtime(true) + 10.0;
+
+        while (microtime(true) < $deadline) {
+            $socket = @stream_socket_client("tcp://{$this->hostPort}", $errno, $errstr, 0.5);
+
+            if ($socket !== false) {
+                fclose($socket);
+
+                return;
+            }
+
+            usleep(20_000);
+        }
+
+        throw new RuntimeException("The conformance fixture server at {$this->hostPort} never started listening.");
+    }
+
     private function waitForServerReady(): void
     {
         $deadline = microtime(true) + 30.0;

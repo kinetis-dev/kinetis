@@ -677,23 +677,28 @@ hydration — `kinetis/mcp`'s `/mcp` endpoint and
 same way and get the identical `413`. What it does *not* reach is a
 body a runtime already parsed into a ready-made array *before* Kinetis
 code ever sees it — a `multipart/form-data` or
-`application/x-www-form-urlencoded` body handed over pre-parsed is
-bounded by PHP's own `upload_max_filesize`/`post_max_size` instead, a
-separate boundary this middleware doesn't need to reach.
+`application/x-www-form-urlencoded` body, parsed by the SAPI under
+FrankenPHP and PHP-FPM and by the adapter itself under
+`kinetis/bref-adapter` and `kinetis/roadrunner-adapter`.
+
+That body is bounded by `Kinetis\Http\Form\FormLimits` instead, in the
+adapter, against the same `MAX_BODY_SIZE` and the same default this
+middleware uses — plus four ceilings a byte count cannot express (input
+variables, file parts, nesting depth, multipart part and header counts)
+and a `413` rather than a silently shortened form. A separate boundary
+from the one this middleware enforces, not a gap in it.
 
 ```{note}
-That SAPI-limit explanation is specific to FrankenPHP/PHP-FPM, where a
-real SAPI parses the body before this middleware ever runs.
-`kinetis/bref-adapter` and `kinetis/roadrunner-adapter` both parse form
-bodies themselves, in userland PHP, so `upload_max_filesize`/
-`post_max_size` never apply there. Under `kinetis/bref-adapter`, a
-Lambda event's whole body arrives as one in-memory string with no SAPI
-involved at all; the effective limit is whatever Lambda's own payload
-size limit already is. Under `kinetis/roadrunner-adapter`, the required
-`http.max_request_size` setting is the real limit — a separate, Go-side
-mechanism independent of `raw_body`, not affected by it — see
-{doc}`runtime-adapters` for the full reasoning, including how it relates
-to `MAX_BODY_SIZE`.
+One further ceiling sits outside PHP entirely and is not
+`MAX_BODY_SIZE`'s to enforce: under `kinetis/roadrunner-adapter`, the
+required `http.max_request_size` setting is what bounds a body whose
+length was never declared, since RoadRunner hands PHP the whole thing at
+once. Under FrankenPHP and PHP-FPM, `enable_post_data_reading=0` is what
+makes the body Kinetis's to bound in the first place — PHP's own
+`post_max_size`/`max_input_vars` never see it. Under
+`kinetis/bref-adapter` there is no mechanism at all below Lambda's own
+invocation payload limit, which is exactly why `FormLimits` matters most
+there. See {doc}`runtime-adapters` for the numbers and the reasoning.
 ```
 
 ## Built in: `CorsMiddleware`
@@ -945,7 +950,19 @@ $app->bind(RateLimitMiddleware::class, function ($c) {
 When a request comes through more than one trusted hop, the
 `X-Forwarded-For` chain is walked from the end backward, skipping every
 entry that's itself a trusted proxy — the first untrusted entry is the
-real client.
+real client. That walk is `Kinetis\Http\TrustedProxies`' own: the same
+implementation, and the same range grammar, the runtime adapters apply
+before letting a forwarded header decide a request's scheme (see
+{doc}`runtime-adapters`), so "who is this request's client" is answered
+one way everywhere it is asked. The *policy* it walks is this
+middleware's own, built from the list given to its constructor. It is a
+separate instance from the one the adapters were handed, and it may name
+a narrower set of edges — a rate limiter can be told to believe fewer
+hops than the application trusts for a request's scheme, and where the
+two lists differ that is the difference you configured. `REMOTE_ADDR`
+itself is never rewritten: the transport peer stays what actually
+connected, and the client behind an edge is derived from it when a bucket
+is keyed.
 
 Each range is parsed when the middleware is constructed. One that cannot
 be — a prefix length outside 0-32 for IPv4 or 0-128 for IPv6, or an

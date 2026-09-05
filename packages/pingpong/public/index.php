@@ -10,9 +10,11 @@ use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerDiscovery;
+use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\ProjectRoot;
@@ -95,6 +97,17 @@ if ($env->isProduction()) {
     $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
 }
 
+// The two policies an adapter needs before the Kernel or its container
+// exist: how many bytes a request body may carry, and whose forwarded
+// headers may decide this request's scheme and client address. Built
+// from the same Config everything else here came from and registered
+// before the bootstrap chain runs, so bootstrap.php can replace either
+// one the way it replaces any other binding: AppScope locks its
+// bindings at boot(), and every registration has to be on the near side
+// of that.
+$app->instance(FormLimits::class, FormLimits::fromConfig($config));
+$app->instance(TrustedProxies::class, TrustedProxies::fromConfig($config));
+
 // PluginDiscovery::bindInstances() (kinetis/mcp's McpRegistry included —
 // its own PackageBootstrap only assembles McpServer lazily around
 // whatever McpRegistry is already resolvable, it never discovers or
@@ -122,7 +135,17 @@ foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
 
 // Detected before constructing Kernel, not after, so its isPersistent()
 // can be passed straight into the constructor rather than patched in.
-$adapter = RuntimeDetector::detect();
+// Both policies are read back out of the container rather than kept
+// from the registration above: whatever the bootstrap chain left bound
+// is what MaxBodySizeMiddleware enforces inside the Kernel, so the
+// adapter has to bound and forward this request by those same two
+// objects.
+/** @var FormLimits $formLimits */
+$formLimits = $app->get(FormLimits::class);
+/** @var TrustedProxies $trustedProxies */
+$trustedProxies = $app->get(TrustedProxies::class);
+
+$adapter = RuntimeDetector::detect($formLimits, $trustedProxies);
 
 $kernel = new Kernel(
     $app,

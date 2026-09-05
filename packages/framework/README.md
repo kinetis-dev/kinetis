@@ -104,10 +104,19 @@ for a complete walkthrough, including running under FrankenPHP.
 Core reads from the environment (or a `.env` file at the project root)
 via `Kinetis\Config`:
 
+**Running under FrankenPHP or PHP-FPM requires `enable_post_data_reading=0`**
+in the SAPI's `php.ini`. Kinetis reads and bounds the request body itself;
+left on, PHP parses form bodies before any Kinetis code runs, truncating
+them at its own limits and leaving `php://input` empty. The bridge refuses
+to serve a request without it rather than running on a body PHP already
+consumed — see
+[Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html).
+
 | Key | Default | Purpose |
 |---|---|---|
 | `APP_ENV` | `production` | `development` — the exact name, ignoring case — selects live discovery; unset or any other name selects the AOT cache. |
-| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read. |
+| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read — by the Kernel for a raw body, and by whichever runtime adapter parsed a form body before the Kernel existed. One `Kinetis\Http\Form\FormLimits` instance, built from this value once, is what both use. |
+| `TRUSTED_PROXIES` | — | Comma-separated addresses/CIDR ranges whose `X-Forwarded-Proto`/`X-Forwarded-For` are believed. Empty means no peer is an edge and neither header is read — the safe default for a directly reachable listener. |
 | `ROUTE_DISCOVERY_PATHS` | — | Restricts the HTTP-controller scan to comma-separated sub-paths, relative to each PSR-4 base directory. |
 | `COMMAND_DISCOVERY_PATHS` | — | The same, for CLI commands. |
 | `MIDDLEWARE_DISCOVERY_PATHS` | — | The same, for global middleware and middleware groups. |

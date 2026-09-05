@@ -135,15 +135,10 @@ final readonly class BroadcastAuthController
             return $parsed;
         }
 
-        // getContents(), never a (string) cast: MaxBodySizeMiddleware
-        // wraps this request's body in a SizeLimitedStream whose
-        // __toString() cannot throw and silently reports an empty
-        // string once the configured cap is exceeded — a string cast
-        // here would turn a real oversized-body rejection into a
-        // misleading 422 "required fields missing" response instead of
-        // the 413 that middleware exists to produce. Letting
-        // BodyTooLargeException propagate uncaught is what lets that
-        // middleware's own catch turn it into the real response.
+        // The body reaching here is already bounded and complete:
+        // MaxBodySizeMiddleware settles the byte ceiling and stages the
+        // whole body before any handler runs, so an oversized request
+        // is a 413 that never arrives at this controller.
         parse_str($request->getBody()->getContents(), $fallback);
 
         $result = [];

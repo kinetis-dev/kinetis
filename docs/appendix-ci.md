@@ -123,10 +123,14 @@ disguised PHPUnit test.
   one path on every side. Readiness is the fixture's own
   `/__conformance/ready` answering 204 through the full adapter path,
   not a TCP accept — nginx listens before the FPM pool behind it does. Exercises each SAPI's own superglobal population, header
-  folding, client address, form/binary bodies, the `post_max_size` 400,
-  and — timed on the wire — incremental streaming, which is why the
-  nginx fixture sets `fastcgi_buffering off`: with the default on, the
-  stream arrives as one lump and the case fails, as verified.
+  folding, client address, request identity, form/binary bodies (under
+  the `enable_post_data_reading=0` the Kinetis SAPI adapters require, so
+  the body each parses is the client's own), the `400` for a body it
+  cannot parse and the `413` for one past a `Kinetis\Http\Form\FormLimits`
+  ceiling, and — timed on the wire —
+  incremental streaming, which is why the nginx fixture sets
+  `fastcgi_buffering off`: with the default on, the stream arrives as
+  one lump and the case fails, as verified.
 - **`roadrunner-conformance`** — the same shared suite against
   `Kinetis\RoadRunnerAdapter\RoadRunnerAdapter`, structurally simpler
   than `runtime-conformance` above: `RoadRunnerDriver` spawns a real
@@ -136,12 +140,13 @@ disguised PHPUnit test.
   providing a real, prebuilt `ext-sockets` (it compiles under Alpine
   too, just not worth doing here — see {doc}`runtime-adapters`), a real
   binary fetched via `spiral/roadrunner-cli`'s `vendor/bin/rr get-binary`,
-  and the suite itself. Two tests are excluded from this job's gate by
-  name — a purely-numeric header name (a deterministic upstream bug)
-  and cookie order (an occasional, probabilistic reordering) — both
-  disclosed in `RoadRunnerAdapter`'s own docblock and {doc}`runtime-adapters`,
-  neither reachable from this adapter's own code; the full, unfiltered
-  suite still shows both, honestly, for anyone running it directly.
+  and the suite itself. The whole suite runs, unfiltered: the two
+  behaviors this environment cannot deliver — a purely-numeric
+  header name, dropped by an upstream bug, and cookie order, lost to a
+  Go map — are declared by `RoadRunnerDriver` and asserted in both
+  directions by the shared suite, so they are covered here rather than
+  skipped. Both are disclosed in `RoadRunnerAdapter`'s own docblock and
+  {doc}`runtime-adapters`.
 - **`pingpong`** — not a package's own real-backend script like every
   job above; the real `docker compose up --build` stack (`app`, `mysql`,
   `redis`, `soketi`, `migrate`, `queue-worker`, `cron`) brought up from

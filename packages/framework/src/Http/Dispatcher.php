@@ -362,10 +362,6 @@ final class Dispatcher
     {
         $contentType = $request->getHeaderLine('Content-Type');
 
-        // getContents(), not a (string) cast: MaxBodySizeMiddleware's
-        // SizeLimitedStream enforces its cap by throwing, and
-        // StreamInterface::__toString() is required to never throw —
-        // only getContents() can actually surface an oversized body here.
         $formEncoded = MediaType::isFormEncoded($contentType);
         $decoded = $formEncoded
             ? $this->parsedBodyAsArray($request)

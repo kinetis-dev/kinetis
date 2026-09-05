@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Runtime\Adapters;
 
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Runtime\SuperglobalsBridge;
@@ -20,6 +22,11 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class FrankenPhpAdapter implements RuntimeAdapterInterface
 {
+    public function __construct(
+        private readonly FormLimits $limits,
+        private readonly TrustedProxies $trustedProxies,
+    ) {}
+
     /**
      * @param callable(ServerRequestInterface): ResponseInterface $handler
      */
@@ -31,8 +38,8 @@ final class FrankenPhpAdapter implements RuntimeAdapterInterface
         }
 
         do {
-            $keepRunning = frankenphp_handle_request(static function () use ($handler): void {
-                SuperglobalsBridge::handle($handler);
+            $keepRunning = frankenphp_handle_request(function () use ($handler): void {
+                SuperglobalsBridge::handle($handler, $this->limits, $this->trustedProxies);
             });
         } while ($keepRunning);
     }

@@ -4,23 +4,28 @@ declare(strict_types=1);
 
 namespace Kinetis\BrefAdapter;
 
+use JsonException;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
-use Kinetis\Http\MediaType;
+use Kinetis\Http\Form\Exception\FormLimitExceededException;
+use Kinetis\Http\Form\Exception\UnparseableFormBodyException;
+use Kinetis\Http\Form\FormBody;
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\Form\MultipartEnvelope;
+use Kinetis\Http\Form\MultipartFormBuilder;
+use Kinetis\Http\Form\StagedMultipartBody;
+use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Kinetis\Http\Responses\ErrorResponse;
-use LogicException;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Runtime\StreamableResponseInterface;
-use JsonException;
 use Nyholm\Psr7\Factory\Psr17Factory;
-use Nyholm\Psr7\Stream;
-use Nyholm\Psr7\UploadedFile;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Riverline\MultiPartParser\StreamedPart;
 use stdClass;
 use Throwable;
+use ValueError;
 
 /**
  * Bridges AWS Lambda's Runtime API to the Kernel, so the same application
@@ -41,12 +46,22 @@ use Throwable;
  *
  * Lives in its own package, not kinetis/framework core, specifically because of
  * the multipart/form-data handling below: a Lambda event's body arrives as
- * one in-memory string with no live php://input stream behind it, so PHP
- * 8.4's request_parse_body() (what FrankenPhpAdapter/FpmAdapter use for the
- * same problem in core) can't help here — it's stream-bound. Parsing an
- * arbitrary multipart string needs riverline/multipart-parser, and pulling
- * that into every Kinetis install just for a deployment target most
- * consumers don't use isn't worth it.
+ * one in-memory string with no live php://input stream behind it, and
+ * parsing an arbitrary multipart string needs riverline/multipart-parser.
+ * Pulling that into every Kinetis install just for a deployment target
+ * most consumers don't use isn't worth it.
+ *
+ * The parser is this package's; the rules it produces are not. Field
+ * nesting, duplicate names, every ceiling on how large or complicated a
+ * form may be, and the staging of the body it is parsed from all come
+ * from `Kinetis\Http\Form` in core, which the SAPI bridge and
+ * kinetis/roadrunner-adapter answer to as well — so the same form sent
+ * to any of the three is read into the same PSR-7 structures or refused
+ * by all three with the same status. No SAPI here enforces anything of
+ * its own — which is the same position the SAPI adapters put themselves
+ * in by requiring `enable_post_data_reading=0` — so those ceilings are
+ * the whole defense, and the platform's own 6 MB invocation payload
+ * limit sits above them rather than in place of them.
  */
 final class BrefLambdaAdapter implements RuntimeAdapterInterface
 {
@@ -91,6 +106,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
 
     public function __construct(
         private readonly string $runtimeApi,
+        private readonly FormLimits $limits,
         private readonly float $nextInvocationTimeoutSeconds = self::DEFAULT_NEXT_INVOCATION_TIMEOUT_SECONDS,
         private readonly float $responseTimeoutSeconds = self::DEFAULT_RESPONSE_TIMEOUT_SECONDS,
     ) {}
@@ -118,7 +134,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
                 // and not silently downgraded into an empty, plausible-
                 // looking GET / that reaches application routing either.
                 $event = self::decodeInvocationEvent($rawBody);
-                $this->postResponse($requestId, self::handleEvent($event, $handler));
+                $this->postResponse($requestId, self::handleEvent($event, $handler, $this->limits));
             } catch (Throwable $e) {
                 $this->postError($requestId, $e);
             }
@@ -149,34 +165,41 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
      * @param callable(ServerRequestInterface): ResponseInterface $handler
      * @return array{statusCode:int,headers:array<string,string>,cookies:list<string>,body:string,isBase64Encoded:bool}
      */
-    public static function handleEvent(array $event, callable $handler): array
+    public static function handleEvent(array $event, callable $handler, FormLimits $limits): array
     {
         try {
-            $request = self::requestFromEvent($event);
-        } catch (MalformedRequestBodyException $e) {
-            // Logged, never returned — the same policy as
-            // SuperglobalsBridge::handle(): the message may carry a
-            // fragment of attacker-controlled input.
-            error_log('Malformed request body: ' . $e->getMessage());
+            $request = self::requestFromEvent($event, $limits);
+        } catch (MalformedRequestBodyException|UnparseableFormBodyException $e) {
+            // A fixed classification, never a message — see
+            // UnparseableFormBodyException for why a parser's own text
+            // can never reach a log line.
+            error_log('Malformed request body: ' . ($e instanceof UnparseableFormBodyException ? $e->category : 'invalid-base64'));
 
             return self::responseToPayload(ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE));
+        } catch (BodyTooLargeException|FormLimitExceededException $e) {
+            // Safe to return as written: a limit message names a
+            // configured ceiling and never anything from the request.
+            return self::responseToPayload(ErrorResponse::create(413, $e->getMessage()));
         }
 
         return self::responseToPayload($handler($request));
     }
 
     /**
+     * The event as a PSR-7 request. Identity — scheme, host, port, path,
+     * raw query, protocol version — is settled first and in one place
+     * (see {@see LambdaRequestIdentity}), so the URI, the `Host` header
+     * and the request target cannot disagree; a contradictory or
+     * malformed event is refused here rather than dispatched as a
+     * plausible request built from whichever fields happened to be
+     * usable.
+     *
      * @param array<string,mixed> $event
      */
-    public static function requestFromEvent(array $event): ServerRequestInterface
+    public static function requestFromEvent(array $event, FormLimits $limits): ServerRequestInterface
     {
-        $factory = new Psr17Factory();
-
-        $method = is_string($event['requestContext']['http']['method'] ?? null)
-            ? $event['requestContext']['http']['method']
-            : 'GET';
-        $path = is_string($event['rawPath'] ?? null) ? $event['rawPath'] : '/';
-        $query = is_string($event['rawQueryString'] ?? null) ? $event['rawQueryString'] : '';
+        $headers = self::headersFromEvent($event);
+        $identity = LambdaRequestIdentity::fromEvent($event, $headers);
 
         // requestContext.http.sourceIp is API Gateway's own record of the
         // real client address — the closest thing to what REMOTE_ADDR
@@ -188,12 +211,82 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         $sourceIp = $event['requestContext']['http']['sourceIp'] ?? null;
         $serverParams = is_string($sourceIp) && $sourceIp !== '' ? ['REMOTE_ADDR' => $sourceIp] : [];
 
-        $request = $factory->createServerRequest($method, $path . ($query !== '' ? "?{$query}" : ''), $serverParams);
-
-        /** @var array<string,string> $headers */
-        $headers = is_array($event['headers'] ?? null) ? $event['headers'] : [];
+        $factory = new Psr17Factory();
+        $request = $factory->createServerRequest($identity->method, $identity->uri(), $serverParams)
+            ->withProtocolVersion($identity->protocolVersion)
+            ->withRequestTarget($identity->requestTarget());
 
         foreach ($headers as $name => $value) {
+            // (string) again, not redundantly: the lowercased name was
+            // cast on the way into $headers, and PHP coerced it straight
+            // back to an int on the way in as an array key. Only a real
+            // string argument survives to withHeader(), which rejects an
+            // int outright even though "123" is a valid header name.
+            $request = $request->withHeader((string) $name, $value);
+        }
+
+        // One authority, the identity's — a host header the event
+        // carried has already been checked against it, and one it did
+        // not carry has to exist all the same for anything downstream
+        // that reads it.
+        $request = $request->withHeader('Host', $identity->authority());
+
+        // The raw query is the authority for the parameters too, so this
+        // adapter reads the same bytes with the same function every other
+        // runtime does. queryStringParameters is not consulted anywhere;
+        // see LambdaRequestIdentity for why.
+        parse_str($identity->rawQueryString, $queryParams);
+        $request = $request->withQueryParams($queryParams);
+
+        $request = self::applyCookies($request, $event);
+
+        $body = self::decodeBody($event);
+        $request = $request->withBody($factory->createStream($body));
+
+        return self::applyFormBody($request, $body, self::declaredContentLength($headers), $limits);
+    }
+
+    /**
+     * The event's headers, lowercased into the map the rest of this
+     * adapter reads — and refused outright when two spellings of one
+     * name arrive.
+     *
+     * A canonical payload-v2 event carries each header once, already
+     * comma-folded by API Gateway. A direct invocation carries whatever
+     * its caller wrote, and a JSON object may legitimately hold both
+     * `Host` and `host`. Lowercasing them into one map makes the second
+     * silently win, so an event can name two authorities, two forwarded
+     * schemes or two content lengths while {@see LambdaRequestIdentity}
+     * validates only the survivor — an ambiguity resolved by key order
+     * is not an identity anything downstream can rely on.
+     *
+     * Names and values are checked here too, not only counted: a name
+     * that is not an RFC 9110 token, or a value carrying a control
+     * character, is a header PSR-7 would reject or a client could break a
+     * log line with. This runs on the public {@see requestFromEvent()}
+     * boundary as well as the run loop's own decoded JSON, so an array
+     * handed straight to this class is held to the same shape the wire
+     * is.
+     *
+     * @param array<string,mixed> $event
+     * @return array<string,string>
+     */
+    private static function headersFromEvent(array $event): array
+    {
+        $raw = $event['headers'] ?? null;
+
+        if ($raw === null) {
+            return [];
+        }
+
+        if (!is_array($raw)) {
+            throw BrefAdapterException::malformedInvocationEvent('headers must be an object with string values when present.');
+        }
+
+        $headers = [];
+        $spellings = [];
+
+        foreach ($raw as $name => $value) {
             // (string) $name, not the raw array key: a canonical JSON
             // object key like "123" is a real, RFC 9110-valid header name
             // (a token, which includes digits) — but json_decode(...,
@@ -201,47 +294,46 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
             // key to a genuine PHP int, and PSR-7's own withHeader()
             // requires a string, throwing InvalidArgumentException on an
             // int even though nothing about the header itself is
-            // invalid. Confirmed directly: the same PSR-7 implementation
-            // accepts the identical name/value pair once it's a real
-            // string again.
-            $request = $request->withHeader((string) $name, $value);
+            // invalid.
+            $name = (string) $name;
+
+            if (!is_string($value)) {
+                throw BrefAdapterException::malformedInvocationEvent('headers must be an object with string values when present.');
+            }
+
+            if (preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/', $name) !== 1) {
+                throw BrefAdapterException::malformedInvocationEvent('a header name is not an RFC 9110 token.');
+            }
+
+            if (preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $value) === 1) {
+                throw BrefAdapterException::malformedInvocationEvent('a header value contains a control character.');
+            }
+
+            $lowercased = strtolower($name);
+
+            if (isset($spellings[$lowercased])) {
+                throw BrefAdapterException::malformedInvocationEvent('the event carries one header name under two spellings.');
+            }
+
+            $spellings[$lowercased] = true;
+            // Lowercased on the way in so identity resolution can look up
+            // `host`/`x-forwarded-proto` without repeating a
+            // case-insensitive search; PSR-7 header lookup is
+            // case-insensitive either way.
+            $headers[$lowercased] = $value;
         }
 
-        // Payload format 2.0 never puts cookies in $headers at all — they
-        // arrive as their own top-level list, one "name=value" pair per
-        // entry, specifically so API Gateway never has to fold multiple
-        // cookies into one header the way it does for ordinary multi-value
-        // headers. Reconstructing the Cookie header here (and parsing it
-        // into cookieParams) is what makes cookie/session authentication
-        // reachable at all under this adapter — see kinetis/session's
-        // SessionMiddleware, which reads cookieParams first.
-        $request = self::applyCookies($request, $event);
+        return $headers;
+    }
 
-        // A canonical numeric JSON object key like "123" becomes a
-        // genuine PHP int array key here (json_decode(..., associative:
-        // true) coerces it, the same as the header loop above) — but
-        // unlike withHeader() (a real string function parameter, where
-        // an explicit (string) cast genuinely fixes the type),
-        // re-keying an array element cannot fix this: PHP always
-        // coerces a canonical-integer string used as an array key back
-        // to int, regardless of any cast applied before the assignment
-        // — confirmed directly, not assumed, since this is easy to get
-        // wrong. Left as-is deliberately rather than "fixed" with dead
-        // code that would look like it does something it can't:
-        // withQueryParams() itself never throws on an int key the way
-        // withHeader() does, and PHP's own array-lookup semantics
-        // coerce a numeric-string read the identical way, so
-        // `$request->getQueryParams()['123']` still finds the value
-        // regardless of which key type is actually stored.
-        /** @var array<string,string> $queryParams */
-        $queryParams = is_array($event['queryStringParameters'] ?? null) ? $event['queryStringParameters'] : [];
+    /**
+     * @param array<string,string> $headers
+     */
+    private static function declaredContentLength(array $headers): ?int
+    {
+        $declared = $headers['content-length'] ?? null;
 
-        $request = $request->withQueryParams($queryParams);
-
-        $body = self::decodeBody($event);
-        $request = $request->withBody($factory->createStream($body));
-
-        return self::applyFormBody($request, $body);
+        return is_string($declared) && ctype_digit($declared) ? (int) $declared : null;
     }
 
     /**
@@ -258,8 +350,23 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
      */
     private static function applyCookies(ServerRequestInterface $request, array $event): ServerRequestInterface
     {
+        $raw = $event['cookies'] ?? null;
+
+        if ($raw === null) {
+            return $request;
+        }
+
+        // Not filtered — validated. array_filter('is_string') on this
+        // public boundary would drop a malformed entry and hand on the
+        // rest as though the client had sent only those, which is the
+        // silently-shortened shape this framework refuses everywhere
+        // else.
+        if (!is_array($raw) || !array_is_list($raw) || array_any($raw, static fn (mixed $entry): bool => !is_string($entry))) {
+            throw BrefAdapterException::malformedInvocationEvent('cookies must be a list of strings when present.');
+        }
+
         /** @var list<string> $cookies */
-        $cookies = is_array($event['cookies'] ?? null) ? array_values(array_filter($event['cookies'], 'is_string')) : [];
+        $cookies = $raw;
 
         if ($cookies === []) {
             return $request;
@@ -281,12 +388,12 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
             return $body;
         }
 
-        // Strict mode: base64_decode() without it would silently accept
-        // invalid base64 as best-effort garbage instead of reporting it,
-        // and the bare `?: ''` this replaces collapsed a genuinely
-        // decoded "" or "0" body into the same "empty" outcome as a
-        // decode failure — three different situations that must not be
-        // conflated.
+        // Strict mode, and an explicit false check rather than a `?:`
+        // fallback. Without strict mode base64_decode() accepts invalid
+        // base64 as best-effort garbage instead of reporting it; with a
+        // falsy fallback a decoded "" or "0" body reads as the same
+        // "empty" outcome a decode failure does — three situations that
+        // must stay distinct.
         $decoded = base64_decode($body, strict: true);
 
         if ($decoded === false) {
@@ -296,19 +403,26 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         return $decoded;
     }
 
-    private static function applyFormBody(ServerRequestInterface $request, string $body): ServerRequestInterface
+    /**
+     * There is no SAPI here to enforce `post_max_size` or
+     * `max_input_vars`, so `Kinetis\Http\Form\FormBody` is the whole
+     * defense — the same entry point, the same contract and the same
+     * `413` every other runtime applies, with this package's own
+     * multipart parser passed in as the one part that differs. The size
+     * it checks is the bytes actually decoded as well as the declared
+     * `Content-Length`: an event may carry either, and a body larger
+     * than the ceiling must not be parsed on the strength of a smaller
+     * declaration.
+     */
+    private static function applyFormBody(ServerRequestInterface $request, string $body, ?int $declaredBytes, FormLimits $limits): ServerRequestInterface
     {
-        $contentType = $request->getHeaderLine('Content-Type');
-
-        if (!MediaType::isFormEncoded($contentType)) {
-            return $request;
-        }
-
-        [$parsedBody, $uploadedFiles] = MediaType::isMultipartFormData($contentType)
-            ? self::parseMultipart($contentType, $body)
-            : self::parseUrlEncoded($body);
-
-        return $request->withParsedBody($parsedBody)->withUploadedFiles($uploadedFiles);
+        return FormBody::apply(
+            $request,
+            $body,
+            $declaredBytes,
+            $limits,
+            static fn (string $contentType, string $raw, FormLimits $formLimits): array => self::parseMultipart($contentType, $raw, $formLimits),
+        );
     }
 
     /**
@@ -393,71 +507,109 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     }
 
     /**
-     * riverline/multipart-parser expects a stream carrying the Content-Type
-     * header (for boundary detection) followed by a blank line, then the
-     * body — the shape of one raw HTTP part — so the header stripped off by
-     * API Gateway is prepended back on before parsing.
+     * riverline/multipart-parser reads one raw HTTP part: a
+     * `Content-Type` header carrying the boundary, a blank line, then
+     * the body. {@see StagedMultipartBody} builds exactly that, owns the
+     * temporary stream for the length of the parse, and refuses to hand
+     * over a body it could not stage whole — a shorter multipart body
+     * still parses, into a form that looks complete.
      *
-     * @return array{0:array<string,string>,1:array<string,UploadedFile>}
+     * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}
      */
-    private static function parseMultipart(string $contentType, string $body): array
+    private static function parseMultipart(string $contentType, string $body, FormLimits $limits): array
     {
-        $stream = fopen('php://temp', 'r+');
-        if ($stream === false) {
-            throw BrefAdapterException::couldNotOpenTempStream();
-        }
+        // The envelope first, over the raw bytes: riverline's getParts()
+        // builds a StreamedPart and a stream for every part before a
+        // caller can ask how many there are, so a ceiling checked on its
+        // result is checked after the cost it exists to bound has been
+        // paid. MultipartEnvelope counts what a parsed result cannot
+        // show either — unnamed parts, and repeated header lines rather
+        // than distinct names.
+        MultipartEnvelope::assertWithinLimits($body, $contentType, $limits);
 
-        fwrite($stream, "Content-Type: {$contentType}\r\n\r\n" . $body);
-        rewind($stream);
-
-        $fields = [];
-        $files = [];
-
-        // riverline reports an unusable body — no boundary it can find,
-        // a truncated part — as a LogicException. Without this it would
-        // escape to run()'s generic catch and be posted as an invocation
-        // error, a 502 for what is a malformed client request.
-        try {
-            $parts = (new StreamedPart($stream))->getParts();
-        } catch (LogicException $e) {
-            throw MalformedRequestBodyException::unparseableMultipart($e->getMessage());
-        }
-
-        foreach ($parts as $part) {
-            $name = $part->getName();
-
-            if ($name === null) {
-                continue;
-            }
-
-            if ($part->isFile()) {
-                $contents = $part->getBody();
-                $files[$name] = new UploadedFile(
-                    Stream::create($contents),
-                    strlen($contents),
-                    UPLOAD_ERR_OK,
-                    $part->getFileName(),
-                    $part->getMimeType(),
-                );
-
-                continue;
-            }
-
-            $fields[$name] = $part->getBody();
-        }
-
-        return [$fields, $files];
+        return StagedMultipartBody::parse($contentType, $body, static fn ($stream): array => self::formFromParts($stream, $limits));
     }
 
     /**
-     * @return array{0:array<string,string>,1:array<never,never>}
+     * riverline reports client input it cannot read through PHP's own
+     * exception types rather than any of its own, so the mapping is by
+     * category, and each category is named here by the failures it
+     * actually covers rather than by a message match:
+     *
+     * - `InvalidArgumentException` (a subclass of `LogicException`, so
+     *   the second catch would swallow it silently if it came second):
+     *   a body whose headers never end, a header line past the parser's
+     *   own 8 KB ceiling, a content type it can find no boundary in.
+     * - `LogicException`: a body with no parts, or one that is not
+     *   multipart at all once parsed.
+     * - `ValueError`: `mb_convert_encoding()` refusing a charset the
+     *   client named — reachable from the constructor, through the
+     *   `boundary` parameter, and from every metadata accessor, through
+     *   an RFC 5987 `name*=`/`filename*=` parameter. Client-chosen text
+     *   either way, and so a client error rather than this worker's.
+     *
+     * Every one of those is a `400` carrying
+     * {@see RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE} and a fixed
+     * category, with the parser's own message discarded rather than
+     * attached: it is assembled from the input that failed, and would
+     * otherwise travel into a log line by way of a `previous` chain. The
+     * envelope contract in `Kinetis\Http\Form\MultipartEnvelope` has
+     * already refused every body these can be reached with, on this
+     * runtime and every other; the mapping stays because a parser
+     * failing on input a scan accepted must still be one refusal
+     * clients cannot tell apart, not an uncaught error.
+     *
+     * Anything else — a {@see \Kinetis\Http\Form\Exception\FormStagingException}
+     * from the stream underneath, a limit refusal from the builder —
+     * travels on untouched: those are not "the client sent nonsense".
+     *
+     * The metadata this reads is the metadata the scan already held to
+     * the contract: the raw `Content-Type` header rather than
+     * `getMimeType()`, which answers `application/octet-stream` for a
+     * part that declared nothing and would report a media type the
+     * client never sent.
+     *
+     * @param resource $stream
+     * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}
      */
-    private static function parseUrlEncoded(string $body): array
+    private static function formFromParts($stream, FormLimits $limits): array
     {
-        parse_str($body, $fields);
+        try {
+            $parts = (new StreamedPart($stream))->getParts();
+        } catch (\InvalidArgumentException|\LogicException|ValueError) {
+            throw UnparseableFormBodyException::unreadableMultipart();
+        }
 
-        /** @var array<string,string> $fields */
-        return [$fields, []];
+        if ($parts === []) {
+            throw UnparseableFormBodyException::noParts();
+        }
+
+        $builder = new MultipartFormBuilder($limits);
+
+        foreach ($parts as $part) {
+            try {
+                $name = $part->getName();
+                $filename = $part->getFileName();
+                $mediaType = $part->getHeader('Content-Type');
+                $contents = $name === null ? '' : $part->getBody();
+            } catch (\LogicException|ValueError) {
+                throw UnparseableFormBodyException::undecodablePart();
+            }
+
+            if (!is_string($name)) {
+                continue;
+            }
+
+            if (is_string($filename)) {
+                $builder->addFile($name, $filename, is_string($mediaType) ? $mediaType : null, $contents);
+
+                continue;
+            }
+
+            $builder->addField($name, $contents);
+        }
+
+        return $builder->build();
     }
 
     /**
@@ -516,15 +668,14 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     }
 
     /**
-     * The real protocol boundary: every field requestFromEvent() reads,
-     * checked here so an invalid or wrong-version event is a clear
-     * invocation error rather than requestFromEvent()'s own defaults
-     * silently producing a plausible-looking GET / from fields that were
-     * never really there. requestFromEvent() itself stays lenient on
-     * purpose — it's a public method other callers can hand a partial,
-     * hand-built event to directly (its own test suite does exactly
-     * that) — so this validation lives here, upstream of it, not inside
-     * it.
+     * The half of the protocol boundary that only the raw JSON can
+     * answer: is this a payload-v2 event at all, and are its collection
+     * fields the shapes that format defines? The other half — whether
+     * the request it describes has a coherent identity — is
+     * {@see LambdaRequestIdentity}'s, and runs inside
+     * requestFromEvent() so every caller of that method gets it,
+     * including the runtime conformance suite's own driver, which never
+     * comes through here.
      *
      * `"version": "2.0"` is the one field that actually distinguishes a
      * genuine payload-v2 event from anything else shaped similarly: a
@@ -557,20 +708,8 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
             );
         }
 
-        $rawPath = self::objectGet($decoded, 'rawPath');
-
-        if (!is_string($rawPath) || $rawPath === '') {
-            throw BrefAdapterException::malformedInvocationEvent('the decoded event has no non-empty rawPath.');
-        }
-
         $http = self::objectGet(self::objectGet($decoded, 'requestContext'), 'http');
-        $method = self::objectGet($http, 'method');
 
-        if (!is_string($method) || $method === '') {
-            throw BrefAdapterException::malformedInvocationEvent('the decoded event has no requestContext.http.method.');
-        }
-
-        self::assertOptionalScalar($decoded, 'rawQueryString', 'is_string', self::DESCRIPTION_STRING);
         self::assertOptionalScalar($decoded, 'body', 'is_string', self::DESCRIPTION_STRING);
         self::assertOptionalScalar($decoded, 'isBase64Encoded', 'is_bool', 'a boolean');
         self::assertOptionalScalar($http, 'sourceIp', 'is_string', self::DESCRIPTION_STRING);
@@ -622,6 +761,13 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
      * list-shaped value passed where an object was required, neither of
      * which a plain is_array() check on the associative: true decode
      * could ever tell apart from a valid string-valued object.
+     *
+     * `queryStringParameters` is checked even though nothing reads it:
+     * an event carrying a malformed one is a malformed event, and
+     * accepting it here would mean this adapter's idea of a valid
+     * payload-v2 event quietly narrowed to the fields it happens to
+     * use. {@see LambdaRequestIdentity} explains why the raw query
+     * string is what the request is actually built from.
      */
     private static function assertOptionalStringMap(mixed $decoded, string $field): void
     {

@@ -35,17 +35,45 @@ final readonly class ResponseSpec
      *     receiving side
      */
     public function __construct(
-        public int $status = 200,
-        public array $headers = [],
-        public array $setCookies = [],
-        public string $body = '',
-        public ?array $streamChunks = null,
-        public int $streamDelayMs = 0,
+        public int $status,
+        public array $headers,
+        public array $setCookies,
+        public string $body,
+        public ?array $streamChunks,
+        public int $streamDelayMs,
     ) {}
+
+    /**
+     * A plain, non-streaming response — every field named, none defaulted.
+     * The constructor takes all six because a spec is compared field by
+     * field across a process boundary: a default is a value the test did
+     * not write and the fixture cannot know was absent, and
+     * {@see fromArray()} would then have nothing to be strict about.
+     *
+     * @param list<array{0: string, 1: string}> $headers
+     * @param list<string> $setCookies
+     */
+    public static function of(int $status, array $headers = [], array $setCookies = [], string $body = ''): self
+    {
+        return new self($status, $headers, $setCookies, $body, null, 0);
+    }
+
+    /**
+     * A streaming response: $chunks written in order, $delayMs apart, so
+     * whether the environment delivered them as they were written shows
+     * up as elapsed time on the receiving side.
+     *
+     * @param list<array{0: string, 1: string}> $headers
+     * @param list<string> $chunks
+     */
+    public static function streaming(int $status, array $headers, array $chunks, int $delayMs): self
+    {
+        return new self($status, $headers, [], '', $chunks, $delayMs);
+    }
 
     public static function json(int $status, string $body): self
     {
-        return new self($status, [['Content-Type', 'application/json']], body: $body);
+        return self::of($status, [['Content-Type', 'application/json']], body: $body);
     }
 
     public function toResponse(): ResponseInterface
@@ -105,32 +133,120 @@ final readonly class ResponseSpec
     }
 
     /**
+     * The exact inverse of {@see toArray()}: every field is required and
+     * every type is checked. A spec crosses a process boundary as a
+     * header on a real HTTP request, so a field that arrived missing,
+     * misspelled or mistyped means the two sides of that boundary
+     * disagree — and a default filled in here would hide it by turning a
+     * disagreement into a quietly different response the suite would
+     * then assert against. Invalid base64 is refused for the same
+     * reason: decoded as empty bytes it is indistinguishable from a
+     * response with no body at all.
+     *
      * @param array<string, mixed> $data
      */
     public static function fromArray(array $data): self
     {
-        /** @var list<array{0: string, 1: string}> $headers */
-        $headers = $data['headers'];
-        /** @var list<string> $setCookies */
-        $setCookies = $data['setCookies'];
-        /** @var list<string>|null $chunks */
-        $chunks = $data['streamChunks'];
+        // array_key_exists, not ??: streamChunks is legitimately null
+        // for a non-streaming spec, and ?? cannot tell that apart from
+        // a field that never crossed the boundary at all.
+        $chunks = array_key_exists('streamChunks', $data)
+            ? $data['streamChunks']
+            : throw MalformedResponseSpecException::missingField('streamChunks');
+
+        if ($chunks !== null && !is_array($chunks)) {
+            throw MalformedResponseSpecException::wrongType('streamChunks', 'a list of strings or null');
+        }
 
         return new self(
-            (int) $data['status'],
-            $headers,
-            $setCookies,
-            self::decode((string) $data['body']),
-            $chunks === null ? null : array_map(self::decode(...), $chunks),
-            (int) ($data['streamDelayMs'] ?? 0),
+            self::requireInt($data, 'status'),
+            self::requirePairs($data, 'headers'),
+            self::requireStrings($data, 'setCookies'),
+            self::decode(self::requireString($data, 'body')),
+            $chunks === null ? null : array_map(self::decode(...), self::strings($chunks, 'streamChunks')),
+            self::requireInt($data, 'streamDelayMs'),
         );
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function requireInt(array $data, string $field): int
+    {
+        $value = self::field($data, $field);
+
+        return is_int($value) ? $value : throw MalformedResponseSpecException::wrongType($field, 'an integer');
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function requireString(array $data, string $field): string
+    {
+        $value = self::field($data, $field);
+
+        return is_string($value) ? $value : throw MalformedResponseSpecException::wrongType($field, 'a string');
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return list<string>
+     */
+    private static function requireStrings(array $data, string $field): array
+    {
+        return self::strings(self::field($data, $field), $field);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function strings(mixed $value, string $field): array
+    {
+        if (!is_array($value) || !array_is_list($value) || array_any($value, static fn (mixed $entry): bool => !is_string($entry))) {
+            throw MalformedResponseSpecException::wrongType($field, 'a list of strings');
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return list<array{0: string, 1: string}>
+     */
+    private static function requirePairs(array $data, string $field): array
+    {
+        $value = self::field($data, $field);
+
+        if (!is_array($value) || !array_is_list($value)) {
+            throw MalformedResponseSpecException::wrongType($field, 'a list of name/value pairs');
+        }
+
+        $pairs = [];
+
+        foreach ($value as $pair) {
+            if (!is_array($pair) || array_keys($pair) !== [0, 1] || !is_string($pair[0]) || !is_string($pair[1])) {
+                throw MalformedResponseSpecException::wrongType($field, 'a list of name/value pairs');
+            }
+
+            $pairs[] = [$pair[0], $pair[1]];
+        }
+
+        return $pairs;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function field(array $data, string $field): mixed
+    {
+        return array_key_exists($field, $data) ? $data[$field] : throw MalformedResponseSpecException::missingField($field);
     }
 
     private static function decode(string $base64): string
     {
         $decoded = base64_decode($base64, strict: true);
 
-        return $decoded === false ? '' : $decoded;
+        return $decoded === false ? throw MalformedResponseSpecException::invalidBase64() : $decoded;
     }
 
     /**

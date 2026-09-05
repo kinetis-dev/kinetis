@@ -58,9 +58,10 @@ final class BroadcastAuthKernelTest extends TestCase
     }
 
     /**
-     * No Content-Length header at all — the declared-header fast path
-     * in MaxBodySizeMiddleware can't catch this; only the actual bytes
-     * read through formData()'s fallback can.
+     * No Content-Length header at all — the declared-length check in
+     * MaxBodySizeMiddleware cannot catch this; only the byte count it
+     * takes while staging the body can, and it takes that before this
+     * controller runs at all.
      */
     public function test_an_oversized_raw_form_body_with_no_content_length_is_rejected_with_413(): void
     {

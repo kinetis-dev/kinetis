@@ -11,6 +11,8 @@ use Kinetis\Container\Exception\DisconnectedRequestScopeException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Events\ListenerInvokerInterface;
 use Kinetis\Events\SynchronousListenerInvoker;
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Instrumentation\TelemetryInterface;
 use Kinetis\Logging\ErrorLogLogger;
@@ -185,6 +187,24 @@ final class AppScope implements ContainerInterface
 
         if (!$this->has(Config::class)) {
             $this->instance(Config::class, Config::fromEnvironment());
+        }
+
+        // The byte ceiling every request body meets, built once from the
+        // same Config a runtime adapter's own copy came from. Registered
+        // rather than autowired: it holds a validated int, which nothing
+        // can reflect its way to. An entry point that already built one
+        // for RuntimeDetector registers that same instance itself, and
+        // this leaves it alone — see docs/runtime-adapters.md.
+        if (!$this->has(FormLimits::class)) {
+            /** @var Config $config */
+            $config = $this->get(Config::class);
+            $this->instance(FormLimits::class, FormLimits::fromConfig($config));
+        }
+
+        if (!$this->has(TrustedProxies::class)) {
+            /** @var Config $config */
+            $config = $this->get(Config::class);
+            $this->instance(TrustedProxies::class, TrustedProxies::fromConfig($config));
         }
 
         if (!$this->has(CacheInterface::class)) {

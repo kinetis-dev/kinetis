@@ -6,6 +6,7 @@ namespace Kinetis\BrefAdapter\Tests;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
+use Kinetis\Http\Form\FormLimits;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\Stream;
 use PHPUnit\Framework\TestCase;
@@ -27,6 +28,11 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class BrefLambdaAdapterEndToEndTest extends TestCase
 {
+    private static function limits(): FormLimits
+    {
+        return new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES);
+    }
+
     private const HOST = '127.0.0.1:8096';
 
     /** @var resource */
@@ -46,7 +52,10 @@ final class BrefLambdaAdapterEndToEndTest extends TestCase
             'headers' => ['content-type' => 'application/json'],
             'cookies' => ['kinetis_session=abc123', 'theme=dark'],
             'queryStringParameters' => ['tab' => 'billing'],
-            'requestContext' => ['http' => ['method' => 'GET', 'sourceIp' => '203.0.113.7']],
+            'requestContext' => [
+                'domainName' => 'kinetis.execute-api.eu-west-1.amazonaws.com',
+                'http' => ['method' => 'GET', 'protocol' => 'HTTP/1.1', 'sourceIp' => '203.0.113.7'],
+            ],
             'body' => '',
             'isBase64Encoded' => false,
         ];
@@ -80,7 +89,7 @@ final class BrefLambdaAdapterEndToEndTest extends TestCase
         /** @var ServerRequestInterface|null $capturedRequest */
         $capturedRequest = null;
 
-        $adapter = new BrefLambdaAdapter(self::HOST);
+        $adapter = new BrefLambdaAdapter(self::HOST, self::limits());
 
         try {
             $adapter->run(static function (ServerRequestInterface $request) use (&$capturedRequest): ResponseInterface {

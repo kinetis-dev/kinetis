@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Runtime;
 
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Adapters\FpmAdapter;
 use Kinetis\Runtime\Adapters\FrankenPhpAdapter;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
@@ -12,9 +14,19 @@ use PHPUnit\Framework\TestCase;
 
 final class RuntimeDetectorTest extends TestCase
 {
+    private static function limits(): FormLimits
+    {
+        return new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES);
+    }
+
+    private static function proxies(): TrustedProxies
+    {
+        return TrustedProxies::fromList([]);
+    }
+
     public function test_prefers_franken_php_when_available(): void
     {
-        $adapter = RuntimeDetector::detect(frankenPhpAvailable: true, lambdaRuntimeApi: '127.0.0.1:9001');
+        $adapter = RuntimeDetector::detect(self::limits(), self::proxies(), frankenPhpAvailable: true, lambdaRuntimeApi: '127.0.0.1:9001');
 
         self::assertInstanceOf(FrankenPhpAdapter::class, $adapter);
     }
@@ -32,12 +44,12 @@ final class RuntimeDetectorTest extends TestCase
         $this->expectException(RuntimeUnavailableException::class);
         $this->expectExceptionMessage('kinetis/bref-adapter');
 
-        RuntimeDetector::detect(frankenPhpAvailable: false, lambdaRuntimeApi: '127.0.0.1:9001');
+        RuntimeDetector::detect(self::limits(), self::proxies(), frankenPhpAvailable: false, lambdaRuntimeApi: '127.0.0.1:9001');
     }
 
     public function test_falls_back_to_fpm_when_nothing_else_matches(): void
     {
-        $adapter = RuntimeDetector::detect(frankenPhpAvailable: false, lambdaRuntimeApi: null);
+        $adapter = RuntimeDetector::detect(self::limits(), self::proxies(), frankenPhpAvailable: false, lambdaRuntimeApi: null);
 
         self::assertInstanceOf(FpmAdapter::class, $adapter);
     }
@@ -54,7 +66,7 @@ final class RuntimeDetectorTest extends TestCase
         $this->expectException(RuntimeUnavailableException::class);
         $this->expectExceptionMessage('kinetis/roadrunner-adapter');
 
-        RuntimeDetector::detect(frankenPhpAvailable: false, roadRunnerMode: 'http');
+        RuntimeDetector::detect(self::limits(), self::proxies(), frankenPhpAvailable: false, roadRunnerMode: 'http');
     }
 
     /**
@@ -64,7 +76,7 @@ final class RuntimeDetectorTest extends TestCase
      */
     public function test_a_non_http_road_runner_mode_does_not_select_the_road_runner_adapter(): void
     {
-        $adapter = RuntimeDetector::detect(frankenPhpAvailable: false, roadRunnerMode: 'jobs');
+        $adapter = RuntimeDetector::detect(self::limits(), self::proxies(), frankenPhpAvailable: false, roadRunnerMode: 'jobs');
 
         self::assertInstanceOf(FpmAdapter::class, $adapter);
     }

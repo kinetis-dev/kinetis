@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Runtime\Adapters;
 
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Adapters\FrankenPhpAdapter;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use PHPUnit\Framework\TestCase;
@@ -12,7 +14,7 @@ final class FrankenPhpAdapterTest extends TestCase
 {
     public function test_is_persistent(): void
     {
-        self::assertTrue((new FrankenPhpAdapter())->isPersistent());
+        self::assertTrue((new FrankenPhpAdapter(new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES), TrustedProxies::fromList([])))->isPersistent());
     }
 
     public function test_run_throws_when_the_frankenphp_extension_is_unavailable(): void
@@ -23,6 +25,6 @@ final class FrankenPhpAdapterTest extends TestCase
         self::assertFalse(function_exists('frankenphp_handle_request'));
 
         $this->expectException(RuntimeUnavailableException::class);
-        (new FrankenPhpAdapter())->run(static fn () => throw new \LogicException('should never run'));
+        (new FrankenPhpAdapter(new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES), TrustedProxies::fromList([])))->run(static fn () => throw new \LogicException('should never run'));
     }
 }

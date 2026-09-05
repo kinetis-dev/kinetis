@@ -344,16 +344,20 @@ $client = TestApplication::withRouter($router)->client();
 ## Conformance-testing a runtime adapter
 
 A runtime adapter turns whatever its environment delivers — superglobals
-and `php://input`, an API Gateway event — into a PSR-7 request, and turns
-the PSR-7 response back. Two adapters built through different code have
-to agree on what that conversion means: which header a repeated header
-becomes, where cookies end up, that a `PUT` or `PATCH` form body parses
-the same as a `POST` one (url-encoded and multipart alike), that the
-declared `Content-Length` and a large body both arrive intact, that a
-binary body arrives byte for byte, that two `Set-Cookie` headers leave
-as two cookies, what happens to a body the environment cannot parse. `Kinetis\Testing\Runtime` expresses each of
-those once, as a PHPUnit base class, and runs the whole list against any
-adapter that provides a driver:
+and `php://input`, an API Gateway event, a Goridge frame — into a PSR-7
+request, and turns the PSR-7 response back. Adapters built through
+entirely different code have to agree on what that conversion means:
+which header a repeated header becomes, where cookies end up, what the
+URI's scheme, authority and request target are and that they agree with
+the `Host` header, that a `PUT` or `PATCH` form body parses the same as
+a `POST` one (url-encoded and multipart alike), that nested and repeated
+field and file names nest identically, that the declared
+`Content-Length` and a large body both arrive intact, that a binary body
+arrives byte for byte, that two `Set-Cookie` headers leave as two
+cookies, what happens to a body the environment cannot parse and to one
+past a form-complexity ceiling. `Kinetis\Testing\Runtime` expresses each
+of those once, as a PHPUnit base class, and runs the whole list against
+any adapter that provides a driver:
 
 ```{code-block} php
 use Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase;
@@ -383,60 +387,138 @@ interface RuntimeAdapterDriver
     public function expectedClientIp(): string;
     public function supportsStreaming(): bool;
     public function unparseableFormRequest(): WireRequest;
+    public function expectedScheme(): string;
+    public function preservesNumericHeaderNames(): bool;
+    public function preservesCookieOrder(): bool;
+    public function trustsTheConnectingClient(): bool;
 }
 ```
 
-The last three are facts the environment decides, not the test: the
-address it reports as `REMOTE_ADDR` (a real socket's peer for a SAPI,
-whatever the driver injects as `sourceIp` for Lambda), whether a
-`StreamedResponse` can reach the client incrementally, and what a form
-body it cannot parse looks like (past `post_max_size` for a SAPI; no
-usable boundary for an adapter that parses the body itself). The suite
-asserts against the declaration either way — a streaming environment
-must deliver every chunk in order, a non-streaming one must refuse the
-response rather than buffer it — so every method runs on every adapter.
-Nothing is skipped.
+Everything after `dispatch()` is a fact the environment decides, not the
+test: the address it reports as `REMOTE_ADDR` (a real socket's peer for
+a SAPI, whatever the driver injects as `sourceIp` for Lambda), the
+scheme it serves over when nothing forwards one, whether a
+`StreamedResponse` can reach the client incrementally, what a form body
+it cannot parse looks like, whether a purely-numeric header name and the
+client's cookie order survive its own request decoding, and whether the
+peer the driver connects from is a trusted edge whose
+`X-Forwarded-Proto` may decide the request's scheme.
 
-The core adapters run this suite themselves. `SuperglobalsBridge`, which
-`FpmAdapter` and `FrankenPhpAdapter` share, is driven through a real
-`php -S` process (the only way `php://input` and `request_parse_body()`
-see a genuine request); `kinetis/bref-adapter` drives
-`BrefLambdaAdapter::handleEvent()` in-process, building the event the
-way API Gateway would. Read either driver for a worked example —
-`Kinetis\Tests\Runtime\Conformance\SuperglobalsDriver` in the framework
-package, `Kinetis\BrefAdapter\Tests\Conformance\LambdaDriver` in the
-adapter's.
+A parsed form body's raw bytes are not among them. Every adapter holds
+the whole body and parses a copy, so `getBody()` after
+`getParsedBody()` is the request byte for byte on all of them, and the
+suite asserts that rather than asking.
+
+**The suite asserts both directions of every declaration**, which is
+what keeps a declaration from becoming a skip. A streaming environment
+must deliver every chunk in order; a non-streaming one must refuse the
+response rather than buffer it. An environment that keeps a numeric
+header name must deliver its value unchanged; one that cannot must drop
+the header outright, never deliver it under another name or with another
+value. An environment that treats this client as an edge must honor a
+forwarded scheme; one
+that does not must ignore it completely, in both directions — it can
+neither be promoted to `https` nor downgraded from it. Every method runs
+on every adapter. Nothing is skipped.
+
+Over-limit input needs no declaration: the ceilings are
+`Kinetis\Http\Form\FormLimits`' own and identical everywhere, so the
+suite builds those requests itself — one field, one file, one nesting
+level, one part past each limit, with a security-significant field
+(`csrf_token`, a signature upload) placed beyond the edge — and requires
+a `413` with the handler never reached. That is the case a truncating
+parser passes by handing on a form that looks complete with exactly that
+field missing.
+
+Three of those cases exist because they are invisible to a limit checked
+after parsing, and every runtime has to meet them the same way: a body
+repeating **one** name past the ceiling (a thousand pairs on the wire,
+one leaf in the result), a body of **unnamed** multipart parts (which
+build nothing and still cost a parser everything), and a part repeating
+**one header line** past the ceiling (one entry in any header map). The
+empty file control is the fourth: submitted by a file input the user left
+alone, and reported as `UPLOAD_ERR_NO_FILE` on every adapter, so upload
+validation written against PHP behaves identically everywhere.
+
+The multipart contract is asserted the same way, as raw wire bodies
+rather than through the suite's own part builder — what is being checked
+is exactly what a well-formed builder would never produce. A line whose
+boundary token is only a prefix stays payload, byte for byte; a root
+`Content-Type` naming the boundary twice or trailing syntax after it, a
+padded delimiter, a boundary after a bare LF, a decoding
+`Content-Transfer-Encoding`, an RFC 2047 encoded word, an RFC 5987
+extended parameter, a nested `multipart/*` part and a repeated
+`Content-Disposition` are each a `400`; and a file part declaring no
+`Content-Type` reports no client media type at all. Every one of those is
+a place two real parsers read one body differently — core's own scan and
+the satellites' `riverline/multipart-parser` — so running them on every
+adapter is what turns "one contract" into something a change can break
+loudly. See "Form bodies: one contract under every runtime" in
+{doc}`runtime-adapters` for the rules themselves.
+
+All four adapters run this suite themselves; how each one is driven, and
+what that does and doesn't prove, is spelled out below. Read a driver
+for a worked example — `Kinetis\Tests\Runtime\Conformance\SuperglobalsDriver`
+in the framework package, `Kinetis\BrefAdapter\Tests\Conformance\LambdaDriver`
+in kinetis/bref-adapter, `Kinetis\RoadRunnerAdapter\Tests\Conformance\RoadRunnerDriver`
+in kinetis/roadrunner-adapter.
 
 Only behavior every environment can exhibit belongs in the shared suite.
 An input one environment alone can produce — a base64-flagged event
-body, an absent client address — is that adapter's own test to write,
-alongside the conformance run; the suite's public assertion helpers
-(`assertMalformedBodyResponse()`) hold that input to the same contract
-the shared cases use, so the *outcome* stays unified even where the
-*trigger* can't be. The byte cap on a request body is not the adapter's
-to test — it is `MaxBodySizeMiddleware`'s, in the Kernel, identical
-under every adapter and tested there. `Kinetis\Testing\FreePort::reserve()`
-hands a fixture server a port nothing is listening on, so two suites
-spawning servers in one checkout don't collide on a hard-coded number.
+body, a multipart part's header count under an adapter that parses the
+body itself — is that adapter's own test to write, alongside the
+conformance run; the suite's public assertion helpers
+(`assertMalformedBodyResponse()`, `assertOverLimitFormResponse()`) hold
+that input to the same contract the shared cases use, so the *outcome*
+stays unified even where the *trigger* can't be. The byte cap on a raw
+request body is not the adapter's to test — it is
+`MaxBodySizeMiddleware`'s, in the Kernel, identical under every adapter
+and tested there. `Kinetis\Testing\FreePort::reserve()` hands a fixture
+server a port nothing is listening on, so two suites spawning servers in
+one checkout don't collide on a hard-coded number.
 
-What each run proves, precisely. The committed framework suite spawns
-`php -S` and, through `RuntimeDetector`, runs `FpmAdapter` under the CLI
-server's superglobal population; the bref-adapter suite runs the Lambda
-conversion in-process. The real SAPIs — a FrankenPHP worker loop behind
-Caddy, and PHP-FPM behind nginx — run the identical suite in CI
-(`integration.yml`'s `runtime-conformance` job), the same driver pointed
-at a container instead of a spawned process. That is where each SAPI's
-own population of headers, client address and body, and its own
-streaming path, are exercised; the streaming case times the body as it
-arrives, so a proxy holding a stream back until the end fails it — as
-nginx does with its default `fastcgi_buffering`, which the FPM fixture
-turns off. `kinetis/roadrunner-adapter` runs the identical shared suite
-a third way — against a real, spawned `rr serve` process, structurally
-closer to the FrankenPHP/nginx case above than to an in-process
-shortcut, since a RoadRunner request only ever exists as the real
-Goridge wire protocol between `rr` and a real PHP worker (see
-{doc}`runtime-adapters` and `integration.yml`'s own
-`roadrunner-conformance` job).
+What each run proves, precisely, and what it doesn't.
+
+- **In-process**, with no wire and no SAPI: the Lambda conversion.
+  `LambdaDriver` calls `BrefLambdaAdapter::handleEvent()` with an event
+  built the way API Gateway builds one. That proves the conversion; it
+  cannot prove anything about the Runtime API poll and response POST
+  around it, which the bref-adapter package's own end-to-end tests cover
+  against a real fake server.
+- **Under a spawned server, over a real socket**: the committed
+  framework suite spawns `php -S -d enable_post_data_reading=0` and,
+  through `RuntimeDetector`, runs `FpmAdapter` under the CLI server's
+  superglobal population — the only way `php://input` sees a genuine
+  request. The CLI server is not a production SAPI, so what this proves
+  is the bridge's own behavior, not FPM's or FrankenPHP's. It also
+  spawns servers configured the *wrong* way, on purpose: one with
+  `enable_post_data_reading` left on, to prove the refusal; one with no
+  trusted-proxy policy, to prove a forwarded scheme from a
+  directly-reachable client is ignored; and one with `max_input_vars`
+  set below the contract, to prove a form that runtime's own
+  `parse_str()` would have shortened is refused instead.
+  `kinetis/roadrunner-adapter` runs the same suite this way against a
+  real, spawned `rr serve` process, which *is* the production path: a
+  RoadRunner request only ever exists as the real Goridge wire protocol
+  between `rr` and a real PHP worker.
+- **Under the real SAPIs**, in CI (`integration.yml`'s
+  `runtime-conformance` job): a FrankenPHP worker loop behind Caddy, and
+  PHP-FPM behind nginx, each in its own container with the same driver
+  pointed at it instead of at a spawned process. That is the only place
+  each production SAPI's own population of headers, client address and
+  body, its own form parsing, and its own streaming path are exercised.
+  The streaming case times the body as it arrives, so a proxy holding a
+  stream back until the end fails it — which is what nginx does with
+  `fastcgi_buffering` at its default `on`, and why the FPM fixture sets
+  it `off` (`X-Accel-Buffering: no` on the response is the other way to
+  get the same result in a real deployment).
+
+
+The RoadRunner run has its own CI job (`integration.yml`'s
+`roadrunner-conformance`), which needs `ext-sockets` and a fetched `rr`
+binary — see {doc}`runtime-adapters`. It runs the suite unfiltered: the
+two behaviors that environment cannot deliver are declared by its driver
+and asserted in both directions rather than skipped.
 
 ## See also
 
