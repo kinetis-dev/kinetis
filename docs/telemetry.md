@@ -101,18 +101,49 @@ use Kinetis\Queue\QueueFactory;
 use Kinetis\Queue\QueueInterface;
 use Kinetis\Telemetry\Queue\TracingQueue;
 
-$app->instance(QueueInterface::class, new TracingQueue(
+$app->instance(QueueInterface::class, TracingQueue::wrap(
     QueueFactory::fromConfig($config),
     $app->get(TracerProviderInterface::class),
 ));
 ```
+
+`wrap()`, not `new`: a backend declaring
+`Kinetis\Queue\ClearableQueueInterface` (see {doc}`queue`'s "Clearing is
+a separate capability") gets `ClearableTracingQueue`, which carries the
+same spans and keeps `clear()` working; every other backend gets a plain
+`TracingQueue`. Constructing `TracingQueue` directly around a clearable
+backend costs it that capability, and `kinetis queue:clear` then refuses.
+
+`wrap()`'s result is typed as whatever it was given, so wrapping the
+configuration-driven `QueueFactory::fromConfig()` yields a
+`QueueInterface` — the capability is there at run time when the backend
+has it, but nothing in the types can promise which backend that is. Pass
+a backend already typed as clearable, or call `wrapClearable()`, to get
+`ClearableQueueInterface` back:
+
+```{code-block} php
+use Kinetis\Queue\ClearableQueueInterface;
+use Kinetis\QueueRedis\RedisQueueFactory;
+
+$app->instance(ClearableQueueInterface::class, TracingQueue::wrapClearable(
+    RedisQueueFactory::fromConfig($config),
+    $app->get(TracerProviderInterface::class),
+));
+```
+
+The queue package's own `ClearableQueueInterface` binding resolves
+through `QueueInterface`, so injecting the capability reaches the
+decorator registered here rather than the undecorated backend.
 
 `push()` gets a producer span. On the worker side, a consumer span opens
 when `pop()` hands a job over and closes at `ack()`, `release()`, or
 `fail()` — its duration is the job's real processing time, and it
 carries the outcome and attempt number. The consumer span is active
 while the job runs, so queries and HTTP calls inside `handle()` nest
-under it.
+under it. A settlement the backend rejects as stale (see {doc}`queue`'s
+"When a settlement is lost") still closes the span, carrying the
+attempted outcome — an unclosed span would be worse than one whose
+recorded exception is the lost delivery rather than a job failure.
 
 With the framework hooks active (the section below), producer and
 consumer spans join **one trace across processes**: the hooks store a

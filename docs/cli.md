@@ -285,7 +285,9 @@ The `migrate*` commands connect through the same `DB_*` keys as
 connection block, winning over the `MIGRATE_CONNECTION_NAME` environment
 key when both are given. `queue:work` runs the worker loop against the
 backend `QUEUE_CONNECTION` selects, checking queues in the given
-priority order. Full docs in {doc}`migrations`, {doc}`queue`, and
+priority order. `queue:clear` needs a backend that can clear, which
+`QUEUE_CONNECTION=sqs` is not — it names the backend and exits 1 there
+instead. Full docs in {doc}`migrations`, {doc}`queue`, and
 {doc}`session`.
 
 ## Development vs. production

@@ -7,20 +7,17 @@ namespace Kinetis\AuthJwt;
 use Kinetis\AuthJwt\Exception\JwkSetException;
 
 /**
- * Builds an RFC 7517 JWK Set from one or more RSA public keys, each
- * under its own kid — the publishing half of JwtAuthMiddleware's
- * multi-key rotation support. RSA only: an HS256 key is symmetric and
- * is never published, and this doesn't cover other asymmetric key
- * types.
+ * Builds an RFC 7517 JWK Set from one or more PublishedRsaKey values —
+ * the publishing half of JwtAuthMiddleware's multi-key rotation
+ * support, whose consuming half is ParsedJwkSet. RSA only: an HS256 key
+ * is symmetric and is never published, and this doesn't cover other
+ * asymmetric key types.
  *
- * Every input is validated before any output is produced — an empty
- * map, a non-string/empty kid, a non-string/unparseable/non-RSA/
- * undersized (below JwtKeyValidator::RSA_MINIMUM_BITS) public key, or
- * an $algorithm outside RS256/RS384/RS512 all throw JwkSetException
- * rather than an incidental TypeError/OpenSSL warning, or a published
- * JWKS whose own `alg`/`kty` fields contradict each other or advertise
- * a key no verifier holding JwtAuthMiddleware's own minimum would
- * accept.
+ * Every input is validated before any output is produced, so a
+ * published document can never advertise a key or algorithm this
+ * package's own verifier refuses. Failures throw JwkSetException, which
+ * states each rule; each kid arrives already held to the shared rule by
+ * PublishedRsaKey.
  *
  * Returns a plain array, not a JSON string — a route method returning
  * it is JSON-encoded automatically the same way any other Kinetis
@@ -31,69 +28,72 @@ use Kinetis\AuthJwt\Exception\JwkSetException;
 final class JwkSet
 {
     /**
-     * @param array<string, string> $publicKeysByKid PEM-format RSA public keys, keyed by their own kid — the documented, correct-caller shape; runtime validation below still checks it, since a caller can hand in something else regardless of what static tooling expects
+     * @param list<PublishedRsaKey> $keys the documented, correct-caller shape; runtime validation below still checks it, since a caller can hand in something else regardless of what static tooling expects
      * @return array{keys: list<array{kty: string, kid: string, use: string, alg: string, n: string, e: string}>}
      */
-    public static function fromRsaPublicKeys(array $publicKeysByKid, string $algorithm = 'RS256'): array
+    public static function fromRsaPublicKeys(array $keys, string $algorithm = 'RS256'): array
     {
         if (!JwtKeyValidator::isRsaAlgorithm($algorithm)) {
             throw JwkSetException::unsupportedAlgorithm($algorithm);
         }
 
-        if ($publicKeysByKid === []) {
-            throw JwkSetException::emptyKeySet();
+        if ($keys === []) {
+            throw JwkSetException::emptyKeyList();
         }
 
-        $keys = [];
-
-        foreach ($publicKeysByKid as $kid => $pem) {
-            if (!is_string($kid) || $kid === '') {
-                throw JwkSetException::invalidKid($kid);
-            }
-
-            if (!is_string($pem)) {
-                throw JwkSetException::invalidPublicKeyType($kid);
-            }
-
-            $keys[] = self::jwkFor($kid, $pem, $algorithm);
+        if (!array_is_list($keys)) {
+            throw JwkSetException::keysNotAList();
         }
 
-        return ['keys' => $keys];
+        $jwks = [];
+        // Compared as strings rather than gathered as array keys, for
+        // the same reason PublishedRsaKey carries its kid as a value.
+        $claimedKids = [];
+
+        foreach ($keys as $key) {
+            if (!$key instanceof PublishedRsaKey) {
+                throw JwkSetException::notAPublishedKey();
+            }
+
+            if (in_array($key->kid, $claimedKids, true)) {
+                throw JwkSetException::duplicateKid($key->kid);
+            }
+
+            $claimedKids[] = $key->kid;
+            $jwks[] = self::jwkFor($key, $algorithm);
+        }
+
+        return ['keys' => $jwks];
     }
 
     /**
      * @return array{kty: string, kid: string, use: string, alg: string, n: string, e: string}
      */
-    private static function jwkFor(string $kid, string $pem, string $algorithm): array
+    private static function jwkFor(PublishedRsaKey $key, string $algorithm): array
     {
-        $key = openssl_pkey_get_public($pem);
+        $parsed = openssl_pkey_get_public($key->publicKey);
 
-        if ($key === false) {
-            throw JwkSetException::invalidPublicKey($kid);
+        if ($parsed === false) {
+            throw JwkSetException::invalidPublicKey($key->kid);
         }
 
-        $details = openssl_pkey_get_details($key);
+        $details = openssl_pkey_get_details($parsed);
 
         if ($details === false || $details['type'] !== OPENSSL_KEYTYPE_RSA) {
-            throw JwkSetException::notAnRsaKey($kid);
+            throw JwkSetException::notAnRsaKey($key->kid);
         }
 
         if ($details['bits'] < JwtKeyValidator::RSA_MINIMUM_BITS) {
-            throw JwkSetException::undersizedRsaKey($kid);
+            throw JwkSetException::undersizedRsaKey($key->kid);
         }
 
         return [
             'kty' => 'RSA',
-            'kid' => $kid,
+            'kid' => $key->kid,
             'use' => 'sig',
             'alg' => $algorithm,
-            'n' => self::base64UrlEncode($details['rsa']['n']),
-            'e' => self::base64UrlEncode($details['rsa']['e']),
+            'n' => Base64Url::encode($details['rsa']['n']),
+            'e' => Base64Url::encode($details['rsa']['e']),
         ];
-    }
-
-    private static function base64UrlEncode(string $data): string
-    {
-        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 }

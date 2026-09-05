@@ -50,9 +50,13 @@ conditional, not just indivisible: calling it a second time with the
 same `QueuedJob` — a duplicate call, or a retry after a connection
 failure whose server-side outcome wasn't known — throws
 `Kinetis\Queue\Exception\StaleJobHandleException` instead of enqueueing
-a second replacement; `QueueWorker` already treats this as a benign
-"already released through another path" outcome rather than letting it
-crash the worker.
+a second replacement. `QueueWorker` keeps running and reports the lost
+delivery — see {doc}`queue`'s "When a settlement is lost".
+
+`ack()` and `fail()` are fenced the same way, from the same signal:
+`LREM` reports how many entries it removed, so a zero means the
+processing list held nothing for that handle and the settlement raises
+rather than reporting a removal that never happened.
 
 Delayed-job promotion also bounds how much it moves in one call
 (`RedisQueue::DELAYED_PROMOTION_BATCH_SIZE`, currently 100) — a large
@@ -60,6 +64,15 @@ ready backlog is promoted in batches across successive polls rather than
 inside one Lua script, since Redis executes one command at a time and an
 unbounded promotion would stall every other client sharing that Redis
 for its full duration.
+
+## Clearing a queue
+
+`RedisQueue` declares `Kinetis\Queue\ClearableQueueInterface` (see
+{doc}`queue`'s "Clearing is a separate capability"). Clearing counts and
+removes the queue's pending and delayed entries in one Lua script, so
+the number it reports is what it removed rather than a count a
+concurrent push could have moved underneath it. The processing list is
+untouched.
 
 ## Delayed jobs
 

@@ -164,10 +164,14 @@ same project-wide scan, and has an explicit-registration counterpart,
 
 **The `mcp` middleware group** covers `/mcp`, which `kinetis/mcp`'s own
 controller references via `#[Middleware('@mcp')]`. Join it by declaring
-membership:
+membership, and register the caller as `CurrentUserInterface` — the
+portable identity a tool, and the group's own final guard, both read:
 
 ```{code-block} php
+use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\AsMiddlewareGroup;
+use Kinetis\Http\CurrentUserInterface;
+use Kinetis\Http\Responses\ErrorResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -176,11 +180,20 @@ use Psr\Http\Server\RequestHandlerInterface;
 #[AsMiddlewareGroup('mcp')]
 final readonly class McpAuthMiddleware implements MiddlewareInterface
 {
+    public function __construct(private RequestScope $scope) {}
+
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if ($request->getHeaderLine('Authorization') !== 'Bearer ' . getenv('MCP_TOKEN')) {
-            return new \Nyholm\Psr7\Response(401, ['Content-Type' => 'application/json'], json_encode(['error' => 'Unauthenticated.']));
+            return ErrorResponse::create(401, 'Unauthenticated.');
         }
+
+        $this->scope->instance(CurrentUserInterface::class, new class implements CurrentUserInterface {
+            public function id(): string
+            {
+                return 'mcp-client';
+            }
+        });
 
         return $handler->handle($request);
     }
@@ -190,10 +203,13 @@ final readonly class McpAuthMiddleware implements MiddlewareInterface
 Because a group is route middleware — resolved from each request's own
 scope — a class here can constructor-inject `RequestScope` and publish
 `CurrentUserInterface` for the tool to see, which is how the auth
-packages work on `/mcp` unchanged. The package's own
-`McpOriginMiddleware` is a permanent group member at priority 100, so
-the spec-required `Origin` validation always runs first; see
-{doc}`mcp`'s "Securing the HTTP transport".
+packages work on `/mcp` unchanged. `kinetis/mcp` contributes two
+permanent members around yours: `McpOriginMiddleware` at priority 100,
+so the spec-required `Origin` validation always runs first, and
+`McpIdentityGuardMiddleware` at priority 0, which closes the endpoint
+when no `CurrentUserInterface` was registered. {doc}`mcp`'s "Securing
+the HTTP transport" states that contract and the `MCP_HTTP_PUBLIC`
+opt-in.
 
 ```{note}
 **Order matters**: route middleware runs *inside* the global pipeline,

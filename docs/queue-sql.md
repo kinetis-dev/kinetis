@@ -104,6 +104,27 @@ too short reclaims a job that's still being legitimately processed,
 producing exactly the duplicate-processing risk a visibility timeout is
 meant to bound, not eliminate outright.
 
+## Clearing a queue
+
+`SqlQueue` declares `Kinetis\Queue\ClearableQueueInterface` (see
+{doc}`queue`'s "Clearing is a separate capability"). Clearing deletes
+every row on the queue whose `reserved_at` is null, and reports how many
+rows the `DELETE` removed.
+
+That predicate is narrower than the one `size()` and `pop()` read,
+which treats a reservation older than `QUEUE_VISIBILITY_TIMEOUT_SECONDS`
+as available again. A row that has outrun the timeout is left alone here
+— see {doc}`queue`'s "Clearing is a separate capability" for why a clear
+draws the line differently from a reclaim.
+
+`ack()`, `release()` and `fail()` address a row by id alone, without
+checking whose reservation it currently holds, so a settlement arriving
+after the timeout has already let another worker reclaim the row lands
+on that worker's delivery instead. The row carries no token identifying
+which reservation wrote it, so this backend can raise no
+`Kinetis\Queue\Exception\StaleJobHandleException` — keep the timeout
+comfortably longer than your slowest job, as above.
+
 ## Delayed jobs
 
 ```{code-block} php

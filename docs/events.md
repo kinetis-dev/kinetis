@@ -151,27 +151,30 @@ final readonly class SendOrderConfirmation implements ShouldQueue
 }
 ```
 
-By default, `ListenerInvokerInterface` resolves to
-`SynchronousListenerInvoker`, which just calls the listener inline — a
-`ShouldQueue` listener works identically to any other one until something
-else is registered. {doc}`queue`'s `QueuedListenerInvoker` pushes it onto
-a real queue instead:
-
-```{code-block} php
-use Kinetis\Events\ListenerInvokerInterface;
-use Kinetis\Queue\QueuedListenerInvoker;
-
-$app->instance(ListenerInvokerInterface::class, new QueuedListenerInvoker($queue));
-```
+With no queue configured, `ListenerInvokerInterface` resolves to
+`SynchronousListenerInvoker`, which calls the listener inline — a
+`ShouldQueue` listener works identically to any other one. Installing
+{doc}`queue` and setting `QUEUE_CONNECTION` is the whole of the change:
+that package's bootstrap binds `QueuedListenerInvoker`, and marked
+listeners are pushed onto the configured queue from then on. An
+application that wants them inline anyway binds its own invoker in
+`bootstrap.php`, which runs later and wins.
 
 `EventDispatcher` decides whether a listener is `ShouldQueue` from the
 registry's own discovered metadata, before ever constructing anything —
 `ListenerInvokerInterface::invoke()` receives the listener by
 class-string, never a resolved instance, so a `ShouldQueue` listener's
-constructor genuinely never runs in the process that dispatched the
-event. `QueuedListenerInvoker` enqueues from that class-string alone;
-`SendOrderConfirmation` above is constructed exactly once, later, by
-whatever worker pops the resulting job.
+constructor never runs in the process that dispatched the event.
+`QueuedListenerInvoker` enqueues from that class-string alone;
+`SendOrderConfirmation` above is constructed on the worker that pops the
+resulting job — once per processing attempt, so a retried job builds and
+invokes it again.
+
+Two consequences worth knowing before marking a listener `ShouldQueue`:
+propagation is decided in the dispatching process (see "Stopping
+propagation" above), so a queued listener cannot stop the listeners
+behind it; and the event has to survive serialization to reach the
+worker, under the wire-value contract {doc}`queue` documents.
 
 ## Events Kinetis itself dispatches
 
@@ -188,22 +191,27 @@ get one.
 | Event | Package | Fired when | Payload |
 |---|---|---|---|
 | `Kinetis\Queue\Events\JobSucceeded` | `kinetis/queue` | A job's `handle()` returns without throwing and the backend has ack'd it. | `class`, `queue`, `attempts` |
-| `Kinetis\Queue\Events\JobReleased` | `kinetis/queue` | A job's `handle()` throws but attempts hasn't reached the effective cap yet, so it goes back on the queue for another try. Not fired when the release itself turns out to be a stale, no-op call. | `class`, `queue`, `attempts`, `exception` |
+| `Kinetis\Queue\Events\JobReleased` | `kinetis/queue` | A job's `handle()` throws but attempts hasn't reached the effective cap yet, so it goes back on the queue for another try. | `class`, `queue`, `attempts`, `exception` |
 | `Kinetis\Queue\Events\JobFailedPermanently` | `kinetis/queue` | A job's `handle()` throws and attempts has reached the effective cap, so it's given up on instead of retried — the only record of it beyond the log entry that fires alongside it. | `class`, `queue`, `attempts`, `exception`, `args` (redacted per `#[Sensitive]`, the same array the log entry carries) |
+| `Kinetis\Queue\Events\JobSettlementLost` | `kinetis/queue` | The backend rejects a job's `ack()`/`release()`/`fail()` as stale — the delivery this worker held was already settled elsewhere, or reclaimed after its reservation expired. Replaces whichever of the three events above the settlement would have earned, since no durable transition happened. | `class`, `queue`, `attempts`, `operation` (a `Kinetis\Queue\JobSettlement`), `stale`, `failure` (the job's own exception on the release/fail paths, `null` on the ack path) |
 | `Kinetis\Migrations\Events\MigrationApplied` | `kinetis/migrations` | Once per migration `migrate` actually runs, in the order they ran. | `name` |
 | `Kinetis\Migrations\Events\MigrationRolledBack` | `kinetis/migrations` | `migrate:rollback` undoes a migration — never fired when there was nothing to roll back. | `name` |
 | `Kinetis\Console\Events\CommandFailed` | `kinetis/framework` | Any `vendor/bin/kinetis` command throws. Commands typically run outside any request context (cron, a Kubernetes CronJob, a deploy step), so this is the only place that can observe a failure without wrapping every command's own body in a try/catch. | `commandName`, `exception` |
 
-All three queue events are dispatched from inside `QueueWorker::processNext()`'s
+All four queue events are dispatched from inside `QueueWorker::processNext()`'s
 own request scope — the same one a job's `handle()` runs in — so a
 listener can constructor-inject anything that scope can resolve, exactly
 like the job itself can. The two migration events and `CommandFailed`
 work the same way through the command's own request scope.
 
-**The three queue events are dispatched only after `QueueWorker` has
-already committed to the outcome they describe** — `ack()`/`release()`/
-`fail()` has already run against the backend by the time
-`JobSucceeded`/`JobReleased`/`JobFailedPermanently` fires. A listener
+**The queue events are dispatched only after `QueueWorker` has already
+committed to the outcome they describe** — `ack()`/`release()`/`fail()`
+has already run against the backend by the time
+`JobSucceeded`/`JobReleased`/`JobFailedPermanently` fires, and
+`JobSettlementLost` fires only once the backend has refused the
+settlement outright. At most one of the four fires for a given job —
+none at all when a transition fails for any other reason, since that
+exception stops the worker. A listener
 throwing is a best-effort observer failure, logged and otherwise
 ignored: it can never retroactively change what already happened to the
 job, and it can never stop the worker from processing the next one. See

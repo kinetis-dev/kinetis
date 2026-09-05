@@ -325,7 +325,16 @@ simply off and `CacheInterface` binds to `NullSimpleCache`.
 ### Queue (`kinetis/queue` + backend packages)
 
 Read by `kinetis queue:work` and `kinetis/queue`'s package bootstrap;
-the backend-specific keys are scoped.
+the backend-specific keys are scoped. Setting `QUEUE_CONNECTION` does
+two things beyond selecting a backend. It decides which capabilities the
+bound backend has beyond `QueueInterface` — `redis`, `sql`, and
+`rabbitmq` can clear a queue and `sqs` cannot, so `kinetis queue:clear`
+refuses under `QUEUE_CONNECTION=sqs`, see {doc}`queue`'s "Clearing is a
+separate capability". And it is what makes a listener marked
+`Kinetis\Events\ShouldQueue` actually queue: the bootstrap binds
+`ListenerInvokerInterface` to the queued invoker, where leaving
+`QUEUE_CONNECTION` unset leaves core's inline default in place (see
+{doc}`events`).
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -356,13 +365,15 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `FILESYSTEM_DRIVER` | `local` | `local`, or `s3` (needs `kinetis/storage-s3`). |
+| `FILESYSTEM_DRIVER` | *(unset — see below)* | `local`, or `s3` (needs `kinetis/storage-s3`). |
 | `FILESYSTEM_ROOT` | *(required for local)* | Local disk root path. |
 | `FILESYSTEM_S3_BUCKET` | *(required for s3)* | Bucket name. |
 | `FILESYSTEM_S3_REGION` | *(required for s3)* | AWS region. |
 | `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
 | `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO). |
 | `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing, needed by most non-AWS S3 services. |
+
+`FILESYSTEM_DRIVER` has no default at the container level: `kinetis/storage` binds `FilesystemOperator` only when the key is set, and installing the package alone registers nothing. `FilesystemFactory::fromConfig()`, called directly, falls back to `local`.
 
 ### Mail (`kinetis/mailer`) — scoped
 
@@ -398,6 +409,7 @@ this package.
 | Key | Default | Purpose |
 |---|---|---|
 | `MCP_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact `Origin` values allowed on `/mcp`. Empty rejects any request that sends an `Origin` header at all; requests without one (CLI clients, server-to-server) always pass. |
+| `MCP_HTTP_PUBLIC` | `false` | Serves `/mcp` to unauthenticated callers. Left at `false`, a request no `mcp`-group middleware registered a `CurrentUserInterface` for is answered `401` before anything is dispatched — see {doc}`mcp`'s "Securing the HTTP transport". |
 
 ### Telemetry (`kinetis/telemetry`)
 

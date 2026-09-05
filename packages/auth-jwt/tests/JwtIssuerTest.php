@@ -11,6 +11,8 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
 use Kinetis\AuthJwt\JwkSet;
 use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtIssuer;
+use Kinetis\AuthJwt\JwtKeyValidator;
+use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\UndersizedRsaKeyPair;
 use Kinetis\Container\AppScope;
@@ -377,20 +379,33 @@ final class JwtIssuerTest extends TestCase
         self::assertSame('user-42', $claims->sub);
     }
 
-    public function test_construction_throws_when_kid_is_an_empty_string(): void
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function unusableKids(): array
     {
-        $this->expectException(JwtIssuerException::class);
-
-        new JwtIssuer(self::SECRET, kid: '');
+        return [
+            'empty' => [''],
+            'blank' => ["  \t"],
+            'past the length limit' => [str_repeat('k', JwtKeyValidator::MAXIMUM_KID_LENGTH + 1)],
+            'not valid UTF-8' => ["key-\xFF"],
+        ];
     }
 
     /**
-     * A non-empty kid is exactly what both JwtAuthMiddleware's key-map
-     * form and JwkSet require — proving the two are actually compatible,
-     * not just independently validated, closes the gap an empty kid
-     * would otherwise leave: a token this class could issue but no
-     * rotation/JWKS configuration could ever represent or select.
+     * The kid rule here is JwtKeyValidator::isUsableKid(), the same one
+     * JwkSet and JwtAuthMiddleware apply, so this class cannot stamp a
+     * kid no rotation or JWKS configuration could select.
      */
+    #[DataProvider('unusableKids')]
+    public function test_construction_throws_for_a_kid_no_verifier_could_select(string $kid): void
+    {
+        $this->expectException(JwtIssuerException::class);
+        $this->expectExceptionMessage('non-blank, valid UTF-8');
+
+        new JwtIssuer(self::SECRET, kid: $kid);
+    }
+
     public function test_a_token_issued_with_a_real_kid_verifies_through_a_matching_key_map(): void
     {
         $app = new AppScope();
@@ -410,14 +425,13 @@ final class JwtIssuerTest extends TestCase
     }
 
     /**
-     * The same invariant through a real, published-and-reparsed JWKS —
-     * the kid this issuer writes into the token header must match a kid
-     * JwkSet can publish and Firebase's own JWK::parseKeySet() can read
-     * back, end to end.
+     * The same invariant through a published-and-reparsed JWKS: the kid
+     * this issuer stamps must match one JwkSet can publish and a JWKS
+     * parser can read back.
      */
     public function test_a_token_issued_with_a_real_kid_verifies_through_a_matching_jwks(): void
     {
-        $set = JwkSet::fromRsaPublicKeys(['current' => RsaKeyPair::PUBLIC_KEY]);
+        $set = JwkSet::fromRsaPublicKeys([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]);
         $keys = JWK::parseKeySet($set);
 
         $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');

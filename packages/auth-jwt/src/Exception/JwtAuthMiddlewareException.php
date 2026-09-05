@@ -115,13 +115,17 @@ final class JwtAuthMiddlewareException extends RuntimeException
     }
 
     /**
-     * A $key map entry's own key (kid) isn't a non-empty string — either
-     * a non-string array key (PHP allows an int) or an empty string.
+     * A $key map entry's own key (kid) is outside
+     * JwtKeyValidator::isUsableKid() — blank, longer than a kid may be,
+     * or an int rather than a string (see ParsedJwkSet).
      */
     public static function invalidKeyMapKid(): self
     {
+        $maximum = JwtKeyValidator::MAXIMUM_KID_LENGTH;
+
         return new self(
-            "JwtAuthMiddleware's \$key map keys (kid) must each be a non-empty string.",
+            "JwtAuthMiddleware's \$key map keys (kid) must each be non-blank, valid UTF-8, and at most "
+            . "{$maximum} bytes — a kid PHP would read as a number belongs in a ParsedJwkSet instead.",
         );
     }
 
