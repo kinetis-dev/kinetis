@@ -8,4 +8,6 @@ parameters:
         - generate-composer.php
         - validate-manifest.php
         - release-plan.php
+        - release-transaction.php
+        - release-gate.php
         - tests

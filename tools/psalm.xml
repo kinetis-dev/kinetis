@@ -23,6 +23,8 @@
         <file name="generate-composer.php" />
         <file name="validate-manifest.php" />
         <file name="release-plan.php" />
+        <file name="release-transaction.php" />
+        <file name="release-gate.php" />
         <ignoreFiles>
             <directory name="vendor" />
         </ignoreFiles>

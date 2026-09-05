@@ -1,9 +1,9 @@
 # Monorepo tooling
 
-Four entry points, plus the four modules three of them share. Those
-three are driven by `packages.manifest.json` (repo root) — the canonical
-source of truth for every `packages/*/composer.json`; the fourth,
-`setup-docs-mcp.sh`, is unrelated and standalone.
+Six entry points, plus the four modules they share. Five are driven by
+`packages.manifest.json` (repo root) — the canonical source of truth for
+every `packages/*/composer.json`; the sixth, `setup-docs-mcp.sh`, is
+unrelated and standalone.
 
 - `generate-composer.php` — generates each package's `composer.json`
   from the manifest. Three usages: default (writes every package),
@@ -25,12 +25,35 @@ source of truth for every `packages/*/composer.json`; the fourth,
   `reportPaths` to name the same packages — a package in one but not the
   other writes a report nobody reads, and shows as 0% covered while its
   tests pass.
-- `release-plan.php` — computes what this round's push would release,
-  read-only. Every fact it needs it either establishes or fails on: a
-  tag lookup that can't reach its remote, a comparison base it can't
-  read, or a dependency graph with no total order all end the run rather
-  than producing a plan that leaves work out. See "Cutting a release" in
-  `docs/appendix-contributing.md`.
+- `release-plan.php` — computes which packages this round has to look
+  at, read-only and unauthenticated. A package is a candidate when its
+  version changed since the comparison base, or when its split
+  repository does not yet carry the current version as a finished
+  release — no tag, no main branch, or a main branch pointing somewhere
+  other than the tagged commit. Every fact it needs it either
+  establishes or fails on: a ref lookup that can't reach its remote, a
+  comparison base it can't read, or a dependency graph with no total
+  order all end the run rather than producing a plan that leaves work
+  out.
+- `release-gate.php` — decides whether the exact commit being released
+  passed CI, Monorepo Validate, Semgrep, and Integration where the
+  commit's own diff makes it applicable. Runs matched on head SHA, and a
+  green run whose meaningful jobs were all skipped counts as a failure.
+  Waiting is bounded, and every state that is not a proven success ends
+  the run.
+- `release-transaction.php` — the publication itself, in two steps.
+  `preflight` stages the round as one deterministic release commit,
+  builds each candidate's publication commit from that commit's own
+  `packages/<key>` tree on top of what its repository publishes today,
+  reads every target repository, and writes the exact ref updates to
+  make with the exact remote value each may replace; it contacts remotes
+  only to read. `apply` re-derives every object that file names against
+  this checkout, and only then takes the deploy credential and performs
+  the updates, one atomic tag-and-main push per repository. Both are
+  idempotent: a round interrupted partway is finished by the next one.
+
+See "Cutting a release" in `docs/appendix-contributing.md` for how the
+three fit together.
 - `setup-docs-mcp.sh` — see "Setting up the docs MCP server" below.
 
 The shared modules, each used by more than one of the three
@@ -52,7 +75,10 @@ manifest-driven entry points:
   couldn't read it". Every git call runs under a deadline, after which
   the child is killed and reaped; an answer that arrives incomplete — a
   failed read, output past the capture cap, a child whose reap could not
-  be established — is a failure rather than a shorter success.
+  be established — is a failure rather than a shorter success. The same
+  bounded runner takes an explicit environment, which is how the
+  publication hands a credential to exactly one child and to nothing
+  else.
 
 Never hand-edit a `packages/*/composer.json` directly for anything the
 manifest controls (`require`, `require-dev`, `autoload`, `bin`, ...) —

@@ -18,6 +18,8 @@
             <file>generate-composer.php</file>
             <file>validate-manifest.php</file>
             <file>release-plan.php</file>
+            <file>release-transaction.php</file>
+            <file>release-gate.php</file>
         </include>
     </source>
 </phpunit>
