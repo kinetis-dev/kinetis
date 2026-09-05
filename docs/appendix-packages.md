@@ -170,6 +170,23 @@ surface without it.
   means any request carrying an Origin is rejected `403`). A permanent
   `mcp`-group member at priority 100 — which is also what guarantees
   the group `McpController` references always exists.
+- `Http\McpIdentityGuardMiddleware` — the group's permanent member at
+  priority 0, the last thing to run before `McpController`. Delegates
+  when `MCP_HTTP_PUBLIC` (a `Config::bool()` read, so an unrecognized
+  value throws `Kinetis\Config\Exception\InvalidConfigValueException`)
+  is true, or when the request's own `RequestScope` reports
+  `isRegistered(Kinetis\Http\CurrentUserInterface::class)`; otherwise
+  `ErrorResponse::create(401, 'Unauthenticated.')`, with no
+  `WWW-Authenticate` header — the scheme belongs to whichever
+  authentication middleware the application put in the group at the
+  default priority 50. `isRegistered()` specifically, never `has()`/
+  `get()`: both answer for any autowirable class, so either would accept
+  a manufactured, disconnected object as proof of authentication.
+  `CurrentUserInterface` alone counts — an identity published only under
+  a concrete user class is not the portable boundary a tool or another
+  package depends on. {doc}`mcp`'s "Securing the HTTP transport" is where
+  the contract itself is stated; stdio, which has no middleware group,
+  is unaffected.
 - `Console\McpServeCommand` — `#[Command('mcp:serve')]`, resolving the
   bootstrap's own `McpServer` binding and handing the transport the
   real `AppScope` for per-message scopes.

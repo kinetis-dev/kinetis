@@ -409,6 +409,7 @@ this package.
 | Key | Default | Purpose |
 |---|---|---|
 | `MCP_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact `Origin` values allowed on `/mcp`. Empty rejects any request that sends an `Origin` header at all; requests without one (CLI clients, server-to-server) always pass. |
+| `MCP_HTTP_PUBLIC` | `false` | Serves `/mcp` to unauthenticated callers. Left at `false`, a request no `mcp`-group middleware registered a `CurrentUserInterface` for is answered `401` before anything is dispatched — see {doc}`mcp`'s "Securing the HTTP transport". |
 
 ### Telemetry (`kinetis/telemetry`)
 

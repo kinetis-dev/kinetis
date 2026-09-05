@@ -1480,39 +1480,110 @@ Like `PingController`, nothing registers this class — any class under one
 of your own PSR-4 roots carrying an `#[McpTool]` method is discovered
 automatically.
 
-The tool still needs a transport to actually reach a client over. This
-application already serves HTTP, so the Streamable HTTP transport reaches
-it with no extra process or container — `Kernel`'s `$mcp` parameter:
+The tool still needs a transport to reach a client over. This
+application already serves HTTP, and `kinetis/mcp` contributes `POST
+/mcp` as an ordinary discovered route, so the Streamable HTTP transport
+is already there — no extra process, no extra container, and nothing to
+pass to `Kernel`.
+
+What the endpoint needs is a caller it can identify. `/mcp` runs the
+`mcp` middleware group, whose last member answers `401` for any request
+reaching it with no `Kinetis\Http\CurrentUserInterface` on the request
+scope. `DemoVisitor` is bound application-wide in `bootstrap.php`, so it
+satisfies that check on every route, `/mcp` included — a fixed visitor
+is an identity, not authentication. Give the endpoint a credential of
+its own, joining the group by attribute the way everything else here is
+discovered:
 
 ```{code-block} php
-:caption: public/index.php (additions)
+:caption: src/Http/McpAuthMiddleware.php
 
-use Kinetis\Mcp\McpDiscovery;
-use Kinetis\Mcp\McpDispatcher;
-use Kinetis\Mcp\McpServer;
+<?php
 
-// ...
+declare(strict_types=1);
 
-$mcp = new McpServer(McpDiscovery::discover($projectRoot), new McpDispatcher($app));
+namespace App\Http;
 
-$adapter = RuntimeDetector::detect();
-$kernel = new Kernel($app, $router, isPersistent: $adapter->isPersistent(), mcp: $mcp);
+use App\Broadcasting\DemoVisitor;
+use Kinetis\Config\Config;
+use Kinetis\Container\RequestScope;
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
+use Kinetis\Http\CurrentUserInterface;
+use Kinetis\Http\Responses\ErrorResponse;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+
+#[AsMiddlewareGroup('mcp')]
+final readonly class McpAuthMiddleware implements MiddlewareInterface
+{
+    public function __construct(
+        private Config $config,
+        private RequestScope $scope,
+    ) {}
+
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        $token = $this->config->string('MCP_TOKEN', '');
+
+        if ($token === '' || !hash_equals('Bearer ' . $token, $request->getHeaderLine('Authorization'))) {
+            return ErrorResponse::create(401, 'Unauthenticated.');
+        }
+
+        $this->scope->instance(CurrentUserInterface::class, new DemoVisitor());
+
+        return $handler->handle($request);
+    }
+}
 ```
+
+```{code-block} text
+:caption: .env (additions)
+
+MCP_TOKEN=local-mcp-token
+```
+
+The group runs it at the attribute's default priority `50`: after the
+package's own `Origin` validation at `100`, and before the identity
+guard at `0`, which the `CurrentUserInterface` it registers satisfies.
+A shared secret is the smallest thing that authenticates a
+caller; an application with real users puts `kinetis/auth`'s or
+`kinetis/auth-jwt`'s middleware in the group instead, and the identity
+it resolves reaches the tool the same way — see {doc}`mcp`'s "Securing
+the HTTP transport".
+
+A request also mirrors its protocol version and method into headers, and
+the server rejects one whose header and body disagree:
 
 ```{code-block} bash
 :caption: Try it
 
 curl -X POST http://localhost:8080/mcp \
+    -H "Authorization: Bearer local-mcp-token" \
     -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    -H "MCP-Protocol-Version: 2026-07-28" \
+    -H "Mcp-Method: tools/list" \
+    -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {}
+            }
+        }
+    }'
 ```
 
 That confirms `ping_scenario_breakdown` is reachable over `/mcp`. To ask a
 real question through it from Claude Code's CLI, register the endpoint as
-an MCP server:
+an MCP server, carrying the same token:
 
 ```{code-block} bash
-claude mcp add --transport http --scope user ping-pong http://localhost:8080/mcp
+claude mcp add --transport http --scope user ping-pong http://localhost:8080/mcp \
+    --header "Authorization: Bearer local-mcp-token"
 ```
 
 Claude Code reads its list of MCP servers once, at session start, so

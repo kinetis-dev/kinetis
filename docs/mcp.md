@@ -102,10 +102,19 @@ rather than leaving a corrupt, half-written line on the stream.
 
 `/mcp` is an ordinary route — `Kinetis\Mcp\Http\McpController`,
 discovered from this package's own scan root the moment the package is
-installed, with nothing to pass to `Kernel`:
+installed, with nothing to pass to `Kernel`.
+
+It answers `401` until an application opens it: the endpoint's own
+middleware group requires either a `CurrentUserInterface` registered for
+the request or `MCP_HTTP_PUBLIC=true`, and "Securing the HTTP transport"
+below is where that contract and both ways of satisfying it are stated.
+The request below therefore carries the credential an `mcp`-group
+authentication middleware is there to check; against an endpoint
+declared public, drop that header.
 
 ```{code-block} bash
 curl -X POST http://localhost:8080/mcp \
+    -H "Authorization: Bearer $MCP_TOKEN" \
     -H "Content-Type: application/json" \
     -H "MCP-Protocol-Version: 2026-07-28" \
     -H "Mcp-Method: tools/list" \
@@ -146,7 +155,7 @@ method is declared.
 The endpoint's own middleware is the `mcp` middleware group, which
 `McpController` references like any route references a group — resolved
 from each request's own scope, so everything route middleware can do
-works here (see {doc}`middleware`):
+works here (see {doc}`middleware`). Three layers, in the order they run:
 
 1. **`Origin` validation, always on.** The Streamable HTTP specification
    requires validating the `Origin` header on every incoming connection
@@ -163,15 +172,17 @@ works here (see {doc}`middleware`):
    MCP_ALLOWED_ORIGINS=https://my-mcp-client.example
    ```
 
-2. **Your own middleware, via `#[AsMiddlewareGroup('mcp')]`.** Declare
-   membership on the middleware class and it joins the endpoint's
-   pipeline — after the origin check, which runs first by priority.
+2. **Your own authentication, via `#[AsMiddlewareGroup('mcp')]`.**
+   Declare membership on the middleware class and it joins the
+   endpoint's pipeline at the attribute's default priority `50` —
+   after the origin check at `100`, before the identity guard at `0`.
    Because the group resolves from the request's scope,
    `kinetis/auth`'s `BearerAuthMiddleware` and `kinetis/auth-jwt`'s
    `JwtAuthMiddleware` subclasses work here unchanged, and the
    `CurrentUserInterface` they publish reaches the tool:
 
    ```{code-block} php
+   use Kinetis\Auth\BearerAuthMiddleware;
    use Kinetis\Http\Attributes\AsMiddlewareGroup;
 
    #[AsMiddlewareGroup('mcp')]
@@ -203,6 +214,50 @@ works here (see {doc}`middleware`):
    at all). A middleware that publishes only `CurrentUserInterface` (the
    plain `BearerAuthMiddleware` case) carries only that — there is no
    second id to preserve.
+
+3. **The identity guard, last.** `McpIdentityGuardMiddleware` is a
+   permanent group member at priority `0`, so it sees the scope
+   everything ahead of it finished writing to. **`/mcp` answers `401`
+   unless the request's scope has a `CurrentUserInterface` registered on
+   it, or `MCP_HTTP_PUBLIC=true` is configured.** A rejected request is
+   settled before `McpController` is constructed: no message is
+   dispatched, no tool or resource runs, and the body is the framework's
+   own `{"error": "Unauthenticated."}` — no `WWW-Authenticate`
+   challenge, since the scheme belongs to the authentication middleware
+   above rather than to this guard, and nothing distinguishing a missing
+   identity from a closed endpoint.
+
+   Presence is the test, and the interface is the whole boundary. A
+   middleware registering only its own concrete user class publishes
+   nothing portable for a tool or another package to depend on, and does
+   not open the endpoint — register `CurrentUserInterface` too, as both
+   auth packages do.
+
+   ```{code-block} text
+   :caption: .env — an endpoint that serves anonymous callers
+   MCP_HTTP_PUBLIC=true
+   ```
+
+   `MCP_HTTP_PUBLIC` is a typed `Kinetis\Config` boolean read from the
+   boot-time environment (see {doc}`config`), so a value that is not a
+   recognized boolean throws `InvalidConfigValueException` rather than
+   resolving either way.
+
+   The stdio transport has no group, no guard, and no
+   `MCP_HTTP_PUBLIC`: the local client that launched the process already
+   owns it.
+
+   ```{note}
+   **Upgrading a deployment that pre-warms its cache.** A middleware
+   group's membership is compiled data (see {doc}`caching`), and a
+   published generation is only ever superseded by a cache *format*
+   change, which a group gaining a member is not. A generation compiled
+   by a `kinetis/mcp` without the guard therefore stays valid and keeps
+   serving `/mcp` without it, so run `bin/kinetis build` in the deploy
+   that upgrades the package. Development's live discovery, and a
+   production deployment that compiles lazily against an empty
+   `.kinetis-cache/`, both pick the guard up with nothing extra to do.
+   ```
 
 Global middleware wraps `/mcp` too, like every route — the group exists
 for what should apply to this endpoint only. That includes
