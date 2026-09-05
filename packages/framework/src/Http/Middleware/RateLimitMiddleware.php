@@ -6,6 +6,7 @@ namespace Kinetis\Http\Middleware;
 
 use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\SimpleCache\AtomicCounterInterface;
 use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
@@ -43,6 +44,9 @@ use Psr\SimpleCache\CacheInterface;
  * the raw `REMOTE_ADDR` — never client-settable `X-Forwarded-For` — unless
  * the connecting address matches a listed CIDR range, opting in to reading
  * that header for requests that actually came through a trusted proxy.
+ * Which address that resolves to is `Kinetis\Http\TrustedProxies`'
+ * answer: the same object, and the same chain-walking rules, the runtime
+ * adapters apply to the same headers before the Kernel runs.
  *
  * Per-route limits: since `#[Middleware(...)]` only ever carries a
  * class-string with no arguments, a different limit for a different route
@@ -105,6 +109,18 @@ class RateLimitMiddleware implements MiddlewareInterface
     private readonly Counter $counter;
 
     /**
+     * This policy's own edge, as the one object that answers "who is
+     * this request's client" for the whole framework. The runtime
+     * adapters build theirs from `TRUSTED_PROXIES` before the Kernel
+     * exists; this one is built from the ranges this policy was
+     * configured with, since a limiter may trust a narrower set than the
+     * application itself does. Same rules either way — which is
+     * what stops a request from having one client address for its scheme
+     * and another for its rate-limit bucket.
+     */
+    private readonly TrustedProxies $proxies;
+
+    /**
      * $clock exists purely for deterministic testing — a real window
      * boundary can be crossed in a test without a real sleep() by
      * substituting a closure that advances an in-memory counter instead
@@ -141,49 +157,26 @@ class RateLimitMiddleware implements MiddlewareInterface
         }
 
         foreach ($trustedProxies as $proxy) {
-            self::assertUsableProxy($proxy);
+            // Checked here, and reported under this middleware's own
+            // configuration exception, so a bad range names the setting
+            // the operator actually wrote. A range decides who may speak
+            // for a client, so a malformed one is refused at construction
+            // rather than reaching a match, where a negative prefix
+            // raises ArithmeticError on the bit shift and an oversized
+            // one silently narrows the range to a single address.
+            $reason = TrustedProxies::unusableReason($proxy);
+
+            if ($reason !== null) {
+                throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, $reason);
+            }
         }
+
+        $this->proxies = TrustedProxies::fromList($trustedProxies);
     }
 
     private function now(): int
     {
         return $this->clock !== null ? ($this->clock)() : time();
-    }
-
-    /**
-     * A range decides who may set X-Forwarded-For, so a malformed one is
-     * rejected here rather than reaching ipInCidr(), where a negative
-     * prefix raises ArithmeticError on the bit shift and an oversized one
-     * silently narrows the range to a single address.
-     */
-    private static function assertUsableProxy(string $proxy): void
-    {
-        if (!str_contains($proxy, '/')) {
-            if (@inet_pton($proxy) === false) {
-                throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, 'not an IP address');
-            }
-
-            return;
-        }
-
-        [$subnet, $prefix] = explode('/', $proxy, 2);
-        $binary = @inet_pton($subnet);
-
-        if ($binary === false) {
-            throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, 'the part before "/" is not an IP address');
-        }
-
-        if (preg_match('/^\d+$/', $prefix) !== 1) {
-            throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, 'the prefix length must be a whole number');
-        }
-
-        $maxBits = strlen($binary) * 8;
-
-        if ((int) $prefix > $maxBits) {
-            $family = $maxBits === 32 ? 'IPv4' : 'IPv6';
-
-            throw InvalidRateLimitConfigException::malformedTrustedProxy($proxy, "an {$family} prefix length runs from 0 to {$maxBits}");
-        }
     }
 
     #[\Override]
@@ -304,90 +297,27 @@ class RateLimitMiddleware implements MiddlewareInterface
      * built-in "key by the authenticated user when one is resolved, IP
      * otherwise" variant.
      *
-     * X-Forwarded-For is only ever consulted when REMOTE_ADDR itself
-     * matches one of $trustedProxies — never unconditionally, since a
-     * client can set that header to any value it likes. Once trusted, the
-     * chain (nearest hop last) is walked from the end backward, skipping
-     * every entry that's itself a trusted proxy; the first untrusted entry
-     * found is the real client. A chain of only trusted proxies (no client
-     * entry present) falls back to its leftmost, oldest entry.
+     * The address itself is Kinetis\Http\TrustedProxies' answer, not
+     * this class's: X-Forwarded-For is only ever consulted when the peer
+     * that connected matches one of $trustedProxies — never
+     * unconditionally, since a client can set that header to any value
+     * it likes — and the chain is then walked from its nearest hop
+     * backward past every entry that is itself a trusted proxy. The
+     * transport peer is untouched by any of it: REMOTE_ADDR stays the
+     * socket's own, so a component reading it still reads what actually
+     * connected.
+     *
+     * A request carrying no REMOTE_ADDR at all has no client to key on
+     * and shares one bucket named `unknown` — a limit is still applied,
+     * which is the safe direction; a per-request identifier would be no
+     * limit at all.
      */
     protected function identifierFor(ServerRequestInterface $request): string
     {
         $serverParams = $request->getServerParams();
         $remoteAddr = is_string($serverParams['REMOTE_ADDR'] ?? null) ? $serverParams['REMOTE_ADDR'] : null;
 
-        if ($remoteAddr === null) {
-            return 'unknown';
-        }
-
-        if ($this->trustedProxies === [] || !$this->isTrustedProxy($remoteAddr)) {
-            return $remoteAddr;
-        }
-
-        $forwardedFor = $request->getHeaderLine('X-Forwarded-For');
-
-        if ($forwardedFor === '') {
-            return $remoteAddr;
-        }
-
-        $chain = array_map('trim', explode(',', $forwardedFor));
-
-        for ($i = count($chain) - 1; $i >= 0; $i--) {
-            if (!$this->isTrustedProxy($chain[$i])) {
-                return $chain[$i];
-            }
-        }
-
-        return $chain[0];
-    }
-
-    private function isTrustedProxy(string $ip): bool
-    {
-        foreach ($this->trustedProxies as $cidr) {
-            if (self::ipInCidr($ip, $cidr)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * inet_pton()-based binary comparison, so IPv4 and IPv6 ranges are
-     * handled uniformly rather than needing separate integer/string logic
-     * for each.
-     */
-    private static function ipInCidr(string $ip, string $cidr): bool
-    {
-        if (!str_contains($cidr, '/')) {
-            return $ip === $cidr;
-        }
-
-        [$subnet, $bitsString] = explode('/', $cidr, 2);
-        $bits = (int) $bitsString;
-
-        $ipBinary = @inet_pton($ip);
-        $subnetBinary = @inet_pton($subnet);
-
-        if ($ipBinary === false || $subnetBinary === false || strlen($ipBinary) !== strlen($subnetBinary)) {
-            return false;
-        }
-
-        $bytes = intdiv($bits, 8);
-        $remainderBits = $bits % 8;
-
-        if ($bytes > 0 && substr($ipBinary, 0, $bytes) !== substr($subnetBinary, 0, $bytes)) {
-            return false;
-        }
-
-        if ($remainderBits === 0) {
-            return true;
-        }
-
-        $mask = ~(0xFF >> $remainderBits) & 0xFF;
-
-        return (ord($ipBinary[$bytes]) & $mask) === (ord($subnetBinary[$bytes]) & $mask);
+        return $this->proxies->clientAddress($remoteAddr, $request->getHeaderLine('X-Forwarded-For')) ?? 'unknown';
     }
 
     private function tooManyRequestsResponse(int $window): ResponseInterface

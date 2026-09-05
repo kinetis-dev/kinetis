@@ -16,12 +16,14 @@ namespace Kinetis\Http;
  * form body, while `application/x-www-form-urlencodedevil` names a
  * different one and is not.
  *
- * {@see of()} is the single parse behind both predicates: everything
+ * {@see of()} is the single parse behind every predicate: everything
  * before the first `;`, surrounding whitespace removed, lowercased
  * through strtolower(), which is ASCII-only and locale-independent — a
  * Turkish locale can't turn an `I` into a dotless one here. The
- * parameters after that `;` stay with the caller: a multipart parser
- * needs the `boundary` and reads it off the full header value.
+ * parameters after that `;` are not this class's to read:
+ * {@see \Kinetis\Http\Form\MultipartEnvelope} holds them to one strict
+ * grammar, because a `boundary` decides where a body's parts are and two
+ * parsers must not find two different answers in one header.
  */
 final class MediaType
 {
@@ -55,5 +57,16 @@ final class MediaType
     public static function isMultipartFormData(string $contentType): bool
     {
         return self::of($contentType) === self::MULTIPART_FORM_DATA;
+    }
+
+    /**
+     * Any `multipart/*` media type, not just the form one — what a
+     * `multipart/form-data` part may never itself declare. See
+     * {@see \Kinetis\Http\Form\MultipartEnvelope} for why a nested
+     * envelope is refused rather than parsed.
+     */
+    public static function isMultipart(string $contentType): bool
+    {
+        return str_starts_with(self::of($contentType), 'multipart/');
     }
 }

@@ -468,6 +468,18 @@ and every adapter parsing a form body itself reads a request's
 `Content-Type` through it, so an application gets the same answer under
 every runtime (see {doc}`runtime-adapters`).
 
+Field names nest the way PHP's own parser nests them, under every
+runtime: `user[address][city]` builds nested arrays,
+`tags[]` appends, a repeated plain name replaces, and repeated or nested
+file names build the same tree in `getUploadedFiles()`. How large and
+how complicated a form may get is bounded by `Kinetis\Http\Form\FormLimits`
+— input variables, file parts, nesting depth, multipart part and header
+counts, and total bytes — identically on all four adapters; a form past
+any of those is refused with a `413` before the handler runs, never
+handed on with the over-limit fields quietly missing. See "Form bodies:
+one contract under every runtime" in {doc}`runtime-adapters` for the
+numbers and the reasoning.
+
 A `#[Body]` DTO can mix ordinary fields with an `UploadedFileInterface`-typed
 constructor parameter — no special handling needed in the DTO itself:
 
@@ -515,14 +527,15 @@ public function receiveFile(UploadedFileInterface $file): array
 
 ```{note}
 This works the same way regardless of which `RuntimeAdapterInterface` is
-driving the request — `FrankenPhpAdapter`/`FpmAdapter` populate the
-uploaded-files bag via PHP 8.4's `request_parse_body()` for `PUT`/`PATCH`
-(PHP's SAPI only does this automatically for `POST`), while
-`kinetis/bref-adapter`'s `BrefLambdaAdapter` and
-`kinetis/roadrunner-adapter`'s `RoadRunnerAdapter` both parse it
-themselves — from the Lambda event body directly, and from the
-`http.raw_body: true`-preserved raw body respectively. See
-{doc}`runtime-adapters` for what differs underneath each one.
+driving the request, and for every method a form can arrive on. All four
+adapters fill the uploaded-files bag through the same
+`Kinetis\Http\Form` entry point, over raw bytes the runtime never
+parsed — `php://input` under the SAPI adapters, which require
+`enable_post_data_reading=0`, the event body under
+`kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
+`http.raw_body: true`-preserved body under `kinetis/roadrunner-adapter`'s
+`RoadRunnerAdapter`. The one difference underneath is which multipart
+parser expands the body; see {doc}`runtime-adapters`.
 ```
 
 ## Returning a status other than the route's default

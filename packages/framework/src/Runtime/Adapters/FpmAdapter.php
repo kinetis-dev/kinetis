@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Runtime\Adapters;
 
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Runtime\SuperglobalsBridge;
 use Psr\Http\Message\ResponseInterface;
@@ -17,13 +19,18 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class FpmAdapter implements RuntimeAdapterInterface
 {
+    public function __construct(
+        private readonly FormLimits $limits,
+        private readonly TrustedProxies $trustedProxies,
+    ) {}
+
     /**
      * @param callable(ServerRequestInterface): ResponseInterface $handler
      */
     #[\Override]
     public function run(callable $handler): void
     {
-        SuperglobalsBridge::handle($handler);
+        SuperglobalsBridge::handle($handler, $this->limits, $this->trustedProxies);
 
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();

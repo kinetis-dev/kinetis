@@ -18,6 +18,19 @@ final class RuntimeUnavailableException extends RuntimeException
         return new self("Cannot run {$adapter}: environment variable \"{$variable}\" is not set.");
     }
 
+    /**
+     * The SAPI is running, but not configured the way a Kinetis adapter
+     * requires. A deployment problem rather than a client error, so it
+     * propagates as a server failure instead of becoming a response —
+     * and it is detected rather than assumed, because a setting whose
+     * absence silently changes what a handler receives is worse than one
+     * that fails loudly.
+     */
+    public static function misconfiguredSapi(string $requirement): self
+    {
+        return new self($requirement);
+    }
+
     public static function missingAdapterPackage(string $adapter, string $package): self
     {
         return new self("Cannot run {$adapter}: install \"{$package}\" to enable it.");

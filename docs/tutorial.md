@@ -127,8 +127,10 @@ converges on:
 declare(strict_types=1);
 
 use Kinetis\Container\AppScope;
+use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\RouteDiscovery;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\ProjectRoot;
 use Kinetis\Runtime\RuntimeDetector;
 
@@ -141,7 +143,11 @@ $app->boot();
 
 $router = RouteDiscovery::discover($projectRoot);
 
-$adapter = RuntimeDetector::detect();
+// The two policies an adapter needs before the Kernel exists: how many
+// bytes a request body may carry, and whose forwarded headers may decide
+// its scheme. AppScope::boot() registered both from Config; the adapter
+// is handed the same instances the Kernel will enforce.
+$adapter = RuntimeDetector::detect($app->get(FormLimits::class), $app->get(TrustedProxies::class));
 $kernel = new Kernel($app, $router, isPersistent: $adapter->isPersistent());
 
 $adapter->run($kernel->handle(...));
@@ -172,6 +178,10 @@ RUN apk add --no-cache unzip curl-dev $PHPIZE_DEPS \
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
+
+# Kinetis reads and bounds the request body itself; PHP must not parse
+# it first. Required, not tuning — see {doc}`runtime-adapters`.
+RUN printf 'enable_post_data_reading=0\n' > /usr/local/etc/php/conf.d/zz-kinetis.ini
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

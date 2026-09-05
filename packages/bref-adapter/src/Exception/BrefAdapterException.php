@@ -17,11 +17,6 @@ final class BrefAdapterException extends RuntimeException
         );
     }
 
-    public static function couldNotOpenTempStream(): self
-    {
-        return new self('Failed to open a php://temp stream to parse a multipart body.');
-    }
-
     public static function runtimeApiUnreachable(string $url): self
     {
         return new self("Could not reach the Lambda Runtime API at {$url}.");

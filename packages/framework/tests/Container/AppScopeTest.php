@@ -11,6 +11,8 @@ use Kinetis\Container\Exception\ContainerException;
 use Kinetis\Container\Exception\DisconnectedRequestScopeException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Container\RequestScope;
+use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\TrustedProxies;
 use Kinetis\Logging\ErrorLogLogger;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Container\Fixtures\CircularA;
@@ -322,6 +324,54 @@ final class AppScopeTest extends TestCase
         $app->boot();
 
         self::assertSame($config, $app->get(Config::class));
+    }
+
+    /**
+     * The two policies a runtime adapter needs before the Kernel or its
+     * container exist. Registered here so an entry point that built
+     * neither still hands the adapter what the application configured,
+     * and so the Kernel's own MaxBodySizeMiddleware enforces that same
+     * object.
+     */
+    public function test_boot_registers_the_runtime_policies_the_config_describes(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(['MAX_BODY_SIZE' => '4096', 'TRUSTED_PROXIES' => '10.0.0.0/8']));
+        $app->boot();
+
+        /** @var FormLimits $limits */
+        $limits = $app->get(FormLimits::class);
+        /** @var TrustedProxies $proxies */
+        $proxies = $app->get(TrustedProxies::class);
+
+        self::assertSame(4096, $limits->maxBodyBytes);
+        self::assertTrue($proxies->trusts('10.1.2.3'));
+    }
+
+    /**
+     * An entry point registers both before the bootstrap chain runs, so
+     * `bootstrap.php` can narrow either one. Whatever is bound when the
+     * container locks is what boot() leaves there — and so what the
+     * entry point reads back and hands to the adapter.
+     */
+    public function test_boot_leaves_a_pre_registered_runtime_policy_alone(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(['MAX_BODY_SIZE' => '4096', 'TRUSTED_PROXIES' => '10.0.0.0/8']));
+
+        // The entry point's own defaults, built from that Config.
+        $app->instance(FormLimits::class, new FormLimits(4096));
+        $app->instance(TrustedProxies::class, TrustedProxies::fromList(['10.0.0.0/8']));
+
+        // What a bootstrap narrowed them to.
+        $limits = new FormLimits(128);
+        $proxies = TrustedProxies::fromList(['192.168.0.0/16']);
+        $app->instance(FormLimits::class, $limits);
+        $app->instance(TrustedProxies::class, $proxies);
+        $app->boot();
+
+        self::assertSame($limits, $app->get(FormLimits::class));
+        self::assertSame($proxies, $app->get(TrustedProxies::class));
     }
 
     public function test_boot_registers_a_null_simple_cache_by_default_when_redis_is_not_configured(): void

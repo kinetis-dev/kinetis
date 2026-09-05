@@ -314,6 +314,61 @@ final class RateLimitMiddlewareTest extends TestCase
         self::assertSame(200, $untrusted->getStatusCode());
     }
 
+    /**
+     * The bucket a request lands in follows from what the peer's address
+     * *is*, not from how it is spelled. An edge configured as
+     * `2001:db8::1` and connecting as its expanded form is the same
+     * host, so the two clients behind it stay two buckets — read as
+     * text it would stop being an edge, and every client behind it would
+     * share one bucket keyed on the proxy, which is the shape that turns
+     * one busy client into a limit for everybody.
+     */
+    public function test_an_exact_ipv6_proxy_is_trusted_however_the_peer_spells_it(): void
+    {
+        $middleware = new RateLimitMiddleware(
+            new InMemorySimpleCache(),
+            maxAttempts: 1,
+            windowSeconds: 60,
+            trustedProxies: ['2001:db8::1'],
+        );
+
+        $first = $middleware->process(
+            $this->request('2001:0db8:0000:0000:0000:0000:0000:0001', ['X-Forwarded-For' => '1.1.1.1']),
+            $this->handler(),
+        );
+        $second = $middleware->process(
+            $this->request('2001:0db8:0000:0000:0000:0000:0000:0001', ['X-Forwarded-For' => '2.2.2.2']),
+            $this->handler(),
+        );
+
+        self::assertSame(200, $first->getStatusCode());
+        self::assertSame(200, $second->getStatusCode());
+    }
+
+    /**
+     * And the chain walk under the same policy: a hop written in the
+     * expanded form is stepped over as the trusted proxy it is, so the
+     * bucket is the client's rather than the proxy's.
+     */
+    public function test_a_forwarded_hop_spelled_another_way_is_still_stepped_over(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $middleware = new RateLimitMiddleware(
+            $cache,
+            maxAttempts: 1,
+            windowSeconds: 60,
+            trustedProxies: ['2001:db8::1'],
+        );
+
+        $chain = ['X-Forwarded-For' => '9.9.9.9, 2001:0db8:0000:0000:0000:0000:0000:0001'];
+
+        $first = $middleware->process($this->request('2001:db8::1', $chain), $this->handler());
+        $second = $middleware->process($this->request('2001:db8::1', $chain), $this->handler());
+
+        self::assertSame(200, $first->getStatusCode());
+        self::assertSame(429, $second->getStatusCode(), '9.9.9.9 is the client both times, so both requests key one bucket');
+    }
+
     public function test_construction_over_a_null_cache_throws_instead_of_silently_not_enforcing(): void
     {
         $this->expectException(RateLimitUnavailableException::class);

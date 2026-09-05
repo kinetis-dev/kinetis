@@ -6,6 +6,7 @@ namespace Kinetis\BrefAdapter\Tests;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Tests\Conformance\LambdaDriver;
+use Kinetis\Http\Form\FormLimits;
 use Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase;
 use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
 use Nyholm\Psr7\Response;
@@ -38,7 +39,10 @@ final class LambdaConformanceTest extends RuntimeAdapterConformanceTestCase
         $payload = BrefLambdaAdapter::handleEvent(
             [
                 'rawPath' => '/users',
-                'requestContext' => ['http' => ['method' => 'POST']],
+                'requestContext' => [
+                    'domainName' => 'kinetis.execute-api.eu-west-1.amazonaws.com',
+                    'http' => ['method' => 'POST', 'protocol' => 'HTTP/1.1'],
+                ],
                 'body' => 'not valid base64 !!! ***',
                 'isBase64Encoded' => true,
             ],
@@ -47,6 +51,7 @@ final class LambdaConformanceTest extends RuntimeAdapterConformanceTestCase
 
                 return new Response(200);
             },
+            new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES),
         );
 
         self::assertFalse($handlerRan, 'the handler must not run for a body the adapter could not decode');
