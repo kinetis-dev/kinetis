@@ -47,10 +47,17 @@ unrelated and standalone.
   `packages/<key>` tree on top of what its repository publishes today,
   reads every target repository, and writes the exact ref updates to
   make with the exact remote value each may replace; it contacts remotes
-  only to read. `apply` re-derives every object that file names against
-  this checkout, and only then takes the deploy credential and performs
-  the updates, one atomic tag-and-main push per repository. Both are
-  idempotent: a round interrupted partway is finished by the next one.
+  only to read. Staging writes every candidate's complete release-mode
+  `composer.json` and drops its tracked `composer.lock`, and the staged
+  commit records only what that changed — a package with no Kinetis
+  siblings has nothing for release mode to rewrite, so it contributes
+  its lock removal alone. A candidate the source commit carries no
+  `composer.json` for ends the round before that file is written, since
+  restoring the checkout can only take back what git tracks. `apply`
+  re-derives every object that file names against this checkout, and
+  only then takes the deploy credential and performs the updates, one
+  atomic tag-and-main push per repository. Both are idempotent: a round
+  interrupted partway is finished by the next one.
 
 See "Cutting a release" in `docs/appendix-contributing.md` for how the
 three fit together.

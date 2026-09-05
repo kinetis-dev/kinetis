@@ -49,6 +49,27 @@ const RELEASE_COMMIT_EMAIL = 'noreply@kinetis.dev';
 /** Where the staged release commit is anchored so nothing collects it mid-run. */
 const STAGING_REF = 'refs/kinetis/release-staging';
 
+/**
+ * What a caller is told when staging could not put the checkout back.
+ *
+ * Fixed text, because the one thing that matters about it never varies:
+ * the working tree and the index are not the source commit any more, so
+ * nothing that reads them afterwards is reading what was released.
+ */
+const CHECKOUT_NOT_RESTORED = 'The checkout was not restored to the commit being released.';
+
+/**
+ * What a caller is told when a candidate has no committed composer.json
+ * at the commit being released.
+ *
+ * Fixed text, because it says the one thing that decides the round: a
+ * releasable package carries its generated composer.json in the commit,
+ * so a candidate without one is a manifest or a checkout that does not
+ * describe a release, and staging it would put a file on disk that the
+ * reset restoring the checkout cannot take back.
+ */
+const COMPOSER_NOT_COMMITTED = 'The commit being released carries no composer.json for a candidate.';
+
 /** Where a fetched remote ref is anchored, one namespace per package key. */
 const REMOTE_REF_PREFIX = 'refs/kinetis/remote/';
 
@@ -599,6 +620,13 @@ function publicationMessage(string $key, string $version, string $source): strin
  * publication concern, not a staging one: the dev graph has cycles, and
  * nothing here needs a total order over it.
  *
+ * Staging writes real files and moves the real index, so the checkout is
+ * put back on the source commit on the way out of every path — the one
+ * that produced a commit, and every one that raised, whatever it raised.
+ * A staging failure that survives restoration is rethrown as it was, so
+ * what went wrong reaches the caller unchanged; one that does not is
+ * carried as the previous of a failure naming the checkout it left.
+ *
  * @param array<string, mixed> $manifest
  * @param list<string> $keys in publish order
  * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
@@ -613,26 +641,105 @@ function stageReleaseGroup(
     callable $run,
 ): string {
     $contents = generateRelease($manifest, $keys);
+
+    try {
+        $commit = writeStagedRelease($manifest, $keys, $contents, $source, $date, $projectRoot, $run);
+    } catch (Throwable $staging) {
+        try {
+            restoreCheckout($run, $source);
+        } catch (Throwable $cleanup) {
+            // The staging failure is what went wrong and stays the
+            // answer; the notice is what the checkout is now, which no
+            // later step and no human reading this may assume away.
+            throw new ReleaseTransactionFailure(
+                $staging->getMessage() . ' ' . $cleanup->getMessage(),
+                previous: $staging,
+            );
+        }
+
+        throw $staging;
+    }
+
+    restoreCheckout($run, $source);
+
+    return $commit;
+}
+
+/**
+ * Writes and stages this round's release representation, and proves the
+ * commit it produced changes exactly what the round meant to change.
+ *
+ * Every candidate's complete release-mode composer.json is written and
+ * added whether or not it differs from what is committed — the file on
+ * disk is the content being published either way. Whether a path
+ * belongs in the expected change set is a separate question, and it is
+ * answered against the source commit before that path is touched: a
+ * package with no Kinetis siblings has nothing for release mode to
+ * rewrite, so its committed development composer.json is already the
+ * release bytes and git records no change for it. A tracked lock file
+ * is the other half — its removal is a change the source commit's own
+ * content decides, not the generated JSON.
+ *
+ * The same read decides whether a candidate may be staged at all. A
+ * releasable package carries its generated composer.json in the commit,
+ * so a source commit without one stops staging before that path is
+ * written: the file would be untracked until `git add` accepts it, and
+ * a failure in between leaves behind something the caller's reset does
+ * not remove and its tracked-file check does not see.
+ *
+ * The expected set is never read back out of the staged result. Doing
+ * that would make requireStagedTree() agree with itself by construction
+ * and let a stray index change ride into every split repository.
+ *
+ * Everything here mutates the checkout, so the caller restores it.
+ *
+ * @param array<string, mixed> $manifest
+ * @param list<string> $keys in publish order
+ * @param array<string, string> $contents package key => release-mode composer.json
+ * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
+ * @throws ReleaseTransactionFailure
+ */
+function writeStagedRelease(
+    array $manifest,
+    array $keys,
+    array $contents,
+    string $source,
+    string $date,
+    string $projectRoot,
+    callable $run,
+): string {
     $expected = [];
 
     foreach ($keys as $key) {
+        $json = "packages/{$key}/composer.json";
+        $lock = "packages/{$key}/composer.lock";
+
+        $committed = sourceFileContents($run, $source, $json);
+
+        if ($committed === null) {
+            throw new ReleaseTransactionFailure(COMPOSER_NOT_COMMITTED . " It has no {$json}.");
+        }
+
+        if ($committed !== $contents[$key]) {
+            $expected[] = $json;
+        }
+
         try {
             writeFileChecked(composerJsonPath($key, $projectRoot), $contents[$key]);
         } catch (CheckedWriteFailure $e) {
             throw new ReleaseTransactionFailure("Could not stage {$key}: " . $e->getMessage());
         }
 
-        gitOutput($run, ['add', '--end-of-options', "packages/{$key}/composer.json"], "stage {$key}'s composer.json");
-        $expected[] = "packages/{$key}/composer.json";
+        gitOutput($run, ['add', '--end-of-options', $json], "stage {$key}'s composer.json");
 
         // The dev-mode lock pins dev-main siblings, which stop resolving
         // once the released composer.json names ^X.Y instead. Composer
         // never reads a dependency's own lock file, so removing it costs
         // a consumer nothing and keeps `composer validate --strict` true
         // for anyone cloning the split repository directly.
-        if (trim(gitOutput($run, ['ls-files', '--end-of-options', "packages/{$key}/composer.lock"], 'list tracked files')) !== '') {
-            gitOutput($run, ['rm', '--quiet', '--cached', '--end-of-options', "packages/{$key}/composer.lock"], "unstage {$key}'s lock file");
-            $expected[] = "packages/{$key}/composer.lock";
+        if (sourceBlob($run, $source, $lock) !== null) {
+            gitOutput($run, ['rm', '--quiet', '--cached', '--end-of-options', $lock], "unstage {$key}'s lock file");
+            $expected[] = $lock;
         }
     }
 
@@ -646,9 +753,114 @@ function stageReleaseGroup(
 
     requireStagedTree($run, $source, $commit, $expected);
     gitOutput($run, ['update-ref', '--end-of-options', STAGING_REF, $commit], 'anchor the staged release commit');
-    gitOutput($run, ['reset', '--hard', '--quiet', '--end-of-options', $source], 'restore the checkout after staging');
 
     return $commit;
+}
+
+/**
+ * The object one path names at the source commit, or null when the
+ * commit carries no such path.
+ *
+ * Those two answers have to stay apart from a third. git spells "this
+ * commit has no such path" as exit 1 with nothing on stdout, and
+ * everything else — an object store it cannot read, a rev it cannot
+ * parse, no git at all — as a code of its own. Reading the second as
+ * absence is what would let a broken checkout stage a rewritten
+ * composer.json as a newly created file, or drop a lock removal out of
+ * the round while still removing the lock.
+ *
+ * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
+ * @throws ReleaseTransactionFailure
+ */
+function sourceBlob(callable $run, string $source, string $path): ?string
+{
+    $result = $run(['rev-parse', '--verify', '--quiet', '--end-of-options', "{$source}:{$path}"]);
+    $id = trim($result['stdout']);
+
+    if ($result['exitCode'] === 1 && $id === '') {
+        return null;
+    }
+
+    if ($result['exitCode'] !== 0) {
+        throw new ReleaseTransactionFailure(
+            "Could not read {$path} at {$source}: " . redactCredentials($result['stderr']),
+        );
+    }
+
+    if (!isObjectId($id)) {
+        throw new ReleaseTransactionFailure("Could not read {$path} at {$source}: git named no object id.");
+    }
+
+    return $id;
+}
+
+/**
+ * What the source commit's own copy of one path says, or null when it
+ * has no such path.
+ *
+ * Read out of the commit rather than off disk, so it answers about the
+ * content the staged commit is compared against and not about whatever
+ * an untracked or half-written file beside it happens to hold. A path
+ * the commit carries as something other than a file fails here rather
+ * than comparing as different content.
+ *
+ * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
+ * @throws ReleaseTransactionFailure
+ */
+function sourceFileContents(callable $run, string $source, string $path): ?string
+{
+    $blob = sourceBlob($run, $source, $path);
+
+    if ($blob === null) {
+        return null;
+    }
+
+    return gitOutput($run, ['cat-file', 'blob', $blob], "read {$path} at {$source}");
+}
+
+/**
+ * Puts the checkout and the index back on the source commit, or says it
+ * could not.
+ *
+ * The reset is not taken on trust. git reports a checkout it could not
+ * complete on its exit code, and a tracked file it left behind is a
+ * difference status still sees — and a checkout that is not the source
+ * commit is one whose next release round would publish whatever it is
+ * carrying instead.
+ *
+ * Every way this can fail says CHECKOUT_NOT_RESTORED first and the
+ * detail after. A caller reading a restoration failure is deciding one
+ * thing — whether the checkout may still be treated as the commit being
+ * released — and it gets the same answer whether git refused the reset,
+ * a wrapped call threw something else entirely, or the reset landed
+ * somewhere other than the source commit.
+ *
+ * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
+ * @throws ReleaseTransactionFailure
+ */
+function restoreCheckout(callable $run, string $source): void
+{
+    try {
+        gitOutput(
+            $run,
+            ['reset', '--hard', '--quiet', '--end-of-options', $source],
+            'restore the checkout after staging',
+        );
+
+        $head = resolveObject($run, 'HEAD^{commit}', 'read the restored checkout');
+
+        if ($head !== $source) {
+            throw new ReleaseTransactionFailure("It is on {$head} rather than {$source}.");
+        }
+
+        $status = gitOutput($run, ['status', '--porcelain', '--untracked-files=no'], 'check the restored checkout');
+
+        if (trim($status) !== '') {
+            throw new ReleaseTransactionFailure('It still carries changes to tracked files.');
+        }
+    } catch (Throwable $e) {
+        throw new ReleaseTransactionFailure(CHECKOUT_NOT_RESTORED . ' ' . $e->getMessage(), previous: $e);
+    }
 }
 
 /**
