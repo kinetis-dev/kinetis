@@ -14,6 +14,7 @@ use RefUpdate;
 use ReleaseTransaction;
 use ReleaseTransactionFailure;
 use RuntimeException;
+use Throwable;
 
 require_once __DIR__ . '/../release-transaction.php';
 
@@ -690,6 +691,255 @@ final class ReleaseTransactionTest extends TestCase
         self::assertSame('', trim($this->git($repository, 'status', '--porcelain', '--untracked-files=no')));
     }
 
+    /**
+     * A package with no Kinetis siblings has nothing for release mode to
+     * rewrite: its committed development composer.json is already the
+     * release representation, byte for byte. The round still writes and
+     * stages that file — it is the content being published — and git
+     * records no change for it, so the only thing the staged commit does
+     * to the package is drop its lock.
+     */
+    public function test_a_release_composer_json_matching_the_committed_one_stages_only_the_lock_removal(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $remotes = $this->remotesFor(['queue']);
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+
+        $transaction = $this->publish($repository, $remotes, [['key' => 'queue', 'version' => '1.0.0']]);
+
+        self::assertSame(
+            ['packages/queue/composer.lock'],
+            $this->changedPaths($repository, $source, $transaction->staged),
+        );
+
+        $published = $transaction->packages[0]->commit;
+        self::assertSame($published, $this->remoteRef($remotes, 'queue', 'refs/tags/v1.0.0'));
+        self::assertSame($published, $this->remoteRef($remotes, 'queue', 'refs/heads/main'));
+
+        $remote = "{$remotes}/queue.git";
+        self::assertSame(['composer.json', 'src'], $this->publishedNames($remote, $published));
+        self::assertSame(
+            (string) file_get_contents("{$repository}/packages/queue/composer.json"),
+            $this->git($remote, 'cat-file', 'blob', "{$published}:composer.json"),
+        );
+    }
+
+    /**
+     * The other half of the same rule: a package whose composer.json
+     * names siblings does have something for release mode to rewrite —
+     * `dev-main` becomes a real constraint and the path repositories go
+     * — so its path is a change the round expects and states.
+     */
+    public function test_a_release_composer_json_that_rewrites_siblings_is_expected_to_change(): void
+    {
+        $repository = $this->monorepo([
+            'storage' => ['version' => '1.0.0'],
+            'queue' => ['version' => '1.0.0', 'requires' => ['storage']],
+        ]);
+        $this->commitPackageLockFiles($repository, ['storage', 'queue']);
+        $remotes = $this->remotesFor(['storage', 'queue']);
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+
+        $transaction = $this->preflight($repository, $remotes, [
+            ['key' => 'storage', 'version' => '1.0.0'],
+            ['key' => 'queue', 'version' => '1.0.0'],
+        ]);
+
+        self::assertSame(
+            [
+                'packages/queue/composer.json',
+                'packages/queue/composer.lock',
+                'packages/storage/composer.lock',
+            ],
+            $this->changedPaths($repository, $source, $transaction->staged),
+        );
+
+        /** @var array<string, mixed> $released */
+        $released = json_decode(
+            $this->git($repository, 'cat-file', 'blob', "{$transaction->staged}:packages/queue/composer.json"),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        self::assertSame('^1.0.0', $released['require']['kinetis/storage']);
+        self::assertArrayNotHasKey('repositories', $released);
+    }
+
+    /**
+     * The same read decides whether a candidate may be staged at all. A
+     * releasable package's generated composer.json is committed, so a
+     * source commit without one is not a release to stage: writing that
+     * file would create it untracked, and the reset staging restores
+     * with removes tracked changes only. A `git add` refusing right
+     * after would leave the round's own composer.json in the checkout
+     * while restoration read it as clean and called it the commit being
+     * released. Staging refuses the candidate before the file exists.
+     */
+    public function test_a_candidate_the_source_commit_has_no_composer_json_for_is_refused(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $this->dropCommittedComposerJson($repository, 'queue');
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+
+        $this->refuse($repository, ['queue'], null, COMPOSER_NOT_COMMITTED);
+
+        self::assertFileDoesNotExist("{$repository}/packages/queue/composer.json");
+        self::assertSame($source, trim($this->git($repository, 'rev-parse', 'HEAD')));
+        self::assertSame('', trim($this->git($repository, 'status', '--porcelain')));
+    }
+
+    /**
+     * Deciding the expected set against the source commit is what keeps
+     * the staged-tree check from agreeing with itself: a tracked change
+     * nobody staged for this round is still a change nothing accounts
+     * for, and it stops the round rather than riding into a split
+     * repository.
+     */
+    public function test_a_tracked_change_staged_alongside_the_round_is_still_refused(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $this->stageStrayChange($repository);
+
+        $this->expectException(ReleaseTransactionFailure::class);
+        $this->expectExceptionMessageMatches('#packages/queue/src/Thing\.php#');
+
+        $this->stage($repository, ['queue']);
+    }
+
+    /**
+     * The rejection lands after real files and the real index have
+     * already moved, so it is also the case that proves staging puts
+     * them back — a CI checkout left carrying a rewritten composer.json
+     * and a removed lock would publish them on the next round.
+     */
+    public function test_a_staged_tree_rejection_restores_the_checkout_it_had_already_moved(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+        $this->stageStrayChange($repository);
+
+        $this->refuse($repository, ['queue'], null, 'packages/queue/src/Thing.php');
+
+        $this->assertRestoredTo($repository, $source, 'queue');
+    }
+
+    /**
+     * A git call failing in the middle of staging is the same situation
+     * arriving a different way, and it gets the same answer.
+     */
+    public function test_a_git_failure_during_staging_restores_the_checkout(): void
+    {
+        $repository = $this->monorepo([
+            'storage' => ['version' => '1.0.0'],
+            'queue' => ['version' => '1.0.0', 'requires' => ['storage']],
+        ]);
+        $this->commitPackageLockFiles($repository, ['storage', 'queue']);
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+
+        $this->refuse(
+            $repository,
+            ['storage', 'queue'],
+            $this->failing($repository, 'write-tree'),
+            'write the staged release tree',
+        );
+
+        $this->assertRestoredTo($repository, $source, 'queue');
+    }
+
+    /**
+     * When the restore cannot be established either, the staging failure
+     * is still the answer — and the checkout it left behind is said in
+     * fixed words, because nothing that reads that checkout afterwards
+     * may treat it as the commit being released.
+     */
+    public function test_a_restore_that_cannot_be_established_is_reported_alongside_the_staging_failure(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $this->stageStrayChange($repository);
+
+        $this->expectException(ReleaseTransactionFailure::class);
+        $this->expectExceptionMessageMatches(
+            '#packages/queue/src/Thing\.php.*' . preg_quote(CHECKOUT_NOT_RESTORED, '#') . '#s',
+        );
+
+        $this->stage($repository, ['queue'], $this->failing($repository, 'reset'));
+    }
+
+    /**
+     * Staging runs against a runner and the process boundary behind it,
+     * and neither is bound to report a fault by returning one. Anything
+     * thrown once the index has moved is the same situation as a refused
+     * git call and gets the same answer: the checkout goes back, and
+     * what went wrong reaches the caller as it was rather than as a
+     * release failure paraphrasing it.
+     */
+    public function test_a_fault_that_is_not_a_release_failure_still_restores_the_checkout(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+        $fault = new RuntimeException('the staging call went wrong in a way nobody planned for');
+        $caught = null;
+
+        try {
+            $this->stage($repository, ['queue'], $this->throwing(gitRunnerFor($repository), 'write-tree', $fault));
+        } catch (Throwable $e) {
+            $caught = $e;
+        }
+
+        self::assertSame($fault, $caught);
+        $this->assertRestoredTo($repository, $source, 'queue');
+    }
+
+    /**
+     * The same fault with the restore unable to establish itself either:
+     * the checkout is said in fixed words, and the fault that started it
+     * is carried rather than replaced, so nothing about what went wrong
+     * is lost to the notice about what the checkout now is.
+     */
+    public function test_a_fault_a_failed_restore_follows_is_carried_under_the_fixed_notice(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+        $fault = new RuntimeException('the staging call went wrong in a way nobody planned for');
+        $run = $this->throwing($this->failing($repository, 'reset'), 'write-tree', $fault);
+        $caught = null;
+
+        try {
+            $this->stage($repository, ['queue'], $run);
+        } catch (Throwable $e) {
+            $caught = $e;
+        }
+
+        self::assertInstanceOf(ReleaseTransactionFailure::class, $caught);
+        self::assertStringContainsString($fault->getMessage(), $caught->getMessage());
+        self::assertStringContainsString(CHECKOUT_NOT_RESTORED, $caught->getMessage());
+        self::assertSame($fault, $caught->getPrevious());
+    }
+
+    /**
+     * The path that produced a commit restores the checkout too, so a
+     * restoration that cannot be established there says what every other
+     * one says. A caller never has to read the detail to learn that the
+     * checkout is no longer the commit being released.
+     */
+    public function test_a_restore_that_cannot_be_established_after_a_staged_commit_says_so(): void
+    {
+        $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
+        $this->commitPackageLockFiles($repository, ['queue']);
+
+        $this->expectException(ReleaseTransactionFailure::class);
+        $this->expectExceptionMessageMatches('#^' . preg_quote(CHECKOUT_NOT_RESTORED, '#') . '#');
+
+        $this->stage($repository, ['queue'], $this->failing($repository, 'reset'));
+    }
+
     public function test_a_checkout_carrying_local_changes_cannot_stage_a_release(): void
     {
         $repository = $this->monorepo(['queue' => ['version' => '1.0.0']]);
@@ -1351,6 +1601,7 @@ final class ReleaseTransactionTest extends TestCase
         }
 
         file_put_contents("{$repository}/packages.manifest.json", $this->manifestJson($packages));
+        $this->writeGeneratedComposerFiles($repository);
         $this->git($repository, 'init', '-q', '-b', 'main');
         $this->git($repository, 'config', 'user.email', 'test@example.com');
         $this->git($repository, 'config', 'user.name', 'test');
@@ -1387,6 +1638,7 @@ final class ReleaseTransactionTest extends TestCase
         }
 
         file_put_contents("{$repository}/packages.manifest.json", $this->manifestJson($merged));
+        $this->writeGeneratedComposerFiles($repository);
         $this->git($repository, 'add', '-A');
         $this->git($repository, 'commit', '-q', '-m', 'bump');
     }
@@ -1532,6 +1784,179 @@ final class ReleaseTransactionTest extends TestCase
         $this->apply($repository, $transaction);
 
         return $transaction;
+    }
+
+    /**
+     * The development composer.json every releasable package carries,
+     * written from the manifest the checkout currently holds.
+     */
+    private function writeGeneratedComposerFiles(string $repository): void
+    {
+        foreach (generateAll($this->manifestOf($repository)) as $key => $json) {
+            file_put_contents("{$repository}/packages/{$key}/composer.json", $json);
+        }
+    }
+
+    /**
+     * Commits the other file a real checkout carries beside a package's
+     * sources and its composer.json: the lock committed with it.
+     *
+     * @param list<string> $keys
+     */
+    private function commitPackageLockFiles(string $repository, array $keys): void
+    {
+        foreach ($keys as $key) {
+            file_put_contents("{$repository}/packages/{$key}/composer.lock", "{\n    \"packages\": []\n}\n");
+        }
+
+        $this->git($repository, 'add', '-A');
+        $this->git($repository, 'commit', '-q', '-m', 'lock files');
+    }
+
+    /**
+     * A source commit one package's generated composer.json is missing
+     * from — a checkout the manifest still calls releasable and the
+     * release round has nothing committed to restore that path from.
+     */
+    private function dropCommittedComposerJson(string $repository, string $key): void
+    {
+        $this->git($repository, 'rm', '--quiet', "packages/{$key}/composer.json");
+        $this->git($repository, 'commit', '-q', '-m', 'drop a generated composer.json');
+    }
+
+    /** A tracked change nothing about the round accounts for, already in the index. */
+    private function stageStrayChange(string $repository): void
+    {
+        file_put_contents("{$repository}/packages/queue/src/Thing.php", "<?php // stray\n");
+        $this->git($repository, 'add', 'packages/queue/src/Thing.php');
+    }
+
+    /**
+     * The real runner with one git subcommand answering as a failure, so
+     * a fault lands at a chosen point in staging without a repository
+     * that has to be arranged into producing one.
+     *
+     * @return callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool}
+     */
+    private function failing(string $repository, string $command): callable
+    {
+        $real = gitRunnerFor($repository);
+
+        return static function (array $args) use ($real, $command): array {
+            // PHPStan reads no @param on a closure, so the list the
+            // method's @return promises is restated for $args.
+            /** @var list<string> $args */
+            if (($args[0] ?? null) === $command) {
+                return [
+                    'exitCode' => 1,
+                    'stdout' => '',
+                    'stderr' => "{$command} was refused",
+                    'timedOut' => false,
+                    'truncated' => false,
+                ];
+            }
+
+            return $real($args);
+        };
+    }
+
+    /**
+     * A runner with one git subcommand throwing rather than answering,
+     * so a fault its own return type cannot express lands at a chosen
+     * point in staging.
+     *
+     * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $base
+     * @return callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool}
+     */
+    private function throwing(callable $base, string $command, RuntimeException $fault): callable
+    {
+        return static function (array $args) use ($base, $command, $fault): array {
+            // PHPStan reads no @param on a closure, so the list the
+            // method's @return promises is restated for $args.
+            /** @var list<string> $args */
+            if (($args[0] ?? null) === $command) {
+                throw $fault;
+            }
+
+            return $base($args);
+        };
+    }
+
+    /**
+     * @param list<string> $keys in publish order
+     * @param (callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool})|null $run
+     */
+    private function stage(string $repository, array $keys, ?callable $run = null): string
+    {
+        $run ??= gitRunnerFor($repository);
+        $source = trim($this->git($repository, 'rev-parse', 'HEAD'));
+
+        return stageReleaseGroup(
+            $this->manifestOf($repository),
+            $keys,
+            $source,
+            sourceCommitDate($run, $source),
+            $repository,
+            $run,
+        );
+    }
+
+    /**
+     * @param list<string> $keys in publish order
+     * @param (callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool})|null $run
+     */
+    private function refuse(string $repository, array $keys, ?callable $run, string $reason): void
+    {
+        try {
+            $this->stage($repository, $keys, $run);
+        } catch (ReleaseTransactionFailure $e) {
+            self::assertStringContainsString($reason, $e->getMessage());
+
+            return;
+        }
+
+        self::fail("staging was expected to fail over {$reason}");
+    }
+
+    /**
+     * The checkout is the commit being released again — HEAD, the index
+     * and the files. A rewritten composer.json still on disk and a lock
+     * still missing from the index are both differences from it.
+     */
+    private function assertRestoredTo(string $repository, string $source, string $key): void
+    {
+        self::assertSame($source, trim($this->git($repository, 'rev-parse', 'HEAD')));
+        self::assertSame('', trim($this->git($repository, 'status', '--porcelain', '--untracked-files=no')));
+
+        foreach (['composer.json', 'composer.lock'] as $file) {
+            self::assertSame(
+                $this->git($repository, 'cat-file', 'blob', "{$source}:packages/{$key}/{$file}"),
+                (string) file_get_contents("{$repository}/packages/{$key}/{$file}"),
+            );
+        }
+    }
+
+    /** @return list<string> the paths one commit changes against another, sorted */
+    private function changedPaths(string $repository, string $from, string $to): array
+    {
+        $paths = splitNulSeparatedPaths(
+            $this->git($repository, 'diff', '--no-renames', '-z', '--name-only', $from, $to),
+        );
+        sort($paths);
+
+        return $paths;
+    }
+
+    /** @return list<string> the top-level names a published commit carries, sorted */
+    private function publishedNames(string $repository, string $commit): array
+    {
+        $names = array_values(array_filter(
+            explode("\n", trim($this->git($repository, 'ls-tree', '--name-only', $commit))),
+            static fn (string $name): bool => $name !== '',
+        ));
+        sort($names);
+
+        return $names;
     }
 
     private function git(string $repository, string ...$args): string
