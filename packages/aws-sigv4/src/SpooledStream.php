@@ -6,6 +6,7 @@ namespace Kinetis\AwsSigV4;
 
 use Kinetis\AwsSigV4\Exception\StreamException;
 use Psr\Http\Message\StreamInterface;
+use SensitiveParameter;
 use Throwable;
 
 /**
@@ -34,17 +35,18 @@ use Throwable;
  * every operationally-meaningful method (`tell()`/`seek()`/`rewind()`/
  * `write()`/`read()`/`getContents()`) throws.
  *
- * @internal Constructed only by SigV4SigningClient itself, to replace a
- * request's original body with one guaranteed seekable regardless of
- * what the original was — see its own docblock for why that guarantee
- * matters.
+ * @internal Constructed by SigV4SigningClient, to replace a request's
+ * original body with one seekable regardless of what the original was
+ * (see its own docblock for why that matters), and by
+ * Exception\ClientFailureException, as the empty body of the stripped
+ * request it serializes.
  */
 final class SpooledStream implements StreamInterface
 {
     /** @var resource|null */
     private $resource;
 
-    public function __construct(string $contents)
+    public function __construct(#[SensitiveParameter] string $contents)
     {
         $resource = fopen('php://temp', 'r+b');
 
@@ -191,9 +193,9 @@ final class SpooledStream implements StreamInterface
         $this->seek(0);
     }
 
-    // Genuinely, independently always true for this stream while it has
-    // a resource — the same as isSeekable() above and isReadable()
-    // below — not a copy-paste artifact of one of the three.
+    // Always true while this stream has a resource, for its own reason:
+    // php://temp is opened "r+b". isSeekable() above and isReadable()
+    // below each hold for their own reason too.
     #[\Override]
     public function isWritable(): bool
     {
@@ -201,7 +203,7 @@ final class SpooledStream implements StreamInterface
     }
 
     #[\Override]
-    public function write(string $string): int
+    public function write(#[SensitiveParameter] string $string): int
     {
         if ($this->resource === null) {
             throw StreamException::couldNotWriteToStream();

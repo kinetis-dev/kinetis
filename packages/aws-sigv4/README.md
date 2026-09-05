@@ -5,7 +5,7 @@
 <p align="center">
   <strong>kinetis/aws-sigv4</strong>
   <br>
-  <strong>A PSR-18 client decorator that signs requests with AWS Signature Version 4</strong>
+  <strong>A PSR-18 client that signs requests with AWS Signature Version 4</strong>
 </p>
 
 <p align="center">
@@ -22,28 +22,35 @@ Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
-Wraps any PSR-18 HTTP client and signs every outgoing request with AWS
-Signature Version 4 (SigV4) before delegating to it — the signing math
-itself is `AsyncAws\Core\Signer\SignerV4`, the same class every AsyncAws
-service client already uses internally, reused directly rather than
-reimplemented. Usable standalone with any PSR-18 client, not only
-[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) — and usable outside Kinetis entirely, the
-same relationship [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) already has with the wider
-PHP ecosystem.
+A PSR-18 HTTP client that signs every outgoing request with AWS
+Signature Version 4 (SigV4) and sends it to one configured origin — the
+signing math is `AsyncAws\Core\Signer\SignerV4`, the same class every
+AsyncAws service client uses internally, reused directly rather than
+reimplemented. Usable outside Kinetis entirely, the same relationship
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) already has with the wider PHP ecosystem.
 
 ```php
 use Kinetis\AwsSigV4\SigV4SigningClient;
-use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
-use Symfony\Component\HttpClient\Psr18Client;
 
 $signedClient = new SigV4SigningClient(
-    client: new Psr18Client(AmpHttpClientFactory::create()),
+    origin: 'https://search-my-domain.us-east-1.es.amazonaws.com',
     region: 'us-east-1',
     service: 'es', // Amazon OpenSearch Service's signing name
 );
 
 $response = $signedClient->sendRequest($request);
 ```
+
+`$origin` is the only scheme, host, and port this client will sign for,
+with an optional path prefix that binds every request. A relative
+request resolves against it; anything else — another host, another port,
+an `http` target under an `https` origin, a path that leaves the prefix
+— is rejected before credentials are resolved, before the body is read,
+and before the network is touched. The target is put into the exact form
+it will be sent in before both the check and the signature, so the
+signature covers the bytes that go out. A 3xx response is returned as it
+is: nothing is re-signed and no `Location` is followed, for the signed
+request or for the credential lookups.
 
 `$service` is the AWS signing service name (`"es"` for Amazon OpenSearch
 Service, `"execute-api"` for API Gateway, and so on) — required, with no
@@ -54,11 +61,8 @@ verification rather than an obvious error.
 
 Resolved through AsyncAws's own default provider chain
 (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, a shared credentials file,
-or an IAM role) unless a `CredentialProvider` is passed directly as the
-fourth constructor argument. The chain's own bootstrap HTTP calls (an
-instance-metadata or container-credentials lookup) go through
-`AmpHttpClientFactory::create()` too, so credential resolution never
-blocks the worker either.
+or an IAM role) unless a `CredentialProvider` is passed as the fourth
+constructor argument.
 
 ## Installation
 
@@ -66,7 +70,9 @@ blocks the worker either.
 composer require kinetis/aws-sigv4
 ```
 
-Requires PHP 8.4+ and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation:
+Requires PHP 8.4+ and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation,
+including the origin grammar, failure behavior, and what is buffered or
+blocking:
 [kinetis.dev/docs/aws-sigv4.html](https://kinetis.dev/docs/aws-sigv4.html).
 
 ## License

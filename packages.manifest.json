@@ -389,10 +389,10 @@
         },
         "aws-sigv4": {
             "name": "kinetis/aws-sigv4",
-            "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
+            "description": "A PSR-18 client that signs outgoing requests with AWS Signature Version 4 (SigV4) for one configured origin — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.2.0",
             "requires": [
                 "revolt-http-client"
             ],
@@ -400,12 +400,13 @@
                 "framework"
             ],
             "require": {
+                "amphp/http-client": "^5.3.6",
                 "async-aws/core": "^1.29.2",
+                "nyholm/psr7": "^1.8.2",
                 "psr/http-client": "^1.0.3",
-                "psr/http-message": "^2.0"
-            },
-            "requireDevExtra": {
-                "nyholm/psr7": "^1.8.2"
+                "psr/http-message": "^2.0",
+                "symfony/http-client": "^8.1.4",
+                "symfony/http-client-contracts": "^3.7.1"
             },
             "kinetis": []
         },

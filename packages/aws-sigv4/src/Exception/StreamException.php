@@ -6,8 +6,15 @@ namespace Kinetis\AwsSigV4\Exception;
 
 use RuntimeException;
 
+/**
+ * A `php://temp` operation behind `SpooledStream` failed. Every message
+ * names the operation and nothing else; the stream's contents are the
+ * request body being signed.
+ */
 final class StreamException extends RuntimeException
 {
+    use SafeSerialization;
+
     public static function couldNotOpenTempStream(): self
     {
         return new self('Could not open a php://temp stream.');

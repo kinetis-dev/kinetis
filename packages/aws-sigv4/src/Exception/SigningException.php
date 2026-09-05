@@ -4,51 +4,103 @@ declare(strict_types=1);
 
 namespace Kinetis\AwsSigV4\Exception;
 
-final class SigningException extends \RuntimeException
+use RuntimeException;
+
+/**
+ * A configuration failure raised while constructing
+ * `SigV4SigningClient`: a trusted origin, region, or service name that
+ * does not satisfy the package's own grammar.
+ *
+ * Every message names the field and the rule it failed, never the
+ * rejected value. A configured origin can carry a password in its
+ * userinfo or a token in its query string, and a caller that catches and
+ * logs this exception must not copy either into a log by doing so. No
+ * cause is chained: the value that failed, and any parser detail derived
+ * from it, stops here.
+ */
+final class SigningException extends RuntimeException
 {
-    public static function noCredentialsResolved(): self
+    use SafeSerialization;
+
+    public const string ORIGIN_NOT_ABSOLUTE
+        = 'origin must be an absolute "http://" or "https://" URI.';
+
+    public const string ORIGIN_UNSUPPORTED_SCHEME
+        = 'origin must use the "http" or "https" scheme.';
+
+    public const string ORIGIN_FORBIDDEN_COMPONENTS
+        = 'origin must not carry userinfo, a query string, or a fragment.';
+
+    public const string ORIGIN_AMBIGUOUS_CHARACTERS
+        = 'origin must not contain whitespace, a control character, or a backslash.';
+
+    public const string ORIGIN_ENCODED_AUTHORITY
+        = 'origin authority must not contain a percent sign.';
+
+    public const string ORIGIN_INVALID_HOST
+        = 'origin host must be a registered name, an IPv4 address, or a bracketed IPv6 address.';
+
+    public const string ORIGIN_INVALID_PORT
+        = 'origin port must be a decimal number between 1 and 65535.';
+
+    public const string ORIGIN_INVALID_PATH
+        = 'origin path must contain only unreserved, sub-delimiter, ":", "@", "/" or well-formed '
+        . 'percent-encoded characters, and no "." or ".." segment.';
+
+    public const string INVALID_REGION
+        = 'region must be 1 to 64 ASCII characters: a letter or digit, then letters, digits, ".", "-" or "_".';
+
+    public const string INVALID_SERVICE
+        = 'service must be 1 to 64 ASCII characters: a letter or digit, then letters, digits, ".", "-" or "_".';
+
+    public static function originIsNotAbsolute(): self
     {
-        return new self(
-            'Could not resolve AWS credentials to sign this request. Set '
-            . 'AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, a shared credentials '
-            . 'file, or run somewhere with an IAM role attached, or pass a '
-            . 'CredentialProvider directly.',
-        );
+        return new self(self::ORIGIN_NOT_ABSOLUTE);
     }
 
-    /**
-     * Deliberately never echoes the configured baseUri itself: this is
-     * reachable with a fully attacker/operator-supplied string (including
-     * one that failed to parse at all), and a URI carrying userinfo or a
-     * query string may carry a credential or token as part of that same
-     * string — one that a caller catching and logging this exception would
-     * otherwise copy verbatim into a log. Reporting only the category of
-     * problem, never the raw input, holds for every baseUri exception this
-     * class throws, not just this one.
-     */
-    public static function invalidBaseUri(): self
+    public static function originHasUnsupportedScheme(): self
     {
-        return new self('baseUri is not a valid absolute URI (must include a scheme and host).');
+        return new self(self::ORIGIN_UNSUPPORTED_SCHEME);
     }
 
-    /**
-     * $scheme alone is safe to report: parse_url() only ever populates it
-     * from the leading `scheme:` token, which RFC 3986 restricts to
-     * `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` — it cannot itself carry
-     * userinfo/query content, unlike the full configured baseUri.
-     */
-    public static function unsupportedBaseUriScheme(string $scheme): self
+    public static function originHasForbiddenComponents(): self
     {
-        return new self(
-            "baseUri uses unsupported scheme \"{$scheme}\" — only \"http\" and \"https\" are supported.",
-        );
+        return new self(self::ORIGIN_FORBIDDEN_COMPONENTS);
     }
 
-    public static function unsupportedBaseUriComponents(): self
+    public static function originHasAmbiguousCharacters(): self
     {
-        return new self(
-            'baseUri must not include userinfo, a query string, or a fragment '
-            . '— only scheme, host, port, and path are used.',
-        );
+        return new self(self::ORIGIN_AMBIGUOUS_CHARACTERS);
     }
+
+    public static function originHasEncodedAuthority(): self
+    {
+        return new self(self::ORIGIN_ENCODED_AUTHORITY);
+    }
+
+    public static function originHasInvalidHost(): self
+    {
+        return new self(self::ORIGIN_INVALID_HOST);
+    }
+
+    public static function originHasInvalidPort(): self
+    {
+        return new self(self::ORIGIN_INVALID_PORT);
+    }
+
+    public static function originHasInvalidPath(): self
+    {
+        return new self(self::ORIGIN_INVALID_PATH);
+    }
+
+    public static function invalidRegion(): self
+    {
+        return new self(self::INVALID_REGION);
+    }
+
+    public static function invalidService(): self
+    {
+        return new self(self::INVALID_SERVICE);
+    }
+
 }
