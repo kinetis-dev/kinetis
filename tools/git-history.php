@@ -172,9 +172,9 @@ function comparisonRefFromEnvironment(): ?string
 }
 
 /**
- * The process and stream calls runGit() makes. Injectable so the paths a
- * working git will not produce on demand — a read that fails, a child
- * that survives SIGKILL — can be exercised deterministically.
+ * The process and stream calls runCommand() makes. Injectable so the
+ * paths a working git will not produce on demand — a read that fails, a
+ * child that survives SIGKILL — can be exercised deterministically.
  */
 interface ProcessBoundary
 {
@@ -276,6 +276,35 @@ final class NativeProcessBoundary implements ProcessBoundary
 /**
  * Runs git under a deadline, killing it when the deadline passes.
  *
+ * $environment replaces the child's whole environment rather than adding
+ * to it, so a caller handing git a credential decides exactly what else
+ * that one process can see. Null inherits this process's environment,
+ * which is what every read here wants.
+ *
+ * That array is the one argument here that can hold a credential, and an
+ * argument is what PHP prints in the stack trace of an error nobody
+ * caught. #[SensitiveParameter] is what keeps the value out of that
+ * trace; it carries the credential through every hop, so every hop
+ * declares it.
+ *
+ * @param list<string> $args
+ * @param array<string, string>|null $environment
+ * @return array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool}
+ */
+function runGit(
+    array $args,
+    string $workingDirectory,
+    int|float $timeoutSeconds = GIT_TIMEOUT_SECONDS,
+    int $outputLimit = GIT_OUTPUT_LIMIT,
+    ?ProcessBoundary $boundary = null,
+    #[SensitiveParameter] ?array $environment = null,
+): array {
+    return runCommand(['git', ...$args], $workingDirectory, $timeoutSeconds, $outputLimit, $boundary, $environment);
+}
+
+/**
+ * Runs one command under a deadline, killing it when the deadline passes.
+ *
  * Two things are watched at once. Draining stdout and stderr keeps the
  * child from blocking on a full pipe; watching the process is what makes
  * the deadline reachable, since a child can close both pipes and keep
@@ -288,22 +317,25 @@ final class NativeProcessBoundary implements ProcessBoundary
  * established — because a caller reading NUL-separated paths cannot tell
  * a short list from a whole one.
  *
- * @param list<string> $args
+ * @param non-empty-list<string> $command
+ * @param array<string, string>|null $environment
  * @return array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool}
  */
-function runGit(
-    array $args,
+function runCommand(
+    array $command,
     string $workingDirectory,
     int|float $timeoutSeconds = GIT_TIMEOUT_SECONDS,
     int $outputLimit = GIT_OUTPUT_LIMIT,
     ?ProcessBoundary $boundary = null,
+    #[SensitiveParameter] ?array $environment = null,
 ): array {
     $boundary ??= new NativeProcessBoundary();
+    $name = basename($command[0]);
     $descriptorSpec = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $process = @proc_open(['git', ...$args], $descriptorSpec, $pipes, $workingDirectory);
+    $process = @proc_open($command, $descriptorSpec, $pipes, $workingDirectory, $environment);
 
     if (!is_resource($process)) {
-        return gitFailure('git could not be started');
+        return commandFailure("{$name} could not be started");
     }
 
     stream_set_blocking($pipes[1], false);
@@ -327,7 +359,7 @@ function runGit(
         }
 
         if ($open !== []) {
-            $failure = drainOnce($boundary, $open, $captured, $truncated, min($remaining, GIT_POLL_INTERVAL_SECONDS), $outputLimit);
+            $failure = drainOnce($boundary, $name, $open, $captured, $truncated, min($remaining, GIT_POLL_INTERVAL_SECONDS), $outputLimit);
 
             if ($failure !== null) {
                 break;
@@ -342,7 +374,7 @@ function runGit(
         $status = $boundary->status($process);
 
         if ($status === false) {
-            $failure = 'git status became unreadable';
+            $failure = "{$name} status became unreadable";
 
             break;
         }
@@ -351,17 +383,17 @@ function runGit(
             $exitCode = $status['exitcode'];
             // The child is gone; whatever it wrote is still in the
             // pipes, and all of it belongs to the answer.
-            $failure = drainRemaining($boundary, $open, $captured, $truncated, $deadline, $outputLimit);
+            $failure = drainRemaining($boundary, $name, $open, $captured, $truncated, $deadline, $outputLimit);
 
             break;
         }
     }
 
-    $endProblem = endProcess($boundary, $process, $open, terminate: $exitCode === null);
+    $endProblem = endProcess($boundary, $name, $process, $open, terminate: $exitCode === null);
 
     if ($timedOut) {
-        return gitFailure(
-            trim("git did not finish within {$timeoutSeconds}s " . (string) $endProblem),
+        return commandFailure(
+            trim("{$name} did not finish within {$timeoutSeconds}s " . (string) $endProblem),
             $captured[0],
             timedOut: true,
             truncated: $truncated,
@@ -369,12 +401,12 @@ function runGit(
     }
 
     if ($failure !== null) {
-        return gitFailure(trim($failure . ' ' . (string) $endProblem), $captured[0], truncated: $truncated);
+        return commandFailure(trim($failure . ' ' . (string) $endProblem), $captured[0], truncated: $truncated);
     }
 
     if ($truncated) {
-        return gitFailure(
-            "git wrote more than {$outputLimit} bytes, so its output is incomplete",
+        return commandFailure(
+            "{$name} wrote more than {$outputLimit} bytes, so its output is incomplete",
             $captured[0],
             truncated: true,
         );
@@ -384,7 +416,7 @@ function runGit(
     // never finished as far as this code knows, so what it wrote is not
     // an answer either.
     if ($endProblem !== null) {
-        return gitFailure($endProblem, $captured[0]);
+        return commandFailure($endProblem, $captured[0]);
     }
 
     return [
@@ -397,7 +429,7 @@ function runGit(
 }
 
 /** @return array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} */
-function gitFailure(string $reason, string $stdout = '', bool $timedOut = false, bool $truncated = false): array
+function commandFailure(string $reason, string $stdout = '', bool $timedOut = false, bool $truncated = false): array
 {
     return [
         'exitCode' => -1,
@@ -429,6 +461,7 @@ function gitFailure(string $reason, string $stdout = '', bool $timedOut = false,
  */
 function drainOnce(
     ProcessBoundary $boundary,
+    string $name,
     array &$open,
     array &$captured,
     bool &$truncated,
@@ -443,7 +476,7 @@ function drainOnce(
     $ready = $boundary->select($read, $waitSeconds);
 
     if ($ready === false) {
-        return 'waiting on git output failed';
+        return "waiting on {$name} output failed";
     }
 
     if ($ready === 0) {
@@ -458,7 +491,7 @@ function drainOnce(
         $chunk = $boundary->read($pipe, 65536);
 
         if ($chunk === false) {
-            return 'reading git output failed';
+            return "reading {$name} output failed";
         }
 
         if ($chunk === '') {
@@ -499,6 +532,7 @@ function drainOnce(
  */
 function drainRemaining(
     ProcessBoundary $boundary,
+    string $name,
     array &$open,
     array &$captured,
     bool &$truncated,
@@ -509,10 +543,10 @@ function drainRemaining(
         $remaining = $deadline - microtime(true);
 
         if ($remaining <= 0) {
-            return 'git output was still arriving when the deadline passed';
+            return "{$name} output was still arriving when the deadline passed";
         }
 
-        $failure = drainOnce($boundary, $open, $captured, $truncated, min($remaining, GIT_POLL_INTERVAL_SECONDS), $outputLimit);
+        $failure = drainOnce($boundary, $name, $open, $captured, $truncated, min($remaining, GIT_POLL_INTERVAL_SECONDS), $outputLimit);
 
         if ($failure !== null) {
             return $failure;
@@ -549,7 +583,7 @@ function drainRemaining(
  * @param array<int, resource> $open
  * @return string|null why the child's end could not be established
  */
-function endProcess(ProcessBoundary $boundary, mixed $process, array $open, bool $terminate): ?string
+function endProcess(ProcessBoundary $boundary, string $name, mixed $process, array $open, bool $terminate): ?string
 {
     foreach ($open as $pipe) {
         $boundary->closeStream($pipe);
@@ -559,10 +593,10 @@ function endProcess(ProcessBoundary $boundary, mixed $process, array $open, bool
     $reapFailed = $boundary->closeProcess($process) === -1;
 
     if ($killFailed) {
-        return 'the git process could not be killed, so the deadline did not bound this call';
+        return "the {$name} process could not be killed, so the deadline did not bound this call";
     }
 
-    return $reapFailed ? 'the git process could not be reaped' : null;
+    return $reapFailed ? "the {$name} process could not be reaped" : null;
 }
 
 /**
@@ -596,6 +630,7 @@ function splitDuration(float $seconds): array
  * repository that produces that answer — some of them, a working git
  * will not produce at all.
  *
+ * @param array<string, string>|null $environment
  * @return callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool}
  */
 function gitRunnerFor(
@@ -603,8 +638,9 @@ function gitRunnerFor(
     int|float $timeoutSeconds = GIT_TIMEOUT_SECONDS,
     int $outputLimit = GIT_OUTPUT_LIMIT,
     ?ProcessBoundary $boundary = null,
+    #[SensitiveParameter] ?array $environment = null,
 ): callable {
-    return static fn (array $args): array => runGit(array_values($args), $workingDirectory, $timeoutSeconds, $outputLimit, $boundary);
+    return static fn (array $args): array => runGit(array_values($args), $workingDirectory, $timeoutSeconds, $outputLimit, $boundary, $environment);
 }
 
 /**

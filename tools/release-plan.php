@@ -4,38 +4,44 @@ declare(strict_types=1);
 
 /**
  * Computes this round's release plan — see CLAUDE.md and the monorepo
- * packaging plan (Phase 5) for the full design. Read-only: never writes
- * anything, never tags, never pushes; .github/workflows/release.yml
- * (splitsh-lite) is what acts on this plan's output.
+ * packaging plan (Phase 5) for the full design. Read-only and
+ * unauthenticated: never writes anything, never tags, never pushes, and
+ * never holds the deploy credential. tools/release-transaction.php is
+ * what acts on this plan's output.
  *
  * Usage: php tools/release-plan.php [--json] [--base=<ref>]
  *
  * A package is a release candidate for either of two reasons: its
  * version field differs from packages.manifest.json's state at the
  * comparison base (see tools/git-history.php — GITHUB_EVENT_BEFORE when
- * set, HEAD^ otherwise), or its current version has no matching tag on
- * its own split repo yet, regardless of whether anything changed this
- * push — see findUntaggedCandidates(), which covers a version that
- * predates this pipeline and so has nothing for a manifest diff alone
- * to catch. Reports the union in publish-order (topological over the
+ * set, HEAD^ otherwise), or its split repository does not yet carry the
+ * current version as a finished release — see
+ * findUnpublishedCandidates(), which covers a version that predates this
+ * pipeline as well as a round that tagged a package without pushing its
+ * main branch. Reports the union in publish-order (topological over the
  * requires graph, restricted to candidates), each with whether its
  * sibling requirements resolve against a real tag on the sibling's own
  * split repo. No-ops cleanly (reports zero candidates, exits 0) only
  * when neither source finds anything; exits 1 if any candidate has an
  * unresolved sibling.
  *
+ * A candidate is work to inspect, not work to publish. Which of a
+ * candidate's refs are actually written is decided by the publication
+ * transaction, against the exact split commit and the remote state it
+ * reads for itself.
+ *
  * The manifest goes through tools/manifest-schema.php before any of
  * that, so a malformed entry stops the plan here rather than reaching a
- * remote lookup or the split loop — this run is the last thing between a
- * manifest and a force-pushed tag, and it does not lean on another
- * workflow having caught the problem concurrently. Every other way this
- * run can fail to establish a fact — an unreadable comparison base, an
- * indeterminate tag lookup, a graph with no total order — ends the run
+ * remote lookup or the split — this run is the last thing between a
+ * manifest and a published tag, and it does not lean on another workflow
+ * having caught the problem concurrently. Every other way this run can
+ * fail to establish a fact — an unreadable comparison base, an
+ * indeterminate ref lookup, a graph with no total order — ends the run
  * rather than producing a plan that omits work.
  *
  * --json emits {candidates: [{key, version, problems}], ok} instead of
- * the human-readable report — what release.yml consumes to drive
- * publishing, one candidate at a time, in the given order.
+ * the human-readable report — what the release workflow hands to the
+ * publication transaction, in the given order.
  */
 
 require_once __DIR__ . '/generate-composer.php';
@@ -43,12 +49,18 @@ require_once __DIR__ . '/validate-manifest.php';
 
 const GITHUB_ORG = 'kinetis-dev';
 
+/** Where one package's own split repository lives. */
+function splitRepositoryUrl(string $key): string
+{
+    return 'https://github.com/' . GITHUB_ORG . "/{$key}.git";
+}
+
 /**
- * A tag lookup reaches the network, and this script runs inside the job
+ * A ref lookup reaches the network, and this script runs inside the job
  * that publishes. A stalled read has to end as a failure rather than
  * holding the release open.
  */
-const TAG_LOOKUP_TIMEOUT_SECONDS = 30;
+const REF_LOOKUP_TIMEOUT_SECONDS = 30;
 
 final class ReleasePlanFailure extends RuntimeException
 {
@@ -77,31 +89,42 @@ function findReleaseCandidates(array $oldManifest, array $newManifest): array
 
 /**
  * A package is also a candidate, independent of any manifest diff, when
- * its current version has no matching tag on its own split repo yet —
- * covers a version that predates this pipeline, which
- * findReleaseCandidates() alone can never detect: the manifest value
- * itself never changes again once committed, so a pure diff has nothing
- * left to compare against.
+ * its own split repository does not yet carry the current version as a
+ * finished release: no tag, no main branch, or a main branch pointing
+ * somewhere other than the tagged commit.
+ *
+ * Two states reach this that a manifest diff never can. A version that
+ * predates this pipeline never changes again, so a diff has nothing left
+ * to compare against. And a round that pushed a tag without pushing the
+ * branch leaves a repository whose tag is right and whose main is stale;
+ * reconciling that is what makes a partial publication recoverable, so a
+ * tagged package is inspected here rather than filtered out.
  *
  * Runs unconditionally, not gated behind "only if the diff found
- * nothing" — a package can independently be untagged from an earlier
+ * nothing" — a package can independently be unpublished from an earlier
  * failed run alongside a diff-based candidate elsewhere in the same
- * round, and this catches that with no extra bookkeeping. A tagged
- * version stops matching here on its own; nothing has to track that a
- * package was already released.
+ * round, and this catches that with no extra bookkeeping.
+ *
+ * Being a candidate is not a decision to write anything.
+ * tools/release-transaction.php reads each candidate's exact split
+ * commit and remote state and decides, per package, whether to publish,
+ * repair main, or leave the repository untouched.
  *
  * @param array<string, mixed> $manifest
- * @param callable(string, string): bool $tagExists Same injectable-callable
- *     shape as checkResolution() — testable without a real network call;
- *     tagExistsOnGitHub() itself is exercised separately, directly.
- * @return list<string> package keys whose current version has no tag yet
+ * @param callable(string, string): PublicationRefs $refsFor Same
+ *     injectable-callable shape as checkResolution() — testable without
+ *     a real network call; publicationRefs() itself is exercised
+ *     separately, directly.
+ * @return list<string> package keys whose current version is not fully published
  */
-function findUntaggedCandidates(array $manifest, callable $tagExists): array
+function findUnpublishedCandidates(array $manifest, callable $refsFor): array
 {
     $candidates = [];
 
     foreach ($manifest['packages'] as $key => $pkg) {
-        if (!$tagExists($key, "v{$pkg['version']}")) {
+        $refs = $refsFor($key, "v{$pkg['version']}");
+
+        if ($refs->tag === null || $refs->main === null || $refs->main !== $refs->taggedCommit()) {
             $candidates[] = $key;
         }
     }
@@ -110,35 +133,24 @@ function findUntaggedCandidates(array $manifest, callable $tagExists): array
 }
 
 /**
- * Unions the two candidate sources, then filters out anything whose tag
- * already exists — the one check neither source applies on its own to
- * the *other's* results. findUntaggedCandidates() only ever sees the
- * untagged path; a diff-based candidate goes straight into the union
- * with no equivalent check. That gap is invisible on a normal run (a
- * version bump has no tag yet by definition) but real on a re-run of a
- * partially-successful release round: re-running release.yml after a
- * mid-round failure (e.g. a missing split repo) replays the same
- * GITHUB_EVENT_BEFORE, so a package the diff already found — and whose
- * tag a *previous* attempt this same round already pushed successfully
- * — gets re-added by the diff alone and its tag push then fails, since
- * tags (unlike the branch ref) are never force-pushed. Filtering the
- * whole union by tag existence, not just the untagged source's own
- * candidates, is what makes a retry idempotent.
+ * Unions the two candidate sources.
+ *
+ * Nothing is filtered back out. A candidate whose tag already exists
+ * still has to reach the publication transaction, the one place that
+ * reads the exact split commit alongside both remote refs and can tell
+ * a finished package from one whose main branch never caught up.
+ * Dropping it here would make a partial publication unrecoverable: the
+ * round that could repair it would report nothing to do.
  *
  * @param list<string> $diffCandidates
- * @param list<string> $untaggedCandidates
- * @param array<string, mixed> $manifest
- * @param callable(string, string): bool $tagExists
+ * @param list<string> $unpublishedCandidates
  * @return list<string>
  */
-function resolveCandidates(array $diffCandidates, array $untaggedCandidates, array $manifest, callable $tagExists): array
+function resolveCandidates(array $diffCandidates, array $unpublishedCandidates): array
 {
-    $union = array_keys(array_fill_keys($diffCandidates, true) + array_fill_keys($untaggedCandidates, true));
-
-    return array_values(array_filter(
-        $union,
-        static fn (string $key): bool => !$tagExists($key, "v{$manifest['packages'][$key]['version']}"),
-    ));
+    return array_keys(
+        array_fill_keys($diffCandidates, true) + array_fill_keys($unpublishedCandidates, true),
+    );
 }
 
 /**
@@ -276,61 +288,92 @@ function publishOrder(array $manifest, array $candidates): array
 }
 
 /**
- * Asks one split repository whether a tag is there.
+ * Asks one split repository what it carries at some exact refs.
  *
  * "Absent" means one thing only: ls-remote ran, spoke to the remote, and
- * matched no ref. A remote that refuses the connection, an
- * unauthenticated fetch, a repository that doesn't exist, git failing to
- * start, a read that stalls until the deadline — none of those are
- * evidence about the tag, and reporting them as absence makes every
- * package a release candidate and republishes tags that already exist.
- * They raise instead.
+ * reported no record for a ref that was asked about. A remote that
+ * refuses the connection, an unauthenticated fetch, a repository that
+ * doesn't exist, git failing to start, a read that stalls until the
+ * deadline — none of those are evidence about a ref, and reporting them
+ * as absence makes every package a release candidate and republishes
+ * work that already exists. They raise instead.
  *
+ * The answer is object ids rather than a yes or no. A publication
+ * compares a remote ref against the split commit it computed and leases
+ * the exact value it read, so "the tag is there" is not something it can
+ * act on.
+ *
+ * Read-only and unauthenticated: this runs before anything is published,
+ * over a public URL with no credential of any kind.
+ *
+ * @param list<string> $refs exact ref names, e.g. refs/tags/v1.2.3
  * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
+ * @param (callable(string): string)|null $urlFor where the split repository lives, for a run pointed somewhere else
+ * @return array<string, string> ref name => object id, holding only the
+ *         asked-for refs the remote reported; an annotated tag also
+ *         reports its peeled `^{}` record
  * @throws ReleasePlanFailure
  */
-function tagLookup(string $repo, string $tag, callable $run): bool
+function refLookup(string $repo, array $refs, callable $run, ?callable $urlFor = null): array
 {
-    $url = 'https://github.com/' . GITHUB_ORG . "/{$repo}.git";
-    $result = $run(['ls-remote', '--tags', '--end-of-options', $url, "refs/tags/{$tag}"]);
+    $url = ($urlFor ?? splitRepositoryUrl(...))($repo);
+    $result = $run(['ls-remote', '--end-of-options', $url, ...$refs]);
+    $asked = implode(', ', $refs);
 
     if ($result['timedOut']) {
         throw new ReleasePlanFailure(
-            "Looking up {$tag} on " . GITHUB_ORG . "/{$repo} did not finish in time — the release plan cannot say "
-            . 'whether that tag exists.',
+            "Looking up {$asked} on " . GITHUB_ORG . "/{$repo} did not finish in time — the release plan cannot say "
+            . 'what those refs point at.',
         );
     }
 
     if ($result['exitCode'] !== 0) {
         throw new ReleasePlanFailure(
-            'Could not reach ' . GITHUB_ORG . "/{$repo} to look up {$tag}: " . redactCredentials($result['stderr']),
+            'Could not reach ' . GITHUB_ORG . "/{$repo} to look up {$asked}: " . redactCredentials($result['stderr']),
         );
     }
 
     if (trim($result['stdout']) === '') {
-        return false;
+        return [];
     }
 
-    if (matchesTagRecord($result['stdout'], $tag)) {
-        return true;
+    $records = matchingRefRecords($result['stdout'], $refs);
+
+    if ($records === []) {
+        throw new ReleasePlanFailure(
+            'Looking up ' . GITHUB_ORG . "/{$repo} for {$asked} produced output that names no such ref, "
+            . 'so what those refs point at is unknown.',
+        );
     }
 
-    throw new ReleasePlanFailure(
-        'Looking up ' . GITHUB_ORG . "/{$repo} for {$tag} produced output that names no such ref, "
-        . 'so whether the tag exists is unknown.',
-    );
+    return $records;
 }
 
 /**
- * Whether ls-remote's output names the ref that was asked for.
+ * The records ls-remote wrote for the refs that were asked about.
+ *
  * Its records are `<object id>\t<ref>`, and an annotated tag also
  * reports its peeled `^{}` line. Anything else — a warning, a redirect
- * notice, a ref that merely resembles the one requested — leaves the
- * question unanswered rather than answering it.
+ * notice, a ref that merely resembles one of those asked for — is not a
+ * record of an answer and is left out, so output carrying none of the
+ * asked-for refs comes back empty and settles nothing.
+ *
+ * @param list<string> $refs
+ * @return array<string, string>
  */
-function matchesTagRecord(string $output, string $tag): bool
+function matchingRefRecords(string $output, array $refs): array
 {
-    $wanted = "refs/tags/{$tag}";
+    $wanted = [];
+
+    foreach ($refs as $ref) {
+        $wanted[$ref] = true;
+
+        if (str_starts_with($ref, 'refs/tags/')) {
+            $wanted["{$ref}^{}"] = true;
+        }
+    }
+
+    $records = [];
 
     foreach (explode("\n", $output) as $line) {
         $line = rtrim($line, "\r");
@@ -339,41 +382,84 @@ function matchesTagRecord(string $output, string $tag): bool
             continue;
         }
 
-        if ($m[2] === $wanted || $m[2] === "{$wanted}^{}") {
-            return true;
+        if (isset($wanted[$m[2]])) {
+            $records[$m[2]] = $m[1];
         }
     }
 
-    return false;
+    return $records;
 }
 
-/** Real git tag check via ls-remote — never touches Packagist. */
-function tagExistsOnGitHub(string $repo, string $tag): bool
+/**
+ * What one split repository holds for a version: the tag object, the
+ * commit an annotated tag peels to, and where main points. Every field
+ * is an exact object id, or null for a ref the remote does not have —
+ * the states a publication has to tell apart before it writes anything.
+ */
+final class PublicationRefs
 {
-    return tagLookup(
+    public function __construct(
+        public readonly ?string $tag,
+        public readonly ?string $peeledTag,
+        public readonly ?string $main,
+    ) {
+    }
+
+    /** The commit the tag names, or null when the tag is absent. */
+    public function taggedCommit(): ?string
+    {
+        return $this->peeledTag ?? $this->tag;
+    }
+}
+
+/**
+ * One split repository's tag and main state for a version, in a single
+ * round trip. Both refs answer one question — whether this version is
+ * published, and whether main carries it — and asking separately doubles
+ * the network cost of the whole script.
+ *
+ * @param callable(list<string>): array{exitCode: int, stdout: string, stderr: string, timedOut: bool, truncated: bool} $run
+ * @throws ReleasePlanFailure
+ */
+function publicationRefs(string $repo, string $tag, callable $run, ?callable $urlFor = null): PublicationRefs
+{
+    $tagRef = "refs/tags/{$tag}";
+    $records = refLookup($repo, [$tagRef, 'refs/heads/main'], $run, $urlFor);
+
+    return new PublicationRefs(
+        $records[$tagRef] ?? null,
+        $records["{$tagRef}^{}"] ?? null,
+        $records['refs/heads/main'] ?? null,
+    );
+}
+
+/** Real ref lookup via ls-remote — never touches Packagist. */
+function publicationRefsOnGitHub(string $repo, string $tag): PublicationRefs
+{
+    return publicationRefs(
         $repo,
         $tag,
-        static fn (array $args): array => runGit($args, PROJECT_ROOT, TAG_LOOKUP_TIMEOUT_SECONDS),
+        static fn (array $args): array => runGit($args, PROJECT_ROOT, REF_LOOKUP_TIMEOUT_SECONDS),
     );
 }
 
 /**
- * Wraps a tag check so each repo/tag pair costs one lookup per run.
+ * Wraps a ref lookup so each repo/tag pair costs one lookup per run.
  * Candidate discovery and sibling resolution both ask about the same
  * pairs, and a network round trip per question is the whole cost of this
  * script.
  *
- * @param callable(string, string): bool $tagExists
- * @return callable(string, string): bool
+ * @param callable(string, string): PublicationRefs $refsFor
+ * @return callable(string, string): PublicationRefs
  */
-function memoizeTagLookups(callable $tagExists): callable
+function memoizeRefLookups(callable $refsFor): callable
 {
     $answers = [];
 
-    return static function (string $repo, string $tag) use ($tagExists, &$answers): bool {
+    return static function (string $repo, string $tag) use ($refsFor, &$answers): PublicationRefs {
         $key = "{$repo}\0{$tag}";
 
-        return $answers[$key] ??= $tagExists($repo, $tag);
+        return $answers[$key] ??= $refsFor($repo, $tag);
     };
 }
 
@@ -384,10 +470,9 @@ function memoizeTagLookups(callable $tagExists): callable
  * A same-round sibling is skipped, for a different reason per kind.
  *
  * A `requires` sibling is ordered earlier: publishOrder() sorts on the
- * requires graph and proves the result contains every candidate, and
- * release.yml's publish loop stops on the first failed push, so by the
- * time $key is attempted its required sibling is either tagged or the
- * run has already ended.
+ * requires graph and proves the result contains every candidate, and the
+ * publication transaction applies candidates in that order, stopping at
+ * the first one it cannot complete.
  *
  * A `requiresDev` sibling carries no such ordering — the dev graph has
  * cycles, so no total order over it exists to impose. It is skipped
@@ -403,13 +488,13 @@ function memoizeTagLookups(callable $tagExists): callable
  * @param array<string, true> $candidateSet Every package key that's a
  *     candidate this round, keyed for O(1) lookup — not just $key's own
  *     siblings, the full round.
- * @param callable(string, string): bool $tagExists Injectable so the
- *     surrounding logic (which siblings get checked, how a miss is
- *     worded) is unit-testable without a real network call —
- *     tagLookup() itself is exercised separately, directly.
+ * @param callable(string, string): PublicationRefs $refsFor Injectable so
+ *     the surrounding logic (which siblings get checked, how a miss is
+ *     worded) is unit-testable without a real network call — refLookup()
+ *     itself is exercised separately, directly.
  * @return list<string> problems, empty if everything resolves
  */
-function checkResolution(array $manifest, string $key, array $candidateSet, callable $tagExists): array
+function checkResolution(array $manifest, string $key, array $candidateSet, callable $refsFor): array
 {
     $pkg = $manifest['packages'][$key];
     $problems = [];
@@ -422,7 +507,7 @@ function checkResolution(array $manifest, string $key, array $candidateSet, call
         $version = $manifest['packages'][$sibling]['version'];
         $tag = "v{$version}";
 
-        if (!$tagExists($sibling, $tag)) {
+        if ($refsFor($sibling, $tag)->tag === null) {
             $problems[] = "{$key} requires {$sibling} ({$tag}), but that tag doesn't exist on kinetis-dev/{$sibling} yet";
         }
     }
@@ -442,7 +527,7 @@ function printHumanReadable(array $plan, ?string $note): void
     }
 
     if ($plan === []) {
-        echo "Nothing to release — no version changed since the comparison base, and every current version is already tagged.\n";
+        echo "Nothing to release — no version changed since the comparison base, and every current version is already published.\n";
 
         return;
     }
@@ -531,23 +616,21 @@ function main(array $argv = []): int
         return 1;
     }
 
-    $tagExists = memoizeTagLookups(tagExistsOnGitHub(...));
+    $refsFor = memoizeRefLookups(publicationRefsOnGitHub(...));
 
     try {
         $oldManifest = manifestAtComparisonBase($arguments['base'], PROJECT_ROOT);
 
         // Two independent sources, unioned — a diff-based candidate (the
-        // ordinary case: a version field changed this
-        // push) and an untagged one (see findUntaggedCandidates() — the
-        // "first release" case a pure diff can never detect on its own).
-        // $oldManifest being unavailable (no prior commit to diff against
-        // at all) only removes the first source; the second still runs.
-        // resolveCandidates() then filters the whole union by tag
-        // existence — see its own docblock for why that has to happen
-        // after the union, not just inside findUntaggedCandidates().
+        // ordinary case: a version field changed this push) and an
+        // unpublished one (see findUnpublishedCandidates() — the "first
+        // release" and "half-published round" cases a pure diff can never
+        // detect on its own). $oldManifest being unavailable (no prior
+        // commit to diff against at all) only removes the first source;
+        // the second still runs.
         $diffCandidates = $oldManifest !== null ? findReleaseCandidates($oldManifest, $newManifest) : [];
-        $untaggedCandidates = findUntaggedCandidates($newManifest, $tagExists);
-        $candidates = resolveCandidates($diffCandidates, $untaggedCandidates, $newManifest, $tagExists);
+        $unpublishedCandidates = findUnpublishedCandidates($newManifest, $refsFor);
+        $candidates = resolveCandidates($diffCandidates, $unpublishedCandidates);
 
         if ($candidates === []) {
             $arguments['json'] ? printJson([]) : printHumanReadable([], note: null);
@@ -563,7 +646,7 @@ function main(array $argv = []): int
             $plan[] = [
                 'key' => $key,
                 'version' => $newManifest['packages'][$key]['version'],
-                'problems' => checkResolution($newManifest, $key, $candidateSet, $tagExists),
+                'problems' => checkResolution($newManifest, $key, $candidateSet, $refsFor),
             ];
         }
     } catch (HistoryUnavailable | ReleasePlanFailure $e) {

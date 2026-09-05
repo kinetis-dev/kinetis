@@ -388,7 +388,7 @@ independent SemVer line, bumped per the version policy above; the
 trigger is the `version` field in `packages.manifest.json` changing on
 `main`.
 
-`tools/release-plan.php` computes what this round's push would release,
+`tools/release-plan.php` computes what this round's push would look at,
 without writing, tagging, or pushing anything — it's a read-only report:
 
 ```sh
@@ -398,22 +398,127 @@ docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_
 ```
 
 It diffs the manifest at `HEAD` against the comparison base — what
-`main` pointed to before this push on CI, `HEAD^` locally; every package
-whose `version` differs is a release candidate, printed in
-dependency-respecting publish order (a package always releases after
-every sibling it requires, never before). For each candidate, it also
-checks that every sibling it depends on already has a matching tag on
-that sibling's own split repo, via real `git ls-remote` lookups against
-GitHub, not Packagist.
+`main` pointed to before this push on CI, `HEAD^` locally — and adds
+every package whose split repository does not yet carry its current
+version as a finished release: no tag, no `main` branch, or a `main`
+pointing somewhere other than the tagged commit. That second source is
+what makes a first release possible at all, and what lets a later round
+repair a repository whose tag landed without its branch. Candidates are
+printed in dependency-respecting publish order (a package always
+releases after every sibling it requires), each with whether the
+siblings it depends on already have matching tags on their own split
+repos, via real `git ls-remote` lookups against GitHub, not Packagist.
 
 The plan validates the manifest before any of that and proves its own
 publish order contains every candidate it found. A cycle, a sibling
 reference to a package that isn't there, or any other graph fault stops
 the run and says so — a nonempty candidate set never becomes an empty
-plan that reads as "nothing to release". A tag lookup answers "absent"
+plan that reads as "nothing to release". A ref lookup answers "absent"
 only when `ls-remote` reached the remote and matched nothing; a refused
 connection, a failed authentication or a stalled read ends the run,
-since none of them are evidence about a tag.
+since none of them are evidence about a ref.
+
+Being a candidate is not a decision to publish. Which refs actually move
+is decided per package by the publication transaction below, against the
+exact publication commit and the remote state it reads for itself.
+
+### What the publication guarantees
+
+`release.yml` runs on every push to `main` and does four things in
+order: gate, preflight, apply, and nothing else.
+
+**One publication at a time.** The workflow groups on a constant, not on
+the workflow-and-ref pair every other workflow uses, and never cancels a
+run. Two pushes to `main` are two runs of one workflow on one ref, so a
+per-ref group would still let them publish side by side — and the older
+round finishing its push last is how a split repository ends up with
+`main` behind its own tag.
+
+**A gate for the exact commit.** `tools/release-gate.php` requires CI,
+Monorepo Validate, Semgrep, and — when the commit's own diff makes it
+applicable — Integration, each matched on head SHA. A run belonging to
+another commit proves nothing about this one, and a green run whose
+meaningful jobs were all skipped counts as a failure, since a
+path-filtered workflow reports success for a commit it never examined.
+The applicability of a path-filtered workflow is read from that
+workflow's own filter, so the two cannot drift. Waiting is bounded, and
+a gate still pending at the deadline fails.
+
+**A whole round preflighted before anything is written.**
+`tools/release-transaction.php preflight` stages the round, builds every
+candidate's publication commit, reads every target repository, and
+writes a transaction file naming the exact ref updates to make. A
+package it cannot decide about — a tag already naming a different
+commit or publishing different content, a `main` sharing no history with
+the release, a remote it cannot read — ends the round with zero
+publication writes, including for the packages already validated ahead
+of it.
+
+**One line of published history per package.** A split repository's
+history is one commit per release. Each publication commit carries
+`packages/<key>`'s tree at that round's staged release commit and names
+the commit the repository published last as its parent, read from the
+remote in the same round. So a release always descends from the release
+before it, `main` only ever fast-forwards, and two rounds run from two
+clean checkouts that have never seen each other still produce one line.
+A per-prefix history rewrite cannot give that guarantee: the staged
+release commit is not on `main`, so consecutive rounds would rewrite to
+siblings rather than to a line and the second could not be published at
+all. A version whose tag is already on the remote is verified against
+what the round stages rather than rebuilt, so a round that lost its push
+halfway repairs the branch around the tag it already wrote.
+
+**Idempotent, remote-aware publication.** Git cannot update two
+repositories atomically, so this does not claim to. What it guarantees
+is that each repository is written by one atomic tag-and-`main` push,
+that every update carries the exact remote value preflight read as a
+lease, and that a round interrupted between two repositories is
+completed by the next one rather than needing a human. Every remote
+state is answered: an absent tag is published, a correct tag with a
+stale `main` repairs `main`, a `main` that already carries a newer
+release is left alone, and a tag naming a different commit is a hard
+failure.
+
+**Deterministic staging.** Every commit the round writes fixes its
+identity, both dates, its parent, its message and its tree, so one
+monorepo commit against one manifest and one remote state always
+produces the same objects. A runtime date would make every retry a new
+object and turn an idempotent republish into an endless force-push.
+
+**One version at a time.** GitHub keeps at most one pending run per
+concurrency group and discards the rest, so an intermediate commit's
+validation can be dropped before it ever runs. The newest round
+reconciles its own manifest version and only that one: if the version
+before it (read from the manifest's own history) has no tag, the round
+fails rather than publishing content no exact-SHA gate ever passed.
+Release that version by re-running the release workflow on the commit
+that carried it, then retry the newer one. A package whose current
+version is the only one the manifest has ever carried has no predecessor
+to wait for, which is what keeps a first release possible.
+
+**A credential with one place to be.** `RELEASE_DEPLOY_TOKEN` is
+provided to the apply step alone. Every other step — the plan, the gate,
+the checkout, the whole preflight — runs without it, over
+unauthenticated reads. Apply hands it to git through an askpass helper
+reading that one child's environment, so it appears in no URL, argument,
+git config value, transaction file, exception, or captured output. The
+gate's own read token is narrower still: it goes only to
+`https://api.github.com`, is never carried across a redirect (none are
+followed, and every 3xx fails the gate), and is taken out of the
+environment only once the gate's git reads are done, so no child
+inherits it.
+
+**A transaction file that is a capability, not a report.** That file is
+the entire input to the one step holding a credential able to write to
+every split repository. Apply parses it against a fixed shape — no
+unknown or missing keys, no duplicate package or ref entries, no ref but
+`refs/tags/v<version>` and `refs/heads/main`, every update publishing
+that entry's own commit — and then re-derives every object it names
+against the checkout that preflighted it: the commit being released, the
+release commit staged from it, each package's version and published
+tree, and the ancestry every lease claims. All of that runs *before* the
+deploy credential is taken, so a file naming anything this checkout
+cannot account for never reaches a process that could push.
 
 ## See also
 

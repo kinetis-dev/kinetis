@@ -4,29 +4,63 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  # The gate reads this repository's own workflow runs and their jobs.
+  actions: read
+
+# One publication at a time across the whole repository, and never
+# cancelled.
+#
+# The group is a constant rather than the usual workflow-and-ref pair
+# every other workflow here uses: two pushes to main are two runs of this
+# one workflow on the same ref, so a per-ref group would still let them
+# publish side by side — and the older round finishing its push last is
+# how a split repository ends up with main behind its own tag.
+# cancel-in-progress: false is the other half of it: a publication killed
+# between two repositories leaves exactly the partial state this workflow
+# works to avoid.
+#
+# GitHub keeps at most one pending run per group and discards the rest,
+# so an intermediate commit's turn here can be dropped entirely. That is
+# why tools/release-transaction.php refuses to publish a version whose
+# predecessor was never tagged instead of quietly releasing over it.
+concurrency:
+  group: kinetis-release-publication
+  cancel-in-progress: false
+
 jobs:
   release:
-    name: Split and publish release candidates
+    name: Publish this round's release candidates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          # release-plan.php's candidate detection needs GITHUB_EVENT_BEFORE
-          # to be reachable, which can land arbitrarily far back for a
-          # multi-commit push (this project's own normal workflow) — same
-          # reasoning as monorepo-validate.yml's own fetch-depth: 0.
+          # The release plan and the publication both read the manifest's
+          # own history — the comparison base for a multi-commit push, and
+          # the version each package carried before the current one. Both
+          # can land arbitrarily far back, and a shallow checkout fails
+          # the run rather than guessing.
           fetch-depth: 0
           # actions/checkout's default (persist-credentials: true) writes
           # the ephemeral per-job GITHUB_TOKEN into the local git config
-          # as a credential override for every https://github.com/ URL,
-          # taking precedence over RELEASE_DEPLOY_TOKEN embedded directly
-          # in the publish loop's own push URLs and authenticating every
-          # push as github-actions[bot] instead — a bot identity with no
-          # access outside this one checked-out repo. false stops
-          # checkout from persisting any credential at all, so the only
-          # auth the publish loop ever uses is the one it explicitly
-          # provides.
+          # as a credential override for every https://github.com/ URL.
+          # It would then authenticate the publication's own pushes as
+          # github-actions[bot], an identity with no access outside this
+          # one checked-out repository, and it would do so ahead of the
+          # askpass helper the apply step provides. false stops checkout
+          # from persisting any credential at all.
           persist-credentials: false
+
+      # PHP runs on the runner rather than in a container for this one
+      # workflow: the publication drives git and the pushes as a single
+      # process, so the credential boundary and the preflight are one
+      # decision rather than a shell loop's worth, and that process needs
+      # the same git the checkout used.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
 
       - name: Compute this round's release plan
         id: plan
@@ -35,111 +69,55 @@ jobs:
         # the step down with it. Without it, tee's own success is the
         # pipeline's exit status and the failure reaches jq as an empty
         # file.
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: |
           set -o pipefail
-          docker run --rm \
-            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-            -e GITHUB_EVENT_BEFORE="${{ github.event.before }}" \
-            -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/release-plan.php --json" | tee plan.json
+          php tools/release-plan.php --json | tee plan.json
           echo "count=$(jq '.candidates | length' plan.json)" >> "$GITHUB_OUTPUT"
           echo "ok=$(jq -r '.ok' plan.json)" >> "$GITHUB_OUTPUT"
 
       - name: Nothing to release
         if: steps.plan.outputs.count == '0'
-        run: echo "No version changed since the comparison base — nothing to release."
+        run: echo "Every current version is already published — nothing to release."
 
       - name: Fail — a candidate's sibling requirement isn't published yet
         # Two packages bumped together in one commit, but their sibling
         # ordering doesn't actually resolve (e.g. a version was bumped
-        # without the dependent's own constraint catching up). Distinct
-        # from the "RELEASE_DEPLOY_TOKEN not yet provisioned" case below
-        # — this one can happen on a fully working pipeline too.
+        # without the dependent's own constraint catching up).
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok != 'true'
         run: |
           echo "::error::One or more release candidates have an unresolved sibling requirement:"
           jq -r '.candidates[].problems[]' plan.json | while IFS= read -r line; do echo "::error::${line}"; done
           exit 1
 
-      - name: Check that publish credentials are configured
+      - name: Gate on this exact commit's own checks
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
-        id: creds
-        run: |
-          if [ -z "${{ secrets.RELEASE_DEPLOY_TOKEN }}" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          fi
+        # The job's own ephemeral token, scoped to actions: read above.
+        # The deploy credential is not available to this step and has no
+        # use here.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: php tools/release-gate.php --sha="${{ github.sha }}" --repo="${{ github.repository }}"
 
-      - name: RELEASE_DEPLOY_TOKEN not yet provisioned
-        # Fails loudly rather than silently succeeding: this workflow
-        # isn't a required status check (only monorepo-validate.yml is),
-        # so nothing blocks on this failing, but a version bump with
-        # nowhere to go should never look green.
-        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'false'
-        run: |
-          echo "::warning::$(jq '.candidates | length' plan.json) candidate(s) are ready to release, but the RELEASE_DEPLOY_TOKEN secret hasn't been provisioned yet:"
-          jq -r '.candidates[] | "  \(.key) -> v\(.version)"' plan.json
-          exit 1
+      - name: Preflight the whole publication
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
+        # Stages the round, builds every candidate's publication commit
+        # on what its repository already publishes, reads every target
+        # repository, and writes the exact ref updates to make. Reaches
+        # the network only to read, and writes nothing to any remote, so
+        # it runs without the deploy credential.
+        run: php tools/release-transaction.php preflight --plan=plan.json --out=transaction.json
 
-      - name: Install splitsh-lite
-        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'true'
-        run: |
-          # v1.0.1 is the last release with a real prebuilt Linux binary —
-          # v2.0.0 dropped precompiled binaries entirely, needing a Go +
-          # libgit2 build from source instead, for nothing gained here.
-          curl -sL https://github.com/splitsh/lite/releases/download/v1.0.1/lite_linux_amd64.tar.gz | tar xz
-          chmod +x splitsh-lite
-          sudo mv splitsh-lite /usr/local/bin/splitsh-lite
-
-      - name: Split and publish each candidate, in order
-        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true' && steps.creds.outputs.configured == 'true'
-        # A for-loop over an array populated via process substitution,
-        # not `jq ... | while read` — the loop body's own git push calls
-        # would otherwise share the same piped stdin `read` is consuming
-        # from, corrupting the loop if a push ever prompts instead of
-        # failing cleanly (a misconfigured credential, for instance).
-        #
-        # Force-pushing main and pushing the tag are two separate git
-        # push calls; a failure between them (main updated, tag not yet
-        # pushed) stops the whole job right there rather than continuing
-        # to later candidates. Safe to just re-run: splitsh-lite's own
-        # caching plus force-push both make a repeated run of this same
-        # workflow idempotent.
-        run: |
-          git config user.name "kinetis-release"
-          git config user.email "noreply@kinetis.dev"
-
-          mapfile -t candidates < <(jq -c '.candidates[]' plan.json)
-
-          for candidate in "${candidates[@]}"; do
-            key=$(echo "$candidate" | jq -r '.key')
-            version=$(echo "$candidate" | jq -r '.version')
-            echo "=== ${key} -> v${version} ==="
-
-            # splitsh-lite reads committed git objects, not the working
-            # directory, so the release-mode composer.json (real ^X.Y
-            # sibling constraints, no repositories key) has to exist in a
-            # real commit before splitting — the checked-out monorepo's
-            # own composer.json is always dev-mode (path repos,
-            # dev-main), meant for local development only. This commit
-            # only ever exists in this runner's own disposable checkout;
-            # it's never pushed to kinetis-dev/kinetis itself.
-            #
-            # composer.lock is removed, not regenerated: Composer never
-            # reads a dependency's own lock file once it's required
-            # transitively, and leaving the dev-mode lock (dev-main
-            # entries) in place fails composer validate --strict against
-            # the now-^X.Y composer.json for anyone who clones the split
-            # repo directly.
-            docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php --release-write="${key}"
-            git add "packages/${key}/composer.json"
-            git rm --quiet "packages/${key}/composer.lock"
-            git commit --quiet -m "release: ${key} v${version}"
-
-            sha1=$(splitsh-lite --prefix="packages/${key}" --origin=HEAD --quiet)
-            echo "split SHA1: ${sha1}"
-
-            target="https://x-access-token:${{ secrets.RELEASE_DEPLOY_TOKEN }}@github.com/kinetis-dev/${key}.git"
-            git push "$target" "${sha1}:refs/heads/main" --force
-            git push "$target" "${sha1}:refs/tags/v${version}"
-          done
+      - name: Publish
+        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
+        # The only step the deploy credential exists for, and the only
+        # one that writes. It re-derives every object the transaction
+        # names against this checkout before taking the credential at
+        # all, then reaches git through an askpass helper reading this
+        # step's environment — never a URL, an argument, or a config
+        # value, all of which git copies into its own output.
+        env:
+          RELEASE_DEPLOY_TOKEN: ${{ secrets.RELEASE_DEPLOY_TOKEN }}
+        run: php tools/release-transaction.php apply --transaction=transaction.json

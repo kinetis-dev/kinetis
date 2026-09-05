@@ -10,15 +10,20 @@ framework's own code. Six workflow files run on every push/PR,
 `.github/dependabot.yml`. Two more workflows exist but are out of this
 page's scope, since neither runs on an ordinary push/PR:
 `deploy-docs.yml` (publishes `docs/` to `kinetis.dev` on a push to
-`main`) and `release.yml` (splits and tags each package's own release
-repo on a push to `main` — see {doc}`appendix-contributing`).
+`main`) and `release.yml` (gates on the pushed commit's own results,
+then publishes each package's own release repo — see
+{doc}`appendix-contributing`).
 
 ## `ci.yml` — static checks and unit tests, per package
 
 One job per package — every package in `packages.manifest.json`, plus
 `tools/` — matrixed across PHP 8.4 and 8.5 — every check below runs against both,
 not just one — each running against the exact same Docker images used
-for local development:
+for local development. The matrix is path-filtered, and
+`packages.manifest.json` is one of the paths that triggers it: a version
+bump changes the manifest and nothing else, since the generated
+`composer.json` carries no version field, and that commit is exactly the
+one a release gates on:
 
 - `composer validate --strict`
 - `composer install`

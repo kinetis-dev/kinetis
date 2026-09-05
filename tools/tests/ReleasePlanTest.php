@@ -6,9 +6,16 @@ namespace Kinetis\Tools\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use PublicationRefs;
 use ReleasePlanFailure;
 
 require_once __DIR__ . '/../release-plan.php';
+
+/** Two distinct object ids, so a test never asserts a value against itself. */
+const SHA_ONE = '9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8';
+
+/** @see SHA_ONE */
+const SHA_TWO = '1a2b3c4d5e6f708192a3b4c5d6e7f89f1c0a0e1f';
 
 final class ReleasePlanTest extends TestCase
 {
@@ -46,140 +53,141 @@ final class ReleasePlanTest extends TestCase
         self::assertSame([], findReleaseCandidates($manifest, $manifest));
     }
 
-    public function test_finds_untagged_candidates_even_with_zero_manifest_diff(): void
+    /** Everything published: tag and main both at the same commit. */
+    private function published(string $commit): PublicationRefs
+    {
+        return new PublicationRefs($commit, null, $commit);
+    }
+
+    /**
+     * @param array<string, PublicationRefs> $byRepo
+     * @return callable(string, string): PublicationRefs
+     */
+    private function refsReturning(array $byRepo): callable
+    {
+        return static fn (string $repo, string $tag): PublicationRefs
+            => $byRepo[$repo] ?? new PublicationRefs(null, null, null);
+    }
+
+    public function test_finds_unpublished_candidates_even_with_zero_manifest_diff(): void
     {
         // The scenario this exists for: a version already sitting in the
         // manifest, unchanged for many commits, that has genuinely never
-        // been tagged — findReleaseCandidates() alone would never catch
-        // this, since there's nothing to diff.
+        // been published — findReleaseCandidates() alone would never
+        // catch this, since there's nothing to diff.
         $manifest = ['packages' => [
             'a' => ['version' => '1.0.0'],
             'b' => ['version' => '1.0.0'],
         ]];
 
-        $candidates = findUntaggedCandidates(
-            $manifest,
-            tagExists: static fn (string $repo, string $tag): bool => false,
-        );
+        $candidates = findUnpublishedCandidates($manifest, $this->refsReturning([]));
 
         self::assertSame(['a', 'b'], $candidates);
     }
 
-    public function test_excludes_a_package_whose_current_version_is_already_tagged(): void
+    public function test_excludes_a_package_whose_current_version_is_fully_published(): void
     {
         $manifest = ['packages' => [
             'a' => ['version' => '1.0.0'],
             'b' => ['version' => '1.0.0'],
         ]];
 
-        $candidates = findUntaggedCandidates(
-            $manifest,
-            tagExists: static fn (string $repo, string $tag): bool => $repo === 'a',
-        );
+        $candidates = findUnpublishedCandidates($manifest, $this->refsReturning([
+            'a' => $this->published(SHA_ONE),
+        ]));
 
         self::assertSame(['b'], $candidates);
     }
 
-    public function test_untagged_check_asks_for_the_exact_v_prefixed_tag(): void
+    /**
+     * The half-published round: the tag landed, the branch did not. The
+     * package has to stay a candidate, or nothing ever repairs main.
+     */
+    public function test_a_tagged_package_whose_main_is_stale_is_still_a_candidate(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        $candidates = findUnpublishedCandidates($manifest, $this->refsReturning([
+            'a' => new PublicationRefs(SHA_ONE, null, SHA_TWO),
+        ]));
+
+        self::assertSame(['a'], $candidates);
+    }
+
+    public function test_a_tagged_package_with_no_main_branch_at_all_is_still_a_candidate(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        $candidates = findUnpublishedCandidates($manifest, $this->refsReturning([
+            'a' => new PublicationRefs(SHA_ONE, null, null),
+        ]));
+
+        self::assertSame(['a'], $candidates);
+    }
+
+    /** An annotated tag is compared by what it peels to, not by its own object. */
+    public function test_an_annotated_tag_whose_peeled_commit_is_on_main_is_published(): void
+    {
+        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
+
+        $candidates = findUnpublishedCandidates($manifest, $this->refsReturning([
+            'a' => new PublicationRefs(SHA_TWO, SHA_ONE, SHA_ONE),
+        ]));
+
+        self::assertSame([], $candidates);
+    }
+
+    public function test_the_unpublished_check_asks_for_the_exact_v_prefixed_tag(): void
     {
         $manifest = ['packages' => ['a' => ['version' => '2.3.1']]];
 
         $seen = [];
-        findUntaggedCandidates($manifest, tagExists: function (string $repo, string $tag) use (&$seen): bool {
+        findUnpublishedCandidates($manifest, function (string $repo, string $tag) use (&$seen): PublicationRefs {
             $seen[] = [$repo, $tag];
 
-            return true;
+            return $this->published(SHA_ONE);
         });
 
         self::assertSame([['a', 'v2.3.1']], $seen);
     }
 
-    public function test_a_version_that_genuinely_has_no_matching_tag_stops_being_untagged_once_it_does(): void
+    public function test_a_version_with_no_published_state_stops_being_a_candidate_once_it_has_one(): void
     {
         // Confirms the "self-healing, no bookkeeping needed" claim in
-        // findUntaggedCandidates()'s own doc comment directly: the exact
-        // same package/version, checked twice, comes back candidate then
-        // clean purely because the injected tagExists() answer changed —
+        // findUnpublishedCandidates()'s own doc comment directly: the
+        // same package and version, checked twice, comes back candidate
+        // then clean purely because the injected remote state changed —
         // nothing about the package itself had to be told it's released.
         $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
 
-        self::assertSame(
-            ['a'],
-            findUntaggedCandidates($manifest, tagExists: static fn (string $r, string $t): bool => false),
-        );
-        self::assertSame(
-            [],
-            findUntaggedCandidates($manifest, tagExists: static fn (string $r, string $t): bool => true),
-        );
+        self::assertSame(['a'], findUnpublishedCandidates($manifest, $this->refsReturning([])));
+        self::assertSame([], findUnpublishedCandidates($manifest, $this->refsReturning([
+            'a' => $this->published(SHA_ONE),
+        ])));
     }
 
     /**
-     * The real bug this reproduces: a re-run of a partially-successful
-     * release round replays the same diff, so a package's version bump
-     * still makes it a diff-based candidate even after an earlier
-     * attempt this same round already pushed its tag successfully.
-     * findUntaggedCandidates() alone can't catch this — it never even
-     * runs on the diff-based source — so resolveCandidates() has to
-     * apply the tag check to the whole union, not just to its own
-     * untagged half.
+     * A re-run of a partially-successful round replays the same diff, so
+     * an already-published package is still a diff-based candidate. It
+     * stays in the union because the publication transaction is the only
+     * place that can tell a finished package from one whose main branch
+     * never caught up, and it needs to see both.
      */
-    public function test_a_diff_based_candidate_whose_tag_was_already_published_this_round_is_dropped(): void
+    public function test_a_diff_based_candidate_already_published_still_reaches_the_transaction(): void
     {
-        $manifest = ['packages' => [
-            'a' => ['version' => '1.0.0'],
-            'b' => ['version' => '1.0.0'],
-        ]];
+        $candidates = resolveCandidates(diffCandidates: ['a', 'b'], unpublishedCandidates: []);
 
-        $candidates = resolveCandidates(
-            diffCandidates: ['a', 'b'],
-            untaggedCandidates: [],
-            manifest: $manifest,
-            tagExists: static fn (string $repo, string $tag): bool => $repo === 'a',
-        );
-
-        self::assertSame(['b'], $candidates);
-    }
-
-    public function test_an_untagged_only_candidate_with_no_tag_yet_is_kept(): void
-    {
-        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
-
-        $candidates = resolveCandidates(
-            diffCandidates: [],
-            untaggedCandidates: ['a'],
-            manifest: $manifest,
-            tagExists: static fn (string $repo, string $tag): bool => false,
-        );
-
-        self::assertSame(['a'], $candidates);
+        self::assertSame(['a', 'b'], $candidates);
     }
 
     public function test_a_candidate_found_by_both_sources_appears_exactly_once(): void
     {
-        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
-
-        $candidates = resolveCandidates(
-            diffCandidates: ['a'],
-            untaggedCandidates: ['a'],
-            manifest: $manifest,
-            tagExists: static fn (string $repo, string $tag): bool => false,
-        );
-
-        self::assertSame(['a'], $candidates);
+        self::assertSame(['a'], resolveCandidates(diffCandidates: ['a'], unpublishedCandidates: ['a']));
     }
 
-    public function test_a_genuinely_unpublished_diff_candidate_is_kept(): void
+    public function test_both_sources_contribute_to_the_union(): void
     {
-        $manifest = ['packages' => ['a' => ['version' => '1.0.0']]];
-
-        $candidates = resolveCandidates(
-            diffCandidates: ['a'],
-            untaggedCandidates: [],
-            manifest: $manifest,
-            tagExists: static fn (string $repo, string $tag): bool => false,
-        );
-
-        self::assertSame(['a'], $candidates);
+        self::assertSame(['a', 'b'], resolveCandidates(diffCandidates: ['a'], unpublishedCandidates: ['b']));
     }
 
     public function test_publish_order_respects_dependency_order_between_two_candidates(): void
@@ -312,7 +320,7 @@ final class ReleasePlanTest extends TestCase
             'kinetis' => ['version' => '2.0.0'],
         ]];
 
-        $problems = checkResolution($manifest, 'queue', candidateSet: [], tagExists: static fn (string $repo, string $tag): bool => false);
+        $problems = checkResolution($manifest, 'queue', candidateSet: [], refsFor: $this->refsReturning([]));
 
         self::assertCount(2, $problems);
         self::assertStringContainsString('persistence (v1.4.0)', $problems[0]);
@@ -326,7 +334,7 @@ final class ReleasePlanTest extends TestCase
             'persistence' => ['version' => '1.4.0'],
         ]];
 
-        $problems = checkResolution($manifest, 'queue', candidateSet: [], tagExists: static fn (string $repo, string $tag): bool => true);
+        $problems = checkResolution($manifest, 'queue', candidateSet: [], refsFor: static fn (string $repo, string $tag): PublicationRefs => new PublicationRefs(SHA_ONE, null, SHA_ONE));
 
         self::assertSame([], $problems);
     }
@@ -339,10 +347,10 @@ final class ReleasePlanTest extends TestCase
         ]];
 
         $seen = [];
-        checkResolution($manifest, 'queue', candidateSet: [], tagExists: function (string $repo, string $tag) use (&$seen): bool {
+        checkResolution($manifest, 'queue', candidateSet: [], refsFor: function (string $repo, string $tag) use (&$seen): PublicationRefs {
             $seen[] = [$repo, $tag];
 
-            return true;
+            return $this->published(SHA_ONE);
         });
 
         self::assertSame([['persistence', 'v1.4.0']], $seen);
@@ -364,7 +372,7 @@ final class ReleasePlanTest extends TestCase
             $manifest,
             'queue',
             candidateSet: ['persistence' => true],
-            tagExists: static fn (string $repo, string $tag): bool => false,
+            refsFor: $this->refsReturning([]),
         );
 
         self::assertSame([], $problems);
@@ -388,10 +396,10 @@ final class ReleasePlanTest extends TestCase
             $manifest,
             'queue',
             candidateSet: ['persistence' => true],
-            tagExists: function (string $repo, string $tag) use (&$called): bool {
+            refsFor: function (string $repo, string $tag) use (&$called): PublicationRefs {
                 $called = true;
 
-                return false;
+                return new PublicationRefs(null, null, null);
             },
         );
 
@@ -413,10 +421,10 @@ final class ReleasePlanTest extends TestCase
             // persistence is a same-round candidate (skipped); kinetis
             // is not (still genuinely checked).
             candidateSet: ['queue' => true, 'persistence' => true],
-            tagExists: function (string $repo, string $tag) use (&$seen): bool {
+            refsFor: function (string $repo, string $tag) use (&$seen): PublicationRefs {
                 $seen[] = [$repo, $tag];
 
-                return true;
+                return $this->published(SHA_ONE);
             },
         );
 
@@ -452,24 +460,24 @@ final class ReleasePlanTest extends TestCase
         ];
     }
 
-    public function test_a_matching_ref_means_the_tag_is_there(): void
+    public function test_a_matching_ref_comes_back_as_its_object_id(): void
     {
-        $found = tagLookup('queue', 'v1.2.3', $this->gitReturning([
-            'stdout' => "9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/tags/v1.2.3\n",
+        $records = refLookup('queue', ['refs/tags/v1.2.3'], $this->gitReturning([
+            'stdout' => SHA_ONE . "\trefs/tags/v1.2.3\n",
         ]));
 
-        self::assertTrue($found);
+        self::assertSame(['refs/tags/v1.2.3' => SHA_ONE], $records);
     }
 
-    public function test_a_successful_lookup_with_no_matching_ref_means_the_tag_is_absent(): void
+    public function test_a_successful_lookup_with_no_matching_ref_means_the_refs_are_absent(): void
     {
-        self::assertFalse(tagLookup('queue', 'v1.2.3', $this->gitReturning([])));
+        self::assertSame([], refLookup('queue', ['refs/tags/v1.2.3'], $this->gitReturning([])));
     }
 
-    public function test_the_lookup_asks_the_split_repo_for_the_exact_tag_ref(): void
+    public function test_the_lookup_asks_the_split_repo_for_the_exact_refs(): void
     {
         $seen = [];
-        tagLookup('queue', 'v1.2.3', function (array $args) use (&$seen): array {
+        publicationRefs('queue', 'v1.2.3', function (array $args) use (&$seen): array {
             $seen = $args;
 
             return ['exitCode' => 0, 'stdout' => '', 'stderr' => '', 'timedOut' => false, 'truncated' => false];
@@ -477,14 +485,15 @@ final class ReleasePlanTest extends TestCase
 
         self::assertContains('https://github.com/kinetis-dev/queue.git', $seen);
         self::assertContains('refs/tags/v1.2.3', $seen);
+        self::assertContains('refs/heads/main', $seen);
         self::assertContains('--end-of-options', $seen);
     }
 
     /**
      * Absence has to mean one thing. A remote that refuses the
-     * connection is not evidence that a tag is missing, and reading it
-     * that way makes every package a candidate and republishes tags that
-     * already exist.
+     * connection is not evidence that a ref is missing, and reading it
+     * that way makes every package a candidate and republishes work that
+     * already exists.
      *
      * @return iterable<string, array{array{exitCode?: int, stdout?: string, stderr?: string, timedOut?: bool, truncated?: bool}, string}>
      */
@@ -519,7 +528,7 @@ final class ReleasePlanTest extends TestCase
         string $expected,
     ): void {
         try {
-            tagLookup('queue', 'v1.2.3', $this->gitReturning($result));
+            refLookup('queue', ['refs/tags/v1.2.3'], $this->gitReturning($result));
             self::fail('a failed lookup must not answer the question');
         } catch (ReleasePlanFailure $e) {
             self::assertStringContainsString($expected, $e->getMessage());
@@ -530,9 +539,9 @@ final class ReleasePlanTest extends TestCase
     /** @return iterable<string, array{string}> */
     public static function indeterminateLookupOutput(): iterable
     {
-        yield 'a different tag' => ["9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/tags/v9.9.9\n"];
-        yield 'a tag the wanted one is a prefix of' => ["9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/tags/v1.2.30\n"];
-        yield 'a branch' => ["9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8\trefs/heads/main\n"];
+        yield 'a different tag' => [SHA_ONE . "\trefs/tags/v9.9.9\n"];
+        yield 'a tag the wanted one is a prefix of' => [SHA_ONE . "\trefs/tags/v1.2.30\n"];
+        yield 'a branch that was not asked for' => [SHA_ONE . "\trefs/heads/trunk\n"];
         yield 'a warning' => ["warning: redirecting to somewhere else\n"];
         yield 'a record with no object id' => ["notasha\trefs/tags/v1.2.3\n"];
         yield 'a ref with no object id' => ["refs/tags/v1.2.3\n"];
@@ -540,39 +549,71 @@ final class ReleasePlanTest extends TestCase
     }
 
     /**
-     * Output that names no matching ref answers nothing. Reading it as
-     * absence would republish a tag that already exists; reading it as
-     * presence would skip one that does not.
+     * Output that names none of the asked-for refs answers nothing.
+     * Reading it as absence would republish work that already exists;
+     * reading it as presence would skip work that does not.
      */
     #[DataProvider('indeterminateLookupOutput')]
     public function test_output_that_names_no_matching_ref_leaves_the_lookup_indeterminate(string $stdout): void
     {
         try {
-            tagLookup('queue', 'v1.2.3', $this->gitReturning(['stdout' => $stdout]));
+            refLookup('queue', ['refs/tags/v1.2.3'], $this->gitReturning(['stdout' => $stdout]));
             self::fail('output naming no matching ref must not answer the question');
         } catch (ReleasePlanFailure $e) {
             self::assertStringContainsString('names no such ref', $e->getMessage());
         }
     }
 
-    public function test_the_peeled_record_of_an_annotated_tag_still_counts_as_present(): void
+    public function test_the_peeled_record_of_an_annotated_tag_is_reported_alongside_the_tag_object(): void
     {
-        $sha = '9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8';
-        $found = tagLookup('queue', 'v1.2.3', $this->gitReturning([
-            'stdout' => "{$sha}\trefs/tags/v1.2.3\n{$sha}\trefs/tags/v1.2.3^{}\n",
+        $refs = publicationRefs('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => SHA_TWO . "\trefs/tags/v1.2.3\n" . SHA_ONE . "\trefs/tags/v1.2.3^{}\n",
         ]));
 
-        self::assertTrue($found);
+        self::assertSame(SHA_TWO, $refs->tag);
+        self::assertSame(SHA_ONE, $refs->peeledTag);
+        self::assertSame(SHA_ONE, $refs->taggedCommit());
     }
 
-    public function test_a_matching_record_among_other_lines_still_counts_as_present(): void
+    public function test_a_lightweight_tag_names_its_own_commit(): void
     {
-        $sha = '9f1c0a0e1f3b7a2d4c5e6f708192a3b4c5d6e7f8';
-        $found = tagLookup('queue', 'v1.2.3', $this->gitReturning([
-            'stdout' => "{$sha}\trefs/tags/v9.9.9\n{$sha}\trefs/tags/v1.2.3\n",
+        $refs = publicationRefs('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => SHA_ONE . "\trefs/tags/v1.2.3\n",
         ]));
 
-        self::assertTrue($found);
+        self::assertSame(SHA_ONE, $refs->taggedCommit());
+        self::assertNull($refs->main);
+    }
+
+    public function test_a_matching_record_among_other_lines_still_reports_its_object_id(): void
+    {
+        $records = refLookup('queue', ['refs/tags/v1.2.3'], $this->gitReturning([
+            'stdout' => SHA_TWO . "\trefs/tags/v9.9.9\n" . SHA_ONE . "\trefs/tags/v1.2.3\n",
+        ]));
+
+        self::assertSame(['refs/tags/v1.2.3' => SHA_ONE], $records);
+    }
+
+    public function test_both_asked_for_refs_come_back_with_their_own_object_ids(): void
+    {
+        $refs = publicationRefs('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => SHA_ONE . "\trefs/tags/v1.2.3\n" . SHA_TWO . "\trefs/heads/main\n",
+        ]));
+
+        self::assertSame(SHA_ONE, $refs->tag);
+        self::assertSame(SHA_TWO, $refs->main);
+    }
+
+    /** A repository with a branch and no tag yet is a normal first-release state. */
+    public function test_a_main_branch_with_no_tag_reports_the_tag_absent(): void
+    {
+        $refs = publicationRefs('queue', 'v1.2.3', $this->gitReturning([
+            'stdout' => SHA_TWO . "\trefs/heads/main\n",
+        ]));
+
+        self::assertNull($refs->tag);
+        self::assertNull($refs->taggedCommit());
+        self::assertSame(SHA_TWO, $refs->main);
     }
 
     /** @return iterable<string, array{string}> */
@@ -584,15 +625,18 @@ final class ReleasePlanTest extends TestCase
     }
 
     #[DataProvider('emptyLookupOutput')]
-    public function test_only_an_empty_successful_lookup_reports_the_tag_absent(string $stdout): void
+    public function test_only_an_empty_successful_lookup_reports_the_refs_absent(string $stdout): void
     {
-        self::assertFalse(tagLookup('queue', 'v1.2.3', $this->gitReturning(['stdout' => $stdout])));
+        $refs = publicationRefs('queue', 'v1.2.3', $this->gitReturning(['stdout' => $stdout]));
+
+        self::assertNull($refs->tag);
+        self::assertNull($refs->main);
     }
 
     public function test_a_lookup_failure_does_not_repeat_the_token_it_was_given(): void
     {
         try {
-            tagLookup('queue', 'v1.2.3', $this->gitReturning([
+            refLookup('queue', ['refs/tags/v1.2.3'], $this->gitReturning([
                 'exitCode' => 128,
                 'stderr' => 'fatal: could not read from '
                     . 'https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz@github.com/kinetis-dev/queue.git',
@@ -611,43 +655,43 @@ final class ReleasePlanTest extends TestCase
     public function test_the_same_repo_and_tag_are_looked_up_once_per_run(): void
     {
         $calls = 0;
-        $tagExists = memoizeTagLookups(function (string $repo, string $tag) use (&$calls): bool {
+        $refsFor = memoizeRefLookups(function (string $repo, string $tag) use (&$calls): PublicationRefs {
             $calls++;
 
-            return $repo === 'framework';
+            return $repo === 'framework' ? $this->published(SHA_ONE) : new PublicationRefs(null, null, null);
         });
 
-        self::assertTrue($tagExists('framework', 'v1.0.0'));
-        self::assertTrue($tagExists('framework', 'v1.0.0'));
-        self::assertFalse($tagExists('queue', 'v1.0.0'));
-        self::assertFalse($tagExists('queue', 'v1.0.0'));
+        self::assertSame(SHA_ONE, $refsFor('framework', 'v1.0.0')->tag);
+        self::assertSame(SHA_ONE, $refsFor('framework', 'v1.0.0')->tag);
+        self::assertNull($refsFor('queue', 'v1.0.0')->tag);
+        self::assertNull($refsFor('queue', 'v1.0.0')->tag);
         self::assertSame(2, $calls);
     }
 
     public function test_different_tags_on_one_repo_are_still_asked_separately(): void
     {
         $seen = [];
-        $tagExists = memoizeTagLookups(function (string $repo, string $tag) use (&$seen): bool {
+        $refsFor = memoizeRefLookups(function (string $repo, string $tag) use (&$seen): PublicationRefs {
             $seen[] = $tag;
 
-            return false;
+            return new PublicationRefs(null, null, null);
         });
 
-        $tagExists('queue', 'v1.0.0');
-        $tagExists('queue', 'v1.0.1');
+        $refsFor('queue', 'v1.0.0');
+        $refsFor('queue', 'v1.0.1');
 
         self::assertSame(['v1.0.0', 'v1.0.1'], $seen);
     }
 
     public function test_a_lookup_failure_propagates_through_the_memo_rather_than_being_cached_as_absence(): void
     {
-        $tagExists = memoizeTagLookups(
-            static fn (string $repo, string $tag): bool => throw new ReleasePlanFailure('the remote refused'),
+        $refsFor = memoizeRefLookups(
+            static fn (string $repo, string $tag): PublicationRefs => throw new ReleasePlanFailure('the remote refused'),
         );
 
         $this->expectException(ReleasePlanFailure::class);
 
-        $tagExists('queue', 'v1.0.0');
+        $refsFor('queue', 'v1.0.0');
     }
 
     /**
@@ -667,7 +711,7 @@ final class ReleasePlanTest extends TestCase
             $manifest,
             'queue',
             candidateSet: ['framework' => true, 'queue' => true],
-            tagExists: static fn (string $repo, string $tag): bool => false,
+            refsFor: $this->refsReturning([]),
         ));
     }
 
@@ -684,10 +728,10 @@ final class ReleasePlanTest extends TestCase
         ]];
 
         $seen = [];
-        $problems = checkResolution($manifest, 'queue', candidateSet: ['queue' => true], tagExists: function (string $repo, string $tag) use (&$seen): bool {
+        $problems = checkResolution($manifest, 'queue', candidateSet: ['queue' => true], refsFor: function (string $repo, string $tag) use (&$seen): PublicationRefs {
             $seen[] = [$repo, $tag];
 
-            return true;
+            return $this->published(SHA_ONE);
         });
 
         self::assertSame([['framework', 'v1.0.0']], $seen);
@@ -705,7 +749,7 @@ final class ReleasePlanTest extends TestCase
             $manifest,
             'queue',
             candidateSet: ['queue' => true],
-            tagExists: static fn (string $repo, string $tag): bool => false,
+            refsFor: $this->refsReturning([]),
         );
 
         self::assertCount(1, $problems);
@@ -876,6 +920,6 @@ final class ReleasePlanTest extends TestCase
         self::assertIsString($output);
 
         self::assertStringContainsString('Nothing to release', $output);
-        self::assertStringContainsString('already tagged', $output);
+        self::assertStringContainsString('already published', $output);
     }
 }
