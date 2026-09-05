@@ -16,8 +16,8 @@ runs every operation without blocking the rest of your application. S3
 see {doc}`storage-s3`.
 
 With `FILESYSTEM_DRIVER` set, installing the package is the whole
-setup: it binds `FilesystemOperator`, so a controller, command, or
-queued job constructor-injects it with nothing to register.
+setup: it binds `FilesystemOperator`, so a controller or command
+constructor-injects it with nothing to register.
 
 ```{code-block} php
 use League\Flysystem\FilesystemOperator;
@@ -41,6 +41,27 @@ The injected value is a plain `League\Flysystem\FilesystemOperator` —
 any existing Flysystem knowledge or tooling applies directly; there's no
 Kinetis-specific interface wrapping it.
 
+A queued job takes it differently. A job's constructor holds only the
+data that survives being written to the queue and read back by a worker
+process, so a `FilesystemOperator` never belongs there — it arrives as a
+class-typed parameter of `handle()`, which the container resolves at run
+time. See {doc}`queue`.
+
+```{code-block} php
+use Kinetis\Queue\Job;
+use League\Flysystem\FilesystemOperator;
+
+final readonly class ArchiveExport implements Job
+{
+    public function __construct(public string $path) {}
+
+    public function handle(FilesystemOperator $storage): void
+    {
+        $storage->move($this->path, 'archive/' . basename($this->path));
+    }
+}
+```
+
 Build one directly when you need a second, named connection, or when
 you are outside the container entirely:
 
@@ -57,9 +78,15 @@ FILESYSTEM_DRIVER=local
 FILESYSTEM_ROOT=/var/app/storage
 ```
 
-`FILESYSTEM_DRIVER` defaults to `local` — the only driver this package
-implements. `FILESYSTEM_ROOT` is required; there's no sane default to
-guess, since a wrong one could write files somewhere unintended.
+`local` is the only driver this package implements, and
+`FilesystemFactory::fromConfig()` falls back to it when
+`FILESYSTEM_DRIVER` is absent. The container binding above does not:
+with no `FILESYSTEM_DRIVER` set, the package registers nothing at all,
+since binding a filesystem into every application that merely installed
+the package would be guessing at intent. Set the key to get the
+binding. `FILESYSTEM_ROOT` is required either way; there's no sane
+default to guess, since a wrong one could write files somewhere
+unintended.
 
 ## Named connections
 
@@ -127,6 +154,156 @@ foreach ($storage->listContents('avatars', deep: true) as $item) {
     $item->isFile();
 }
 ```
+
+## Writes are staged privately and published atomically
+
+A file the local driver creates starts at whatever the runtime's umask
+produces — world-readable on most deployments — and a file created in a
+directory others can read can be opened the instant it exists, keeping
+that descriptor through every later permission change. So `write()`,
+`writeStream()`, and `copy()` never build new content at the destination
+path. Each one:
+
+1. creates a directory beside the destination with a random name and
+   mode `0700`;
+2. creates the new file inside it and sets it to `0600` while it is
+   still empty;
+3. writes the whole body and closes the file;
+4. reads the closed file's length back and checks it against the number
+   of bytes written to it;
+5. applies the mode the file will carry once published;
+6. renames it over the destination.
+
+```{code-block} php
+use League\Flysystem\Config;
+use League\Flysystem\Visibility;
+
+// $csv reaches no path a reader outside this service can open.
+$storage->write('exports/payroll.csv', $csv, [
+    Config::OPTION_VISIBILITY => Visibility::PRIVATE,
+]);
+
+// The same for a copy, whether the mode comes from an explicit
+// visibility or from the source it is retained from (the default).
+$storage->copy('exports/payroll.csv', 'exports/payroll-q1.csv');
+```
+
+### The privacy boundary
+
+`0700` on the staging directory excludes other Unix users, and that is
+the boundary this staging provides. It is not a boundary against the
+service itself: a process running under the same UID that can list the
+destination's parent can enter the staging directory and open what is
+in it. Isolating writers from each other needs separate UIDs, which is
+an operational decision this adapter cannot make.
+
+Within that boundary the ordering still matters. `openFile()` creates
+the staged file at the umask mode, not at `0600`; the `0700` directory
+is what covers the window between that creation and the `chmod` in step
+2, and the file is empty for all of it. Step 5 is the first moment the
+file carries a mode another user could act on, and by then it is
+complete and verified.
+
+### What the length check promises
+
+`Amp\File\File::write()` returns nothing and is not required to have
+stored what it accepted: the driver behind a local file calls `fwrite()`
+once and only rejects an outright failure, so a short write against a
+full disk or a quota returns as though the whole body landed. Step 4
+rejects that, and a length the filesystem cannot report fails the call
+too.
+
+The check is on length, and length is the promise: a destination is
+never published short. A storage layer that keeps the right number of
+wrong bytes is a different failure, and catching it would mean reading
+every staged file back to compare it, doubling the I/O of every write.
+
+### The rename, and the three outcomes of one that fails
+
+The rename in step 6 is the commit point. On POSIX it replaces the
+destination atomically for concurrent observers: another reader opening
+the path sees either the whole old file or the whole new one, never a
+partial or mixed one. A call that stops before the rename leaves the old
+destination in place, because nothing before that step touches it.
+
+This holds because the staging directory is a child of the destination's
+own parent, so both paths are on one filesystem — a rename across
+filesystems is a copy-and-unlink and is not atomic. Windows offers no
+equivalent guarantee: its `rename()` can fail outright while another
+process holds the destination open.
+
+The guarantee is about what concurrent readers observe, not about what
+survives a crash. Nothing here issues `fsync(2)` on the file or on the
+directory, so a process kill, a kernel panic or a power loss can leave
+the destination in either state, or leave the rename unrecorded with the
+data already written. An application that needs durability across those
+has to arrange it at a level this adapter does not reach.
+
+A rename that reports failure has not necessarily failed. `amphp/file`
+runs `rename(2)` in a worker, and the reply can be lost after the kernel
+has already committed. The adapter therefore records the staged file's
+device and inode before the rename and reads them back afterward, which
+gives three outcomes:
+
+- **Not committed** — that same inode is still in the staging
+  directory. The destination is untouched, the staged file is removed,
+  and the call throws `UnableToWriteFile` or `UnableToCopyFile`.
+- **Committed** — the staged inode is gone from the staging directory
+  and is the one now at the destination. The write succeeded; the
+  failed reply is not reported.
+- **Indeterminate** — anything else: a status that cannot be read, a
+  filesystem that supplies no inode, or a destination holding neither
+  the old file nor the staged one. The call throws
+  `Kinetis\Storage\Exception\IndeterminatePublicationException`, which
+  implements `League\Flysystem\FilesystemException`. **Inspect the
+  destination.** It is not reported as a failed write, because that
+  would claim the old file survived when that has not been
+  established. Nothing is deleted on this path: an object whose
+  ownership is not established is not the adapter's to remove.
+
+### What a failed call can leave behind
+
+No failure publishes a destination object except the committed outcome
+above. Cleanup of the staged file and its directory is *attempted*, and
+never allowed to mask the failure being reported — which is also its
+limit. What can remain:
+
+- a `0600` staged file inside its `0700` directory, when that cleanup
+  fails or when a handle that could not be closed cannot be unlinked
+  portably;
+- an empty `0700` directory, when the cleanup after a successful rename
+  fails, or when creating the staging directory failed in a way that
+  leaves the outcome unknown — a lost `mkdir(2)` reply does not prove
+  nothing was created, and removing a directory on that guess could
+  destroy a path the call never owned;
+- directories created to hold the destination, which are never rolled
+  back on any path: another call writing nearby may already be using
+  them.
+
+A call that requests no visibility invents none: replacing a file keeps
+the mode that file already had, and a new file lands on the umask
+default.
+
+### The source of a copy
+
+`copy()` reads its source's status before opening it and reads it again
+after the byte copy, comparing file type, permission bits, device and
+inode. A filesystem that reports no inode makes the source
+unverifiable, and that fails the copy rather than falling back to mode
+bits, which cannot tell one file from another at the same path. The
+check runs for every copy, whatever the destination's mode comes from,
+so a source replaced mid-copy by a file carrying the very same
+permissions is rejected under an explicit `visibility` and under
+`retain_visibility: false` just as it is under retention. A disagreement publishes nothing and throws
+`UnableToCopyFile` with the `UnableToRetrieveMetadata` that detected it
+as its cause.
+
+That pairing narrows the same check-then-use gap the next section
+describes and, for the same structural reason, does not close it: a
+source mutated in place, or replaced and then put back, between the two
+readings is the same file by every measure a `stat` can report, and
+nothing binds either reading to the bytes the read handle streamed.
+`copy()` is atomic in what it publishes, not in what it reads.
 
 ## Symlink checks — and why they are not a security boundary
 

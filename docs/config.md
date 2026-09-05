@@ -365,13 +365,15 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `FILESYSTEM_DRIVER` | `local` | `local`, or `s3` (needs `kinetis/storage-s3`). |
+| `FILESYSTEM_DRIVER` | *(unset — see below)* | `local`, or `s3` (needs `kinetis/storage-s3`). |
 | `FILESYSTEM_ROOT` | *(required for local)* | Local disk root path. |
 | `FILESYSTEM_S3_BUCKET` | *(required for s3)* | Bucket name. |
 | `FILESYSTEM_S3_REGION` | *(required for s3)* | AWS region. |
 | `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
 | `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO). |
 | `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing, needed by most non-AWS S3 services. |
+
+`FILESYSTEM_DRIVER` has no default at the container level: `kinetis/storage` binds `FilesystemOperator` only when the key is set, and installing the package alone registers nothing. `FilesystemFactory::fromConfig()`, called directly, falls back to `local`.
 
 ### Mail (`kinetis/mailer`) — scoped
 
