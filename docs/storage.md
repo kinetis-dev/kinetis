@@ -88,6 +88,13 @@ binding. `FILESYSTEM_ROOT` is required either way; there's no sane
 default to guess, since a wrong one could write files somewhere
 unintended.
 
+It also has to be non-empty. `FILESYSTEM_ROOT=` is a key that is set,
+so it passes the required check, and an empty root would leave every
+path relative to whatever working directory the worker process happens
+to hold. The adapter refuses it with an `InvalidArgumentException` at
+construction rather than confining to a directory nobody configured.
+`/` is a legitimate root and stays one.
+
 ## Named connections
 
 ```{code-block} php
@@ -154,6 +161,39 @@ foreach ($storage->listContents('avatars', deep: true) as $item) {
     $item->isFile();
 }
 ```
+
+Two options decide a directory's mode, and they are not
+interchangeable. `createDirectory()` reads `visibility` first and falls
+back to `directory_visibility` — a call naming one directory means that
+directory, whichever key it reached for. A parent directory built on the
+way to a file by `write()`, `copy()` or `move()` reads only
+`directory_visibility`: a `visibility` on a write names the file, and a
+private file does not ask for a private tree above it, nor for one that
+cuts off the siblings already published there.
+
+```{code-block} php
+use League\Flysystem\Config;
+use League\Flysystem\Visibility;
+
+// The file is 0600; reports/ is the converter's default for a
+// directory, not the file's own mode.
+$storage->write('reports/q1.csv', $csv, [
+    Config::OPTION_VISIBILITY => Visibility::PRIVATE,
+]);
+
+// Both, said separately.
+$storage->write('reports/q2.csv', $csv, [
+    Config::OPTION_VISIBILITY => Visibility::PRIVATE,
+    Config::OPTION_DIRECTORY_VISIBILITY => Visibility::PUBLIC,
+]);
+```
+
+`move()` applies an explicit `visibility` to whatever arrives at the
+destination, through the converter its kind calls for: a directory lands
+on the directory mode, never on a file's `0600`, which would leave its
+own contents unreachable. The conversion happens before a parent is
+created or anything is renamed, so an invalid value throws
+`InvalidVisibilityProvided` with the tree exactly as it was.
 
 ## Writes are staged privately and published atomically
 
@@ -305,6 +345,73 @@ readings is the same file by every measure a `stat` can report, and
 nothing binds either reading to the bytes the read handle streamed.
 `copy()` is atomic in what it publishes, not in what it reads.
 
+## Paths are confined to the root
+
+Every path the local adapter is given becomes a location only after it
+has been admitted, and both operands of a `move()` or a `copy()` are
+admitted on their own terms. A refused path costs no filesystem call at
+all — nothing is stat'ed, opened, created or removed:
+
+- a `..` segment anywhere throws
+  `League\Flysystem\PathTraversalDetected`. `../etc/passwd` and
+  `uploads/../../etc/passwd` are both refused, and so is `a/../b`, which
+  never leaves the root: the segment is refused rather than resolved, so
+  no path is quietly rewritten into a different one on the way in.
+- a control byte (NUL through `0x1F`, and `0x7F`) or a backslash throws
+  `League\Flysystem\CorruptedPathDetected`. A NUL ends the string where
+  C does, so a check and the kernel could otherwise read one path as two
+  different files; a backslash is a separator to a caller and to
+  Windows while being an ordinary filename byte to the segment split
+  here.
+
+`.` segments and repeated, leading or trailing separators name nothing
+of their own and are dropped, so `a//b/` and `a/./b` both name `a/b`.
+A path left with no segment at all names the root itself, and asking
+about that is legitimate — `listContents('')`, `directoryExists('')` and
+`fileExists('')` all answer for `FILESYSTEM_ROOT`, in every spelling
+(`''`, `.`, `/`, `//`, `/./`).
+
+```{code-block} php
+use League\Flysystem\PathTraversalDetected;
+
+try {
+    $storage->read($pathFromTheRequest);
+} catch (PathTraversalDetected $e) {
+    // Refused. Nothing was read, and nothing was stat'ed.
+}
+```
+
+Publishing *to* the root is not. `write()`, `writeStream()` and the
+destination of a `move()` or a `copy()` refuse every spelling of it —
+the root holds no file to publish over, and staging one there would
+build the private staging directory in the root's own *parent*, outside
+the tree. Each reports it as the failure its own interface declares
+(`UnableToWriteFile`, `UnableToMoveFile`, `UnableToCopyFile`), decided
+from the path alone: before the source is walked, before a parent
+directory is created, and before a `writeStream()` resource is read
+from, so the call costs no filesystem access and leaves a caller's
+stream at the position they handed it over at.
+
+```{code-block} php
+use League\Flysystem\UnableToWriteFile;
+
+try {
+    // $key came from a request and arrived empty.
+    $storage->write($key, $body);
+} catch (UnableToWriteFile $e) {
+    // "the destination names the storage root itself". Nothing was
+    // written, and nothing was staged anywhere.
+}
+```
+
+`League\Flysystem\Filesystem` normalizes a path before any adapter sees
+it, and that is not what this rests on: `Kinetis\Storage\AmpFileAdapter`
+is a public class documented for direct use, so the check lives in the
+operation rather than in front of it. Behind a `FilesystemOperator` the
+normalizer refuses an escaping traversal first, with the same exception
+type, and normalizes away a relative segment that resolves back inside;
+called directly, the adapter refuses both.
+
 ## Symlink checks — and why they are not a security boundary
 
 A symlink anywhere below `FILESYSTEM_ROOT`, pointing anywhere, would
@@ -334,7 +441,17 @@ try {
 `fileExists()`/`directoryExists()` are the one exception to throwing:
 since they already report "no" for anything else that isn't really
 there, a path through a symlink reports `false` rather than raising an
-exception a caller checking mere existence wouldn't expect.
+exception a caller checking mere existence wouldn't expect. A path
+refused by the confinement rules above still throws there — a traversal
+is a rejected request, not an answer of "no".
+
+Which exception a symlink found *while listing* arrives as depends on
+which object you are holding. `AmpFileAdapter::listContents()`, called
+directly, throws `SymbolicLinkEncountered` naming the entry.
+`FilesystemOperator::listContents()` wraps every failure its own
+iteration sees, so the same walk arrives as `UnableToListContents` with
+that `SymbolicLinkEncountered` as its `getPrevious()`. Both are the real
+behavior of the object you called; neither is a layer the adapter adds.
 
 **This is not a race-free guarantee, and `FILESYSTEM_ROOT` is not a
 security boundary against a concurrent actor.** Stated plainly here
@@ -400,6 +517,70 @@ transaction could make an I/O failure mid-deletion undo what already
 succeeded, so a caller catching a `FilesystemException` here (as opposed
 to `SymbolicLinkEncountered`) should expect the tree to be partially
 deleted, not intact.
+
+## What each operation throws
+
+Confinement, the root-destination check, the symlink check and every
+filesystem call an operation makes run inside one boundary, so a driver
+failure at any stage arrives as the type `FilesystemOperator` declares
+for that operation — including one raised while a listing is already
+being iterated, and one raised by the worker pool the local driver runs
+its filesystem calls in:
+
+| Operation | Failure |
+|---|---|
+| `fileExists()` | `UnableToCheckFileExistence` |
+| `directoryExists()` | `UnableToCheckDirectoryExistence` |
+| `read()`, `readStream()` | `UnableToReadFile` |
+| `write()`, `writeStream()` | `UnableToWriteFile` |
+| `delete()` | `UnableToDeleteFile` |
+| `deleteDirectory()` | `UnableToDeleteDirectory` |
+| `createDirectory()` | `UnableToCreateDirectory` |
+| `setVisibility()` | `UnableToSetVisibility` |
+| `visibility()`, `mimeType()`, `lastModified()`, `fileSize()` | `UnableToRetrieveMetadata` |
+| `listContents()` | `UnableToListContents` |
+| `move()` | `UnableToMoveFile` |
+| `copy()` | `UnableToCopyFile` |
+
+Where those driver failures come from is worth being concrete about.
+With neither `ext-uv` nor `ext-eio` loaded — the default for a stock PHP
+image — `amphp/file` runs every filesystem call as a task in a pool of
+worker processes, and translates a worker or task failure into its own
+`Amp\File\FilesystemException` or `Amp\ByteStream\StreamException`. Two
+paths it does not translate: acquiring a worker to open a file with, and
+closing an open handle. So a pool that cannot start a worker process, or a worker that
+dies mid-`fclose`, surfaces as `Amp\Parallel\Worker\WorkerException`,
+`Amp\Parallel\Worker\TaskFailureException` or
+`Amp\Parallel\Context\ContextException` — and `write()`,
+`writeStream()`, `copy()` and `mimeType()`, the four operations that
+open or close a handle, report each of them as their own row above,
+with the original chained as `getPrevious()`. Nothing about the pool
+reaches a caller as a type they have no reason to expect.
+
+A policy outcome is not a driver failure, and keeps its own type rather
+than being relabeled as one of the above:
+
+- `PathTraversalDetected` and `CorruptedPathDetected` — the path was
+  refused before anything was touched.
+- `SymbolicLinkEncountered` — a path component, or an entry found while
+  walking, is a symlink.
+- `InvalidVisibilityProvided` — `visibility` or `directory_visibility`
+  was not one of the two values the converter accepts.
+- `IndeterminatePublicationException` — a rename failed without
+  establishing what it did.
+
+All of them implement `League\Flysystem\FilesystemException`, so a
+caller catching that alone still catches every failure this adapter
+produces.
+
+A programmer error is not a driver failure either, and is never
+relabeled: an `\Error` — including `Amp\Parallel\Worker\TaskFailureError`,
+which carries an `\Error` raised inside a worker, and
+`Amp\File\PendingOperationError` — reaches the caller as itself. So does
+anything a `writeStream()` producer raises that is none of the types
+above. Cleanup never displaces any of them: a handle that fails to close
+while a failure is already being reported is absorbed, and the failure
+that prompted the cleanup is the one raised.
 
 ## See also
 

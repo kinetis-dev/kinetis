@@ -366,7 +366,7 @@ keys as persistence.
 | Key | Default | Purpose |
 |---|---|---|
 | `FILESYSTEM_DRIVER` | *(unset — see below)* | `local`, or `s3` (needs `kinetis/storage-s3`). |
-| `FILESYSTEM_ROOT` | *(required for local)* | Local disk root path. |
+| `FILESYSTEM_ROOT` | *(required for local)* | Local disk root path. Must be non-empty; `/` is valid. |
 | `FILESYSTEM_S3_BUCKET` | *(required for s3)* | Bucket name. |
 | `FILESYSTEM_S3_REGION` | *(required for s3)* | AWS region. |
 | `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
