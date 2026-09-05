@@ -74,16 +74,16 @@ authentication mechanism; nothing here depends on either auth package.
 
 ```{code-block} php
 $this->gate->authorize($user, $check, ...$arguments): void;  // throws on denial
-$this->gate->allows($user, $check, ...$arguments): bool;     // never throws
+$this->gate->allows($user, $check, ...$arguments): bool;     // reports the denial instead
 $this->gate->denies($user, $check, ...$arguments): bool;     // the exact inverse of allows()
 ```
 
 **`authorize()`** throws `Kinetis\Authorization\Exception\AuthorizationException`
-on denial. Use it when a denial should hard-stop the request with a
-generic `403` — the common case, and the one the package's own
-registered middleware exists for (see below).
+on denial, which reaches the client as a `403` on its own (see below).
+Use it when a denial should hard-stop the request — the common case.
 
-**`allows()`** returns a plain `bool` and never throws. Use it when
+**`allows()`** returns a plain `bool`: it reports the decision instead of
+acting on it, so a denial is `false` rather than an exception. Use it when
 execution should continue either way and the result itself is what you
 need — shaping a response value, or branching positively:
 
@@ -135,16 +135,22 @@ one — the flow is exception propagation, not a return value:
    controller method (its own `return` is never reached), `Dispatcher::dispatch()`,
    any route middleware — all the way out to the **global** middleware
    pipeline, since nothing in between catches it.
-4. Installing this package registers
-   `Kinetis\Authorization\AuthorizationExceptionMiddleware` globally — it
-   wraps the entire request in a `try`/`catch` and turns a caught
-   `AuthorizationException` into `ErrorResponse::create(403, $e->getMessage())`.
+4. `AuthorizationException` implements core's
+   `Kinetis\Http\Exception\HttpStatusExceptionInterface`, declaring
+   `403`. `Kinetis\Http\Middleware\ExceptionHandlerMiddleware` —
+   included unconditionally, whatever else is registered — reads that
+   status off the exception and returns
+   `ErrorResponse::create(403, $e->getMessage())`, the exception's own
+   message as the body's error text.
 
-This is the same mechanism `Kinetis\Http\Middleware\ExceptionHandlerMiddleware`
-already uses for turning any uncaught exception into a `500` — just
-narrower, catching one specific exception type and mapping it to `403`
-instead. No `Router`, `Dispatcher`, or `Kernel` change was needed to add
-it.
+This package registers nothing to make that work: the interface is the
+seam core provides for exactly this, so there's no middleware to install,
+order, or forget. Only a *denied* check becomes this exception — anything
+the check itself throws propagates unchanged, and
+`ExceptionHandlerMiddleware` treats it by the same rule it applies to
+everything else: the status it declares if it implements
+`HttpStatusExceptionInterface` with a valid one, a generic `500` only
+when no such status contract applies.
 
 ## Reading claims or roles without a query
 
@@ -183,9 +189,8 @@ it only forwards whatever `CurrentUserInterface` instance it was given.
 `allows()`/`denies()`/`authorize()` are generic over the concrete user
 type (`@template TUser of CurrentUserInterface`), so PHPStan accepts a
 check typed narrower than the interface as long as the object actually
-passed at that call site really is that type — verified directly, not
-assumed: a check typed against a fixture richer than `CurrentUserInterface`
-fails PHPStan level 8 without this generic and passes cleanly with it.
+passed at that call site really is that type. Without the generic, the
+same check is a contravariance violation.
 
 The same pattern works for `kinetis/auth`'s opaque Bearer tokens, just
 with the richer type coming from your own application instead of a
@@ -266,15 +271,13 @@ object in hand and so stays an imperative call inside the controller.
 
 ## Provides
 
-Installing this package auto-registers, via `extra.kinetis`:
+Nothing. This package declares no `extra.kinetis` bootstrap, registers no
+middleware, and discovers no attribute — the `403` comes from the
+exception's own declared status, described above.
 
-- **A global middleware** — `AuthorizationExceptionMiddleware`, described
-  above.
-
-`Gate` itself needs no explicit binding: it has no constructor
+`Gate` needs no explicit binding either: it has no constructor
 dependencies, so plain autowiring resolves it wherever a controller
-constructor-injects it. There's no attribute to discover and no registry
-— nothing else is registered.
+constructor-injects it.
 
 ## See also
 
@@ -283,7 +286,7 @@ constructor-injects it. There's no attribute to discover and no registry
   `Kinetis\Http\Middleware\RateLimitMiddleware`'s own docblock establishes.
 - {doc}`auth` / {doc}`auth-jwt` / {doc}`session` — where `CurrentUserInterface`
   actually comes from; this package has no dependency on any of them.
-- {doc}`middleware` — the PSR-15 pipeline `AuthorizationExceptionMiddleware`
-  joins, `ExceptionHandlerMiddleware`'s own identical exception-to-response
-  shape, and the `#[Middleware]`/thin-subclass pattern "Gating a whole
-  route by role" above builds on.
+- {doc}`middleware` — `ExceptionHandlerMiddleware` and the
+  `HttpStatusExceptionInterface` mapping `AuthorizationException`'s `403`
+  travels through, and the `#[Middleware]`/thin-subclass pattern "Gating a
+  whole route by role" above builds on.

@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Kinetis\Authorization;
 
 /**
- * A Policy method or Gate::define() closure returns a plain `bool` for
- * the ordinary case, or one of these when the caller should see a
- * specific reason for a denial rather than a generic fallback message.
- * Gate::evaluate() normalizes a bare bool via fromBool() so both shapes
- * end up here regardless.
+ * A check handed to Gate — a Policy method reference or a plain closure
+ * — returns a plain `bool` for the ordinary case, or one of these when
+ * the caller should see a specific reason for a denial rather than a
+ * generic fallback message. Gate normalizes a bare bool via fromBool(),
+ * so both shapes end up here regardless.
  */
 final readonly class AuthorizationResponse
 {

@@ -130,16 +130,14 @@
         },
         "authorization": {
             "name": "kinetis/authorization",
-            "description": "Ability-based authorization for Kinetis — Gate wraps a callable Policy check, normalizing a bool/AuthorizationResponse result and turning a denial into a 403 through one registered middleware.",
+            "description": "Ability-based authorization for Kinetis — Gate wraps a callable Policy check, normalizing a bool/AuthorizationResponse result into an allow/deny decision and raising a denial as an exception that declares its own 403.",
             "namespace": "Kinetis\\Authorization\\",
             "testNamespace": "Kinetis\\Authorization\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework"
             ],
-            "kinetis": {
-                "bootstrap": "Kinetis\\Authorization\\PackageBootstrap"
-            }
+            "kinetis": []
         },
         "auth": {
             "name": "kinetis/auth",

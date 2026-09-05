@@ -57,30 +57,33 @@ sees `PostPolicy` exist as a concept.
 
 ## Provides
 
-Installing this package auto-registers, via `extra.kinetis`:
+Nothing to register. `AuthorizationException` declares its own `403`
+through core's `Kinetis\Http\Exception\HttpStatusExceptionInterface`,
+so `ExceptionHandlerMiddleware` — included unconditionally — returns a
+denied `Gate::authorize()` call as that response from any route.
 
-- **A global middleware** translating a thrown `AuthorizationException`
-  into a `403` response, so a denied `Gate::authorize()` call works from
-  any route with nothing else to wire.
-
-`Gate` itself needs no explicit binding — it has no constructor
+`Gate` itself needs no explicit binding either: it has no constructor
 dependencies, so plain autowiring resolves it wherever a controller
 constructor-injects it.
 
-Nothing else. There's no attribute to discover, no registry, and no
-"Policy" concept this package enforces — `PostPolicy` above is only a
-name a developer chose.
+Nothing else. There's no middleware, no attribute to discover, no
+registry, and no "Policy" concept this package enforces — `PostPolicy`
+above is only a name a developer chose.
 
 ## The three methods
 
 - `authorize($user, $check, ...$arguments): void` — throws
-  `AuthorizationException` on denial, letting the registered middleware
-  turn it into a `403`. Use it when a denial should hard-stop the
-  request.
-- `allows($user, $check, ...$arguments): bool` — never throws. Use it to
-  branch, or to shape a response value (`'canEdit' => $gate->allows(...)`).
+  `AuthorizationException` on denial, which core returns as a `403`. Use
+  it when a denial should hard-stop the request.
+- `allows($user, $check, ...$arguments): bool` — reports the decision
+  instead of acting on it: a denial is `false`, not an exception. Use it
+  to branch, or to shape a response value
+  (`'canEdit' => $gate->allows(...)`).
 - `denies($user, $check, ...$arguments): bool` — the exact inverse of
   `allows()`, for guard-clause style (`if ($gate->denies(...)) { ... }`).
+
+Neither `allows()` nor `denies()` catches anything the check itself
+throws — a check that fails outright is a failure, not a denial.
 
 `$check` is any `callable(CurrentUserInterface, mixed...): bool|AuthorizationResponse`
 — a first-class callable reference to a method, a plain closure, or a

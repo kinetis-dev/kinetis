@@ -8,6 +8,7 @@ use Kinetis\Authorization\AuthorizationResponse;
 use Kinetis\Authorization\Exception\AuthorizationException;
 use Kinetis\Authorization\Gate;
 use Kinetis\Authorization\Tests\Fixtures\{FakeClaimsUser, FakeCurrentUser, FixtureArticlePolicy, FixturePost, FixturePostPolicy};
+use Kinetis\Container\AppScope;
 use PHPUnit\Framework\TestCase;
 
 final class GateTest extends TestCase
@@ -118,8 +119,8 @@ final class GateTest extends TestCase
      * implementation that carries more than an id (kinetis/auth-jwt's
      * JwtUser, or an app's own richer user) directly — no query needed
      * to read a role/claim already decoded onto that object. Gate's own
-     * generic @template TUser lets this pass PHPStan level 8 cleanly,
-     * confirmed separately against a real phpstan run, not just here.
+     * generic @template TUser is what lets a check typed that narrowly
+     * pass static analysis at all.
      */
     public function test_a_check_typed_against_a_richer_user_reads_its_claims_with_no_lookup(): void
     {
@@ -130,6 +131,20 @@ final class GateTest extends TestCase
 
         self::assertTrue($gate->allows($editor, $policy->publish(...)));
         self::assertFalse($gate->allows($viewer, $policy->publish(...)));
+    }
+
+    /**
+     * The claim the README and docs both make about needing no explicit
+     * binding: nothing registers Gate anywhere, so what resolves it is
+     * AppScope's own autowiring of a class with no constructor.
+     */
+    public function test_gate_resolves_through_plain_autowiring_with_no_explicit_binding(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        self::assertFalse($app->has(Gate::class));
+        self::assertInstanceOf(Gate::class, $app->get(Gate::class));
     }
 
     public function test_multiple_arguments_pass_through_to_the_check_in_order(): void
