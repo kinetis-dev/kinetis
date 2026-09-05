@@ -68,7 +68,7 @@ tutorial, then read whichever section you have reached.
 - [Mailer](https://kinetis.dev/docs/mailer.html): kinetis/mailer: mail sending via Symfony\Component\Mailer, non-blocking via kinetis/revolt-http-client for API-based transports.
 - [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.
-- [AWS request signing (SigV4)](https://kinetis.dev/docs/aws-sigv4.html): kinetis/aws-sigv4: a PSR-18 client decorator signing requests with AWS Signature Version 4, non-blocking via kinetis/revolt-http-client — usable standalone.
+- [AWS request signing (SigV4)](https://kinetis.dev/docs/aws-sigv4.html): kinetis/aws-sigv4: a PSR-18 client signing requests with AWS Signature Version 4 for one configured origin, non-blocking via kinetis/revolt-http-client — usable standalone.
 
 ## AI agents
 

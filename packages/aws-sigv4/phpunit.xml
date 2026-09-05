@@ -9,6 +9,12 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+    <php>
+        <!-- Stack-trace arguments are what the failure-sentinel tests
+             inspect for a leaked credential, header, or body; PHP's
+             production ini drops them, so they are turned on here. -->
+        <ini name="zend.exception_ignore_args" value="0"/>
+    </php>
     <source>
         <include>
             <directory>src</directory>

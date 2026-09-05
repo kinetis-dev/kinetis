@@ -1,6 +1,6 @@
 {
     "name": "kinetis/aws-sigv4",
-    "description": "A PSR-18 client decorator that signs outgoing requests with AWS Signature Version 4 (SigV4) — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
+    "description": "A PSR-18 client that signs outgoing requests with AWS Signature Version 4 (SigV4) for one configured origin — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -11,14 +11,17 @@
     "require": {
         "php": "^8.4",
         "kinetis/revolt-http-client": "dev-main",
+        "amphp/http-client": "^5.3.6",
         "async-aws/core": "^1.29.2",
+        "nyholm/psr7": "^1.8.2",
         "psr/http-client": "^1.0.3",
-        "psr/http-message": "^2.0"
+        "psr/http-message": "^2.0",
+        "symfony/http-client": "^8.1.4",
+        "symfony/http-client-contracts": "^3.7.1"
     },
     "require-dev": {
         "infection/infection": "^0.35.0",
         "kinetis/framework": "dev-main",
-        "nyholm/psr7": "^1.8.2",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^12.5.33",
         "vimeo/psalm": "^6.16.1"
