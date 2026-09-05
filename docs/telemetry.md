@@ -179,9 +179,9 @@ span crosses process and language boundaries. Because requests through
 this transport return immediately and complete later, the span ends
 when the response is actually consumed, not when `request()` returns.
 
-When composing with `Http::withRetries()`, wrap the tracing transport
-first and add retries on top — each attempt then gets its own span, so
-the failure that triggered a retry stays visible.
+`Http::withRetries()` retries above the transport, so each attempt
+reaches this decorator separately and gets its own span — the failure
+that triggered a retry stays visible.
 
 The span carries `url.scheme`, `server.address` and `server.port`, plus
 a `kinetis.http.url_fingerprint` covering the whole URL. An outgoing
