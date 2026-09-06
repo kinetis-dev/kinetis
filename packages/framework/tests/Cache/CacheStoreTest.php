@@ -39,42 +39,29 @@ final class CacheStoreTest extends TestCase
     }
 
     /**
-     * Every one of the four sections carries something distinguishable
-     * per $marker, so a read that returned one publish's HttpCache
-     * alongside another's CommandCache would show up here rather than
-     * passing silently. `packageBootstraps` is present on both HttpCache
-     * and CommandCache for exactly that reason.
+     * Every one of the four sections, and the artifact's own package-
+     * bootstrap list, carries something distinguishable per $marker, so
+     * a read that returned one publish's HttpCache alongside another's
+     * CommandCache would show up here rather than passing silently.
      */
     private function compiledCache(string $marker = 'a'): CompiledCache
     {
         $http = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [['httpMethod' => 'GET', 'pathTemplate' => "/{$marker}", 'controllerClass' => "App\\C{$marker}", 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: "2026-01-01T00:00:00+00:00#{$marker}",
-            packageBootstraps: ["App\\Package{$marker}Bootstrap"],
         );
-        $commands = new CommandCache(
-            formatVersion: CacheFormat::VERSION,
-            commands: [['name' => "app:{$marker}", 'description' => '', 'controllerClass' => "App\\C{$marker}", 'controllerMethod' => 'm', 'takesArguments' => false, 'bootstrap' => true]],
-            compiledAt: "2026-01-01T00:00:00+00:00#{$marker}",
-            packageBootstraps: ["App\\Package{$marker}Bootstrap"],
-        );
-        $events = new EventCache(
-            formatVersion: CacheFormat::VERSION,
-            listeners: ["App\\SomeEvent{$marker}" => [['class' => "App\\SomeListener{$marker}", 'method' => 'handle', 'priority' => 50, 'queued' => true]]],
-            compiledAt: "2026-01-01T00:00:00+00:00#{$marker}",
-        );
-        $plugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: ["App\\SomeRegistry{$marker}" => ['x' => 1]],
-            compiledAt: "2026-01-01T00:00:00+00:00#{$marker}",
-        );
+        $commands = new CommandCache([
+            ['name' => "app:{$marker}", 'description' => '', 'controllerClass' => "App\\C{$marker}", 'controllerMethod' => 'm', 'takesArguments' => false, 'bootstrap' => true],
+        ]);
+        $events = new EventCache([
+            "App\\SomeEvent{$marker}" => [['class' => "App\\SomeListener{$marker}", 'method' => 'handle', 'priority' => 50, 'queued' => true]],
+        ]);
+        $plugins = new PluginCache(["App\\SomeRegistry{$marker}" => ['x' => 1]]);
 
-        return new CompiledCache($http, $commands, $events, $plugins);
+        return new CompiledCache($http, $commands, $events, $plugins, ["App\\Package{$marker}Bootstrap"]);
     }
 
     public function test_load_returns_null_when_nothing_has_been_published(): void
@@ -94,6 +81,7 @@ final class CacheStoreTest extends TestCase
         self::assertEquals($cache->commands, $loaded->commands);
         self::assertEquals($cache->events, $loaded->events);
         self::assertEquals($cache->plugins, $loaded->plugins);
+        self::assertSame($cache->packageBootstraps, $loaded->packageBootstraps);
     }
 
     public function test_write_creates_the_cache_directory(): void
@@ -130,6 +118,7 @@ final class CacheStoreTest extends TestCase
         self::assertEquals($this->compiledCache('b')->commands, $loaded->commands);
         self::assertEquals($this->compiledCache('b')->events, $loaded->events);
         self::assertEquals($this->compiledCache('b')->plugins, $loaded->plugins);
+        self::assertSame($this->compiledCache('b')->packageBootstraps, $loaded->packageBootstraps);
     }
 
     /**
@@ -195,7 +184,8 @@ final class CacheStoreTest extends TestCase
         mkdir($this->directory, 0775, true);
         file_put_contents(
             $this->directory . '/' . CacheStore::ARTIFACT_FILENAME,
-            '<?php return ["formatVersion" => ' . CacheFormat::VERSION . ', "http" => "not an array", "commands" => [], "events" => [], "plugins" => []];',
+            '<?php return ["formatVersion" => ' . CacheFormat::VERSION
+                . ', "packageBootstraps" => [], "http" => "not an array", "commands" => [], "events" => [], "plugins" => []];',
         );
 
         $this->expectException(InvalidCacheArtifactException::class);
@@ -317,22 +307,19 @@ final class CacheStoreTest extends TestCase
     {
         $rest = $this->compiledCache();
         $http = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [],
             httpBindingPlans: [],
             hydrationPlans: [$hydrationPlan['className'] => $hydrationPlan],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
         );
 
-        return new CompiledCache($http, $rest->commands, $rest->events, $rest->plugins);
+        return new CompiledCache($http, $rest->commands, $rest->events, $rest->plugins, $rest->packageBootstraps);
     }
 
     private function poisonedCompiledCache(): CompiledCache
     {
         $http = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [],
             httpBindingPlans: [],
             hydrationPlans: [
@@ -346,11 +333,10 @@ final class CacheStoreTest extends TestCase
             ],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
         );
 
         $rest = $this->compiledCache();
 
-        return new CompiledCache($http, $rest->commands, $rest->events, $rest->plugins);
+        return new CompiledCache($http, $rest->commands, $rest->events, $rest->plugins, $rest->packageBootstraps);
     }
 }

@@ -13,7 +13,6 @@ use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Validation\Hydrator;
-use DateTimeImmutable;
 use ReflectionMethod;
 
 /**
@@ -22,15 +21,16 @@ use ReflectionMethod;
  * validation plan for each, and carries the already-sorted list of
  * #[AsGlobalMiddleware]-discovered classes and #[Listener]-discovered
  * event listeners — producing four sections (HttpCache/CommandCache/
- * EventCache/PluginCache, grouped for convenience as one CompiledCache)
- * with zero live objects/closures inside any of them. PluginCache is
- * populated by PluginDiscovery, which compiles whatever installed
- * packages declare as their own CacheableDiscoveryInterface class —
- * kinetis/mcp's McpRegistry (tool/resource definitions) among them,
- * when that package is installed. CacheStore publishes and reads all
- * four as one file; an entry point reconstructs only the sections it
- * uses (an HTTP boot http/events/plugins, the CLI commands/events/
- * plugins), but never reads a section without the rest.
+ * EventCache/PluginCache) inside one CompiledCache, which carries the
+ * package-bootstrap class list beside them, with zero live objects/
+ * closures anywhere in the result. PluginCache is populated by
+ * PluginDiscovery, which compiles whatever installed packages declare
+ * as their own CacheableDiscoveryInterface class — kinetis/mcp's
+ * McpRegistry (tool/resource definitions) among them, when that package
+ * is installed. CacheStore publishes and reads the whole thing as one
+ * file; an entry point reconstructs only the sections it uses (an HTTP
+ * boot http/events/plugins, the CLI commands/events/plugins), but never
+ * reads a section without the rest.
  *
  * DTO discovery here is HTTP-only — every #[Body]-bound DTO class
  * reachable from a registered route. kinetis/mcp's own tool/resource
@@ -75,8 +75,6 @@ final class Compiler
         array $packageBootstraps = [],
         array $pluginData = [],
     ): CompiledCache {
-        $compiledAt = (new DateTimeImmutable())->format(DATE_ATOM);
-
         $httpBindingPlans = [];
         $httpDtoClasses = [];
 
@@ -93,37 +91,19 @@ final class Compiler
         }
 
         $http = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: $router->toArray(),
             httpBindingPlans: $httpBindingPlans,
             hydrationPlans: $this->hydrationPlansFor($httpDtoClasses),
             globalMiddleware: $middleware['global'] ?? [],
             openApiMiddleware: $middleware['openApi'] ?? [],
-            compiledAt: $compiledAt,
             middlewareGroups: $middleware['groups'] ?? [],
-            packageBootstraps: $packageBootstraps,
         );
 
-        $commandsCache = new CommandCache(
-            formatVersion: CacheFormat::VERSION,
-            commands: ($commands ?? new CommandRegistry())->toArray(),
-            compiledAt: $compiledAt,
-            packageBootstraps: $packageBootstraps,
-        );
+        $commandsCache = new CommandCache(($commands ?? new CommandRegistry())->toArray());
+        $eventsCache = new EventCache(($listeners ?? new EventListenerRegistry())->toArray());
+        $pluginsCache = new PluginCache($pluginData);
 
-        $eventsCache = new EventCache(
-            formatVersion: CacheFormat::VERSION,
-            listeners: ($listeners ?? new EventListenerRegistry())->toArray(),
-            compiledAt: $compiledAt,
-        );
-
-        $pluginsCache = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: $pluginData,
-            compiledAt: $compiledAt,
-        );
-
-        return new CompiledCache($http, $commandsCache, $eventsCache, $pluginsCache);
+        return new CompiledCache($http, $commandsCache, $eventsCache, $pluginsCache, $packageBootstraps);
     }
 
     /**

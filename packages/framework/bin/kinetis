@@ -76,7 +76,7 @@ if ($env->isProduction()) {
     $registry = $resolved['registry'];
     $listenerRegistry = $resolved['listenerRegistry'];
     $pluginInstances = $resolved['pluginInstances'];
-    $packageBootstraps = $resolved['commandCache']->packageBootstraps;
+    $packageBootstraps = $resolved['packageBootstraps'];
 } else {
     $registry = CommandDiscovery::discover($projectRoot);
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);

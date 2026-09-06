@@ -108,7 +108,7 @@ final class BootSequence
      * result directly.
      *
      * @param callable(): CompiledCache $compile
-     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}
+     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     public static function resolveHttp(CacheStore $store, callable $compile): array
     {
@@ -127,14 +127,14 @@ final class BootSequence
     }
 
     /**
-     * The CLI's own equivalent of `resolveHttp()` — `commands`/
-     * `CommandRegistry` in place of `http`/`Router`, otherwise
-     * identical, including the same single compile, the same
-     * reconstruct-before-publish order and the same treatment of a
-     * publish that fails.
+     * The CLI's own equivalent of `resolveHttp()` — a `CommandRegistry`
+     * out of the `commands` section in place of a `Router` out of
+     * `http`, otherwise identical, including the same single compile,
+     * the same reconstruct-before-publish order and the same treatment
+     * of a publish that fails.
      *
      * @param callable(): CompiledCache $compile
-     * @return array{commandCache: CommandCache, registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}
+     * @return array{registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     public static function resolveCli(CacheStore $store, callable $compile): array
     {
@@ -174,7 +174,7 @@ final class BootSequence
      * cache" and retried as a fresh compile; see
      * `CacheableDiscoveryInterface::fromArray()`'s own contract.
      *
-     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}|null
+     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}|null
      */
     public static function loadHttpFromCache(CacheStore $store): ?array
     {
@@ -188,11 +188,12 @@ final class BootSequence
     }
 
     /**
-     * The CLI's own equivalent of `loadHttpFromCache()` — `commands`/
-     * `CommandRegistry` in place of `http`/`Router`, otherwise
-     * identical, including the same narrow classification.
+     * The CLI's own equivalent of `loadHttpFromCache()` — a
+     * `CommandRegistry` out of the `commands` section in place of a
+     * `Router` out of `http`, otherwise identical, including the same
+     * narrow classification.
      *
-     * @return array{commandCache: CommandCache, registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}|null
+     * @return array{registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}|null
      */
     public static function loadCliFromCache(CacheStore $store): ?array
     {
@@ -206,7 +207,7 @@ final class BootSequence
     }
 
     /**
-     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}
+     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     private static function httpBundle(CompiledCache $compiled): array
     {
@@ -215,19 +216,20 @@ final class BootSequence
             'router' => Router::fromArray($compiled->http->routes),
             'listenerRegistry' => EventListenerRegistry::fromArray($compiled->events->listeners),
             'pluginInstances' => PluginDiscovery::reconstruct($compiled->plugins->data),
+            'packageBootstraps' => $compiled->packageBootstraps,
         ];
     }
 
     /**
-     * @return array{commandCache: CommandCache, registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}
+     * @return array{registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     private static function cliBundle(CompiledCache $compiled): array
     {
         return [
-            'commandCache' => $compiled->commands,
             'registry' => CommandRegistry::fromArray($compiled->commands->commands),
             'listenerRegistry' => EventListenerRegistry::fromArray($compiled->events->listeners),
             'pluginInstances' => PluginDiscovery::reconstruct($compiled->plugins->data),
+            'packageBootstraps' => $compiled->packageBootstraps,
         ];
     }
 

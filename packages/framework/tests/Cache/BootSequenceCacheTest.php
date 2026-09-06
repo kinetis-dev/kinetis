@@ -56,31 +56,21 @@ final class BootSequenceCacheTest extends TestCase
     private function validCompiledCache(): CompiledCache
     {
         $http = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
         );
-        $commands = new CommandCache(
-            formatVersion: CacheFormat::VERSION,
-            commands: [['name' => 'app:x', 'description' => '', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'takesArguments' => false, 'bootstrap' => true]],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
-        $events = new EventCache(
-            formatVersion: CacheFormat::VERSION,
-            listeners: ['App\\SomeEvent' => [['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 50, 'queued' => false]]],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
-        $plugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [StrictCacheableDiscovery::class => ['value' => 'ok']],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
+        $commands = new CommandCache([
+            ['name' => 'app:x', 'description' => '', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'takesArguments' => false, 'bootstrap' => true],
+        ]);
+        $events = new EventCache([
+            'App\\SomeEvent' => [['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 50, 'queued' => false]],
+        ]);
+        $plugins = new PluginCache([StrictCacheableDiscovery::class => ['value' => 'ok']]);
 
-        return new CompiledCache($http, $commands, $events, $plugins);
+        return new CompiledCache($http, $commands, $events, $plugins, ['App\\PackageBootstrap']);
     }
 
     private function publish(CompiledCache $cache): void
@@ -126,6 +116,7 @@ final class BootSequenceCacheTest extends TestCase
         ]);
         self::assertInstanceOf(StrictCacheableDiscovery::class, $http['pluginInstances'][StrictCacheableDiscovery::class]);
         self::assertSame('ok', $http['pluginInstances'][StrictCacheableDiscovery::class]->value);
+        self::assertSame(['App\\PackageBootstrap'], $http['packageBootstraps']);
 
         $cli = BootSequence::loadCliFromCache(new CacheStore($this->directory));
         self::assertNotNull($cli);
@@ -136,6 +127,7 @@ final class BootSequenceCacheTest extends TestCase
             $cli['listenerRegistry']->listenersFor('App\\SomeEvent')[0]['method'],
         ]);
         self::assertInstanceOf(StrictCacheableDiscovery::class, $cli['pluginInstances'][StrictCacheableDiscovery::class]);
+        self::assertSame(['App\\PackageBootstrap'], $cli['packageBootstraps']);
     }
 
     /**
@@ -165,16 +157,12 @@ final class BootSequenceCacheTest extends TestCase
     public function test_a_structurally_malformed_event_registry_is_a_miss_not_an_uncaught_exception(): void
     {
         $cache = $this->validCompiledCache();
-        $corruptEvents = new EventCache(
-            formatVersion: CacheFormat::VERSION,
-            listeners: [
-                'App\\SomeEvent' => [
-                    ['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 50, 'queued' => false],
-                    ['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 10, 'queued' => false],
-                ],
+        $corruptEvents = new EventCache([
+            'App\\SomeEvent' => [
+                ['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 50, 'queued' => false],
+                ['class' => 'App\\SomeListener', 'method' => 'handle', 'priority' => 10, 'queued' => false],
             ],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
+        ]);
         $this->publish(new CompiledCache($cache->http, $cache->commands, $corruptEvents, $cache->plugins));
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
@@ -192,11 +180,7 @@ final class BootSequenceCacheTest extends TestCase
     public function test_a_plugins_own_malformed_cached_data_is_a_miss_not_an_uncaught_exception(): void
     {
         $cache = $this->validCompiledCache();
-        $corruptPlugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
+        $corruptPlugins = new PluginCache([StrictCacheableDiscovery::class => ['wrong-key' => 'nope']]);
         $this->publish(new CompiledCache($cache->http, $cache->commands, $cache->events, $corruptPlugins));
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
@@ -212,11 +196,7 @@ final class BootSequenceCacheTest extends TestCase
     public function test_a_plugins_own_genuine_defect_propagates_uncaught_not_classified_as_a_miss(): void
     {
         $cache = $this->validCompiledCache();
-        $buggyPlugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [BuggyCacheableDiscovery::class => []],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
+        $buggyPlugins = new PluginCache([BuggyCacheableDiscovery::class => []]);
         $this->publish(new CompiledCache($cache->http, $cache->commands, $cache->events, $buggyPlugins));
 
         $this->expectException(LogicException::class);
@@ -245,10 +225,26 @@ final class BootSequenceCacheTest extends TestCase
     public function test_a_malformed_top_level_field_in_the_commands_section_is_a_miss(): void
     {
         $data = $this->validCompiledCache()->toArray();
-        unset($data['commands']['packageBootstraps']);
+        unset($data['commands']['commands']);
         mkdir($this->directory, 0775, true);
         $this->overwriteArtifact($data);
 
+        self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
+    }
+
+    /**
+     * The package-bootstrap list is validated once, at the artifact's
+     * own top level, so a file missing it is a miss for both entry
+     * points at once.
+     */
+    public function test_a_missing_artifact_level_package_bootstrap_list_is_a_miss_for_both_bundles(): void
+    {
+        $data = $this->validCompiledCache()->toArray();
+        unset($data['packageBootstraps']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
+
+        self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
         self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
     }
 
@@ -302,11 +298,7 @@ final class BootSequenceCacheTest extends TestCase
     public function test_a_rejected_bundle_returns_null_deterministically_not_a_retry_loop(): void
     {
         $cache = $this->validCompiledCache();
-        $corruptPlugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
+        $corruptPlugins = new PluginCache([StrictCacheableDiscovery::class => ['wrong-key' => 'nope']]);
         $this->publish(new CompiledCache($cache->http, $cache->commands, $cache->events, $corruptPlugins));
 
         $reader = new CacheStore($this->directory);
@@ -356,11 +348,7 @@ final class BootSequenceCacheTest extends TestCase
     {
         $store = new CacheStore($this->directory);
         $cache = $this->validCompiledCache();
-        $withCountingPlugin = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [CountingCacheableDiscovery::class => []],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
+        $withCountingPlugin = new PluginCache([CountingCacheableDiscovery::class => []]);
         $compiled = new CompiledCache($cache->http, $cache->commands, $cache->events, $withCountingPlugin);
 
         $calls = 0;
@@ -519,7 +507,6 @@ final class BootSequenceCacheTest extends TestCase
     {
         $cache = $this->validCompiledCache();
         $poisoned = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: $cache->http->routes,
             httpBindingPlans: [],
             hydrationPlans: [
@@ -531,7 +518,6 @@ final class BootSequenceCacheTest extends TestCase
             ],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
         );
 
         $this->expectException(UnexportableArtifactException::class);
@@ -550,11 +536,7 @@ final class BootSequenceCacheTest extends TestCase
             $cache->http,
             $cache->commands,
             $cache->events,
-            new PluginCache(
-                formatVersion: CacheFormat::VERSION,
-                data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
-                compiledAt: '2026-01-01T00:00:00+00:00',
-            ),
+            new PluginCache([StrictCacheableDiscovery::class => ['wrong-key' => 'nope']]),
         );
     }
 }

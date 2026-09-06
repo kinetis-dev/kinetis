@@ -20,13 +20,11 @@ use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
  */
 final readonly class EventCache
 {
-    private const array TOP_LEVEL_KEYS = ['formatVersion', 'listeners', 'compiledAt'];
+    private const array TOP_LEVEL_KEYS = ['listeners'];
 
     public function __construct(
-        public int $formatVersion,
         /** @var array<class-string, list<array{class: class-string, method: string, priority: int, queued: bool}>> */
         public array $listeners,
-        public string $compiledAt,
     ) {}
 
     /**
@@ -35,9 +33,7 @@ final readonly class EventCache
     public function toArray(): array
     {
         return [
-            'formatVersion' => $this->formatVersion,
             'listeners' => $this->listeners,
-            'compiledAt' => $this->compiledAt,
         ];
     }
 
@@ -55,15 +51,9 @@ final readonly class EventCache
     {
         ArtifactValidation::exactKeys($data, 'EventCache', self::TOP_LEVEL_KEYS);
 
-        $formatVersion = ArtifactValidation::int($data, 'EventCache', 'formatVersion');
         $listeners = ArtifactValidation::array($data, 'EventCache', 'listeners');
-        $compiledAt = ArtifactValidation::string($data, 'EventCache', 'compiledAt');
 
         /** @var array<class-string, list<array{class: class-string, method: string, priority: int, queued: bool}>> $listeners */
-        return new self(
-            formatVersion: $formatVersion,
-            listeners: $listeners,
-            compiledAt: $compiledAt,
-        );
+        return new self(listeners: $listeners);
     }
 }

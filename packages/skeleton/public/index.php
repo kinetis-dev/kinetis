@@ -63,7 +63,7 @@ if ($env->isProduction()) {
     $discoveredGlobalMiddleware = $httpCache->globalMiddleware;
     $discoveredOpenApiMiddleware = $httpCache->openApiMiddleware;
     $middlewareGroups = $httpCache->middlewareGroups;
-    $packageBootstraps = $httpCache->packageBootstraps;
+    $packageBootstraps = $resolved['packageBootstraps'];
 } else {
     $phaseStart = microtime(true);
     // Discovered before routes, not after: RouteDiscovery needs the

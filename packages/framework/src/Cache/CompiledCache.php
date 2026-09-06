@@ -11,8 +11,11 @@ use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
  * Everything one `Compiler::compile()` run produces, and the shape
  * {@see CacheStore} persists as a single artifact: the HTTP section, the
  * command section, the event-listener section and the plugin section,
- * plus the one `formatVersion` that decides whether a build can read the
- * file at all.
+ * beside the two values that belong to the artifact itself rather than
+ * to any one section — the `formatVersion` that decides whether a build
+ * can read the file at all, and the `extra.kinetis` bootstrap-class list
+ * every entry point runs ahead of the project's own `bootstrap.php`, so
+ * production never re-reads `vendor/composer/installed.json`.
  *
  * A boot loads the whole thing. HTTP uses `http`, `events` and `plugins`;
  * the CLI uses `commands`, `events` and `plugins` — one `require` either
@@ -21,13 +24,17 @@ use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
  */
 final readonly class CompiledCache
 {
-    private const array TOP_LEVEL_KEYS = ['formatVersion', 'http', 'commands', 'events', 'plugins'];
+    private const array TOP_LEVEL_KEYS = [
+        'formatVersion', 'packageBootstraps', 'http', 'commands', 'events', 'plugins',
+    ];
 
     public function __construct(
         public HttpCache $http,
         public CommandCache $commands,
         public EventCache $events,
         public PluginCache $plugins,
+        /** @var list<class-string> */
+        public array $packageBootstraps = [],
     ) {}
 
     /**
@@ -37,6 +44,7 @@ final readonly class CompiledCache
     {
         return [
             'formatVersion' => CacheFormat::VERSION,
+            'packageBootstraps' => $this->packageBootstraps,
             'http' => $this->http->toArray(),
             'commands' => $this->commands->toArray(),
             'events' => $this->events->toArray(),
@@ -57,11 +65,15 @@ final readonly class CompiledCache
     {
         ArtifactValidation::exactKeys($data, 'CompiledCache', self::TOP_LEVEL_KEYS);
 
+        $packageBootstraps = ArtifactValidation::listOfStrings($data, 'CompiledCache', 'packageBootstraps');
+
+        /** @var list<class-string> $packageBootstraps */
         return new self(
             http: HttpCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'http')),
             commands: CommandCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'commands')),
             events: EventCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'events')),
             plugins: PluginCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'plugins')),
+            packageBootstraps: $packageBootstraps,
         );
     }
 }
