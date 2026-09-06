@@ -165,8 +165,8 @@ Contributed by `kinetis/mcp` — present exactly when that package is
 installed, like `queue:work` or `migrate`. Starts the MCP server over
 stdio — one JSON-RPC message per line in, one per line out — the way
 Claude Desktop, Cursor, and most local MCP clients launch a server as a
-subprocess. Your own tools and resources are included automatically,
-alongside Kinetis's own documentation resources — see {doc}`mcp`.
+subprocess. Your own tools and resources are included automatically —
+see {doc}`mcp`.
 
 ## `kinetis routes:list`
 

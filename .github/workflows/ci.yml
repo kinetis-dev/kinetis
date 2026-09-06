@@ -111,6 +111,7 @@ jobs:
           - { name: auth-jwt, dir: packages/auth-jwt, phpunit: true }
           - { name: migrations, dir: packages/migrations, phpunit: true }
           - { name: mcp, dir: packages/mcp, phpunit: true }
+          - { name: mcp-docs, dir: packages/mcp-docs, phpunit: true }
           - { name: queue, dir: packages/queue, phpunit: true }
           - { name: queue-redis, dir: packages/queue-redis, phpunit: true }
           - { name: queue-sql, dir: packages/queue-sql, phpunit: true }

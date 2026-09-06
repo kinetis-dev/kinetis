@@ -60,6 +60,8 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
   HTTP — installing the package is the whole setup.
 - Tools and resources declared with attributes and validated exactly like
   HTTP routes — one definition, two audiences.
+- These docs as an MCP server of their own (`kinetis/mcp-docs`), so an
+  agent reads the framework's documentation instead of recalling it.
 
 ## Long-running or classic, same code
 
@@ -221,6 +223,7 @@ aws-sigv4
 :hidden:
 
 mcp
+mcp-docs
 ```
 
 ```{toctree}

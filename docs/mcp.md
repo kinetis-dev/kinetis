@@ -10,10 +10,12 @@ composer require kinetis/mcp
 ```
 
 That one install registers everything below — the `kinetis mcp:serve`
-command, the `/mcp` HTTP endpoint, and Kinetis's own documentation as
-readable resources — through the package's `extra.kinetis` declaration,
-with nothing to wire by hand. Without the package, none of it exists:
-core has no MCP surface of its own.
+command and the `/mcp` HTTP endpoint — through the package's
+`extra.kinetis` declaration, with nothing to wire by hand. Without the
+package, none of it exists: core has no MCP surface of its own.
+
+For Kinetis's *own* documentation as MCP resources, in any project and
+without this package, see {doc}`mcp-docs`.
 
 ## Tools and resources
 
@@ -571,46 +573,6 @@ either way: nothing about disposal timing changes when
 `notifications/progress` events are written, only when the scope backing
 the call is torn down afterward.
 
-## Exposing Kinetis's own docs as a resource
-
-`Kinetis\Mcp\KinetisDocsResource` registers every page of this documentation
-site as an MCP resource — `kinetis://docs/tutorial`,
-`kinetis://docs/routing-validation`, and so on — so an agent working in
-*your* codebase can read Kinetis's own docs the same way it reads your
-app's resources, instead of relying on stale training data about the
-framework:
-
-Included automatically on both transports — the class lives under this
-package's own scan root, so discovery finds it exactly the way it finds
-your application's resources. Registering it explicitly
-(`$registry->register(KinetisDocsResource::class)`) is only needed for a
-hand-wired `McpRegistry` that never goes through discovery.
-
-Each resource returns the actual `docs/*.md` source as `text/markdown` —
-read from the monorepo when developing Kinetis itself, and fetched from
-the published documentation otherwise — so there's nothing to keep in
-sync as pages change.
-
-### A standalone docs server for Claude Code
-
-No Kinetis project needed for this — one command installs
-`kinetis/framework` into its own directory and registers Kinetis's docs
-as an MCP server in Claude Code directly:
-
-```{code-block} bash
-curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setup-docs-mcp.sh | bash
-```
-
-Requires a running Docker daemon and the `claude` CLI already on your
-machine — nothing else, no PHP or Composer of your own, and no `sudo`:
-everything it does runs as your own user, writing only to
-`~/.kinetis-mcp` and your own Claude Code configuration. Start a new
-Claude Code session afterward to use it.
-
-The registered server checks for a newer `kinetis/framework` release on
-its own, at most once a day, so it stays current without needing to be
-set up again.
-
 ## See also
 
 - {doc}`routing-validation` — `Hydrator`/`JsonSchema`, the validation
@@ -618,3 +580,6 @@ set up again.
 - {doc}`logging` — registering the logger `McpServer` uses.
 - {doc}`caching` — how tool/resource discovery is part of the AOT cache
   in production, avoiding live reflection entirely.
+- {doc}`mcp-docs` — the standalone server for Kinetis's own
+  documentation, which needs neither this package nor a Kinetis
+  project.

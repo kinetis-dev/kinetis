@@ -210,7 +210,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.5.0",
             "requires": [
                 "framework"
             ],
@@ -229,6 +229,20 @@
                 "scan": "Kinetis\\Mcp\\",
                 "bootstrap": "Kinetis\\Mcp\\PackageBootstrap",
                 "discovery": "Kinetis\\Mcp\\McpRegistry"
+            }
+        },
+        "mcp-docs": {
+            "name": "kinetis/mcp-docs",
+            "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
+            "namespace": "Kinetis\\McpDocs\\",
+            "testNamespace": "Kinetis\\McpDocs\\Tests\\",
+            "version": "1.0.0",
+            "bin": [
+                "bin/kinetis-mcp-docs"
+            ],
+            "require": {
+                "symfony/http-client": "^8.1.4",
+                "symfony/http-client-contracts": "^3.7.1"
             }
         },
         "queue": {

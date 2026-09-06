@@ -73,6 +73,7 @@ tutorial, then read whichever section you have reached.
 ## AI agents
 
 - [Model Context Protocol (MCP)](https://kinetis.dev/docs/mcp.html): kinetis/mcp: the native Model Context Protocol server — tools, resources, stdio and HTTP transports, and protocol-era handling.
+- [MCP Documentation Server](https://kinetis.dev/docs/mcp-docs.html): kinetis/mcp-docs: a standalone MCP server serving these pages as resources, depending on no Kinetis package.
 
 ## Reference
 
