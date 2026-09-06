@@ -38,9 +38,12 @@ with `KINETIS_MCP_DOCS_DIR`), verifies the server over a real handshake,
 and registers it with the one client you named. Every Docker step runs
 as your own user id and group id, so nothing it writes is owned by root.
 
-The target directory must be empty or already carry the marker file the
-script writes into the installs it owns; a directory holding anything
-else is refused rather than reused.
+The target directory must be empty, or already carry the marker file
+the script writes into the installs it owns: a regular file holding
+exactly the one line it writes there. The name alone proves nothing, so
+a symlink, a directory or different content under that name is refused
+rather than reused — a mistyped `KINETIS_MCP_DOCS_DIR` never has a
+`composer.json` written over it.
 
 The registered command is the package's own `start.sh`: it looks for a
 newer release, at most once a day, and then hands stdin and stdout to

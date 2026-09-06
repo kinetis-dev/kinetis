@@ -17,10 +17,10 @@ set -euo pipefail
 
 SERVER_NAME="kinetis-docs"
 INSTALL_DIR="${KINETIS_MCP_DOCS_DIR:-$HOME/.kinetis-mcp-docs}"
-# Written into every directory this script installs into, and required
-# before an existing non-empty directory is reused. A mistyped
-# KINETIS_MCP_DOCS_DIR pointing at real work is refused rather than
-# having a composer.json dropped into it.
+# Written into every directory this script installs into, and what
+# proves an existing non-empty directory is one of ours before anything
+# in it is rewritten. A mistyped KINETIS_MCP_DOCS_DIR pointing at real
+# work is refused rather than having a composer.json dropped into it.
 MARKER_FILE="$INSTALL_DIR/.kinetis-mcp-docs"
 MARKER_TEXT="kinetis/mcp-docs install directory - safe for this script to rewrite"
 
@@ -65,8 +65,18 @@ if [ -e "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR" ]; then
     exit 1
 fi
 
-if [ -d "$INSTALL_DIR" ] && [ ! -f "$MARKER_FILE" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
-    echo "${INSTALL_DIR} is not empty and was not created by this script." >&2
+# Ownership is the marker's content, not its name: a regular file
+# holding exactly MARKER_TEXT. A directory that happens to hold
+# something under that name is somebody else's, and a symlink there
+# would carry both this check and the write that follows it out of the
+# directory.
+marker_is_ours() {
+    [ ! -L "$MARKER_FILE" ] && [ -f "$MARKER_FILE" ] \
+        && printf '%s\n' "$MARKER_TEXT" | cmp -s - "$MARKER_FILE"
+}
+
+if [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ] && ! marker_is_ours; then
+    echo "${INSTALL_DIR} is not empty and carries no marker written by this script." >&2
     echo "Empty it, or set KINETIS_MCP_DOCS_DIR to a directory this script may own." >&2
     exit 1
 fi

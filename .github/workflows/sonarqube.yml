@@ -143,9 +143,12 @@ jobs:
           # docker sends the whole context to the daemon, and a single
           # unreadable file anywhere under it fails the build.
           mkdir -p /tmp/coverage-image
+
+          # bash is for mcp-docs' suite, which drives setup.sh; see
+          # ci.yml's own bash leg.
           cat > /tmp/coverage-image/Dockerfile <<'DOCKERFILE'
           FROM php:8.4-cli-alpine
-          RUN apk add --no-cache gcc g++ make autoconf pkgconf re2c postgresql-dev linux-headers curl \
+          RUN apk add --no-cache bash gcc g++ make autoconf pkgconf re2c postgresql-dev linux-headers curl \
            && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql sockets \
            && curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar \
            && chmod +x /usr/local/bin/pie.phar \

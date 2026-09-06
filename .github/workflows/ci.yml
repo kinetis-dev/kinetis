@@ -111,7 +111,7 @@ jobs:
           - { name: auth-jwt, dir: packages/auth-jwt, phpunit: true }
           - { name: migrations, dir: packages/migrations, phpunit: true }
           - { name: mcp, dir: packages/mcp, phpunit: true }
-          - { name: mcp-docs, dir: packages/mcp-docs, phpunit: true }
+          - { name: mcp-docs, dir: packages/mcp-docs, phpunit: true, needsBash: true }
           - { name: queue, dir: packages/queue, phpunit: true }
           - { name: queue-redis, dir: packages/queue-redis, phpunit: true }
           - { name: queue-sql, dir: packages/queue-sql, phpunit: true }
@@ -167,12 +167,19 @@ jobs:
         run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 audit
 
       - name: PHPUnit
-        if: matrix.package.phpunit && !matrix.package.needsGit && !matrix.package.needsSockets
+        if: matrix.package.phpunit && !matrix.package.needsGit && !matrix.package.needsSockets && !matrix.package.needsBash
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/phpunit
 
       - name: PHPUnit (needs ext-sockets — linux-headers on top of $PHPIZE_DEPS under Alpine)
         if: matrix.package.phpunit && matrix.package.needsSockets
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine sh -c "apk add --no-cache --virtual .build \$PHPIZE_DEPS linux-headers >/dev/null && docker-php-ext-install sockets >/dev/null && php vendor/bin/phpunit"
+
+      # setup.sh is a bash script - it builds the docker command as an
+      # array - and mcp-docs' suite runs it against stand-in binaries.
+      # Alpine ships no bash.
+      - name: PHPUnit (needs bash — mcp-docs' suite drives setup.sh)
+        if: matrix.package.phpunit && matrix.package.needsBash
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine sh -c "apk add --no-cache bash >/dev/null && php vendor/bin/phpunit"
 
       # git-subtree is its own Alpine package. The publication splits
       # each package out with `git subtree split`, and this suite runs
