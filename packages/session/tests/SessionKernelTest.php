@@ -444,6 +444,37 @@ final class SessionKernelTest extends TestCase
         $this->client->get('/recall', [], ['Cookie' => $oldCookie])->assertJsonPath('remembered', null);
     }
 
+    /**
+     * The whole fixation scenario over real requests: a form fetched
+     * before the privilege change, the rotation, then that same form
+     * submitted under the rotated cookie. The token it carries is the
+     * one an attacker who planted the pre-rotation session already
+     * knows, so it has to be refused; only a token fetched after the
+     * rotation gets through.
+     */
+    public function test_a_token_fetched_before_regenerate_no_longer_passes_the_csrf_guard_after_it(): void
+    {
+        $seeded = $this->client->get('/token');
+        $oldCookie = self::cookieFrom($seeded->getHeaderLine('Set-Cookie'));
+        $oldToken = $seeded->json()['token'];
+        self::assertIsString($oldToken);
+
+        $rotated = $this->client->get('/rotate', [], ['Cookie' => $oldCookie]);
+        $newCookie = self::cookieFrom($rotated->getHeaderLine('Set-Cookie'));
+
+        $this->client->post('/guarded', [], ['Cookie' => $newCookie, 'X-CSRF-Token' => $oldToken])
+            ->assertStatus(403);
+
+        $refreshed = $this->client->get('/token', [], ['Cookie' => $newCookie]);
+        $newToken = $refreshed->json()['token'];
+        self::assertIsString($newToken);
+        self::assertNotSame($oldToken, $newToken);
+
+        $this->client->post('/guarded', [], ['Cookie' => $newCookie, 'X-CSRF-Token' => $newToken])
+            ->assertOk()
+            ->assertJsonPath('changed', true);
+    }
+
     public function test_destroy_expires_the_cookie(): void
     {
         $first = $this->client->get('/remember/x');

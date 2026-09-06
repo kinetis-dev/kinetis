@@ -197,9 +197,16 @@ session-free requests. The cookie is always `HttpOnly`; `Secure` and
 `SameSite` come from configuration.
 
 **Call `regenerate()` whenever privilege changes** — especially on
-login. It gives the session a fresh id, keeps its data, and destroys
-the old id's payload, so a session id an attacker planted before login
-stops working. `destroy()` is logout: payload gone, cookie expired.
+login. It gives the session a fresh id and a fresh CSRF token, keeps
+its application data, and destroys the old id's payload, so neither a
+session id nor a CSRF token an attacker planted before login carries
+into the authenticated session. Every key the application itself set
+survives, flash data included; only the token is discarded, and the
+next `csrfToken()` call mints a different one. A form rendered before
+the call therefore no longer passes `CsrfMiddleware` after it — render
+it again with the new token, which the redirect a login already ends
+with does on its own. `destroy()` is logout: payload gone, cookie
+expired.
 
 Both are transactional with respect to the request actually succeeding:
 `regenerate()`/`destroy()` only ever change in-memory state, and the
@@ -288,6 +295,9 @@ session's normal lifecycle — flash-generation-aging included — the
 moment it's confirmed, not only if the guarded handler happens to use
 `Session` again afterward: a route that does nothing but check CSRF
 still ages any flash data pending on that session correctly.
+
+A token does not survive a privilege change — `regenerate()` discards
+it along with the old id, as described above.
 
 JSON requests use the header: Kinetis decodes JSON bodies inside the
 dispatcher, so a `_token` field inside a JSON body is not seen by this

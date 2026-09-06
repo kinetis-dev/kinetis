@@ -236,6 +236,64 @@ final class SessionTest extends TestCase
         self::assertSame(42, $reloaded->get('user'));
     }
 
+    /**
+     * The same fixation threat regenerate() exists for, from the CSRF
+     * side: a token an attacker read out of the session it planted
+     * before the privilege change must not verify against the session
+     * that comes out of that change — neither in memory nor once the
+     * replacement has been written and read back. Carrying `_csrf`
+     * across with the rest of the data — what these assertions rule
+     * out — is what lets the planted token authenticate a write as the
+     * now-authenticated user.
+     */
+    public function test_regenerate_makes_the_pre_regeneration_csrf_token_stop_verifying(): void
+    {
+        $planted = new Session($this->store, null);
+        $plantedToken = $planted->csrfToken();
+        $planted->commit(60);
+
+        $session = new Session($this->store, $planted->id());
+        $session->regenerate();
+        self::assertFalse($session->verifyCsrfToken($plantedToken), 'a form rendered before the privilege change must no longer authenticate after it.');
+
+        $session->commit(60);
+        $reloaded = new Session($this->store, $session->id());
+        self::assertFalse($reloaded->verifyCsrfToken($plantedToken), 'the planted token must not have been written under the new id either.');
+    }
+
+    public function test_regenerate_mints_a_different_csrf_token_on_the_next_call(): void
+    {
+        $session = new Session($this->store, null);
+        $before = $session->csrfToken();
+
+        $session->regenerate();
+        $after = $session->csrfToken();
+
+        self::assertNotSame($before, $after);
+        self::assertTrue($session->verifyCsrfToken($after));
+        self::assertFalse($session->verifyCsrfToken($before));
+    }
+
+    /**
+     * Only `_csrf` goes: every key the application itself set, and flash
+     * data waiting to be read this request, cross the rotation intact.
+     */
+    public function test_regenerate_keeps_application_data_and_pending_flash_data(): void
+    {
+        $first = new Session($this->store, null);
+        $first->set('user', 42);
+        $first->set('theme', 'dark');
+        $first->csrfToken();
+        $first->flash('status', 'saved');
+        $first->commit(60);
+
+        $second = new Session($this->store, $first->id());
+        $second->regenerate();
+
+        self::assertSame(['user' => 42, 'theme' => 'dark'], $second->all());
+        self::assertSame('saved', $second->flashed('status'));
+    }
+
     public function test_destroy_removes_the_payload_and_flags_for_cookie_expiry(): void
     {
         $first = new Session($this->store, null);
@@ -289,6 +347,45 @@ final class SessionTest extends TestCase
         $session->commit(60);
 
         self::assertSame([['write', $newId], ['destroy', $oldId]], $store->operations);
+    }
+
+    /**
+     * What the replacement write actually contains, in that same order:
+     * the application's own keys, and no trace of the token the old id
+     * carried. A session that renders no new form after the rotation
+     * stores no token at all.
+     */
+    public function test_a_regenerate_writes_the_replacement_without_the_old_csrf_token(): void
+    {
+        $oldId = \str_repeat('f', 32);
+        $store = new RecordingSessionStore();
+        $store->seed($oldId, ['user' => 42, '_csrf' => \str_repeat('a', 40)]);
+
+        $session = new Session($store, $oldId);
+        $session->regenerate();
+        $newId = $session->id();
+        $session->commit(60);
+
+        self::assertSame([['write', $newId], ['destroy', $oldId]], $store->operations);
+        self::assertSame([[$newId, ['user' => 42]]], $store->writes);
+    }
+
+    /** The same commit, when the handler does render a new form after rotating. */
+    public function test_a_regenerate_writes_the_replacement_with_the_freshly_minted_token(): void
+    {
+        $oldId = \str_repeat('f', 32);
+        $store = new RecordingSessionStore();
+        $store->seed($oldId, ['user' => 42, '_csrf' => \str_repeat('a', 40)]);
+
+        $session = new Session($store, $oldId);
+        $session->regenerate();
+        $fresh = $session->csrfToken();
+        $newId = $session->id();
+        $session->commit(60);
+
+        self::assertNotSame(\str_repeat('a', 40), $fresh);
+        self::assertSame([['write', $newId], ['destroy', $oldId]], $store->operations);
+        self::assertSame([[$newId, ['user' => 42, '_csrf' => $fresh]]], $store->writes);
     }
 
     /**

@@ -518,7 +518,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.1.3",
+            "version": "1.1.4",
             "requires": [
                 "framework"
             ],

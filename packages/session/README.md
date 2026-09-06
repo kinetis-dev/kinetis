@@ -59,7 +59,10 @@ needs a stable identity — a mutation, an explicit `id()` call,
 generating a CSRF token — still gets one, persisted under the
 already-rotated fresh id. `Session::regenerate()` is the complementary
 session-fixation defense for a *known*, previously-issued id — call it
-on login.
+on login. It rotates the CSRF token with the id, keeping every
+application key, so a token issued before the privilege change stops
+verifying after it and a form rendered before it needs re-rendering
+with the new token.
 
 ## Provides
 
