@@ -78,6 +78,13 @@ Installing this package auto-registers, via `extra.kinetis`:
 - **`POST /broadcasting/auth`**, a real Kinetis route
   (`Kinetis\Broadcasting\Http\BroadcastAuthController`), discovered the
   same way any `Kinetis\Http\Routing\RouteDiscovery`-found controller is.
+- **The `broadcasting` middleware group** that route references, with
+  `Kinetis\Broadcasting\Http\BroadcastOriginMiddleware` as its permanent
+  member. Join it with `#[AsMiddlewareGroup('broadcasting')]` — a thin
+  subclass of `kinetis/auth`'s `BearerAuthMiddleware` or
+  `kinetis/auth-jwt`'s `JwtAuthMiddleware` is enough — to authenticate
+  this one route and nothing else, and an authorizer taking
+  `CurrentUserInterface` receives the identity it publishes.
 
 Nothing else — `Kinetis\Broadcasting\Broadcaster` (the service your own
 code constructor-injects) autowires from the bound
@@ -93,6 +100,7 @@ BROADCAST_SECRET=your-secret
 BROADCAST_HOST=soketi.example.com
 BROADCAST_PORT=6001
 BROADCAST_TLS=false
+BROADCAST_ALLOWED_ORIGINS=https://app.example
 ```
 
 | Key | Default | Purpose |
@@ -104,9 +112,10 @@ BROADCAST_TLS=false
 | `BROADCAST_HOST` | `api.pusherapp.com` | The broker's host. |
 | `BROADCAST_PORT` | `443` | The broker's port. |
 | `BROADCAST_TLS` | `true` | Whether to connect over TLS. |
+| `BROADCAST_ALLOWED_ORIGINS` | *(empty)* | Extra exact `Origin` values this route's own guard admits on `POST /broadcasting/auth`. The request's own origin, and a request sending no `Origin` at all, pass without it. A cross-origin browser request must also be allowed by the app's global `CorsMiddleware`. |
 
-Scoped — `BROADCAST_KEY` + `notifications` →
-`BROADCAST_NOTIFICATIONS_KEY`. Full reference:
+Scoped, apart from `BROADCAST_ALLOWED_ORIGINS` — `BROADCAST_KEY` +
+`notifications` → `BROADCAST_NOTIFICATIONS_KEY`. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 ## Installation

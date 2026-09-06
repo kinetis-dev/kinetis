@@ -8,6 +8,7 @@ use Kinetis\Broadcasting\BroadcasterInterface;
 use Kinetis\Broadcasting\BroadcastChannelRegistry;
 use Kinetis\Broadcasting\Driver\PusherBroadcaster;
 use Kinetis\Broadcasting\Http\BroadcastAuthController;
+use Kinetis\Broadcasting\Http\BroadcastOriginMiddleware;
 use Kinetis\Broadcasting\Tests\Fixtures\OrderChannelAuthorizer;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
@@ -54,7 +55,10 @@ final class BroadcastAuthKernelTest extends TestCase
         $router = new Router();
         $router->register(BroadcastAuthController::class);
 
-        return new Kernel($app, $router);
+        // The group BroadcastAuthController references, exactly as an
+        // install of this package supplies it: its one permanent member
+        // and nothing else, which is all an anonymous authorizer needs.
+        return new Kernel($app, $router, middlewareGroups: ['broadcasting' => [BroadcastOriginMiddleware::class]]);
     }
 
     /**

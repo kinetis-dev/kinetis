@@ -566,7 +566,7 @@
             "description": "Real-time broadcasting for Kinetis over the Pusher Channels protocol (Soketi, Laravel Reverb, or Pusher itself) - attribute-based private/presence channel authorization and a non-blocking driver over kinetis/revolt-http-client.",
             "namespace": "Kinetis\\Broadcasting\\",
             "testNamespace": "Kinetis\\Broadcasting\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.4.0",
             "requires": [
                 "framework",
                 "revolt-http-client"

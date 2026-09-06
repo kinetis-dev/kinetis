@@ -177,15 +177,102 @@ A channel with no authorizer registered for it is rejected with `403`.
 
 The leading `CurrentUserInterface` parameter decides whether the channel
 requires an identity. Declaring it means the request must carry a
-`CurrentUserInterface` on its scope — register one from your own auth
-middleware first, see {doc}`auth` or {doc}`auth-jwt` — and a request
-without one is rejected with `401` before the method runs. Omitting it
+`CurrentUserInterface` on its scope — published by middleware in the
+`broadcasting` group, below — and a request without one is rejected with
+`401` before the method runs. Omitting it
 means the method authorizes from its own context, so an authorizer can
 admit an anonymous request, or one identified by something
 other than a logged-in user (an invite token, a signed link, a tenant
 resolved from the host). A `private-`/`presence-` prefix selects which
 auth response gets signed; it does not by itself impose an application
 login. What a channel requires is whatever its authorizer checks.
+
+### Securing the endpoint
+
+The endpoint's own middleware is the `broadcasting` middleware group,
+which `BroadcastAuthController` references with
+`#[Middleware('@broadcasting')]` like any route references a group (see
+{doc}`middleware`). It is route middleware, resolved from each request's
+own scope, so authentication attached here runs on this one route and
+nowhere else — which is what lets `kinetis/auth` and `kinetis/auth-jwt`
+stay route-only. Two layers, in the order they run:
+
+1. **`Origin` validation, always on.** `BroadcastOriginMiddleware` is
+   this package's permanent member of the group, at priority `100`. A
+   request passes it three ways: carrying no `Origin` header at all (any
+   non-browser client — a server-side test, curl, a native app),
+   carrying the request's own `scheme://authority` (a page this same
+   application serves, which needs no configuration), or carrying an
+   exact match from `BROADCAST_ALLOWED_ORIGINS` — a comma-separated
+   list, empty by default, for a front end served from a different host
+   than the endpoint. Any other origin is `403`, settled before the rest
+   of the group and the controller run.
+
+   ```{code-block} text
+   :caption: .env
+   BROADCAST_ALLOWED_ORIGINS=https://app.example,https://admin.example
+   ```
+
+   Both sides of the comparison are exact strings: an `Origin` is
+   `scheme://host[:port]` with no path, no trailing slash and no default
+   port, which is the form the request URI's own scheme and authority
+   already carry. `https://app.example` and `http://app.example`, or
+   `app.example` and `app.example:8080`, are different origins. Behind a
+   TLS-terminating proxy, the scheme half of that comparison is the one
+   `TRUSTED_PROXIES` decides (see {doc}`config`) — a deployment that
+   does not name its edge sees `http` where the browser sends `https`,
+   and has to list the origin explicitly.
+
+   ```{note}
+   **This setting admits the origin at this route only; it is not a CORS
+   policy.** A browser posting here from another origin also has to be
+   admitted by the application's global `CorsMiddleware` — that origin
+   on its allow list, with `allowCredentials` and the `Authorization`
+   header configured for whatever the client sends — or the browser
+   discards the response before the page ever reads it. Listing an
+   origin here and nowhere else is not enough. See {doc}`middleware`.
+   ```
+
+2. **Your own authentication, via `#[AsMiddlewareGroup('broadcasting')]`.**
+   Declare membership on the middleware class and it joins the
+   endpoint's pipeline at the attribute's default priority `50` — after
+   the origin check at `100`. Because the group resolves from the
+   request's scope, a thin subclass is the whole integration, and the
+   `CurrentUserInterface` it publishes is what an authorizer declaring
+   that parameter receives:
+
+   ```{code-block} php
+   use Kinetis\Auth\BearerAuthMiddleware;
+   use Kinetis\Http\Attributes\AsMiddlewareGroup;
+
+   #[AsMiddlewareGroup('broadcasting')]
+   final readonly class BroadcastAuthMiddleware extends BearerAuthMiddleware {}
+   ```
+
+   `kinetis/auth-jwt`'s middleware takes the same shape, with the
+   constructor its own `$key` parameter needs — see {doc}`auth-jwt`:
+
+   ```{code-block} php
+   use Kinetis\AuthJwt\JwtAuthMiddleware;
+   use Kinetis\Config\Config;
+   use Kinetis\Container\RequestScope;
+   use Kinetis\Http\Attributes\AsMiddlewareGroup;
+
+   #[AsMiddlewareGroup('broadcasting')]
+   final class BroadcastJwtAuthMiddleware extends JwtAuthMiddleware
+   {
+       public function __construct(RequestScope $scope, Config $config)
+       {
+           parent::__construct($config->required('JWT_SECRET'), $scope);
+       }
+   }
+   ```
+
+An application whose channel authorizers are all anonymous adds nothing:
+the group already exists wherever this package is installed, and a
+request carrying no identity reaches an authorizer that declares no
+`CurrentUserInterface`. There is no identity guard on this endpoint —
+what a channel requires is whatever its own authorizer checks.
 
 ### Pattern grammar and conflicts
 
@@ -247,6 +334,7 @@ BROADCAST_SECRET=your-secret
 BROADCAST_HOST=soketi.example.com
 BROADCAST_PORT=6001
 BROADCAST_TLS=false
+BROADCAST_ALLOWED_ORIGINS=https://app.example
 ```
 
 `BROADCAST_DRIVER` defaults to `null` — `Kinetis\Broadcasting\NullBroadcaster`,
@@ -258,6 +346,10 @@ lazily, so a misconfiguration fails before the first request rather than
 on whichever one happens to broadcast first. Every key is
 `Config::scopedKey()`-scoped for named connections:
 `BROADCAST_KEY` + `notifications` → `BROADCAST_NOTIFICATIONS_KEY`.
+
+`BROADCAST_ALLOWED_ORIGINS` is the one key the driver never reads: it
+belongs to the auth endpoint's own origin check above, so it applies
+whichever driver is configured and takes no connection scope.
 
 `BROADCAST_HOST` defaults to `api.pusherapp.com`, with port `443` and
 TLS on. There is no cluster selector: a Pusher account outside the

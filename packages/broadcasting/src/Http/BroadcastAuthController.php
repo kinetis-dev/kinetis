@@ -11,6 +11,7 @@ use Kinetis\Broadcasting\Exception\BroadcastingException;
 use Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException;
 use Kinetis\Broadcasting\PusherProtocol;
 use Kinetis\Container\RequestScope;
+use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Http\CurrentUserInterface;
 use Kinetis\Http\Responses\ErrorResponse;
@@ -34,7 +35,15 @@ use Psr\Http\Message\ServerRequestInterface;
  * `BearerAuthMiddleware`/`EventDispatcher` already rely on), so a
  * `CurrentUserInterface` an upstream auth middleware registered on this
  * request is visible here.
+ *
+ * That middleware joins the `broadcasting` group with
+ * `#[AsMiddlewareGroup('broadcasting')]`, keeping authentication on this
+ * one route. {@see BroadcastOriginMiddleware} is the group's permanent
+ * member, so the reference resolves wherever this package is installed —
+ * including for an application whose authorizers are all anonymous,
+ * which needs no member of its own.
  */
+#[Middleware('@broadcasting')]
 final readonly class BroadcastAuthController
 {
     private const string NOT_AUTHORIZED = 'Not authorized.';

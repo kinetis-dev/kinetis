@@ -211,6 +211,16 @@ when no `CurrentUserInterface` was registered. {doc}`mcp`'s "Securing
 the HTTP transport" states that contract and the `MCP_HTTP_PUBLIC`
 opt-in.
 
+**The `broadcasting` middleware group** is the same shape for
+`POST /broadcasting/auth`, which `kinetis/broadcasting`'s own controller
+references. Joining it with `#[AsMiddlewareGroup('broadcasting')]` — a
+thin subclass of either auth package's middleware is enough — is what
+makes a channel authorizer taking `CurrentUserInterface` reachable, on
+that route alone. That package contributes one permanent member,
+`BroadcastOriginMiddleware` at priority 100. {doc}`broadcasting`'s
+"Securing the endpoint" states the group's contract and its origin
+rules.
+
 ```{note}
 **Order matters**: route middleware runs *inside* the global pipeline,
 not instead of it. For a request to `/mcp`, global middleware runs
