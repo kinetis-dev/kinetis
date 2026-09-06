@@ -60,9 +60,10 @@ little care. JSON Schema distinguishes the empty object `{}` from the
 empty array `[]` — an empty `properties` map is one, an empty `required`
 list the other — and a PHP array expresses only the second, so
 `JsonSchema` spells `{}` as a live `stdClass`. A compiled artifact
-carries plain data only, and the build refuses a live object anywhere
-in one. `McpRegistry` therefore stores the schema as its own JSON text,
-in `inputSchemaJson`: a plain string, and the one notation that already
+carries scalars, arrays and enum cases, and the build refuses any other
+object anywhere in one. `McpRegistry` therefore stores the schema as its
+own JSON text, in `inputSchemaJson`: a plain string, and the one notation
+that already
 carries the distinction, so every empty object and every empty array
 comes back the type it went in as, at any depth. That text is the
 cache's own representation of the schema, not the bytes a transport

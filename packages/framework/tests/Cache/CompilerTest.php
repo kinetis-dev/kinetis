@@ -6,16 +6,21 @@ namespace Kinetis\Tests\Cache;
 
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
+use Kinetis\Container\AppScope;
+use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
+use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Http\Fixtures\VersionPrefixedController;
+use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Kinetis\Validation\Hydrator;
+use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 
 final class CompilerTest extends TestCase
@@ -221,6 +226,43 @@ final class CompilerTest extends TestCase
             ], $plan);
 
             self::assertSame('1 Infinite Loop', $dto->shippingAddress->street);
+        } finally {
+            @unlink($store->path());
+            @rmdir($directory);
+        }
+    }
+
+    /**
+     * An enum case is the one object a plan may capture, so this is the
+     * one default that has to survive a real build: compiled, written as
+     * `var_export()` output, required back out of that file, and
+     * dispatched through — not compared structurally and assumed to
+     * work.
+     */
+    public function test_an_enum_case_default_survives_the_full_compile_and_reload_round_trip(): void
+    {
+        $router = new Router();
+        $router->register(EnumDefaultParameterController::class);
+
+        $directory = sys_get_temp_dir() . '/kinetis_enum_default_cache_test_' . bin2hex(random_bytes(8));
+        $store = new CacheStore($directory);
+        $store->write((new Compiler())->compile($router));
+
+        try {
+            $reloadedHttp = $store->load()?->http;
+            self::assertNotNull($reloadedHttp);
+
+            $key = EnumDefaultParameterController::class . '::index';
+            self::assertSame(SortDirection::Descending, $reloadedHttp->httpBindingPlans[$key][0]['defaultValue']);
+
+            $app = new AppScope();
+            $app->boot();
+            $response = new Dispatcher($app, $reloadedHttp->httpBindingPlans)->dispatch(
+                $router->match('GET', '/sorted'),
+                new ServerRequest('GET', '/sorted'),
+            );
+
+            self::assertSame(['direction' => 'desc'], json_decode((string) $response->getBody(), true));
         } finally {
             @unlink($store->path());
             @rmdir($directory);

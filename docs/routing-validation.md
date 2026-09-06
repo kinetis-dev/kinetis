@@ -442,7 +442,10 @@ those arguments — see {doc}`mcp`.
 A parameter matching none of the six — untyped, or scalar-typed with no
 attribute and no matching placeholder — falls back to its default value
 if it has one, and otherwise fails with an error naming every source it
-could have come from, rather than passing `null` silently.
+could have come from, rather than passing `null` silently. Not every
+default can be captured for reuse — see "Default values a plan captures"
+below for the rule, which applies to a controller parameter and a DTO
+field alike.
 
 (multipart-form-data-file-uploads)=
 ## Multipart/form-data & file uploads
@@ -1197,6 +1200,52 @@ emitting a bare `{"type": "object"}` no request could satisfy.
 `UploadedFileInterface` is the one such type both sides accept — it is
 described as `{"type": "string", "format": "binary"}` and supplied by
 `Dispatcher` from the request's uploaded-files bag.
+
+### Default values a plan captures
+
+A plan — the hydration plan behind a `#[Body]` DTO, the binding plan
+behind a controller method — is derived once and reused: memoized for a
+persistent worker's whole lifetime, and written into
+`.kinetis-cache/compiled.php` by `kinetis build` (see {doc}`caching`).
+The default value it captures is handed to every request that leaves
+that parameter unfilled, so a default has to be a value PHP would have
+rebuilt identically on every evaluation: a scalar, `null`, an array of
+those, or an enum case. An enum case qualifies because a case is a
+process-wide singleton — there is no second instance for a plan to hand
+out in place of the one the declaration names.
+
+Any other object default is rejected where the plan is derived, with an
+`UnsupportedDefaultValueException` naming the DTO class or
+`Controller::method()` and the parameter: on that DTO's first hydration
+or that route's registration in development, at build time for an AOT
+build.
+
+```php
+enum SortDirection: string
+{
+    case Ascending = 'asc';
+    case Descending = 'desc';
+}
+
+final readonly class SearchRequest
+{
+    public function __construct(
+        public string $term,
+        // Captured: every request that omits `direction` gets this case.
+        public SortDirection $direction = SortDirection::Ascending,
+        // A per-request value: `new DateTimeImmutable()` written here
+        // is rejected, since a plan holds one moment — the first
+        // request's, or the build's — for every request after it.
+        public ?DateTimeImmutable $since = null,
+    ) {}
+}
+```
+
+Where a request-time object is what the parameter wants, declare it
+nullable with a `null` default, as `$since` does above, and build the
+real value in the constructor body or in the controller. That code runs
+per request, which is the whole point of a `new` in a default and the
+one thing a captured default cannot do.
 
 ## Zero-config OpenAPI & Swagger UI
 

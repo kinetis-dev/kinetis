@@ -13,6 +13,8 @@ use Kinetis\Http\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Exception\UnresolvableParameterException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Instrumentation\Telemetry;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Reflection\ParameterDefault;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Validation\Constraint;
@@ -60,6 +62,11 @@ use ReflectionType;
  * resolveScalarFromPlan(), after the declared-type-mismatch check and
  * cast — the same two-stage shape Hydrator uses for a #[Body] DTO
  * field, applied uniformly to every parameter source.
+ *
+ * A parameter's own default value is captured under the rule
+ * Kinetis\Reflection\ParameterDefault owns, shared with Hydrator's
+ * hydration plan: an object default other than an enum case is rejected
+ * there, while the plan is derived.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
  * @phpstan-type HttpBindingPlan array{
@@ -198,11 +205,14 @@ final class Dispatcher
      * UnresolvableParameterException::forImpossibleQueryOrPathNull().
      *
      * @return list<HttpBindingPlan>
+     * @throws UnresolvableParameterException
+     * @throws UnsupportedDefaultValueException
      */
     public static function derivePlan(ReflectionMethod $method, Route $route): array
     {
         $plan = [];
         $pathParameterNames = $route->pathParameterNames();
+        $owner = $method->getDeclaringClass()->getName() . '::' . $method->getName() . '()';
 
         foreach ($method->getParameters() as $parameter) {
             $name = $parameter->getName();
@@ -253,7 +263,7 @@ final class Dispatcher
                 // any of those branches below is reached.
                 'scalarType' => $scalarType,
                 'hasDefault' => $parameter->isDefaultValueAvailable(),
-                'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
+                'defaultValue' => ParameterDefault::capture($parameter, $owner),
                 // An untyped parameter accepts anything, null included.
                 'allowsNull' => $type === null || $type->allowsNull(),
                 // Only meaningful for 'query'/'path' — a #[Body] DTO's own

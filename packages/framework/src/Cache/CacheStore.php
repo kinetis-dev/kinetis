@@ -8,6 +8,7 @@ use Kinetis\Cache\Exception\CacheWriteException;
 use Kinetis\Cache\Exception\UnexportableArtifactException;
 use ParseError;
 use Throwable;
+use UnitEnum;
 
 /**
  * Reads and publishes the one compiled artifact,
@@ -205,11 +206,22 @@ final class CacheStore
     /**
      * `var_export()` renders an object as a `\SomeClass::__set_state(...)`
      * call most classes cannot replay, so an object anywhere in the
-     * artifact — in practice a constructor default value like
-     * `new DateTimeImmutable()` captured into a binding or hydration plan
-     * — produces a file that cannot be required back. Refused here,
-     * naming where the object sits, rather than discovered on the first
-     * boot that reads it.
+     * artifact produces a file that cannot be required back. Refused
+     * here, naming where the object sits, rather than discovered on the
+     * first boot that reads it.
+     *
+     * An enum case is the exception, and the only one: `var_export()`
+     * writes it as `\Status::Active`, which a reload evaluates back to
+     * the very same case — enum cases are process-wide singletons, so
+     * the reconstructed artifact is identical to the one written, and
+     * `assertReconstructs()` below compares it as such.
+     *
+     * A parameter default that constructs an object never reaches this
+     * check: {@see \Kinetis\Reflection\ParameterDefault} refuses it
+     * while the plan is derived, so a live worker and a build fail on
+     * the same declaration. What reaches here is the rest of the
+     * artifact — a discovery section carrying a value it has not reduced
+     * to plain data.
      *
      * @param array<array-key, mixed> $data
      */
@@ -218,7 +230,7 @@ final class CacheStore
         foreach ($data as $key => $value) {
             $valuePath = $keyPath === '' ? (string) $key : "{$keyPath}.{$key}";
 
-            if (is_object($value)) {
+            if (is_object($value) && !$value instanceof UnitEnum) {
                 throw UnexportableArtifactException::object($valuePath, $value::class);
             }
 

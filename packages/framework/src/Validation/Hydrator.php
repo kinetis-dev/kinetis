@@ -7,6 +7,8 @@ namespace Kinetis\Validation;
 use Kinetis\Cache\Exception\ArtifactValidation;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Reflection\ParameterDefault;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\UnsupportedScalarTypeException;
 use Kinetis\Validation\Exception\ValidationException;
@@ -53,6 +55,11 @@ use ReflectionType;
  * #[ListOf] on a parameter that isn't typed `array`, and #[ListOf] naming a
  * class that cannot be instantiated.
  *
+ * A parameter's own default value is captured under the rule
+ * Kinetis\Reflection\ParameterDefault owns, shared with Dispatcher's
+ * binding plan: an object default other than an enum case is rejected
+ * there, at the same point, with an UnsupportedDefaultValueException.
+ *
  * Every builtin-typed parameter is type-checked before it is cast, never
  * after. `string` requires an actual string; `int` requires a real int, a
  * finite float with no fractional part, or a string spelled as a plain
@@ -86,9 +93,11 @@ use ReflectionType;
  * enforces (see phpstan.neon): a plan is pure derived data, identical on
  * every request for the process's lifetime, so persisting it across
  * requests cannot bleed request state — it only avoids re-running the
- * same reflection for every hydrated row. $compiledPlan remains an
- * optional argument so ahead-of-time compiled plans (Kinetis\Cache) keep
- * skipping even the first live compile.
+ * same reflection for every hydrated row. ParameterDefault is what keeps
+ * "pure derived data" true of the one field that could otherwise hold a
+ * live value, a captured default. $compiledPlan remains an optional
+ * argument so ahead-of-time compiled plans (Kinetis\Cache) keep skipping
+ * even the first live compile.
  *
  * HydrationPlan can't self-reference `nestedPlan` in its own type alias —
  * PHPStan (at least this version) rejects that as a circular definition
@@ -161,6 +170,7 @@ final class Hydrator
      * @return T
      * @throws ValidationException
      * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
     public static function hydrate(string $class, array $data, ?array $compiledPlan = null, bool $normalizeFormLiterals = false): object
     {
@@ -199,6 +209,7 @@ final class Hydrator
      * @param array<class-string, true> $visiting
      * @return HydrationPlan
      * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
     public static function compilePlan(string $class, array $visiting = []): array
     {
@@ -317,6 +328,7 @@ final class Hydrator
      *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
      * }
      * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
     private static function compileParameter(ReflectionParameter $parameter, string $class, array $visiting): array
     {
@@ -331,7 +343,7 @@ final class Hydrator
             'listItemClass' => $listItemClass,
             'listItemPlan' => $listItemPlan,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
-            'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
+            'defaultValue' => ParameterDefault::capture($parameter, $class),
             // An untyped parameter accepts anything, null included.
             'allowsNull' => $type === null || $type->allowsNull(),
             'constraints' => self::collectConstraints($parameter),
@@ -395,6 +407,7 @@ final class Hydrator
      * @param array<class-string, true> $visiting
      * @return HydrationPlan
      * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
     private static function compileNestedPlan(string $nested, string $class, string $parameter, array $visiting): array
     {

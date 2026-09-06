@@ -14,6 +14,9 @@ use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Cache\Exception\UnexportableArtifactException;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\PluginCache;
+use Kinetis\Tests\Validation\Fixtures\EnumDefaultRequest;
+use Kinetis\Tests\Validation\Fixtures\SortDirection;
+use Kinetis\Validation\Hydrator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -265,6 +268,65 @@ final class CacheStoreTest extends TestCase
         } finally {
             unlink($blocker);
         }
+    }
+
+
+    /**
+     * The one object an artifact carries: `var_export()` writes an enum
+     * case as the literal `\Kinetis\...\SortDirection::Ascending`, which
+     * a reload evaluates back to the very same case — enum cases are
+     * process-wide singletons, so write()'s own reconstruction check,
+     * which compares the required-back array against the one it
+     * rendered, passes on identity.
+     */
+    public function test_an_enum_case_default_survives_the_artifact_round_trip(): void
+    {
+        $store = new CacheStore($this->directory);
+        $store->write($this->cacheCarrying(Hydrator::compilePlan(EnumDefaultRequest::class)));
+
+        $reloaded = $store->load()?->http->hydrationPlans[EnumDefaultRequest::class];
+
+        self::assertNotNull($reloaded);
+        self::assertSame(SortDirection::Ascending, $reloaded['parameters'][1]['defaultValue']);
+        self::assertStringContainsString(
+            SortDirection::class . '::Ascending',
+            (string) file_get_contents($store->path()),
+        );
+    }
+
+    /**
+     * Why every other object stays refused, shown against the format
+     * itself rather than against the check: `var_export()` renders one as
+     * a `::__set_state()` call, and requiring that back is a fatal Error
+     * for a class that does not implement the method. A default
+     * constructing such an object is rejected earlier still, where
+     * Kinetis\Reflection\ParameterDefault derives the plan.
+     */
+    public function test_a_non_enum_object_has_no_var_export_round_trip(): void
+    {
+        mkdir($this->directory, 0775, true);
+        $path = $this->directory . '/probe.php';
+        file_put_contents($path, "<?php\n\nreturn " . var_export(['defaultValue' => new \ArrayObject()], true) . ";\n");
+
+        $this->expectException(\Error::class);
+
+        require $path;
+    }
+
+    private function cacheCarrying(array $hydrationPlan): CompiledCache
+    {
+        $rest = $this->compiledCache();
+        $http = new HttpCache(
+            formatVersion: CacheFormat::VERSION,
+            routes: [],
+            httpBindingPlans: [],
+            hydrationPlans: [$hydrationPlan['className'] => $hydrationPlan],
+            globalMiddleware: [],
+            openApiMiddleware: [],
+            compiledAt: '2026-01-01T00:00:00+00:00',
+        );
+
+        return new CompiledCache($http, $rest->commands, $rest->events, $rest->plugins);
     }
 
     private function poisonedCompiledCache(): CompiledCache

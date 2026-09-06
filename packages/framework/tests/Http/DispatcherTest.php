@@ -7,15 +7,18 @@ namespace Kinetis\Tests\Http;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Exception\UnresolvableParameterException;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
+use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathArrayController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathNullController;
 use Kinetis\Tests\Http\Fixtures\ImpossibleQueryNullController;
 use Kinetis\Tests\Http\Fixtures\MultipleUnsupportedFieldsController;
 use Kinetis\Tests\Http\Fixtures\NoteController;
 use Kinetis\Tests\Http\Fixtures\NullableFieldsController;
+use Kinetis\Tests\Http\Fixtures\ObjectDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
@@ -27,6 +30,7 @@ use Kinetis\Tests\Http\Fixtures\UnsupportedBodyFieldController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedCallableBodyFieldController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Nyholm\Psr7\ServerRequest;
 use Nyholm\Psr7\Stream;
 use Nyholm\Psr7\UploadedFile;
@@ -1450,5 +1454,47 @@ final class DispatcherTest extends TestCase
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame(['tags' => []], json_decode((string) $response->getBody(), true));
+    }
+
+    // --- A binding plan captures a parameter's default once and reuses
+    // it for every later request, so only a value PHP would have rebuilt
+    // identically each time can be captured. ---
+
+    /**
+     * Rejected at register() — the boundary every route passes through
+     * regardless of deployment shape, the same one the impossible
+     * #[Query]/path declarations above are caught at — so a live worker
+     * and Kinetis\Cache\Compiler's own AOT build fail on this
+     * declaration identically, rather than one of them shipping a route
+     * that hands every request the first request's DateTimeImmutable.
+     */
+    public function test_a_parameter_default_that_constructs_an_object_is_rejected_at_registration(): void
+    {
+        $router = new Router();
+
+        $this->expectException(UnsupportedDefaultValueException::class);
+        $this->expectExceptionMessage('ObjectDefaultParameterController::index(), parameter "$since"');
+        $this->expectExceptionMessage('DateTimeImmutable');
+
+        $router->register(ObjectDefaultParameterController::class);
+    }
+
+    /**
+     * The enum-case exception, in the plan a route actually dispatches
+     * through: a case is a process-wide singleton, so the captured value
+     * is the one PHP would have evaluated for every request.
+     */
+    public function test_an_enum_case_default_is_captured_into_the_binding_plan(): void
+    {
+        $router = new Router();
+        $router->register(EnumDefaultParameterController::class);
+
+        $plan = Dispatcher::derivePlan(
+            new \ReflectionMethod(EnumDefaultParameterController::class, 'index'),
+            $router->match('GET', '/sorted')->route,
+        );
+
+        self::assertTrue($plan[0]['hasDefault']);
+        self::assertSame(SortDirection::Descending, $plan[0]['defaultValue']);
     }
 }

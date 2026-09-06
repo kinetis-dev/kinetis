@@ -13,6 +13,8 @@ use Kinetis\Tests\Http\Fixtures\CreateUserRequest;
 use Kinetis\Tests\Http\Fixtures\HiddenRequest;
 use Kinetis\Tests\Http\Fixtures\RegisterAccountRequest;
 use Kinetis\Tests\Http\Fixtures\UpdateStatusRequest;
+use DateTimeImmutable;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
 use Kinetis\Tests\Validation\Fixtures\BoundlessIntFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\CallableFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\FalseTypedFieldRequest;
@@ -21,15 +23,19 @@ use Kinetis\Tests\Validation\Fixtures\IntersectionTypedFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\IterableFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfAnInterfaceRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfOnAStringRequest;
+use Kinetis\Tests\Validation\Fixtures\EnumDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\MutuallyRecursiveParent;
+use Kinetis\Tests\Validation\Fixtures\NestedObjectDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullTypedFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\PlainArrayFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
 use Kinetis\Tests\Validation\Fixtures\SelfReferencingListRequest;
 use Kinetis\Tests\Validation\Fixtures\SelfReferencingRequest;
+use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Kinetis\Tests\Validation\Fixtures\TrueTypedFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\UnionTypedFieldRequest;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
@@ -43,6 +49,7 @@ use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\UploadedFileInterface;
+use ReflectionParameter;
 
 final class HydratorTest extends TestCase
 {
@@ -1331,5 +1338,81 @@ final class HydratorTest extends TestCase
         $this->expectExceptionMessage('it cannot be instantiated');
 
         Hydrator::compilePlan(UploadedFileInterface::class);
+    }
+
+    // --- A default value a plan captures must be the same value on
+    // every request that reaches it. ---
+
+    public function test_an_enum_case_default_is_captured_and_used_when_the_field_is_absent(): void
+    {
+        $plan = Hydrator::compilePlan(EnumDefaultRequest::class);
+
+        self::assertSame(SortDirection::Ascending, $plan['parameters'][1]['defaultValue']);
+        self::assertSame(SortDirection::Ascending, Hydrator::hydrate(EnumDefaultRequest::class, ['term' => 'kinetis'])->direction);
+    }
+
+    public function test_a_default_that_constructs_an_object_is_rejected_when_the_plan_is_compiled(): void
+    {
+        $this->expectException(UnsupportedDefaultValueException::class);
+        $this->expectExceptionMessage('ObjectDefaultRequest, parameter "$since"');
+        $this->expectExceptionMessage('DateTimeImmutable');
+
+        Hydrator::compilePlan(ObjectDefaultRequest::class);
+    }
+
+    /**
+     * The live path — a first hydrate() with no compiled plan, which is
+     * how development runs — refuses the identical declaration the build
+     * refuses, at the same point in the same words.
+     */
+    public function test_the_live_path_rejects_an_object_default_the_same_way(): void
+    {
+        $this->expectException(UnsupportedDefaultValueException::class);
+
+        Hydrator::hydrate(ObjectDefaultRequest::class, []);
+    }
+
+    public function test_an_object_nested_inside_an_array_default_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDefaultValueException::class);
+        $this->expectExceptionMessage('ArrayObject');
+
+        Hydrator::compilePlan(NestedObjectDefaultRequest::class);
+    }
+
+    /**
+     * What the rejection above prevents, shown against a plan handed in
+     * directly: PHP evaluates `new DateTimeImmutable()` afresh every time
+     * the parameter goes unfilled, while a plan holding one instance
+     * hands that same instance to every hydration for as long as the
+     * worker lives.
+     */
+    public function test_a_captured_object_default_would_be_shared_by_every_hydration(): void
+    {
+        $parameter = new ReflectionParameter([ObjectDefaultRequest::class, '__construct'], 'since');
+
+        self::assertNotSame($parameter->getDefaultValue(), $parameter->getDefaultValue());
+
+        $capturedPlan = [
+            'className' => ObjectDefaultRequest::class,
+            'hasConstructor' => true,
+            'parameters' => [[
+                'name' => 'since',
+                'scalarType' => null,
+                'dtoClass' => DateTimeImmutable::class,
+                'nestedPlan' => null,
+                'listItemClass' => null,
+                'listItemPlan' => null,
+                'hasDefault' => true,
+                'defaultValue' => $parameter->getDefaultValue(),
+                'allowsNull' => true,
+                'constraints' => [],
+            ]],
+        ];
+
+        self::assertSame(
+            Hydrator::hydrate(ObjectDefaultRequest::class, [], $capturedPlan)->since,
+            Hydrator::hydrate(ObjectDefaultRequest::class, [], $capturedPlan)->since,
+        );
     }
 }
