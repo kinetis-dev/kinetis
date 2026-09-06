@@ -8,12 +8,13 @@
 # of seconds even when nothing has changed.
 #
 # One install directory serves every client and every project, so
-# several copies of this script can run against it at once. Reading the
-# timestamp and running the update hold an exclusive lock, and a spawn
-# that finds it taken waits: whichever process arrives second reads a
-# finished vendor tree rather than one halfway through being replaced,
-# and sees the timestamp the first one wrote rather than updating again
-# behind it.
+# several copies of this script - and the setup script that installs
+# into it - can run against it at once. Reading the timestamp and
+# running the update hold an exclusive lock on the same file setup.sh
+# holds through its own install, and a spawn that finds it taken waits:
+# whichever process arrives second reads a finished vendor tree rather
+# than one halfway through being replaced, and sees the timestamp the
+# first one wrote rather than updating again behind it.
 #
 # The lock is an open file descriptor, so the kernel drops it when the
 # last process holding it ends - an update killed part-way leaves

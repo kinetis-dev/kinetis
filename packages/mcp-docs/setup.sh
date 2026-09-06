@@ -86,36 +86,68 @@ echo "Installing kinetis/mcp-docs into ${INSTALL_DIR}..."
 mkdir -p "$INSTALL_DIR"
 echo "$MARKER_TEXT" > "$MARKER_FILE"
 
+# The install runs in one container holding the same .update.lock
+# start.sh takes, from the first write to composer.json through the end
+# of composer install. A session spawning start.sh against this
+# directory, or a second run of this script, waits there and reads a
+# finished vendor tree rather than one halfway through being replaced.
+# composer:2 carries the flock, so the host still needs nothing but
+# Docker and the client CLI.
+#
 # composer.json is rewritten on every run, and composer install refuses
 # a lock file that no longer matches it. Dropping this one file lets
 # Composer resolve fresh and reconcile vendor/ itself.
-rm -f "$INSTALL_DIR/composer.lock"
-cat > "$INSTALL_DIR/composer.json" <<'EOF'
+#
+# The timestamp start.sh reads comes last, and only from an install
+# that succeeded: a failed one leaves the next spawn to retry, and a
+# successful one spares the first session an update just done here.
+INSTALL_SCRIPT='
+set -eu
+
+exec 9>.update.lock
+flock 9
+
+rm -f composer.lock
+cat > composer.json <<"JSON"
 {
     "require": {
         "kinetis/mcp-docs": "^1.0"
     }
 }
-EOF
+JSON
 
-if ! COMPOSER_LOG=$("${DOCKER_RUN[@]}" composer:2 install --no-interaction --prefer-dist 2>&1); then
+composer install --no-interaction --prefer-dist
+date +%s > .last-update-check
+'
+
+if ! COMPOSER_LOG=$("${DOCKER_RUN[@]}" composer:2 sh -c "$INSTALL_SCRIPT" 2>&1); then
     echo "composer install failed:" >&2
     echo "$COMPOSER_LOG" >&2
     exit 1
 fi
+
+# start.sh, out of the package just installed, is what the client
+# spawns: it runs the once-a-day update check - locked, since every
+# session shares this one directory - and then hands stdin and stdout
+# to the server. Running it from vendor/ rather than from a copy means
+# that same update carries changes to it too.
+SERVER_COMMAND=("${DOCKER_RUN[@]}" -i composer:2 sh vendor/kinetis/mcp-docs/start.sh)
 
 echo
 echo "Verifying the server responds..."
 
 # Four messages down one stdin, in the order a client sends them. The
 # notification in the middle is part of the check: a correct server
-# answers it with nothing, so three responses come back, not four.
+# answers it with nothing, so three responses come back, not four. They
+# go through the command registered below rather than around it, so
+# what answers here is what the client spawns; the timestamp the
+# install just wrote turns its update check into a no-op.
 VERIFICATION=$(printf '%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"kinetis-mcp-docs-setup","version":"1.0"}}}' \
     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
     '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
     '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"kinetis://docs/index"}}' \
-    | "${DOCKER_RUN[@]}" -i composer:2 php vendor/bin/kinetis-mcp-docs)
+    | "${SERVER_COMMAND[@]}")
 
 verification_failed() {
     echo "The server did not answer the verification handshake as expected: $1" >&2
@@ -132,13 +164,6 @@ echo "OK - the server responded correctly."
 
 echo
 echo "Registering \"${SERVER_NAME}\" with ${CLIENT}..."
-
-# start.sh, out of the package just installed, is what the client
-# spawns: it runs the once-a-day update check - locked, since every
-# session shares this one directory - and then hands stdin and stdout
-# to the server. Running it from vendor/ rather than from a copy means
-# that same update carries changes to it too.
-SERVER_COMMAND=("${DOCKER_RUN[@]}" -i composer:2 sh vendor/kinetis/mcp-docs/start.sh)
 
 if [ "$CLIENT" = "claude" ]; then
     claude mcp remove "$SERVER_NAME" -s user >/dev/null 2>&1 || true

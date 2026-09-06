@@ -34,9 +34,10 @@ curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/packages/m
 The script needs a running Docker daemon and the chosen client's CLI on
 your `PATH` — no PHP or Composer of your own, and no `sudo`. It installs
 `kinetis/mcp-docs` from Packagist into `~/.kinetis-mcp-docs` (override
-with `KINETIS_MCP_DOCS_DIR`), verifies the server over a real handshake,
-and registers it with the one client you named. Every Docker step runs
-as your own user id and group id, so nothing it writes is owned by root.
+with `KINETIS_MCP_DOCS_DIR`), verifies the server over a real handshake
+run through the same command it registers, and registers that command
+with the one client you named. Every Docker step runs as your own user
+id and group id, so nothing it writes is owned by root.
 
 The target directory must be empty, or already carry the marker file
 the script writes into the installs it owns: a regular file holding
@@ -53,6 +54,12 @@ moves the timestamp, so the next spawn retries rather than waiting out
 the rest of the window. The check and any update it runs hold an
 exclusive lock on the install directory, so a spawn arriving while
 another one is updating waits for it and starts from the finished tree.
+
+The setup script holds that same lock across its install, from the first
+write to `composer.json` through the end of `composer install`, and an
+install that succeeded stamps the timestamp. A session spawned while a
+setup is running waits for a finished tree, and the first one after it
+starts without a check of its own.
 
 ## Running it directly
 
