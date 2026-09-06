@@ -460,4 +460,63 @@ final class TestClientTest extends TestCase
         self::assertSame('existing=1&page=2', $decoded['queryString']);
         self::assertSame(['existing' => '1', 'page' => '2'], $decoded['queryParams']);
     }
+
+    /**
+     * Cookies must arrive in both places a request carries them — the
+     * `Cookie` header verbatim, and `getCookieParams()` parsed out of
+     * that same header — which is what every runtime adapter delivers.
+     * A consumer reading only cookieParams (kinetis/session's
+     * SessionMiddleware) is otherwise unreachable from a test.
+     */
+    public function test_cookies_reach_both_the_cookie_header_and_cookie_params(): void
+    {
+        $decoded = $this->client()->post('/raw-request', body: ['anything' => true], headers: [
+            'Cookie' => 'kinetis_session=abc123; theme=dark',
+        ])->json();
+
+        self::assertSame('kinetis_session=abc123; theme=dark', $decoded['cookieHeader']);
+        self::assertSame(['kinetis_session' => 'abc123', 'theme' => 'dark'], $decoded['cookieParams']);
+    }
+
+    public function test_no_cookies_means_no_cookie_header_and_empty_cookie_params(): void
+    {
+        $decoded = $this->client()->post('/raw-request', body: ['anything' => true])->json();
+
+        self::assertSame('', $decoded['cookieHeader']);
+        self::assertSame([], $decoded['cookieParams']);
+    }
+
+    /**
+     * HTTP header names carry no case meaning (RFC 7230), so the Cookie
+     * header is read under whatever spelling the caller used — the rule
+     * Content-Type already follows here.
+     */
+    public function test_a_cookie_header_is_read_under_any_letter_case(): void
+    {
+        foreach (['cookie', 'COOKIE', 'CoOkIe'] as $spelling) {
+            $decoded = $this->client()
+                ->post('/raw-request', body: ['anything' => true], headers: [$spelling => 'kinetis_session=abc123'])
+                ->json();
+
+            self::assertSame(['kinetis_session' => 'abc123'], $decoded['cookieParams'], $spelling);
+        }
+    }
+
+    /**
+     * send() completes nothing: a hand-built request is dispatched
+     * exactly as its builder made it, so a Cookie header set without
+     * matching cookieParams stays that way. Building a whole request is
+     * the caller's job on this path, as it is a runtime adapter's on
+     * every other one.
+     */
+    public function test_send_leaves_a_hand_built_request_exactly_as_given(): void
+    {
+        $request = new ServerRequest('POST', '/raw-request', ['Content-Type' => 'application/json'], '{}')
+            ->withHeader('Cookie', 'kinetis_session=abc123');
+
+        $decoded = $this->client()->send($request)->json();
+
+        self::assertSame('kinetis_session=abc123', $decoded['cookieHeader']);
+        self::assertSame([], $decoded['cookieParams']);
+    }
 }

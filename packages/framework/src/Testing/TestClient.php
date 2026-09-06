@@ -74,6 +74,14 @@ use Psr\Http\Message\ServerRequestInterface;
  * fragment instead of before it. `getQueryParams()` is parsed back out of
  * that same, now-authoritative query string — the two always agree, the
  * same relationship a real incoming request has.
+ *
+ * A `Cookie` header stands in the same relationship to
+ * `getCookieParams()`, and every mode that builds a request fills the
+ * latter from the former, so cookies arrive in both places — the shape
+ * every runtime adapter delivers, and the only one a consumer reading
+ * cookies (kinetis/session's `SessionMiddleware`) looks at. `send()`
+ * dispatches its request exactly as handed over, this included: a
+ * hand-built request carries whatever cookies its builder gave it.
  */
 final readonly class TestClient
 {
@@ -383,6 +391,37 @@ final readonly class TestClient
         // independently of it.
         \parse_str($request->getUri()->getQuery(), $queryParams);
 
-        return $request->withQueryParams($queryParams);
+        $request = $request->withQueryParams($queryParams);
+
+        // The same holds for cookieParams and the Cookie header: every
+        // runtime adapter fills the one from the other, and a consumer
+        // reads only cookieParams. Taken off the built request rather
+        // than the caller's array, so the header is found under
+        // whatever letter-case it was spelled in, the way PSR-7 does.
+        return $request->withCookieParams(self::parseCookieHeader($request->getHeaderLine('Cookie')));
+    }
+
+    /**
+     * The `name=value` pairs of a Cookie header, in the shape the
+     * runtime conformance suite pins for every adapter: `;`-separated,
+     * surrounding whitespace insignificant, the first `=` dividing name
+     * from value. A pair carrying no `=`, or an empty name, names no
+     * cookie and is skipped; no header at all yields no cookies.
+     *
+     * @return array<string, string>
+     */
+    private static function parseCookieHeader(string $header): array
+    {
+        $cookies = [];
+
+        foreach (\explode(';', $header) as $pair) {
+            [$name, $value] = \array_pad(\explode('=', \trim($pair), 2), 2, null);
+
+            if ($name !== null && $name !== '' && $value !== null) {
+                $cookies[$name] = $value;
+            }
+        }
+
+        return $cookies;
     }
 }

@@ -121,6 +121,16 @@ Query parameters, wherever you pass them (`get()`'s own `query:`, or
 `getQueryParams()` is parsed back out of that same string, so the two
 always agree, the same relationship a real incoming request has.
 
+A `Cookie` header — passed in `headers` under any letter-case — stands
+in the same relationship to `getCookieParams()`: the header is sent
+verbatim and the cookies are parsed back out of it, so a test drives
+anything that reads cookies (`SessionMiddleware`, see {doc}`session`) the
+way a runtime adapter does:
+
+```{code-block} php
+$this->client->get('/dashboard', headers: ['Cookie' => 'kinetis_session=' . $id]);
+```
+
 **A JSON array is not the only body a route needs to see.** Four more
 methods send something genuinely different, never routed through JSON
 encoding at all:
@@ -160,7 +170,10 @@ does.
 request, or anything else none of the methods above cover. This class
 deliberately never guesses a multipart boundary from a plain array; build
 the real PSR-7 request yourself and dispatch it through the same Kernel
-every other method here uses.
+every other method here uses. It is dispatched exactly as handed over and
+nothing about it is completed for you — a request that needs cookies
+read, for one, needs `withCookieParams()` set alongside its `Cookie`
+header.
 
 Send the multipart bytes, not a parsed body. `RequestBodyMiddleware` is
 global and unconditional (see {doc}`middleware`), so it stages and parses

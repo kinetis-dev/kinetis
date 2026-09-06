@@ -25,9 +25,12 @@ use Psr\Http\Server\RequestHandlerInterface;
  *
  *     #[Middleware(SessionMiddleware::class)]
  *
- * Reads the session cookie (rejecting anything that isn't a wellformed
- * id), hands the handler a lazily-loading Session, and afterwards
- * persists and sets the cookie — but only when the session was actually
+ * The cookie is read from `getCookieParams()` and nowhere else — the
+ * PSR-7 form every runtime adapter fills from the incoming `Cookie`
+ * header, so parsing that header is the adapter's job, not this class's.
+ * Anything that isn't a wellformed id is rejected, the handler is
+ * handed a lazily-loading Session, and the session is afterwards
+ * persisted and its cookie set — but only when the session was actually
  * written to. A route that never touches its session performs no
  * storage round trip and sends no Set-Cookie, so attaching this
  * middleware broadly costs nothing on session-free requests. Every
@@ -152,8 +155,8 @@ final readonly class SessionMiddleware implements MiddlewareInterface
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $raw = $this->cookieValue($request, $this->cookieName);
-        $cookieId = $raw !== null && \preg_match(self::ID_PATTERN, $raw) === 1 ? $raw : null;
+        $raw = $request->getCookieParams()[$this->cookieName] ?? null;
+        $cookieId = \is_string($raw) && \preg_match(self::ID_PATTERN, $raw) === 1 ? $raw : null;
 
         $session = new Session($this->store, $cookieId);
         $this->scope->instance(Session::class, $session);
@@ -175,31 +178,6 @@ final readonly class SessionMiddleware implements MiddlewareInterface
         }
 
         return $response->withAddedHeader('Set-Cookie', $this->cookie($session->id(), $this->lifetime));
-    }
-
-    /**
-     * cookieParams first — what every real runtime adapter populates —
-     * with the raw Cookie header as fallback, so a hand-built PSR-7
-     * request (Kinetis\Testing\TestClient's included) works by just
-     * setting the header.
-     */
-    private function cookieValue(ServerRequestInterface $request, string $name): ?string
-    {
-        $params = $request->getCookieParams();
-
-        if (\is_string($params[$name] ?? null)) {
-            return $params[$name];
-        }
-
-        foreach (\explode(';', $request->getHeaderLine('Cookie')) as $pair) {
-            [$key, $value] = \array_pad(\explode('=', \trim($pair), 2), 2, null);
-
-            if ($key === $name && $value !== null) {
-                return $value;
-            }
-        }
-
-        return null;
     }
 
     private function cookie(string $value, int $lifetimeSeconds): string
