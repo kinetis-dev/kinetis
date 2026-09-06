@@ -38,9 +38,8 @@ the deadline bounds when the backend stops looking rather than when
 ## Configuring
 
 `QUEUE_SQS_REGION` is required — there's no sane default to guess.
-Credentials come from the AWS SDK's usual sources
-(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, or an IAM role) — nothing
-Kinetis-specific to set up.
+Credentials need nothing Kinetis-specific set up at all — see Credentials
+below.
 
 Two optional settings:
 
@@ -54,6 +53,21 @@ for example) instead of real AWS — handy for development and testing.
 `QUEUE_SQS_QUEUE_PREFIX` is prepended to every queue name — useful when
 staging and production share one AWS account and need to stay on separate
 queues without both trying to use a plain name like `default`.
+
+## Credentials
+
+Credentials resolve through AsyncAws's standard chain, in its standard
+order: environment variables (including the STS assume-role that
+`AWS_ROLE_ARN` selects), web identity, the shared credentials and config
+files, ECS or EKS pod identity, then IMDS. There is nothing to
+configure.
+
+Every provider in that chain that calls AWS uses the same Revolt
+transport as the client itself, so an assume-role or an IMDS lookup
+suspends the calling Fiber like any other call. The shared credentials
+file, the shared config file and any web-identity or pod-identity token
+file are read with native blocking calls, on first resolution and again
+on each refresh. Resolved credentials are held until they expire.
 
 ## Create your queues ahead of time
 
