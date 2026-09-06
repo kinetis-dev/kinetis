@@ -323,6 +323,30 @@ after that reading, reads as unchanged. One landing between the open
 and that reading fails the copy, though the handle it holds would have
 read the original file through to the end.
 
+## The staging namespace is reserved
+
+The directory step 2 creates is named `.kinetis-stage.` followed by 32
+lowercase hexadecimal digits, and that name, matched whole, belongs to
+the adapter:
+
+- `listContents()` reports no entry carrying it, shallow or deep, and
+  never descends into one, so the partially written file inside a
+  publication still in flight is out of reach of a listing too. A
+  listing running beside a publication, or after a cleanup that could
+  not remove one, reports published objects and nothing else.
+- A path whose segment carries it, at any depth, is refused with
+  `Kinetis\Storage\Exception\ReservedPathDetected` before any
+  filesystem call is made — every operation, on both operands of a
+  `move()` or a `copy()`, through the one admission the confinement
+  rules below live in.
+- `deleteDirectory()` walks and removes them. `rmdir(2)` refuses a
+  directory that still holds anything, so a skipped leftover would
+  leave its parent undeletable.
+
+Nothing else is hidden or refused: `.htaccess`, `.kinetis-stage`, and
+the prefix carrying a shorter, longer, uppercase or non-hexadecimal
+tail all list, read and write like any other path.
+
 ## Resource methods
 
 `readStream()` reads the whole object through the driver and hands it
@@ -412,6 +436,11 @@ try {
     // written, and nothing was staged anywhere.
 }
 ```
+
+A segment naming one of the adapter's own staging directories is refused
+by this same admission — see
+[The staging namespace is reserved](#the-staging-namespace-is-reserved)
+above.
 
 `League\Flysystem\Filesystem` normalizes a path before any adapter sees
 it, and that is not what this rests on: `Kinetis\Storage\AmpFileAdapter`
@@ -504,6 +533,8 @@ than being relabeled as one of the above:
   refused before anything was touched.
 - `SymbolicLinkEncountered` — a path component, or an entry found while
   walking, is a symlink.
+- `Kinetis\Storage\Exception\ReservedPathDetected` — a segment of the
+  path names a staging directory the adapter publishes through.
 - `InvalidVisibilityProvided` — `visibility` or `directory_visibility`
   was not one of the two values the converter accepts.
 
