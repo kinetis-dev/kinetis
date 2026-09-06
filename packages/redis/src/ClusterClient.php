@@ -14,6 +14,7 @@ use Kinetis\Redis\Cluster\HashSlot;
 use Kinetis\Redis\Cluster\Redirect;
 use Kinetis\Redis\Cluster\RedirectKind;
 use Kinetis\Redis\Cluster\SlotMap;
+use Kinetis\Redis\Exception\ConnectionFailed;
 use Kinetis\Redis\Exception\RedirectLimitExceeded;
 use Kinetis\Redis\Exception\TopologyUnavailable;
 
@@ -25,7 +26,7 @@ use Kinetis\Redis\Exception\TopologyUnavailable;
  * and never before, and each node's connection is opened on its own
  * first command. Under a boot-and-die runtime every request therefore
  * pays one CLUSTER SLOTS round trip; under a persistent worker the map
- * and the connections live as long as the client.
+ * and the connections are reused across requests.
  *
  * MOVED patches the one slot it names and the command is sent straight
  * to the target the reply named: that reply is proof of both, so
@@ -35,6 +36,16 @@ use Kinetis\Redis\Exception\TopologyUnavailable;
  * connection. A command is re-sent only after a reply that proves the
  * node did not execute it; a connection failure is never a reason to
  * re-send.
+ *
+ * A routed operation that ends in a ConnectionFailed drops the map and
+ * reports the failure, so the next operation reads CLUSTER SLOTS again
+ * and routes at the owner the cluster names then. That exception covers
+ * every pre-dispatch failure, an already-spent budget among them, and
+ * dropping the map on all of them is what recovers the case that
+ * matters: an owner the map still names that no longer answers. An
+ * OutcomeUnknown keeps the map, because it does not establish that the
+ * cached topology is stale. Neither sends the failed command again:
+ * whether repeating it is safe stays the caller's to decide.
  *
  * Discovery reads CLUSTER SLOTS from the seeds in order, giving each an
  * equal share of what is left of the budget, and concurrent fibers
@@ -160,6 +171,14 @@ final class ClusterClient implements RoutedExecutor
         for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
             try {
                 return $run($client, $asking, $deadline);
+            } catch (ConnectionFailed $e) {
+                // Nothing was dispatched, so this map may name an owner
+                // that no longer answers. Dropping it is what sends the
+                // next operation back to CLUSTER SLOTS instead of at
+                // the same node for the life of the worker.
+                $this->slots = null;
+
+                throw $e;
             } catch (QueryException $e) {
                 $redirect = Redirect::tryParse($e->getMessage());
 

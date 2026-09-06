@@ -89,7 +89,7 @@
             "description": "A non-replaying, deadline-bounded Redis transport for amphp/redis, with TLS, authentication, and Redis Cluster slot routing. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\Redis\\",
             "testNamespace": "Kinetis\\Redis\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requiresDev": [
                 "framework"
             ],

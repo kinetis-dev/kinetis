@@ -181,6 +181,19 @@ trip on first use. Only a reply covering slots 0-16383 exactly once is
 accepted, so a partially-formed cluster is refused rather than routed
 against.
 
+A `ConnectionFailed` from a routed operation drops the cached map, and
+the operation itself still fails: the next one reads `CLUSTER SLOTS`
+again and routes at the owner the cluster names then, so an owner that
+stops answering under a persistent worker costs one failed operation
+rather than every operation until the process restarts. The exception
+reports every pre-dispatch failure, an already-spent budget included,
+and dropping the map on all of them costs one rediscovery while
+recovering the case that matters. The failed command is not sent again —
+that stays yours to decide, under the same rule as any other
+`ConnectionFailed`. An `OutcomeUnknown` leaves the map in place: an
+ambiguous outcome does not establish that the cached topology is stale,
+and that command is never re-sent either.
+
 The seeds are read in order, each given an equal share of what is left
 of the operation's budget, so a seed that accepts the connection and
 never answers cannot spend all of it and leave a healthy seed behind it

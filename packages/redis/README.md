@@ -42,7 +42,9 @@ replaces that transport and adds Redis Cluster routing on top of it.
   returns.
 - **Cluster routing** with `CLUSTER SLOTS` discovery, MOVED/ASK, and a
   six-attempt bound. Routing keys are supplied by the caller, never
-  guessed from a command's parameters.
+  guessed from a command's parameters. A pre-dispatch `ConnectionFailed`
+  drops the slot map, so an owner it names that stops answering is
+  routed around after one rediscovery.
 
 ```php
 use Kinetis\Redis\Client;

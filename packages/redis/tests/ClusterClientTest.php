@@ -8,6 +8,8 @@ use Amp\CancelledException;
 use Kinetis\Redis\ClientOptions;
 use Kinetis\Redis\ClusterClient;
 use Kinetis\Redis\Endpoint;
+use Kinetis\Redis\Exception\ConnectionFailed;
+use Kinetis\Redis\Exception\OutcomeUnknown;
 use Kinetis\Redis\Exception\RedirectLimitExceeded;
 use Kinetis\Redis\Exception\TopologyUnavailable;
 use PHPUnit\Framework\Attributes\Test;
@@ -203,6 +205,69 @@ final class ClusterClientTest extends TestCase
             self::assertSame([['CLUSTER', 'SLOTS']], $seed->received());
             $client->close();
         }
+    }
+
+    #[Test]
+    public function an_owner_that_cannot_be_reached_drops_the_slot_map(): void
+    {
+        $healthy = $this->peer([RespPeer::bulk('value')]);
+        // Bound to a loopback port and then closed, so a connection to
+        // it is refused before a byte of the command can be written.
+        $gone = $this->peer([]);
+        $gone->close();
+        $seed = $this->peer([
+            $this->slots([[0, 16383, $gone]]),
+            $this->slots([[0, 16383, $healthy]]),
+        ]);
+
+        $client = ClusterClient::create([$seed->endpoint()], new ClientOptions(timeout: 2.0));
+
+        try {
+            $client->executeKeyed('k', 'GET', 'k');
+            self::fail('Expected the unreachable owner to fail the operation.');
+        } catch (ConnectionFailed) {
+            // Reported as it is: sending the command again is the
+            // caller's decision, not this client's.
+        }
+
+        self::assertSame([['CLUSTER', 'SLOTS']], $seed->received(), 'The failing operation read the topology a second time.');
+
+        self::assertSame('value', $client->executeKeyed('k', 'GET', 'k'));
+        self::assertSame(
+            [['CLUSTER', 'SLOTS'], ['CLUSTER', 'SLOTS']],
+            $seed->received(),
+            'The next operation routed on the map its predecessor failed on instead of reading the topology again.',
+        );
+        self::assertSame([['GET', 'k']], $healthy->received(), 'The command that failed was sent again to the new owner.');
+
+        $client->close();
+    }
+
+    #[Test]
+    public function an_unknown_outcome_leaves_the_slot_map_in_place(): void
+    {
+        // The command is recorded and never answered, so the budget
+        // expires with it already written.
+        $owner = $this->peer([RespPeer::SILENCE, RespPeer::bulk('value')]);
+        // One slot map and nothing after it: a second topology read
+        // ends the connection and fails the test as TopologyUnavailable.
+        $seed = $this->peer([$this->slots([[0, 16383, $owner]])]);
+
+        $client = ClusterClient::create([$seed->endpoint()], new ClientOptions(timeout: 0.5));
+
+        try {
+            $client->executeKeyed('k', 'GET', 'k');
+            self::fail('Expected the silent owner to spend the budget.');
+        } catch (OutcomeUnknown) {
+            // An ambiguous outcome, which says nothing about whether
+            // the cached map is still correct.
+        }
+
+        self::assertSame('value', $client->executeKeyed('k', 'GET', 'k'));
+        self::assertSame([['CLUSTER', 'SLOTS']], $seed->received(), 'An unknown outcome dropped the slot map.');
+        self::assertSame([['GET', 'k'], ['GET', 'k']], $owner->received());
+
+        $client->close();
     }
 
     #[Test]
