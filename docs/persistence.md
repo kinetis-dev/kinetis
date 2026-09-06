@@ -621,6 +621,31 @@ server acknowledged anything — the statement may well have run.
 Closing a PDO client does the same to the transaction holding it, since
 both run on the client's one connection.
 
+### A transaction nothing ends
+
+Calling `beginTransaction()` on a link makes ending the transaction the
+caller's own job, and an exception path that drops the object without
+reaching `commit()`, `rollback()` or `close()` leaves nobody holding it:
+a driver keeps a transaction's owner Fiber, never the transaction. The
+last reference going away is where such a transaction ends. Its
+connection is discarded, the Fiber's client-level ownership goes with
+it, and the span closes with the outcome `unknown`.
+
+Nothing goes on the wire there. That cleanup runs in a destructor, which
+cannot suspend and so cannot wait for an answer; a `ROLLBACK` dispatched
+with nobody to read the reply would sit on a connection about to serve
+someone else. The server rolls the work back as the session goes, which
+is not a `ROLLBACK` it acknowledged — and the span says so rather than
+claiming one.
+
+What that costs is the connection: an async client's pool opens a
+replacement, and a PDO client, holding one connection and never
+reopening it, closes. `TransactionGuard::transaction()` costs neither —
+it ends the transaction on every path out of the work, so the connection
+goes back to the pool with the outcome the server confirmed. Use the
+guard; the discard is a safety net for a connection, not a way to end a
+transaction.
+
 ## `TransactionGuard` — the request-scoped safety net
 
 `Kernel` degrades gracefully when `kinetis/persistence` isn't installed
@@ -630,8 +655,10 @@ database at all can skip it entirely.
 Connection pooling is the drivers' own job. What no driver can know
 about is Kinetis's `RequestScope` (see {doc}`container`): if application
 code begins a transaction and something throws before it's explicitly
-committed or rolled back, nothing closes it — and it leaks into whatever
-the next thing to borrow that pooled connection does.
+committed or rolled back, nothing commits or rolls it back, and it holds
+its connection — and the locks on it — for as long as anything still
+references it. Dropped, it ends the only way a destructor can, by
+discarding that connection.
 
 `Kinetis\Persistence\TransactionGuard` is the request-scoped safety net for
 exactly this. It's autowired fresh per request, like any other class you
@@ -677,9 +704,10 @@ public function rollbackDangling(): void
 ```
 
 For the case the pattern above doesn't cover — a transaction begun
-directly via `beginTransaction()` and held open across multiple calls,
-that never reaches either `commit()` or `rollback()` before the unit of
-work ends — `Kinetis\Container\TransactionGuardHook::registerIfAvailable()`
+through the guard's own `beginTransaction()` and held open across
+multiple calls, that never reaches either `commit()` or `rollback()`
+before the unit of work ends —
+`Kinetis\Container\TransactionGuardHook::registerIfAvailable()`
 registers `rollbackDangling()` as a `RequestScope` dispose hook:
 
 ```{code-block} php
@@ -710,6 +738,14 @@ When it does find something to close, it logs a warning through whatever
 logger you've registered (see {doc}`logging`) — a genuine anomaly signal,
 since it means a transaction was left open somewhere it shouldn't have
 been.
+
+What it finds is what it started: `$guard->beginTransaction($link)` and
+`transaction()`, the two calls that put a transaction on its tracked
+list. One begun straight off the link is not tracked here or anywhere
+else, and ends by being dropped — connection discarded, outcome
+`unknown`. Route a transaction you hold open across several calls
+through the guard, and disposal rolls it back on the wire and hands the
+connection back instead.
 
 Both `beginTransaction()` and `transaction()` work identically for MySQL
 and Postgres: all drivers implement the same `Contract\SqlLink`/
