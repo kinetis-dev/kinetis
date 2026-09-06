@@ -33,8 +33,15 @@ use Psr\SimpleCache\CacheInterface;
  * revocation already documents. $ttlSeconds must cover the longest
  * lifetime any of this user's currently-outstanding refresh tokens
  * could still have; once it elapses, the cutoff itself is forgotten.
- * Both stores derive that per-subject key through SubjectKey, so a
- * subject id's type is part of the identity here too.
+ *
+ * A subject is the same canonical non-empty string an access token
+ * carries in its `sub` claim: issue() accepts `string|int` and converts
+ * it once, exactly as JwtIssuer::issue() does, so one application id
+ * produces one identity across both token kinds. redeem() hands that
+ * string back, ready to reissue with, and revokeAllForUser() takes it
+ * as-is — JwtUser::id() on an authenticated access token names the same
+ * subject its refresh token was stored under. A stored record whose
+ * subject is anything else is treated as unredeemable.
  *
  * Built against plain Psr\SimpleCache\CacheInterface, but requires the
  * cache to also implement AtomicConsumeInterface — NullSimpleCache is
@@ -61,10 +68,19 @@ final readonly class RefreshTokenStore
     }
 
     /**
+     * $subject is canonicalized to a non-empty string before it is
+     * stored — see this class's own docblock.
+     *
      * @param array<string, mixed> $claims
      */
     public function issue(string|int $subject, array $claims = [], int $ttlSeconds = 1_209_600): string
     {
+        $storedSubject = (string) $subject;
+
+        if ($storedSubject === '') {
+            throw RefreshTokenUnavailableException::emptySubject();
+        }
+
         if ($ttlSeconds <= 0) {
             throw RefreshTokenUnavailableException::nonPositiveIssueTtl();
         }
@@ -72,7 +88,7 @@ final readonly class RefreshTokenStore
         $token = bin2hex(random_bytes(32));
 
         $stored = $this->cache->set($this->key($token), [
-            'subject' => $subject,
+            'subject' => $storedSubject,
             'claims' => $claims,
             'issuedAt' => time(),
         ], $ttlSeconds);
@@ -85,7 +101,7 @@ final readonly class RefreshTokenStore
     }
 
     /**
-     * @return array{subject: string|int, claims: array<string, mixed>}|null
+     * @return array{subject: string, claims: array<string, mixed>}|null
      */
     public function redeem(string $token): ?array
     {
@@ -109,8 +125,16 @@ final readonly class RefreshTokenStore
         }
     }
 
-    public function revokeAllForUser(string|int $userId, int $ttlSeconds): void
+    /**
+     * $userId is the canonical subject string — JwtUser::id() on an
+     * access token, or redeem()'s own `subject`.
+     */
+    public function revokeAllForUser(string $userId, int $ttlSeconds): void
     {
+        if ($userId === '') {
+            throw RefreshTokenUnavailableException::emptySubject();
+        }
+
         if ($ttlSeconds <= 0) {
             throw RefreshTokenUnavailableException::nonPositiveRevokeAllForUserTtl();
         }
@@ -120,7 +144,7 @@ final readonly class RefreshTokenStore
         }
     }
 
-    private function isRevokedForSubject(string|int $subject, int $issuedAt): bool
+    private function isRevokedForSubject(string $subject, int $issuedAt): bool
     {
         $cutoff = $this->cache->get($this->userKey($subject));
 
@@ -128,7 +152,12 @@ final readonly class RefreshTokenStore
     }
 
     /**
-     * @return array{subject: string|int, claims: array<string, mixed>, issuedAt: int}|null
+     * A record whose subject is not the canonical non-empty string
+     * issue() stores — a tampered or foreign cache entry — is
+     * unredeemable rather than reinterpreted, the same null redeem()
+     * already returns for a token that never existed.
+     *
+     * @return array{subject: string, claims: array<string, mixed>, issuedAt: int}|null
      */
     private function entry(string $token): ?array
     {
@@ -141,14 +170,15 @@ final readonly class RefreshTokenStore
         if (
             !is_array($value)
             || !isset($value['subject'], $value['claims'], $value['issuedAt'])
-            || !(is_string($value['subject']) || is_int($value['subject']))
+            || !is_string($value['subject'])
+            || $value['subject'] === ''
             || !is_array($value['claims'])
             || !is_int($value['issuedAt'])
         ) {
             return null;
         }
 
-        /** @var array{subject: string|int, claims: array<string, mixed>, issuedAt: int} $value */
+        /** @var array{subject: string, claims: array<string, mixed>, issuedAt: int} $value */
         return $value;
     }
 
@@ -157,8 +187,8 @@ final readonly class RefreshTokenStore
         return 'jwt-refresh.' . hash('sha256', $token);
     }
 
-    private function userKey(string|int $userId): string
+    private function userKey(string $userId): string
     {
-        return 'jwt-refresh-user.' . SubjectKey::digest($userId);
+        return 'jwt-refresh-user.' . hash('sha256', $userId);
     }
 }

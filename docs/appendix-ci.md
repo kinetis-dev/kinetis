@@ -19,11 +19,14 @@ then publishes each package's own release repo — see
 One job per package — every package in `packages.manifest.json`, plus
 `tools/` — matrixed across PHP 8.4 and 8.5 — every check below runs against both,
 not just one — each running against the exact same Docker images used
-for local development. The matrix is path-filtered, and
-`packages.manifest.json` is one of the paths that triggers it: a version
-bump changes the manifest and nothing else, since the generated
-`composer.json` carries no version field, and that commit is exactly the
-one a release gates on:
+for local development. Every push to `main` runs the whole matrix,
+whatever the push touched: a release round gates on this workflow having
+succeeded at the exact commit it publishes, and it can publish a version
+whose own push came earlier, so a commit that skipped the matrix would
+leave the gate proving nothing about the package code being tagged. Pull
+requests are path-filtered instead, `packages.manifest.json` included —
+a version bump changes the manifest and nothing else, since the
+generated `composer.json` carries no version field:
 
 - `composer validate --strict`
 - `composer install`
@@ -31,6 +34,10 @@ one a release gates on:
   FriendsOfPHP security advisory database.
 - PHPUnit — every package's own existing, fake-backed unit test suite.
   Skipped for `kinetis/pingpong`, which has none by design.
+  `kinetis/persistence` runs its suite in a container that compiles
+  `ext-sockets` first: its native Postgres driver refuses to construct
+  without it, and the suite constructs one. Only that step needs the
+  extension — PHPStan and Psalm read the package's own stubs.
 - PHPStan, level 8.
 - Psalm, `--taint-analysis` — data-flow analysis for injection-style
   bugs (SQL injection, XSS, ...), a different lens than PHPStan's
@@ -105,11 +112,14 @@ disguised PHPUnit test.
   release/fail, `maxAttempts`, priority queues; `S3FilesystemFactory`:
   write/read/exists/list/delete.
 - **`redis-cluster`** (`grokzen/redis-cluster`, 3 masters + 3 replicas) —
-  `ClusteredRedisSimpleCache`/`ClusterTopology`: the full PSR-16 surface
-  routed across every node, `clear()` fanning out to every shard, and
-  forced migrations exercising `-ASK`, `-MOVED`, chained redirects, and
-  concurrent traffic. Each case restores the slots it changes. The job
-  runs the suite twice against one cluster to enforce that isolation.
+  `kinetis/redis`'s `ClusterClient`: keys routed to the master that owns
+  them, `nodes()` against the live topology, and forced migrations
+  exercising `-MOVED`, `-ASK`, an `ASK`-redirected script, and a
+  `MOVED`-then-`ASK` sequence inside one operation. `kinetis/cache-redis`
+  then covers the PSR-16 surface across shards and a `clear()` that scans
+  every master while leaving other keys alone. Each case restores the
+  slots it changes. The job runs the suite twice against one cluster to
+  enforce that isolation.
 - **`runtime-conformance`** (matrix: a `dunglas/frankenphp` worker behind
   Caddy; `php:8.4-fpm-alpine` behind `nginx:alpine`) — the shared runtime
   adapter conformance suite (`Kinetis\Testing\Runtime`, see
@@ -222,6 +232,7 @@ above the number here by design:
 | `queue` | 60% |
 | `queue-rabbitmq` | 90% |
 | `queue-sqs` | 55% |
+| `redis` | 60% |
 | `revolt-http-client` | 75% |
 | `roadrunner-adapter` | 80% |
 | `search-opensearch` | 70% |

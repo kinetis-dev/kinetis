@@ -22,23 +22,26 @@ Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
-Polls the Lambda Runtime API and converts API Gateway v2 payloads to/from
-PSR-7, including `multipart/form-data` support — the one piece Lambda
-specifically needs that core's `FrankenPhpAdapter`/`FpmAdapter` don't.
+Polls the Lambda Runtime API and converts API Gateway v2 payloads to and
+from PSR-7.
 
 The request's identity is rebuilt from one authoritative field each —
 `requestContext.domainName` for the host, the forwarded headers for the
 scheme and port, `rawPath`/`rawQueryString` for the request target — so
 the URI, the `Host` header and the request target cannot disagree; an
 event where they do is reported as an invocation error rather than
-dispatched. Form bodies are held to `Kinetis\Http\Form\FormLimits`, the
-same ceilings core applies under every other runtime, and to
-`Kinetis\Http\Form\MultipartEnvelope`'s wire-level multipart contract,
-which runs before `riverline/multipart-parser` expands anything. That
-matters more here than anywhere else: there is no SAPI at all, so the
-framework's own contract is the whole defense. An event whose header map names one header under two
+dispatched. An event whose header map names one header under two
 spellings is refused too — an ambiguity resolved by key order is not an
 identity anything downstream can rely on.
+
+The body is handed on as raw PSR-7 bytes. Core's own
+`RequestBodyMiddleware` stages it, holds it to
+`Kinetis\Http\Form\FormLimits` and parses a form under
+`Kinetis\Http\Form\MultipartEnvelope`'s wire-level multipart contract —
+the same ceilings, the same refusals and the same statuses every other
+runtime delivers its bodies to. Those apply after delivery: API Gateway
+has already accepted the request and materialized its body, up to the
+platform's own 6 MB invocation payload limit, before this package runs.
 
 There's nothing to configure or call directly: install the package, and
 `RuntimeDetector` picks it up automatically the moment `AWS_LAMBDA_RUNTIME_API`

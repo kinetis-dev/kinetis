@@ -25,12 +25,15 @@ Every SQS call this backend makes, including a worker waiting for the
 next job, suspends rather than blocking the process. A worker given
 several queue names does not watch them simultaneously: it sweeps them
 in priority order, giving each an immediate non-blocking check first,
-and only then long-polls one queue at a time for a bounded slice — at
-most five seconds per queue, and never past the deadline it was given.
+and only then long-polls the highest-priority one for a bounded slice —
+at most five seconds, and no longer than what is left of the deadline it
+was given — before sweeping again. Once that slice comes back empty and
+the deadline has passed, `pop()` returns rather than sweeping once more.
 So a job on a lower-priority queue is never missed while a higher one is
-quiet, and a job arriving on a higher-priority queue mid-slice is picked
-up on the next sweep rather than instantly. {doc}`queue` has the full
-`pop()` contract.
+quiet, and a job arriving mid-slice is picked up on the next sweep rather
+than instantly. {doc}`queue` has the full `pop()` contract, including why
+the deadline bounds when the backend stops looking rather than when
+`pop()` returns.
 
 ## Configuring
 

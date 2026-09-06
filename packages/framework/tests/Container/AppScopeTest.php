@@ -327,11 +327,10 @@ final class AppScopeTest extends TestCase
     }
 
     /**
-     * The two policies a runtime adapter needs before the Kernel or its
-     * container exist. Registered here so an entry point that built
-     * neither still hands the adapter what the application configured,
-     * and so the Kernel's own MaxBodySizeMiddleware enforces that same
-     * object.
+     * The body ceilings RequestBodyMiddleware enforces and the proxy
+     * policy an adapter needs before the Kernel exists. Registered here
+     * so an entry point that built neither still runs under what the
+     * application configured.
      */
     public function test_boot_registers_the_runtime_policies_the_config_describes(): void
     {
@@ -385,7 +384,7 @@ final class AppScopeTest extends TestCase
 
     public function test_boot_succeeds_when_redis_is_configured_but_the_driver_package_is_not_installed(): void
     {
-        // RedisSimpleCache/ClusteredRedisSimpleCache live in the separate
+        // RedisSimpleCache lives in the separate
         // kinetis/cache-redis package, never installed for core's own test
         // suite — this is the real, always-true "not installed" branch,
         // not a simulated one. Booting survives it: an application that

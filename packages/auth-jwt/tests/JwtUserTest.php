@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\AuthJwt\Tests;
 
 use Kinetis\AuthJwt\JwtUser;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use UnexpectedValueException;
 use stdClass;
@@ -23,13 +24,6 @@ final class JwtUserTest extends TestCase
         self::assertSame('user-42', $user->id());
     }
 
-    public function test_id_accepts_an_integer_subject(): void
-    {
-        $user = new JwtUser($this->claims(['sub' => 42]));
-
-        self::assertSame(42, $user->id());
-    }
-
     public function test_id_throws_when_the_subject_claim_is_missing(): void
     {
         $user = new JwtUser($this->claims(['role' => 'admin']));
@@ -37,6 +31,32 @@ final class JwtUserTest extends TestCase
         $this->expectException(UnexpectedValueException::class);
 
         $user->id();
+    }
+
+    /**
+     * A subject is one canonical non-empty string, so a claims object
+     * carrying anything else has no id to hand back. JwtAuthMiddleware
+     * rejects such a token with a 401 before a JwtUser is ever
+     * registered; constructing one directly is the only way to reach
+     * this at all.
+     */
+    #[DataProvider('nonCanonicalSubjects')]
+    public function test_id_throws_for_a_subject_that_is_not_a_non_empty_string(mixed $sub): void
+    {
+        $user = new JwtUser($this->claims(['sub' => $sub]));
+
+        $this->expectException(UnexpectedValueException::class);
+
+        $user->id();
+    }
+
+    public static function nonCanonicalSubjects(): iterable
+    {
+        yield 'an integer' => [42];
+        yield 'an empty string' => [''];
+        yield 'a float' => [42.5];
+        yield 'null' => [null];
+        yield 'a boolean' => [true];
     }
 
     public function test_claim_reads_an_arbitrary_claim(): void

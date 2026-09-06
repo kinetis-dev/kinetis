@@ -7,13 +7,8 @@ namespace Kinetis\Broadcasting\Tests\Fixtures;
 use Kinetis\Broadcasting\Attributes\BroadcastChannel;
 
 /**
- * Two distinct methods on the same class claim the identical pattern —
- * a conflict that only exists against the batch this class's own
- * registration is still staging (`$this->definitions` is empty when
- * this class registers alone), not against anything already committed
- * to the registry. Registering this class must reject it atomically:
- * the first method's own definition, staged only in memory while the
- * second is still being validated, must never survive the throw.
+ * Two methods on one class claiming the identical pattern — a conflict
+ * the class carries on its own, with nothing else registered.
  */
 final class IntraBatchDuplicateChannelAuthorizer
 {

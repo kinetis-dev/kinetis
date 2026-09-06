@@ -6,8 +6,8 @@ namespace Kinetis\Http;
 
 /**
  * Classifies a Content-Type header value by the media type it names —
- * the one place every request-body path in this framework, core and
- * satellite adapters alike, decides whether a body is form-encoded.
+ * the one place every request-body path in this framework decides
+ * whether a body is form-encoded.
  *
  * The comparison is exact on the type/subtype and
  * ASCII-case-insensitive, which is what RFC 9110 §8.3.1 requires:

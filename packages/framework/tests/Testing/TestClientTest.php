@@ -14,7 +14,6 @@ use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 use Nyholm\Psr7\Stream;
-use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\TestCase;
 
 final class TestClientTest extends TestCase
@@ -187,17 +186,22 @@ final class TestClientTest extends TestCase
 
     /**
      * The direct escape hatch — this class never guesses a multipart
-     * boundary from a plain array; the caller builds the real PSR-7
-     * request (uploaded file included) and hands it straight to send(),
-     * dispatched through the exact same Kernel every other method uses.
+     * boundary from a plain array; the caller writes the wire body it
+     * wants and hands it straight to send(), where the Kernel's own
+     * RequestBodyMiddleware reads the fields and the upload out of those
+     * bytes exactly as it does for a request off a socket.
      */
     public function test_send_dispatches_a_hand_built_multipart_request_directly(): void
     {
-        $avatar = new UploadedFile(Stream::create('fake image bytes'), 17, \UPLOAD_ERR_OK, 'avatar.png', 'image/png');
-        $request = new ServerRequest('POST', '/avatars')
-            ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary')
-            ->withParsedBody(['name' => 'Alon'])
-            ->withUploadedFiles(['avatar' => $avatar]);
+        $body = "------WebKitFormBoundary\r\n"
+            . "Content-Disposition: form-data; name=\"name\"\r\n\r\nAlon\r\n"
+            . "------WebKitFormBoundary\r\n"
+            . "Content-Disposition: form-data; name=\"avatar\"; filename=\"avatar.png\"\r\n"
+            . "Content-Type: image/png\r\n\r\nfake image bytes\r\n"
+            . "------WebKitFormBoundary--\r\n";
+
+        $request = new ServerRequest('POST', '/avatars', body: Stream::create($body))
+            ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary');
 
         $response = $this->client()->send($request);
 

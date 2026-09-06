@@ -8,7 +8,6 @@ use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\SimpleCache\AtomicCounterInterface;
-use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -28,7 +27,7 @@ use Psr\SimpleCache\CacheInterface;
  * requests that arrived together — a rate limiter that stops applying
  * under the exact concurrent load it exists to resist is not a rounding
  * error, so this is rejected at construction rather than left to a flag
- * (`Counter::isAtomic()`) the application has to remember to check.
+ * the application has to remember to check.
  * NullSimpleCache is checked first, for its own clearer message: a
  * counter that never stores anything enforces no limit at all while
  * still emitting healthy-looking X-RateLimit-* headers.
@@ -106,7 +105,7 @@ class RateLimitMiddleware implements MiddlewareInterface
 {
     private const string EXECUTED_ATTRIBUTE = 'kinetis.rate-limit.executed';
 
-    private readonly Counter $counter;
+    private readonly AtomicCounterInterface $counter;
 
     /**
      * This policy's own edge, as the one object that answers "who is
@@ -146,7 +145,7 @@ class RateLimitMiddleware implements MiddlewareInterface
             throw RateLimitUnavailableException::notAtomic();
         }
 
-        $this->counter = new Counter($cache);
+        $this->counter = $cache;
 
         if ($maxAttempts < 1) {
             throw InvalidRateLimitConfigException::nonPositiveMaxAttempts($maxAttempts);

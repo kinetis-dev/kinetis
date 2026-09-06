@@ -429,7 +429,7 @@ Registered automatically on every `Kernel`, immediately inside
 Kernel's global pipeline, outermost to innermost:
   SecurityHeadersMiddleware    ← always first, unconditionally
   ExceptionHandlerMiddleware   ← always second, unconditionally
-  MaxBodySizeMiddleware        ← always third, unconditionally
+  RequestBodyMiddleware        ← always third, unconditionally
   ...your own $app->middleware() registrations, in order...
   (routing, then a matched route's own middleware, then the controller)
 ```
@@ -536,6 +536,12 @@ explanation of why this matters):
   legitimately becomes the ordinary generic `500` `ExceptionHandlerMiddleware`
   produces for any other uncaught exception, logged exactly once, with
   the same development-vs-production detail rules as any other failure.
+- **The response streams its own body** — its scope is disposed after the
+  last byte instead of before `handle()` returns (see {doc}`container`),
+  by which point the status, the headers and part of the body are already
+  on the wire. A disposal failure there is logged through `AppScope`'s own
+  logger and goes no further; a failure raised by the emitter itself is
+  the one that propagates.
 
 Either way, `RequestScope::dispose()`'s own contract still holds
 underneath this: every registered dispose callback runs, even if an
@@ -638,12 +644,12 @@ public function widget(): ResponseInterface
 }
 ```
 
-## Built in: `MaxBodySizeMiddleware`
+## Built in: `RequestBodyMiddleware`
 
 Registered unconditionally, right after `ExceptionHandlerMiddleware` —
-also not something you opt into. Without it, nothing checks how large a
-request body is before `#[Body]` reads the whole thing into memory and
-`json_decode()`s it.
+also not something you opt into. It is the one place a request body
+becomes something a handler can use, whichever runtime delivered it: an
+adapter turns its transport into a raw PSR-7 request and stops there.
 
 ```{code-block} text
 :caption: .env
@@ -653,52 +659,60 @@ MAX_BODY_SIZE=2097152
 Bytes, not a `"2M"`-style string. Defaults to `2097152` (2 MiB) when
 unset.
 
+Three things happen, in order.
+
+**The declared `Content-Length` is checked first**, so a request that
+honestly labels itself oversized is refused without being read.
+
+**Then the body is staged** — read once, incrementally, counted, into a
+seekable temporary stream, and rewound. This is what bounds a request
+with no `Content-Length` at all, or one that under-reports its real
+size. It happens for every request, not only for forms, and it is what
+lets everything downstream see one body and one length: `read()`,
+`getContents()` and a plain `(string)` cast all return the identical
+accepted bytes. A raw or binary body reaches the handler untouched apart
+from being staged.
+
+**Then a form is parsed.** For `application/x-www-form-urlencoded` and
+`multipart/form-data` on a method that carries a body, the staged bytes
+are read into `getParsedBody()`/`getUploadedFiles()` under
+`Kinetis\Http\Form\FormLimits` — the byte ceiling above plus six
+ceilings a byte count cannot express (input variables, file parts,
+nesting depth, multipart parts, header lines per part, and bytes per
+header line). The body stays readable afterwards, rewound and complete.
+Nothing is truncated: a form past any ceiling is refused whole.
+
+Two answers to a bad body, and only two.
+
 ```{code-block} json
-:caption: What an oversized request produces (413)
+:caption: What an oversized or over-complicated request produces (413)
 {
     "error": "Request body exceeds the maximum allowed size of 2097152 bytes."
 }
 ```
 
-Two checks, not one. A declared `Content-Length` over the limit is
-rejected immediately, before the body is touched at all. Underneath
-that, the body itself is capped as it's actually read — so a request
-with no `Content-Length` header, or one that under-reports its real
-size, is still rejected once a `#[Body]` route actually reads past the
-limit. A route that never reads the body (a `GET`, or one using only
-`#[Query]`/path parameters) is unaffected either way, since nothing tries
-to read past the limit in the first place.
+```{code-block} json
+:caption: What a body that cannot be parsed produces (400)
+{
+    "error": "The request body could not be parsed."
+}
+```
 
-The actual-bytes-read cap applies to any code that reads the request
-body stream via `read()`/`getContents()`, not only `#[Body]`'s own JSON
-hydration — `kinetis/mcp`'s `/mcp` endpoint and
-`kinetis/broadcasting`'s `/broadcasting/auth` raw
-`application/x-www-form-urlencoded` fallback both read the body the
-same way and get the identical `413`. What it does *not* reach is a
-body a runtime already parsed into a ready-made array *before* Kinetis
-code ever sees it — a `multipart/form-data` or
-`application/x-www-form-urlencoded` body, parsed by the SAPI under
-FrankenPHP and PHP-FPM and by the adapter itself under
-`kinetis/bref-adapter` and `kinetis/roadrunner-adapter`.
-
-That body is bounded by `Kinetis\Http\Form\FormLimits` instead, in the
-adapter, against the same `MAX_BODY_SIZE` and the same default this
-middleware uses — plus four ceilings a byte count cannot express (input
-variables, file parts, nesting depth, multipart part and header counts)
-and a `413` rather than a silently shortened form. A separate boundary
-from the one this middleware enforces, not a gap in it.
+The `400` message is fixed and never carries the parser's own text,
+which is assembled from the input that failed.
 
 ```{note}
 One further ceiling sits outside PHP entirely and is not
-`MAX_BODY_SIZE`'s to enforce: under `kinetis/roadrunner-adapter`, the
-required `http.max_request_size` setting is what bounds a body whose
-length was never declared, since RoadRunner hands PHP the whole thing at
-once. Under FrankenPHP and PHP-FPM, `enable_post_data_reading=0` is what
-makes the body Kinetis's to bound in the first place — PHP's own
-`post_max_size`/`max_input_vars` never see it. Under
-`kinetis/bref-adapter` there is no mechanism at all below Lambda's own
-invocation payload limit, which is exactly why `FormLimits` matters most
-there. See {doc}`runtime-adapters` for the numbers and the reasoning.
+`MAX_BODY_SIZE`'s to enforce, because it applies before Kinetis has the
+bytes at all: under `kinetis/roadrunner-adapter`, the required
+`http.max_request_size` setting is what bounds a body whose length was
+never declared, since RoadRunner reads the whole thing into memory
+before the PHP worker runs. Under `kinetis/bref-adapter`, API Gateway
+has already accepted and materialized the body, up to Lambda's own 6 MB
+invocation payload limit. Under FrankenPHP and PHP-FPM,
+`enable_post_data_reading=0` is what makes the body Kinetis's to bound
+in the first place — PHP's own `post_max_size`/`max_input_vars` never
+see it. See {doc}`runtime-adapters` for the numbers and the reasoning.
 ```
 
 ## Built in: `CorsMiddleware`
@@ -1008,8 +1022,8 @@ $app->bind(RateLimitMiddleware::class, fn ($c) => new RateLimitMiddleware(
 ```{note}
 **The cache must count atomically, and construction enforces it.**
 `RateLimitMiddleware` requires the given cache to implement
-`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` and
-`ClusteredRedisSimpleCache` do — and throws
+`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` does
+— and throws
 `Exception\RateLimitUnavailableException` at construction for any
 cache that doesn't, `NullSimpleCache` included.
 

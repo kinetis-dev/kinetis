@@ -370,12 +370,13 @@ final class Dispatcher
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];
 
-        // A DTO constructor parameter typed UploadedFileInterface needs no
-        // special-casing inside Hydrator: castScalar() already passes any
-        // non-scalar-typed value through unchanged, so merging the files
-        // bag in here is sufficient — Hydrator never needs to know files
-        // exist at all. Left-wins union: a same-named regular field, if
-        // one somehow exists, isn't silently overwritten by a file.
+        // A DTO constructor parameter typed UploadedFileInterface is an
+        // ordinary non-instantiable class-typed field to Hydrator: it
+        // accepts an existing instance of the declared interface and
+        // nothing else, so merging the files bag in here is what makes
+        // the field resolvable — Hydrator never needs to know files exist
+        // at all. Left-wins union: a same-named regular field, if one
+        // somehow exists, isn't silently overwritten by a file.
         $data = $decoded + $this->uploadedFilesByFieldName($request);
 
         $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
@@ -396,9 +397,12 @@ final class Dispatcher
      * An empty body is treated as "no fields" — the same outcome a plain
      * `{}` body already produces — rather than an error, since a route
      * with an all-optional #[Body] DTO commonly expects exactly that. A
-     * non-empty body that fails to parse, or parses to something other
-     * than a JSON object/array (null, a bare string, a bare number, a
-     * bare bool), throws instead of silently becoming "no fields" too.
+     * non-empty body must decode to a JSON *object*: a #[Body] parameter
+     * is a DTO and a DTO's fields are named, so a top-level JSON array
+     * is as malformed as null, a bare string, a bare number or a bare
+     * bool, and all of them throw. This decoder is the only place that
+     * distinction exists — `Hydrator` sees a field map, in which `[]`
+     * and `{}` are the same value.
      *
      * Decoded with `associative: false`, not `true`, and run through
      * `JsonTree::convert()` — this is what lets `Hydrator::typeMismatchMessage()`'s
@@ -427,15 +431,11 @@ final class Dispatcher
 
         $converted = JsonTree::convert($decoded);
 
-        if ($converted instanceof JsonObject) {
-            return $converted->toArray();
-        }
-
-        if (!is_array($converted)) {
+        if (!$converted instanceof JsonObject) {
             throw MalformedRequestBodyException::notAnObject();
         }
 
-        return $converted;
+        return $converted->toArray();
     }
 
     /**
@@ -683,13 +683,7 @@ final class Dispatcher
             }
         }
 
-        $value = match ($scalarType) {
-            'int' => (int) $raw,
-            'float' => (float) $raw,
-            'bool' => (bool) $raw,
-            'string' => (string) $raw,
-            default => $raw,
-        };
+        $value = Hydrator::castScalar($raw, $scalarType);
 
         $errors = [];
 

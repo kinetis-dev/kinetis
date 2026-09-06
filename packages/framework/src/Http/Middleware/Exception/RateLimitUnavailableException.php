@@ -23,8 +23,7 @@ final class RateLimitUnavailableException extends RuntimeException
             'RateLimitMiddleware requires a cache implementing Kinetis\SimpleCache\AtomicCounterInterface: '
             . 'counting by reading the value and writing it back is not safe across processes, and lets '
             . 'the limit be exceeded by every request that arrives concurrently rather than sequentially. '
-            . 'Kinetis\SimpleCache\RedisSimpleCache and ClusteredRedisSimpleCache (kinetis/cache-redis) both '
-            . 'implement it.',
+            . 'Install kinetis/cache-redis for a Redis-backed cache that implements it.',
         );
     }
 }

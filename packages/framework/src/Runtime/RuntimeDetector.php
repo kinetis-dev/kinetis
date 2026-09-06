@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kinetis\Runtime;
 
-use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Adapters\FpmAdapter;
 use Kinetis\Runtime\Adapters\FrankenPhpAdapter;
@@ -33,16 +32,17 @@ final class RuntimeDetector
     private const ROADRUNNER_ADAPTER_CLASS = 'Kinetis\RoadRunnerAdapter\RoadRunnerAdapter';
 
     /**
-     * $limits and $trustedProxies are the application's own, built once
-     * from its Config at the entry point and handed to whichever adapter
-     * is chosen. Required, and first: an adapter bounds and parses a
-     * request body before the Kernel or its container exist, so it cannot
-     * resolve either of them and must not invent one — a body ceiling or
-     * a proxy policy an adapter guessed at is a body ceiling or a proxy
-     * policy the application never configured.
+     * $trustedProxies is the application's own, built once from its
+     * Config at the entry point and handed to whichever adapter is
+     * chosen. Required, and first: an adapter decides a request's scheme
+     * and client address before the Kernel or its container exist, so it
+     * cannot resolve that policy and must not invent one — a proxy policy
+     * an adapter guessed at is a proxy policy the application never
+     * configured. The request body needs no such argument: an adapter
+     * hands it on raw, and the Kernel's own RequestBodyMiddleware bounds
+     * and parses it under the FormLimits bound in the container.
      */
     public static function detect(
-        FormLimits $limits,
         TrustedProxies $trustedProxies,
         ?bool $frankenPhpAvailable = null,
         ?string $lambdaRuntimeApi = null,
@@ -53,7 +53,7 @@ final class RuntimeDetector
         $roadRunnerMode ??= getenv('RR_MODE') ?: null;
 
         if ($frankenPhpAvailable) {
-            return new FrankenPhpAdapter($limits, $trustedProxies);
+            return new FrankenPhpAdapter($trustedProxies);
         }
 
         // RR_MODE has several real values (temporal, jobs, grpc, tcp,
@@ -74,7 +74,7 @@ final class RuntimeDetector
              *     check just above is exactly what makes reaching this
              *     line safe.
              */
-            return new $adapterClass($limits, $trustedProxies);
+            return new $adapterClass($trustedProxies);
         }
 
         if ($lambdaRuntimeApi !== null) {
@@ -92,9 +92,9 @@ final class RuntimeDetector
              *     class-level docblock). The class_exists() check just
              *     above is exactly what makes reaching this line safe.
              */
-            return new $adapterClass($lambdaRuntimeApi, $limits);
+            return new $adapterClass($lambdaRuntimeApi);
         }
 
-        return new FpmAdapter($limits, $trustedProxies);
+        return new FpmAdapter($trustedProxies);
     }
 }

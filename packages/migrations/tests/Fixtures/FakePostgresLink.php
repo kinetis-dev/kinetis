@@ -32,7 +32,7 @@ final class FakePostgresLink implements PostgresLink
      * Every query() call's own SQL, verbatim, in order — str_contains()
      * alone (what this fake's own dispatch already uses) can't tell a
      * correct "pg_try_advisory_lock(870124, 1)" call apart from one with
-     * a wrong/dropped namespace or key value, so a test asserting real
+     * a wrong or dropped namespace or key, so a test asserting real
      * correctness has to inspect these directly.
      *
      * @var list<string>
@@ -41,16 +41,6 @@ final class FakePostgresLink implements PostgresLink
 
     /** Returned as the acquired flag's own value once a poll succeeds — an int by default, but overridable to prove a (int) cast actually matters. */
     public mixed $acquiredValue = 1;
-
-    /**
-     * Returned as the released flag's own value — an int by default,
-     * but overridable to false to simulate Postgres's own
-     * pg_advisory_unlock() reporting the session did not hold the
-     * lock, distinct from $releaseShouldFail (which simulates the
-     * query call itself throwing rather than returning a value at
-     * all).
-     */
-    public mixed $releasedValue = 1;
 
     public function __construct(
         private readonly int $acquiresAfterAttempts = 1,
@@ -74,7 +64,7 @@ final class FakePostgresLink implements PostgresLink
 
             $this->lockReleased = true;
 
-            return new BufferedSqlResult([['released' => $this->releasedValue]], 1, 1);
+            return new BufferedSqlResult([], 0, null);
         }
 
         throw new LogicException("FakePostgresLink does not execute queries: {$sql}");

@@ -22,7 +22,7 @@ $cacheDir = $argv[1] ?? (__DIR__ . '/fixtures/manyControllers.cache');
 $app = new AppScope();
 $app->boot();
 
-$httpCache = (new CacheStore($cacheDir))->loadHttp();
+$httpCache = (new CacheStore($cacheDir))->load()->http;
 $router = Router::fromArray($httpCache->routes);
 
 $kernel = new Kernel($app, $router, httpCache: $httpCache);

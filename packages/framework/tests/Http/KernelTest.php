@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Http;
 
 use Kinetis\Cache\CacheFormat;
-use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\CommandCache;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\Compiler;

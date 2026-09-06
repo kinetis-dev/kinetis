@@ -68,7 +68,13 @@ interface TelemetryInterface
 
     public function transactionStarted(string $system): mixed;
 
-    /** $outcome is 'commit' or 'rollback'. */
+    /**
+     * $outcome is 'commit' for a COMMIT the server acknowledged,
+     * 'rollback' for a ROLLBACK it acknowledged, and 'unknown' for
+     * everything else — a lost or discarded connection, a finish the
+     * server never answered, a transaction ended without sending one,
+     * and one the server ended on its own.
+     */
     public function transactionEnded(mixed $token, string $outcome): void;
 
     /** A concurrently() batch. */

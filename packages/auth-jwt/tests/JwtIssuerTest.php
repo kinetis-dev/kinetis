@@ -31,6 +31,11 @@ final class JwtIssuerTest extends TestCase
     // alike — self::SECRET (40 bytes) only clears HS256's.
     private const string LONG_SECRET = 'this-is-a-generously-long-test-secret-key-well-over-64-bytes-do-not-use-in-production';
 
+    /**
+     * An integer application id becomes the canonical subject string at
+     * issuance — the same conversion RefreshTokenStore::issue() makes,
+     * so both token kinds name one subject.
+     */
     public function test_issues_a_token_with_the_subject_as_a_string_claim(): void
     {
         $token = new JwtIssuer(self::SECRET)->issue(42);
@@ -38,6 +43,13 @@ final class JwtIssuerTest extends TestCase
         $claims = JWT::decode($token, new Key(self::SECRET, 'HS256'));
 
         self::assertSame('42', $claims->sub);
+    }
+
+    public function test_issue_rejects_an_empty_subject(): void
+    {
+        $this->expectException(JwtIssuerException::class);
+
+        new JwtIssuer(self::SECRET)->issue('');
     }
 
     public function test_extra_claims_are_included(): void

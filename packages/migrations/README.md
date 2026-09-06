@@ -30,8 +30,8 @@ DDL builder, no schema-diffing — the same "thin, not an ORM" shape as
 
 ```php
 // migrations/20260810143000_create_orders_table.php
-use Amp\Mysql\MysqlLink;
-use Amp\Postgres\PostgresLink;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Migrations\Migration;
 
 return new class implements Migration
@@ -57,7 +57,7 @@ return new class implements Migration
 
 ```sh
 vendor/bin/kinetis migrate                     # runs every pending migration
-vendor/bin/kinetis migrate:rollback            # rolls back the most recently applied one
+vendor/bin/kinetis migrate:rollback            # rolls back the applied migration whose name sorts last
 vendor/bin/kinetis migrate:status              # lists applied/pending migrations
 vendor/bin/kinetis migrate:make <description>
 ```

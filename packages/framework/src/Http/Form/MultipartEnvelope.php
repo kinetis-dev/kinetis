@@ -14,16 +14,13 @@ use Kinetis\Http\MediaType;
  * and end — with {@see FormLimits}' structural ceilings applied while
  * the scan runs, before anything materializes a part.
  *
- * **Why the framework owns this rather than each parser.** Two things
- * would otherwise differ per runtime. The first is cost: every real
- * multipart parser expands the whole body and reports its shape
- * afterwards — `riverline/multipart-parser`'s `getParts()` builds a
- * `StreamedPart` and a stream for every part before a caller can ask how
- * many there are — so a ceiling checked on that result is checked after
- * the cost it exists to bound has been paid. The scan here runs over
- * bytes already bounded by {@see FormLimits::assertBodyWithinLimit()},
- * allocates nothing per part beyond its own offsets while counting, and
- * refuses at the first part or header line past a ceiling.
+ * **Why a scan rather than a parse.** A parser expands the whole body
+ * and reports its shape afterwards, so a ceiling checked on that result
+ * is checked after the cost it exists to bound has been paid. The scan
+ * here runs over bytes already bounded by
+ * {@see FormLimits::assertBodyWithinLimit()}, allocates nothing per part
+ * beyond its own offsets while counting, and refuses at the first part
+ * or header line past a ceiling.
  *
  * It also counts the two things a parsed result cannot show:
  *
@@ -37,15 +34,13 @@ use Kinetis\Http\MediaType;
  *   thousand lines on the wire; the second number is the one that
  *   bounds what a parser has to hold.
  *
- * The second is meaning, which is what the rest of this class is. A
- * `multipart/form-data` body is not one language: parsers disagree about
- * what a delimiter is, whether a part's bytes are decoded before they are
- * handed over, and what a `Content-Disposition` parameter says. Kinetis
- * accepts one reading of it, the byte-literal RFC 7578 subset, and
- * refuses everything a second reading exists for — so a form means the
- * same thing under FrankenPHP, Lambda and RoadRunner, whether the parse
- * that follows is {@see MultipartFormBuilder}'s or a satellite's own
- * `riverline/multipart-parser`:
+ * The rest of this class is meaning. A `multipart/form-data` body is not
+ * one language: readings of it disagree about what a delimiter is,
+ * whether a part's bytes are decoded before they are handed over, and
+ * what a `Content-Disposition` parameter says. Kinetis accepts one
+ * reading, the byte-literal RFC 7578 subset, and refuses everything a
+ * second reading exists for — so a form means the same thing under
+ * FrankenPHP, Lambda and RoadRunner:
  *
  * - **The root `Content-Type` names exactly one boundary.** Its
  *   parameter section is read whole, under the same grammar a part's
@@ -86,11 +81,8 @@ use Kinetis\Http\MediaType;
  *   last-wins to one parser, first-wins to another, and neither to a
  *   third.
  *
- * {@see parts()} returns the same scan's results, so the SAPI bridge
- * parses a body from exactly what was counted and checked. A satellite
- * that hands the body to its own parser calls {@see assertWithinLimits()}
- * first, over the same bytes: by the time its parser runs, every input
- * the two of them would have read differently has already been refused.
+ * {@see parts()} returns the same scan's results, so a body is parsed
+ * from exactly what was counted and checked.
  */
 final class MultipartEnvelope
 {
@@ -108,22 +100,13 @@ final class MultipartEnvelope
     private const array IDENTITY_ENCODINGS = ['7bit', 'binary'];
 
     /**
-     * Counts and checks the envelope without keeping any of it — the
-     * preflight for a parser that will expand the body itself.
-     */
-    public static function assertWithinLimits(string $body, string $contentType, FormLimits $limits): void
-    {
-        self::scan($body, $contentType, $limits, collect: false);
-    }
-
-    /**
-     * The parts, in arrival order, from the same scan.
+     * The parts, in arrival order.
      *
      * @return list<MultipartPart>
      */
     public static function parts(string $body, string $contentType, FormLimits $limits): array
     {
-        return self::scan($body, $contentType, $limits, collect: true);
+        return self::scan($body, $contentType, $limits);
     }
 
     /**
@@ -139,7 +122,7 @@ final class MultipartEnvelope
      *
      * @return list<MultipartPart>
      */
-    private static function scan(string $body, string $contentType, FormLimits $limits, bool $collect): array
+    private static function scan(string $body, string $contentType, FormLimits $limits): array
     {
         $boundary = self::boundary($contentType);
 
@@ -169,11 +152,7 @@ final class MultipartEnvelope
 
             $limits->assertMultipartPartCount(++$count);
 
-            $part = self::readPart(substr($search, $start, $next - $start), $limits, $collect);
-
-            if ($part !== null) {
-                $parts[] = $part;
-            }
+            $parts[] = self::readPart(substr($search, $start, $next - $start), $limits);
 
             $delimiter = $next;
         }
@@ -320,7 +299,7 @@ final class MultipartEnvelope
      * One part's own bytes: header lines up to the first blank line,
      * then everything after it.
      */
-    private static function readPart(string $raw, FormLimits $limits, bool $collect): ?MultipartPart
+    private static function readPart(string $raw, FormLimits $limits): MultipartPart
     {
         // A part with no headers at all begins with the blank line
         // itself, so there is no CRLFCRLF to find — the terminator is the
@@ -358,10 +337,6 @@ final class MultipartEnvelope
 
         $disposition = self::headerValue($headers, 'Content-Disposition');
         $parameters = $disposition === null ? [] : self::dispositionParameters($disposition);
-
-        if (!$collect) {
-            return null;
-        }
 
         return new MultipartPart(
             $headers,

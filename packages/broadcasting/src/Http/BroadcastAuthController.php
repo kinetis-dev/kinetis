@@ -135,10 +135,13 @@ final readonly class BroadcastAuthController
             return $parsed;
         }
 
-        // The body reaching here is already bounded and complete:
-        // MaxBodySizeMiddleware settles the byte ceiling and stages the
-        // whole body before any handler runs, so an oversized request
-        // is a 413 that never arrives at this controller.
+        // The body reaching here is bounded and complete:
+        // RequestBodyMiddleware stages it whole against the byte ceiling
+        // and parses the form media types into getParsedBody() before
+        // any handler runs, so an oversized request is a 413 that never
+        // arrives here and this branch sees only a body that carried no
+        // fields. getContents() rather than a string cast, because the
+        // staged stream is what carries the accepted bytes.
         parse_str($request->getBody()->getContents(), $fallback);
 
         $result = [];

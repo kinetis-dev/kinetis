@@ -57,6 +57,11 @@ jobs:
           # reason auth-jwt's own threshold below was re-measured — see its
           # comment for the full explanation.
           - { name: persistence, dir: packages/persistence, minMsi: 80, minCoveredMsi: 80 }
+          # A provisional floor: this package's Infection job has not
+          # run yet, so 60 is a starting point rather than a measurement.
+          # Set it from the score its own first run reports, the way
+          # every other threshold here was.
+          - { name: redis, dir: packages/redis, minMsi: 60, minCoveredMsi: 60 }
           - { name: cache-redis, dir: packages/cache-redis, minMsi: 75, minCoveredMsi: 75 }
           - { name: auth, dir: packages/auth, minMsi: 70, minCoveredMsi: 70 }
           # Re-measured for real (66.75% in CI, 69% locally — Infection's

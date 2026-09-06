@@ -127,7 +127,6 @@ converges on:
 declare(strict_types=1);
 
 use Kinetis\Container\AppScope;
-use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\TrustedProxies;
@@ -143,11 +142,12 @@ $app->boot();
 
 $router = RouteDiscovery::discover($projectRoot);
 
-// The two policies an adapter needs before the Kernel exists: how many
-// bytes a request body may carry, and whose forwarded headers may decide
-// its scheme. AppScope::boot() registered both from Config; the adapter
-// is handed the same instances the Kernel will enforce.
-$adapter = RuntimeDetector::detect($app->get(FormLimits::class), $app->get(TrustedProxies::class));
+// The one policy an adapter needs before the Kernel exists: whose
+// forwarded headers may decide this request's scheme and client address.
+// AppScope::boot() registered it from Config. The body ceilings are not
+// passed here — the adapter hands the body on raw, and the Kernel's own
+// RequestBodyMiddleware bounds and parses it.
+$adapter = RuntimeDetector::detect($app->get(TrustedProxies::class));
 $kernel = new Kernel($app, $router, isPersistent: $adapter->isPersistent());
 
 $adapter->run($kernel->handle(...));

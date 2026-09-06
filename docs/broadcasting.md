@@ -106,13 +106,11 @@ controller is, and every `#[BroadcastChannel]` method is itself part of
 the AOT cache — see {doc}`caching`.
 
 The client sends `socket_id`/`channel_name` as
-`application/x-www-form-urlencoded` fields. The endpoint reads whatever
-runtime-parsed body is already available (`getParsedBody()`) and, only
-when that's empty, parses the raw request body itself — reading it via
-`getContents()`, not a plain string cast, which is what makes
-`MaxBodySizeMiddleware` (see {doc}`middleware`) reject an oversized
-request with a `413` on this fallback path too, exactly as it would for
-any other route.
+`application/x-www-form-urlencoded` fields. `RequestBodyMiddleware` (see
+{doc}`middleware`) has already bounded the body and parsed those fields
+into `getParsedBody()` by the time the endpoint runs, so an oversized
+request — with or without an honest `Content-Length` — gets a `413`
+before the controller sees anything.
 
 Both fields must also match the Pusher protocol's own grammar —
 `socket_id` a pair of digit runs joined by a dot (`1234.5678`),
@@ -144,11 +142,11 @@ final class OrderChannels
 }
 ```
 
-`{orderId}` matches a channel name segment the same way a route
-placeholder does, but never crosses a `.` — the pattern names the
-channel **without** its `private-`/`presence-` prefix, since the prefix
-only selects which of the two auth responses gets built, not which
-pattern applies. A method's parameters must be: an optional leading
+`{orderId}` matches one whole channel-name segment and never crosses a
+`.` — the pattern names the channel **without** its
+`private-`/`presence-` prefix, since the prefix only selects which of
+the two auth responses gets built, not which pattern applies. A method's
+parameters must be: an optional leading
 `CurrentUserInterface`, then exactly one `string` parameter per
 placeholder, named to match, in order — a mismatch throws
 `InvalidChannelAuthorizerException` at registration, not the first time
@@ -175,51 +173,69 @@ missing this, or exceeding either limit, is never signed: the
 subscription is rejected the same way a `false` private-channel result
 is, not a server error.
 
-A channel with no authorizer registered for it, or a request with no
-`CurrentUserInterface` on the request scope (register one from your own
-auth middleware first — see {doc}`auth` or {doc}`auth-jwt`), is rejected
-with `401`/`403` — never a silent subscribe.
+A channel with no authorizer registered for it is rejected with `403`.
 
-### Pattern grammar and precedence
+The leading `CurrentUserInterface` parameter decides whether the channel
+requires an identity. Declaring it means the request must carry a
+`CurrentUserInterface` on its scope — register one from your own auth
+middleware first, see {doc}`auth` or {doc}`auth-jwt` — and a request
+without one is rejected with `401` before the method runs. Omitting it
+means the method authorizes from its own context, so an authorizer can
+admit an anonymous request, or one identified by something
+other than a logged-in user (an invite token, a signed link, a tenant
+resolved from the host). A `private-`/`presence-` prefix selects which
+auth response gets signed; it does not by itself impose an application
+login. What a channel requires is whatever its authorizer checks.
 
-A dot-separated segment holds **at most one** `{name}` placeholder,
-with optional literal text directly before and/or after it —
-`orders`, `{orderId}`, and `order-{id}` are all valid segments;
-`{a}-{b}` (two placeholders in one segment) is not. A placeholder name
-must also be unique across the whole pattern — `orders.{id}.{id}` is
-rejected too. Both are enforced when the pattern is compiled, so a
-malformed pattern fails at registration (or when hydrating a compiled
-cache) rather than producing a broken match later.
+### Pattern grammar and conflicts
 
-More than one `#[BroadcastChannel]` pattern can match the same channel
-name — `orders.admin` and `orders.{orderId}` both match the literal
-channel `orders.admin`. Which authorizer runs is decided by a fixed
-precedence, never by registration or discovery order: a channel-name
-segment that only satisfies a literal pattern's own exact text is
-always narrower than one that also satisfies an overlapping
-placeholder pattern in the same position, and between two placeholder
-segments, the one whose required prefix and/or suffix text is a
-strict extension of the other's is the narrower one — `orders.{id}-final-draft`
-always wins over `orders.{id}-draft` for a channel name both match,
-since every name ending in `-final-draft` also ends in `-draft`, but
-not the reverse. This holds regardless of which class was registered
-first or how a compiled cache artifact happens to list them.
+A pattern is dot-separated segments. Each segment is either one literal
+or exactly one whole `{name}` placeholder — `orders`, `{orderId}`,
+`orders.{orderId}.items`. A placeholder sharing its segment with literal
+text (`order-{id}`), two placeholders in one segment (`{a}-{b}`), a
+stray brace, an empty segment, and a placeholder name used twice in one
+pattern (`orders.{id}.{id}`) are all rejected where the pattern is
+parsed, so a malformed pattern fails at registration or when a compiled
+cache is hydrated, never at match time.
 
-Two patterns that differ **only** in a placeholder's own name —
-`orders.{orderId}` and `orders.{id}` — match exactly the same channel
-names with identical specificity. Two patterns can also overlap
-without either one being narrower — `orders.archived-{id}` and
-`orders.{id}-2024` both match `orders.archived-2024`, but neither
-contains the other (`orders.archived-foo` matches only the first;
-`orders.bar-2024` matches only the second). Neither case has a
-principled winner, so registering both throws
-`InvalidChannelAuthorizerException` at registration time (or the
-equivalent classified cache-artifact exception when hydrating a
-compiled cache) rather than one silently winning. Patterns that only
-share the same *shape* without the same *literal* content —
-`orders.{orderId}` and `team.{teamId}` — are completely unaffected;
-they can never both match the same channel name, so there's nothing to
-disambiguate.
+Two patterns conflict when some channel name could match both: they have
+the same segment count, and at every position either both hold the same
+literal or at least one holds a placeholder. Registering the second one
+throws `InvalidChannelAuthorizerException` (or the classified
+cache-artifact exception when hydrating a compiled cache), whichever
+order the two arrive in. So each of these pairs is rejected:
+
+- `orders.admin` and `orders.{orderId}` — the literal segment satisfies
+  the placeholder.
+- `orders.{orderId}` and `orders.{id}` — the same template under a
+  different placeholder name.
+- `orders.{orderId}` and `{scope}.admin` — they cross at
+  `orders.admin`.
+
+Patterns that no channel name can share coexist. `orders.{orderId}` and
+`team.{teamId}` hold unequal literals in their first segment;
+`orders.{orderId}` and `lobby` have different segment counts.
+
+There is no precedence between two authorizers, and no fallthrough from
+a denial to a broader pattern: at most one pattern claims any channel
+name, and its authorizer's answer is the answer. A channel that needs a
+special case for one name handles it inside a single authorizer:
+
+```{code-block} php
+#[BroadcastChannel('orders.{orderId}')]
+public function authorizeOrder(CurrentUserInterface $user, string $orderId): bool
+{
+    if ($orderId === 'admin') {
+        return $this->users->isAdmin($user->id());
+    }
+
+    return $this->orders->belongsTo($orderId, $user->id());
+}
+```
+
+The alternative is to give the two cases channel names that cannot
+collide — `orders.{orderId}` and `orders-admin.{view}` — which the same
+rule then keeps apart on its own.
 
 ## Configuring
 
@@ -243,9 +259,11 @@ on whichever one happens to broadcast first. Every key is
 `Config::scopedKey()`-scoped for named connections:
 `BROADCAST_KEY` + `notifications` → `BROADCAST_NOTIFICATIONS_KEY`.
 
-Pointed at a real Pusher account, drop `BROADCAST_HOST`/`BROADCAST_PORT`/
-`BROADCAST_TLS` and use the account's own cluster — `api-{cluster}.pusher.com`,
-port `443`, TLS on (the defaults).
+`BROADCAST_HOST` defaults to `api.pusherapp.com`, with port `443` and
+TLS on. There is no cluster selector: a Pusher account outside the
+default cluster reaches its own hostname only when `BROADCAST_HOST` is
+set to it explicitly — `api-eu.pusher.com` for the `eu` cluster, and so
+on for the cluster the account's dashboard names.
 
 ## Verified
 

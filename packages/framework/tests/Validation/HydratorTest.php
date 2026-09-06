@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Validation;
 
+use Kinetis\Tests\Http\Fixtures\Address;
+use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateNoteRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Http\Fixtures\CreateProductRequest;
@@ -11,9 +13,16 @@ use Kinetis\Tests\Http\Fixtures\CreateUserRequest;
 use Kinetis\Tests\Http\Fixtures\HiddenRequest;
 use Kinetis\Tests\Http\Fixtures\RegisterAccountRequest;
 use Kinetis\Tests\Http\Fixtures\UpdateStatusRequest;
+use Kinetis\Tests\Validation\Fixtures\BoundlessIntFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\CallableFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\FalseTypedFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\FieldlessNestedRequest;
+use Kinetis\Tests\Validation\Fixtures\IntersectionTypedFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\IterableFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\ListOfAnInterfaceRequest;
+use Kinetis\Tests\Validation\Fixtures\ListOfOnAStringRequest;
+use Kinetis\Tests\Validation\Fixtures\MutuallyRecursiveParent;
+use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullTypedFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
@@ -22,12 +31,18 @@ use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
 use Kinetis\Tests\Validation\Fixtures\SelfReferencingListRequest;
 use Kinetis\Tests\Validation\Fixtures\SelfReferencingRequest;
 use Kinetis\Tests\Validation\Fixtures\TrueTypedFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\UnionTypedFieldRequest;
+use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\UnsupportedScalarTypeException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
+use Nyholm\Psr7\Stream;
+use Nyholm\Psr7\UploadedFile;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\UploadedFileInterface;
 
 final class HydratorTest extends TestCase
 {
@@ -329,7 +344,7 @@ final class HydratorTest extends TestCase
         }
     }
 
-    public function test_a_class_typed_value_that_is_not_an_array_passes_through_unhydrated(): void
+    public function test_an_already_built_instance_for_a_class_typed_field_is_accepted(): void
     {
         // Mirrors what Dispatcher does for a multipart UploadedFileInterface
         // field merged directly into the data array as an object, never an
@@ -363,108 +378,6 @@ final class HydratorTest extends TestCase
         ], $plan);
 
         self::assertSame('1 Infinite Loop', $dto->shippingAddress->street);
-    }
-
-    public function test_compiling_a_self_referencing_dto_does_not_recurse_forever(): void
-    {
-        $plan = Hydrator::compilePlan(SelfReferencingRequest::class);
-
-        $childParam = $plan['parameters'][1];
-        self::assertSame('child', $childParam['name']);
-        self::assertSame(SelfReferencingRequest::class, $childParam['dtoClass']);
-        self::assertNull($childParam['nestedPlan']);
-    }
-
-    public function test_a_self_referencing_dto_hydrates_fine_when_the_recursive_field_is_omitted(): void
-    {
-        $dto = Hydrator::hydrate(SelfReferencingRequest::class, ['label' => 'parent']);
-
-        self::assertSame('parent', $dto->label);
-        self::assertNull($dto->child);
-    }
-
-    public function test_a_self_referencing_dtos_child_field_accepts_an_already_built_instance(): void
-    {
-        // With no nestedPlan, an array value for `child` can't be hydrated
-        // (nesting stopped at the guard — see the compile-plan test above),
-        // so the only way to populate it is to hand hydrate() an
-        // already-constructed instance directly, which — like any other
-        // non-array class-typed value — passes through unchanged.
-        $child = new SelfReferencingRequest(label: 'child');
-        $dto = Hydrator::hydrate(SelfReferencingRequest::class, ['label' => 'parent', 'child' => $child]);
-
-        self::assertSame($child, $dto->child);
-    }
-
-    /**
-     * KINETIS-76 third follow-up: resolveNestedDtoValue()'s own guard
-     * branch (see its docblock) now unwraps the raw value it returns via
-     * JsonTree::unwrap() before handing it back — closing a real,
-     * structural marker-leak class matching resolveListValue()'s own
-     * identical, independently-observable fix (see the two tests above
-     * this one). SelfReferencingRequest's own `child` is honestly, and
-     * unavoidably, not the fixture that can observe *this* specific half
-     * of it directly: `dtoClass` is only ever set for a constructor
-     * parameter reflection reports as a single, strictly non-builtin
-     * `ReflectionNamedType` (never a union, and PHP represents
-     * `array|SelfReferencingRequest|null` as `ReflectionUnionType`, which
-     * `compileNesting()` deliberately never treats as a nested-DTO field
-     * at all) — so the *only* type shape that ever reaches this guard is
-     * one PHP's own constructor invocation already, unconditionally,
-     * rejects with a raw TypeError for any array value regardless of
-     * this fix, JsonObject-marked or not. This test proves that
-     * pre-existing, accepted, documented behavior (see
-     * test_a_self_referencing_dtos_child_field_accepts_an_already_built_instance()
-     * above) is unchanged by this round's Hydrator.php edit — a real
-     * regression check, not a demonstration of the fix itself, which
-     * this codebase has no reachable single-nested-DTO fixture that
-     * could demonstrate observably. The fix is kept anyway: defense in
-     * depth against a partially-converted tree ever reaching a typed
-     * constructor, matching what the reviewer's own remediation asked
-     * for directly ("do not pass partially converted trees into typed
-     * constructors"), independent of whether today's type system happens
-     * to intercept it first.
-     */
-    public function test_a_self_referencing_dtos_recursive_field_still_throws_a_type_error_for_a_real_nested_json_object(): void
-    {
-        $decoded = json_decode(
-            '{"label": "parent", "child": {"label": "nested", "child": {"label": "deepest", "child": null}}}',
-            associative: false,
-        );
-        $converted = JsonTree::convert($decoded);
-        self::assertInstanceOf(JsonObject::class, $converted);
-
-        $this->expectException(\TypeError::class);
-
-        Hydrator::hydrate(SelfReferencingRequest::class, $converted->toArray());
-    }
-
-    /**
-     * The identical leak, for #[ListOf]'s own self-referencing guard --
-     * see resolveListValue()'s docblock. SelfReferencingListRequest's
-     * `children` is loosely typed `array` (not `list<self>`, which PHP
-     * doesn't enforce natively), so it can receive the raw, unhydrated
-     * list directly without hitting a TypeError, letting this prove what
-     * that raw value actually contains, at every depth.
-     */
-    public function test_a_self_referencing_lists_own_elements_never_leak_a_json_object_marker(): void
-    {
-        $decoded = json_decode(
-            '{"label": "parent", "children": [{"label": "child-a", "children": []}, {"label": "child-b", "children": [{"label": "grandchild", "children": []}]}]}',
-            associative: false,
-        );
-        $converted = JsonTree::convert($decoded);
-        self::assertInstanceOf(JsonObject::class, $converted);
-
-        $dto = Hydrator::hydrate(SelfReferencingListRequest::class, $converted->toArray());
-
-        self::assertSame(
-            [
-                ['label' => 'child-a', 'children' => []],
-                ['label' => 'child-b', 'children' => [['label' => 'grandchild', 'children' => []]]],
-            ],
-            $dto->children,
-        );
     }
 
     public function test_hydrates_a_list_of_nested_dtos_from_a_list_of_arrays(): void
@@ -523,7 +436,7 @@ final class HydratorTest extends TestCase
         }
     }
 
-    public function test_a_non_array_list_element_passes_through_unhydrated(): void
+    public function test_an_already_built_item_instance_is_accepted_as_a_list_element(): void
     {
         $alreadyBuilt = new OrderItem(product: 'Widget', quantity: 2);
         $dto = Hydrator::hydrate(OrderWithItems::class, [
@@ -533,6 +446,18 @@ final class HydratorTest extends TestCase
 
         self::assertSame($alreadyBuilt, $dto->items[0]);
         self::assertInstanceOf(OrderItem::class, $dto->items[1]);
+    }
+
+    public function test_an_already_built_item_instance_is_accepted_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(OrderWithItems::class);
+        $alreadyBuilt = new OrderItem(product: 'Widget', quantity: 2);
+        $dto = Hydrator::hydrate(OrderWithItems::class, [
+            'customerName' => 'Alon',
+            'items' => [$alreadyBuilt],
+        ], $plan);
+
+        self::assertSame($alreadyBuilt, $dto->items[0]);
     }
 
     public function test_compile_plan_embeds_a_list_item_plan_for_a_list_of_parameter(): void
@@ -555,29 +480,6 @@ final class HydratorTest extends TestCase
         ], $plan);
 
         self::assertSame('Widget', $dto->items[0]->product);
-    }
-
-    public function test_compiling_a_self_referencing_list_does_not_recurse_forever(): void
-    {
-        $plan = Hydrator::compilePlan(SelfReferencingListRequest::class);
-
-        $childrenParam = $plan['parameters'][1];
-        self::assertSame('children', $childrenParam['name']);
-        self::assertSame(SelfReferencingListRequest::class, $childrenParam['listItemClass']);
-        self::assertNull($childrenParam['listItemPlan']);
-    }
-
-    public function test_a_self_referencing_lists_items_pass_through_unhydrated_when_the_guard_stops_nesting(): void
-    {
-        // With no listItemPlan, an array of arrays for `children` can't be
-        // hydrated (nesting stopped at the guard — see the compile-plan test
-        // above), so each element passes through exactly as given.
-        $dto = Hydrator::hydrate(SelfReferencingListRequest::class, [
-            'label' => 'parent',
-            'children' => [['label' => 'child']],
-        ]);
-
-        self::assertSame([['label' => 'child']], $dto->children);
     }
 
     // --- A JSON array/object must not be silently coerced into a scalar
@@ -635,10 +537,8 @@ final class HydratorTest extends TestCase
         }
     }
 
-    public function test_a_numeric_string_for_an_int_field_is_still_accepted_leniently(): void
+    public function test_a_numeric_string_for_an_int_field_is_accepted(): void
     {
-        // Laravel's own `integer` rule accepts a numeric string too — the
-        // policy is "reject the wrong shape", not "reject every non-int".
         $dto = Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'age' => '42']);
 
         self::assertSame(42, $dto->age);
@@ -972,5 +872,464 @@ final class HydratorTest extends TestCase
         self::assertNull(Hydrator::typeMismatchMessage('mixed', 42));
         self::assertNull(Hydrator::typeMismatchMessage('mixed', ['a', 'b']));
         self::assertNull(Hydrator::typeMismatchMessage('mixed', true));
+    }
+
+    // --- A class-typed field and a #[ListOf] element accept exactly two
+    // shapes: an object-shaped value hydrated into the declared class, or
+    // a value already an instance of it. ---
+
+    public function test_an_object_of_another_class_for_a_nested_dto_field_is_rejected(): void
+    {
+        try {
+            Hydrator::hydrate(CreateOrderRequest::class, [
+                'customerName' => 'Alon',
+                'shippingAddress' => new OrderItem(product: 'Widget', quantity: 2),
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['shippingAddress' => ['must be a ' . Address::class . ' instance.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_a_scalar_list_element_is_rejected_under_its_own_dotted_index_key(): void
+    {
+        try {
+            Hydrator::hydrate(OrderWithItems::class, [
+                'customerName' => 'Alon',
+                'items' => [['product' => 'Widget', 'quantity' => 2], 'nope'],
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items.1' => ['must be an object, value given.']], $e->errors);
+        }
+    }
+
+    public function test_a_null_list_element_is_rejected(): void
+    {
+        try {
+            Hydrator::hydrate(OrderWithItems::class, ['customerName' => 'Alon', 'items' => [null]]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items.0' => ['must be an object, null given.']], $e->errors);
+        }
+    }
+
+    public function test_an_object_of_another_class_as_a_list_element_is_rejected(): void
+    {
+        try {
+            Hydrator::hydrate(OrderWithItems::class, [
+                'customerName' => 'Alon',
+                'items' => [new Address(street: '1 Infinite Loop', city: 'Cupertino')],
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items.0' => ['must be a ' . OrderItem::class . ' instance.']], $e->errors);
+        }
+    }
+
+    public function test_a_wrong_shaped_list_element_is_rejected_identically_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(OrderWithItems::class);
+
+        try {
+            Hydrator::hydrate(OrderWithItems::class, ['customerName' => 'Alon', 'items' => [42]], $plan);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items.0' => ['must be an object, integer given.']], $e->errors);
+        }
+    }
+
+    /**
+     * A real JSON object element, marked by JsonTree::convert() the way a
+     * decoded request body's own elements are, hydrates exactly like the
+     * plain associative array a direct hydrate() call supplies.
+     */
+    public function test_a_marked_json_object_list_element_hydrates_into_the_item_class(): void
+    {
+        $decoded = json_decode('{"customerName": "Alon", "items": [{"product": "Widget", "quantity": 2}]}', associative: false);
+        $converted = JsonTree::convert($decoded);
+        self::assertInstanceOf(JsonObject::class, $converted);
+
+        $dto = Hydrator::hydrate(OrderWithItems::class, $converted->toArray());
+
+        self::assertInstanceOf(OrderItem::class, $dto->items[0]);
+        self::assertSame('Widget', $dto->items[0]->product);
+    }
+
+    /**
+     * The fields of a request body decoded exactly the way Dispatcher
+     * decodes one: every JSON object marked, every JSON array left plain.
+     *
+     * @return array<string, mixed>
+     */
+    private static function decodedBody(string $json): array
+    {
+        $converted = JsonTree::convert(json_decode($json, associative: false));
+        self::assertInstanceOf(JsonObject::class, $converted);
+
+        return $converted->toArray();
+    }
+
+    public function test_a_json_array_for_a_nested_dto_field_is_rejected(): void
+    {
+        try {
+            Hydrator::hydrate(CreateOrderRequest::class, self::decodedBody(
+                '{"customerName": "Alon", "shippingAddress": ["1 Infinite Loop", "Cupertino"]}',
+            ));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['shippingAddress' => ['must be a JSON object, not a JSON array.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_a_json_array_for_a_nested_dto_field_is_rejected_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(CreateOrderRequest::class);
+
+        try {
+            Hydrator::hydrate(
+                CreateOrderRequest::class,
+                self::decodedBody('{"customerName": "Alon", "shippingAddress": []}'),
+                $plan,
+            );
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['shippingAddress' => ['must be a JSON object, not a JSON array.']],
+                $e->errors,
+            );
+        }
+    }
+
+    /**
+     * A class hydrating from no fields at all is the case an empty JSON
+     * array would otherwise slip through: `[]` carries nothing the plan
+     * would miss, so only the object/array distinction rejects it.
+     */
+    public function test_an_empty_json_array_is_rejected_for_a_field_typed_as_a_fieldless_class(): void
+    {
+        try {
+            Hydrator::hydrate(FieldlessNestedRequest::class, self::decodedBody('{"settings": [], "extras": []}'));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['settings' => ['must be a JSON object, not a JSON array.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_an_empty_json_array_is_rejected_for_a_fieldless_list_element(): void
+    {
+        try {
+            Hydrator::hydrate(FieldlessNestedRequest::class, self::decodedBody('{"settings": {}, "extras": [[]]}'));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['extras.0' => ['must be a JSON object, not a JSON array.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_an_empty_json_array_is_rejected_for_a_fieldless_list_element_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(FieldlessNestedRequest::class);
+
+        try {
+            Hydrator::hydrate(
+                FieldlessNestedRequest::class,
+                self::decodedBody('{"settings": {}, "extras": [{}, ["a"]]}'),
+                $plan,
+            );
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['extras.1' => ['must be a JSON object, not a JSON array.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_a_marked_json_object_hydrates_a_fieldless_nested_field_and_list(): void
+    {
+        $dto = Hydrator::hydrate(FieldlessNestedRequest::class, self::decodedBody('{"settings": {}, "extras": [{}, {}]}'));
+
+        self::assertInstanceOf(NoConstructorFixture::class, $dto->settings);
+        self::assertCount(2, $dto->extras);
+    }
+
+    /**
+     * The direct/form call path carries no JSON object/array distinction
+     * of its own, so a map-shaped PHP array is the object spelling there.
+     */
+    public function test_a_map_shaped_array_still_hydrates_a_nested_dto_field_on_the_direct_call_path(): void
+    {
+        $dto = Hydrator::hydrate(CreateOrderRequest::class, [
+            'customerName' => 'Alon',
+            'shippingAddress' => ['street' => '1 Infinite Loop', 'city' => 'Cupertino'],
+        ]);
+
+        self::assertInstanceOf(Address::class, $dto->shippingAddress);
+        self::assertSame('Cupertino', $dto->shippingAddress->city);
+    }
+
+    // --- A field typed as a class that cannot be instantiated accepts an
+    // existing instance and nothing else — the UploadedFileInterface a
+    // multipart request carries. ---
+
+    public function test_compile_plan_records_a_non_instantiable_field_with_no_nested_plan(): void
+    {
+        $plan = Hydrator::compilePlan(AvatarUploadRequest::class);
+
+        $avatarParam = $plan['parameters'][1];
+        self::assertSame('avatar', $avatarParam['name']);
+        self::assertSame(UploadedFileInterface::class, $avatarParam['dtoClass']);
+        self::assertNull($avatarParam['nestedPlan']);
+    }
+
+    public function test_a_prebuilt_uploaded_file_is_accepted_for_an_interface_typed_field(): void
+    {
+        $file = new UploadedFile(Stream::create('fake image bytes'), 16, UPLOAD_ERR_OK, 'avatar.png', 'image/png');
+
+        $dto = Hydrator::hydrate(AvatarUploadRequest::class, ['name' => 'Alon', 'avatar' => $file]);
+
+        self::assertSame($file, $dto->avatar);
+    }
+
+    public function test_a_prebuilt_uploaded_file_is_accepted_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(AvatarUploadRequest::class);
+        $file = new UploadedFile(Stream::create('x'), 1, UPLOAD_ERR_OK, 'a.png', 'image/png');
+
+        $dto = Hydrator::hydrate(AvatarUploadRequest::class, ['name' => 'Alon', 'avatar' => $file], $plan);
+
+        self::assertSame($file, $dto->avatar);
+    }
+
+    public function test_an_array_for_an_interface_typed_field_is_a_validation_error_not_a_raw_error(): void
+    {
+        try {
+            Hydrator::hydrate(AvatarUploadRequest::class, ['name' => 'Alon', 'avatar' => ['tmp_name' => '/tmp/x']]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['avatar' => ['must be a ' . UploadedFileInterface::class . ' instance.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_a_scalar_for_an_interface_typed_field_is_rejected_through_a_compiled_plan(): void
+    {
+        $plan = Hydrator::compilePlan(AvatarUploadRequest::class);
+
+        try {
+            Hydrator::hydrate(AvatarUploadRequest::class, ['name' => 'Alon', 'avatar' => '/tmp/x'], $plan);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['avatar' => ['must be a ' . UploadedFileInterface::class . ' instance.']],
+                $e->errors,
+            );
+        }
+    }
+
+    // --- `int` accepts a real int, an integral in-range float, and a
+    // plain base-10 integer string, and nothing else. ---
+
+    /**
+     * @return iterable<string, list<mixed>>
+     */
+    public static function integerValuedSpellings(): iterable
+    {
+        yield 'a JSON integer' => [42, 42];
+        yield 'a decimal string' => ['42', 42];
+        yield 'a sign-prefixed string' => ['+42', 42];
+        yield 'a negative string' => ['-42', -42];
+        yield 'a float with no fractional part' => [42.0, 42];
+        yield 'a negative integer' => [-42, -42];
+        yield 'the largest representable int' => [PHP_INT_MAX, PHP_INT_MAX];
+        yield 'the smallest representable int' => [PHP_INT_MIN, PHP_INT_MIN];
+        yield 'the largest representable int as a string' => [(string) PHP_INT_MAX, PHP_INT_MAX];
+    }
+
+    #[DataProvider('integerValuedSpellings')]
+    public function test_an_integer_valued_spelling_is_accepted_for_an_int_field(mixed $value, int $expected): void
+    {
+        $dto = Hydrator::hydrate(BoundlessIntFieldRequest::class, ['count' => $value]);
+
+        self::assertSame($expected, $dto->count);
+    }
+
+    /**
+     * Every value here is either not an integer at all or not spelled as
+     * one. `"1.0000000000000001"` is the case a float step cannot decide:
+     * it is the same `double` as `1`, and only reading the string as
+     * written keeps it out.
+     *
+     * @return iterable<string, list<mixed>>
+     */
+    public static function nonIntegerNumbers(): iterable
+    {
+        yield 'a fractional float' => [30.5];
+        yield 'a fractional string' => ['1.5'];
+        yield 'a string a double cannot tell from 1' => ['1.0000000000000001'];
+        yield 'a decimal-spelled string' => ['42.0'];
+        yield 'an exponent-spelled string' => ['4.2e1'];
+        yield 'a whitespace-padded string' => [' 42 '];
+        yield 'a float past the integer range' => [1.0e20];
+        yield 'a string past the integer range' => ['9223372036854775808'];
+        yield 'a non-finite float' => [INF];
+        yield 'a non-finite string' => ['1e999'];
+        yield 'a non-numeric string' => ['not-a-number'];
+    }
+
+    #[DataProvider('nonIntegerNumbers')]
+    public function test_a_value_that_is_not_an_integer_is_rejected_not_truncated(mixed $value): void
+    {
+        try {
+            Hydrator::hydrate(BoundlessIntFieldRequest::class, ['count' => $value]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['count' => ['must be an integer within the platform integer range.']],
+                $e->errors,
+            );
+        }
+    }
+
+    #[DataProvider('nonIntegerNumbers')]
+    public function test_a_value_that_is_not_an_integer_is_rejected_identically_through_a_compiled_plan(mixed $value): void
+    {
+        $plan = Hydrator::compilePlan(BoundlessIntFieldRequest::class);
+
+        try {
+            Hydrator::hydrate(BoundlessIntFieldRequest::class, ['count' => $value], $plan);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                ['count' => ['must be an integer within the platform integer range.']],
+                $e->errors,
+            );
+        }
+    }
+
+    public function test_a_non_numeric_value_for_an_int_field_names_the_type_it_was_given(): void
+    {
+        try {
+            Hydrator::hydrate(BoundlessIntFieldRequest::class, ['count' => true]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['count' => ['must be an integer, boolean given.']], $e->errors);
+        }
+    }
+
+    public function test_a_numeric_string_is_still_accepted_for_a_float_field(): void
+    {
+        $dto = Hydrator::hydrate(CreateProductRequest::class, ['sku' => 'ABC123', 'price' => '9.99']);
+
+        self::assertSame(9.99, $dto->price);
+    }
+
+    /**
+     * @return iterable<string, list<mixed>>
+     */
+    public static function nonFiniteNumbers(): iterable
+    {
+        yield 'a float that overflowed to INF' => [INF];
+        yield 'a string that overflows to INF' => ['1e999'];
+        yield 'NAN' => [NAN];
+    }
+
+    #[DataProvider('nonFiniteNumbers')]
+    public function test_a_non_finite_value_for_a_float_field_is_rejected(mixed $value): void
+    {
+        try {
+            Hydrator::hydrate(CreateProductRequest::class, ['sku' => 'ABC123', 'price' => $value]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['price' => ['must be a finite number.']], $e->errors);
+        }
+    }
+
+    // --- A DTO definition Hydrator cannot hydrate is rejected when its
+    // plan is compiled, not when a request reaches its constructor. ---
+
+    public function test_a_union_typed_constructor_parameter_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('UnionTypedFieldRequest::$identifier');
+
+        Hydrator::compilePlan(UnionTypedFieldRequest::class);
+    }
+
+    public function test_an_intersection_typed_constructor_parameter_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('IntersectionTypedFieldRequest::$collection');
+
+        Hydrator::compilePlan(IntersectionTypedFieldRequest::class);
+    }
+
+    public function test_the_live_path_rejects_an_unsupported_definition_the_same_way(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+
+        Hydrator::hydrate(UnionTypedFieldRequest::class, ['identifier' => 'abc']);
+    }
+
+    public function test_a_directly_recursive_dto_definition_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('SelfReferencingRequest::$child');
+
+        Hydrator::compilePlan(SelfReferencingRequest::class);
+    }
+
+    public function test_a_directly_recursive_list_of_definition_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('SelfReferencingListRequest::$children');
+
+        Hydrator::compilePlan(SelfReferencingListRequest::class);
+    }
+
+    public function test_mutually_recursive_dto_definitions_are_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('MutuallyRecursiveChild::$parent');
+
+        Hydrator::compilePlan(MutuallyRecursiveParent::class);
+    }
+
+    public function test_list_of_on_a_parameter_that_is_not_an_array_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('#[ListOf] only applies to a parameter typed array.');
+
+        Hydrator::compilePlan(ListOfOnAStringRequest::class);
+    }
+
+    public function test_list_of_naming_a_class_that_cannot_be_instantiated_is_rejected(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('ListOfAnInterfaceRequest::$files');
+
+        Hydrator::compilePlan(ListOfAnInterfaceRequest::class);
+    }
+
+    public function test_a_plan_cannot_be_compiled_for_a_class_that_cannot_be_instantiated(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('it cannot be instantiated');
+
+        Hydrator::compilePlan(UploadedFileInterface::class);
     }
 }

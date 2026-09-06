@@ -26,8 +26,10 @@ interface MigrationRepositoryInterface
     public function markRolledBack(string $migration): void;
 
     /**
-     * The most recently applied migration's name, or null if none has
-     * been applied yet.
+     * The applied migration whose name sorts last, or null if none has
+     * been applied. Name order, not application order: a migration
+     * merged from another branch can be applied after a
+     * later-timestamped one, and this is what rollback() undoes.
      */
-    public function lastApplied(): ?string;
+    public function highestApplied(): ?string;
 }

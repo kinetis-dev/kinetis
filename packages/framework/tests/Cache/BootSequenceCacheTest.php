@@ -10,6 +10,7 @@ use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\CommandCache;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\EventCache;
+use Kinetis\Cache\Exception\UnexportableArtifactException;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\PluginCache;
 use Kinetis\Console\CommandRegistry;
@@ -24,16 +25,14 @@ use RuntimeException;
 /**
  * BootSequence::loadHttpFromCache()/loadCliFromCache() (the cache-hit
  * half) and resolveHttp()/resolveCli() (the full cache-or-compile
- * decision) against real generated cache files — proving
- * http.php+events.php+plugins.php (commands.php in place of http.php
- * for the CLI) behave as one all-or-none unit, that every runtime
+ * decision) against a real published artifact — proving every runtime
  * object a boot needs (Router/CommandRegistry included, not just the
- * raw DTOs) is reconstructed exactly once inside that unit, and that a
- * genuine defect in a plugin's own reconstruction never gets
- * misclassified as cache corruption. Every test writes a real
- * generation via a real CacheStore, then corrupts exactly one real
- * file on disk before reading it back — not a mock of any fromArray()
- * method.
+ * raw DTOs) is reconstructed exactly once, that a corrupt artifact is a
+ * clean miss rather than an uncaught fatal, and that a genuine defect
+ * in a plugin's own reconstruction never gets misclassified as cache
+ * corruption. Every test publishes through a real CacheStore, then
+ * corrupts the real file on disk before reading it back — not a mock of
+ * any fromArray() method.
  */
 final class BootSequenceCacheTest extends TestCase
 {
@@ -47,7 +46,11 @@ final class BootSequenceCacheTest extends TestCase
 
     protected function tearDown(): void
     {
-        CacheStore::destroy($this->directory);
+        foreach (glob($this->directory . '/*') ?: [] as $entry) {
+            is_dir($entry) ? @rmdir($entry) : @unlink($entry);
+        }
+
+        @rmdir($this->directory);
     }
 
     private function validCompiledCache(): CompiledCache
@@ -80,21 +83,28 @@ final class BootSequenceCacheTest extends TestCase
         return new CompiledCache($http, $commands, $events, $plugins);
     }
 
-    /**
-     * @return non-empty-string the pinned generation's own directory
-     */
-    private function publish(CacheStore $store, CompiledCache $cache): string
+    private function publish(CompiledCache $cache): void
     {
-        $store->writeAll($cache);
-        $directory = $store->activeGenerationDirectory();
-        self::assertIsString($directory, 'writeAll() must publish a real generation before this helper is used');
+        (new CacheStore($this->directory))->write($cache);
+    }
 
-        return $directory;
+    /**
+     * Overwrites the published artifact with $data, so a test can
+     * corrupt exactly one field of an otherwise well-formed file.
+     *
+     * @param array<array-key, mixed> $data
+     */
+    private function overwriteArtifact(array $data): void
+    {
+        file_put_contents(
+            (new CacheStore($this->directory))->path(),
+            "<?php\n\nreturn " . var_export($data, true) . ";\n",
+        );
     }
 
     // --- loadHttpFromCache()/loadCliFromCache(): the cache-hit half ---
 
-    public function test_no_cache_at_all_is_a_miss_for_both_bundles(): void
+    public function test_no_artifact_at_all_is_a_miss_for_both_bundles(): void
     {
         $store = new CacheStore($this->directory);
 
@@ -102,10 +112,9 @@ final class BootSequenceCacheTest extends TestCase
         self::assertNull(BootSequence::loadCliFromCache($store));
     }
 
-    public function test_a_fully_valid_generation_yields_both_bundles_with_reconstructed_runtime_objects(): void
+    public function test_a_valid_artifact_yields_both_bundles_with_reconstructed_runtime_objects(): void
     {
-        $store = new CacheStore($this->directory);
-        $this->publish($store, $this->validCompiledCache());
+        $this->publish($this->validCompiledCache());
 
         $http = BootSequence::loadHttpFromCache(new CacheStore($this->directory));
         self::assertNotNull($http);
@@ -130,54 +139,31 @@ final class BootSequenceCacheTest extends TestCase
     }
 
     /**
-     * A valid http.php alone must not be enough to call this a hit:
-     * events.php belongs to the same generation and must be present too.
+     * A format version this build does not speak makes the artifact a
+     * miss for both bundles at once — there is one file, so no bundle
+     * can ever be served from a shape another one rejected.
      */
-    public function test_a_missing_events_php_is_a_miss_for_the_http_bundle_even_though_http_php_is_valid(): void
+    public function test_a_wrong_format_version_is_a_miss_for_both_bundles(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        unlink($generationDirectory . '/events.php');
+        $this->publish($this->validCompiledCache());
+
+        $data = $this->validCompiledCache()->toArray();
+        $data['formatVersion'] = CacheFormat::VERSION + 1;
+        $this->overwriteArtifact($data);
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
-    }
-
-    public function test_a_missing_events_php_is_a_miss_for_the_cli_bundle_even_though_commands_php_is_valid(): void
-    {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        unlink($generationDirectory . '/events.php');
-
         self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
-    }
-
-    /**
-     * A stale-format plugins.php — CacheStore::loadSection()'s own
-     * formatVersion check already returns null for this, cleanly, with
-     * no exception at all; this proves that null is what makes the
-     * *whole* bundle a miss too, not just the one section.
-     */
-    public function test_a_wrong_format_version_in_plugins_php_is_a_miss_for_the_http_bundle(): void
-    {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-
-        $wrongVersion = ['formatVersion' => CacheFormat::VERSION + 1, 'data' => [], 'compiledAt' => 'x'];
-        file_put_contents($generationDirectory . '/plugins.php', "<?php\n\nreturn " . var_export($wrongVersion, true) . ";\n");
-
-        self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
     }
 
     /**
      * A structurally malformed event registry — a duplicate {class,
      * method} pair, which EventListenerRegistry::fromArray() rejects by
-     * throwing InvalidListenerException (see its own docblock). A
-     * generation carrying one must be classified as corrupt and turned
+     * throwing InvalidListenerException (see its own docblock). An
+     * artifact carrying one must be classified as corrupt and turned
      * into a clean miss here, never an uncaught fatal at boot.
      */
     public function test_a_structurally_malformed_event_registry_is_a_miss_not_an_uncaught_exception(): void
     {
-        $store = new CacheStore($this->directory);
         $cache = $this->validCompiledCache();
         $corruptEvents = new EventCache(
             formatVersion: CacheFormat::VERSION,
@@ -189,30 +175,29 @@ final class BootSequenceCacheTest extends TestCase
             ],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
-        $this->publish($store, new CompiledCache($cache->http, $cache->commands, $corruptEvents, $cache->plugins));
+        $this->publish(new CompiledCache($cache->http, $cache->commands, $corruptEvents, $cache->plugins));
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
         self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
     }
 
     /**
-     * The same classification, triggered from the plugins.php side
-     * instead of events.php — a package's own fromArray() rejecting its
-     * own malformed cached data (via an exception implementing
+     * The same classification, triggered from the plugin section
+     * instead — a package's own fromArray() rejecting its own malformed
+     * cached data (via an exception implementing
      * CacheArtifactExceptionInterface, per that interface's own
-     * contract) is exactly the same class of "this generation is
-     * corrupt" signal as EventListenerRegistry's.
+     * contract) is exactly the same class of "this artifact is corrupt"
+     * signal as EventListenerRegistry's.
      */
     public function test_a_plugins_own_malformed_cached_data_is_a_miss_not_an_uncaught_exception(): void
     {
-        $store = new CacheStore($this->directory);
         $cache = $this->validCompiledCache();
         $corruptPlugins = new PluginCache(
             formatVersion: CacheFormat::VERSION,
             data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
-        $this->publish($store, new CompiledCache($cache->http, $cache->commands, $cache->events, $corruptPlugins));
+        $this->publish(new CompiledCache($cache->http, $cache->commands, $cache->events, $corruptPlugins));
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
     }
@@ -226,14 +211,13 @@ final class BootSequenceCacheTest extends TestCase
      */
     public function test_a_plugins_own_genuine_defect_propagates_uncaught_not_classified_as_a_miss(): void
     {
-        $store = new CacheStore($this->directory);
         $cache = $this->validCompiledCache();
         $buggyPlugins = new PluginCache(
             formatVersion: CacheFormat::VERSION,
             data: [BuggyCacheableDiscovery::class => []],
             compiledAt: '2026-01-01T00:00:00+00:00',
         );
-        $this->publish($store, new CompiledCache($cache->http, $cache->commands, $cache->events, $buggyPlugins));
+        $this->publish(new CompiledCache($cache->http, $cache->commands, $cache->events, $buggyPlugins));
 
         $this->expectException(LogicException::class);
         $this->expectExceptionMessage('BuggyCacheableDiscovery: a genuine defect, not a data-shape problem.');
@@ -242,144 +226,88 @@ final class BootSequenceCacheTest extends TestCase
     }
 
     /**
-     * A malformed top-level field on http.php itself (right format
-     * version, but a field missing or wrong-typed) must also be a miss
-     * — not an uncaught TypeError escaping from inside
-     * CacheStore::loadHttp()/HttpCache::fromArray(), before
-     * loadHttpFromCache()'s own try block would otherwise have started.
+     * A malformed top-level field on the HTTP section (right format
+     * version, but a field missing or wrong-typed) must also be a miss —
+     * not an uncaught TypeError escaping from inside
+     * HttpCache::fromArray(), before loadHttpFromCache()'s own try block
+     * would otherwise have started.
      */
-    public function test_a_malformed_top_level_field_in_http_php_is_a_miss(): void
+    public function test_a_malformed_top_level_field_in_the_http_section_is_a_miss(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-
-        $data = $this->validCompiledCache()->http->toArray();
-        unset($data['globalMiddleware']);
-        file_put_contents($generationDirectory . '/http.php', "<?php\n\nreturn " . var_export($data, true) . ";\n");
+        $data = $this->validCompiledCache()->toArray();
+        unset($data['http']['globalMiddleware']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
     }
 
-    /**
-     * The same, for commands.php.
-     */
-    public function test_a_malformed_top_level_field_in_commands_php_is_a_miss(): void
+    public function test_a_malformed_top_level_field_in_the_commands_section_is_a_miss(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-
-        $data = $this->validCompiledCache()->commands->toArray();
-        unset($data['packageBootstraps']);
-        file_put_contents($generationDirectory . '/commands.php', "<?php\n\nreturn " . var_export($data, true) . ";\n");
+        $data = $this->validCompiledCache()->toArray();
+        unset($data['commands']['packageBootstraps']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
 
         self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
     }
 
     /**
-     * A malformed *entry* within an otherwise well-shaped http.php — a
-     * route missing its own "httpMethod" — must be a miss too, not an
+     * A malformed *entry* within an otherwise well-shaped HTTP section —
+     * a route missing its own "httpMethod" — must be a miss too, not an
      * uncaught TypeError from inside Router::fromArray().
      */
-    public function test_a_malformed_route_entry_in_http_php_is_a_miss(): void
+    public function test_a_malformed_route_entry_is_a_miss(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-
-        $data = $this->validCompiledCache()->http->toArray();
-        unset($data['routes'][0]['httpMethod']);
-        file_put_contents($generationDirectory . '/http.php', "<?php\n\nreturn " . var_export($data, true) . ";\n");
+        $data = $this->validCompiledCache()->toArray();
+        unset($data['http']['routes'][0]['httpMethod']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
     }
 
-    /**
-     * The same, for a command entry missing "bootstrap" in commands.php.
-     */
-    public function test_a_malformed_command_entry_in_commands_php_is_a_miss(): void
+    public function test_a_malformed_command_entry_is_a_miss(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-
-        $data = $this->validCompiledCache()->commands->toArray();
-        unset($data['commands'][0]['bootstrap']);
-        file_put_contents($generationDirectory . '/commands.php', "<?php\n\nreturn " . var_export($data, true) . ";\n");
+        $data = $this->validCompiledCache()->toArray();
+        unset($data['commands']['commands'][0]['bootstrap']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
 
         self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
     }
 
     /**
-     * Laziness proof, half one: the HTTP bundle must never require
-     * commands.php at all — corrupting it beyond recognition (not even
-     * valid PHP) must not affect loadHttpFromCache() in the slightest.
+     * A syntax-corrupt artifact (a truncated write, disk corruption,
+     * hand tampering — never a shape CacheStore::write() itself
+     * produces) must be a clean miss: require()'s own ParseError is
+     * exactly the same class of "unusable" signal as a missing file, not
+     * an uncaught fatal escaping this method.
      */
-    public function test_http_bundle_never_reads_commands_php(): void
+    public function test_a_syntax_corrupt_artifact_is_a_miss_not_an_uncaught_parse_error(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        file_put_contents($generationDirectory . '/commands.php', "<?php\n\nthis is not valid PHP at all {{{\n");
-
-        $http = BootSequence::loadHttpFromCache(new CacheStore($this->directory));
-        self::assertNotNull($http);
-        self::assertSame('App\\C', $http['router']->match('GET', '/x')->route->controllerClass);
-    }
-
-    /**
-     * Laziness proof, half two: the dual of the above for the CLI
-     * bundle and http.php.
-     */
-    public function test_cli_bundle_never_reads_http_php(): void
-    {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        file_put_contents($generationDirectory . '/http.php', "<?php\n\nthis is not valid PHP at all {{{\n");
-
-        $cli = BootSequence::loadCliFromCache(new CacheStore($this->directory));
-        self::assertNotNull($cli);
-        self::assertSame('App\\C', $cli['registry']->findCommand('app:x')?->controllerClass);
-    }
-
-    /**
-     * A syntax-corrupt http.php (a truncated write, corruption, hand
-     * tampering — never a shape produced by writeAll() itself) must
-     * also be a clean miss: require()'s own ParseError, thrown while
-     * reconstructing data read directly off disk, is exactly the same
-     * class of "this generation is unusable" signal as a missing file
-     * or a wrong format version, not an uncaught fatal escaping this
-     * method.
-     */
-    public function test_a_syntax_corrupt_http_php_is_a_miss_not_an_uncaught_parse_error(): void
-    {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        file_put_contents($generationDirectory . '/http.php', "<?php\n\nthis is not valid PHP at all {{{\n");
+        $this->publish($this->validCompiledCache());
+        file_put_contents((new CacheStore($this->directory))->path(), "<?php\n\nthis is not valid PHP at all {{{\n");
 
         self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
-    }
-
-    /**
-     * The same, for commands.php and the CLI bundle.
-     */
-    public function test_a_syntax_corrupt_commands_php_is_a_miss_not_an_uncaught_parse_error(): void
-    {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        file_put_contents($generationDirectory . '/commands.php', "<?php\n\nthis is not valid PHP at all {{{\n");
-
         self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
     }
 
     /**
      * A rejected bundle is a pure decision, not a retry loop: the same
-     * still-corrupt generation, read twice in a row through the same
-     * pinned CacheStore instance, returns null both times — never a
-     * second attempt that behaves differently, and never an exception
-     * escaping on either call.
+     * still-corrupt artifact, read twice in a row, returns null both
+     * times — never a second attempt that behaves differently, and never
+     * an exception escaping on either call.
      */
     public function test_a_rejected_bundle_returns_null_deterministically_not_a_retry_loop(): void
     {
-        $store = new CacheStore($this->directory);
-        $generationDirectory = $this->publish($store, $this->validCompiledCache());
-        unlink($generationDirectory . '/events.php');
+        $cache = $this->validCompiledCache();
+        $corruptPlugins = new PluginCache(
+            formatVersion: CacheFormat::VERSION,
+            data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
+            compiledAt: '2026-01-01T00:00:00+00:00',
+        );
+        $this->publish(new CompiledCache($cache->http, $cache->commands, $cache->events, $corruptPlugins));
 
         $reader = new CacheStore($this->directory);
         self::assertNull(BootSequence::loadHttpFromCache($reader));
@@ -390,8 +318,7 @@ final class BootSequenceCacheTest extends TestCase
 
     public function test_resolve_http_uses_the_cache_and_never_invokes_compile_on_a_hit(): void
     {
-        $store = new CacheStore($this->directory);
-        $this->publish($store, $this->validCompiledCache());
+        $this->publish($this->validCompiledCache());
 
         $calls = 0;
         $resolved = BootSequence::resolveHttp(new CacheStore($this->directory), function () use (&$calls): CompiledCache {
@@ -406,8 +333,7 @@ final class BootSequenceCacheTest extends TestCase
 
     public function test_resolve_cli_uses_the_cache_and_never_invokes_compile_on_a_hit(): void
     {
-        $store = new CacheStore($this->directory);
-        $this->publish($store, $this->validCompiledCache());
+        $this->publish($this->validCompiledCache());
 
         $calls = 0;
         $resolved = BootSequence::resolveCli(new CacheStore($this->directory), function () use (&$calls): CompiledCache {
@@ -448,9 +374,25 @@ final class BootSequenceCacheTest extends TestCase
         self::assertSame(1, CountingCacheableDiscovery::$constructions);
         self::assertInstanceOf(CountingCacheableDiscovery::class, $resolved['pluginInstances'][CountingCacheableDiscovery::class]);
 
-        // writeAll() really happened: a fresh store now finds it as a hit.
-        $hit = BootSequence::loadHttpFromCache(new CacheStore($this->directory));
-        self::assertNotNull($hit);
+        // The publish landed: a fresh store finds it as a hit.
+        self::assertNotNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
+    }
+
+    public function test_resolve_cli_compiles_exactly_once_on_a_miss_and_publishes_the_result(): void
+    {
+        $store = new CacheStore($this->directory);
+        $compiled = $this->validCompiledCache();
+
+        $calls = 0;
+        $resolved = BootSequence::resolveCli($store, function () use (&$calls, $compiled): CompiledCache {
+            $calls++;
+
+            return $compiled;
+        });
+
+        self::assertSame(1, $calls);
+        self::assertSame('App\\C', $resolved['registry']->findCommand('app:x')?->controllerClass);
+        self::assertNotNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
     }
 
     /**
@@ -474,7 +416,7 @@ final class BootSequenceCacheTest extends TestCase
             });
         } finally {
             self::assertSame(1, $calls, 'the compiler must be invoked exactly once, never retried');
-            self::assertNull($store->activeGenerationDirectory(), 'a failed compile must never publish anything');
+            self::assertFileDoesNotExist($store->path(), 'a failed compile must never publish anything');
         }
     }
 
@@ -497,30 +439,16 @@ final class BootSequenceCacheTest extends TestCase
     }
 
     /**
-     * A malformed fresh compile — the compiler callback itself
-     * succeeds, but produces data that fails to reconstruct (a plugin
-     * rejecting its own freshly-compiled data, say) — is also a real,
-     * uncaught failure: there is no cache artifact to blame it on, so
-     * nothing here classifies it as a miss to retry.
-     */
-    /**
-     * The decisive proof reconstruction genuinely happens before
-     * writeAll(): a fresh compile whose data fails to reconstruct must
-     * never publish anything at all — not even the pieces that *would*
-     * have reconstructed successfully — since a later process reading
-     * a published-but-broken generation would just hit the identical
-     * failure and recompile into it again, forever.
+     * The decisive proof reconstruction happens before the
+     * publish: a fresh compile whose data fails to reconstruct must
+     * never publish anything at all, since a later process reading a
+     * published-but-broken artifact would hit the identical failure and
+     * recompile into it again, forever.
      */
     public function test_resolve_http_propagates_a_reconstruction_failure_from_a_fresh_compile_and_publishes_nothing(): void
     {
         $store = new CacheStore($this->directory);
-        $cache = $this->validCompiledCache();
-        $brokenPlugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
-        $compiled = new CompiledCache($cache->http, $cache->commands, $cache->events, $brokenPlugins);
+        $compiled = $this->compiledCacheWithUnreconstructablePlugin();
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('StrictCacheableDiscovery: malformed cached data.');
@@ -528,20 +456,14 @@ final class BootSequenceCacheTest extends TestCase
         try {
             BootSequence::resolveHttp($store, fn (): CompiledCache => $compiled);
         } finally {
-            self::assertNull($store->activeGenerationDirectory(), 'a failed fresh reconstruction must never publish anything');
+            self::assertFileDoesNotExist($store->path(), 'a failed fresh reconstruction must never publish anything');
         }
     }
 
     public function test_resolve_cli_propagates_a_reconstruction_failure_from_a_fresh_compile_and_publishes_nothing(): void
     {
         $store = new CacheStore($this->directory);
-        $cache = $this->validCompiledCache();
-        $brokenPlugins = new PluginCache(
-            formatVersion: CacheFormat::VERSION,
-            data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
-            compiledAt: '2026-01-01T00:00:00+00:00',
-        );
-        $compiled = new CompiledCache($cache->http, $cache->commands, $cache->events, $brokenPlugins);
+        $compiled = $this->compiledCacheWithUnreconstructablePlugin();
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('StrictCacheableDiscovery: malformed cached data.');
@@ -549,7 +471,90 @@ final class BootSequenceCacheTest extends TestCase
         try {
             BootSequence::resolveCli($store, fn (): CompiledCache => $compiled);
         } finally {
-            self::assertNull($store->activeGenerationDirectory(), 'a failed fresh reconstruction must never publish anything');
+            self::assertFileDoesNotExist($store->path(), 'a failed fresh reconstruction must never publish anything');
         }
+    }
+
+    /**
+     * A machine that will not take the file has not made the compiled
+     * value wrong, and this process already holds it — so the boot keeps
+     * its own result and reports the failure once, rather than turning
+     * an unwritable directory into an outage.
+     */
+    public function test_a_publish_failure_still_returns_the_compiled_value_and_reports_itself_once(): void
+    {
+        // A directory where the artifact belongs makes rename() fail with
+        // no permission games — and a directory this test can portably
+        // create, unlike an unwritable one under a root-run container.
+        mkdir($this->directory . '/' . CacheStore::ARTIFACT_FILENAME, 0775, true);
+
+        $log = sys_get_temp_dir() . '/kinetis_boot_sequence_log_' . bin2hex(random_bytes(8));
+        $previousLog = ini_get('error_log');
+        ini_set('error_log', $log);
+
+        try {
+            $resolved = BootSequence::resolveHttp(
+                new CacheStore($this->directory),
+                fn (): CompiledCache => $this->validCompiledCache(),
+            );
+
+            self::assertSame('App\\C', $resolved['router']->match('GET', '/x')->route->controllerClass);
+
+            $reported = file_exists($log) ? file_get_contents($log) : '';
+            self::assertStringContainsString('could not publish', $reported);
+            self::assertSame(1, substr_count($reported, 'could not publish'), 'one boot reports once');
+        } finally {
+            ini_set('error_log', $previousLog === false ? '' : $previousLog);
+            @unlink($log);
+        }
+    }
+
+    /**
+     * A live object in the compiled data is a defect in the compile, not
+     * a failure to persist it, so it propagates rather than being
+     * absorbed the way a publish failure is — this boot's value is the
+     * wrong one to carry on with.
+     */
+    public function test_an_unexportable_fresh_compile_propagates(): void
+    {
+        $cache = $this->validCompiledCache();
+        $poisoned = new HttpCache(
+            formatVersion: CacheFormat::VERSION,
+            routes: $cache->http->routes,
+            httpBindingPlans: [],
+            hydrationPlans: [
+                'App\\Dto' => [
+                    'className' => 'App\\Dto',
+                    'hasConstructor' => true,
+                    'parameters' => [['name' => 'since', 'defaultValue' => new \DateTimeImmutable()]],
+                ],
+            ],
+            globalMiddleware: [],
+            openApiMiddleware: [],
+            compiledAt: '2026-01-01T00:00:00+00:00',
+        );
+
+        $this->expectException(UnexportableArtifactException::class);
+
+        BootSequence::resolveHttp(
+            new CacheStore($this->directory),
+            fn (): CompiledCache => new CompiledCache($poisoned, $cache->commands, $cache->events, $cache->plugins),
+        );
+    }
+
+    private function compiledCacheWithUnreconstructablePlugin(): CompiledCache
+    {
+        $cache = $this->validCompiledCache();
+
+        return new CompiledCache(
+            $cache->http,
+            $cache->commands,
+            $cache->events,
+            new PluginCache(
+                formatVersion: CacheFormat::VERSION,
+                data: [StrictCacheableDiscovery::class => ['wrong-key' => 'nope']],
+                compiledAt: '2026-01-01T00:00:00+00:00',
+            ),
+        );
     }
 }

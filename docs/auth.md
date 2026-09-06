@@ -231,9 +231,9 @@ deploy.
 ````{note}
 **The cache must count atomically, and construction enforces it.**
 `AttemptThrottle` requires the given cache to implement
-`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` and
-`ClusteredRedisSimpleCache` do, see {doc}`middleware`'s rate-limiting
-section for the `REDIS_URL`/`REDIS_HOST` configuration they read — and
+`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` does,
+see {doc}`middleware`'s rate-limiting section for the
+`REDIS_URL`/`REDIS_HOST` configuration it reads — and
 throws `Exception\AttemptThrottleUnavailableException` at construction
 for any cache that doesn't, `NullSimpleCache` included.
 

@@ -11,12 +11,12 @@ use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use SensitiveParameter;
 
 /**
- * The one bound on how large and how complicated a request body may be,
- * shared by every runtime adapter — the SAPI bridge core ships, and the
- * satellites that parse a form body themselves. A form the same client
- * sends to a FrankenPHP worker, a Lambda function and a RoadRunner
- * worker is accepted by all three or refused by all three, with the same
- * status.
+ * The one bound on how large and how complicated a request body may be.
+ * Enforced in one place, {@see \Kinetis\Http\Middleware\RequestBodyMiddleware},
+ * over the raw bytes every runtime adapter delivers — so a form the same
+ * client sends to a FrankenPHP worker, a Lambda function and a
+ * RoadRunner worker is accepted by all three or refused by all three,
+ * with the same status.
  *
  * Seven dimensions, because a body small enough to pass a byte cap can
  * still be expensive or dangerous: a megabyte of `a[b][c][d]...=1` is
@@ -41,11 +41,10 @@ use SensitiveParameter;
  * framework is willing to hydrate at all; the byte ceiling is a
  * per-application value, so it is a validated field of a value object
  * rather than a live `getenv()` read behind a static call. One instance
- * is built at an entry point, handed to {@see \Kinetis\Runtime\RuntimeDetector}
- * and through it to the adapter, and the same instance is what
- * {@see \Kinetis\Http\Middleware\MaxBodySizeMiddleware} enforces inside
- * the Kernel — so the byte cap a form body meets before the Kernel
- * exists and the one a raw body meets inside it cannot drift apart.
+ * is built at an entry point and bound in the container, and
+ * {@see \Kinetis\Http\Middleware\RequestBodyMiddleware} enforces it
+ * over every request body under every runtime — one object, one set of
+ * ceilings, nothing to drift apart from.
  */
 final readonly class FormLimits
 {
@@ -78,11 +77,9 @@ final readonly class FormLimits
 
     /**
      * Bytes on one multipart header line. 8 KiB is what a web server
-     * accepts for a request header line and what
-     * `riverline/multipart-parser` refuses past, so a line longer than
-     * this is a line some parser in this framework's supported set will
-     * not read — refused here, on every runtime, rather than accepted by
-     * one and rejected by another.
+     * accepts for a request header line, so a longer line is one a
+     * deployment's own edge may already have refused — held to the same
+     * ceiling here, on every runtime.
      */
     public const int MAX_PART_HEADER_BYTES = 8_192;
 

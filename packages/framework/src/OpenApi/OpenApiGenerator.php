@@ -391,9 +391,9 @@ final class OpenApiGenerator
      * already-registered entry rather than describing it again.
      *
      * The name is registered *before* the recursive JsonSchema::forClass()
-     * call below, not after: a self-referencing DTO's nested reference to
-     * its own class hits the isset() check and returns a $ref immediately,
-     * rather than recursing forever.
+     * call below, not after, so a class reached again while its own schema
+     * is still being built hits the isset() check and returns a $ref
+     * immediately.
      *
      * @param class-string $class
      * @return array{'$ref': string}

@@ -28,18 +28,20 @@ use Psr\Http\Message\ServerRequestInterface;
  *   decodes a JSON body itself, at bind time, not via `getParsedBody()`).
  * - `postForm()`/`putForm()`/`patchForm()` — a genuine
  *   `application/x-www-form-urlencoded` body: the raw bytes are exactly
- *   `http_build_query($form)`, and `getParsedBody()` is that same string
- *   parsed back with `parse_str()` — the actual result a real request
- *   arrives with, not `$form` itself (`http_build_query()` loses
- *   information no wire-format body can carry: every scalar becomes a
- *   string, and a `null` value is omitted entirely), so
- *   `CsrfMiddleware`'s own `_token`-in-a-form-body fallback (and anything
- *   else reading `getParsedBody()`) is genuinely reachable with exactly
- *   the shape a real form post produces.
+ *   `http_build_query($form)`, and nothing else is attached. The Kernel's
+ *   own `RequestBodyMiddleware` parses those bytes on the way in, so
+ *   `getParsedBody()` carries whatever a real request carries, not
+ *   `$form` itself (`http_build_query()` loses information no wire-format
+ *   body can express: every scalar becomes a string, and a `null` value
+ *   is omitted entirely). `CsrfMiddleware`'s own `_token`-in-a-form-body
+ *   fallback, and anything else reading `getParsedBody()`, is therefore
+ *   reachable with exactly the shape a real form post produces.
  * - `raw()` — a plain string body sent exactly as given, no encoding
  *   inferred from it at all; for a webhook payload, binary content, or
- *   any shape none of the other modes cover. `getParsedBody()` stays
- *   null, matching a real non-form/non-multipart request.
+ *   any shape none of the other modes cover. Nothing here attaches a
+ *   parsed body; what the Kernel's own `RequestBodyMiddleware` makes of
+ *   the bytes follows from the `Content-Type` the caller supplied, the
+ *   same as a real request.
  * - `send()` — the direct escape hatch: dispatches a fully hand-built
  *   `ServerRequestInterface` exactly as given. This is what a multipart
  *   or uploaded-file request needs — this class deliberately never
@@ -173,10 +175,10 @@ final readonly class TestClient
 
     /**
      * A genuine `application/x-www-form-urlencoded` body: the raw bytes
-     * sent are exactly `http_build_query($form)`, and `getParsedBody()`
-     * is that same string parsed back with `parse_str()` — not `$form`
-     * itself, since a wire-format body can't carry `$form`'s original
-     * PHP types; see this class's own docblock for why.
+     * sent are exactly `http_build_query($form)`, parsed on the way in by
+     * the same middleware a real request meets — so `getParsedBody()`
+     * carries what the wire carries, not `$form`'s own PHP types; see
+     * this class's own docblock for why.
      *
      * @param array<string, mixed> $form
      * @param array<string, string> $headers
@@ -208,8 +210,9 @@ final readonly class TestClient
      * A raw string body, sent exactly as given — no JSON encoding, no
      * form encoding, nothing inferred from it. For a webhook payload,
      * binary content, or any shape none of this class's other methods
-     * already cover. `getParsedBody()` is left null, matching what a
-     * real non-form/non-multipart request actually gets.
+     * already cover. Nothing here attaches a parsed body; what the
+     * Kernel's own `RequestBodyMiddleware` makes of the bytes follows
+     * from the `Content-Type` given, the same as a real request.
      *
      * @param array<string, string> $headers
      */
@@ -248,12 +251,7 @@ final readonly class TestClient
                 . 'hand-built PSR-7 request.',
         );
 
-        $encoded = \http_build_query($form);
-        \parse_str($encoded, $parsedBody);
-
-        $request = self::buildRequest($method, $uri, $headers, $encoded);
-
-        return $this->send($request->withParsedBody($parsedBody));
+        return $this->send(self::buildRequest($method, $uri, $headers, \http_build_query($form)));
     }
 
     /**

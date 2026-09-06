@@ -190,6 +190,33 @@ final class JwtAuthMiddlewareTest extends TestCase
         self::assertSame(401, $response->getStatusCode());
     }
 
+    /**
+     * A subject is one canonical non-empty string across this package —
+     * the form JwtIssuer writes and both stores key their per-subject
+     * revocation by. A token whose `sub` is a JSON number or an empty
+     * string could not be revoked under the same identity it
+     * authenticated as, so it never authenticates at all.
+     */
+    #[DataProvider('nonCanonicalSubjectClaims')]
+    public function test_a_token_whose_subject_is_not_a_non_empty_string_is_rejected_with_401(mixed $sub): void
+    {
+        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $token = JWT::encode(['sub' => $sub, 'iat' => time()], self::SECRET, 'HS256');
+
+        $response = $middleware->process($this->requestWithToken($token), $this->handler());
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    public static function nonCanonicalSubjectClaims(): iterable
+    {
+        yield 'an integer' => [42];
+        yield 'an empty string' => [''];
+        yield 'a float' => [42.5];
+        yield 'a boolean' => [true];
+        yield 'a list' => [['user-42']];
+    }
+
     public function test_the_inner_handler_never_runs_when_unauthenticated(): void
     {
         $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());

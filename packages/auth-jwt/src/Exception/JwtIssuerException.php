@@ -18,6 +18,18 @@ final class JwtIssuerException extends RuntimeException
         );
     }
 
+    /**
+     * $subject canonicalized to the empty string — an id naming nobody.
+     * Never names the value itself, which is caller-controlled.
+     */
+    public static function emptySubject(): self
+    {
+        return new self(
+            'JwtIssuer::issue() requires a non-empty $subject: the "sub" claim is the identity every '
+            . 'revocation and refresh-token record is keyed by, and an empty one names no user at all.',
+        );
+    }
+
     public static function ttlOverflow(): self
     {
         return new self(

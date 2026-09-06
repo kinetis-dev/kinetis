@@ -63,8 +63,8 @@ tutorial, then read whichever section you have reached.
 
 ## Integrations
 
-- [Storage](https://kinetis.dev/docs/storage.html): kinetis/storage: file storage on League\Flysystem — a genuinely non-blocking, Amp\File-backed local adapter.
-- [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, non-blocking via kinetis/revolt-http-client.
+- [Storage](https://kinetis.dev/docs/storage.html): kinetis/storage: file storage on League\Flysystem — an Amp\File-backed local adapter whose driver calls suspend the Fiber.
+- [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, over the Revolt-native transport in kinetis/revolt-http-client.
 - [Mailer](https://kinetis.dev/docs/mailer.html): kinetis/mailer: mail sending via Symfony\Component\Mailer, non-blocking via kinetis/revolt-http-client for API-based transports.
 - [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.

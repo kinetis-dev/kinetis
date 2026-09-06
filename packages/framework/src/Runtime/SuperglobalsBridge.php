@@ -5,12 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Runtime;
 
 use Kinetis\Http\Exception\UntrustedForwardedHeaderException;
-use Kinetis\Http\Form\Exception\FormLimitExceededException;
-use Kinetis\Http\Form\Exception\UnparseableFormBodyException;
-use Kinetis\Http\Form\FormBody;
-use Kinetis\Http\Form\FormLimits;
-use Kinetis\Http\Form\StagedRequestBody;
-use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
@@ -26,36 +20,34 @@ use Psr\Http\Message\ServerRequestInterface;
  * is a real PHP SAPI, and therefore the only two whose request arrives as
  * `$_SERVER`/`$_COOKIE`/`$_GET` plus a `php://input` stream.
  *
- * **This class parses the request body; PHP does not.** That is what
- * `enable_post_data_reading=0` is for, and why {@see assertCapabilities()}
- * refuses to run without it. Left on, PHP reads the body itself before
- * any Kinetis code exists: it populates `$_POST`/`$_FILES` for a POST
- * form, empties `php://input` doing so, silently drops everything past
- * `max_input_vars`, and answers a body over `post_max_size` with an empty
- * `$_POST` and no error at all — three different ways to hand a handler a
- * form that looks complete and is not. None of them is observable
- * afterwards: a form truncated to its first 1000 fields is
- * indistinguishable from a form that had 1000 fields.
+ * **This class does not parse the request body, and PHP must not
+ * either.** That is what `enable_post_data_reading=0` is for, and why
+ * {@see assertCapabilities()} refuses to run without it. Left on, PHP
+ * reads the body itself before any Kinetis code exists: it populates
+ * `$_POST`/`$_FILES` for a POST form, empties `php://input` doing so,
+ * silently drops everything past `max_input_vars`, and answers a body
+ * over `post_max_size` with an empty `$_POST` and no error at all —
+ * three different ways to hand a handler a form that looks complete and
+ * is not. None of them is observable afterwards: a form truncated to its
+ * first 1000 fields is indistinguishable from a form that had 1000
+ * fields.
  *
  * With the setting off, `php://input` carries the whole body for every
  * method including POST — which the runtime conformance suite asserts
- * against `php -S`, FrankenPHP and nginx + PHP-FPM alike — so the body
- * is staged under {@see FormLimits}' byte ceiling, counted in its raw
- * form, and parsed by `Kinetis\Http\Form`: the same code, the same
- * ceilings and the same refusals `kinetis/bref-adapter` and
- * `kinetis/roadrunner-adapter` apply to the same bytes.
- * `request_parse_body()` is not called, and cannot be: it reads the same
- * input stream, so it returns an empty form to anyone who staged the
- * body first, which makes "count the raw bytes, then let PHP parse them"
- * impossible rather than merely awkward.
+ * against `php -S`, FrankenPHP and nginx + PHP-FPM alike — so this hands
+ * that stream on unread, as the body of a raw PSR-7 request, and
+ * {@see \Kinetis\Http\Middleware\RequestBodyMiddleware} stages, bounds
+ * and parses it inside the Kernel. `request_parse_body()` is not called,
+ * and cannot be: it reads the same input stream, so it would leave
+ * nothing for the middleware that actually owns the body.
  *
- * Two answers to a bad body, and only two. One that cannot be parsed is a
- * `400` carrying the fixed
- * {@see RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE}, with a fixed
- * category logged and nothing from the request. One too large or too
- * complicated is a `413` naming the ceiling it met. Anything else — a
- * temporary stream that would not open, a bug — propagates, because it is
- * this worker's failure and not a client's.
+ * One failure belongs to this class rather than to that middleware: a
+ * forwarded header from an untrusted source, which decides the request's
+ * own scheme and client address and so has to be settled while the
+ * request is still being built. It is answered with the same fixed `400`
+ * a malformed body gets. Anything else — a bug, an environment that
+ * cannot be read — propagates, because it is this worker's failure and
+ * not a client's.
  */
 final class SuperglobalsBridge
 {
@@ -68,26 +60,13 @@ final class SuperglobalsBridge
      *
      * @param callable(ServerRequestInterface): ResponseInterface $handler
      */
-    public static function handle(callable $handler, FormLimits $limits, TrustedProxies $trustedProxies): void
+    public static function handle(callable $handler, TrustedProxies $trustedProxies): void
     {
         try {
-            $request = self::requestFromGlobals($limits, $trustedProxies);
-        } catch (UnparseableFormBodyException $e) {
-            // The category, never the message: see that class for why a
-            // parser's own text can never reach a log line.
-            error_log('Malformed request body: ' . $e->category);
-            self::emit(ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE));
-
-            return;
+            $request = self::requestFromGlobals($trustedProxies);
         } catch (UntrustedForwardedHeaderException) {
-            error_log('Malformed request body: unreadable-forwarded-header');
+            error_log('Rejected request: unreadable-forwarded-header');
             self::emit(ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE));
-
-            return;
-        } catch (BodyTooLargeException|FormLimitExceededException $e) {
-            // Safe to return as written: a limit message names a
-            // configured ceiling and never anything from the request.
-            self::emit(ErrorResponse::create(413, $e->getMessage()));
 
             return;
         }
@@ -95,16 +74,16 @@ final class SuperglobalsBridge
         self::emit($handler($request));
     }
 
-    public static function requestFromGlobals(FormLimits $limits, TrustedProxies $trustedProxies): ServerRequestInterface
+    public static function requestFromGlobals(TrustedProxies $trustedProxies): ServerRequestInterface
     {
         self::assertCapabilities();
 
         $factory = new Psr17Factory();
         $creator = new ServerRequestCreator($factory, $factory, $factory, $factory);
 
-        // Built without a body: fromGlobals() would open php://input
-        // itself, and this class stages that stream under a byte ceiling
-        // rather than handing it on unread.
+        // Built without a body, then given one: fromGlobals() would read
+        // php://input itself, and the body belongs to the Kernel's own
+        // RequestBodyMiddleware, which is what bounds it.
         $request = $creator->fromArrays(
             $_SERVER,
             ServerRequestCreator::getHeadersFromServer($_SERVER),
@@ -117,17 +96,13 @@ final class SuperglobalsBridge
 
         $request = self::withClientIdentity($request, $trustedProxies);
 
-        $declaredBytes = self::declaredContentLength($request);
         $input = fopen('php://input', 'r');
 
         if ($input === false) {
             throw RuntimeUnavailableException::missingFunction(self::class, 'php://input');
         }
 
-        $body = StagedRequestBody::stage(Stream::create($input), $limits, $declaredBytes);
-        $request = $request->withBody($body);
-
-        return self::withFormBody($request, $limits);
+        return $request->withBody(Stream::create($input));
     }
 
     /**
@@ -151,29 +126,9 @@ final class SuperglobalsBridge
                 'enable_post_data_reading must be 0 so Kinetis reads and bounds the request body itself. '
                 . 'Left on, PHP parses form bodies before any Kinetis code runs, silently truncating them at '
                 . 'its own max_input_vars/post_max_size limits and leaving php://input empty. '
-                . 'See the "Form bodies: one contract under every runtime" section of docs/runtime-adapters.md.',
+                . 'See the "Request bodies: one contract under every runtime" section of docs/runtime-adapters.md.',
             );
         }
-    }
-
-    /**
-     * The form the client sent, parsed from the staged bytes by
-     * {@see FormBody} — the same entry point, the same contract and the
-     * same ceilings every other runtime uses, with core's own multipart
-     * parser behind it.
-     *
-     * Every count and every rule that bounds the parse is applied to the
-     * raw body first, because that is the only place the real numbers
-     * exist: a thousand repetitions of one name are a thousand pairs on
-     * the wire and one leaf afterwards, and a part carrying no name at
-     * all costs a parser everything and appears nowhere in the result.
-     */
-    private static function withFormBody(ServerRequestInterface $request, FormLimits $limits): ServerRequestInterface
-    {
-        $body = (string) $request->getBody();
-        $request->getBody()->rewind();
-
-        return FormBody::apply($request, $body, self::declaredContentLength($request), $limits);
     }
 
     public static function emit(ResponseInterface $response): void
@@ -265,19 +220,5 @@ final class SuperglobalsBridge
         }
 
         return $request->withUri($uri, preserveHost: true);
-    }
-
-    /**
-     * The declared length, when the client declared one this framework
-     * can act on. A header that is absent, or carries anything but a
-     * non-negative integer, yields null: an unusable declaration is the
-     * same as no declaration, and the actual byte count is what bounds
-     * the request either way.
-     */
-    private static function declaredContentLength(ServerRequestInterface $request): ?int
-    {
-        $declared = $request->getHeaderLine('Content-Length');
-
-        return ctype_digit($declared) ? (int) $declared : null;
     }
 }

@@ -26,7 +26,7 @@ jobs:
           # The version-bump and content-bump checks diff the manifest
           # against a base commit: the PR's own base on a pull request,
           # GITHUB_EVENT_BEFORE (what main pointed to before this push) on
-          # a push — see tools/git-history.php. Either can land
+          # a push — see tools/validate-manifest.php. Either can land
           # arbitrarily far back on a multi-commit branch or push (this
           # project's own normal workflow, not an edge case), so full
           # history is needed here, matching sonarqube.yml's own
@@ -71,7 +71,7 @@ jobs:
         # "report everything, not just the first problem" behavior.
         run: |
           failed=""
-          for pkg in framework persistence cache-redis bref-adapter roadrunner-adapter query-builder auth auth-jwt authorization migrations mcp queue queue-redis queue-sql storage revolt-http-client storage-s3 queue-sqs queue-rabbitmq mailer broadcasting search-opensearch aws-sigv4 telemetry session pingpong skeleton; do
+          for pkg in framework persistence redis cache-redis bref-adapter roadrunner-adapter query-builder auth auth-jwt authorization migrations mcp queue queue-redis queue-sql storage revolt-http-client storage-s3 queue-sqs queue-rabbitmq mailer broadcasting search-opensearch aws-sigv4 telemetry session pingpong skeleton; do
             echo "=== $pkg ==="
             if ! docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/packages/$pkg composer:2 validate --strict; then
               failed="$failed $pkg"

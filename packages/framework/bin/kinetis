@@ -64,13 +64,12 @@ $store = new CacheStore($projectRoot . '/.kinetis-cache');
 // here at all.
 if ($env->isProduction()) {
     // BootSequence::resolveCli() is the entire "use the cache, or
-    // compile fresh" decision: commands.php, events.php, and
-    // plugins.php must all be present, the right format, and actually
-    // reconstruct into live objects — CommandRegistry/
-    // EventListenerRegistry/every plugin instance included, not just
-    // the raw DTOs — or the whole generation is treated as absent and
-    // $compile runs exactly once. See its own docblock. The OpenAPI
-    // document is never part of this — it's generated/cached
+    // compile fresh" decision: .kinetis-cache/compiled.php has to be
+    // present, the right format, and actually reconstruct into live
+    // objects — CommandRegistry/EventListenerRegistry/every plugin
+    // instance included, not just the raw DTOs — or it counts as absent
+    // and $compile runs exactly once. See its own docblock. The OpenAPI
+    // document is never part of this — it's generated and cached
     // separately, see docs/caching.md.
     $resolved = BootSequence::resolveCli($store, static fn (): CompiledCache => (new Compiler())->compileProject($projectRoot));
 

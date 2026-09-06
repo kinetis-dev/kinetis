@@ -83,9 +83,21 @@ $scope->dispose();
 ```
 
 `Kernel::handle()` creates exactly one `RequestScope` per incoming request
-and always disposes it before the request finishes, so a thrown exception
-partway through dispatch still can't leak that scope into the next
-request. You will almost never call `createRequestScope()`/`dispose()`
+and disposes it before returning, so a thrown exception partway through
+dispatch still can't leak that scope into the next request.
+
+A response that streams its own body is the one exception, because the
+code writing those bytes runs after `handle()` has returned and resolves
+from that same scope. `Kernel` hands back a `StreamedResponse` wrapper
+and releases the scope the moment the emitter finishes. If nothing ever
+emits it — an adapter that refuses to stream, a middleware that replaces
+the response, an exception trace holding it as a frame argument — the
+next request releases it first thing, before any of its own global
+middleware runs.
+Either way a finished request's scope is unreachable from the one after
+it.
+
+You will almost never call `createRequestScope()`/`dispose()`
 yourself — this is `Kernel`'s job — but understanding what happens inside
 it is what the rest of this page is actually about.
 

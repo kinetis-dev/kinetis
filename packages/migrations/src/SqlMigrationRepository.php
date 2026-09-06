@@ -69,7 +69,7 @@ final class SqlMigrationRepository implements MigrationRepositoryInterface
     }
 
     #[\Override]
-    public function lastApplied(): ?string
+    public function highestApplied(): ?string
     {
         $result = $this->db->execute('SELECT migration FROM ' . self::TABLE . ' ORDER BY migration DESC LIMIT 1');
         $row = $result->fetchRow();

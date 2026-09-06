@@ -24,9 +24,10 @@ API-first applications, developed in the
 
 The same `League\Flysystem\FilesystemOperator` interface [`kinetis/storage`](https://github.com/kinetis-dev/storage)
 gives local disk, backed by `AsyncAws\S3\S3Client` and
-`League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter` instead — genuinely
-non-blocking, via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP
-transport injected into `S3Client`, not the SDK's default blocking one.
+`League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter` instead. Every call
+travels on [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP
+transport, injected into `S3Client` in place of the SDK's default
+blocking one, so it suspends the calling Fiber.
 
 ```php
 use Kinetis\Storage\FilesystemFactory;
@@ -58,9 +59,12 @@ Every key is scoped — `FILESYSTEM_S3_BUCKET` + `backups` →
 `FILESYSTEM_BACKUPS_S3_BUCKET`. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
-Credentials are never read from Kinetis config — `AsyncAws\Core\Configuration`
-resolves them on its own, from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
-or an IAM role, the standard AWS SDK convention.
+Credentials are never read from Kinetis config — AsyncAws's standard
+provider chain resolves them on its own, the usual AWS SDK convention.
+Every provider in that chain that calls AWS uses the same Revolt
+transport as the client, while the shared credentials and config files
+and any token file are read with native blocking calls. Full detail:
+[kinetis.dev/docs/storage-s3.html](https://kinetis.dev/docs/storage-s3.html).
 
 ## Installation
 

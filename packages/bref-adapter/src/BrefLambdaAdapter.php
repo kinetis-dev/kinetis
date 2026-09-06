@@ -7,14 +7,6 @@ namespace Kinetis\BrefAdapter;
 use JsonException;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
-use Kinetis\Http\Form\Exception\FormLimitExceededException;
-use Kinetis\Http\Form\Exception\UnparseableFormBodyException;
-use Kinetis\Http\Form\FormBody;
-use Kinetis\Http\Form\FormLimits;
-use Kinetis\Http\Form\MultipartEnvelope;
-use Kinetis\Http\Form\MultipartFormBuilder;
-use Kinetis\Http\Form\StagedMultipartBody;
-use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use Kinetis\Runtime\RuntimeAdapterInterface;
@@ -22,10 +14,8 @@ use Kinetis\Runtime\StreamableResponseInterface;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Riverline\MultiPartParser\StreamedPart;
 use stdClass;
 use Throwable;
-use ValueError;
 
 /**
  * Bridges AWS Lambda's Runtime API to the Kernel, so the same application
@@ -44,24 +34,24 @@ use ValueError;
  * is more surface for a framework that's supposed to stay runtime-agnostic
  * at its core.
  *
- * Lives in its own package, not kinetis/framework core, specifically because of
- * the multipart/form-data handling below: a Lambda event's body arrives as
- * one in-memory string with no live php://input stream behind it, and
- * parsing an arbitrary multipart string needs riverline/multipart-parser.
- * Pulling that into every Kinetis install just for a deployment target
- * most consumers don't use isn't worth it.
+ * Lives in its own package rather than in core because the Lambda
+ * deployment target is one most consumers never use, and core carries
+ * only the two adapters that must always work.
  *
- * The parser is this package's; the rules it produces are not. Field
- * nesting, duplicate names, every ceiling on how large or complicated a
- * form may be, and the staging of the body it is parsed from all come
- * from `Kinetis\Http\Form` in core, which the SAPI bridge and
- * kinetis/roadrunner-adapter answer to as well — so the same form sent
+ * This adapter decides what a Lambda event *is* — identity, headers,
+ * cookies, the base64 envelope — and nothing about what its body
+ * contains. The body is handed on as raw PSR-7 bytes, and the Kernel's
+ * own `RequestBodyMiddleware` bounds and parses it under
+ * `Kinetis\Http\Form`'s ceilings, the same ones the SAPI bridge and
+ * kinetis/roadrunner-adapter deliver their bodies to. The same form sent
  * to any of the three is read into the same PSR-7 structures or refused
- * by all three with the same status. No SAPI here enforces anything of
- * its own — which is the same position the SAPI adapters put themselves
- * in by requiring `enable_post_data_reading=0` — so those ceilings are
- * the whole defense, and the platform's own 6 MB invocation payload
- * limit sits above them rather than in place of them.
+ * by all three with the same status.
+ *
+ * Those ceilings apply after delivery, not before it: by the time this
+ * adapter sees an event, API Gateway has already accepted the request
+ * and materialized its whole body in memory, up to the platform's own
+ * 6 MB invocation payload limit. Kinetis refuses an oversized body; it
+ * cannot stop AWS from having received one.
  */
 final class BrefLambdaAdapter implements RuntimeAdapterInterface
 {
@@ -106,7 +96,6 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
 
     public function __construct(
         private readonly string $runtimeApi,
-        private readonly FormLimits $limits,
         private readonly float $nextInvocationTimeoutSeconds = self::DEFAULT_NEXT_INVOCATION_TIMEOUT_SECONDS,
         private readonly float $responseTimeoutSeconds = self::DEFAULT_RESPONSE_TIMEOUT_SECONDS,
     ) {}
@@ -134,7 +123,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
                 // and not silently downgraded into an empty, plausible-
                 // looking GET / that reaches application routing either.
                 $event = self::decodeInvocationEvent($rawBody);
-                $this->postResponse($requestId, self::handleEvent($event, $handler, $this->limits));
+                $this->postResponse($requestId, self::handleEvent($event, $handler));
             } catch (Throwable $e) {
                 $this->postError($requestId, $e);
             }
@@ -150,13 +139,19 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     /**
      * One invocation, from a decoded event to the payload to post back:
      * the Lambda counterpart of SuperglobalsBridge::handle(), and like it
-     * the one place the failure that happens *before* $handler is turned
-     * into a response. A body the adapter cannot parse — invalid base64,
-     * a multipart body with no usable boundary — is the client's
-     * mistake, answered with the same 400 every other adapter gives,
-     * not an invocation error (which API Gateway renders as a 502, with
-     * the real message in CloudWatch only). Anything else escapes to
-     * run()'s postError() as before.
+     * the one place a failure that happens *before* $handler is turned
+     * into a response. A body this adapter cannot decode — a
+     * `isBase64Encoded` payload that is not valid base64 — is the
+     * client's mistake, answered with the same 400 every other adapter
+     * gives, not an invocation error (which API Gateway renders as a
+     * 502, with the real message in CloudWatch only). Anything else
+     * escapes to run()'s postError().
+     *
+     * What a body *contains* is not judged here at all: the request goes
+     * on raw, and the Kernel's own RequestBodyMiddleware bounds and
+     * parses it under the application's own FormLimits — the same
+     * ceilings, the same `413` and the same `400` every other runtime
+     * applies to the same bytes.
      *
      * Public so the runtime conformance suite can drive exactly the code
      * run() drives, without a Runtime API in the loop.
@@ -165,21 +160,17 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
      * @param callable(ServerRequestInterface): ResponseInterface $handler
      * @return array{statusCode:int,headers:array<string,string>,cookies:list<string>,body:string,isBase64Encoded:bool}
      */
-    public static function handleEvent(array $event, callable $handler, FormLimits $limits): array
+    public static function handleEvent(array $event, callable $handler): array
     {
         try {
-            $request = self::requestFromEvent($event, $limits);
-        } catch (MalformedRequestBodyException|UnparseableFormBodyException $e) {
+            $request = self::requestFromEvent($event);
+        } catch (MalformedRequestBodyException) {
             // A fixed classification, never a message — see
-            // UnparseableFormBodyException for why a parser's own text
+            // UnparseableFormBodyException for why a decoder's own text
             // can never reach a log line.
-            error_log('Malformed request body: ' . ($e instanceof UnparseableFormBodyException ? $e->category : 'invalid-base64'));
+            error_log('Malformed request body: invalid-base64');
 
             return self::responseToPayload(ErrorResponse::create(400, RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE));
-        } catch (BodyTooLargeException|FormLimitExceededException $e) {
-            // Safe to return as written: a limit message names a
-            // configured ceiling and never anything from the request.
-            return self::responseToPayload(ErrorResponse::create(413, $e->getMessage()));
         }
 
         return self::responseToPayload($handler($request));
@@ -196,7 +187,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
      *
      * @param array<string,mixed> $event
      */
-    public static function requestFromEvent(array $event, FormLimits $limits): ServerRequestInterface
+    public static function requestFromEvent(array $event): ServerRequestInterface
     {
         $headers = self::headersFromEvent($event);
         $identity = LambdaRequestIdentity::fromEvent($event, $headers);
@@ -240,10 +231,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
 
         $request = self::applyCookies($request, $event);
 
-        $body = self::decodeBody($event);
-        $request = $request->withBody($factory->createStream($body));
-
-        return self::applyFormBody($request, $body, self::declaredContentLength($headers), $limits);
+        return $request->withBody($factory->createStream(self::decodeBody($event)));
     }
 
     /**
@@ -327,16 +315,6 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     }
 
     /**
-     * @param array<string,string> $headers
-     */
-    private static function declaredContentLength(array $headers): ?int
-    {
-        $declared = $headers['content-length'] ?? null;
-
-        return is_string($declared) && ctype_digit($declared) ? (int) $declared : null;
-    }
-
-    /**
      * Payload format 2.0 never puts cookies in $headers at all — they
      * arrive as their own top-level list, one "name=value" pair per
      * entry, specifically so API Gateway never has to fold multiple
@@ -401,28 +379,6 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         }
 
         return $decoded;
-    }
-
-    /**
-     * There is no SAPI here to enforce `post_max_size` or
-     * `max_input_vars`, so `Kinetis\Http\Form\FormBody` is the whole
-     * defense — the same entry point, the same contract and the same
-     * `413` every other runtime applies, with this package's own
-     * multipart parser passed in as the one part that differs. The size
-     * it checks is the bytes actually decoded as well as the declared
-     * `Content-Length`: an event may carry either, and a body larger
-     * than the ceiling must not be parsed on the strength of a smaller
-     * declaration.
-     */
-    private static function applyFormBody(ServerRequestInterface $request, string $body, ?int $declaredBytes, FormLimits $limits): ServerRequestInterface
-    {
-        return FormBody::apply(
-            $request,
-            $body,
-            $declaredBytes,
-            $limits,
-            static fn (string $contentType, string $raw, FormLimits $formLimits): array => self::parseMultipart($contentType, $raw, $formLimits),
-        );
     }
 
     /**
@@ -504,112 +460,6 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     private static function isValidUtf8(string $value): bool
     {
         return preg_match('//u', $value) === 1;
-    }
-
-    /**
-     * riverline/multipart-parser reads one raw HTTP part: a
-     * `Content-Type` header carrying the boundary, a blank line, then
-     * the body. {@see StagedMultipartBody} builds exactly that, owns the
-     * temporary stream for the length of the parse, and refuses to hand
-     * over a body it could not stage whole — a shorter multipart body
-     * still parses, into a form that looks complete.
-     *
-     * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}
-     */
-    private static function parseMultipart(string $contentType, string $body, FormLimits $limits): array
-    {
-        // The envelope first, over the raw bytes: riverline's getParts()
-        // builds a StreamedPart and a stream for every part before a
-        // caller can ask how many there are, so a ceiling checked on its
-        // result is checked after the cost it exists to bound has been
-        // paid. MultipartEnvelope counts what a parsed result cannot
-        // show either — unnamed parts, and repeated header lines rather
-        // than distinct names.
-        MultipartEnvelope::assertWithinLimits($body, $contentType, $limits);
-
-        return StagedMultipartBody::parse($contentType, $body, static fn ($stream): array => self::formFromParts($stream, $limits));
-    }
-
-    /**
-     * riverline reports client input it cannot read through PHP's own
-     * exception types rather than any of its own, so the mapping is by
-     * category, and each category is named here by the failures it
-     * actually covers rather than by a message match:
-     *
-     * - `InvalidArgumentException` (a subclass of `LogicException`, so
-     *   the second catch would swallow it silently if it came second):
-     *   a body whose headers never end, a header line past the parser's
-     *   own 8 KB ceiling, a content type it can find no boundary in.
-     * - `LogicException`: a body with no parts, or one that is not
-     *   multipart at all once parsed.
-     * - `ValueError`: `mb_convert_encoding()` refusing a charset the
-     *   client named — reachable from the constructor, through the
-     *   `boundary` parameter, and from every metadata accessor, through
-     *   an RFC 5987 `name*=`/`filename*=` parameter. Client-chosen text
-     *   either way, and so a client error rather than this worker's.
-     *
-     * Every one of those is a `400` carrying
-     * {@see RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE} and a fixed
-     * category, with the parser's own message discarded rather than
-     * attached: it is assembled from the input that failed, and would
-     * otherwise travel into a log line by way of a `previous` chain. The
-     * envelope contract in `Kinetis\Http\Form\MultipartEnvelope` has
-     * already refused every body these can be reached with, on this
-     * runtime and every other; the mapping stays because a parser
-     * failing on input a scan accepted must still be one refusal
-     * clients cannot tell apart, not an uncaught error.
-     *
-     * Anything else — a {@see \Kinetis\Http\Form\Exception\FormStagingException}
-     * from the stream underneath, a limit refusal from the builder —
-     * travels on untouched: those are not "the client sent nonsense".
-     *
-     * The metadata this reads is the metadata the scan already held to
-     * the contract: the raw `Content-Type` header rather than
-     * `getMimeType()`, which answers `application/octet-stream` for a
-     * part that declared nothing and would report a media type the
-     * client never sent.
-     *
-     * @param resource $stream
-     * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}
-     */
-    private static function formFromParts($stream, FormLimits $limits): array
-    {
-        try {
-            $parts = (new StreamedPart($stream))->getParts();
-        } catch (\InvalidArgumentException|\LogicException|ValueError) {
-            throw UnparseableFormBodyException::unreadableMultipart();
-        }
-
-        if ($parts === []) {
-            throw UnparseableFormBodyException::noParts();
-        }
-
-        $builder = new MultipartFormBuilder($limits);
-
-        foreach ($parts as $part) {
-            try {
-                $name = $part->getName();
-                $filename = $part->getFileName();
-                $mediaType = $part->getHeader('Content-Type');
-                $contents = $name === null ? '' : $part->getBody();
-            } catch (\LogicException|ValueError) {
-                throw UnparseableFormBodyException::undecodablePart();
-            }
-
-            if (!is_string($name)) {
-                continue;
-            }
-
-            if (is_string($filename)) {
-                $builder->addFile($name, $filename, is_string($mediaType) ? $mediaType : null, $contents);
-
-                continue;
-            }
-
-            $builder->addField($name, $contents);
-        }
-
-        return $builder->build();
     }
 
     /**

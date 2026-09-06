@@ -2,12 +2,9 @@ parameters:
     level: 8
     paths:
         - version-policy.php
-        - checked-write.php
-        - manifest-schema.php
-        - git-history.php
         - generate-composer.php
         - validate-manifest.php
         - release-plan.php
-        - release-transaction.php
+        - release-publish.php
         - release-gate.php
         - tests

@@ -18,11 +18,15 @@ use Psr\Http\Message\ServerRequestInterface;
 interface RuntimeAdapterInterface
 {
     /**
-     * The one message a client sees for a request body the environment
-     * could not parse — fixed, and silent about the input, which may be
-     * attacker-controlled. Every adapter answers a parse failure with a
-     * 400 carrying this message; the runtime conformance suite
-     * (`Kinetis\Testing\Runtime`) holds them to it.
+     * The one message a client sees for a request body that could not be
+     * parsed — fixed, and silent about the input, which may be
+     * attacker-controlled. An adapter hands its body on raw and
+     * `Kinetis\Http\Middleware\RequestBodyMiddleware` answers a parse
+     * failure with a 400 carrying this message, so the answer is the
+     * same under every runtime; the runtime conformance suite
+     * (`Kinetis\Testing\Runtime`) holds each adapter to it. The constant
+     * lives here because this interface is the contract the suite drives
+     * every adapter through.
      */
     public const string MALFORMED_BODY_MESSAGE = 'The request body could not be parsed.';
 

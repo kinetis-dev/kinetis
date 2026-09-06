@@ -210,6 +210,7 @@ storage-s3
 mailer
 broadcasting
 revolt-http-client
+redis
 search-opensearch
 aws-sigv4
 ```

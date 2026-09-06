@@ -33,8 +33,8 @@ use Kinetis\Http\Form\Exception\FormParserConfigurationException;
  * refused here, on every runtime, before `parse_str()` consumes a pair
  * and before a handler is handed a form. A multipart body reaches this
  * parse through an envelope {@see MultipartEnvelope} has validated and
- * the active multipart parser has expanded into parts; the parse
- * refused is the one those part names are joined for.
+ * expanded into parts; the parse refused is the one those part names
+ * are joined for.
  *
  * The value is read immediately before the parse that depends on it, and
  * that is the value the parse runs under: `arg_separator.input` is

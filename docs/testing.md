@@ -160,21 +160,42 @@ does.
 request, or anything else none of the methods above cover. This class
 deliberately never guesses a multipart boundary from a plain array; build
 the real PSR-7 request yourself and dispatch it through the same Kernel
-every other method here uses:
+every other method here uses.
+
+Send the multipart bytes, not a parsed body. `RequestBodyMiddleware` is
+global and unconditional (see {doc}`middleware`), so it stages and parses
+whatever body the request carries and replaces `getParsedBody()` with the
+result — a request that declares `multipart/form-data` and carries no
+matching bytes is refused with a `400` before the handler runs:
 
 ```{code-block} php
 use Nyholm\Psr7\ServerRequest;
-use Nyholm\Psr7\Stream;
-use Nyholm\Psr7\UploadedFile;
 
-$avatar = new UploadedFile(Stream::create($fileContents), \strlen($fileContents), \UPLOAD_ERR_OK, 'avatar.png', 'image/png');
-$request = new ServerRequest('POST', '/avatars')
-    ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary')
-    ->withParsedBody(['name' => 'Ada'])
-    ->withUploadedFiles(['avatar' => $avatar]);
+$boundary = '----KinetisTestBoundary';
+$body = "--{$boundary}\r\n"
+    . "Content-Disposition: form-data; name=\"name\"\r\n\r\n"
+    . "Ada\r\n"
+    . "--{$boundary}\r\n"
+    . "Content-Disposition: form-data; name=\"avatar\"; filename=\"avatar.png\"\r\n"
+    . "Content-Type: image/png\r\n\r\n"
+    . $fileContents . "\r\n"
+    . "--{$boundary}--\r\n";
+
+$request = new ServerRequest(
+    'POST',
+    '/avatars',
+    ['Content-Type' => "multipart/form-data; boundary={$boundary}"],
+    $body,
+);
 
 $this->client->send($request)->assertOk();
 ```
+
+Every line ending is a literal CRLF and the closing delimiter carries its
+trailing `--`, because that is the only spelling
+`Kinetis\Http\Form\MultipartEnvelope` reads as a delimiter — see
+"Request bodies: one contract under every runtime" in
+{doc}`runtime-adapters`.
 
 Every method above is, underneath, just a convenience for building one of
 these requests and calling `send()`.
@@ -214,70 +235,20 @@ can be called repeatedly — reading the body doesn't consume it.
 ## Testing against a database
 
 A test that writes rows has to leave the database as it found it, or the
-next test inherits its data. `kinetis/persistence` ships two strategies;
-both are PHPUnit traits, and both ask the test which connection to
-isolate.
+next test inherits its data. `kinetis/persistence` ships one strategy for
+that, a PHPUnit trait that asks the test which connection to isolate.
 
-### Rolling back: `DatabaseTransactions`
+### Emptying tables: `DatabaseTruncation`
 
-Opens a transaction before each test and rolls it back after. Fast —
-nothing is ever written — and it covers writes the application makes
-through the container's own client, not just ones the test issues
-directly.
+Deletes the rows in the tables you name, before each test. It holds no
+transaction of its own, so it works for code that manages its own
+transactions, and on every driver.
 
 ```{code-block} php
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\SqlLink;
-use Kinetis\Persistence\Testing\DatabaseTransactions;
-use Kinetis\Testing\ApplicationTestCase;
-
-final class OrderRepositoryTest extends ApplicationTestCase
-{
-    use DatabaseTransactions;
-
-    protected function projectRoot(): string
-    {
-        return dirname(__DIR__);
-    }
-
-    protected function databaseLink(): SqlLink
-    {
-        return $this->app->get(MysqlLink::class);
-    }
-
-    public function test_it_stores_an_order(): void
-    {
-        $this->client->post('/orders', ['sku' => 'A1', 'quantity' => 2])->assertCreated();
-
-        self::assertSame(1, $this->orderCount());
-    }
-}
-```
-
-That works because the PDO drivers hold a single connection, and a
-transaction opened on it encloses every later statement on it. Two cases
-fall outside that, and both are loud rather than silent:
-
-- **Code that opens its own transaction.** The drivers reject nested
-  transactions deliberately, so `TransactionGuard::transaction()` or an
-  explicit `beginTransaction()` in the code under test throws while this
-  trait holds one open.
-- **`DB_DRIVER=native`.** The async drivers pool several connections, so a
-  transaction on one isolates nothing the others do. The trait skips the
-  test rather than reporting isolation it isn't providing. Test suites run
-  under the CLI, where `auto` already selects PDO, so this only comes up
-  if a suite forces `native`.
-
-Use the other strategy for either.
-
-### Emptying tables: `DatabaseTruncation`
-
-Deletes the rows in the tables you name, before each test. Slower, and it
-holds no transaction of its own — so it works for code that manages its
-own transactions, and for any driver.
-
-```{code-block} php
 use Kinetis\Persistence\Testing\DatabaseTruncation;
+use Kinetis\Testing\ApplicationTestCase;
 
 final class CheckoutTest extends ApplicationTestCase
 {
@@ -311,10 +282,8 @@ Truncation happens *before* each test rather than after, so a failing
 test leaves its rows behind to inspect.
 
 ```{note}
-Schema creation belongs outside both traits — in a migration run once
-before the suite, not in a test. On MySQL, `CREATE TABLE` commits the
-surrounding transaction implicitly, which would silently end
-`DatabaseTransactions`' isolation for the rest of that test.
+Schema creation belongs outside the trait — in a migration run once
+before the suite, not in a test.
 ```
 
 ## Without the base class
@@ -386,7 +355,6 @@ interface RuntimeAdapterDriver
     public function dispatch(WireRequest $request, ResponseSpec $response): Outcome;
     public function expectedClientIp(): string;
     public function supportsStreaming(): bool;
-    public function unparseableFormRequest(): WireRequest;
     public function expectedScheme(): string;
     public function preservesNumericHeaderNames(): bool;
     public function preservesCookieOrder(): bool;
@@ -398,16 +366,16 @@ Everything after `dispatch()` is a fact the environment decides, not the
 test: the address it reports as `REMOTE_ADDR` (a real socket's peer for
 a SAPI, whatever the driver injects as `sourceIp` for Lambda), the
 scheme it serves over when nothing forwards one, whether a
-`StreamedResponse` can reach the client incrementally, what a form body
-it cannot parse looks like, whether a purely-numeric header name and the
-client's cookie order survive its own request decoding, and whether the
+`StreamedResponse` can reach the client incrementally, whether a
+purely-numeric header name and the client's cookie order survive its own
+request decoding, and whether the
 peer the driver connects from is a trusted edge whose
 `X-Forwarded-Proto` may decide the request's scheme.
 
-A parsed form body's raw bytes are not among them. Every adapter holds
-the whole body and parses a copy, so `getBody()` after
-`getParsedBody()` is the request byte for byte on all of them, and the
-suite asserts that rather than asking.
+A parsed form body's raw bytes are not among them. The staged body is
+seekable and rewound, so `getBody()` after `getParsedBody()` is the
+request byte for byte under every adapter, and the suite asserts that
+rather than asking.
 
 **The suite asserts both directions of every declaration**, which is
 what keeps a declaration from becoming a skip. A streaming environment
@@ -449,12 +417,11 @@ padded delimiter, a boundary after a bare LF, a decoding
 `Content-Transfer-Encoding`, an RFC 2047 encoded word, an RFC 5987
 extended parameter, a nested `multipart/*` part and a repeated
 `Content-Disposition` are each a `400`; and a file part declaring no
-`Content-Type` reports no client media type at all. Every one of those is
-a place two real parsers read one body differently — core's own scan and
-the satellites' `riverline/multipart-parser` — so running them on every
-adapter is what turns "one contract" into something a change can break
-loudly. See "Form bodies: one contract under every runtime" in
-{doc}`runtime-adapters` for the rules themselves.
+`Content-Type` reports no client media type at all. One parse produces
+all of those, under every runtime, so running the cases on every adapter
+is what proves each one delivers its body to that parse intact rather
+than reshaping it on the way. See "Request bodies: one contract under every
+runtime" in {doc}`runtime-adapters` for the rules themselves.
 
 All four adapters run this suite themselves; how each one is driven, and
 what that does and doesn't prove, is spelled out below. Read a driver
@@ -465,14 +432,13 @@ in kinetis/roadrunner-adapter.
 
 Only behavior every environment can exhibit belongs in the shared suite.
 An input one environment alone can produce — a base64-flagged event
-body, a multipart part's header count under an adapter that parses the
-body itself — is that adapter's own test to write, alongside the
+body, say — is that adapter's own test to write, alongside the
 conformance run; the suite's public assertion helpers
 (`assertMalformedBodyResponse()`, `assertOverLimitFormResponse()`) hold
 that input to the same contract the shared cases use, so the *outcome*
 stays unified even where the *trigger* can't be. The byte cap on a raw
 request body is not the adapter's to test — it is
-`MaxBodySizeMiddleware`'s, in the Kernel, identical under every adapter
+`RequestBodyMiddleware`'s, in the Kernel, identical under every adapter
 and tested there. `Kinetis\Testing\FreePort::reserve()` hands a fixture
 server a port nothing is listening on, so two suites spawning servers in
 one checkout don't collide on a hard-coded number.
@@ -506,7 +472,7 @@ What each run proves, precisely, and what it doesn't.
   PHP-FPM behind nginx, each in its own container with the same driver
   pointed at it instead of at a spawned process. That is the only place
   each production SAPI's own population of headers, client address and
-  body, its own form parsing, and its own streaming path are exercised.
+  body, and its own streaming path, are exercised.
   The streaming case times the body as it arrives, so a proxy holding a
   stream back until the end fails it — which is what nginx does with
   `fastcgi_buffering` at its default `on`, and why the FPM fixture sets

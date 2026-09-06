@@ -8,70 +8,37 @@ use InvalidArgumentException;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Migrations\Exception\MigrationFileMissingException;
-use Kinetis\Migrations\Exception\MigrationLockReleaseException;
 use Kinetis\Migrations\Exception\MigrationLockTimeoutException;
 use Throwable;
 
 /**
  * Orchestrates migrate()/rollback()/status() against a migrations
- * directory and a MigrationRepositoryInterface. Never wraps a migration's
- * up()/down() in a transaction: Postgres supports transactional DDL,
- * MySQL's DDL statements auto-commit regardless of any surrounding
- * transaction, so a runner-imposed transaction would be real atomicity on
- * one backend and a false sense of it on the other. A migration that
- * wants atomicity on Postgres opens one itself, inside its own up() —
- * which is also why migrate()/rollback() never wrap the lock below in a
- * beginTransaction() of their own: a still-open transaction on the same
- * connection would either make that migration-level beginTransaction()
- * throw (this project's drivers reject nested transactions outright) or,
- * on the PDO drivers specifically, silently wrap the migration's own DDL
- * in it — the exact false atomicity this class exists to avoid.
+ * directory and a MigrationRepositoryInterface.
  *
- * If a migration's up() throws mid-run, migrate() doesn't catch it or roll
- * anything back — every migration before it in this call is already
- * marked applied (correctly: they succeeded), the failing one is not
- * (correctly: it didn't complete), and the exception propagates so the
- * caller sees a real failure instead of a silently partial run.
+ * A migration's up()/down() is never wrapped in a transaction: Postgres
+ * supports transactional DDL, MySQL's DDL statements auto-commit
+ * regardless of any surrounding transaction, so a runner-imposed
+ * transaction would be real atomicity on one backend and a false sense
+ * of it on the other. A migration that wants atomicity on Postgres opens
+ * one itself, inside its own up(). If a migration's up() throws, migrate()
+ * catches nothing: every migration before it is already marked applied,
+ * the failing one is not, and the exception propagates.
  *
- * migrate() and rollback() hold a cross-process advisory lock for their
- * whole duration, so two deploy instances starting together can't both
- * compute the same pending set and run it twice. A unique row in
- * MigrationRepositoryInterface's own table only makes the second run's
- * final markApplied() fail — by then its up() has already executed.
- * Advisory locks (MySQL's GET_LOCK/RELEASE_LOCK, Postgres's
- * pg_try_advisory_lock/pg_advisory_unlock) are the portable primitive
- * here, not a transactional row lock: they're session-scoped rather than
- * transaction-scoped, which is what a migration's own DDL needs — a
- * transaction-held row lock would be silently released by MySQL's
- * implicit per-DDL commit partway through a real migration run. Session
- * scope also answers "what happens to an abandoned lock": both
- * mechanisms release automatically the moment the session/connection
- * that holds them closes, gracefully or not, with no separate cleanup.
+ * migrate() and rollback() hold a cross-process advisory lock (MySQL's
+ * GET_LOCK/RELEASE_LOCK, Postgres's pg_try_advisory_lock/
+ * pg_advisory_unlock) for their whole duration, so two deploy instances
+ * starting together cannot both compute the same pending set and run it
+ * twice. Both are session-scoped rather than transaction-scoped, which is
+ * what a migration's DDL needs — a transaction-held row lock would be
+ * released by MySQL's implicit per-DDL commit partway through a run — and
+ * both release on their own when the session closes, gracefully or not.
  *
- * Both lock calls are issued directly on the injected $db, not through a
- * dedicated beginTransaction() — deliberately, to avoid the nesting
- * conflict above. This makes session continuity between the acquire and
- * release call exact only when $db itself resolves to a single physical
- * connection for its whole lifetime — a PDO driver always does (one
- * blocking connection), and a native driver pool does too only when
- * sized to exactly one connection. A native driver pool sized above one
- * connection breaks this: the acquire and release calls are not
- * guaranteed to reuse the same pooled physical connection, so the
- * release can land on a connection that never held the lock (the lock
- * itself still expires safely on its own once the connection that
- * actually holds it closes, but not necessarily as promptly as an
- * explicit release).
- *
- * This class cannot enforce that invariant itself — it accepts whatever
- * MysqlLink|PostgresLink its caller hands it. The migrate:* commands
- * enforce it at the one place that can, before this class ever sees
- * $db: {@see \Kinetis\Migrations\Console\MigrationContext::connection()}
- * forces maxConnections: 1 unconditionally, regardless of
- * DB_MAX_CONNECTIONS, since these commands are strictly serial and gain
- * nothing from a wider pool. A caller constructing MigrationRunner
- * directly, outside that command path, is responsible for the identical
- * guarantee itself: a link it knows resolves to one physical connection
- * for this object's whole lifetime.
+ * $db must be a single connection that is never replaced for this
+ * object's lifetime: a lock acquired on one connection is not held on
+ * another. A PDO client is exactly that, which is what
+ * {@see \Kinetis\Migrations\Console\MigrationContext} builds for the
+ * migrate:* commands. A pooled or reconnecting link can move between
+ * connections and drop the lock mid-run.
  */
 final readonly class MigrationRunner
 {
@@ -144,8 +111,8 @@ final readonly class MigrationRunner
     }
 
     /**
-     * Rolls back the single most recently applied migration only — there
-     * is no batch/group concept here, unlike some migration tools.
+     * Undoes the applied migration whose name sorts last — one migration,
+     * with no batch or group concept. Run it again to reach earlier ones.
      *
      * @throws MigrationFileMissingException
      */
@@ -153,7 +120,7 @@ final readonly class MigrationRunner
     {
         return $this->withLock(function (): ?string {
             $this->repository->ensureTableExists();
-            $name = $this->repository->lastApplied();
+            $name = $this->repository->highestApplied();
 
             if ($name === null) {
                 return null;
@@ -173,26 +140,10 @@ final readonly class MigrationRunner
     }
 
     /**
-     * Acquires the advisory lock, runs $operation, and always releases
-     * it afterward — including when releaseLock() itself fails, in
-     * which case that failure is absorbed rather than allowed to take
-     * $operation's own already-in-flight failure's place. PHP does not
-     * discard an exception a try was already propagating when its own
-     * finally throws a different one — it makes the finally's exception
-     * the new outer exception and chains the original beneath it as
-     * previous. Left unhandled, that means a release failure would
-     * become the direct, reported cause instead of $operation's own
-     * real failure, which would only be reachable one level deeper via
-     * getPrevious() — the identical masking hazard
-     * Kinetis\Storage\AmpFileAdapter::readMimeTypeSample() already
-     * discloses and guards against for the structurally identical
-     * reason (there: a close() failure racing a read() failure; here: a
-     * releaseLock() failure racing $operation's own). Absorbing the
-     * release failure here keeps $operation's own failure as the one
-     * this method directly reports. A release failure with no operation
-     * failure in flight is not absorbed — it propagates normally, since
-     * releasing genuinely is part of what this method promises to do,
-     * not an optional afterthought.
+     * Acquires the advisory lock, runs $operation, and releases the lock
+     * afterwards. When $operation fails, its own failure is what
+     * propagates: a release that also fails on the way out is not what
+     * went wrong, and the lock releases with the session regardless.
      *
      * @template T
      * @param callable(): T $operation
@@ -201,23 +152,22 @@ final readonly class MigrationRunner
     private function withLock(callable $operation): mixed
     {
         $this->acquireLock();
-        $primaryFailure = null;
 
         try {
-            return $operation();
+            $result = $operation();
         } catch (Throwable $e) {
-            $primaryFailure = $e;
-
-            throw $e;
-        } finally {
             try {
                 $this->releaseLock();
-            } catch (Throwable $releaseFailure) {
-                if ($primaryFailure === null) {
-                    throw $releaseFailure;
-                }
+            } catch (Throwable) {
+                // Subordinate to $e, which is what the caller needs.
             }
+
+            throw $e;
         }
+
+        $this->releaseLock();
+
+        return $result;
     }
 
     /**
@@ -251,11 +201,9 @@ final readonly class MigrationRunner
         // functions, unlike MySQL's GET_LOCK — pg_try_advisory_lock is
         // the non-blocking primitive, polled with a short sleep between
         // attempts, the same "no native blocking-with-timeout" shape
-        // Kinetis\QueueSql\SqlQueue::pop() already uses for the identical
-        // reason. Cast to ::int so the result is a plain 0/1 regardless
-        // of whether the driver represents SQL boolean as a native PHP
-        // bool or Postgres's own "t"/"f" text — confirmed to differ
-        // between the native and PDO drivers, not assumed.
+        // Kinetis\QueueSql\SqlQueue::pop() already uses. The ::int cast
+        // makes the answer a plain 0/1 on both drivers, which represent
+        // a SQL boolean differently.
         $deadline = microtime(true) + $this->lockTimeoutSeconds;
 
         while (true) {
@@ -275,35 +223,17 @@ final readonly class MigrationRunner
         }
     }
 
-    /**
-     * Checks the release call's own returned value — MySQL's
-     * RELEASE_LOCK() returns 0 (a different session holds the lock) or
-     * NULL (never acquired at all), Postgres's pg_advisory_unlock()
-     * returns false for the equivalent case — neither backend throws
-     * for this on its own, so a successful query is not the same
-     * guarantee as a successful release. See MigrationLockReleaseException's
-     * own docblock for what a failure here most likely means.
-     */
     private function releaseLock(): void
     {
         if ($this->db instanceof MysqlLink) {
-            $result = $this->db->execute('SELECT RELEASE_LOCK(?) AS released', [self::LOCK_NAME]);
-            $released = $result->fetchRow()['released'] ?? null;
-
-            if ((int) $released !== 1) {
-                throw MigrationLockReleaseException::didNotRelease();
-            }
+            $this->db->execute('SELECT RELEASE_LOCK(?)', [self::LOCK_NAME]);
 
             return;
         }
 
-        $result = $this->db->query(
-            'SELECT pg_advisory_unlock(' . self::PG_LOCK_NAMESPACE . ', ' . self::PG_LOCK_KEY . ')::int AS released',
+        $this->db->query(
+            'SELECT pg_advisory_unlock(' . self::PG_LOCK_NAMESPACE . ', ' . self::PG_LOCK_KEY . ')',
         );
-
-        if ((int) ($result->fetchRow()['released'] ?? 0) !== 1) {
-            throw MigrationLockReleaseException::didNotRelease();
-        }
     }
 
     private function findFile(string $name): ?MigrationFile

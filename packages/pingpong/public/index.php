@@ -53,15 +53,12 @@ $pluginInstances = null;
 // discovers or binds the registry itself.
 if ($env->isProduction()) {
     // BootSequence::resolveHttp() is the entire "use the cache, or
-    // compile fresh" decision: http.php, events.php, and plugins.php
-    // must all be present, the right format, and actually reconstruct
-    // into live objects — Router/EventListenerRegistry/every plugin
-    // instance included, not just the raw DTOs — or the whole
-    // generation is treated as absent and $compile runs exactly once,
-    // safely, even under concurrent workers racing to be "first" (see
-    // CacheStore::writeAll()'s own docblock: each racing writer
-    // publishes its own complete generation, never a partial or mixed
-    // one). See its own docblock.
+    // compile fresh" decision: .kinetis-cache/compiled.php has to be
+    // present, the right format, and actually reconstruct into live
+    // objects — Router/EventListenerRegistry/every plugin instance
+    // included, not just the raw DTOs — or it counts as absent and
+    // $compile runs exactly once, its result published as the very
+    // artifact `bin/kinetis build` produces. See its own docblock.
     $resolved = BootSequence::resolveHttp($store, static fn (): CompiledCache => (new Compiler())->compileProject($projectRoot));
 
     $httpCache = $resolved['httpCache'];
@@ -97,14 +94,13 @@ if ($env->isProduction()) {
     $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
 }
 
-// The two policies an adapter needs before the Kernel or its container
-// exist: how many bytes a request body may carry, and whose forwarded
-// headers may decide this request's scheme and client address. Built
-// from the same Config everything else here came from and registered
-// before the bootstrap chain runs, so bootstrap.php can replace either
-// one the way it replaces any other binding: AppScope locks its
-// bindings at boot(), and every registration has to be on the near side
-// of that.
+// How large and how complicated a request body may be, and whose
+// forwarded headers may decide this request's scheme and client address.
+// Built from the same Config everything else here came from and
+// registered before the bootstrap chain runs, so bootstrap.php can
+// replace either one the way it replaces any other binding: AppScope
+// locks its bindings at boot(), and every registration has to be on the
+// near side of that.
 $app->instance(FormLimits::class, FormLimits::fromConfig($config));
 $app->instance(TrustedProxies::class, TrustedProxies::fromConfig($config));
 
@@ -135,17 +131,16 @@ foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
 
 // Detected before constructing Kernel, not after, so its isPersistent()
 // can be passed straight into the constructor rather than patched in.
-// Both policies are read back out of the container rather than kept
-// from the registration above: whatever the bootstrap chain left bound
-// is what MaxBodySizeMiddleware enforces inside the Kernel, so the
-// adapter has to bound and forward this request by those same two
-// objects.
-/** @var FormLimits $formLimits */
-$formLimits = $app->get(FormLimits::class);
+// The proxy policy is read back out of the container rather than kept
+// from the registration above, so whatever the bootstrap chain left
+// bound is what decides this request's scheme and client address. The
+// body ceiling is not passed here at all: the adapter hands the body on
+// raw, and RequestBodyMiddleware bounds and parses it inside the Kernel
+// under whatever FormLimits the container holds.
 /** @var TrustedProxies $trustedProxies */
 $trustedProxies = $app->get(TrustedProxies::class);
 
-$adapter = RuntimeDetector::detect($formLimits, $trustedProxies);
+$adapter = RuntimeDetector::detect($trustedProxies);
 
 $kernel = new Kernel(
     $app,

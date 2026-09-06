@@ -52,7 +52,8 @@ project-wide scan for all three middleware attributes, not three — see
 
 MCP tools and resources are part of this cache too — `kinetis/mcp`'s
 `McpRegistry` is a `CacheableDiscoveryInterface` class like any other
-installed package's, one more entry in `plugins.php`. See {doc}`mcp`.
+installed package's, one more entry in the artifact's plugin section.
+See {doc}`mcp`.
 
 A tool's generated `inputSchema` is the one place this format needs a
 little care. JSON Schema distinguishes the empty object `{}` from the
@@ -75,88 +76,68 @@ application declares. The full rule is in {doc}`appendix-packages`'s
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
 
-The on-disk result is four files, always published together as one
-*generation*:
+The on-disk result is one file:
 
 ```{code-block} text
 .kinetis-cache/
-├── current                the published pointer — names which
-│                          generation below is active
-├── gen_1a2b3c4d5e6f7a8b/  one complete generation
-│   ├── http.php           routes + global/openapi middleware + named
-│   │                      middleware groups + HTTP binding plans +
-│   │                      validation plans for DTOs reachable from
-│   │                      HTTP routes + the package bootstrap-class
-│   │                      list
-│   ├── commands.php       command definitions + the package
-│   │                      bootstrap-class list (repeated here and
-│   │                      in http.php, so whichever one an entry
-│   │                      point reads already carries it, with no
-│   │                      extra section needed just for that)
-│   ├── events.php         event listeners, grouped by event class
-│   └── plugins.php        every installed package's own
-│                          CacheableDiscoveryInterface data, keyed by
-│                          the class that produced it
-└── gen_.../               an older, superseded generation — retained,
-                           not deleted (see "Publishing a generation
-                           atomically" below)
+└── compiled.php    routes + global/openapi middleware + named middleware
+                    groups + HTTP binding plans + validation plans for
+                    DTOs reachable from HTTP routes + command definitions
+                    + event listeners grouped by event class + every
+                    installed package's own CacheableDiscoveryInterface
+                    data + the package bootstrap-class list
 ```
 
-Each entry point still reads only the sections it actually consumes, never
-all four — an HTTP boot reads `http.php`, `events.php`, and `plugins.php`
-(never `commands.php`); the CLI reads `commands.php`, `events.php`, and
-`plugins.php` (never `http.php`) — so this stays exactly as lazy as it
-looks. What's new is that every file inside one generation directory is
-guaranteed to have come from the *same* compile pass: `current` is what
-makes that guarantee possible.
+Plain PHP returning a literal array, so a boot `require`s it and has the
+data with no decoding step, and OPcache's shared opcode cache — keyed by
+realpath, shared across every worker process on a host — skips
+re-parsing it from the second request on.
 
-`current` is deliberately plain text, not a `.php` file like every
-section — the one place `require()` and OPcache would actively work
-against correctness rather than for it. Every section lives at a
-brand-new path per generation, so OPcache caching it forever
-(`opcache.validate_timestamps=0`, a common production setting) is
-exactly right — that path's content never changes once written. `current`
-is the opposite: the one path reused across every publish, rewritten via
-`rename()` each time. Under that same setting, OPcache never re-stats a
-`require()`d file to notice a rename happened, so a PHP pointer could
-silently keep serving the *first* compiled generation's content
-indefinitely, no matter how many times `kinetis build` reports success,
-until a process restart or an explicit OPcache invalidation. Reading it
-as plain data instead makes every read see the real, current bytes.
+One file rather than one per section, because a boot needs the same
+compile pass throughout: an HTTP boot reconstructs routes, event
+listeners and plugin data, and the CLI reconstructs commands, event
+listeners and plugin data. Reading them from separate files makes
+"routes from one build, listeners from another" a state a mid-deploy
+request can land in. Reading them from one file makes it unrepresentable.
 
-### Publishing a generation atomically
+Reconstruction is still only what an entry point uses — an HTTP boot
+never builds a `CommandRegistry` — but never from a file the rest of the
+artifact didn't come with.
 
-Four separate files being individually well-formed isn't the same as the
-*set* being safe to read piecemeal — a plain HTTP boot reads `http.php`
-first and, later in the same request, `events.php`/`plugins.php` too (see
-{doc}`appendix`'s `BootSequence` entry). If a rebuild could replace those
-files one at a time in place, a request could read routes from one
-compile pass and event listeners from a different one, mid-swap.
+### Publishing atomically
 
-`CacheStore::writeAll()` avoids this by never touching an already-
-published generation at all. A rebuild writes all four files into a
-brand-new, uniquely-named generation directory first; only once every one
-of them has succeeded does it atomically switch `current` to name that
-generation — the single moment any reader can learn it exists. A
-`CacheStore` instance resolves that pointer once, on its first read, and
-keeps using the same generation for every later read it makes — so the
-`http.php` a request loads and the `events.php`/`plugins.php` it loads
-afterward are always from the identical compile pass, even if another
-worker or deploy publishes a newer generation in between. A fresh
-instance — the next request, or the next `bin/kinetis` invocation —
-resolves independently and may see that newer one.
+`CacheStore::write()` never modifies the live file. It renders the whole
+artifact into a uniquely-named temporary file beside it, `require`s that
+file back to confirm it returns the array it was rendered from, and only
+then `rename()`s it onto `compiled.php` — atomic within one directory on
+POSIX, a directory-entry swap rather than a data copy. A reader sees the
+complete previous artifact or the complete new one, never a partial
+write. A publish that fails at any step leaves whatever was already
+there untouched, and removes its own temporary file.
 
-An older generation is never deleted automatically: nothing tells
-`CacheStore` when the last reader still pinned to it has finished, so
-deleting on a schedule could remove a generation a long-lived persistent
-worker is still reading from. `.kinetis-cache/` therefore accumulates a
-generation directory per successful `kinetis build` until something
-explicitly clears it — `kinetis build --destroy` removes the whole
-directory, pointer and every generation alike. A rebuild that fails
-partway through (a compile error, an unwritable disk) never publishes at
-all: the partially-written generation is deleted before the error
-propagates, and whatever was previously active — if anything — is left
-exactly as it was.
+The rename is followed by `opcache_invalidate()` where OPcache is
+loaded. It reaches the calling process's own OPcache and nothing else. A
+boot that compiles in memory and publishes the result goes on serving
+that in-memory bundle, so invalidation is not what makes the fallback
+publish usable. What it covers is narrower: this process may already
+have required a stale or rejected artifact from this path, and clearing
+that entry makes a later include by this same process eligible to see
+the replacement.
+
+It does not reach a separate serving pool, and that is what decides how
+this is deployed. See "Deploying a rebuilt artifact" below.
+
+Concurrent publishers are not serialized. Workers cold-starting against
+a missing artifact each compile once and each publish their own complete
+copy; whichever rename lands last is what later readers get. Every racing
+compile discovers the same classes, so the cost is bounded, one-time
+per process, rather than a difference in what gets served.
+
+An artifact that is missing, carries a `CacheFormat::VERSION` this build
+does not speak, will not parse, or fails to reconstruct into live objects
+is treated as absent: the boot compiles in memory and publishes the
+result. Nothing is retained, pinned, or garbage-collected — there is one
+file, replaced in place.
 
 The OpenAPI document is deliberately not among these. It is generated
 per request in development and cached in whatever `CacheInterface` the
@@ -170,28 +151,40 @@ or DTOs runs `kinetis openapi:clear` alongside `kinetis build` — see
 
 ```{code-block} bash
 php vendor/bin/kinetis build
-# Compiled routes, commands, event listeners, and every installed
-# package's own plugin data written to .kinetis-cache/
+# Compiled routes, MCP tools/resources, commands, and event listeners
+# written to /app/.kinetis-cache/compiled.php
 ```
 
-Run this as part of your deploy step. Routes, commands, global
+Run this as part of your deploy step. It compiles from your project's
+own source every time and replaces the artifact, whatever was there
+before — the published file is an output of this command, never an input
+to it. Routes, commands, global
 middleware, event listeners, and every installed package's own
 `CacheableDiscoveryInterface` data are all found by namespace — see
 {doc}`cli` for how.
 
+Build it into the image or artifact you deploy, before any worker
+starts — see "Deploying a rebuilt artifact" below for why the shared
+path matters.
+
 ### Lazy, on first request
 
 If `APP_ENV=production` and no cache exists yet, the very first request
-compiles and publishes it — safely, even under concurrent PHP-FPM workers
-racing to be "first" against an empty cache directory: each one that
-loses the race still publishes its own complete generation (see
-"Publishing a generation atomically" above), never a corrupted or partial
-one, and every worker's own read of that generation stays internally
-consistent regardless of which one "wins." Every request after that, on
-any worker, just loads what's already published. Once a generation
-exists, live discovery never runs again: your `Http`/`Console`/`Events`
-classes, and any `#[AsGlobalMiddleware]`-attributed class, aren't
-reflected again until the cache is rebuilt with `bin/kinetis build`.
+compiles and publishes it — safely, even under concurrent PHP-FPM
+workers racing to be "first" against an empty cache directory: each one
+publishes its own complete artifact (see "Publishing atomically" above),
+never a corrupted or partial one. Every request after that, on any
+worker, just loads what's already published. Once the artifact exists,
+live discovery never runs again: your `Http`/`Console`/`Events` classes,
+and any `#[AsGlobalMiddleware]`-attributed class, aren't reflected again
+until the cache is rebuilt with `bin/kinetis build`.
+
+A machine that cannot be written to — a read-only mount, a full disk —
+does not take the application down. The boot serves from the value it
+compiled in memory and writes one line to the error log naming the
+artifact it could not publish. Every later boot on that machine pays the
+compile again and reports again, so a permanently unwritable cache
+directory is visible rather than silent.
 
 ```{note}
 Pre-warming avoids exactly one thing: the extra compile-and-write cost on
@@ -232,11 +225,28 @@ consistently the slowest cold configuration, for the same reason as above:
 it's still paying the compile-and-write cost a pre-warmed deployment
 already paid ahead of time.
 
-## Cache invalidation
+## Deploying a rebuilt artifact
 
 The cache is not automatically invalidated on redeploy. Rerun
 `bin/kinetis build` as part of your deploy step whenever your
 registrations or DTO shapes change.
+
+**Build it before workers start.** `compiled.php` belongs in the
+immutable artifact or image a deployment ships — built by the CI job or
+the image build, then read by workers that start against it. Nothing has
+to be invalidated in that shape, because no process has seen the path
+before.
+
+`opcache_invalidate()` reaches only the OPcache of the process that
+calls it. `kinetis build` runs on the CLI, in its own process, so under
+`opcache.validate_timestamps=0` it cannot make a same-path replacement
+visible to an FPM pool or a FrankenPHP worker that is already serving —
+those keep the previous file's opcodes no matter how many times the
+command reports success. If you do run `build` against a live shared
+deployment, restart the serving pool or workers afterwards; until then
+the new artifact is not guaranteed active. A restart is what a code
+change needs under a persistent worker anyway (see
+{doc}`runtime-adapters`).
 
 ## See also
 

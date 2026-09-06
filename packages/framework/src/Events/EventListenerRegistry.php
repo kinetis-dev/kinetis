@@ -178,7 +178,7 @@ final class EventListenerRegistry
      *
      * - Every event key must be a real string (PHP silently coerces a
      *   numeric-looking array key to int, the same footgun
-     *   Kinetis\Queue\Support\WireValue's own key handling already guards
+     *   Kinetis\Queue\JobSerializer's own key handling already guards
      *   against elsewhere in this codebase) shaped like a valid
      *   class-string.
      * - Every event's own value must be a dense list — never a scalar, an
@@ -191,11 +191,10 @@ final class EventListenerRegistry
      *   valid class-string/identifier shape.
      * - No two entries for the same event may name the same
      *   {class, method} pair, whether identical in every other field or
-     *   genuinely conflicting (a different priority or queued value) —
-     *   Kinetis is not deployed anywhere with an existing compiled
-     *   generation to preserve, so there is no legacy duplicate this
-     *   class needs to tolerate or silently resolve; any duplicate is
-     *   corruption and is rejected outright.
+     *   conflicting on one (a different priority or queued value). A
+     *   compile produces each pair once, so a duplicate is corruption,
+     *   and rejecting it is the only answer that does not silently pick
+     *   one of two priorities.
      *
      * Every event's own list is re-sorted here by the identical
      * priority-desc/class/method comparator register() itself uses,
@@ -204,11 +203,11 @@ final class EventListenerRegistry
      * expensive, than verifying an arbitrary input is already correctly
      * sorted, for the short lists this class ever holds.
      *
-     * Throws loudly rather than trusting arbitrary data, but provides no
-     * fallback or recovery path of its own: nothing in the production
-     * cache-loading pipeline currently catches this exception, so a
-     * malformed generation is a hard failure at boot, not a silent
-     * recompile.
+     * Throws loudly rather than trusting arbitrary data, and offers no
+     * fallback of its own. Recovery is `BootSequence`'s decision, not
+     * this class's: InvalidListenerException implements
+     * CacheArtifactExceptionInterface, so a malformed artifact is
+     * classified there as corrupt and recompiled from source.
      *
      * @param array<class-string, list<array{class: class-string, method: string, priority: int, queued: bool}>> $listeners
      * @throws InvalidListenerException

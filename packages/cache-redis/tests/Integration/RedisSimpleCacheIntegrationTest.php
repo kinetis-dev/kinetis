@@ -11,12 +11,12 @@ use PHPUnit\Framework\TestCase;
 /**
  * RedisSimpleCache against a real Redis.
  *
- * A mocked "was this command sent" test would prove nothing about a
- * client whose entire job is speaking a wire protocol correctly, which
- * is why this package's cache classes have no unit tests. Running the
- * same checks as a PHPUnit case rather than a standalone script means
- * the coverage they produce is measured, and that a regression here
- * fails the suite rather than only a script somebody remembers to run.
+ * A mocked "was this command sent" test proves nothing about storage
+ * behaviour, so serialization, expiry, and the atomic scripts are
+ * checked here instead. Running them as a PHPUnit case rather than a
+ * standalone script means the coverage they produce is measured, and
+ * that a regression fails the suite rather than only a script somebody
+ * remembers to run.
  *
  * Environment-gated: without REDIS_HOST there is nothing to talk to, so
  * these skip rather than fail.
@@ -119,12 +119,27 @@ final class RedisSimpleCacheIntegrationTest extends TestCase
         self::assertFalse($this->cache->has('c'));
     }
 
-    public function test_clear_wipes_everything(): void
+    /**
+     * clear() scans this cache's own namespace, so a key written by
+     * anything else in the same database has to survive it.
+     */
+    public function test_clear_removes_this_caches_keys_and_nothing_else(): void
     {
+        $other = RedisSimpleCache::fromConfig(new Config([
+            'REDIS_HOST' => (string) \getenv('REDIS_HOST'),
+            'REDIS_PORT' => \getenv('REDIS_PORT') ?: '6379',
+            'REDIS_CACHE_NAMESPACE' => 'other',
+        ]));
+
+        self::assertNotNull($other);
         $this->cache->set('will-clear', 'x');
+        $other->set('will-survive', 'y');
 
         self::assertTrue($this->cache->clear());
         self::assertFalse($this->cache->has('will-clear'));
+        self::assertSame('y', $other->get('will-survive'));
+
+        $other->clear();
     }
 
     public function test_increment_counts_up_from_nothing_and_sets_the_expiry(): void

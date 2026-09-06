@@ -78,6 +78,19 @@ final class RevocationUnavailableException extends RuntimeException
     }
 
     /**
+     * revokeAllForUser() was handed an empty subject — no token this
+     * package can issue carries one, so the write would establish a
+     * cutoff nothing is ever checked against. Never names the value.
+     */
+    public static function emptySubject(): self
+    {
+        return new self(
+            'RevocationStore::revokeAllForUser() requires a non-empty $userId: it is the token\'s own '
+            . '"sub" claim, and no token this package issues carries an empty one. Pass JwtUser::id().',
+        );
+    }
+
+    /**
      * revokeToken() was handed a JwtUser whose token carries no usable
      * `jti` claim — there is nothing to add to the denylist, so the
      * revocation did NOT happen. A caller that swallows this and

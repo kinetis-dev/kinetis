@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Validation;
 
 use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Http\Fixtures\Address;
+use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
@@ -302,5 +303,29 @@ final class JsonSchemaTest extends TestCase
             ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/' . OrderItem::class]],
             $schema['properties']['items'],
         );
+    }
+
+    /**
+     * A class-typed parameter whose class cannot be instantiated has no
+     * truthful object schema: Hydrator accepts only an already-constructed
+     * instance there, so an expanded {type: object} would describe input it
+     * rejects.
+     */
+    public function test_a_class_typed_parameter_that_cannot_be_instantiated_is_rejected(): void
+    {
+        $fn = static function (\Countable $a) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $this->expectException(\Kinetis\Validation\Exception\JsonSchemaException::class);
+        $this->expectExceptionMessage('Countable');
+
+        JsonSchema::forParameters($params);
+    }
+
+    public function test_an_uploaded_file_field_is_still_described_as_a_binary_string(): void
+    {
+        $schema = JsonSchema::forClass(AvatarUploadRequest::class);
+
+        self::assertSame(['type' => 'string', 'format' => 'binary'], $schema['properties']['avatar']);
     }
 }

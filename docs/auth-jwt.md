@@ -124,13 +124,12 @@ outright rather than issuing a token no verifier could ever match.
 not a fixed schema. `roles` above is a name this example chose, not one
 `kinetis/auth-jwt` defines or expects.
 
-`sub` (the subject — always your passed-in id, coerced to a string),
-`iat`, `jti` (a random, unique token ID — see "Revoking tokens" below),
-and `iss`/`aud` (when `issuer`/`audience` are configured, per above)
-always win over an extra claim of the same name, so a stray
-`['sub' => ...]` in `$claims` can't accidentally override the real
-subject. Signing only — verifying a password and returning the resulting
-token to the client is your own login endpoint's job.
+`sub` (the subject), `iat`, `jti` (a random, unique token ID — see
+"Revoking tokens" below), and `iss`/`aud` (when `issuer`/`audience` are
+configured, per above) always win over an extra claim of the same name,
+so a stray `['sub' => ...]` in `$claims` can't accidentally override the
+real subject. Signing only — verifying a password and returning the
+resulting token to the client is your own login endpoint's job.
 
 ```{note}
 `ttlSeconds` must be `null` (no expiry claim at all) or a positive number
@@ -141,12 +140,33 @@ current time throws the same way, rather than silently corrupting the
 resulting `exp` claim.
 ```
 
+### The subject is one canonical string
+
+A subject is one non-empty string everywhere in `kinetis/auth-jwt`.
+`issue()` takes `string|int` and converts an application's own integer
+id to that string at the moment of issuance; `RefreshTokenStore::issue()`
+takes and converts it identically, so the access token and the refresh
+token a login endpoint hands back name the same subject. `JwtUser::id()`
+returns that string, `RevocationStore` and `RefreshTokenStore` key their
+per-user revocation by it, and `redeem()` hands it back ready to reissue
+with. The id a request carries is therefore the id that revokes
+everything issued under it — an integer `42` in your own user table is
+the subject `'42'` on both token kinds.
+
+An empty subject throws (`Exception\JwtIssuerException` from
+`JwtIssuer::issue()`, `Exception\RefreshTokenUnavailableException` from
+`RefreshTokenStore`), and `JwtAuthMiddleware` answers a token whose
+`sub` is anything but a non-empty string — absent, a JSON number, empty
+— with the usual `401`: such a token could not be revoked under the
+identity it authenticated as.
+
 ## Reading claims beyond `id()`
 
 `CurrentUserInterface::id()` only ever guarantees the subject.
 `JwtAuthMiddleware` registers a `JwtUser`, which exposes the rest of the
-token's claims directly — inject `JwtUser` instead of `CurrentUserInterface`
-where you need one:
+token's claims directly, and narrows `id()` to the subject string both
+stores' `revokeAllForUser()` take — inject `JwtUser` instead of
+`CurrentUserInterface` where you need either:
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwtUser;
@@ -291,14 +311,14 @@ session." To invalidate every token a user currently holds, across every
 device they're logged in on, use `revokeAllForUser()` instead:
 
 ```{code-block} php
+use Kinetis\AuthJwt\JwtUser;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\Http\Attributes\Post;
-use Kinetis\Http\CurrentUserInterface;
 
 final readonly class LogoutEverywhereController
 {
     public function __construct(
-        private CurrentUserInterface $user,
+        private JwtUser $user,
         private RevocationStore $revocationStore,
     ) {}
 
@@ -324,14 +344,10 @@ longest-lived token can stay valid (matching whatever `ttlSeconds` you
 pass to `JwtIssuer::issue()`); anything shorter risks the cutoff itself
 expiring while an old token is technically still unexpired.
 
-The user id this is keyed by is a `string|int`, and its type counts: the
-integer `42` and the string `'42'` are two different users, on both
-stores' `revokeAllForUser()`. `CurrentUserInterface::id()` hands back
-whichever type your own user identity carries, so passing it straight
-through — as the controller above does — keeps every call on one
-identity. Casting it at some call sites and not others is what splits a
-user in two, leaving a "log out everywhere" that revokes an identity
-nobody's tokens were issued to.
+The user id this is keyed by is the token's own `sub` claim — pass
+`JwtUser::id()` straight through, as the controller above does. Both
+stores' `revokeAllForUser()` take exactly that string and reject an
+empty one; see "The subject is one canonical string" above.
 
 ## Refresh tokens
 
@@ -403,9 +419,9 @@ A refresh token is single-use: `redeem()` reads it and deletes it in one
 atomic operation the moment it's looked up, valid or not, so the same
 refresh token can never be redeemed twice — even by two requests racing
 each other, since the cache is required to implement
-`Kinetis\SimpleCache\AtomicConsumeInterface` (both `RedisSimpleCache`
-and `ClusteredRedisSimpleCache` do; construction throws otherwise, the
-same refusal `NullSimpleCache` already gets). `redeem()` also returns
+`Kinetis\SimpleCache\AtomicConsumeInterface` (`RedisSimpleCache` does;
+construction throws otherwise, the same refusal `NullSimpleCache`
+already gets). `redeem()` also returns
 `null` — the identical "invalid or expired" outcome the endpoint above
 already handles — for a token that's still on record but predates a
 `revokeAllForUser()` cutoff for its own subject (see "Logging out
@@ -435,9 +451,11 @@ public function invoke(): array
 }
 ```
 
-Each `ttlSeconds` covers that store's own longest-lived outstanding
-token — an access token's is typically much shorter than a refresh
-token's, so the two calls above commonly pass different values.
+Both calls take the same `JwtUser::id()` — the one subject the access
+token and the refresh token were issued under, so a single id covers
+both. Each `ttlSeconds` covers that store's own longest-lived
+outstanding token — an access token's is typically much shorter than a
+refresh token's, so the two calls above commonly pass different values.
 
 Defaults to a 14-day expiry (`issue(..., ttlSeconds: 1_209_600)`),
 adjustable per call. `RefreshTokenStore` requires a real cache the same

@@ -12,8 +12,9 @@ use Attribute;
  * `Kinetis\Events\Listener`, discovered the same way. $pattern names the
  * channel without its `private-`/`presence-` prefix (the prefix selects
  * which of the two auth responses {@see \Kinetis\Broadcasting\Http\BroadcastAuthController}
- * builds, so the pattern itself never repeats it), with `{name}`
- * placeholders matching path-template segments elsewhere in Kinetis:
+ * builds, so the pattern itself never repeats it). $pattern is
+ * dot-separated segments, each either one literal or exactly one whole
+ * `{name}` placeholder:
  *
  *     #[BroadcastChannel('orders.{orderId}')]
  *     public function authorizeOrder(CurrentUserInterface $user, string $orderId): bool
@@ -24,8 +25,12 @@ use Attribute;
  * The leading `CurrentUserInterface` parameter is optional but, when
  * present, must come first — every other parameter must be a `string`
  * named after one of the pattern's placeholders, in the pattern's own
- * order. Returning `bool` authorizes (or rejects) a private channel;
- * returning `array` authorizes a presence channel, and the array becomes
+ * order. Declaring it requires a `CurrentUserInterface` on the request
+ * scope: a request without one is rejected with `401` before the method
+ * runs. Omitting it lets the method authorize from its own context,
+ * including an anonymous request. Returning `bool` authorizes (or
+ * rejects) a private channel; returning `array` authorizes a presence
+ * channel, and the array becomes
  * that subscriber's `channel_data` — {@see BroadcastChannelRegistry::register()}
  * does not itself enforce which shape a given pattern must return, since
  * a channel is free to serve both channel types under different

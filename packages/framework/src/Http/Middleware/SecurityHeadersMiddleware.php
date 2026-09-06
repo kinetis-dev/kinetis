@@ -15,7 +15,7 @@ use Psr\Http\Server\RequestHandlerInterface;
  * Response security headers, registered unconditionally as the
  * outermost global middleware by Kernel — the same "costs nothing when
  * nothing's wrong, closes a real gap when something does" reasoning
- * MaxBodySizeMiddleware already uses.
+ * RequestBodyMiddleware already uses.
  *
  * Outside ExceptionHandlerMiddleware rather than inside it, which is
  * the one deliberate exception to that class otherwise being outermost:

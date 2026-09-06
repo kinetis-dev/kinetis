@@ -6,7 +6,6 @@ namespace Kinetis\SimpleCache\Tests;
 
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
-use Kinetis\SimpleCache\ClusteredRedisSimpleCache;
 use Kinetis\SimpleCache\RedisSimpleCache;
 use PHPUnit\Framework\TestCase;
 use Psr\SimpleCache\CacheInterface;
@@ -17,11 +16,11 @@ use Psr\SimpleCache\CacheInterface;
  * own AppScopeTest tests proving the class_exists()-gated
  * SimpleCacheUnavailableException fires correctly when this package is
  * *not* installed. Only this package has both AppScope and
- * RedisSimpleCache/ClusteredRedisSimpleCache simultaneously available
- * (it depends on kinetis/framework; core never depends the other way), so
- * this is the one place the real "configured -> concrete class bound"
- * path can be proven end-to-end without a real Redis server (both
- * classes' own fromConfig() never connects eagerly).
+ * RedisSimpleCache simultaneously available (it depends on
+ * kinetis/framework; core never depends the other way), so this is the
+ * one place the real "configured -> concrete class bound" path can be
+ * proven end-to-end without a real Redis server: fromConfig() never
+ * connects eagerly.
  */
 final class AppScopeIntegrationTest extends TestCase
 {
@@ -43,6 +42,6 @@ final class AppScopeIntegrationTest extends TestCase
         ]));
         $app->boot();
 
-        self::assertInstanceOf(ClusteredRedisSimpleCache::class, $app->get(CacheInterface::class));
+        self::assertInstanceOf(RedisSimpleCache::class, $app->get(CacheInterface::class));
     }
 }

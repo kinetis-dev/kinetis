@@ -112,7 +112,7 @@ final class MultipartEnvelopeTest extends TestCase
         $this->expectException(FormLimitExceededException::class);
         $this->expectExceptionMessage('multipart parts');
 
-        MultipartEnvelope::assertWithinLimits(self::envelope($parts), self::CONTENT_TYPE, self::limits());
+        MultipartEnvelope::parts(self::envelope($parts), self::CONTENT_TYPE, self::limits());
     }
 
     /**
@@ -131,21 +131,7 @@ final class MultipartEnvelopeTest extends TestCase
         $this->expectException(FormLimitExceededException::class);
         $this->expectExceptionMessage('headers');
 
-        MultipartEnvelope::assertWithinLimits(self::envelope([$headers . "\r\nvalue"]), self::CONTENT_TYPE, self::limits());
-    }
-
-    /**
-     * The whole point of scanning before parsing: the refusal happens
-     * without a single part being materialized. Proven by the counting
-     * entry point never building one at all — it returns nothing, so
-     * there is nothing it could have expanded.
-     */
-    public function test_the_counting_entry_point_materializes_no_parts(): void
-    {
-        $body = self::envelope(array_fill(0, 8, "Content-Disposition: form-data; name=\"f\"\r\n\r\nvalue"));
-
-        MultipartEnvelope::assertWithinLimits($body, self::CONTENT_TYPE, self::limits());
-        self::assertCount(8, MultipartEnvelope::parts($body, self::CONTENT_TYPE, self::limits()));
+        MultipartEnvelope::parts(self::envelope([$headers . "\r\nvalue"]), self::CONTENT_TYPE, self::limits());
     }
 
     /**
@@ -294,24 +280,6 @@ final class MultipartEnvelopeTest extends TestCase
     }
 
     /**
-     * The counting entry point enforces the identical contract: a
-     * satellite adapter calls it and hands the same bytes to its own
-     * parser, so a rule the count skipped would be a rule that runtime
-     * alone does not have.
-     */
-    #[\PHPUnit\Framework\Attributes\DataProvider('bodiesOutsideTheContract')]
-    public function test_the_counting_entry_point_refuses_the_same_bodies(string $body, string $category): void
-    {
-        try {
-            MultipartEnvelope::assertWithinLimits($body, self::CONTENT_TYPE, self::limits());
-
-            self::fail('a body outside the contract must be refused by the count as well as the parse');
-        } catch (UnparseableFormBodyException $e) {
-            self::assertSame($category, $e->category);
-        }
-    }
-
-    /**
      * The two spellings that decode to the bytes they were given, and
      * the only two a part may declare.
      */
@@ -335,7 +303,7 @@ final class MultipartEnvelopeTest extends TestCase
         $this->expectException(FormLimitExceededException::class);
         $this->expectExceptionMessage('header line');
 
-        MultipartEnvelope::assertWithinLimits(
+        MultipartEnvelope::parts(
             self::envelope(["{$line}\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nv"]),
             self::CONTENT_TYPE,
             self::limits(),

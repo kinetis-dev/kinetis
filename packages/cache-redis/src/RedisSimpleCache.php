@@ -4,139 +4,93 @@ declare(strict_types=1);
 
 namespace Kinetis\SimpleCache;
 
-use Kinetis\Config\Config;
-use Kinetis\SimpleCache\Connection\TlsRedisConnector;
-use Kinetis\SimpleCache\Exception\CacheException;
-use Kinetis\SimpleCache\Exception\InvalidArgumentException;
-use Amp\Redis\Command\Option\SetOptions;
-use Amp\Redis\RedisClient;
-use Amp\Redis\RedisConfig;
 use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
 use Amp\Serialization\Serializer;
-use Kinetis\SimpleCache\AtomicCounterInterface;
-use Kinetis\SimpleCache\AtomicConsumeInterface;
 use DateInterval;
 use DateTimeImmutable;
+use Kinetis\Config\Config;
+use Kinetis\Redis\QueryExecutor;
+use Kinetis\Redis\RoutedExecutor;
+use Kinetis\SimpleCache\Exception\CacheException;
+use Kinetis\SimpleCache\Exception\InvalidArgumentException;
 use Psr\SimpleCache\CacheInterface;
 
-use function Amp\Redis\createRedisClient;
+use function Kinetis\Async\concurrently;
 
 /**
- * PSR-16 SimpleCache backed by Amp\Redis\RedisClient. Values are serialized
- * with the same Amp\Serialization\NativeSerializer Amp\Redis\RedisCache
- * itself uses internally — reused rather than reimplemented, since PSR-16
- * allows storing any serializable PHP value, not just strings.
+ * PSR-16 SimpleCache over `Kinetis\Redis\RoutedExecutor`, serving a
+ * single node and a Redis Cluster through the same class: the executor
+ * routes each key, and the only behaviour that differs is whether one
+ * command may name keys from more than one slot.
  *
- * Not constructed unless Redis is actually configured — see fromConfig().
- * AppScope::boot() falls back to NullSimpleCache otherwise, so an
- * application that never sets REDIS_URL/REDIS_HOST never touches this class
- * at all. createRedisClient() itself is lazy regardless — the underlying
- * Amp\Redis\Connection\ReconnectingRedisLink only opens a socket on the
- * first command actually executed — so constructing this eagerly (the same
- * discipline every other AppScope service uses) costs nothing when Redis
- * is configured but momentarily unreachable; the first real cache access
- * throws, not construction.
+ * Values are serialized with the `Amp\Serialization\NativeSerializer`
+ * `Amp\Redis\RedisCache` itself uses, so any serializable PHP value can
+ * be stored as PSR-16 requires.
  *
- * Single node only — see ClusteredRedisSimpleCache for a Redis Cluster
- * deployment (REDIS_CLUSTER=true), which routes each key to whichever
- * node actually owns it instead of one fixed connection.
+ * Every physical key is written as `kinetis_cache:<namespace>:<key>`,
+ * which is what keeps `clear()` off keys this cache did not write and
+ * separates it from queue keys and unrelated data in the same database.
+ * The prefix carries no `{}` hash tag, so keys still spread across
+ * cluster slots.
+ *
+ * Not constructed unless Redis is configured — see fromConfig().
+ * `AppScope::boot()` binds `NullSimpleCache` otherwise. Construction
+ * opens no connection, so a configured but momentarily unreachable
+ * server fails at the first cache call rather than at boot.
  */
 final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, AtomicConsumeInterface
 {
+    /**
+     * Enough per round trip to keep a large keyspace scan moving without
+     * building an unbounded reply or delete.
+     */
+    private const int SCAN_COUNT = 512;
+
+    private const int UNLINK_CHUNK = 256;
+
+    private const string DEFAULT_NAMESPACE = 'default';
+
+    private readonly string $prefix;
+
     public function __construct(
-        private readonly RedisClient $client,
+        private readonly RoutedExecutor $client,
+        string $namespace = self::DEFAULT_NAMESPACE,
         private readonly Serializer $serializer = new NativeSerializer(),
-    ) {}
+    ) {
+        if (preg_match('/^[A-Za-z0-9_-]+$/', $namespace) !== 1) {
+            throw new InvalidArgumentException(
+                "Invalid cache namespace \"{$namespace}\": use letters, digits, underscores and dashes only.",
+            );
+        }
+
+        $this->prefix = "kinetis_cache:{$namespace}:";
+    }
 
     /**
-     * Builds a configured instance from REDIS_URL (a full
-     * "redis://[:password@]host[:port][/database]" URI) or, absent that,
-     * from discrete REDIS_HOST/REDIS_PORT/REDIS_PASSWORD/REDIS_DATABASE/
-     * REDIS_TIMEOUT values — or null when neither is set, the "Redis is
-     * optional" case AppScope::boot() falls back to NullSimpleCache for.
+     * Builds a configured instance, or null when Redis is not configured
+     * at all — the case `AppScope::boot()` falls back to
+     * `NullSimpleCache` for.
      *
-     * $connection selects a named connection via Config::scopedKey() —
-     * 'default' (the default) reads the plain REDIS_* keys above unchanged;
-     * any other name reads REDIS_{NAME}_* instead. A named connection is
-     * never autowired by type; retrieve it from the container explicitly
-     * (or construct it directly) wherever it's needed.
+     * `REDIS_CLUSTER=true` selects the cluster client and requires
+     * `REDIS_CLUSTER_SEEDS`; otherwise `REDIS_URL` or
+     * `REDIS_HOST` selects a single node. `$connection` selects a named
+     * connection via `Config::scopedKey()`, and
+     * `REDIS_CACHE_NAMESPACE` names the key namespace this instance
+     * owns.
      */
     public static function fromConfig(Config $config, string $connection = 'default'): ?self
     {
-        $redisConfig = self::buildRedisConfig($config, $connection);
+        $client = RedisConnectionFactory::fromConfig($config, $connection);
 
-        if ($redisConfig === null) {
+        if ($client === null) {
             return null;
         }
 
-        $timeout = $config->float(Config::scopedKey('REDIS_TIMEOUT', $connection), RedisConfig::DEFAULT_TIMEOUT);
-        $connector = TlsRedisConnector::fromConfig($config, $redisConfig->getConnectUri(), $timeout, $connection);
-
-        return new self(createRedisClient($redisConfig, $connector));
-    }
-
-    /**
-     * Split out from fromConfig() so the configuration-parsing logic is
-     * testable without ever constructing a RedisClient — createRedisClient()
-     * doesn't connect eagerly either, but keeping this pure and RedisConfig-
-     * shaped avoids any question of it.
-     */
-    public static function buildRedisConfig(Config $config, string $connection = 'default'): ?RedisConfig
-    {
-        $url = $config->get(Config::scopedKey('REDIS_URL', $connection));
-
-        if ($url !== null) {
-            return RedisConfig::fromUri($url, self::timeoutFromConfig($config, $connection));
-        }
-
-        $host = $config->get(Config::scopedKey('REDIS_HOST', $connection));
-
-        if ($host === null) {
-            return null;
-        }
-
-        $portKey = Config::scopedKey('REDIS_PORT', $connection);
-        $port = $config->int($portKey, RedisConfig::DEFAULT_PORT);
-
-        if ($port < 1 || $port > 65535) {
-            throw new InvalidArgumentException("{$portKey} must be a valid TCP port (1-65535), got {$port}.");
-        }
-
-        $redisConfig = RedisConfig::fromUri("tcp://{$host}:{$port}", self::timeoutFromConfig($config, $connection));
-
-        $password = $config->get(Config::scopedKey('REDIS_PASSWORD', $connection));
-
-        if ($password !== null) {
-            $redisConfig = $redisConfig->withPassword($password);
-        }
-
-        $databaseKey = Config::scopedKey('REDIS_DATABASE', $connection);
-        $database = $config->int($databaseKey, 0);
-
-        if ($database < 0) {
-            throw new InvalidArgumentException("{$databaseKey} must not be negative, got {$database}.");
-        }
-
-        return $redisConfig->withDatabase($database);
-    }
-
-    /**
-     * Shared by both the REDIS_URL and discrete REDIS_HOST branches of
-     * {@see buildRedisConfig()}, so the connect-timeout bound is enforced
-     * identically regardless of which form a deployment uses to configure
-     * Redis.
-     */
-    private static function timeoutFromConfig(Config $config, string $connection): float
-    {
-        $timeoutKey = Config::scopedKey('REDIS_TIMEOUT', $connection);
-        $timeout = $config->float($timeoutKey, RedisConfig::DEFAULT_TIMEOUT);
-
-        if ($timeout <= 0.0) {
-            throw new InvalidArgumentException("{$timeoutKey} must be a positive number of seconds, got {$timeout}.");
-        }
-
-        return $timeout;
+        return new self(
+            $client,
+            $config->string(Config::scopedKey('REDIS_CACHE_NAMESPACE', $connection), self::DEFAULT_NAMESPACE),
+        );
     }
 
     /**
@@ -148,11 +102,12 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     #[\Override]
     public function increment(string $key, int $ttlSeconds): int
     {
-        self::assertValidKey($key);
+        $physical = $this->physical($key);
 
-        $value = $this->guard('increment', $key, fn () => $this->client->eval(
+        $value = $this->guard('increment', fn (): mixed => $this->client->script(
+            $physical,
             "local v = redis.call('INCR', KEYS[1]) redis.call('EXPIRE', KEYS[1], ARGV[1]) return v",
-            [$key],
+            [$physical],
             [(string) $ttlSeconds],
         ));
 
@@ -162,9 +117,8 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     #[\Override]
     public function count(string $key): int
     {
-        self::assertValidKey($key);
-
-        $value = $this->guard('count', $key, fn () => $this->client->get($key));
+        $physical = $this->physical($key);
+        $value = $this->guard('count', fn (): mixed => $this->client->executeKeyed($physical, 'GET', $physical));
 
         return is_numeric($value) ? (int) $value : 0;
     }
@@ -172,11 +126,10 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     #[\Override]
     public function get(string $key, mixed $default = null): mixed
     {
-        self::assertValidKey($key);
+        $physical = $this->physical($key);
+        $value = $this->guard('get', fn (): mixed => $this->client->executeKeyed($physical, 'GET', $physical));
 
-        $value = $this->guard('get', $key, fn () => $this->client->get($key));
-
-        return $value === null ? $default : $this->serializer->unserialize($value);
+        return is_string($value) ? $this->serializer->unserialize($value) : $default;
     }
 
     /**
@@ -187,29 +140,33 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     #[\Override]
     public function consume(string $key, mixed $default = null): mixed
     {
-        self::assertValidKey($key);
+        $physical = $this->physical($key);
 
-        $value = $this->guard('consume', $key, fn () => $this->client->eval(
+        $value = $this->guard('consume', fn (): mixed => $this->client->script(
+            $physical,
             "local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v",
-            [$key],
+            [$physical],
         ));
 
-        return $value === null ? $default : $this->serializer->unserialize((string) $value);
+        return is_string($value) ? $this->serializer->unserialize($value) : $default;
     }
 
     #[\Override]
     public function set(string $key, mixed $value, null|int|DateInterval $ttl = null): bool
     {
-        self::assertValidKey($key);
+        $physical = $this->physical($key);
         $seconds = self::ttlInSeconds($ttl);
 
         if ($seconds !== null && $seconds <= 0) {
             return $this->delete($key);
         }
 
-        $this->guard('set', $key, function () use ($key, $value, $seconds): void {
-            $options = $seconds !== null ? (new SetOptions())->withTtl($seconds) : null;
-            $this->client->set($key, $this->serializer->serialize($value), $options);
+        $payload = $this->serializer->serialize($value);
+
+        $this->guard('set', function () use ($physical, $payload, $seconds): void {
+            $seconds !== null
+                ? $this->client->executeKeyed($physical, 'SET', $physical, $payload, 'EX', $seconds)
+                : $this->client->executeKeyed($physical, 'SET', $physical, $payload);
         });
 
         return true;
@@ -218,25 +175,32 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     #[\Override]
     public function delete(string $key): bool
     {
-        self::assertValidKey($key);
-        $this->guard('delete', $key, fn () => $this->client->delete($key));
+        $physical = $this->physical($key);
+        $this->guard('delete', fn (): mixed => $this->client->executeKeyed($physical, 'DEL', $physical));
 
         return true;
     }
 
     /**
-     * Flushes the *entire currently selected database* — not just keys this
-     * cache wrote. Correct when, as recommended, Redis is configured with a
-     * dedicated REDIS_DATABASE for Kinetis's cache; a database shared with
-     * unrelated data would lose it too. Not hidden behind a narrower
-     * per-prefix scan-and-delete, since that's neither atomic nor complete
-     * (a concurrent writer could add a key between the scan and the
-     * deletes) — flushdb is what Redis itself guarantees is exhaustive.
+     * Removes this cache's own keys, and nothing else, by scanning each
+     * current master for the namespace prefix and unlinking what it
+     * finds.
+     *
+     * This is not atomic and not a snapshot: a key written after its
+     * node's scan has passed survives, and a key migrating between two
+     * nodes can be missed. It also costs one pass over each node's whole
+     * keyspace, since `SCAN MATCH` filters server-side after reading.
+     * Use it to reset a cache, not as part of request handling.
      */
     #[\Override]
     public function clear(): bool
     {
-        $this->guard('clear', '*', fn () => $this->client->flushDatabase());
+        $this->guard('clear', function (): void {
+            concurrently(array_map(
+                fn (QueryExecutor $node): \Closure => fn (): null => $this->clearNode($node),
+                $this->client->nodes(),
+            ));
+        });
 
         return true;
     }
@@ -250,12 +214,29 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
             return [];
         }
 
-        $raw = $this->guard('getMultiple', implode(',', $keys), fn () => $this->client->getMultiple(...$keys));
+        $physical = array_map($this->physical(...), $keys);
+
+        if ($this->client->allowsCrossSlotKeys()) {
+            $raw = $this->guard('getMultiple', fn (): mixed => $this->client->executeKeyed($physical[0], 'MGET', ...$physical));
+            $values = is_array($raw) ? array_values($raw) : [];
+        } else {
+            // Redis Cluster rejects any multi-key command whose keys do
+            // not all share one slot, so each key is its own command,
+            // dispatched concurrently.
+            $values = concurrently(array_map(
+                fn (string $one): \Closure => fn (): mixed => $this->guard(
+                    'getMultiple',
+                    fn (): mixed => $this->client->executeKeyed($one, 'GET', $one),
+                ),
+                $physical,
+            ));
+        }
 
         $result = [];
 
-        foreach ($raw as $key => $value) {
-            $result[$key] = $value === null ? $default : $this->serializer->unserialize($value);
+        foreach ($keys as $index => $key) {
+            $value = $values[$index] ?? null;
+            $result[$key] = is_string($value) ? $this->serializer->unserialize($value) : $default;
         }
 
         return $result;
@@ -264,8 +245,7 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     /**
      * Redis's own MSET has no per-key TTL option, so a bulk set with a
      * shared $ttl is a loop of individual SET...EX calls, not one atomic
-     * round trip — the same tradeoff most PSR-16 Redis adapters make, since
-     * there's no server-side primitive that does both at once.
+     * round trip.
      *
      * @param iterable<string, mixed> $values
      */
@@ -288,7 +268,21 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
             return true;
         }
 
-        $this->guard('deleteMultiple', implode(',', $keys), fn () => $this->client->delete(...$keys));
+        $physical = array_map($this->physical(...), $keys);
+
+        if ($this->client->allowsCrossSlotKeys()) {
+            $this->guard('deleteMultiple', fn (): mixed => $this->client->executeKeyed($physical[0], 'DEL', ...$physical));
+
+            return true;
+        }
+
+        concurrently(array_map(
+            fn (string $one): \Closure => fn (): mixed => $this->guard(
+                'deleteMultiple',
+                fn (): mixed => $this->client->executeKeyed($one, 'DEL', $one),
+            ),
+            $physical,
+        ));
 
         return true;
     }
@@ -296,22 +290,62 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     #[\Override]
     public function has(string $key): bool
     {
+        $physical = $this->physical($key);
+
+        return $this->guard('has', fn (): mixed => $this->client->executeKeyed($physical, 'EXISTS', $physical)) === 1;
+    }
+
+    private function clearNode(QueryExecutor $node): null
+    {
+        $pattern = addcslashes($this->prefix, '\\*?[]') . '*';
+        $cursor = '0';
+
+        do {
+            $page = $node->execute('SCAN', $cursor, 'MATCH', $pattern, 'COUNT', self::SCAN_COUNT);
+
+            if (!is_array($page) || !is_array($page[1] ?? null)) {
+                return null;
+            }
+
+            $cursor = (string) $page[0];
+            $keys = array_map(strval(...), $page[1]);
+
+            // One node still spans many slots, and a cluster rejects a
+            // multi-key command whose keys do not all share one, so only
+            // a single node deletes a page in batches.
+            $batches = $this->client->allowsCrossSlotKeys()
+                ? array_chunk($keys, self::UNLINK_CHUNK)
+                : array_map(static fn (string $key): array => [$key], $keys);
+
+            foreach ($batches as $batch) {
+                $node->execute('UNLINK', ...$batch);
+            }
+        } while ($cursor !== '0');
+
+        return null;
+    }
+
+    private function physical(string $key): string
+    {
         self::assertValidKey($key);
 
-        return $this->guard('has', $key, fn () => $this->client->has($key));
+        return $this->prefix . $key;
     }
 
     /**
+     * A cache key can be a session identifier or a token hash, so the
+     * failure names the operation and never the key.
+     *
      * @template T
      * @param callable(): T $operation
      * @return T
      */
-    private function guard(string $name, string $key, callable $operation): mixed
+    private function guard(string $name, callable $operation): mixed
     {
         try {
             return $operation();
         } catch (RedisException $e) {
-            throw CacheException::forOperation($name, $key, $e);
+            throw CacheException::forOperation($name, $e);
         }
     }
 

@@ -23,11 +23,11 @@ use PHPUnit\Framework\TestCase;
  * the result: everything it binds goes in before `boot()`, where the
  * bootstrap chain can still replace it, and everything it hands to the
  * runtime adapter comes back out of the booted container, so the adapter
- * bounds and forwards a request by the same `FormLimits` and
- * `TrustedProxies` the Kernel's own middleware enforces. A registration
- * on the far side of `boot()` throws a `ContainerException` while the
- * entry point is still running, so the process serves nothing at all —
- * a failure no unit test of the classes the file wires can see.
+ * forwards a request by the same `TrustedProxies` the Kernel's own
+ * middleware enforces. A registration on the far side of `boot()` throws
+ * a `ContainerException` while the entry point is still running, so the
+ * process serves nothing at all — a failure no unit test of the classes
+ * the file wires can see.
  *
  * The assertions read the entry point's own source with the tokenizer
  * and ignore its comments, because starting one needs a SAPI, an
@@ -94,28 +94,25 @@ abstract class EntryPointStartupTestCase extends TestCase
 
     /**
      * What reaches the adapter is what the booted container holds, not a
-     * second pair built beside it: a `bootstrap.php` that narrowed either
-     * policy would otherwise bind one object for the Kernel's middleware
-     * and leave the adapter bounding the same body by another.
+     * second object built beside it: a `bootstrap.php` that narrowed the
+     * trusted-proxy list would otherwise bind one object for the Kernel's
+     * middleware and leave the adapter deriving client identity from
+     * another.
      */
-    final public function test_the_adapter_is_handed_the_policies_the_booted_container_holds(): void
+    final public function test_the_adapter_is_handed_the_policy_the_booted_container_holds(): void
     {
         $code = $this->code();
         $boot = $this->offsetOf($code, '$app->boot()');
         $detect = $this->offsetOf($code, 'RuntimeDetector::detect(');
+        $read = $this->offsetOf($code, '$app->get(TrustedProxies::class)');
 
         self::assertLessThan($detect, $boot, 'the adapter is detected before the container is booted');
-
-        foreach (['FormLimits', 'TrustedProxies'] as $policy) {
-            $read = $this->offsetOf($code, "\$app->get({$policy}::class)");
-
-            self::assertGreaterThan($boot, $read, "the {$policy} handed to the adapter is read before boot() settles it");
-            self::assertLessThan($detect, $read, "the {$policy} handed to the adapter is read after it is needed");
-            self::assertFalse(
-                strpos($code, "{$policy}::fromConfig(", $boot),
-                "a second {$policy} is built after boot() instead of the one the container holds",
-            );
-        }
+        self::assertGreaterThan($boot, $read, 'the trusted proxies handed to the adapter are read before boot() settles them');
+        self::assertLessThan($detect, $read, 'the trusted proxies handed to the adapter are read after they are needed');
+        self::assertFalse(
+            strpos($code, 'TrustedProxies::fromConfig(', $boot),
+            'a second TrustedProxies is built after boot() instead of the one the container holds',
+        );
     }
 
     /**

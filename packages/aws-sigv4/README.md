@@ -59,10 +59,14 @@ verification rather than an obvious error.
 
 ## Credentials
 
-Resolved through AsyncAws's own default provider chain
-(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, a shared credentials file,
-or an IAM role) unless a `CredentialProvider` is passed as the fourth
-constructor argument.
+Resolved through AsyncAws's standard provider chain
+(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, STS assume-role, web
+identity, a shared credentials file, ECS or EKS pod identity, IMDS)
+unless a `CredentialProvider` is passed as the fourth constructor
+argument. Every provider in it that calls AWS uses the same
+`SignedTransport` the signed request travels on; the shared credentials
+and config files and any token file are read with native blocking
+calls.
 
 ## Installation
 

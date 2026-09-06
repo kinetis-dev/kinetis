@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 /**
  * Generates each packages/<name>/composer.json from the one canonical
- * packages.manifest.json — see CLAUDE.md and the monorepo packaging plan
- * for the full design. Usages:
+ * packages.manifest.json — see CLAUDE.md and tools/README.md for the
+ * full flow. Usages:
  *
  *   php tools/generate-composer.php            Write every package's
  *                                               composer.json (dev-mode:
@@ -41,34 +41,74 @@ declare(strict_types=1);
  * validate-manifest.php checks a push against — there is no mode here
  * that writes a version the validator would then reject.
  *
- * Every manifest read runs through tools/manifest-schema.php first, so
- * nothing below writes a file from an entry that hasn't been validated.
- *
  * Never runs `composer` itself — see tools/README.md for the full
  * edit-manifest -> regenerate -> composer update -> commit flow.
  */
 
-require_once __DIR__ . '/manifest-schema.php';
-require_once __DIR__ . '/checked-write.php';
+require_once __DIR__ . '/version-policy.php';
+
+const PROJECT_ROOT = __DIR__ . '/..';
+const MANIFEST_PATH = PROJECT_ROOT . '/packages.manifest.json';
+
+function packageDirectory(string $key, ?string $projectRoot = null): string
+{
+    return ($projectRoot ?? PROJECT_ROOT) . "/packages/{$key}";
+}
+
+function composerJsonPath(string $key, ?string $projectRoot = null): string
+{
+    return packageDirectory($key, $projectRoot) . '/composer.json';
+}
 
 /**
- * Reads and validates the manifest, or returns the reason it can't be
- * used. Reading, decoding and schema failures all arrive the same way,
- * and only the three entry-point functions turn one into a message and
- * an exit code — nothing deeper exits, and nothing has written a file or
- * contacted a remote by the time this returns.
+ * Reads the manifest far enough to index into it safely. Anything
+ * deeper — a package entry's own fields, its siblings, its paths — is
+ * validate-manifest.php's manifest-schema check, which runs on every PR
+ * and before every release.
  *
- * @return array<string, mixed>|null
+ * @return array<string, mixed>
  */
-function loadManifestOrReport(?string $projectRoot = null): ?array
+function loadManifest(?string $path = null): array
 {
-    $loaded = loadValidatedManifest($projectRoot ?? PROJECT_ROOT);
+    $file = $path ?? MANIFEST_PATH;
+    $json = @file_get_contents($file);
 
-    foreach ($loaded['problems'] as $problem) {
-        fwrite(STDERR, "[manifest] {$problem}\n");
+    if ($json === false) {
+        fwrite(STDERR, "Could not read {$file}\n");
+        exit(1);
     }
 
-    return $loaded['manifest'];
+    try {
+        $manifest = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+    } catch (JsonException $e) {
+        fwrite(STDERR, "{$file} is not valid JSON: {$e->getMessage()}\n");
+        exit(1);
+    }
+
+    if (!is_array($manifest) || !isset($manifest['defaults'], $manifest['packages'])
+        || !is_array($manifest['defaults']) || !is_array($manifest['packages'])) {
+        fwrite(STDERR, "{$file} needs a 'defaults' object and a 'packages' object\n");
+        exit(1);
+    }
+
+    /** @var array<string, mixed> */
+    return $manifest;
+}
+
+/**
+ * Writes a generated file, reporting the reason rather than leaving a
+ * silent short write behind. Generated files are small and rewritten
+ * whole; a partial one is caught by the next --check run.
+ */
+function writeGeneratedFile(string $path, string $content): bool
+{
+    if (@file_put_contents($path, $content) === strlen($content)) {
+        return true;
+    }
+
+    fwrite(STDERR, "Could not write {$path}\n");
+
+    return false;
 }
 
 /**
@@ -175,7 +215,7 @@ function assembleComposerJson(array $pkg, array $manifest, bool $release = false
 
     if (!$release) {
         // repositories: requiresDev siblings first, then requires
-        // siblings — confirmed against every real composer.json,
+        // siblings — the order every real composer.json carries,
         // including the one package (aws-sigv4) with both kinds
         // present at once.
         $repoSiblings = [...$requiresDevSiblings, ...$requiresSiblings];
@@ -245,11 +285,7 @@ function generateRelease(array $manifest, array $keys): array
 function runWrite(array $manifest): int
 {
     foreach (generateAll($manifest) as $key => $content) {
-        try {
-            writeFileChecked(composerJsonPath($key), $content);
-        } catch (CheckedWriteFailure $e) {
-            fwrite(STDERR, $e->getMessage() . "\n");
-
+        if (!writeGeneratedFile(composerJsonPath($key), $content)) {
             return 1;
         }
 
@@ -279,10 +315,10 @@ function parseKeys(array $manifest, string $keysArg): array
 }
 
 /**
- * Writes each given package's release-mode composer.json to disk —
- * real ^X.Y.Z sibling constraints, no repositories key — the counterpart
- * to runRelease()'s stdout preview. $projectRoot is injectable for
- * testing against a temp directory rather than this repo's own tree.
+ * Writes each given package's release-mode composer.json to disk — real
+ * ^X.Y.Z sibling constraints, no repositories key — the counterpart to
+ * runRelease()'s stdout preview. $projectRoot is injectable for testing
+ * against a temp directory rather than this repo's own tree.
  *
  * @param array<string, mixed> $manifest
  */
@@ -295,11 +331,7 @@ function runReleaseWrite(array $manifest, string $keysArg, ?string $projectRoot 
     }
 
     foreach (generateRelease($manifest, $keys) as $key => $content) {
-        try {
-            writeFileChecked(composerJsonPath($key, $projectRoot), $content);
-        } catch (CheckedWriteFailure $e) {
-            fwrite(STDERR, $e->getMessage() . "\n");
-
+        if (!writeGeneratedFile(composerJsonPath($key, $projectRoot), $content)) {
             return 1;
         }
 
@@ -347,49 +379,11 @@ function runCheck(array $manifest): int
 }
 
 /**
- * Resolves every requested version move against the shared policy before
- * any of them is applied, so a rejected key leaves the manifest whole
- * rather than half-bumped.
- *
- * @param array<string, mixed> $manifest
- * @param array<string, string> $targets package key => requested version
- * @return array{versions: array<string, string>, problems: list<string>}
- */
-function planVersionMoves(array $manifest, array $targets): array
-{
-    $versions = [];
-    $problems = [];
-
-    foreach ($targets as $key => $target) {
-        if (!isset($manifest['packages'][$key])) {
-            $problems[] = "Unknown package: {$key}";
-
-            continue;
-        }
-
-        $current = $manifest['packages'][$key]['version'];
-        $problem = versionTransitionProblem($current, $target);
-
-        if ($problem !== null) {
-            $problems[] = "{$key}: {$problem}";
-
-            continue;
-        }
-
-        $versions[$key] = $target;
-    }
-
-    return ['versions' => $versions, 'problems' => $problems];
-}
-
-/**
  * The whole invocation, checked before any of it runs.
  *
  * Every mode below writes a file, so an argument list that could mean
- * two things has to be rejected rather than resolved by whichever branch
- * happens to be tested first. A repeated --bump, two size flags, a size
- * flag with nothing to size, --check alongside a mode that writes: each
- * is a different intent than any single reading of it.
+ * two things is rejected rather than resolved by whichever branch
+ * happens to be tested first.
  *
  * @param list<string> $args
  * @return array{
@@ -409,24 +403,23 @@ function parseGeneratorArguments(array $args): array
     $keys = null;
     $modes = [];
     $problems = [];
-    $seen = ['--bump' => 0, 'size' => 0, '--release' => 0, '--release-write' => 0, '--check' => 0];
 
     foreach ($args as $arg) {
         if ($arg === '--check') {
-            $seen['--check']++;
             $modes['check'] = true;
-        } elseif (str_starts_with($arg, '--bump=')) {
-            $seen['--bump']++;
-            $bump = substr($arg, strlen('--bump='));
-            $modes['version'] = true;
         } elseif ($arg === '--minor' || $arg === '--patch') {
-            $seen['size']++;
-
             if ($size !== null && $size !== substr($arg, 2)) {
                 $problems[] = 'Pick one of --minor or --patch, not both.';
             }
 
             $size = substr($arg, 2);
+        } elseif (str_starts_with($arg, '--bump=')) {
+            if ($bump !== null) {
+                $problems[] = '--bump is given more than once.';
+            }
+
+            $bump = substr($arg, strlen('--bump='));
+            $modes['version'] = true;
         } elseif (str_starts_with($arg, '--set-version=')) {
             $modes['version'] = true;
             $assignment = substr($arg, strlen('--set-version='));
@@ -447,26 +440,14 @@ function parseGeneratorArguments(array $args): array
 
             $setVersions[$key] = $version;
         } elseif (str_starts_with($arg, '--release=')) {
-            $seen['--release']++;
             $keys = substr($arg, strlen('--release='));
             $modes['release'] = true;
         } elseif (str_starts_with($arg, '--release-write=')) {
-            $seen['--release-write']++;
             $keys = substr($arg, strlen('--release-write='));
             $modes['release-write'] = true;
         } else {
             $problems[] = "Unknown option: {$arg}";
         }
-    }
-
-    foreach (['--bump', '--release', '--release-write', '--check'] as $option) {
-        if ($seen[$option] > 1) {
-            $problems[] = "{$option} is given more than once.";
-        }
-    }
-
-    if ($seen['size'] > 1 && $size !== null) {
-        $problems[] = 'A bump size is given more than once.';
     }
 
     if ($size !== null && $bump === null) {
@@ -494,58 +475,74 @@ function parseGeneratorArguments(array $args): array
 }
 
 /**
- * The version each named package is asked to move to. Runs after
- * parseGeneratorArguments() has accepted the invocation, so the only
- * failures left are about the packages themselves.
+ * The version each named package is asked to move to, checked against
+ * the shared policy before any of them is applied — so a rejected key
+ * leaves the manifest whole rather than half-bumped.
  *
  * @param array<string, mixed> $manifest
  * @param array{bump: ?string, size: ?string, setVersions: array<string, string>} $parsed
- * @return array{targets: array<string, string>, problems: list<string>}
+ * @return array{versions: array<string, string>, problems: list<string>}
  */
-function versionTargets(array $manifest, array $parsed): array
+function planVersionMoves(array $manifest, array $parsed): array
 {
-    $targets = $parsed['setVersions'];
+    $targets = [];
     $problems = [];
 
-    foreach (array_keys($targets) as $key) {
+    foreach ($parsed['setVersions'] as $key => $version) {
+        $targets[$key] = $version;
+    }
+
+    if ($parsed['bump'] !== null && $parsed['size'] !== null) {
+        $keys = $parsed['bump'] === 'all'
+            ? array_map(strval(...), array_keys($manifest['packages']))
+            : explode(',', $parsed['bump']);
+
+        foreach ($keys as $key) {
+            if (isset($targets[$key])) {
+                $problems[] = "{$key}: --bump and --set-version both name it; pick one";
+
+                continue;
+            }
+
+            if (!isset($manifest['packages'][$key])) {
+                $problems[] = "Unknown package: {$key}";
+
+                continue;
+            }
+
+            $current = $manifest['packages'][$key]['version'];
+
+            if (parseVersion($current) === null) {
+                $problems[] = "{$key}: current version '{$current}' is not a canonical X.Y.Z version";
+
+                continue;
+            }
+
+            $targets[$key] = nextVersion($current, $parsed['size']);
+        }
+    }
+
+    $versions = [];
+
+    foreach ($targets as $key => $target) {
         if (!isset($manifest['packages'][$key])) {
             $problems[] = "Unknown package: {$key}";
-            unset($targets[$key]);
-        }
-    }
-
-    if ($parsed['bump'] === null || $parsed['size'] === null) {
-        return ['targets' => $targets, 'problems' => $problems];
-    }
-
-    $keys = $parsed['bump'] === 'all'
-        ? array_map(strval(...), array_keys($manifest['packages']))
-        : explode(',', $parsed['bump']);
-
-    foreach ($keys as $key) {
-        if (!isset($manifest['packages'][$key])) {
-            $problems[] = "Unknown package: {$key}";
 
             continue;
         }
 
-        if (isset($targets[$key])) {
-            $problems[] = "{$key}: --bump and --set-version both name it; pick one";
+        $problem = versionTransitionProblem($manifest['packages'][$key]['version'], $target);
+
+        if ($problem !== null) {
+            $problems[] = "{$key}: {$problem}";
 
             continue;
         }
 
-        if (!canStep($manifest['packages'][$key]['version'], $parsed['size'])) {
-            $problems[] = "{$key}: a {$parsed['size']} step from {$manifest['packages'][$key]['version']} "
-                . 'exceeds the largest version component this tool represents';
-
-            continue;
-        }
-
-        $targets[$key] = nextVersion($manifest['packages'][$key]['version'], $parsed['size']);
+        $versions[$key] = $target;
     }
 
-    return ['targets' => $targets, 'problems' => $problems];
+    return ['versions' => $versions, 'problems' => $problems];
 }
 
 /**
@@ -554,12 +551,10 @@ function versionTargets(array $manifest, array $parsed): array
  */
 function runBump(array $manifest, array $parsed): int
 {
-    $requested = versionTargets($manifest, $parsed);
-    $plan = planVersionMoves($manifest, $requested['targets']);
-    $problems = [...$requested['problems'], ...$plan['problems']];
+    $plan = planVersionMoves($manifest, $parsed);
 
-    if ($problems !== []) {
-        foreach ($problems as $problem) {
+    if ($plan['problems'] !== []) {
+        foreach ($plan['problems'] as $problem) {
             fwrite(STDERR, "{$problem}\n");
         }
 
@@ -580,11 +575,7 @@ function runBump(array $manifest, array $parsed): int
         $manifest['packages'][$key]['version'] = $version;
     }
 
-    try {
-        writeFileChecked(MANIFEST_PATH, encodeComposerJson($manifest));
-    } catch (CheckedWriteFailure $e) {
-        fwrite(STDERR, $e->getMessage() . "\n");
-
+    if (!writeGeneratedFile(MANIFEST_PATH, encodeComposerJson($manifest))) {
         return 1;
     }
 
@@ -627,11 +618,7 @@ function generatorMain(array $argv): int
         return 1;
     }
 
-    $manifest = loadManifestOrReport();
-
-    if ($manifest === null) {
-        return 1;
-    }
+    $manifest = loadManifest();
 
     return match ($parsed['mode']) {
         'check' => runCheck($manifest),

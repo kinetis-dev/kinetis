@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  # The gate reads this repository's own workflow runs and their jobs.
+  # The gate reads this repository's own workflow runs.
   actions: read
 
 # One publication at a time across the whole repository, and never
@@ -22,9 +22,13 @@ permissions:
 # works to avoid.
 #
 # GitHub keeps at most one pending run per group and discards the rest,
-# so an intermediate commit's turn here can be dropped entirely. That is
-# why tools/release-transaction.php refuses to publish a version whose
-# predecessor was never tagged instead of quietly releasing over it.
+# so an intermediate commit's turn here can be dropped entirely. What the
+# next round recovers is a version still current: tools/release-plan.php
+# looks for versions that are not fully published as well as for versions
+# that changed in this push, and the manifest states one version per
+# package. A version that was superseded before its own run started is
+# gone from the manifest and is not published later — the predecessor
+# check in the plan fails that round rather than tagging over the gap.
 concurrency:
   group: kinetis-release-publication
   cancel-in-progress: false
@@ -36,11 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # The release plan and the publication both read the manifest's
-          # own history — the comparison base for a multi-commit push, and
-          # the version each package carried before the current one. Both
-          # can land arbitrarily far back, and a shallow checkout fails
-          # the run rather than guessing.
+          # The plan reads the manifest's own history for the comparison
+          # base, which can land arbitrarily far back on a multi-commit
+          # push. A shallow checkout fails the run rather than guessing.
           fetch-depth: 0
           # actions/checkout's default (persist-credentials: true) writes
           # the ephemeral per-job GITHUB_TOKEN into the local git config
@@ -48,15 +50,13 @@ jobs:
           # It would then authenticate the publication's own pushes as
           # github-actions[bot], an identity with no access outside this
           # one checked-out repository, and it would do so ahead of the
-          # askpass helper the apply step provides. false stops checkout
-          # from persisting any credential at all.
+          # askpass helper the publish step provides. false stops
+          # checkout from persisting any credential at all.
           persist-credentials: false
 
       # PHP runs on the runner rather than in a container for this one
       # workflow: the publication drives git and the pushes as a single
-      # process, so the credential boundary and the preflight are one
-      # decision rather than a shell loop's worth, and that process needs
-      # the same git the checkout used.
+      # process, and that process needs the same git the checkout used.
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
@@ -65,10 +65,10 @@ jobs:
       - name: Compute this round's release plan
         id: plan
         # pipefail so a plan that fails — a malformed manifest, a base
-        # commit git can't read, a graph with no publish order — takes
-        # the step down with it. Without it, tee's own success is the
-        # pipeline's exit status and the failure reaches jq as an empty
-        # file.
+        # commit git can't read, a split repository that can't be reached
+        # — takes the step down with it. Without it, tee's own success is
+        # the pipeline's exit status and the failure reaches jq as an
+        # empty file.
         env:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: |
@@ -81,13 +81,14 @@ jobs:
         if: steps.plan.outputs.count == '0'
         run: echo "Every current version is already published — nothing to release."
 
-      - name: Fail — a candidate's sibling requirement isn't published yet
-        # Two packages bumped together in one commit, but their sibling
-        # ordering doesn't actually resolve (e.g. a version was bumped
-        # without the dependent's own constraint catching up).
+      - name: Fail — a candidate can't be published as it stands
+        # Either a sibling requirement doesn't resolve (two packages
+        # bumped together whose constraints don't line up), or a
+        # version doesn't follow what its split repository publishes.
+        # Both are decided by a person, not by this round.
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok != 'true'
         run: |
-          echo "::error::One or more release candidates have an unresolved sibling requirement:"
+          echo "::error::One or more release candidates cannot be published as they stand:"
           jq -r '.candidates[].problems[]' plan.json | while IFS= read -r line; do echo "::error::${line}"; done
           exit 1
 
@@ -98,26 +99,17 @@ jobs:
         # use here.
         env:
           GH_TOKEN: ${{ github.token }}
-          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: php tools/release-gate.php --sha="${{ github.sha }}" --repo="${{ github.repository }}"
 
-      - name: Preflight the whole publication
-        if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
-        # Stages the round, builds every candidate's publication commit
-        # on what its repository already publishes, reads every target
-        # repository, and writes the exact ref updates to make. Reaches
-        # the network only to read, and writes nothing to any remote, so
-        # it runs without the deploy credential.
-        run: php tools/release-transaction.php preflight --plan=plan.json --out=transaction.json
-
-      - name: Publish
+      - name: Publish each candidate, in order
         if: steps.plan.outputs.count != '0' && steps.plan.outputs.ok == 'true'
         # The only step the deploy credential exists for, and the only
-        # one that writes. It re-derives every object the transaction
-        # names against this checkout before taking the credential at
-        # all, then reaches git through an askpass helper reading this
-        # step's environment — never a URL, an argument, or a config
-        # value, all of which git copies into its own output.
+        # one that writes: it stages each package's release-mode
+        # composer.json in this runner's own disposable checkout, splits
+        # the package out with the runner's own git, and updates that
+        # repository's main branch and version tag in one atomic push.
+        # tools/release-publish.php states what that push guarantees and
+        # where the credential is allowed to be.
         env:
           RELEASE_DEPLOY_TOKEN: ${{ secrets.RELEASE_DEPLOY_TOKEN }}
-        run: php tools/release-transaction.php apply --transaction=transaction.json
+        run: php tools/release-publish.php --plan=plan.json

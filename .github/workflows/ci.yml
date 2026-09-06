@@ -52,11 +52,11 @@ jobs:
             packages:
               - 'packages/**'
               - 'tools/**'
-              # A version bump changes the manifest and nothing else: the
-              # generated composer.json carries no version field, so
-              # without this entry the release-triggering commit is the
-              # one commit whose validate/audit/unit/static matrix never
-              # runs, and the gate has nothing to accept.
+              # A version bump changes the manifest and nothing else,
+              # since the generated composer.json carries no version
+              # field. Without this entry a pull request that only bumps
+              # a version would merge with its packages never validated,
+              # audited, tested or analysed.
               - 'packages.manifest.json'
               - '.github/workflows/ci.yml'
             docs:
@@ -65,7 +65,14 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.packages == 'true'
+    # Every push to main runs the whole package matrix, whatever the push
+    # touched. release-gate.php requires this workflow to have succeeded
+    # at the exact commit being published, and a release round can publish
+    # a version whose own push predates the current one — a docs-only push
+    # that skipped the matrix would leave the gate proving nothing about
+    # the package code it is about to tag. Pull requests keep the path
+    # filter: nothing publishes from one.
+    if: github.event_name == 'push' || needs.changes.outputs.packages == 'true'
     name: ${{ matrix.package.name }} (PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -77,7 +84,9 @@ jobs:
         php-version: ['8.4', '8.5']
         package:
           - { name: core, dir: packages/framework, phpunit: true }
-          - { name: persistence, dir: packages/persistence, phpunit: true }
+          # The native pgsql driver refuses to construct without ext-sockets.
+          - { name: persistence, dir: packages/persistence, phpunit: true, needsSockets: true }
+          - { name: redis, dir: packages/redis, phpunit: true }
           - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
           - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }
           # ext-sockets — a real, hard `require` of spiral/roadrunner-worker
@@ -157,12 +166,19 @@ jobs:
         run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$PWD":/app -w /app/${{ matrix.package.dir }} composer:2 audit
 
       - name: PHPUnit
-        if: matrix.package.phpunit && !matrix.package.needsGit
+        if: matrix.package.phpunit && !matrix.package.needsGit && !matrix.package.needsSockets
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/phpunit
 
+      - name: PHPUnit (needs ext-sockets — linux-headers on top of $PHPIZE_DEPS under Alpine)
+        if: matrix.package.phpunit && matrix.package.needsSockets
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine sh -c "apk add --no-cache --virtual .build \$PHPIZE_DEPS linux-headers >/dev/null && docker-php-ext-install sockets >/dev/null && php vendor/bin/phpunit"
+
+      # git-subtree is its own Alpine package. The publication splits
+      # each package out with `git subtree split`, and this suite runs
+      # that command against a scratch repository.
       - name: PHPUnit (needs a real git binary — tools/'s own suite shells out to it)
         if: matrix.package.phpunit && matrix.package.needsGit
-        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine sh -c "apk add --no-cache git >/dev/null 2>&1 && php vendor/bin/phpunit"
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine sh -c "apk add --no-cache git git-subtree >/dev/null 2>&1 && php vendor/bin/phpunit"
 
       - name: PHPStan
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M

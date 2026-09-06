@@ -75,7 +75,7 @@ final class PluginDiscoveryTest extends TestCase
      * reconstruct() has no fallback of its own — whatever a class's own
      * fromArray() throws for malformed data propagates unchanged. A
      * cache-bundle load (BootSequence) is the caller that turns this
-     * into "treat the generation as corrupt, compile fresh instead";
+     * into "treat the artifact as corrupt, compile fresh instead";
      * this method itself must never swallow it.
      */
     public function test_reconstruct_propagates_whatever_a_class_own_fromarray_throws(): void

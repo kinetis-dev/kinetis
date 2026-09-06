@@ -38,7 +38,7 @@ final readonly class BuildCommand
     ) {}
 
     #[Command('build', description: 'Compiles routes, MCP tools/resources, commands, and event listeners ahead of time', bootstrap: false)]
-    public function run(CommandArguments $arguments): int
+    public function run(): int
     {
         // dirname(__DIR__): this file lives one level deeper than
         // bin/kinetis does (src/Console/ vs bin/), so ProjectRoot::detect()
@@ -49,25 +49,18 @@ final readonly class BuildCommand
         // it's only the non-proxied (this monorepo's own dev/test) case
         // this actually matters for.
         $projectRoot = $this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__));
-        $cacheDirectory = $projectRoot . '/.kinetis-cache';
+        $store = new CacheStore($projectRoot . '/.kinetis-cache');
 
-        if ($arguments->hasOption('destroy')) {
-            CacheStore::destroy($cacheDirectory);
-            fwrite(STDOUT, "Removed {$cacheDirectory}/\n");
+        // Compiles from the project's own source every time, never from
+        // whatever artifact happens to be sitting there — the published
+        // file is an output of this command, never an input to it. The
+        // staged file only replaces the live one once it has been written
+        // whole and read back intact (see CacheStore::write()), so a
+        // compile or publish failure leaves the previous artifact exactly
+        // as it was.
+        $store->write((new Compiler())->compileProject($projectRoot));
 
-            return 0;
-        }
-
-        // Compiles and stages a whole new generation before touching
-        // anything the previous one published — see CacheStore::
-        // writeAll()'s own docblock. A compile or write failure here
-        // leaves whatever was already active (if anything) exactly as
-        // it was; the cache directory itself is never removed as part
-        // of a plain rebuild.
-        $compiled = (new Compiler())->compileProject($projectRoot);
-        (new CacheStore($cacheDirectory))->writeAll($compiled);
-
-        fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, and event listeners written to {$cacheDirectory}/\n");
+        fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, and event listeners written to {$store->path()}\n");
 
         return 0;
     }

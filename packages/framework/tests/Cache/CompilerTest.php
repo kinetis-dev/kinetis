@@ -111,8 +111,8 @@ final class CompilerTest extends TestCase
         $store = new CacheStore($directory);
 
         try {
-            $store->writeAll($compiled);
-            $reloaded = $store->loadHttp();
+            $store->write($compiled);
+            $reloaded = $store->load()?->http;
 
             self::assertNotNull($reloaded);
             self::assertSame(
@@ -120,7 +120,8 @@ final class CompilerTest extends TestCase
                 $reloaded->middlewareGroups,
             );
         } finally {
-            CacheStore::destroy($directory);
+            @unlink($store->path());
+            @rmdir($directory);
         }
     }
 
@@ -141,15 +142,16 @@ final class CompilerTest extends TestCase
         $store = new CacheStore($directory);
 
         try {
-            $store->writeAll($compiled);
-            $reloaded = $store->loadHttp();
+            $store->write($compiled);
+            $reloaded = $store->load()?->http;
 
             self::assertNotNull($reloaded);
 
             $router = Router::fromArray($reloaded->routes);
             self::assertSame('index', $router->match('GET', '/v1/users')->route->controllerMethod);
         } finally {
-            CacheStore::destroy($directory);
+            @unlink($store->path());
+            @rmdir($directory);
         }
     }
 
@@ -200,10 +202,10 @@ final class CompilerTest extends TestCase
 
         $directory = sys_get_temp_dir() . '/kinetis_nested_dto_cache_test_' . bin2hex(random_bytes(8));
         $store = new CacheStore($directory);
-        $store->writeAll($compiled);
+        $store->write($compiled);
 
         try {
-            $reloadedHttp = $store->loadHttp();
+            $reloadedHttp = $store->load()?->http;
             self::assertNotNull($reloadedHttp);
 
             $plan = $reloadedHttp->hydrationPlans[CreateOrderRequest::class];
@@ -220,7 +222,8 @@ final class CompilerTest extends TestCase
 
             self::assertSame('1 Infinite Loop', $dto->shippingAddress->street);
         } finally {
-            CacheStore::destroy($directory);
+            @unlink($store->path());
+            @rmdir($directory);
         }
     }
 }

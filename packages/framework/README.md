@@ -115,7 +115,7 @@ consumed — see
 | Key | Default | Purpose |
 |---|---|---|
 | `APP_ENV` | `production` | `development` — the exact name, ignoring case — selects live discovery; unset or any other name selects the AOT cache. |
-| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read — by the Kernel for a raw body, and by whichever runtime adapter parsed a form body before the Kernel existed. One `Kinetis\Http\Form\FormLimits` instance, built from this value once, is what both use. |
+| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read, by the Kernel's own `RequestBodyMiddleware` for every request body. One `Kinetis\Http\Form\FormLimits` instance, built from this value once, is what it reads. |
 | `TRUSTED_PROXIES` | — | Comma-separated addresses/CIDR ranges whose `X-Forwarded-Proto`/`X-Forwarded-For` are believed. Empty means no peer is an edge and neither header is read — the safe default for a directly reachable listener. |
 | `ROUTE_DISCOVERY_PATHS` | — | Restricts the HTTP-controller scan to comma-separated sub-paths, relative to each PSR-4 base directory. |
 | `COMMAND_DISCOVERY_PATHS` | — | The same, for CLI commands. |
@@ -156,7 +156,7 @@ documentation from its own README:
 | [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
 | [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone, no Kinetis required |
 | [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | The native Model Context Protocol server — stdio and Streamable HTTP |
-| [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs |
+| [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda (Bref) runtime adapter — polls the Lambda Runtime API and converts API Gateway v2 payloads to and from PSR-7 |
 | [`kinetis/roadrunner-adapter`](https://github.com/kinetis-dev/roadrunner-adapter) | RoadRunner runtime adapter — a persistent worker over RoadRunner's own Goridge/`PSR7Worker` protocol |
 
 ## Documentation

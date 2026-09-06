@@ -8,8 +8,8 @@ use Kinetis\Migrations\MigrationRepositoryInterface;
 
 /**
  * A real, array-backed MigrationRepositoryInterface — no database, no
- * mocking framework — so MigrationRunner's ordering/diffing logic is
- * tested against real applied()/lastApplied() behavior instead of
+ * mocking framework — so MigrationRunner's ordering and diffing logic is
+ * tested against real applied()/highestApplied() behavior instead of
  * pre-programmed return values.
  */
 final class InMemoryMigrationRepository implements MigrationRepositoryInterface
@@ -45,13 +45,8 @@ final class InMemoryMigrationRepository implements MigrationRepositoryInterface
         ));
     }
 
-    public function lastApplied(): ?string
+    public function highestApplied(): ?string
     {
-        // Highest by name, not most-recently-inserted — matching
-        // SqlMigrationRepository's own `ORDER BY migration DESC`, which
-        // orders by name specifically because applied_at has no
-        // sub-second precision and can't disambiguate two migrations
-        // applied within the same second.
         $sorted = $this->applied;
         sort($sorted);
 

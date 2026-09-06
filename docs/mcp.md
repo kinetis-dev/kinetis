@@ -194,8 +194,8 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
    middleware resolved for this message — the same mechanism an HTTP
    controller already uses. This holds for an ordinary call and a
    progress-streamed one alike: a streamed `tools/call` runs on a
-   *second* scope, created after the request's own is disposed (see
-   below), and this identity is carried across to it.
+   *second* scope of its own (see below), and this identity is carried
+   across to it.
 
    **The portable identity handoff carries both `CurrentUserInterface`
    and a concrete class, when one was published too.**
@@ -250,9 +250,9 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
    ```{note}
    **Upgrading a deployment that pre-warms its cache.** A middleware
    group's membership is compiled data (see {doc}`caching`), and a
-   published generation is only ever superseded by a cache *format*
-   change, which a group gaining a member is not. A generation compiled
-   by a `kinetis/mcp` without the guard therefore stays valid and keeps
+   published artifact is only ever superseded by a cache *format* change,
+   which a group gaining a member is not. An artifact compiled by a
+   `kinetis/mcp` without the guard therefore stays valid and keeps
    serving `/mcp` without it, so run `bin/kinetis build` in the deploy
    that upgrades the package. Development's live discovery, and a
    production deployment that compiles lazily against an empty
@@ -261,11 +261,10 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
 
 Global middleware wraps `/mcp` too, like every route — the group exists
 for what should apply to this endpoint only. That includes
-`MaxBodySizeMiddleware` (see {doc}`middleware`): `McpController` reads
-the request body via `getContents()`, not a plain string cast, so an
-oversized JSON-RPC body — with or without an honest `Content-Length`
-header — gets the same `413` any other route gets, before `McpServer`
-ever sees a decoded message.
+`RequestBodyMiddleware` (see {doc}`middleware`), which stages and
+bounds the body before any route runs, so an oversized JSON-RPC body —
+with or without an honest `Content-Length` header — gets the same `413`
+any other route gets, before `McpServer` ever sees a decoded message.
 
 ## The protocol
 

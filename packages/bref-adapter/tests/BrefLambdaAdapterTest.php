@@ -7,9 +7,6 @@ namespace Kinetis\BrefAdapter\Tests;
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
-use Kinetis\Http\Form\Exception\FormLimitExceededException;
-use Kinetis\Http\Form\FormLimits;
-use Kinetis\Http\Middleware\Exception\BodyTooLargeException;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -19,7 +16,7 @@ use PHPUnit\Framework\TestCase;
  * to hold it to. Everything an adapter shares with the others — request
  * line, identity, headers, cookies, the client address, form/JSON/binary
  * bodies, the form-complexity ceilings, response headers and cookies,
- * streaming, the parse-failure 400 — lives in the runtime conformance
+ * streaming, the malformed-body 400 — lives in the runtime conformance
  * suite, run against this adapter by {@see LambdaConformanceTest}, which
  * also holds the Lambda-only malformed-base64 input to that suite's 400
  * contract.
@@ -28,14 +25,9 @@ final class BrefLambdaAdapterTest extends TestCase
 {
     private const string DOMAIN = 'kinetis.execute-api.eu-west-1.amazonaws.com';
 
-    private static function limits(): FormLimits
-    {
-        return new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES);
-    }
-
     public function test_is_persistent(): void
     {
-        self::assertTrue((new BrefLambdaAdapter('127.0.0.1:9001', self::limits()))->isPersistent());
+        self::assertTrue((new BrefLambdaAdapter('127.0.0.1:9001'))->isPersistent());
     }
 
     /**
@@ -48,12 +40,18 @@ final class BrefLambdaAdapterTest extends TestCase
             'rawPath' => '/users',
             'body' => base64_encode('{"name":"Alon"}'),
             'isBase64Encoded' => true,
-        ], method: 'POST'), self::limits());
+        ], method: 'POST'));
 
         self::assertSame('{"name":"Alon"}', (string) $request->getBody());
     }
 
-    public function test_a_base64_encoded_multipart_body_is_decoded_before_parsing(): void
+    /**
+     * A multipart body is decoded like any other, and handed on as the
+     * exact bytes the client sent — nothing here parses it, so what
+     * reaches the Kernel is what RequestBodyMiddleware would have met
+     * under any other runtime.
+     */
+    public function test_a_base64_encoded_multipart_body_is_decoded_and_handed_on_intact(): void
     {
         $boundary = 'KinetisTestBoundary';
         $body = "--{$boundary}\r\n"
@@ -66,9 +64,10 @@ final class BrefLambdaAdapterTest extends TestCase
             'headers' => ['content-type' => "multipart/form-data; boundary={$boundary}"],
             'body' => base64_encode($body),
             'isBase64Encoded' => true,
-        ], method: 'POST'), self::limits());
+        ], method: 'POST'));
 
-        self::assertSame(['name' => 'Alon'], $request->getParsedBody());
+        self::assertSame($body, (string) $request->getBody());
+        self::assertNull($request->getParsedBody());
     }
 
     public function test_a_missing_source_ip_leaves_remote_addr_unset(): void
@@ -76,7 +75,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $event = self::event();
         unset($event['requestContext']['http']['sourceIp']);
 
-        self::assertArrayNotHasKey('REMOTE_ADDR', BrefLambdaAdapter::requestFromEvent($event, self::limits())->getServerParams());
+        self::assertArrayNotHasKey('REMOTE_ADDR', BrefLambdaAdapter::requestFromEvent($event)->getServerParams());
     }
 
     // --- Strict base64 decoding: invalid input is reported, and a
@@ -89,7 +88,7 @@ final class BrefLambdaAdapterTest extends TestCase
         BrefLambdaAdapter::requestFromEvent(self::event([
             'body' => 'not valid base64 !!! ***',
             'isBase64Encoded' => true,
-        ], method: 'POST'), self::limits());
+        ], method: 'POST'));
     }
 
     public function test_a_base64_body_that_decodes_to_the_literal_zero_is_not_treated_as_empty(): void
@@ -97,7 +96,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $request = BrefLambdaAdapter::requestFromEvent(self::event([
             'body' => base64_encode('0'),
             'isBase64Encoded' => true,
-        ], method: 'POST'), self::limits());
+        ], method: 'POST'));
 
         self::assertSame('0', (string) $request->getBody());
     }
@@ -107,7 +106,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $request = BrefLambdaAdapter::requestFromEvent(self::event([
             'body' => base64_encode(''),
             'isBase64Encoded' => true,
-        ], method: 'POST'), self::limits());
+        ], method: 'POST'));
 
         self::assertSame('', (string) $request->getBody());
     }
@@ -126,7 +125,7 @@ final class BrefLambdaAdapterTest extends TestCase
             'rawPath' => '/users/42',
             'rawQueryString' => 'tag=a+b&tag=c',
             'headers' => ['x-forwarded-proto' => 'https', 'x-forwarded-port' => '443'],
-        ]), self::limits());
+        ]));
 
         self::assertSame('https', $request->getUri()->getScheme());
         self::assertSame(self::DOMAIN, $request->getUri()->getHost());
@@ -140,7 +139,7 @@ final class BrefLambdaAdapterTest extends TestCase
     {
         $request = BrefLambdaAdapter::requestFromEvent(self::event([
             'headers' => ['x-forwarded-port' => '8443'],
-        ]), self::limits());
+        ]));
 
         self::assertSame(8443, $request->getUri()->getPort());
         self::assertSame([self::DOMAIN . ':8443'], $request->getHeader('Host'));
@@ -157,7 +156,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $request = BrefLambdaAdapter::requestFromEvent(self::event([
             'rawQueryString' => 'tag=a&tag=b',
             'queryStringParameters' => ['tag' => 'a,b'],
-        ]), self::limits());
+        ]));
 
         self::assertSame(['tag' => 'b'], $request->getQueryParams());
         self::assertSame('tag=a&tag=b', $request->getUri()->getQuery());
@@ -238,7 +237,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $this->expectException(BrefAdapterException::class);
         $this->expectExceptionMessageMatches('/' . preg_quote($expected, '/') . '/');
 
-        BrefLambdaAdapter::requestFromEvent(self::event($overrides), self::limits());
+        BrefLambdaAdapter::requestFromEvent(self::event($overrides));
     }
 
     // --- Header maps that mean two things at once ----------------------
@@ -297,7 +296,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $this->expectException(BrefAdapterException::class);
         $this->expectExceptionMessageMatches('/' . preg_quote($expected, '/') . '/');
 
-        BrefLambdaAdapter::requestFromEvent(self::event(['headers' => $headers]), self::limits());
+        BrefLambdaAdapter::requestFromEvent(self::event(['headers' => $headers]));
     }
 
     /**
@@ -311,103 +310,7 @@ final class BrefLambdaAdapterTest extends TestCase
         $this->expectException(BrefAdapterException::class);
         $this->expectExceptionMessageMatches('/cookies must be a list of strings/');
 
-        BrefLambdaAdapter::requestFromEvent(self::event(['cookies' => ['a=1', 42, 'b=2']]), self::limits());
-    }
-
-    // --- The form-complexity contract, where no SAPI enforces one ------
-
-    public function test_a_form_body_larger_than_the_ceiling_is_refused_on_its_real_size(): void
-    {
-        $this->expectException(BodyTooLargeException::class);
-
-        BrefLambdaAdapter::requestFromEvent(self::event([
-            'headers' => [
-                'content-type' => 'application/x-www-form-urlencoded',
-                // Understated on purpose: the real bytes are what bind.
-                'content-length' => '10',
-            ],
-            // csrf_token last, past the edge, as everywhere else this
-            // contract is tested: a byte cap that truncated instead of
-            // refusing would hand on a form missing exactly it.
-            'body' => 'pad=' . str_repeat('x', self::limits()->maxBodyBytes) . '&csrf_token=t',
-        ], method: 'POST'), self::limits());
-    }
-
-    /**
-     * The one ceiling only an adapter running its own parser can see —
-     * a SAPI never exposes a part's headers — held to the same `413`
-     * the shared suite holds every other ceiling to.
-     */
-    public function test_a_multipart_part_with_more_headers_than_the_contract_allows_is_refused(): void
-    {
-        $boundary = 'B';
-        $part = "--{$boundary}\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n";
-
-        for ($i = 0; $i <= FormLimits::MAX_PART_HEADERS; $i++) {
-            $part .= "X-Pad-{$i}: v\r\n";
-        }
-
-        $handlerRan = false;
-        $payload = BrefLambdaAdapter::handleEvent(
-            self::event([
-                'headers' => ['content-type' => "multipart/form-data; boundary={$boundary}"],
-                'body' => $part . "\r\nt\r\n--{$boundary}--\r\n",
-            ], method: 'POST'),
-            static function () use (&$handlerRan): Response {
-                $handlerRan = true;
-
-                return new Response(200);
-            },
-            self::limits(),
-        );
-
-        self::assertFalse($handlerRan);
-        LambdaConformanceTest::assertOverLimitFormResponse(Conformance\LambdaDriver::wireResponseFromPayload($payload));
-    }
-
-    /**
-     * A part naming a charset PHP has no converter for makes
-     * `mb_convert_encoding()` throw a `ValueError` from inside the
-     * parser — client-chosen input, per part, and so the same fixed
-     * `400` any other unreadable body gets rather than an invocation
-     * error API Gateway would render as a `502`.
-     */
-    public function test_a_part_declaring_an_unknown_charset_is_a_clean_400(): void
-    {
-        $boundary = 'B';
-        $body = "--{$boundary}\r\n"
-            . "Content-Disposition: form-data; name=\"note\"\r\n"
-            . "Content-Type: text/plain; charset=definitely-not-a-charset\r\n"
-            . "Content-Transfer-Encoding: 8bit\r\n\r\n"
-            . "hello\r\n"
-            . "--{$boundary}--\r\n";
-
-        $handlerRan = false;
-        $payload = BrefLambdaAdapter::handleEvent(
-            self::event([
-                'headers' => ['content-type' => "multipart/form-data; boundary={$boundary}"],
-                'body' => $body,
-            ], method: 'POST'),
-            static function () use (&$handlerRan): Response {
-                $handlerRan = true;
-
-                return new Response(200);
-            },
-            self::limits(),
-        );
-
-        self::assertFalse($handlerRan);
-        LambdaConformanceTest::assertMalformedBodyResponse(Conformance\LambdaDriver::wireResponseFromPayload($payload));
-    }
-
-    public function test_a_form_past_a_contract_ceiling_is_refused_before_the_handler(): void
-    {
-        $this->expectException(FormLimitExceededException::class);
-
-        BrefLambdaAdapter::requestFromEvent(self::event([
-            'headers' => ['content-type' => 'application/x-www-form-urlencoded'],
-            'body' => 'a' . str_repeat('[b]', FormLimits::MAX_NESTING_DEPTH) . '=deep',
-        ], method: 'POST'), self::limits());
+        BrefLambdaAdapter::requestFromEvent(self::event(['cookies' => ['a=1', 42, 'b=2']]));
     }
 
     /**

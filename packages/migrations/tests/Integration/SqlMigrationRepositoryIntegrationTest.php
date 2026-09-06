@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
  * logic is unit-tested against InMemoryMigrationRepository; what only a
  * real server can show is that this class's bookkeeping SQL does what
  * the runner assumes — that the table creates idempotently, and that
- * lastApplied() answers by migration name rather than by insertion
+ * highestApplied() answers by migration name rather than by insertion
  * order or applied_at.
  *
  * Environment-gated on MYSQL_HOST, like every other real-backend test in
@@ -87,28 +87,28 @@ final class SqlMigrationRepositoryIntegrationTest extends TestCase
     }
 
     /**
-     * lastApplied() orders by the migration name rather than applied_at
-     * on purpose: applied_at has no sub-second precision, so two
+     * highestApplied() orders by the migration name rather than
+     * applied_at: applied_at has no sub-second precision, so two
      * migrations recorded in the same second cannot be told apart by it,
      * while the timestamped name always can. Recording them in reverse
      * is what makes the two orderings disagree.
      */
-    public function test_last_applied_answers_by_name_not_by_when_it_was_recorded(): void
+    public function test_highest_applied_answers_by_name_not_by_when_it_was_recorded(): void
     {
         $repository = $this->repository();
         $repository->ensureTableExists();
         $repository->markApplied('20260102_create_orders');
         $repository->markApplied('20260101_create_users');
 
-        self::assertSame('20260102_create_orders', $repository->lastApplied());
+        self::assertSame('20260102_create_orders', $repository->highestApplied());
     }
 
-    public function test_last_applied_is_null_on_a_fresh_database(): void
+    public function test_highest_applied_is_null_on_a_fresh_database(): void
     {
         $repository = $this->repository();
         $repository->ensureTableExists();
 
-        self::assertNull($repository->lastApplied());
+        self::assertNull($repository->highestApplied());
     }
 
     public function test_rolling_back_removes_only_that_migration(): void
@@ -121,6 +121,6 @@ final class SqlMigrationRepositoryIntegrationTest extends TestCase
         $repository->markRolledBack('20260102_create_orders');
 
         self::assertSame(['20260101_create_users'], $repository->applied());
-        self::assertSame('20260101_create_users', $repository->lastApplied());
+        self::assertSame('20260101_create_users', $repository->highestApplied());
     }
 }

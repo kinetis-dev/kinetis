@@ -175,12 +175,14 @@ $transport = SignedTransport::answeredInProcess(
 
 ## Credentials
 
-Resolved automatically the standard AWS way: `AWS_ACCESS_KEY_ID`/
-`AWS_SECRET_ACCESS_KEY`, a shared credentials file, or an IAM role,
-whichever is available first. The chain's own ECS, EKS pod-identity, and
-IMDS lookups run on that same transport, so a
+Resolved through AsyncAws's standard chain, in its standard order:
+environment variables (including the STS assume-role that `AWS_ROLE_ARN`
+selects), web identity, the shared credentials and config files, ECS or
+EKS pod identity, then IMDS. Every provider in it that calls AWS uses
+the same `SignedTransport` the signed request travels on, so a
 configured metadata token is sent to the endpoint that was configured
-and to nothing a `Location` names.
+and to nothing a `Location` names. Resolved credentials are held until
+they expire.
 
 Pass a `CredentialProvider` directly as the fourth constructor argument
 to use something else instead:
@@ -218,11 +220,12 @@ a non-seekable body already positioned at its start for it to be signed
 and sent correctly.
 
 A request through the transport suspends the calling Fiber rather than
-blocking it, and so do the credential chain's ECS/EKS/IMDS lookups:
-`SignedTransport` is AMPHP-backed. The rest is synchronous work on the calling thread: the shared credentials
-and config files, an SSO cache file, and a web identity token file are
-read with blocking filesystem calls, and capturing and hashing the
-request body is CPU work.
+blocking it, and so does every credential lookup that reaches the
+network: `SignedTransport` is AMPHP-backed. The rest is synchronous work
+on the calling thread: the shared credentials and config files, an SSO
+cache file, and a web identity token file are read with blocking
+filesystem calls, on first resolution and on each refresh, and capturing
+and hashing the request body is CPU work.
 
 ## Errors
 

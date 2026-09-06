@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * The one version-transition policy every tool in this directory
- * shares: generate-composer.php's --bump/--set-version, and
+ * shares: generate-composer.php's --bump/--set-version and
  * validate-manifest.php's version-bump check both decide what a legal
  * version move is here and nowhere else, so a bump the generator writes
  * is exactly a bump the validator accepts.
@@ -19,7 +19,7 @@ declare(strict_types=1);
  * tags whatever version lands on main, so jumping 1.2.3 -> 1.2.5 leaves
  * 1.2.4 permanently untagged while its content ships inside 1.2.5's tag.
  * A multi-commit push is compared end to end, so an intermediate commit
- * can't launder a skipped version either.
+ * cannot launder a skipped version either.
  */
 
 /** Every package stays on this major line for the duration of incubation. */
@@ -34,52 +34,24 @@ const BUMP_COMPONENTS = ['patch', 'minor'];
  * argument — comes through here, so all of them agree on what a version
  * even is.
  *
- * A component is canonical decimal: `0`, or a nonzero digit followed by
- * any digits. `01` and `1.0.00` are rejected rather than silently
- * meaning the same thing as their canonical spelling, because the
- * manifest value is compared as a string in several places and a tag is
- * published from it verbatim.
- *
- * A component wider than PHP_INT_MAX is rejected too. Casting it would
- * saturate at PHP_INT_MAX, so `1.0.<PHP_INT_MAX + 1>` and
- * `1.0.<PHP_INT_MAX>` would compare equal and one of them would pass a
- * check the other failed.
+ * A component is canonical decimal, at most nine digits. `01` and
+ * `1.0.00` are rejected rather than silently meaning the same thing as
+ * their canonical spelling, because the manifest value is compared as a
+ * string in several places and a tag is published from it verbatim. The
+ * width cap keeps every component well inside the int range, so the
+ * arithmetic below has no overflow case to model.
  *
  * @return array{major: int, minor: int, patch: int}|null
  */
 function parseVersion(string $version): ?array
 {
-    if (preg_match('/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/', $version, $m) !== 1) {
+    $component = '(0|[1-9][0-9]{0,8})';
+
+    if (preg_match("/^{$component}\\.{$component}\\.{$component}$/", $version, $m) !== 1) {
         return null;
     }
 
-    $parsed = [];
-
-    foreach (['major' => 1, 'minor' => 2, 'patch' => 3] as $component => $group) {
-        if (!isRepresentableComponent($m[$group])) {
-            return null;
-        }
-
-        $parsed[$component] = (int) $m[$group];
-    }
-
-    return $parsed;
-}
-
-/**
- * Whether a canonical decimal digit string fits in a PHP int. Compared
- * as digits rather than cast first: the cast is the thing being guarded
- * against.
- */
-function isRepresentableComponent(string $digits): bool
-{
-    $limit = (string) PHP_INT_MAX;
-
-    if (strlen($digits) !== strlen($limit)) {
-        return strlen($digits) < strlen($limit);
-    }
-
-    return strcmp($digits, $limit) <= 0;
+    return ['major' => (int) $m[1], 'minor' => (int) $m[2], 'patch' => (int) $m[3]];
 }
 
 /** The version a brand-new package starts its own line at. */
@@ -88,19 +60,11 @@ function initialVersion(): string
     return INCUBATION_MAJOR . '.0.0';
 }
 
-/** Whether $component can be incremented without leaving the int range. */
-function canStep(string $current, string $component): bool
-{
-    $v = parseVersion($current);
-
-    return $v !== null && in_array($component, BUMP_COMPONENTS, true) && $v[$component] !== PHP_INT_MAX;
-}
-
 /**
  * The single step $component takes from $current.
  *
- * @throws InvalidArgumentException when $current doesn't parse, when
- *         $component isn't a bump size, or when the step would overflow
+ * @throws InvalidArgumentException when $current doesn't parse or
+ *         $component isn't a bump size
  */
 function nextVersion(string $current, string $component): string
 {
@@ -114,12 +78,6 @@ function nextVersion(string $current, string $component): string
         throw new InvalidArgumentException("Unknown bump component: {$component}");
     }
 
-    if ($v[$component] === PHP_INT_MAX) {
-        throw new InvalidArgumentException(
-            "A {$component} step from {$current} exceeds the largest version component this tool represents",
-        );
-    }
-
     return match ($component) {
         'patch' => "{$v['major']}.{$v['minor']}." . ($v['patch'] + 1),
         'minor' => "{$v['major']}." . ($v['minor'] + 1) . '.0',
@@ -130,21 +88,17 @@ function nextVersion(string $current, string $component): string
  * Every version $current is allowed to move to, in bump-size order.
  * Drives both the generator's own arithmetic and the wording of a
  * rejection, so the two describe one rule. Empty when $current doesn't
- * parse or no step fits in the int range.
+ * parse.
  *
  * @return list<string>
  */
 function allowedNextVersions(string $current): array
 {
-    $next = [];
-
-    foreach (BUMP_COMPONENTS as $component) {
-        if (canStep($current, $component)) {
-            $next[] = nextVersion($current, $component);
-        }
+    if (parseVersion($current) === null) {
+        return [];
     }
 
-    return $next;
+    return array_map(static fn (string $component): string => nextVersion($current, $component), BUMP_COMPONENTS);
 }
 
 /**
@@ -185,10 +139,6 @@ function versionTransitionProblem(?string $old, string $new): ?string
 
     $allowed = allowedNextVersions($old);
 
-    if ($allowed === []) {
-        return "no step from version '{$old}' fits in the largest version component this tool represents";
-    }
-
     if (in_array($new, $allowed, true)) {
         return null;
     }
@@ -197,19 +147,10 @@ function versionTransitionProblem(?string $old, string $new): ?string
         return "version '{$new}' is unchanged — a release needs a new version";
     }
 
-    if (versionIsBefore($newParts, $oldParts)) {
+    if (array_values($newParts) < array_values($oldParts)) {
         return "version {$new} is lower than {$old}";
     }
 
     return "version jumped from {$old} to {$new} — the only steps allowed are "
         . implode(' or ', $allowed) . ', so every version in between stays reachable';
-}
-
-/**
- * @param array{major: int, minor: int, patch: int} $a
- * @param array{major: int, minor: int, patch: int} $b
- */
-function versionIsBefore(array $a, array $b): bool
-{
-    return [$a['major'], $a['minor'], $a['patch']] < [$b['major'], $b['minor'], $b['patch']];
 }

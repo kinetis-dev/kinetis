@@ -123,12 +123,20 @@ php vendor/bin/kinetis build
 ```
 
 Compiles a fresh cache — routing and validation plans, commands, and
-event listeners — and publishes it as a new, complete generation; a
-previously-published generation, if any, stays exactly as it was until
-that publish succeeds, so a failed compile or write never takes down a
-cache a previous build already produced. Run this as part of your deploy
-pipeline to pre-warm the cache before real traffic arrives — see
-{doc}`caching` for exactly what gets written and how publishing works.
+event listeners — from your project's own source, and replaces
+`.kinetis-cache/compiled.php` with it. The published artifact is an
+output of this command, never an input to it, and a previously-published
+one stays exactly as it was until the new one is written whole and read
+back intact, so a failed compile or write never takes down a cache a
+previous build already produced. Run this as part of your deploy pipeline
+to pre-warm the cache before real traffic arrives — see {doc}`caching`
+for exactly what gets written and how publishing works.
+
+Build into the artifact or image you deploy, before any worker starts.
+This command runs in its own CLI process, which is what decides where it
+belongs in a deploy — see "Deploying a rebuilt artifact" in
+{doc}`caching` for the contract, and for what a live shared deployment
+needs on top of it.
 
 Always runs, regardless of `APP_ENV` — safe to run from a CI runner, a
 laptop, or any machine that hasn't set that variable. It also runs
@@ -146,13 +154,6 @@ your own bootstrap registers. The default (`true`) runs every installed
 package's `PackageBootstrapInterface::register()` first, then your own
 `bootstrap.php` last, before dispatch — exactly what a command that
 talks to real services wants.
-
-Pass `--destroy` to remove `.kinetis-cache/` entirely — the active
-generation and every retained older one — without rebuilding it:
-
-```{code-block} sh
-vendor/bin/kinetis build --destroy
-```
 
 ## `kinetis mcp:serve`
 
@@ -177,7 +178,7 @@ php vendor/bin/kinetis routes:list
 Global middleware (outermost to innermost):
   1. Kinetis\Http\Middleware\SecurityHeadersMiddleware
   2. Kinetis\Http\Middleware\ExceptionHandlerMiddleware
-  3. Kinetis\Http\Middleware\MaxBodySizeMiddleware
+  3. Kinetis\Http\Middleware\RequestBodyMiddleware
   4. App\Http\Middleware\RequestIdMiddleware
 
 Method  Path     Status  Controller                       Middleware
@@ -195,7 +196,7 @@ happens to hold.
 
 The global middleware section lists the exact order requests run in —
 the three Kinetis always wires in first — `SecurityHeadersMiddleware`,
-`ExceptionHandlerMiddleware`, `MaxBodySizeMiddleware` — then your own
+`ExceptionHandlerMiddleware`, `RequestBodyMiddleware` — then your own
 explicitly-registered (`AppScope::middleware()`) and `#[AsGlobalMiddleware]`-discovered
 classes, deduplicated (see {doc}`middleware`). Each route's own
 `Middleware` column shows its `#[Middleware]` list in the same

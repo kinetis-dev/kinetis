@@ -311,7 +311,7 @@ falls back to the parameter's default; without one, a nullable parameter
 receives `null`, and a non-nullable one is a `422` (`is required.`),
 joining the route's other binding errors in the same response. A value
 whose shape doesn't match the declared type (an array where a scalar is
-expected, a non-numeric string for `int`/`float`) is also a `422`,
+expected, a non-numeric or fractional string for `int`) is also a `422`,
 not a silently wrong cast — see [Scalar type checking](#scalar-type-checking)
 below.
 
@@ -464,9 +464,9 @@ lands on the same row as `application/x-www-form-urlencoded`. The match
 is exact, so a longer media type that merely begins with one of them —
 `application/x-www-form-urlencodedevil` — is a different media type and
 takes the first row. `Kinetis\Http\MediaType` is that classification,
-and every adapter parsing a form body itself reads a request's
-`Content-Type` through it, so an application gets the same answer under
-every runtime (see {doc}`runtime-adapters`).
+and the one place a `Content-Type` is read — by `Dispatcher` here, and by
+the Kernel's own `RequestBodyMiddleware` before it — so an application
+gets the same answer under every runtime (see {doc}`runtime-adapters`).
 
 Field names nest the way PHP's own parser nests them, under every
 runtime: `user[address][city]` builds nested arrays,
@@ -474,11 +474,12 @@ runtime: `user[address][city]` builds nested arrays,
 file names build the same tree in `getUploadedFiles()`. How large and
 how complicated a form may get is bounded by `Kinetis\Http\Form\FormLimits`
 — input variables, file parts, nesting depth, multipart part and header
-counts, and total bytes — identically on all four adapters; a form past
-any of those is refused with a `413` before the handler runs, never
-handed on with the over-limit fields quietly missing. See "Form bodies:
-one contract under every runtime" in {doc}`runtime-adapters` for the
-numbers and the reasoning.
+counts, and total bytes — identically under all four adapters, because
+one middleware inside the Kernel applies them; a form past any of those
+is refused with a `413` before the handler runs, never handed on with the
+over-limit fields quietly missing. See "Request bodies: one contract
+under every runtime" in {doc}`runtime-adapters` for the numbers and the
+reasoning.
 
 A `#[Body]` DTO can mix ordinary fields with an `UploadedFileInterface`-typed
 constructor parameter — no special handling needed in the DTO itself:
@@ -527,15 +528,14 @@ public function receiveFile(UploadedFileInterface $file): array
 
 ```{note}
 This works the same way regardless of which `RuntimeAdapterInterface` is
-driving the request, and for every method a form can arrive on. All four
-adapters fill the uploaded-files bag through the same
-`Kinetis\Http\Form` entry point, over raw bytes the runtime never
-parsed — `php://input` under the SAPI adapters, which require
-`enable_post_data_reading=0`, the event body under
-`kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
+driving the request, and for every method a form can arrive on. An
+adapter delivers raw bytes the runtime never parsed — `php://input`
+under the SAPI adapters, which require `enable_post_data_reading=0`, the
+event body under `kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
 `http.raw_body: true`-preserved body under `kinetis/roadrunner-adapter`'s
-`RoadRunnerAdapter`. The one difference underneath is which multipart
-parser expands the body; see {doc}`runtime-adapters`.
+`RoadRunnerAdapter` — and the Kernel's own `RequestBodyMiddleware` fills
+the uploaded-files bag from them through `Kinetis\Http\Form`. There is
+one parse, under every runtime; see {doc}`runtime-adapters`.
 ```
 
 ## Returning a status other than the route's default
@@ -743,11 +743,12 @@ A failed validation short-circuits straight to a `422` — the controller
 method is never invoked at all.
 
 An empty body is treated as no data at all, so a DTO with only optional
-fields hydrates from its own defaults. A body that isn't valid JSON, or
-that decodes to something other than a JSON object (`null`, a bare
-string, a number, a boolean), is a `400` instead, before any field-level
-validation runs — see "Scalar type checking" below for how a genuine JSON
-*array* body is handled once it reaches field-level validation:
+fields hydrates from its own defaults — the same outcome a `{}` body
+produces. A non-empty body must be a JSON object: one that isn't valid
+JSON, or that decodes to anything else (a top-level JSON array, `null`,
+a bare string, a number, a boolean), is a `400` instead, before any
+field-level validation runs. That check belongs to the decoder, which is
+where the object/array distinction still exists:
 
 ```{code-block} json
 {
@@ -771,9 +772,19 @@ never left to fall through silently:
 
 - A `string`-typed field/parameter must actually be a string. An array,
   object, number, or boolean is rejected.
-- An `int`/`float`-typed field/parameter accepts a real number or a
-  numeric string (`"42"` for an `int` field is fine) — but rejects a
-  non-numeric string, an array, or a boolean.
+- An `int`-typed field/parameter accepts three things, all inside PHP's
+  native integer range: a JSON integer (`42`), a float with no fractional
+  part (`42.0`), and a string spelled as a plain base-10 integer (`"42"`,
+  `"+42"`, `"-42"`). A string is read as written, never through a float,
+  so a decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
+  whitespace-padded one, and a value a `double` cannot tell apart from an
+  integer (`"1.0000000000000001"`) are all rejected. So is a fractional,
+  non-finite, or out-of-range number: the result is a `422` ("must be an
+  integer within the platform integer range."), never a truncated cast —
+  `4.5` does not become `4`. An array or a boolean is rejected too.
+- A `float`-typed field/parameter accepts a real number or a numeric
+  string, and rejects any value that isn't finite (`"1e999"` overflows to
+  `INF`) as well as a non-numeric string, an array, or a boolean.
 - A `bool`-typed field/parameter accepts exactly `true`, `false`, `1`,
   `0`, `"1"`, or `"0"` for a `#[Body]`/MCP value — see "Query and path
   values are raw strings" below for the different, source-specific
@@ -1066,27 +1077,33 @@ than only reporting the outer field name:
 }
 ```
 
-This is a data-driven distinction, not a type-driven one: nesting only
-happens when the incoming value for that field is actually an array. A
-class-typed field holding anything else — most notably an
-`UploadedFileInterface` merged in for a [multipart](#multipart-form-data-file-uploads)
-field — passes through completely unchanged, exactly like it always has.
+A class-typed field accepts exactly two shapes and nothing else: an
+object-shaped value, hydrated into the declared class; or a value that is
+already an instance of that class, taken as given — most notably an
+`UploadedFileInterface` merged in for a
+[multipart](#multipart-form-data-file-uploads) field. A scalar, a `null`
+for a non-nullable field, or an object of some other class is a `422`
+under that field's key, never a raw `TypeError` from the constructor.
 
-```{note}
-A self-referencing (or mutually referencing) DTO stops nesting the moment a
-class repeats in the chain, rather than recursing forever — not just a
-safety net, but a requirement of {doc}`caching`'s AOT compilation, which
-bakes a DTO's hydration plan into a cache file via `var_export()` and has
-no way to represent a genuinely circular array as re-parseable PHP. A
-self-referencing field simply receives its raw array unhydrated one level
-deep in that case.
-```
+Object-shaped means a JSON object (`{...}`, including `{}`) or — for a
+direct `Hydrator::hydrate()` call or a form-encoded body, neither of which
+carries a JSON object/array distinction — a map-shaped PHP array. A JSON
+array is not an object: `[]` and `[...]` are both a `422` ("must be a JSON
+object, not a JSON array.") even for a class whose every field has a
+default and would otherwise have accepted no fields at all.
+
+A field typed as a class that cannot be instantiated — an interface, an
+abstract class, an enum — accepts only an existing instance: nothing on
+the wire can construct one, so an array or a scalar for it is a `422`
+("must be a `Psr\Http\Message\UploadedFileInterface` instance."). That
+is exactly how a `#[Body]` DTO's own file field works, since `Dispatcher`
+merges the uploaded file in as an object.
 
 ### Collections of nested DTOs
 
 A constructor parameter typed `array` and carrying
 `#[ListOf(SomeClass::class)]` is hydrated as a list of nested DTOs — each
-array-shaped element is hydrated the same way a single nested DTO field is:
+object-shaped element is hydrated the same way a single nested DTO field is:
 
 ```{code-block} php
 use Kinetis\Validation\Constraints\GreaterThan;
@@ -1134,16 +1151,52 @@ response:
 }
 ```
 
-A list element that isn't itself an array — most notably an
-already-constructed instance — passes through completely unchanged, the
-same tolerance a single nested DTO field gives a non-array value.
+Every element gets the same two-shape contract a single nested DTO field
+has: object-shaped and hydrated into the item class, or already an
+instance of it. A scalar, a `null`, a nested JSON array, or an object of
+another class is a `422` under that element's own `field.index` key —
+`items.1: must be an object, value given.` — alongside every other error
+in the response.
 
-```{note}
-The same self-reference guard described above covers a `#[ListOf]` pointing
-back at its own class: nesting stops the moment the class repeats in the
-chain, and that list's elements receive their raw array unhydrated one
-level deep.
-```
+`#[ListOf]` itself is only valid on a parameter typed `array`, and its
+item class must be a class that can be instantiated.
+
+### DTO definitions Kinetis rejects
+
+A hydration plan is compiled from a DTO's constructor by reflection —
+ahead of time by `kinetis build`, or on that class's first hydration
+otherwise. It supports a finite set of parameter shapes: a builtin type,
+a single named class (hydrated when it can be instantiated, instance-only
+when it can't), an `array` carrying `#[ListOf]`, and nullable variants of
+each.
+
+Anything else is rejected while the plan is compiled, with an
+`UnsupportedDtoDefinitionException` naming the class and the parameter —
+so the definition fails at build time, or on that route's first request
+in development, rather than as a `TypeError` on a live one:
+
+- A **union** or **intersection** parameter type (`int|string`,
+  `Countable&ArrayAccess`). Kinetis hydrates neither; declare a single
+  named type.
+- A **recursive or mutually recursive** class reference — a `Comment`
+  with a `Comment $parent` field, or two DTOs naming each other. A plan
+  embeds each nested class's own plan inline, so a cycle has no finite
+  plan, and nothing {doc}`caching`'s AOT compilation could bake into a
+  cache file through `var_export()`. Take the nested payload as a plain
+  `array` field, or model the deeper level as its own request.
+- A class type reflection cannot resolve to a real class: `self`,
+  `parent`, `static`.
+- `#[ListOf]` on a parameter that isn't typed `array`, or naming a class
+  that cannot be instantiated.
+- A `#[Body]` DTO class that cannot itself be instantiated.
+
+The generated OpenAPI document and MCP tool input schemas hold the same
+line: a class-typed field whose class cannot be instantiated has no
+truthful object schema, so schema generation refuses it rather than
+emitting a bare `{"type": "object"}` no request could satisfy.
+`UploadedFileInterface` is the one such type both sides accept — it is
+described as `{"type": "string", "format": "binary"}` and supplied by
+`Dispatcher` from the request's uploaded-files bag.
 
 ## Zero-config OpenAPI & Swagger UI
 
@@ -1328,6 +1381,6 @@ final readonly class InternalController
 - {doc}`caching` — how route/binding/validation metadata gets precomputed
   ahead of time in production, and exactly what that does and doesn't
   change about the behavior described on this page.
-- {doc}`runtime-adapters` — how each runtime gets a request's multipart
-  body into the uploaded-files bag `#[Body]`/`UploadedFileInterface` read
-  from here.
+- {doc}`runtime-adapters` — how a request's raw bytes reach the one
+  middleware that fills the uploaded-files bag
+  `#[Body]`/`UploadedFileInterface` read from here.

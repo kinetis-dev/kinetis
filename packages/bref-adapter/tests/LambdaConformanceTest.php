@@ -6,7 +6,6 @@ namespace Kinetis\BrefAdapter\Tests;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Tests\Conformance\LambdaDriver;
-use Kinetis\Http\Form\FormLimits;
 use Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase;
 use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
 use Nyholm\Psr7\Response;
@@ -51,7 +50,6 @@ final class LambdaConformanceTest extends RuntimeAdapterConformanceTestCase
 
                 return new Response(200);
             },
-            new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES),
         );
 
         self::assertFalse($handlerRan, 'the handler must not run for a body the adapter could not decode');

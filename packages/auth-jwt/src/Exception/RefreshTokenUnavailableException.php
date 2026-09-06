@@ -23,8 +23,8 @@ final class RefreshTokenUnavailableException extends RuntimeException
         return new self(
             'RefreshTokenStore requires a cache implementing Kinetis\SimpleCache\AtomicConsumeInterface: '
             . 'redeeming a token by reading it and deleting it in two separate calls lets two concurrent '
-            . 'redeems of the same token both succeed, defeating single use. Kinetis\SimpleCache\RedisSimpleCache '
-            . 'and ClusteredRedisSimpleCache (kinetis/cache-redis) both implement it.',
+            . 'redeems of the same token both succeed, defeating single use. Install kinetis/cache-redis '
+            . 'for a Redis-backed cache that implements it.',
         );
     }
 
@@ -66,6 +66,19 @@ final class RefreshTokenUnavailableException extends RuntimeException
             'RefreshTokenStore::revokeAllForUser() failed: the cache reported a failed write, so none of '
             . "this user's outstanding refresh tokens have been revoked. Treat this as a hard failure, "
             . 'not a warning.',
+        );
+    }
+
+    /**
+     * A subject canonicalized to the empty string, on issue() or
+     * revokeAllForUser() — an id naming nobody, and one no access token
+     * this package issues can carry either. Never names the value.
+     */
+    public static function emptySubject(): self
+    {
+        return new self(
+            'RefreshTokenStore requires a non-empty subject: it is the same identity an access token '
+            . 'carries in its "sub" claim, and an empty one names no user at all.',
         );
     }
 

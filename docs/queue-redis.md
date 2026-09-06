@@ -25,8 +25,16 @@ vendor/bin/kinetis queue:work --queue=high,default
 
 This package introduces no configuration keys of its own — every
 `REDIS_*` setting `RedisSimpleCache` ({doc}`persistence`) already reads
-is the exact one this backend reads too, scoped by
+is the exact one this backend reads too, `REDIS_TLS*` included, scoped by
 `QUEUE_CONNECTION_NAME` the same way as everywhere else in Kinetis.
+`REDIS_CLUSTER` is not among them: this backend is single-node.
+
+The queue opens its own connection over {doc}`redis`'s transport rather
+than sharing the cache's. A blocking `BRPOPLPUSH` parks on its socket for
+up to a second, which would stall every pipelined command sharing it; the
+queue's operation budget is `REDIS_TIMEOUT` plus that same second, so a
+probe that waits out its whole timeout reads as an empty queue rather
+than a lost reply.
 
 ## A crashed worker's job is never lost
 
@@ -115,4 +123,6 @@ which package to install, rather than a confusing crash.
   retries that applies to every backend equally.
 - {doc}`persistence` — the `REDIS_*` configuration convention this
   backend reuses.
+- {doc}`redis` — the transport underneath: what a failed command's
+  outcome means, and why one is never re-sent.
 - {doc}`config` — the named-connection convention used above.

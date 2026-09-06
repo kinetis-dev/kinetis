@@ -19,6 +19,7 @@
         "infection/infection": "^0.35.0",
         "kinetis/cache-redis": "dev-main",
         "kinetis/persistence": "dev-main",
+        "kinetis/redis": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^12.5.33",
         "vimeo/psalm": "^6.16.1"
@@ -51,6 +52,10 @@
         {
             "type": "path",
             "url": "../cache-redis"
+        },
+        {
+            "type": "path",
+            "url": "../redis"
         },
         {
             "type": "path",

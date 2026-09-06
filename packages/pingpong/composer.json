@@ -13,6 +13,7 @@
         "kinetis/framework": "dev-main",
         "kinetis/migrations": "dev-main",
         "kinetis/persistence": "dev-main",
+        "kinetis/redis": "dev-main",
         "kinetis/cache-redis": "dev-main",
         "kinetis/query-builder": "dev-main",
         "kinetis/queue": "dev-main",
@@ -51,6 +52,10 @@
         {
             "type": "path",
             "url": "../persistence"
+        },
+        {
+            "type": "path",
+            "url": "../redis"
         },
         {
             "type": "path",

@@ -158,9 +158,7 @@ final class JsonSchema
      */
     private static function schemaForClassTyped(string $class, ?callable $classSchema, bool $nullable): array
     {
-        $schema = $classSchema !== null ? $classSchema($class) : self::forClass($class);
-
-        return self::withNullableSchema($schema, $nullable);
+        return self::withNullableSchema(self::objectSchemaFor($class, $classSchema), $nullable);
     }
 
     /**
@@ -176,12 +174,36 @@ final class JsonSchema
      */
     private static function schemaForListOf(string $listItemClass, ?callable $classSchema, bool $nullable): array
     {
-        $schema = [
+        return self::withNullableSchema([
             'type' => 'array',
-            'items' => $classSchema !== null ? $classSchema($listItemClass) : self::forClass($listItemClass),
-        ];
+            'items' => self::objectSchemaFor($listItemClass, $classSchema),
+        ], $nullable);
+    }
 
-        return self::withNullableSchema($schema, $nullable);
+    /**
+     * One class's own object schema — expanded from its constructor, or
+     * whatever $classSchema substitutes for it (OpenApiGenerator's `$ref`).
+     *
+     * A class that cannot be instantiated (an interface, an abstract class,
+     * an enum) is rejected rather than described: `Kinetis\Validation\Hydrator`
+     * accepts only an already-constructed instance for such a field, and
+     * refuses it outright as a #[ListOf] item class — see its own docblock —
+     * so no wire value could satisfy the {type: object} schema expanding it
+     * would produce. The one interface a request can carry,
+     * `UploadedFileInterface`, never reaches here; forParameters()
+     * describes it as `{type: string, format: binary}` directly.
+     *
+     * @param class-string $class
+     * @param (callable(class-string): array<string, mixed>)|null $classSchema
+     * @return array<string, mixed>
+     */
+    private static function objectSchemaFor(string $class, ?callable $classSchema): array
+    {
+        if (!new ReflectionClass($class)->isInstantiable()) {
+            throw JsonSchemaException::unsupportedClassType($class);
+        }
+
+        return $classSchema !== null ? $classSchema($class) : self::forClass($class);
     }
 
     /**

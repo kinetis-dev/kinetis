@@ -27,12 +27,10 @@ use ReflectionMethod;
  * populated by PluginDiscovery, which compiles whatever installed
  * packages declare as their own CacheableDiscoveryInterface class —
  * kinetis/mcp's McpRegistry (tool/resource definitions) among them,
- * when that package is installed. CacheStore publishes all four
- * together as one atomic generation — see its own docblock — so
- * "independent" describes how each is *read* (a given entry point only
- * ever loads the sections it needs — an HTTP boot loads
- * http/events/plugins, the CLI loads commands/events/plugins), not how
- * they're published.
+ * when that package is installed. CacheStore publishes and reads all
+ * four as one file; an entry point reconstructs only the sections it
+ * uses (an HTTP boot http/events/plugins, the CLI commands/events/
+ * plugins), but never reads a section without the rest.
  *
  * DTO discovery here is HTTP-only — every #[Body]-bound DTO class
  * reachable from a registered route. kinetis/mcp's own tool/resource
@@ -43,13 +41,15 @@ use ReflectionMethod;
  *
  * Discovery itself only ever walks the top-level #[Body]-bound DTO
  * class — it does *not* recurse into a DTO's own nested-DTO constructor
- * parameters to find more classes to compile plans for, even though
- * Hydrator now supports nested-DTO hydration. That's not a gap:
- * Hydrator::compilePlan() is itself recursive (see its own doc comment)
- * and embeds every nested class's plan inline as `nestedPlan`, so
- * compiling a plan for just the top-level class already produces a
+ * parameters to find more classes to compile plans for. That's not a
+ * gap: Hydrator::compilePlan() is itself recursive (see its own doc
+ * comment) and embeds every nested class's plan inline as `nestedPlan`,
+ * so compiling a plan for just the top-level class already produces a
  * fully nested-inclusive result — there's no independent lookup
- * anywhere by a nested DTO's class name for this discovery pass to feed.
+ * anywhere by a nested DTO's class name for this discovery pass to
+ * feed. It is also where a DTO definition Hydrator cannot hydrate
+ * (a union or intersection parameter type, a recursive class reference,
+ * an invalid #[ListOf]) fails the build, rather than a live request.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
  * @phpstan-import-type DiscoveredMiddleware from GlobalMiddlewareDiscovery
@@ -159,9 +159,7 @@ final class Compiler
      * compiles its tool/resource definitions into PluginCache here too.
      * Any package declaring its own CacheableDiscoveryInterface class
      * (see PackageDiscovery::discoveryClasses()) is compiled the same
-     * way — that's the whole point of the mechanism. Only with no cache
-     * published yet does anything discover live instead — see
-     * PluginDiscovery::bind()'s own docblock.
+     * way — that's the whole point of the mechanism.
      */
     public function compileProject(string $projectRoot): CompiledCache
     {

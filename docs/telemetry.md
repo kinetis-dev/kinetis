@@ -196,7 +196,7 @@ fixed vocabulary, `HTTP` for anything outside it.
 ## Cache spans
 
 Wraps any PSR-16 `CacheInterface`, {doc}`persistence`'s
-`RedisSimpleCache`/`ClusteredRedisSimpleCache` included:
+`RedisSimpleCache` included:
 
 ```{code-block} php
 use Kinetis\SimpleCache\RedisSimpleCache;
@@ -394,7 +394,10 @@ report becomes a span with zero configuration beyond the same
   that event is time spent waiting for a free pooled connection, the
   number that is invisible from outside.
 - **Transactions** — begin to `COMMIT`/`ROLLBACK`, with the outcome as
-  an attribute.
+  an attribute. Only what the server confirmed counts: `commit` for an
+  acknowledged `COMMIT`, `rollback` for an acknowledged `ROLLBACK`, and
+  `unknown` for everything else — a lost or discarded connection, a
+  finish nothing answered, a transaction the server ended on its own.
 - **`concurrently()`** — a span for the batch and one per task, so
   overlap is visible even for tasks that aren't queries or HTTP calls.
 - **Events and listeners, MCP tool calls and resource reads, queue
@@ -466,8 +469,8 @@ stops there.
   and what that looks like when they do not.
 - {doc}`queue` — trace propagation across a queue, so a job's spans join
   the request that pushed it.
-- {doc}`persistence` — `RedisSimpleCache`/`ClusteredRedisSimpleCache`,
-  what `TracingSimpleCache` wraps.
+- {doc}`persistence` — `RedisSimpleCache`, what `TracingSimpleCache`
+  wraps.
 - {doc}`session` — the store interface and drivers `TracingSessionStore`
   wraps, and the `bootstrap.php` rebind pattern it reuses.
 - {doc}`search-opensearch` — `OpenSearchClientFactory`'s own

@@ -361,6 +361,26 @@ final class DispatcherTest extends TestCase
         self::assertSame(400, $response->getStatusCode());
     }
 
+    /**
+     * A #[Body] parameter is a DTO, so a top-level JSON array is a 400
+     * even when every field of the DTO has a default and `[]` would
+     * otherwise hydrate as cleanly as `{}`.
+     */
+    public function test_a_top_level_json_array_body_returns_400_for_an_all_default_dto(): void
+    {
+        $router = $this->router();
+        $match = $router->match('PATCH', '/users/42/preferences');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', body: '[]');
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(
+            ['error' => 'Request body must be a JSON object.'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
     // --- A #[Query]/path value with the wrong shape is a 422, not a
     // silently-wrong cast ("not-a-number" -> 0, an array -> 1, a
     // non-numeric path segment -> 0). ---
@@ -378,6 +398,69 @@ final class DispatcherTest extends TestCase
         /** @var array{errors: array<string, list<string>>} $body */
         $body = json_decode((string) $response->getBody(), true);
         self::assertArrayHasKey('page', $body['errors']);
+    }
+
+    /**
+     * A #[Query]/path value is always a raw string, so it is the source
+     * where `int`'s string rule decides everything: only a plain base-10
+     * integer spelling binds, and every other spelling is a 422 rather
+     * than a value the cast silently reinterprets.
+     *
+     * @return iterable<string, list<string>>
+     */
+    public static function nonIntegerQueryStrings(): iterable
+    {
+        yield 'a fractional string' => ['1.5'];
+        yield 'a string a double cannot tell from 1' => ['1.0000000000000001'];
+        yield 'a decimal-spelled string' => ['2.0'];
+        yield 'an exponent-spelled string' => ['4.2e1'];
+    }
+
+    #[DataProvider('nonIntegerQueryStrings')]
+    public function test_a_non_integer_query_value_for_an_int_parameter_returns_422_instead_of_truncating(string $page): void
+    {
+        $router = $this->router();
+        $match = $router->match('GET', '/users');
+        $request = (new ServerRequest('GET', '/users'))->withQueryParams(['page' => $page]);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['must be an integer within the platform integer range.'], $body['errors']['page']);
+    }
+
+    public function test_an_integer_query_string_is_still_accepted_for_an_int_parameter(): void
+    {
+        $router = $this->router();
+        $match = $router->match('GET', '/users');
+        $request = (new ServerRequest('GET', '/users'))->withQueryParams(['page' => '2']);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['page' => 2, 'limit' => 20], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * A path placeholder captures one raw string too, so the identical
+     * rule applies where a route binds `{id}` to an `int`.
+     */
+    public function test_a_non_integer_path_segment_returns_422_instead_of_truncating(): void
+    {
+        $router = $this->router();
+        $match = $router->match('GET', '/users/1.5');
+        $request = new ServerRequest('GET', '/users/1.5');
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['must be an integer within the platform integer range.'], $body['errors']['id']);
     }
 
     public function test_an_array_style_query_value_returns_422_instead_of_casting_to_one(): void
@@ -633,7 +716,7 @@ final class DispatcherTest extends TestCase
     public function test_a_defaultless_nullable_field_rejects_omission(): void
     {
         $match = $this->nullableFieldsRouter()->match('POST', '/nullable-fields');
-        $request = new ServerRequest('POST', '/nullable-fields', body: json_encode([]));
+        $request = new ServerRequest('POST', '/nullable-fields', body: '{}');
 
         $response = $this->dispatcher()->dispatch($match, $request);
 

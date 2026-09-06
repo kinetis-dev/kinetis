@@ -111,7 +111,7 @@ than letting an unrecognized value like `"purple"` silently become
 whether a given key means a TCP port, a positive duration, or a ratio
 between 0 and 1. That domain knowledge belongs to whichever factory or
 middleware actually reads the key: `SqlConnectionFactory` rejects a
-`DB_PORT` outside 1–65535, `MaxBodySizeMiddleware` rejects a
+`DB_PORT` outside 1–65535, `FormLimits` rejects a
 non-positive `MAX_BODY_SIZE`, `TracerFactory` rejects an
 `OTEL_TRACES_SAMPLER_ARG` outside 0–1, and so on — each with a clear
 `InvalidArgumentException` naming the key, rather than clamping silently
@@ -315,12 +315,13 @@ simply off and `CacheInterface` binds to `NullSimpleCache`.
 | `REDIS_PORT` | `6379` | Port; must be a valid TCP port (1–65535). |
 | `REDIS_PASSWORD` | — | Password. |
 | `REDIS_DATABASE` | `0` | Database index (single-node only; Cluster has no `SELECT`); must not be negative. |
-| `REDIS_TIMEOUT` | `5` | Connect timeout, seconds; must be positive. |
+| `REDIS_TIMEOUT` | `5` | Operation budget, seconds — connect, reply, and cluster redirects together; must be positive. |
 | `REDIS_TLS` | `false` | Connect over TLS. |
 | `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
 | `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
 | `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
 | `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap — `host:port`, or `[ipv6-address]:port` for an IPv6 node. |
+| `REDIS_CACHE_NAMESPACE` | `default` | Key namespace the cache owns; letters, digits, underscores and dashes. |
 
 ### Queue (`kinetis/queue` + backend packages)
 

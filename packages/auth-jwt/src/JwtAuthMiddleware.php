@@ -118,7 +118,7 @@ use UnexpectedValueException;
  * token.
  *
  * A decode failure (expired, bad signature, malformed, wrong key), a
- * structurally valid but subject-less token, a token failing an
+ * token whose `sub` is not a non-empty string, a token failing an
  * issuer/audience check, and a revoked token are all treated identically
  * — 401 with WWW-Authenticate: Bearer, matching
  * Kinetis\Auth\BearerAuthMiddleware's failure shape exactly.
@@ -290,9 +290,14 @@ class JwtAuthMiddleware implements MiddlewareInterface
             return $this->unauthorized();
         }
 
+        // A subject is one canonical non-empty string here, the form
+        // JwtIssuer writes and both stores key their per-subject
+        // revocation by. A `sub` of any other shape — absent, a JSON
+        // number, an empty string — is a token this package cannot
+        // revoke consistently, so it never authenticates one.
         $sub = $claims->sub ?? null;
 
-        if (!is_string($sub) && !is_int($sub)) {
+        if (!is_string($sub) || $sub === '') {
             return $this->unauthorized();
         }
 

@@ -22,7 +22,7 @@ use Symfony\Component\HttpClient\MockHttpClient;
  * BroadcastAuthController::formData()'s raw application/x-www-form-urlencoded
  * fallback — reachable only when getParsedBody() is empty, which
  * BroadcastAuthControllerTest's own withParsedBody()-built requests
- * never exercise — driven through a real Kernel, the same MaxBodySizeMiddleware
+ * never exercise — driven through a real Kernel, the same RequestBodyMiddleware
  * every other route runs behind. authorizeLobby() (matched via the
  * private-lobby channel, stripped to "lobby") needs no CurrentUserInterface,
  * which keeps these regressions focused on the body-size boundary rather
@@ -59,7 +59,7 @@ final class BroadcastAuthKernelTest extends TestCase
 
     /**
      * No Content-Length header at all — the declared-length check in
-     * MaxBodySizeMiddleware cannot catch this; only the byte count it
+     * RequestBodyMiddleware cannot catch this; only the byte count it
      * takes while staging the body can, and it takes that before this
      * controller runs at all.
      */

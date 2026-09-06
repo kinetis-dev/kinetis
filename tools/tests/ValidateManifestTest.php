@@ -10,315 +10,245 @@ require_once __DIR__ . '/../validate-manifest.php';
 
 final class ValidateManifestTest extends TestCase
 {
-    public function test_detects_a_real_cycle_and_names_the_chain(): void
-    {
-        $manifest = ['packages' => [
-            'a' => ['requires' => ['b']],
-            'b' => ['requires' => ['c']],
-            'c' => ['requires' => ['a']],
-        ]];
-
-        $result = checkCycles($manifest);
-
-        self::assertNotNull($result);
-        self::assertStringContainsString('a -> b -> c -> a', $result);
-    }
-
-    public function test_an_acyclic_graph_passes_clean(): void
-    {
-        $manifest = ['packages' => [
-            'a' => ['requires' => ['b']],
-            'b' => ['requires' => []],
-        ]];
-
-        self::assertNull(checkCycles($manifest));
-    }
-
-    public function test_detects_a_shared_external_dependency_with_conflicting_constraints(): void
-    {
-        $manifest = ['packages' => [
-            'x' => ['require' => ['foo/bar' => '^1.0']],
-            'y' => ['require' => ['foo/bar' => '^2.0']],
-        ]];
-
-        $problems = checkVersionConsistency($manifest);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('foo/bar', $problems[0]);
-    }
-
-    public function test_consistent_shared_versions_pass_clean(): void
-    {
-        $manifest = ['packages' => [
-            'x' => ['require' => ['foo/bar' => '^1.0']],
-            'y' => ['require' => ['foo/bar' => '^1.0']],
-        ]];
-
-        self::assertSame([], checkVersionConsistency($manifest));
-    }
-
-    public function test_a_dependency_specific_exemption_suppresses_that_conflict(): void
-    {
-        $manifest = ['packages' => [
-            'x' => ['require' => ['foo/bar' => '^1.0']],
-            'y' => [
-                'require' => ['foo/bar' => '^2.0'],
-                'versionDriftExemptions' => ['foo/bar' => 'pinned to the release the fixtures were captured against'],
-            ],
-        ]];
-
-        self::assertSame([], checkVersionConsistency($manifest));
-    }
-
     /**
-     * The exemption covers the one dependency it names and nothing else.
-     * A package-wide flag would have silenced baz/qux here too, which is
-     * how a second, unrelated drift rides in on the first one's reason.
+     * comparisonBase() falls back to GITHUB_EVENT_BEFORE, which a run
+     * inside Actions has set for a completely different repository.
      */
-    public function test_an_exemption_for_one_shared_dependency_leaves_the_others_checked(): void
+    protected function setUp(): void
     {
-        $manifest = ['packages' => [
-            'x' => ['require' => ['foo/bar' => '^1.0', 'baz/qux' => '^3.0']],
-            'y' => [
-                'require' => ['foo/bar' => '^2.0', 'baz/qux' => '^4.0'],
-                'versionDriftExemptions' => ['foo/bar' => 'pinned to the release the fixtures were captured against'],
-            ],
-        ]];
-
-        $problems = checkVersionConsistency($manifest);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('baz/qux', $problems[0]);
-        self::assertStringNotContainsString('foo/bar', $problems[0]);
+        putenv('GITHUB_EVENT_BEFORE');
     }
 
-    public function test_an_exempted_package_still_reports_its_own_other_drift(): void
+    public function test_the_repository_manifest_passes_the_schema(): void
     {
-        $manifest = ['packages' => [
-            'x' => ['require' => ['foo/bar' => '^1.0']],
-            'y' => [
-                'require' => ['foo/bar' => '^2.0'],
-                'versionDriftExemptions' => ['foo/bar' => 'deliberate'],
-            ],
-            'z' => ['require' => ['foo/bar' => '^1.0', 'baz/qux' => '^1.0']],
-            'w' => ['require' => ['baz/qux' => '^2.0']],
-        ]];
-
-        $problems = checkVersionConsistency($manifest);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('baz/qux', $problems[0]);
+        self::assertSame([], checkManifestSchema(loadManifest()));
     }
 
-    public function test_a_field_changed_without_a_version_bump_fails(): void
+    public function test_the_fixture_manifest_passes_the_schema(): void
     {
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^1.0']]]];
-        $new = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^2.0']]]];
-
-        $problems = checkVersionBumpCompleteness($old, $new);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString("'version' was not bumped", $problems[0]);
+        // Every test below asserts one named problem, which a fixture
+        // carrying problems of its own would still satisfy.
+        self::assertSame([], checkManifestSchema(self::manifest(), self::root()));
     }
 
-    public function test_a_version_only_bump_with_nothing_else_changed_passes(): void
+    public function test_a_missing_required_field_is_named(): void
     {
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^1.0']]]];
-        $new = ['packages' => ['x' => ['version' => '1.1.0', 'require' => ['foo/bar' => '^1.0']]]];
+        $manifest = self::manifest();
+        unset($manifest['packages']['demo']['namespace']);
 
-        self::assertSame([], checkVersionBumpCompleteness($old, $new));
+        self::assertContains("demo: 'namespace' must be a non-empty string", checkManifestSchema($manifest, self::root()));
     }
 
-    public function test_a_field_change_paired_with_a_version_bump_passes(): void
+    public function test_an_unknown_package_key_is_named(): void
     {
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^1.0']]]];
-        $new = ['packages' => ['x' => ['version' => '1.0.1', 'require' => ['foo/bar' => '^2.0']]]];
+        $manifest = self::manifest();
+        $manifest['packages']['demo']['autoloadfiles'] = [];
 
-        self::assertSame([], checkVersionBumpCompleteness($old, $new));
+        self::assertContains("demo: unknown key 'autoloadfiles'", checkManifestSchema($manifest, self::root()));
     }
 
-    public function test_a_version_decrease_fails_even_with_no_other_change(): void
+    public function test_a_package_key_that_is_not_a_directory_name_is_rejected(): void
     {
-        $old = ['packages' => ['x' => ['version' => '1.2.3', 'require' => []]]];
-        $new = ['packages' => ['x' => ['version' => '1.2.2', 'require' => []]]];
+        $manifest = self::manifest();
+        $manifest['packages']['Demo_One'] = $manifest['packages']['demo'];
 
-        $problems = checkVersionBumpCompleteness($old, $new);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('is lower than', $problems[0]);
+        self::assertContains(
+            'Demo_One: package key must be lowercase words joined by single dashes',
+            checkManifestSchema($manifest, self::root()),
+        );
     }
 
-    public function test_a_major_bump_fails(): void
+    public function test_a_package_with_no_directory_is_named(): void
     {
-        $old = ['packages' => ['x' => ['version' => '1.2.3', 'require' => []]]];
-        $new = ['packages' => ['x' => ['version' => '2.0.0', 'require' => []]]];
+        $manifest = self::manifest();
+        $manifest['packages']['absent'] = $manifest['packages']['demo'];
 
-        $problems = checkVersionBumpCompleteness($old, $new);
+        self::assertContains('absent: no packages/absent directory', checkManifestSchema($manifest, self::root()));
+    }
 
-        self::assertCount(1, $problems);
+    public function test_a_version_off_the_incubation_line_is_rejected(): void
+    {
+        $manifest = self::manifest();
+        $manifest['packages']['demo']['version'] = '2.0.0';
+
+        self::assertContains("demo: 'version' must be a canonical 1.x.y version", checkManifestSchema($manifest, self::root()));
+    }
+
+    public function test_a_sibling_that_is_not_a_manifest_package_is_named(): void
+    {
+        $manifest = self::manifest();
+        $manifest['packages']['demo']['requires'] = ['nowhere'];
+
+        self::assertContains(
+            "demo: 'requires' names 'nowhere', which is not a manifest package",
+            checkManifestSchema($manifest, self::root()),
+        );
+    }
+
+    public function test_a_package_requiring_itself_is_named(): void
+    {
+        $manifest = self::manifest();
+        $manifest['packages']['demo']['requires'] = ['demo'];
+
+        self::assertContains("demo: 'requires' names the package itself", checkManifestSchema($manifest, self::root()));
+    }
+
+    public function test_a_require_block_that_is_not_a_constraint_map_is_rejected(): void
+    {
+        $manifest = self::manifest();
+        $manifest['packages']['demo']['require'] = ['amphp/sql'];
+
+        self::assertContains(
+            "demo: 'require' must be an object of package name => string",
+            checkManifestSchema($manifest, self::root()),
+        );
+    }
+
+    public function test_the_repository_manifest_is_acyclic(): void
+    {
+        self::assertNull(checkCycles(loadManifest()));
+    }
+
+    public function test_a_cycle_is_reported_with_its_path(): void
+    {
+        $cycle = checkCycles(['packages' => [
+            'a' => ['requires' => ['b']],
+            'b' => ['requires' => ['a']],
+        ]]);
+
+        self::assertSame('Cycle detected: a -> b -> a', $cycle);
+    }
+
+    public function test_the_repository_manifest_has_no_shared_dependency_drift(): void
+    {
+        self::assertSame([], checkVersionConsistency(loadManifest()));
+    }
+
+    public function test_two_constraints_for_one_shared_dependency_are_reported(): void
+    {
+        $problems = checkVersionConsistency(['packages' => [
+            'a' => ['require' => ['amphp/sql' => '^2']],
+            'b' => ['require' => ['amphp/sql' => '^1']],
+        ]]);
+
+        self::assertSame(['amphp/sql: ^2 (a) vs. ^1 (b)'], $problems);
+    }
+
+    public function test_a_manifest_entry_changing_without_a_bump_is_rejected(): void
+    {
+        $old = self::versioned('1.0.0');
+        $new = self::versioned('1.0.0');
+        $new['packages']['demo']['description'] = 'changed';
+
+        self::assertSame(
+            ["demo: manifest entry changed but 'version' was not bumped"],
+            checkVersionBumpCompleteness($old, $new),
+        );
+    }
+
+    public function test_a_one_step_bump_passes(): void
+    {
+        self::assertSame([], checkVersionBumpCompleteness(self::versioned('1.0.0'), self::versioned('1.0.1')));
+    }
+
+    public function test_a_skipped_version_is_rejected(): void
+    {
+        $problems = checkVersionBumpCompleteness(self::versioned('1.0.0'), self::versioned('1.0.2'));
+
+        self::assertStringContainsString('demo: version jumped from 1.0.0 to 1.0.2', $problems[0]);
+    }
+
+    public function test_a_major_bump_is_rejected(): void
+    {
+        $problems = checkVersionBumpCompleteness(self::versioned('1.0.0'), self::versioned('2.0.0'));
+
         self::assertStringContainsString('leaves the 1.x line', $problems[0]);
     }
 
-    /**
-     * The multi-commit push this check has to see end to end. Each of
-     * 1.2.3 -> 1.2.4 and 1.2.4 -> 1.2.5 is a legal step on its own, but
-     * only what lands on main gets tagged, so accepting the pair leaves
-     * 1.2.4 unreleased with its content inside 1.2.5's tag.
-     */
-    public function test_two_bumps_across_one_push_fail_as_a_skipped_release(): void
+    public function test_a_brand_new_package_has_to_start_at_the_initial_version(): void
     {
-        $old = ['packages' => ['x' => ['version' => '1.2.3', 'require' => []]]];
-        $new = ['packages' => ['x' => ['version' => '1.2.5', 'require' => []]]];
+        $problems = checkVersionBumpCompleteness(['packages' => []], self::versioned('1.2.0'));
 
-        $problems = checkVersionBumpCompleteness($old, $new);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('jumped from 1.2.3 to 1.2.5', $problems[0]);
-    }
-
-    public function test_nothing_changed_at_all_passes(): void
-    {
-        $manifest = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^1.0']]]];
-
-        self::assertSame([], checkVersionBumpCompleteness($manifest, $manifest));
-    }
-
-    public function test_an_invalid_semver_shape_fails(): void
-    {
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => []]]];
-        $new = ['packages' => ['x' => ['version' => '1.1', 'require' => []]]];
-
-        $problems = checkVersionBumpCompleteness($old, $new);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('not a canonical X.Y.Z version', $problems[0]);
-    }
-
-    public function test_a_brand_new_package_starting_at_1_0_0_passes(): void
-    {
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => []]]];
-        $new = ['packages' => [
-            'x' => ['version' => '1.0.0', 'require' => []],
-            'y' => ['version' => '1.0.0', 'require' => []],
-        ]];
-
-        self::assertSame([], checkVersionBumpCompleteness($old, $new));
-    }
-
-    public function test_a_brand_new_package_starting_anywhere_else_fails(): void
-    {
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => []]]];
-        $new = ['packages' => [
-            'x' => ['version' => '1.0.0', 'require' => []],
-            'y' => ['version' => '1.2.0', 'require' => []],
-        ]];
-
-        $problems = checkVersionBumpCompleteness($old, $new);
-
-        self::assertCount(1, $problems);
         self::assertStringContainsString('a new package starts at 1.0.0', $problems[0]);
     }
 
-    public function test_no_previous_manifest_at_all_skips_every_package_cleanly(): void
+    public function test_an_unchanged_package_needs_nothing(): void
     {
-        $new = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^1.0']]]];
-
-        self::assertSame([], checkVersionBumpCompleteness(null, $new));
+        self::assertSame([], checkVersionBumpCompleteness(self::versioned('1.0.0'), self::versioned('1.0.0')));
     }
 
-    public function test_identical_content_built_via_a_different_array_construction_order_still_passes(): void
-    {
-        // Confirms the comparison is content-based, not sensitive to how
-        // the two arrays happen to have been constructed in memory.
-        $old = ['packages' => ['x' => ['version' => '1.0.0', 'require' => ['foo/bar' => '^1.0']]]];
-        $new = ['packages' => ['x' => ['require' => ['foo/bar' => '^1.0'], 'version' => '1.0.0']]];
-
-        self::assertSame([], checkVersionBumpCompleteness($old, $new));
-    }
-
-    /** @return array{packages: array<string, array<string, mixed>>} */
-    private static function contentManifest(string $version = '1.0.0'): array
-    {
-        return ['packages' => ['pingpong' => ['name' => 'kinetis/pingpong', 'version' => $version]]];
-    }
-
-    public function test_content_change_without_a_version_bump_fails(): void
+    public function test_a_package_file_change_without_a_bump_is_rejected(): void
     {
         $problems = checkContentBumpCompleteness(
-            self::contentManifest(),
-            self::contentManifest(),
-            ['packages/pingpong/docker-compose.yml', 'packages/pingpong/bootstrap.php'],
+            self::versioned('1.0.0'),
+            self::versioned('1.0.0'),
+            ['packages/demo/docker-compose.yml', 'packages/demo/bootstrap.php'],
         );
 
         self::assertCount(1, $problems);
-        self::assertStringContainsString("pingpong: package files changed but 'version' was not bumped", $problems[0]);
+        self::assertStringContainsString("demo: package files changed but 'version' was not bumped", $problems[0]);
         self::assertStringContainsString('docker-compose.yml', $problems[0]);
     }
 
     public function test_a_composer_lock_only_change_passes_without_a_bump(): void
     {
-        $problems = checkContentBumpCompleteness(
-            self::contentManifest(),
-            self::contentManifest(),
-            ['packages/pingpong/composer.lock'],
-        );
-
-        self::assertSame([], $problems);
+        self::assertSame([], checkContentBumpCompleteness(
+            self::versioned('1.0.0'),
+            self::versioned('1.0.0'),
+            ['packages/demo/composer.lock'],
+        ));
     }
 
-    public function test_content_change_paired_with_a_version_bump_passes(): void
+    public function test_a_nested_lock_file_is_real_content(): void
     {
         $problems = checkContentBumpCompleteness(
-            self::contentManifest('1.0.0'),
-            self::contentManifest('1.0.1'),
-            ['packages/pingpong/docker-compose.yml'],
+            self::versioned('1.0.0'),
+            self::versioned('1.0.0'),
+            ['packages/demo/tests/fixtures/composer.lock'],
         );
 
-        self::assertSame([], $problems);
+        self::assertCount(1, $problems);
+    }
+
+    public function test_a_content_change_paired_with_a_bump_passes(): void
+    {
+        self::assertSame([], checkContentBumpCompleteness(
+            self::versioned('1.0.0'),
+            self::versioned('1.0.1'),
+            ['packages/demo/docker-compose.yml'],
+        ));
     }
 
     public function test_a_brand_new_package_is_exempt_from_the_content_check(): void
     {
-        $problems = checkContentBumpCompleteness(
+        self::assertSame([], checkContentBumpCompleteness(
             ['packages' => []],
-            self::contentManifest(),
-            ['packages/pingpong/src/NewFile.php'],
-        );
-
-        self::assertSame([], $problems);
+            self::versioned('1.0.0'),
+            ['packages/demo/src/NewFile.php'],
+        ));
     }
 
     public function test_changed_files_outside_any_manifest_package_are_ignored(): void
     {
-        $problems = checkContentBumpCompleteness(
-            self::contentManifest(),
-            self::contentManifest(),
+        self::assertSame([], checkContentBumpCompleteness(
+            self::versioned('1.0.0'),
+            self::versioned('1.0.0'),
             ['packages/removed-package/old.php', 'tools/validate-manifest.php'],
-        );
-
-        self::assertSame([], $problems);
-    }
-
-    public function test_no_previous_manifest_skips_the_content_check(): void
-    {
-        self::assertSame(
-            [],
-            checkContentBumpCompleteness(null, self::contentManifest(), ['packages/pingpong/src/A.php']),
-        );
+        ));
     }
 
     /**
      * A file moved from one package to another reaches this check as two
      * paths, one under each package — changedPackagePaths() turns git's
      * rename detection off precisely so the source package is still
-     * named. Both packages need their own bump: the source's next release
-     * drops that file.
+     * named. Both need their own bump: the source's next release drops
+     * that file.
      */
     public function test_a_cross_package_move_needs_a_bump_on_both_sides(): void
     {
         $manifest = ['packages' => [
-            'demo' => ['name' => 'kinetis/demo', 'version' => '1.0.0'],
-            'other' => ['name' => 'kinetis/other', 'version' => '1.0.0'],
+            'demo' => ['version' => '1.0.0'],
+            'other' => ['version' => '1.0.0'],
         ]];
 
         $problems = checkContentBumpCompleteness($manifest, $manifest, [
@@ -331,207 +261,260 @@ final class ValidateManifestTest extends TestCase
         self::assertStringContainsString('other:', $problems[1]);
     }
 
-    public function test_a_cross_package_move_passes_once_both_sides_are_bumped(): void
-    {
-        $old = ['packages' => [
-            'demo' => ['name' => 'kinetis/demo', 'version' => '1.0.0'],
-            'other' => ['name' => 'kinetis/other', 'version' => '1.0.0'],
-        ]];
-        $new = ['packages' => [
-            'demo' => ['name' => 'kinetis/demo', 'version' => '1.0.1'],
-            'other' => ['name' => 'kinetis/other', 'version' => '1.0.1'],
-        ]];
-
-        $problems = checkContentBumpCompleteness($old, $new, [
-            'packages/demo/src/Thing.php',
-            'packages/other/src/Thing.php',
-        ]);
-
-        self::assertSame([], $problems);
-    }
-
-    public function test_a_move_that_only_bumps_the_destination_still_names_the_source(): void
-    {
-        $old = ['packages' => [
-            'demo' => ['name' => 'kinetis/demo', 'version' => '1.0.0'],
-            'other' => ['name' => 'kinetis/other', 'version' => '1.0.0'],
-        ]];
-        $new = ['packages' => [
-            'demo' => ['name' => 'kinetis/demo', 'version' => '1.0.0'],
-            'other' => ['name' => 'kinetis/other', 'version' => '1.0.1'],
-        ]];
-
-        $problems = checkContentBumpCompleteness($old, $new, [
-            'packages/demo/src/Thing.php',
-            'packages/other/src/Thing.php',
-        ]);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('demo:', $problems[0]);
-    }
-
-    /**
-     * A rename inside one package arrives as two paths under that same
-     * package, and one bump covers both.
-     */
     public function test_a_within_package_rename_needs_one_bump(): void
     {
-        $old = ['packages' => ['demo' => ['name' => 'kinetis/demo', 'version' => '1.0.0']]];
-        $new = ['packages' => ['demo' => ['name' => 'kinetis/demo', 'version' => '1.0.1']]];
-
-        $problems = checkContentBumpCompleteness($old, $new, [
-            'packages/demo/src/Thing.php',
-            'packages/demo/src/Renamed.php',
-        ]);
-
-        self::assertSame([], $problems);
+        self::assertSame([], checkContentBumpCompleteness(
+            self::versioned('1.0.0'),
+            self::versioned('1.0.1'),
+            ['packages/demo/src/Thing.php', 'packages/demo/src/Renamed.php'],
+        ));
     }
 
     public function test_a_path_holding_spaces_and_quotes_is_attributed_to_its_package(): void
     {
-        $manifest = ['packages' => ['demo' => ['name' => 'kinetis/demo', 'version' => '1.0.0']]];
-
-        $problems = checkContentBumpCompleteness($manifest, $manifest, [
-            'packages/demo/src/a file "with" spaces.php',
-        ]);
+        $problems = checkContentBumpCompleteness(
+            self::versioned('1.0.0'),
+            self::versioned('1.0.0'),
+            ['packages/demo/src/a file "with" spaces.php'],
+        );
 
         self::assertCount(1, $problems);
         self::assertStringContainsString('a file "with" spaces.php', $problems[0]);
     }
 
-    public function test_a_nested_lock_named_file_still_counts_as_content(): void
+    public function test_every_manifest_package_has_a_ci_and_an_infection_job(): void
     {
-        // Only the package-root composer.lock is release-deleted; a file
-        // that merely shares the name deeper in the tree (a test
-        // fixture's lock) is real, shipped content.
-        $problems = checkContentBumpCompleteness(
-            self::contentManifest(),
-            self::contentManifest(),
-            ['packages/pingpong/tests/Fixtures/composer.lock'],
-        );
+        $manifest = loadManifest();
 
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('tests/Fixtures/composer.lock', $problems[0]);
+        self::assertSame([], checkWorkflowCoverage(
+            $manifest,
+            workflowPackages(__DIR__ . '/../../.github/workflows/ci.yml'),
+            workflowPackages(__DIR__ . '/../../.github/workflows/infection.yml'),
+        ));
     }
 
-    public function test_workflow_coverage_accepts_a_package_present_in_both_workflows(): void
+    public function test_a_package_missing_from_ci_is_named(): void
     {
-        $manifest = ['packages' => ['framework' => [], 'session' => []]];
+        $problems = checkWorkflowCoverage(['packages' => ['demo' => []]], [], ['demo']);
 
-        self::assertSame([], checkWorkflowCoverage($manifest, ['framework', 'session'], ['framework', 'session']));
+        self::assertSame(['demo has no job in ci.yml — add one to its matrix.'], $problems);
     }
 
-    public function test_workflow_coverage_names_a_package_missing_from_ci(): void
+    public function test_a_package_missing_from_infection_is_named(): void
     {
-        $manifest = ['packages' => ['framework' => [], 'telemetry' => []]];
+        $problems = checkWorkflowCoverage(['packages' => ['demo' => []]], ['demo'], []);
 
-        $problems = checkWorkflowCoverage($manifest, ['framework'], ['framework', 'telemetry']);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('telemetry has no job in ci.yml', $problems[0]);
+        self::assertStringContainsString('demo has no job in infection.yml', $problems[0]);
     }
 
-    /**
-     * The drift this check exists for: session and telemetry were added
-     * without an infection.yml job, which nothing noticed.
-     */
-    public function test_workflow_coverage_names_a_package_missing_from_infection(): void
+    public function test_an_exempt_package_needs_no_infection_job(): void
     {
-        $manifest = ['packages' => ['framework' => [], 'session' => []]];
-
-        $problems = checkWorkflowCoverage($manifest, ['framework', 'session'], ['framework']);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('session has no job in infection.yml', $problems[0]);
+        self::assertSame([], checkWorkflowCoverage(['packages' => ['pingpong' => []]], ['pingpong'], []));
     }
 
-    public function test_workflow_coverage_allows_a_named_infection_exemption(): void
+    public function test_a_workflow_job_with_no_package_is_named(): void
     {
-        $manifest = ['packages' => ['pingpong' => []]];
+        $problems = checkWorkflowCoverage(['packages' => []], ['ghost'], ['ghost']);
 
-        self::assertSame([], checkWorkflowCoverage($manifest, ['pingpong'], []));
+        self::assertStringContainsString('ci.yml has a job for "ghost"', $problems[0]);
     }
 
-    public function test_workflow_coverage_allows_a_named_non_package_job(): void
+    public function test_the_tools_directory_is_a_workflow_only_job(): void
     {
-        $manifest = ['packages' => ['framework' => []]];
-
-        self::assertSame([], checkWorkflowCoverage($manifest, ['framework', 'tools'], ['framework']));
+        self::assertSame([], checkWorkflowCoverage(['packages' => []], ['tools'], ['tools']));
     }
 
-    /**
-     * A job left behind after a package is renamed or removed points at
-     * a directory nothing builds any more.
-     */
-    public function test_workflow_coverage_names_a_job_with_no_matching_package(): void
+    public function test_the_sonar_coverage_loop_and_report_paths_agree(): void
     {
-        $manifest = ['packages' => ['framework' => []]];
-
-        $problems = checkWorkflowCoverage($manifest, ['framework', 'skeleton'], ['framework']);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('ci.yml has a job for "skeleton"', $problems[0]);
+        self::assertSame([], checkCoverageWiring(
+            coverageLoopPackages(__DIR__ . '/../../.github/workflows/sonarqube.yml'),
+            coverageReportPackages(__DIR__ . '/../../sonar-project.properties'),
+        ));
     }
 
-    /**
-     * Read from dir: rather than name: — the two differ, the framework
-     * package being called "core" in both workflows.
-     */
-    public function test_workflow_packages_reads_the_repos_own_workflows(): void
+    public function test_a_generated_report_nobody_reads_is_named(): void
     {
-        $ci = workflowPackages(__DIR__ . '/../../.github/workflows/ci.yml');
+        $problems = checkCoverageWiring(['demo'], []);
 
-        self::assertContains('framework', $ci, 'matched on dir:, so the framework package appears under its own key');
-        self::assertNotContains('core', $ci);
-        self::assertContains('tools', $ci);
+        self::assertStringContainsString('reads as 0% covered', $problems[0]);
     }
 
-    public function test_workflow_packages_is_empty_for_a_file_that_does_not_exist(): void
+    public function test_a_report_path_nobody_writes_is_named(): void
     {
-        self::assertSame([], workflowPackages(__DIR__ . '/does-not-exist.yml'));
-    }
+        $problems = checkCoverageWiring([], ['demo']);
 
-    public function test_coverage_wiring_accepts_matching_lists(): void
-    {
-        self::assertSame([], checkCoverageWiring(['framework', 'session'], ['session', 'framework']));
-    }
-
-    /**
-     * The mistake this catches: a package added to the loop that
-     * generates reports, but not to the list that reads them. The report
-     * is written and thrown away, and the package reads as 0% covered
-     * while its tests pass.
-     */
-    public function test_coverage_wiring_names_a_report_nobody_reads(): void
-    {
-        $problems = checkCoverageWiring(['framework', 'pingpong'], ['framework']);
-
-        self::assertCount(1, $problems);
-        self::assertStringContainsString('pingpong', $problems[0]);
-        self::assertStringContainsString('never reads', $problems[0]);
-    }
-
-    public function test_coverage_wiring_names_a_report_nobody_writes(): void
-    {
-        $problems = checkCoverageWiring(['framework'], ['framework', 'gone']);
-
-        self::assertCount(1, $problems);
         self::assertStringContainsString('never generates', $problems[0]);
     }
 
-    public function test_coverage_lists_are_read_from_the_repos_own_files(): void
+    public function test_an_explicit_base_wins_over_the_environment(): void
     {
-        $loop = coverageLoopPackages(__DIR__ . '/../../.github/workflows/sonarqube.yml');
-        $read = coverageReportPackages(__DIR__ . '/../../sonar-project.properties');
+        $repository = self::scratchRepository();
+        $first = self::commit($repository, ManifestFixture::json(['demo' => '1.0.0']));
+        self::commit($repository, ManifestFixture::json(['demo' => '1.0.1']));
 
-        self::assertContains('framework', $loop);
-        self::assertContains('framework', $read);
-        self::assertSame([], checkCoverageWiring($loop, $read), 'the repo\'s own coverage wiring must agree');
+        self::assertSame($first, comparisonBase($first, $repository));
     }
 
-    public function test_coverage_lists_are_empty_for_files_that_do_not_exist(): void
+    public function test_the_first_commit_has_nothing_to_compare_against(): void
     {
-        self::assertSame([], coverageLoopPackages(__DIR__ . '/nope.yml'));
-        self::assertSame([], coverageReportPackages(__DIR__ . '/nope.properties'));
+        $repository = self::scratchRepository();
+        self::commit($repository, ManifestFixture::json());
+
+        self::assertNull(comparisonBase(null, $repository));
+    }
+
+    public function test_the_previous_commit_is_what_a_change_is_compared_against(): void
+    {
+        $repository = self::scratchRepository();
+        $first = self::commit($repository, ManifestFixture::json(['demo' => '1.0.0']));
+        self::commit($repository, ManifestFixture::json(['demo' => '1.0.1']));
+
+        self::assertSame($first, comparisonBase(null, $repository));
+    }
+
+    /**
+     * A shallow checkout's oldest commit records no parent, exactly as a
+     * root commit does. Reading it as a root commit would report both
+     * history checks as skipped on a history that is absent.
+     */
+    public function test_a_shallow_checkout_is_not_a_first_commit(): void
+    {
+        $repository = self::scratchRepository();
+        self::commit($repository, ManifestFixture::json(['demo' => '1.0.0']));
+        self::commit($repository, ManifestFixture::json(['demo' => '1.0.1']));
+        $shallow = self::scratchRepository() . '-shallow';
+        run(sys_get_temp_dir(), ['git', 'clone', '--quiet', '--depth=1', "file://{$repository}", $shallow]);
+
+        $this->expectExceptionMessage('the repository is shallow');
+
+        comparisonBase(null, $shallow);
+    }
+
+    public function test_a_base_that_cannot_be_read_fails_rather_than_skipping(): void
+    {
+        $repository = self::scratchRepository();
+        self::commit($repository, ManifestFixture::json());
+
+        $this->expectExceptionMessage("Comparison base 'deadbeef' is not a commit this checkout can read");
+
+        comparisonBase('deadbeef', $repository);
+    }
+
+    public function test_the_all_zero_sha_is_a_first_push_rather_than_a_bad_base(): void
+    {
+        $repository = self::scratchRepository();
+        self::commit($repository, ManifestFixture::json());
+
+        self::assertNull(comparisonBase(str_repeat('0', 40), $repository));
+    }
+
+    public function test_the_manifest_at_a_commit_is_read_back(): void
+    {
+        $repository = self::scratchRepository();
+        $first = self::commit($repository, ManifestFixture::json(['demo' => '1.2.3']));
+
+        self::assertSame('1.2.3', manifestAtCommit($first, $repository)['packages']['demo']['version']);
+    }
+
+    public function test_a_commit_carrying_no_manifest_fails_plainly(): void
+    {
+        $repository = self::scratchRepository();
+        file_put_contents("{$repository}/README.md", "hello\n");
+        $commit = self::commitAll($repository);
+
+        $this->expectExceptionMessage('carries no packages.manifest.json');
+
+        manifestAtCommit($commit, $repository);
+    }
+
+    public function test_changed_package_paths_are_listed_against_the_base(): void
+    {
+        $repository = self::scratchRepository();
+        $first = self::commit($repository, ManifestFixture::json());
+        mkdir("{$repository}/packages/demo/src", 0o755, recursive: true);
+        file_put_contents("{$repository}/packages/demo/src/Thing.php", "<?php\n");
+        self::commitAll($repository);
+
+        self::assertSame(['packages/demo/src/Thing.php'], changedPackagePaths($first, $repository));
+    }
+
+    public function test_the_validator_rejects_an_unknown_option(): void
+    {
+        self::assertSame(['Unknown option: --nope'], parseValidatorArguments(['--nope'])['problems']);
+    }
+
+    public function test_an_empty_base_is_a_missing_base_rather_than_no_base(): void
+    {
+        self::assertSame(['--base needs a commit id or a ref name.'], parseValidatorArguments(['--base='])['problems']);
+    }
+
+    public function test_a_repeated_base_is_rejected(): void
+    {
+        self::assertContains('--base is given more than once.', parseValidatorArguments(['--base=a', '--base=b'])['problems']);
+    }
+
+    /**
+     * A scratch project root holding only the package directory the
+     * schema fixture names, so the directory check answers for a real
+     * tree rather than this repository's own.
+     */
+    private static function root(): string
+    {
+        static $root = null;
+
+        if ($root === null) {
+            $root = sys_get_temp_dir() . '/kinetis-schema-' . bin2hex(random_bytes(6));
+            mkdir("{$root}/packages/demo", 0o755, recursive: true);
+        }
+
+        return $root;
+    }
+
+    /** @return array<string, mixed> */
+    private static function manifest(): array
+    {
+        return [
+            'defaults' => ManifestFixture::defaults(),
+            'packages' => [
+                'demo' => [
+                    'name' => 'kinetis/demo',
+                    'description' => 'the demo package',
+                    'namespace' => 'Kinetis\\Demo\\',
+                    'version' => '1.0.0',
+                ],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private static function versioned(string $version): array
+    {
+        return ['packages' => ['demo' => ['name' => 'kinetis/demo', 'version' => $version]]];
+    }
+
+    private static function scratchRepository(): string
+    {
+        $path = sys_get_temp_dir() . '/kinetis-validate-' . bin2hex(random_bytes(6));
+        mkdir($path, 0o755, recursive: true);
+        run($path, ['git', 'init', '--quiet', '--initial-branch=main']);
+        run($path, ['git', 'config', 'user.name', 'Test']);
+        run($path, ['git', 'config', 'user.email', 'test@example.com']);
+
+        return $path;
+    }
+
+    private static function commit(string $repository, string $manifestJson): string
+    {
+        file_put_contents("{$repository}/packages.manifest.json", $manifestJson);
+
+        return self::commitAll($repository);
+    }
+
+    private static function commitAll(string $repository): string
+    {
+        run($repository, ['git', 'add', '-A']);
+        run($repository, ['git', 'commit', '--quiet', '--allow-empty', '-m', 'change']);
+
+        return trim((string) git($repository, 'rev-parse', 'HEAD'));
     }
 }

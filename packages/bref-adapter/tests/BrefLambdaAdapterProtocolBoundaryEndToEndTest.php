@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\BrefAdapter\Tests;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
-use Kinetis\Http\Form\FormLimits;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -32,11 +31,6 @@ use Throwable;
  */
 final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
 {
-    private static function limits(): FormLimits
-    {
-        return new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES);
-    }
-
     private const HOST = '127.0.0.1:8097';
 
     /** @var resource */
@@ -148,7 +142,7 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
         // below for that.
         $this->delayRoute('next', 0.8);
 
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits(), nextInvocationTimeoutSeconds: 3.0, responseTimeoutSeconds: 0.3);
+        $adapter = new BrefLambdaAdapter(self::HOST, nextInvocationTimeoutSeconds: 3.0, responseTimeoutSeconds: 0.3);
 
         try {
             $adapter->run(static fn (ServerRequestInterface $request): ResponseInterface => new Response(204));
@@ -189,7 +183,7 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
         $this->writeEvent($this->minimalEvent());
         $this->delayRoute('next', 0.8);
 
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits());
+        $adapter = new BrefLambdaAdapter(self::HOST);
 
         try {
             $adapter->run(static fn (ServerRequestInterface $request): ResponseInterface => new Response(204));
@@ -285,7 +279,7 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
         // comfortably allows.
         $this->delayRoute('response', 1.0);
 
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits(), nextInvocationTimeoutSeconds: 5.0, responseTimeoutSeconds: 0.6);
+        $adapter = new BrefLambdaAdapter(self::HOST, nextInvocationTimeoutSeconds: 5.0, responseTimeoutSeconds: 0.6);
 
         try {
             $adapter->run(static fn (ServerRequestInterface $request): ResponseInterface => new Response(204));
@@ -334,7 +328,7 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
      */
     private function runAndAssertEventRejectedBeforeRouting(): array
     {
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits());
+        $adapter = new BrefLambdaAdapter(self::HOST);
         $handlerWasCalled = false;
 
         try {
@@ -690,7 +684,7 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
             'isBase64Encoded' => false,
         ]));
 
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits());
+        $adapter = new BrefLambdaAdapter(self::HOST);
         $handlerWasCalled = false;
 
         try {
@@ -728,7 +722,7 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
         /** @var ServerRequestInterface|null $capturedRequest */
         $capturedRequest = null;
 
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits());
+        $adapter = new BrefLambdaAdapter(self::HOST);
 
         try {
             $adapter->run(static function (ServerRequestInterface $request) use (&$capturedRequest): ResponseInterface {

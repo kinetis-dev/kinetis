@@ -8,7 +8,6 @@ use RuntimeException;
 
 /**
  * A stream wrapper that fails on demand, so
- * {@see \Kinetis\Http\Form\StagedMultipartBody}'s and
  * {@see \Kinetis\Http\Form\StagedRequestBody}'s write, close and read
  * paths can be driven deterministically. `php://temp` cannot be made to
  * short write, refuse a write, fail to close, or hand back nothing while

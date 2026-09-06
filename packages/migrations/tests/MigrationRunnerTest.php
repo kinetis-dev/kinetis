@@ -6,7 +6,6 @@ namespace Kinetis\Migrations\Tests;
 
 use InvalidArgumentException;
 use Kinetis\Migrations\Exception\MigrationFileMissingException;
-use Kinetis\Migrations\Exception\MigrationLockReleaseException;
 use Kinetis\Migrations\Exception\MigrationLockTimeoutException;
 use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Migrations\Tests\Fixtures\FakeMysqlLink;
@@ -143,6 +142,25 @@ final class MigrationRunnerTest extends TestCase
 
         self::assertSame('20260102000000_second', $rolledBack);
         self::assertSame(['20260101000000_first'], $repository->applied());
+    }
+
+    /**
+     * Name order, not application order: a migration merged from another
+     * branch is applied after a later-timestamped one, and rollback still
+     * undoes the name that sorts last.
+     */
+    public function test_rollback_targets_the_highest_name_even_when_it_was_applied_first(): void
+    {
+        $this->writeMigration('20260101000000_first');
+        $this->writeMigration('20260102000000_second');
+        $this->writeMigration('20260103000000_third');
+
+        $repository = new InMemoryMigrationRepository();
+        $repository->markApplied('20260101000000_first');
+        $repository->markApplied('20260103000000_third');
+        $repository->markApplied('20260102000000_second');
+
+        self::assertSame('20260103000000_third', $this->runner($repository)->rollback());
     }
 
     public function test_rollback_ensures_the_tracking_table_exists(): void
@@ -320,7 +338,7 @@ final class MigrationRunnerTest extends TestCase
         self::assertSame(
             [
                 ['sql' => 'SELECT GET_LOCK(?, ?) AS acquired', 'params' => ['kinetis_migrations', 10]],
-                ['sql' => 'SELECT RELEASE_LOCK(?) AS released', 'params' => ['kinetis_migrations']],
+                ['sql' => 'SELECT RELEASE_LOCK(?)', 'params' => ['kinetis_migrations']],
             ],
             $link->calls,
         );
@@ -374,16 +392,15 @@ final class MigrationRunnerTest extends TestCase
         self::assertSame(
             [
                 'SELECT pg_try_advisory_lock(870124, 1)::int AS acquired',
-                'SELECT pg_advisory_unlock(870124, 1)::int AS released',
+                'SELECT pg_advisory_unlock(870124, 1)',
             ],
             $link->calls,
         );
     }
 
     /**
-     * The same (int) cast concern as the MySQL case above — Postgres's
-     * own boolean representation genuinely differs between the native
-     * and PDO drivers (this class's own docblock says so directly), so a
+     * The same (int) cast concern as the MySQL case above: the native
+     * and PDO drivers represent a Postgres boolean differently, so a
      * non-native-int acquired value has to still be recognized.
      */
     public function test_postgres_lock_acquisition_tolerates_a_non_native_int_acquired_value(): void
@@ -518,11 +535,8 @@ final class MigrationRunnerTest extends TestCase
     }
 
     /**
-     * A release failure with no migration failure in flight is not
-     * absorbed — releasing genuinely is part of what migrate() promises
-     * to do, the same "closing is part of the operation" precedent
-     * already established for Kinetis\Storage\AmpFileAdapter's own
-     * write()/writeStream().
+     * A release failure with no migration failure in flight propagates:
+     * releasing is part of what migrate() promises to do.
      */
     public function test_a_release_failure_with_no_migration_failure_still_propagates(): void
     {
@@ -534,49 +548,5 @@ final class MigrationRunnerTest extends TestCase
         $this->expectExceptionMessage('simulated release failure');
 
         $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
-    }
-
-    // --- releaseLock() checks the release call's own returned value —
-    // neither backend throws on its own when the current session didn't
-    // hold the lock at release time, so a successful query is not the
-    // same guarantee as a successful release. $releasedValue (distinct
-    // from $releaseShouldFail, which simulates the call itself
-    // throwing) forces the value MigrationRunner reads back. ---
-
-    /** MySQL's RELEASE_LOCK() returns 0 when a different session holds the lock. */
-    public function test_migrate_throws_when_mysql_release_lock_reports_the_session_did_not_hold_it(): void
-    {
-        $link = new FakeMysqlLink();
-        $link->releasedValue = 0;
-        $this->writeMigration('20260101000000_first');
-
-        $this->expectException(MigrationLockReleaseException::class);
-
-        $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
-    }
-
-    /** MySQL's RELEASE_LOCK() returns NULL when the lock was never acquired at all. */
-    public function test_migrate_throws_when_mysql_release_lock_reports_null(): void
-    {
-        $link = new FakeMysqlLink();
-        $link->releasedValue = null;
-        $this->writeMigration('20260101000000_first');
-
-        $this->expectException(MigrationLockReleaseException::class);
-
-        $this->runner(new InMemoryMigrationRepository(), $link)->migrate();
-    }
-
-    /** Postgres's pg_advisory_unlock() returns false for the equivalent case. */
-    public function test_migrate_throws_when_postgres_unlock_reports_false(): void
-    {
-        $link = new FakePostgresLink();
-        $link->releasedValue = false;
-        $this->writeMigration('20260101000000_first');
-        $runner = new MigrationRunner($link, new InMemoryMigrationRepository(), $this->migrationsPath);
-
-        $this->expectException(MigrationLockReleaseException::class);
-
-        $runner->migrate();
     }
 }

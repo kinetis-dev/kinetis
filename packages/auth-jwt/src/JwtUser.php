@@ -14,6 +14,14 @@ use UnexpectedValueException;
  * carries (roles, email, ...) without this package needing to know their
  * shape ahead of time — the same "presence is the signal, contents are
  * the app's business" spirit CurrentUserInterface itself documents.
+ *
+ * id() narrows CurrentUserInterface's own `string|int` to the non-empty
+ * string a subject always is here (see JwtIssuer), so its return value
+ * can be handed straight to RevocationStore::revokeAllForUser() and
+ * RefreshTokenStore::revokeAllForUser() — one identity across the access
+ * token, the refresh token, and every revocation covering either.
+ * JwtAuthMiddleware rejects a token whose `sub` is anything else, so a
+ * JwtUser it registered always has one.
  */
 final readonly class JwtUser implements CurrentUserInterface
 {
@@ -22,11 +30,11 @@ final readonly class JwtUser implements CurrentUserInterface
     ) {}
 
     #[\Override]
-    public function id(): string|int
+    public function id(): string
     {
         $sub = $this->claims->sub ?? null;
 
-        if (!is_string($sub) && !is_int($sub)) {
+        if (!is_string($sub) || $sub === '') {
             throw new UnexpectedValueException('JWT claims have no valid "sub" (subject) claim.');
         }
 

@@ -66,7 +66,7 @@ vendor/bin/kinetis migrate:make "create orders table"
 
 ```{code-block} sh
 vendor/bin/kinetis migrate           # runs every pending migration, in filename order
-vendor/bin/kinetis migrate:rollback  # rolls back the single most recently applied migration
+vendor/bin/kinetis migrate:rollback  # rolls back the applied migration whose name sorts last
 vendor/bin/kinetis migrate:status    # lists every migration with its applied/pending state
 ```
 
@@ -155,7 +155,11 @@ what's pending.
 The lock is scoped to your database session, not a row in a table, so it
 releases on its own the moment the connection holding it closes —
 gracefully or not — with nothing to clean up by hand if a process is
-killed mid-migration. Waiting longer than 10 seconds throws
+killed mid-migration. Session scope is also why the `migrate*` commands
+connect over PDO whatever `DB_DRIVER` says: one connection, held for the
+whole run, where the pooling drivers could acquire and release the lock
+on two different ones. These commands are serial, so blocking on a query
+costs them nothing. Waiting longer than 10 seconds throws
 `Exception\MigrationLockTimeoutException`, most often meaning another
 `migrate`/`migrate:rollback` is already running elsewhere; retry once it
 finishes.
@@ -164,7 +168,7 @@ finishes.
 
 - {doc}`query-builder` — a fluent builder for querying the tables these
   migrations create, on the same MySQL/Postgres connections.
-- {doc}`persistence` — the connection pool shape the `migrate*`
-  commands build internally.
+- {doc}`persistence` — the drivers and connection options the `migrate*`
+  commands build on.
 - {doc}`config` — the `.env`/environment convention `migrate` reads its
   connection details from.

@@ -54,7 +54,7 @@ final class TelemetryHooksTest extends TestCase
         self::assertContains('controllerReturned', $calls);
         self::assertContains('responseEncodingStarted', $calls);
         self::assertContains('responseEncodingEnded', $calls);
-        // ExceptionHandlerMiddleware and MaxBodySizeMiddleware are always
+        // ExceptionHandlerMiddleware and RequestBodyMiddleware are always
         // in the global pipeline, so middleware hooks fire on every
         // request even with none registered explicitly.
         self::assertContains('middlewareEntered', $calls);

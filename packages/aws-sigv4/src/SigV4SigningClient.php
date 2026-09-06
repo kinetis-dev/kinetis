@@ -7,7 +7,12 @@ namespace Kinetis\AwsSigV4;
 use AsyncAws\Core\Configuration;
 use AsyncAws\Core\Credentials\CacheProvider;
 use AsyncAws\Core\Credentials\ChainProvider;
+use AsyncAws\Core\Credentials\ConfigurationProvider;
+use AsyncAws\Core\Credentials\ContainerProvider;
 use AsyncAws\Core\Credentials\CredentialProvider;
+use AsyncAws\Core\Credentials\IniFileProvider;
+use AsyncAws\Core\Credentials\InstanceProvider;
+use AsyncAws\Core\Credentials\WebIdentityProvider;
 use AsyncAws\Core\Request as AwsRequest;
 use AsyncAws\Core\RequestContext;
 use AsyncAws\Core\Signer\SignerV4;
@@ -103,13 +108,15 @@ use Throwable;
  *
  * ## What is synchronous
  *
- * A request through the transport, and the credential chain's own
- * ECS/EKS/IMDS lookups, suspend the calling Fiber rather than blocking
- * it: {@see SignedTransport} is AMPHP-backed. Everything else is
- * synchronous PHP work on the calling thread: the shared credentials and
- * config files, an SSO cache file, and a web identity token file are
- * read with blocking filesystem calls, and capturing and hashing the
- * request body is CPU work.
+ * A request through the transport, and every credential lookup that
+ * reaches the network — STS assume-role, web identity, ECS, EKS pod
+ * identity, IMDS — suspend the calling Fiber rather than blocking it:
+ * all of them run on {@see SignedTransport}, which is AMPHP-backed.
+ * Everything else is synchronous PHP work on the calling thread: the
+ * shared credentials and config files, an SSO cache file, and a web
+ * identity token file are read with blocking filesystem calls on first
+ * resolution and on each refresh, and capturing and hashing the request
+ * body is CPU work.
  *
  * SigV4 signs over the body's exact bytes, so `sendRequest()` reads the
  * whole body into memory as a plain string more than once —
@@ -194,8 +201,31 @@ final class SigV4SigningClient implements ClientInterface
         $psr17 = new Psr17Factory();
 
         $this->client = new Psr18Client($transport, $psr17, $psr17);
-        $this->credentialProvider = $credentialProvider
-            ?? new CacheProvider(ChainProvider::createDefaultChain($transport));
+        $this->credentialProvider = $credentialProvider ?? self::defaultCredentialProvider($transport);
+    }
+
+    /**
+     * AsyncAws's own default chain, in its own provider order, with one
+     * change: every provider that reaches the network is handed
+     * $transport. ChainProvider::createDefaultChain() builds
+     * ConfigurationProvider with no client, and that provider is the one
+     * that calls STS when AWS_ROLE_ARN is set — with no client it
+     * constructs a blocking Symfony transport and assumes the role on
+     * the worker thread, on first resolution and again on every expiry.
+     *
+     * CacheProvider holds the resolved credentials until they expire, so
+     * the chain runs again only at refresh. Passing a
+     * $credentialProvider to the constructor replaces the whole chain.
+     */
+    private static function defaultCredentialProvider(SignedTransport $transport): CredentialProvider
+    {
+        return new CacheProvider(new ChainProvider([
+            new ConfigurationProvider($transport),
+            new WebIdentityProvider(null, null, $transport),
+            new IniFileProvider(null, null, $transport),
+            new ContainerProvider($transport),
+            new InstanceProvider($transport),
+        ]));
     }
 
     /**

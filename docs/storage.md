@@ -11,15 +11,16 @@ composer require kinetis/storage
 File storage against `League\Flysystem`'s `FilesystemOperator` interface —
 read, write, delete, and list files through one interface, swappable to a
 different backend with no application-code changes. The local backend
-runs every operation without blocking the rest of your application. S3
-(and S3-compatible services) is a second, equally non-blocking backend —
-see {doc}`storage-s3`.
+runs on `Amp\File`: a driver call suspends the calling Fiber rather than
+blocking the worker. S3 (and S3-compatible services) is the second
+backend — see {doc}`storage-s3`.
 
 With `FILESYSTEM_DRIVER` set, installing the package is the whole
 setup: it binds `FilesystemOperator`, so a controller or command
 constructor-injects it with nothing to register.
 
 ```{code-block} php
+use Kinetis\Http\Attributes\Post;
 use League\Flysystem\FilesystemOperator;
 use Psr\Http\Message\UploadedFileInterface;
 
@@ -30,10 +31,39 @@ final readonly class AvatarController
     #[Post('/avatars')]
     public function store(UploadedFileInterface $avatar): array
     {
-        $this->storage->write('avatars/user-42.png', $avatar->getStream()->getContents());
+        $extension = match ($avatar->getClientMediaType()) {
+            'image/png' => 'png',
+            'image/jpeg' => 'jpg',
+            default => throw new \InvalidArgumentException('Unsupported image type'),
+        };
 
-        return ['stored' => true];
+        // The name is generated here. A client-supplied filename is
+        // never a path segment: it can collide with another user's
+        // object, name a dotfile the server treats specially, or carry
+        // a relative segment the normalizer resolves back into the
+        // root.
+        $path = 'avatars/' . bin2hex(random_bytes(16)) . '.' . $extension;
+
+        $this->storage->write($path, $avatar->getStream()->getContents());
+
+        return ['path' => $path, 'originalName' => $avatar->getClientFilename()];
     }
+}
+```
+
+`Dispatcher` resolves `UploadedFileInterface` parameters on its own (see
+{doc}`routing-validation`), and the body behind one is already buffered
+in memory by the time a handler runs, so `write()` is the cheaper call
+here. `writeStream()` is for a caller that already holds a resource; it
+does not close the one it is given, so close it yourself:
+
+```{code-block} php
+$resource = $avatar->getStream()->detach();
+
+try {
+    $this->storage->writeStream($path, $resource);
+} finally {
+    fclose($resource);
 }
 ```
 
@@ -80,13 +110,12 @@ FILESYSTEM_ROOT=/var/app/storage
 
 `local` is the only driver this package implements, and
 `FilesystemFactory::fromConfig()` falls back to it when
-`FILESYSTEM_DRIVER` is absent. The container binding above does not:
-with no `FILESYSTEM_DRIVER` set, the package registers nothing at all,
-since binding a filesystem into every application that merely installed
-the package would be guessing at intent. Set the key to get the
-binding. `FILESYSTEM_ROOT` is required either way; there's no sane
-default to guess, since a wrong one could write files somewhere
-unintended.
+`FILESYSTEM_DRIVER` is absent. The container binding does not: with no
+`FILESYSTEM_DRIVER` set, the package registers nothing at all, since
+binding a filesystem into every application that merely installed the
+package would be guessing at intent. Set the key to get the binding.
+`FILESYSTEM_ROOT` is required either way; there's no sane default to
+guess, since a wrong one could write files somewhere unintended.
 
 It also has to be non-empty. `FILESYSTEM_ROOT=` is a key that is set,
 so it passes the required check, and an empty root would leave every
@@ -112,32 +141,32 @@ the plain `FILESYSTEM_*` keys above; any other name reads
 type — resolve it explicitly, or construct it directly, wherever it's
 needed.
 
-## Streaming an upload
+## How the local driver runs
 
-`Dispatcher` already resolves `UploadedFileInterface` parameters (see
-{doc}`routing-validation`); its stream feeds `writeStream()` directly:
+`FilesystemFactory` builds each filesystem on
+`Amp\File\createDefaultDriver()`. With `ext-uv` or `ext-eio` loaded that
+is an OS-native driver. Without either — the default for a stock PHP
+image — it is a pool of up to eight worker *processes*, and every
+filesystem call is an IPC round trip to one of them. Either extension
+removes the pool; both are listed in the package's `suggest`.
 
-```{code-block} php
-use Kinetis\Http\Attributes\Post;
-use League\Flysystem\FilesystemOperator;
-use Psr\Http\Message\UploadedFileInterface;
+Each `fromConfig()` call builds a driver of its own, and each of those
+drivers a pool of its own: one pool per filesystem instance, not one
+per event loop. A FrankenPHP image with eight threads therefore holds
+up to sixty-four worker processes for one filesystem, and every named
+connection built alongside it is another pool again. Build one instance
+per process or thread and hold it for the application's lifetime rather
+than building one per request — the container binding does exactly
+that, and a named connection is worth registering the same way.
 
-final readonly class AvatarController
-{
-    public function __construct(private FilesystemOperator $storage) {}
-
-    #[Post('/avatar')]
-    public function store(UploadedFileInterface $avatar): array
-    {
-        $this->storage->writeStream(
-            "avatars/{$avatar->getClientFilename()}",
-            $avatar->getStream()->detach(),
-        );
-
-        return ['status' => 'stored'];
-    }
-}
-```
+`Amp\File\filesystem()`, the library's own shared instance, is not used:
+it wraps the driver in a status cache that holds a positive `stat` per
+path for 1,000 seconds and invalidates only on mutations made through
+that same instance. Under a persistent worker that reports a file
+another thread, another process or an external writer has already
+deleted or rewritten. `AmpFileAdapter` accepts any
+`Amp\File\Filesystem`, so a consumer who wants the cache can construct
+one with it.
 
 ## Metadata and visibility
 
@@ -188,31 +217,30 @@ $storage->write('reports/q2.csv', $csv, [
 ]);
 ```
 
-`move()` applies an explicit `visibility` to whatever arrives at the
-destination, through the converter its kind calls for: a directory lands
-on the directory mode, never on a file's `0600`, which would leave its
-own contents unreachable. The conversion happens before a parent is
-created or anything is renamed, so an invalid value throws
+A call that requests no visibility invents none: replacing a file keeps
+the mode that file already had, and a new file lands on the umask
+default. `move()` applies an explicit `visibility` through the converter
+its source's kind calls for, so moving a directory private lands it on a
+directory mode rather than on a file's `0600` with its own contents
+unreachable. The conversion happens before a parent is created or
+anything is renamed, so an invalid value throws
 `InvalidVisibilityProvided` with the tree exactly as it was.
 
-## Writes are staged privately and published atomically
+## Writes are published atomically
 
-A file the local driver creates starts at whatever the runtime's umask
-produces — world-readable on most deployments — and a file created in a
-directory others can read can be opened the instant it exists, keeping
-that descriptor through every later permission change. So `write()`,
-`writeStream()`, and `copy()` never build new content at the destination
-path. Each one:
+`write()`, `writeStream()` and `copy()` never build new content at the
+destination path. Each one:
 
-1. creates a directory beside the destination with a random name and
+1. creates the destination's parent directory if it is missing;
+2. creates a directory beside the destination with a random name and
    mode `0700`;
-2. creates the new file inside it and sets it to `0600` while it is
-   still empty;
-3. writes the whole body and closes the file;
-4. reads the closed file's length back and checks it against the number
+3. creates the new file inside it with an exclusive open;
+4. writes the whole body and closes the file;
+5. reads the closed file's length back and checks it against the number
    of bytes written to it;
-5. applies the mode the file will carry once published;
-6. renames it over the destination.
+6. applies the mode the file will carry once published;
+7. renames it over the destination;
+8. removes the staging directory.
 
 ```{code-block} php
 use League\Flysystem\Config;
@@ -228,122 +256,104 @@ $storage->write('exports/payroll.csv', $csv, [
 $storage->copy('exports/payroll.csv', 'exports/payroll-q1.csv');
 ```
 
-### The privacy boundary
+The rename in step 7 is the commit point, and it is atomic because the
+staging directory is a child of the destination's own parent: both paths
+are on one filesystem. A concurrent reader opening the destination sees
+either the whole old file or the whole new one. Nothing before step 7
+touches the destination, so a call that fails before it leaves the
+destination exactly as it was.
 
-`0700` on the staging directory excludes other Unix users, and that is
-the boundary this staging provides. It is not a boundary against the
-service itself: a process running under the same UID that can list the
-destination's parent can enter the staging directory and open what is
-in it. Isolating writers from each other needs separate UIDs, which is
-an operational decision this adapter cannot make.
+A failure reported *by* step 7 says less than that. What the adapter
+sees is the driver's acknowledgement, and an acknowledgement can go
+missing after the kernel has already renamed — a worker process dying
+between the two is enough. `UnableToWriteFile` or `UnableToCopyFile`
+from the rename therefore means "no success was reported", not "nothing
+was published": the destination holds the old file or the new one, and
+this adapter cannot tell you which. Read the destination back before
+deciding what to do, and do not retry blindly where republishing this
+call's body over a *later* update by someone else would be wrong — the
+retry writes what this call was given, over whatever is there by then.
 
-Within that boundary the ordering still matters. `openFile()` creates
-the staged file at the umask mode, not at `0600`; the `0700` directory
-is what covers the window between that creation and the `chmod` in step
-2, and the file is empty for all of it. Step 5 is the first moment the
-file carries a mode another user could act on, and by then it is
-complete and verified.
+The `0700` directory in step 2 is what makes the new file private from
+creation: `Amp\File` has no mode argument on opening a file, and the
+umask is process-global and cannot be changed safely from a worker
+thread. It excludes other Unix users and nothing more — a process
+running under the same UID can enter the staging directory. Isolating
+writers from each other needs separate UIDs.
 
-### What the length check promises
+Step 5 is there because `Amp\File\File::write()` returns nothing and is
+not required to have stored what it accepted: the driver behind a local
+file calls `fwrite()` once and only rejects an outright failure, so a
+short write against a full disk or a quota returns as though the whole
+body landed. Reading the closed file's length back rejects that, and a
+length the filesystem cannot report fails the call too. The promise is
+length: a destination is never published short.
 
-`Amp\File\File::write()` returns nothing and is not required to have
-stored what it accepted: the driver behind a local file calls `fwrite()`
-once and only rejects an outright failure, so a short write against a
-full disk or a quota returns as though the whole body landed. Step 4
-rejects that, and a length the filesystem cannot report fails the call
-too.
+Cleanup of the staged file and its directory is attempted on every
+failure and never allowed to mask the failure being reported, which is
+also its limit — a failed cleanup leaves the staged file inside its
+`0700` directory, and a cleanup that fails after a committed rename
+leaves an empty one. Directories created in step 1 are never rolled
+back: another call writing nearby may already be using them.
 
-The check is on length, and length is the promise: a destination is
-never published short. A storage layer that keeps the right number of
-wrong bytes is a different failure, and catching it would mean reading
-every staged file back to compare it, doubling the I/O of every write.
+Durability across a crash is not part of this. Nothing here issues
+`fsync(2)` on the file or on the directory, so a process kill, a kernel
+panic or a power loss can leave the destination in either state. An
+application that needs more has to arrange it at a level this adapter
+does not reach. Windows offers no equivalent rename guarantee either:
+its `rename()` can fail outright while another process holds the
+destination open.
 
-### The rename, and the three outcomes of one that fails
+`copy()` publishes what the handle it opened on the source read. That
+handle keeps reading the file it was opened on however the source
+pathname changes afterward, so a replacement partway through cannot mix
+two files' bytes into one destination. It is not a snapshot of the
+file's contents: a writer modifying that same file in place while the
+copy runs is read as it goes.
 
-The rename in step 6 is the commit point. On POSIX it replaces the
-destination atomically for concurrent observers: another reader opening
-the path sees either the whole old file or the whole new one, never a
-partial or mixed one. A call that stops before the rename leaves the old
-destination in place, because nothing before that step touches it.
+A copy that retains the source's visibility — the default — reads the
+mode it will publish at off the source pathname *before* it opens that
+handle. So it reads the pathname once more with the handle already
+open, and fails the copy with `UnableToCopyFile`, nothing published,
+when the two readings describe different files. That is what stops a
+public file replaced by a private one in between from being published
+at the public mode. Like the symlink checks below it is a check and not
+a lock: a replacement reverted before the second reading, or landing
+after that reading, reads as unchanged. One landing between the open
+and that reading fails the copy, though the handle it holds would have
+read the original file through to the end.
 
-This holds because the staging directory is a child of the destination's
-own parent, so both paths are on one filesystem — a rename across
-filesystems is a copy-and-unlink and is not atomic. Windows offers no
-equivalent guarantee: its `rename()` can fail outright while another
-process holds the destination open.
+## Resource methods
 
-The guarantee is about what concurrent readers observe, not about what
-survives a crash. Nothing here issues `fsync(2)` on the file or on the
-directory, so a process kill, a kernel panic or a power loss can leave
-the destination in either state, or leave the rename unrecorded with the
-data already written. An application that needs durability across those
-has to arrange it at a level this adapter does not reach.
+`readStream()` reads the whole object through the driver and hands it
+back as a `php://temp` resource, buffered in full before the caller
+gets anything. `php://temp` keeps up to 2 MiB in memory and spills the
+rest to a temporary file, so memory and disk cost the object's own size
+and the spill blocks the thread for as long as that disk takes. A
+failure there — a full or unwritable spill disk above all — is this
+operation's own `UnableToReadFile`, including where an application
+error handler converts the underlying warning into a throw of its own,
+and the temporary resource is closed rather than left open. Prefer
+`read()` unless a consumer requires a resource.
 
-A rename that reports failure has not necessarily failed. `amphp/file`
-runs `rename(2)` in a worker, and the reply can be lost after the kernel
-has already committed. The adapter therefore records the staged file's
-device and inode before the rename and reads them back afterward, which
-gives three outcomes:
+`writeStream()` transfers the caller's resource in bounded chunks and
+never holds the whole input: it reads a chunk with PHP's own stream
+functions on the calling thread, writes that chunk to the staged file
+through the driver, and repeats. A read from a memory resource returns
+immediately; one from a socket suspends the Fiber until it is readable;
+one from a regular file, or from a temporary file that has spilled,
+goes to disk and blocks the thread until the disk answers — a
+resource's non-blocking mode governs sockets and pipes and does not
+make disk I/O asynchronous. The resource is not closed, and the
+non-blocking mode `Amp\ByteStream\ReadableResourceStream` sets on it to
+install its readability watcher is restored, where the stream reports
+one at all.
 
-- **Not committed** — that same inode is still in the staging
-  directory. The destination is untouched, the staged file is removed,
-  and the call throws `UnableToWriteFile` or `UnableToCopyFile`.
-- **Committed** — the staged inode is gone from the staging directory
-  and is the one now at the destination. The write succeeded; the
-  failed reply is not reported.
-- **Indeterminate** — anything else: a status that cannot be read, a
-  filesystem that supplies no inode, or a destination holding neither
-  the old file nor the staged one. The call throws
-  `Kinetis\Storage\Exception\IndeterminatePublicationException`, which
-  implements `League\Flysystem\FilesystemException`. **Inspect the
-  destination.** It is not reported as a failed write, because that
-  would claim the old file survived when that has not been
-  established. Nothing is deleted on this path: an object whose
-  ownership is not established is not the adapter's to remove.
-
-### What a failed call can leave behind
-
-No failure publishes a destination object except the committed outcome
-above. Cleanup of the staged file and its directory is *attempted*, and
-never allowed to mask the failure being reported — which is also its
-limit. What can remain:
-
-- a `0600` staged file inside its `0700` directory, when that cleanup
-  fails or when a handle that could not be closed cannot be unlinked
-  portably;
-- an empty `0700` directory, when the cleanup after a successful rename
-  fails, or when creating the staging directory failed in a way that
-  leaves the outcome unknown — a lost `mkdir(2)` reply does not prove
-  nothing was created, and removing a directory on that guess could
-  destroy a path the call never owned;
-- directories created to hold the destination, which are never rolled
-  back on any path: another call writing nearby may already be using
-  them.
-
-A call that requests no visibility invents none: replacing a file keeps
-the mode that file already had, and a new file lands on the umask
-default.
-
-### The source of a copy
-
-`copy()` reads its source's status before opening it and reads it again
-after the byte copy, comparing file type, permission bits, device and
-inode. A filesystem that reports no inode makes the source
-unverifiable, and that fails the copy rather than falling back to mode
-bits, which cannot tell one file from another at the same path. The
-check runs for every copy, whatever the destination's mode comes from,
-so a source replaced mid-copy by a file carrying the very same
-permissions is rejected under an explicit `visibility` and under
-`retain_visibility: false` just as it is under retention. A disagreement publishes nothing and throws
-`UnableToCopyFile` with the `UnableToRetrieveMetadata` that detected it
-as its cause.
-
-That pairing narrows the same check-then-use gap the next section
-describes and, for the same structural reason, does not close it: a
-source mutated in place, or replaced and then put back, between the two
-readings is the same file by every measure a `stat` can report, and
-nothing binds either reading to the bytes the read handle streamed.
-`copy()` is atomic in what it publishes, not in what it reads.
+Neither method hands back something that streams lazily: `writeStream()`
+consumes its input to the end before returning, and `readStream()`
+buffers the object before returning one. There is no `Amp`-native
+storage stream API here, and there will not be one until an in-repo
+consumer streams a stored object straight to a response.
 
 ## Paths are confined to the root
 
@@ -381,16 +391,15 @@ try {
 }
 ```
 
-Publishing *to* the root is not. `write()`, `writeStream()` and the
-destination of a `move()` or a `copy()` refuse every spelling of it —
-the root holds no file to publish over, and staging one there would
+Publishing *to* the root is not legitimate. `write()`, `writeStream()`
+and the destination of a `move()` or a `copy()` refuse every spelling of
+it — the root holds no file to publish over, and staging one there would
 build the private staging directory in the root's own *parent*, outside
 the tree. Each reports it as the failure its own interface declares
 (`UnableToWriteFile`, `UnableToMoveFile`, `UnableToCopyFile`), decided
 from the path alone: before the source is walked, before a parent
 directory is created, and before a `writeStream()` resource is read
-from, so the call costs no filesystem access and leaves a caller's
-stream at the position they handed it over at.
+from.
 
 ```{code-block} php
 use League\Flysystem\UnableToWriteFile;
@@ -407,26 +416,18 @@ try {
 `League\Flysystem\Filesystem` normalizes a path before any adapter sees
 it, and that is not what this rests on: `Kinetis\Storage\AmpFileAdapter`
 is a public class documented for direct use, so the check lives in the
-operation rather than in front of it. Behind a `FilesystemOperator` the
-normalizer refuses an escaping traversal first, with the same exception
-type, and normalizes away a relative segment that resolves back inside;
-called directly, the adapter refuses both.
+operation rather than in front of it.
 
-## Symlink checks — and why they are not a security boundary
+## Symlinks
 
-A symlink anywhere below `FILESYSTEM_ROOT`, pointing anywhere, would
-otherwise let a caller escape it: `read()`ing through a directory
-symlink returns whatever the link points at, `write()`ing through one
-lands the file wherever the link points, and recursively deleting a
-directory containing one would delete through it too. The local driver
-(`AmpFileAdapter`) checks for this: every path is checked one component
-at a time, from directly under the root down to the target, with a
-check that inspects the component itself and never follows it — a
-directory listing applies the identical check to every entry it
-discovers, which is also what stops it from looping forever on a
-symlink that points back into itself. Any component that turns out to
-be a symlink throws `League\Flysystem\SymbolicLinkEncountered`, the same
-exception Flysystem's own reference local adapter uses for this:
+A path that passes through an existing symlink below `FILESYSTEM_ROOT`
+is refused with `League\Flysystem\SymbolicLinkEncountered`: every
+component is checked, one at a time, from directly under the root down
+to the target, with a check that inspects the component itself and never
+follows it. Listing and recursive deletion apply the same check to every
+entry they discover, which is also what stops a symlink cycle. The
+configured root itself is not walked — it is operator configuration, and
+a root that is a symlink is the operator's choice.
 
 ```{code-block} php
 use League\Flysystem\SymbolicLinkEncountered;
@@ -438,85 +439,40 @@ try {
 }
 ```
 
-`fileExists()`/`directoryExists()` are the one exception to throwing:
-since they already report "no" for anything else that isn't really
-there, a path through a symlink reports `false` rather than raising an
-exception a caller checking mere existence wouldn't expect. A path
-refused by the confinement rules above still throws there — a traversal
-is a rejected request, not an answer of "no".
+`fileExists()`/`directoryExists()` answer `false` rather than throwing:
+they already report "no" for anything else that isn't really there. A
+path refused by the confinement rules above still throws there — a
+traversal is a rejected request, not an answer of "no".
 
 Which exception a symlink found *while listing* arrives as depends on
 which object you are holding. `AmpFileAdapter::listContents()`, called
 directly, throws `SymbolicLinkEncountered` naming the entry.
 `FilesystemOperator::listContents()` wraps every failure its own
 iteration sees, so the same walk arrives as `UnableToListContents` with
-that `SymbolicLinkEncountered` as its `getPrevious()`. Both are the real
-behavior of the object you called; neither is a layer the adapter adds.
+that `SymbolicLinkEncountered` as its `getPrevious()`.
 
-**This is not a race-free guarantee, and `FILESYSTEM_ROOT` is not a
-security boundary against a concurrent actor.** Stated plainly here
-rather than as a footnote below, because "symlinks are never followed"
-would be a false claim: each check above is a real filesystem call
-(lstat), separate from the real read/write/delete that follows it a few
-instructions later, and nothing enforces that nothing changes in
-between.
+**A link created while an operation runs is not detected.** The check
+and the operation are separate syscalls, and nothing enforces that
+nothing changes between them. `FILESYSTEM_ROOT` is a real boundary only
+where this adapter is the sole writer to it. Where another writer shares
+the tree, use an OS control instead: Linux's `nosymfollow` mount option
+(5.10+), a dedicated bind-mount or mount namespace with no
+symlink-creation rights for other writers, or a seccomp/LSM profile
+restricting `symlink()`.
 
-**What the checks catch**: a symlink that already exists below
-`FILESYSTEM_ROOT` at the moment a path component is checked, however it
-got there — an unpacked archive that contained one, a link left over
-from an earlier operation, one planted moments before the current
-request and left in place. This covers the ordinary case of untrusted
-content landing on disk (an unpacked upload, for one) and later being
-read back through `$storage`. Real, but bounded: this is a check-then-use
-guard, not a race-free primitive.
+Under the worker-pool driver each component check is one round trip, so
+`read('a/b/c.txt')` costs four rather than one.
 
-**What they cannot catch, structurally**: a symlink swapped into place
-between a component's own check and the real operation that follows it.
-Checking a deeper path component doesn't help — by the time the real
-operation runs, it resolves the whole path fresh, following whatever the
-swapped component has become by then, regardless of what an earlier
-check found. The check and the use are always two separate syscalls
-with an unavoidable gap between them; closing that for real needs a
-directory-relative, no-follow open (`openat()`/`O_NOFOLLOW`, walked one
-component at a time from a held parent directory descriptor), which
-neither `Amp\File` nor PHP itself exposes without a native extension.
-`ext-ffi` — the route to binding it directly — was checked rather than
-assumed absent: it isn't compiled into this project's own standard
-`php:8.4-cli-alpine` toolchain image, and even where it is available,
-taking on a native extension dependency to reach one syscall is a
-heavier, more fragile commitment than the risk it would close. Not
-pursued.
-
-**The supported threat model, narrowed rather than left open-ended**:
-`FILESYSTEM_ROOT` is a real boundary only when this adapter is the sole
-writer to it — an application-exclusive directory nothing else, trusted
-or not, creates, renames, or replaces entries in concurrently. Outside
-that model — shared storage, a process unpacking untrusted uploads
-directly into `FILESYSTEM_ROOT` while `$storage` also serves requests
-against it, any other actor with concurrent write access to the tree —
-these checks provide no protection at all, not merely weaker protection:
-winning the race needs nothing beyond ordinary filesystem access to
-`FILESYSTEM_ROOT`, not an already-compromised environment. A deployment
-that can't guarantee exclusive access needs an OS-level control this
-adapter cannot provide from PHP instead: Linux's `nosymfollow` mount
-option (5.10+), a dedicated bind-mount or mount namespace with no
-symlink-creation rights for any other writer, or restricting
-`symlink()` for every other writer via a seccomp/LSM profile.
-
-## Recursive deletion: all-or-nothing on a symlink, not on an I/O failure
+## Recursive deletion
 
 `deleteDirectory()` walks the whole subtree first and only then deletes
-anything — a symlink found anywhere in the tree throws
-`SymbolicLinkEncountered` before a single file or directory has been
-removed, rather than partway through a combined walk-and-delete pass
-that would leave every safe sibling visited earlier already gone. This
-guarantee covers the symlink-policy case specifically; a failure partway
-through the actual deletion (a permission error deleting one file, for
-one) is not made atomic by it — nothing short of a real filesystem
-transaction could make an I/O failure mid-deletion undo what already
-succeeded, so a caller catching a `FilesystemException` here (as opposed
-to `SymbolicLinkEncountered`) should expect the tree to be partially
-deleted, not intact.
+anything, so a symlink found anywhere in the tree throws before a single
+entry has been removed. That covers the symlink policy specifically. A
+failure partway through the deletion itself is not made atomic by it —
+nothing short of a real filesystem transaction could undo what already
+succeeded — so a caller catching a `FilesystemException` here, as
+opposed to a `SymbolicLinkEncountered`, should expect the tree to be
+partially deleted.
 
 ## What each operation throws
 
@@ -524,8 +480,7 @@ Confinement, the root-destination check, the symlink check and every
 filesystem call an operation makes run inside one boundary, so a driver
 failure at any stage arrives as the type `FilesystemOperator` declares
 for that operation — including one raised while a listing is already
-being iterated, and one raised by the worker pool the local driver runs
-its filesystem calls in:
+being iterated:
 
 | Operation | Failure |
 |---|---|
@@ -542,21 +497,6 @@ its filesystem calls in:
 | `move()` | `UnableToMoveFile` |
 | `copy()` | `UnableToCopyFile` |
 
-Where those driver failures come from is worth being concrete about.
-With neither `ext-uv` nor `ext-eio` loaded — the default for a stock PHP
-image — `amphp/file` runs every filesystem call as a task in a pool of
-worker processes, and translates a worker or task failure into its own
-`Amp\File\FilesystemException` or `Amp\ByteStream\StreamException`. Two
-paths it does not translate: acquiring a worker to open a file with, and
-closing an open handle. So a pool that cannot start a worker process, or a worker that
-dies mid-`fclose`, surfaces as `Amp\Parallel\Worker\WorkerException`,
-`Amp\Parallel\Worker\TaskFailureException` or
-`Amp\Parallel\Context\ContextException` — and `write()`,
-`writeStream()`, `copy()` and `mimeType()`, the four operations that
-open or close a handle, report each of them as their own row above,
-with the original chained as `getPrevious()`. Nothing about the pool
-reaches a caller as a type they have no reason to expect.
-
 A policy outcome is not a driver failure, and keeps its own type rather
 than being relabeled as one of the above:
 
@@ -566,21 +506,14 @@ than being relabeled as one of the above:
   walking, is a symlink.
 - `InvalidVisibilityProvided` — `visibility` or `directory_visibility`
   was not one of the two values the converter accepts.
-- `IndeterminatePublicationException` — a rename failed without
-  establishing what it did.
 
 All of them implement `League\Flysystem\FilesystemException`, so a
 caller catching that alone still catches every failure this adapter
 produces.
 
-A programmer error is not a driver failure either, and is never
-relabeled: an `\Error` — including `Amp\Parallel\Worker\TaskFailureError`,
-which carries an `\Error` raised inside a worker, and
-`Amp\File\PendingOperationError` — reaches the caller as itself. So does
-anything a `writeStream()` producer raises that is none of the types
-above. Cleanup never displaces any of them: a handle that fails to close
-while a failure is already being reported is absorbed, and the failure
-that prompted the cleanup is the one raised.
+An `\Error` is not a driver failure either and is never relabeled: a
+programmer error reaches the caller as itself, and so does anything a
+`writeStream()` producer raises that is none of the types above.
 
 ## See also
 
@@ -588,6 +521,4 @@ that prompted the cleanup is the one raised.
   `FilesystemFactory`.
 - {doc}`config` — the named-connection convention `FilesystemFactory`
   builds on.
-- {doc}`persistence` — MySQL, Postgres, and Redis, which run the same
-  way: without blocking the rest of your application.
 - {doc}`routing-validation` — `UploadedFileInterface` parameter binding.

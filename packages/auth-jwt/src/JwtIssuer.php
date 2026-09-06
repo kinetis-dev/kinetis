@@ -40,6 +40,15 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
  * left `null` (the default) never writes `iss`/`aud` at all, exactly as
  * before either existed.
  *
+ * A subject is one canonical non-empty string: issue() accepts
+ * `string|int` so an application keying its users by integer id can hand
+ * one straight over, and converts it to that string once, here, before
+ * anything else in this package sees it. The `sub` claim, JwtUser::id(),
+ * and both stores' per-subject revocation keys all carry that identical
+ * string, so a token and the revocation covering it can never name the
+ * subject two different ways. An empty subject is rejected — a token
+ * whose subject names nobody is not a token this class will sign.
+ *
  * $kid, when given, is written into the token's own header — pair it
  * with JwtAuthMiddleware's own multi-key `$key` support to roll a
  * signing key over without invalidating every token issued under the
@@ -132,12 +141,22 @@ final readonly class JwtIssuer
      * rather than silently letting PHP promote the sum to a float and
      * corrupt the resulting `exp` claim.
      *
+     * $subject is canonicalized to a non-empty string here — see this
+     * class's own docblock — and every other subject-carrying surface in
+     * this package reads that same string.
+     *
      * @param array<string, mixed> $claims extra claims merged in alongside `sub`/`iat`/`exp`/`jti` (and `iss`/`aud`, when configured), which always win if duplicated
      */
     public function issue(string|int $subject, array $claims = [], ?int $ttlSeconds = 3600): string
     {
+        $sub = (string) $subject;
+
+        if ($sub === '') {
+            throw JwtIssuerException::emptySubject();
+        }
+
         $now = time();
-        $payload = [...$claims, 'sub' => (string) $subject, 'iat' => $now, 'jti' => bin2hex(random_bytes(16))];
+        $payload = [...$claims, 'sub' => $sub, 'iat' => $now, 'jti' => bin2hex(random_bytes(16))];
 
         if ($this->issuer !== null) {
             $payload['iss'] = $this->issuer;

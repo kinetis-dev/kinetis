@@ -6,7 +6,7 @@ namespace Kinetis\Http\Middleware;
 
 /**
  * Computes the real global-middleware order: SecurityHeadersMiddleware
- * first, then ExceptionHandlerMiddleware, then MaxBodySizeMiddleware,
+ * first, then ExceptionHandlerMiddleware, then RequestBodyMiddleware,
  * then $explicit
  * (AppScope::middlewares()) as a group, then $discovered
  * (GlobalMiddlewareDiscovery) minus anything already in $explicit.
@@ -31,20 +31,19 @@ final class GlobalMiddlewareOrder
             // docblock.
             SecurityHeadersMiddleware::class,
             ExceptionHandlerMiddleware::class,
-            MaxBodySizeMiddleware::class,
+            RequestBodyMiddleware::class,
             ...self::merge($explicit, $discovered),
         ];
     }
 
     /**
      * The plain explicit-then-discovered merge, with no fixed prepended
-     * classes — factored out so Kernel's /mcp scoped
-     * scoped pipelines can reuse the identical precedence rule
-     * (explicit always wins, discovered fills in the rest) without
-     * inheriting SecurityHeadersMiddleware/ExceptionHandlerMiddleware/
-     * MaxBodySizeMiddleware, which neither scoped pipeline needs or wants
-     * a copy of — both already run inside the global pipeline that
-     * already includes those three.
+     * classes — factored out so Kernel's scoped pipelines can reuse the
+     * identical precedence rule (explicit always wins, discovered fills
+     * in the rest) without inheriting SecurityHeadersMiddleware/
+     * ExceptionHandlerMiddleware/RequestBodyMiddleware, which neither
+     * scoped pipeline needs or wants a copy of — both already run inside
+     * the global pipeline that already includes those three.
      *
      * @param list<class-string> $explicit
      * @param list<class-string> $discovered

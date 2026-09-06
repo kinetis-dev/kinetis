@@ -42,9 +42,10 @@ use Psr\SimpleCache\CacheInterface;
  * second after the call, the overwhelmingly common case, is unaffected
  * either way. Unlike revokeToken(), $ttlSeconds on revokeAllForUser()
  * has no single token to derive from — pass your own app's longest
- * token lifetime. A subject id's type is part of the identity being
- * revoked, so `42` and `'42'` are two separate users here — see
- * SubjectKey for the framing that holds them apart.
+ * token lifetime. The user id is the canonical subject string a token
+ * carries in its `sub` claim — JwtUser::id() hands back exactly that,
+ * and JwtIssuer::issue() is where an application's own integer id
+ * becomes it.
  *
  * Built against plain Psr\SimpleCache\CacheInterface, the same "don't
  * hard-couple to Redis specifically" reasoning
@@ -137,12 +138,17 @@ final readonly class RevocationStore
 
     /**
      * Invalidates every token already issued to $userId — any token
-     * whose `iat` predates this call. $ttlSeconds must cover the longest
-     * lifetime any of your app's currently-outstanding tokens could
-     * still have; once it elapses, this cutoff itself is forgotten.
+     * whose `iat` predates this call. $userId is the token's own `sub`
+     * claim, straight from JwtUser::id(). $ttlSeconds must cover the
+     * longest lifetime any of your app's currently-outstanding tokens
+     * could still have; once it elapses, this cutoff itself is forgotten.
      */
-    public function revokeAllForUser(string|int $userId, int $ttlSeconds): void
+    public function revokeAllForUser(string $userId, int $ttlSeconds): void
     {
+        if ($userId === '') {
+            throw RevocationUnavailableException::emptySubject();
+        }
+
         if ($ttlSeconds <= 0) {
             throw RevocationUnavailableException::nonPositiveRevokeAllForUserTtl();
         }
@@ -152,7 +158,7 @@ final readonly class RevocationStore
         }
     }
 
-    public function isRevokedForUser(string|int $userId, int $issuedAt): bool
+    public function isRevokedForUser(string $userId, int $issuedAt): bool
     {
         $cutoff = $this->cache->get($this->userKey($userId));
 
@@ -164,8 +170,8 @@ final readonly class RevocationStore
         return 'jwt-revoked.' . hash('sha256', $jti);
     }
 
-    private function userKey(string|int $userId): string
+    private function userKey(string $userId): string
     {
-        return 'jwt-revoked-user.' . SubjectKey::digest($userId);
+        return 'jwt-revoked-user.' . hash('sha256', $userId);
     }
 }

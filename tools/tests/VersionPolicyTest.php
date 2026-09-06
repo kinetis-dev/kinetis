@@ -4,240 +4,128 @@ declare(strict_types=1);
 
 namespace Kinetis\Tools\Tests;
 
-use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-require_once __DIR__ . '/../generate-composer.php';
+require_once __DIR__ . '/../version-policy.php';
 
 final class VersionPolicyTest extends TestCase
 {
-    /** @return iterable<string, array{?string, string}> */
-    public static function acceptedTransitions(): iterable
+    #[DataProvider('canonicalVersions')]
+    public function test_a_canonical_version_parses(string $version, int $major, int $minor, int $patch): void
     {
-        yield 'patch step' => ['1.4.2', '1.4.3'];
-        yield 'patch step from zero' => ['1.0.0', '1.0.1'];
-        yield 'minor step resets the patch' => ['1.4.2', '1.5.0'];
-        yield 'minor step from a zero patch' => ['1.4.0', '1.5.0'];
-        yield 'patch across a two-digit minor' => ['1.12.9', '1.12.10'];
-        yield 'a new package starts at 1.0.0' => [null, '1.0.0'];
+        self::assertSame(['major' => $major, 'minor' => $minor, 'patch' => $patch], parseVersion($version));
     }
 
-    #[DataProvider('acceptedTransitions')]
-    public function test_an_allowed_transition_reports_no_problem(?string $old, string $new): void
+    /** @return iterable<string, array{string, int, int, int}> */
+    public static function canonicalVersions(): iterable
     {
-        self::assertNull(versionTransitionProblem($old, $new));
+        yield 'zero' => ['0.0.0', 0, 0, 0];
+        yield 'initial' => ['1.0.0', 1, 0, 0];
+        yield 'multi-digit' => ['1.12.30', 1, 12, 30];
     }
 
-    /** @return iterable<string, array{?string, string, string}> */
-    public static function rejectedTransitions(): iterable
+    #[DataProvider('rejectedVersions')]
+    public function test_a_non_canonical_version_is_rejected(string $version): void
     {
-        yield 'major bump' => ['1.4.2', '2.0.0', 'leaves the 1.x line'];
-        yield 'major bump from a new package' => [null, '2.0.0', 'leaves the 1.x line'];
-        yield 'skipped patch' => ['1.2.3', '1.2.5', 'jumped from 1.2.3 to 1.2.5'];
-        yield 'skipped minor' => ['1.2.3', '1.4.0', 'jumped from 1.2.3 to 1.4.0'];
-        yield 'minor step keeping a nonzero patch' => ['1.2.3', '1.3.3', 'jumped from 1.2.3 to 1.3.3'];
-        yield 'minor step inventing a patch' => ['1.2.3', '1.3.1', 'jumped from 1.2.3 to 1.3.1'];
-        yield 'patch downgrade' => ['1.2.3', '1.2.2', 'is lower than'];
-        yield 'minor downgrade' => ['1.2.3', '1.1.0', 'is lower than'];
-        yield 'no-op' => ['1.2.3', '1.2.3', 'is unchanged'];
-        yield 'not semver' => ['1.2.3', '1.3', 'not a canonical X.Y.Z version'];
-        yield 'prerelease suffix' => ['1.2.3', '1.2.4-rc1', 'not a canonical X.Y.Z version'];
-        yield 'a leading zero patch' => ['1.2.3', '1.2.04', 'not a canonical X.Y.Z version'];
-        yield 'a leading zero minor' => ['1.2.3', '1.03.0', 'not a canonical X.Y.Z version'];
-        yield 'a leading zero major' => ['1.2.3', '01.2.4', 'not a canonical X.Y.Z version'];
-        yield 'a patch one beyond the int range' => ['1.2.3', '1.2.' . self::oneBeyondIntMax(), 'not a canonical X.Y.Z version'];
-        yield 'a new package starting anywhere else' => [null, '1.0.1', 'a new package starts at 1.0.0'];
-        yield 'a new package starting on a later minor' => [null, '1.1.0', 'a new package starts at 1.0.0'];
-        yield 'a prior version off the 1.x line' => ['0.9.0', '1.0.0', "previous version '0.9.0' is not on the 1.x line"];
-        yield 'a malformed prior version' => ['1.2', '1.2.1', "previous version '1.2' is not a canonical X.Y.Z version"];
-        yield 'a prior version with a leading zero' => ['1.02.3', '1.2.4', "previous version '1.02.3' is not a canonical"];
-        yield 'a prior patch one beyond the int range' => ['1.2.' . self::oneBeyondIntMax(), '1.2.4', 'is not a canonical'];
+        self::assertNull(parseVersion($version));
     }
 
-    #[DataProvider('rejectedTransitions')]
-    public function test_a_rejected_transition_says_why(?string $old, string $new, string $expected): void
+    /** @return iterable<string, array{string}> */
+    public static function rejectedVersions(): iterable
     {
-        $problem = versionTransitionProblem($old, $new);
-
-        self::assertNotNull($problem);
-        self::assertStringContainsString($expected, $problem);
+        yield 'leading zero' => ['1.01.0'];
+        yield 'two components' => ['1.0'];
+        yield 'four components' => ['1.0.0.0'];
+        yield 'prerelease' => ['1.0.0-beta'];
+        yield 'v prefix' => ['v1.0.0'];
+        yield 'blank' => [''];
+        yield 'wider than the component cap' => ['1.0.1234567890'];
     }
 
-    public function test_the_two_allowed_next_versions_are_the_patch_and_the_minor_step(): void
-    {
-        self::assertSame(['1.4.3', '1.5.0'], allowedNextVersions('1.4.2'));
-    }
-
-    public function test_every_allowed_next_version_is_one_the_policy_accepts(): void
-    {
-        foreach (allowedNextVersions('1.4.2') as $next) {
-            self::assertNull(versionTransitionProblem('1.4.2', $next), "{$next} must be reachable from 1.4.2");
-        }
-    }
-
-    public function test_next_version_patch_increments_the_patch_only(): void
+    public function test_a_patch_step_moves_the_last_component(): void
     {
         self::assertSame('1.4.3', nextVersion('1.4.2', 'patch'));
     }
 
-    public function test_next_version_minor_resets_the_patch(): void
+    public function test_a_minor_step_resets_the_patch(): void
     {
         self::assertSame('1.5.0', nextVersion('1.4.2', 'minor'));
     }
 
-    public function test_next_version_rejects_a_component_the_policy_does_not_offer(): void
+    public function test_the_allowed_moves_are_the_patch_and_the_minor_in_that_order(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-
-        nextVersion('1.4.2', 'major');
+        self::assertSame(['1.4.3', '1.5.0'], allowedNextVersions('1.4.2'));
     }
 
-    /**
-     * The largest component the tool can hold. Parsing it is fine —
-     * refusing to read a version that is already in the manifest would
-     * help nobody — but stepping from it is the operation that has
-     * nowhere to go.
-     */
-    public function test_a_component_at_the_int_maximum_parses(): void
+    public function test_an_unparseable_current_version_allows_no_move(): void
     {
-        $version = '1.0.' . PHP_INT_MAX;
-
-        self::assertSame(['major' => 1, 'minor' => 0, 'patch' => PHP_INT_MAX], parseVersion($version));
+        self::assertSame([], allowedNextVersions('nonsense'));
     }
 
-    public function test_a_component_one_beyond_the_int_maximum_does_not_parse(): void
+    public function test_a_new_package_starts_at_the_initial_version(): void
     {
-        // Cast, it would saturate at PHP_INT_MAX and compare equal to the
-        // version below it, so two different strings would pass and fail
-        // the same checks inconsistently.
-        self::assertNull(parseVersion('1.0.' . self::oneBeyondIntMax()));
-        self::assertNull(parseVersion(self::oneBeyondIntMax() . '.0.0'));
-        self::assertNull(parseVersion('1.' . self::oneBeyondIntMax() . '.0'));
+        self::assertNull(versionTransitionProblem(null, '1.0.0'));
     }
 
-    public function test_a_step_that_would_overflow_is_refused_rather_than_wrapping(): void
+    public function test_a_new_package_cannot_start_anywhere_else(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-
-        nextVersion('1.0.' . PHP_INT_MAX, 'patch');
+        self::assertStringContainsString('starts at 1.0.0', (string) versionTransitionProblem(null, '1.2.0'));
     }
 
-    public function test_a_step_the_other_component_can_still_take_is_offered(): void
+    #[DataProvider('allowedTransitions')]
+    public function test_a_one_step_move_is_allowed(string $old, string $new): void
     {
-        $version = '1.0.' . PHP_INT_MAX;
-
-        self::assertFalse(canStep($version, 'patch'));
-        self::assertTrue(canStep($version, 'minor'));
-        self::assertSame(['1.1.0'], allowedNextVersions($version));
-        self::assertNull(versionTransitionProblem($version, '1.1.0'));
+        self::assertNull(versionTransitionProblem($old, $new));
     }
 
-    public function test_a_version_with_no_step_left_at_all_is_rejected_rather_than_overflowing(): void
+    /** @return iterable<string, array{string, string}> */
+    public static function allowedTransitions(): iterable
     {
-        $version = '1.' . PHP_INT_MAX . '.' . PHP_INT_MAX;
-
-        self::assertSame([], allowedNextVersions($version));
-        $problem = versionTransitionProblem($version, '1.0.0');
-        self::assertNotNull($problem);
-        self::assertStringContainsString('no step from version', $problem);
+        yield 'patch' => ['1.4.2', '1.4.3'];
+        yield 'minor' => ['1.4.2', '1.5.0'];
     }
 
-    /** @return iterable<string, array{string}> */
-    public static function noncanonicalVersions(): iterable
+    public function test_a_major_bump_leaves_the_incubation_line(): void
     {
-        yield 'a leading zero patch' => ['1.0.01'];
-        yield 'a leading zero minor' => ['1.00.0'];
-        yield 'a leading zero major' => ['01.0.0'];
-        yield 'all zeros padded' => ['0.0.00'];
-        yield 'a plus-signed component' => ['1.0.+1'];
-        yield 'a spaced component' => ['1.0. 1'];
+        self::assertStringContainsString('leaves the 1.x line', (string) versionTransitionProblem('1.4.2', '2.0.0'));
     }
 
-    #[DataProvider('noncanonicalVersions')]
-    public function test_a_noncanonical_component_does_not_parse(string $version): void
+    public function test_a_skipped_patch_names_every_version_it_would_strand(): void
     {
-        self::assertNull(parseVersion($version));
+        $problem = (string) versionTransitionProblem('1.4.2', '1.4.4');
+
+        self::assertStringContainsString('1.4.3 or 1.5.0', $problem);
+        self::assertStringContainsString('stays reachable', $problem);
     }
 
-    public function test_a_plain_zero_component_is_canonical(): void
+    public function test_a_skipped_minor_is_rejected(): void
     {
-        self::assertSame(['major' => 0, 'minor' => 0, 'patch' => 0], parseVersion('0.0.0'));
+        self::assertStringContainsString('jumped from 1.4.2 to 1.6.0', (string) versionTransitionProblem('1.4.2', '1.6.0'));
     }
 
-    private static function oneBeyondIntMax(): string
+    public function test_two_bumps_in_one_change_are_rejected_as_a_jump(): void
     {
-        // PHP_INT_MAX + 1 as digits, without ever holding it as an int.
-        $digits = (string) PHP_INT_MAX;
-        $carry = 1;
-
-        for ($i = strlen($digits) - 1; $i >= 0 && $carry === 1; $i--) {
-            $sum = (int) $digits[$i] + $carry;
-            $digits[$i] = (string) ($sum % 10);
-            $carry = intdiv($sum, 10);
-        }
-
-        return $carry === 1 ? '1' . $digits : $digits;
+        self::assertStringContainsString('jumped from 1.4.2 to 1.4.4', (string) versionTransitionProblem('1.4.2', '1.4.4'));
     }
 
-    public function test_parse_version_reads_a_plain_x_y_z(): void
+    public function test_an_unchanged_version_is_not_a_release(): void
     {
-        self::assertSame(['major' => 1, 'minor' => 4, 'patch' => 2], parseVersion('1.4.2'));
+        self::assertStringContainsString('is unchanged', (string) versionTransitionProblem('1.4.2', '1.4.2'));
     }
 
-    /** @return iterable<string, array{string}> */
-    public static function unparseableVersions(): iterable
+    public function test_going_backwards_is_named_as_such(): void
     {
-        yield 'two parts' => ['1.4'];
-        yield 'four parts' => ['1.4.2.1'];
-        yield 'prerelease' => ['1.4.2-rc1'];
-        yield 'build metadata' => ['1.4.2+build'];
-        yield 'leading v' => ['v1.4.2'];
-        yield 'empty' => [''];
-        yield 'negative' => ['-1.4.2'];
+        self::assertStringContainsString('lower than', (string) versionTransitionProblem('1.4.2', '1.4.1'));
     }
 
-    #[DataProvider('unparseableVersions')]
-    public function test_parse_version_reports_null_for_anything_else(string $version): void
+    public function test_a_non_canonical_target_is_rejected_before_anything_else(): void
     {
-        self::assertNull(parseVersion($version));
+        self::assertStringContainsString('not a canonical', (string) versionTransitionProblem('1.4.2', '1.4.3-rc1'));
     }
 
-    /**
-     * The multi-commit push this rule exists for: a branch that bumps
-     * 1.2.3 -> 1.2.4 in one commit and 1.2.4 -> 1.2.5 in the next reads,
-     * end to end, as 1.2.3 -> 1.2.5. release.yml tags only what lands on
-     * main, so accepting that leaves 1.2.4 permanently untagged with its
-     * content folded into 1.2.5's tag.
-     */
-    public function test_two_bumps_in_one_push_are_rejected_end_to_end_though_each_step_is_legal(): void
+    public function test_a_previous_version_off_the_incubation_line_is_rejected(): void
     {
-        self::assertNull(versionTransitionProblem('1.2.3', '1.2.4'));
-        self::assertNull(versionTransitionProblem('1.2.4', '1.2.5'));
-        self::assertNotNull(versionTransitionProblem('1.2.3', '1.2.5'));
-    }
-
-    /**
-     * The policy is stated on the net move, which is what release.yml
-     * tags. A patch and then a minor within one push nets out to the
-     * minor, so it is one release and passes; the patch never reached
-     * main and was never a release to skip.
-     */
-    public function test_a_patch_then_a_minor_in_one_push_nets_out_to_the_minor_it_ships(): void
-    {
-        self::assertNull(versionTransitionProblem('1.2.3', '1.2.4'));
-        self::assertNull(versionTransitionProblem('1.2.4', '1.3.0'));
-        self::assertNull(versionTransitionProblem('1.2.3', '1.3.0'));
-    }
-
-    /**
-     * A minor and then a patch does not net out to anything reachable:
-     * 1.3.0 would have had to be tagged for 1.3.1 to follow it.
-     */
-    public function test_a_minor_then_a_patch_in_one_push_is_rejected_end_to_end(): void
-    {
-        self::assertNull(versionTransitionProblem('1.2.3', '1.3.0'));
-        self::assertNull(versionTransitionProblem('1.3.0', '1.3.1'));
-        self::assertNotNull(versionTransitionProblem('1.2.3', '1.3.1'));
+        self::assertStringContainsString('not on the 1.x line', (string) versionTransitionProblem('0.9.0', '1.0.0'));
     }
 }

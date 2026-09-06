@@ -7,7 +7,6 @@ namespace Kinetis\Security;
 use Kinetis\Security\Exception\AttemptThrottleUnavailableException;
 use Kinetis\Security\Exception\InvalidAttemptThrottleConfigException;
 use Kinetis\SimpleCache\AtomicCounterInterface;
-use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
 
@@ -58,7 +57,7 @@ use Psr\SimpleCache\CacheInterface;
  */
 final readonly class AttemptThrottle
 {
-    private Counter $counter;
+    private AtomicCounterInterface $counter;
 
     public function __construct(
         private CacheInterface $cache,
@@ -82,7 +81,7 @@ final readonly class AttemptThrottle
             throw InvalidAttemptThrottleConfigException::nonPositiveDecay($decaySeconds);
         }
 
-        $this->counter = new Counter($cache);
+        $this->counter = $cache;
     }
 
     public function tooManyAttempts(string $identifier): bool
@@ -120,7 +119,7 @@ final readonly class AttemptThrottle
 
     private function count(string $identifier): int
     {
-        // Through the counter, not the cache: a natively-incremented
+        // Through the atomic counter, not the cache: an INCR-backed
         // counter is not stored in the form get() reads back.
         return $this->counter->count($this->key($identifier));
     }

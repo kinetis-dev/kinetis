@@ -41,18 +41,6 @@ interface RuntimeAdapterDriver
     public function supportsStreaming(): bool;
 
     /**
-     * A form-encoded request this environment cannot parse — the
-     * concrete trigger differs per environment (a multipart body with no
-     * usable boundary for a parser of the adapter's own, a body a SAPI's
-     * own parser rejects), but the required outcome doesn't: a clean
-     * 400, never an uncaught failure. Over-limit input is the other
-     * half of that policy and needs no declaration: the ceilings are
-     * `Kinetis\Http\Form\FormLimits`' own, identical everywhere, so the
-     * suite builds those requests itself.
-     */
-    public function unparseableFormRequest(): WireRequest;
-
-    /**
      * The URI scheme this environment serves over when the request
      * carries no forwarded scheme of its own — `http` for a SAPI or a
      * worker behind a plain listener, `https` for an API Gateway
