@@ -253,6 +253,13 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
         return $this->trustedProxies !== '';
     }
 
+    #[\Override]
+    public function supportsPlaintextRequests(): bool
+    {
+        // A plain listener, so a request can arrive over one.
+        return true;
+    }
+
     /**
      * Sends $raw and reads the whole response, timing the body: the
      * seconds between the read that delivered the first body byte and

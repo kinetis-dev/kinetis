@@ -359,6 +359,7 @@ interface RuntimeAdapterDriver
     public function preservesNumericHeaderNames(): bool;
     public function preservesCookieOrder(): bool;
     public function trustsTheConnectingClient(): bool;
+    public function supportsPlaintextRequests(): bool;
 }
 ```
 
@@ -368,9 +369,9 @@ a SAPI, whatever the driver injects as `sourceIp` for Lambda), the
 scheme it serves over when nothing forwards one, whether a
 `StreamedResponse` can reach the client incrementally, whether a
 purely-numeric header name and the client's cookie order survive its own
-request decoding, and whether the
-peer the driver connects from is a trusted edge whose
-`X-Forwarded-Proto` may decide the request's scheme.
+request decoding, whether the peer the driver connects from is a trusted
+edge whose `X-Forwarded-Proto` may decide the request's scheme, and
+whether a plaintext request can reach the environment at all.
 
 A parsed form body's raw bytes are not among them. The staged body is
 seekable and rewound, so `getBody()` after `getParsedBody()` is the
@@ -384,10 +385,14 @@ response rather than buffer it. An environment that keeps a numeric
 header name must deliver its value unchanged; one that cannot must drop
 the header outright, never deliver it under another name or with another
 value. An environment that treats this client as an edge must honor a
-forwarded scheme; one
-that does not must ignore it completely, in both directions — it can
-neither be promoted to `https` nor downgraded from it. Every method runs
-on every adapter. Nothing is skipped.
+forwarded scheme, `http` and `https` alike; one that does not must
+ignore it completely and serve the scheme it serves itself, which on an
+environment already terminating TLS leaves the request `https`. An
+environment no plaintext request can reach —
+`supportsPlaintextRequests()` says so — has nothing to honor and nothing
+to ignore when a forwarded scheme names `http`: that names a request it
+cannot have received, and it is refused before the handler. Every method
+runs on every adapter. Nothing is skipped.
 
 Over-limit input needs no declaration: the ceilings are
 `Kinetis\Http\Form\FormLimits`' own and identical everywhere, so the

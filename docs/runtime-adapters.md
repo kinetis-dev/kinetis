@@ -457,11 +457,16 @@ including two schemes folded into one header, is a fixed `400` before the
 handler: there is no rule that picks the right answer out of two, and the
 peer that could have gotten it right is the one that got it wrong.
 
-Lambda is the exception that proves it: an invocation arrives over the
-Runtime API with no connecting client at all, and `x-forwarded-proto` is
-API Gateway's own field on an event it built. The gateway is the edge by
-construction — and the value is still validated rather than believed, as
-the identity rules below describe.
+Lambda is the one runtime this policy does not reach, and
+`BrefLambdaAdapter` is the one adapter that takes no `TrustedProxies` at
+all. An invocation arrives over the Runtime API with no connecting client
+to weigh: `x-forwarded-proto` is API Gateway's own field on an event it
+built, so the gateway is the edge by construction. What replaces the
+policy there is a platform fact — an HTTP API and a Function URL are
+TLS-only, so the scheme is `https` and a forwarded header cannot move it.
+An event claiming `http` describes an invocation the platform cannot have
+delivered, and is refused as malformed rather than honored or ignored;
+see the identity rules below.
 
 ## Running on AWS Lambda
 
@@ -539,9 +544,13 @@ and an event where they don't is rejected before anything is dispatched:
   they must match when both are present. A port that is the scheme's
   default is not part of the authority, exactly as PSR-7's own URI
   treats it.
-- **Scheme** — `x-forwarded-proto`; `https` when it's absent, because an
-  HTTP API and a Function URL have no plaintext mode at all. Anything
-  other than `http` or `https` is refused.
+- **Scheme** — `https`, decided by the platform rather than by the
+  event: an HTTP API and a Function URL have no plaintext mode at all,
+  so there is no listener a plaintext request could have arrived on.
+  `x-forwarded-proto` is checked against that instead of deciding it —
+  absent or `https` is what API Gateway sends, and any other value,
+  `http` included, is refused with everything else that contradicts
+  itself.
 - **Protocol version** — `requestContext.http.protocol`.
 - **Request target** — `rawPath` and `rawQueryString`, byte for byte,
   set as the request target rather than rebuilt from a parsed path and
@@ -814,6 +823,11 @@ supervisor respawns the worker. If you configure a short
 worker's *total* lifetime regardless of this — RoadRunner's own default
 is `0s` (unlimited).
 
+FrankenPHP contains exactly one throwable, and it is much narrower: a
+streamed response's failing emitter, caught at the SAPI emission
+boundary because the status, the headers and part of the body have
+already left the process. See "Writing your own adapter" below.
+
 ### What isn't supported
 
 - **Response streaming.** `Worker::create()`'s default
@@ -897,6 +911,20 @@ as soon as the emitter returns. An adapter that can't stream answers with
 its own response and never invokes the emitter; the Kernel releases that
 scope at the start of the next request.
 
+An emitter that throws is the one failure an adapter contains rather than
+lets propagate. By then the status, the headers and some number of body
+bytes have left the process, so there is no replacement response to send
+— and under a persistent worker an escaping throwable ends the worker
+itself, taking the warm state every later request on that thread would
+have used down with one client's broken stream. The SAPI adapters catch
+it at `SuperglobalsBridge::emit()`, write the exception class, message
+and `file:line` to the SAPI error log, and return to the loop; the client
+sees the truncated body a half-sent response can only end as. Nothing
+else moves: the Kernel's own wrapper still releases the request scope and
+re-raises the emitter's failure to whoever invoked it, and a request that
+fails before emission begins is still a `500` from
+`ExceptionHandlerMiddleware`.
+
 An adapter never parses a form body itself. It delivers the raw bytes,
 and `RequestBodyMiddleware` applies `Kinetis\Http\Form` to them inside
 the Kernel — which is what keeps the accepted spellings, the nesting, and
@@ -904,14 +932,25 @@ the point at which a client is refused identical under every runtime; see
 {ref}`multipart-form-data-file-uploads`.
 
 You can also construct any adapter directly if you want to force a
-specific one instead of relying on automatic detection. Every adapter
-takes the same policy `RuntimeDetector::detect()` would have handed it,
-for the same reason — it settles a request's identity before the Kernel
-or its container exist:
+specific one instead of relying on automatic detection. The two SAPI
+adapters and RoadRunner's take the same `TrustedProxies` policy
+`RuntimeDetector::detect()` would have handed them, for the same reason —
+they settle a request's identity before the Kernel or its container
+exist:
 
 ```{code-block} php
 $adapter = new Kinetis\Runtime\Adapters\FpmAdapter(
     $app->get(Kinetis\Http\TrustedProxies::class),
+);
+```
+
+`BrefLambdaAdapter` takes the Runtime API endpoint instead, and no proxy
+policy: there is no connecting peer to weigh, and the event's own scheme
+is settled against the platform fact described above.
+
+```{code-block} php
+$adapter = new Kinetis\BrefAdapter\BrefLambdaAdapter(
+    (string) getenv('AWS_LAMBDA_RUNTIME_API'),
 );
 ```
 

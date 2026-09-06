@@ -147,6 +147,15 @@ final class LambdaDriver implements RuntimeAdapterDriver
         return true;
     }
 
+    #[\Override]
+    public function supportsPlaintextRequests(): bool
+    {
+        // An HTTP API and a Function URL terminate TLS themselves and
+        // expose no plaintext listener, so an event naming `http` is one
+        // the platform cannot have delivered — see LambdaRequestIdentity.
+        return false;
+    }
+
     /**
      * The event API Gateway would build from this wire request. Every
      * field here is one API Gateway sets itself, filled the way it

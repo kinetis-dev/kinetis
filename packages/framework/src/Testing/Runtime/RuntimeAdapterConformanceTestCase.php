@@ -175,18 +175,40 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
 
     /**
      * The other direction of the same rule, and the one that costs
-     * something when it is wrong: an environment that trusts this client
-     * must still not be talked *out* of TLS by a forwarded header, and
-     * one that does not trust it must not be talked into it. `http`
-     * where the environment already serves `https` is the downgrade a
-     * spoofed header would aim for.
+     * something when it is wrong: `http` where the environment serves
+     * `https` is the downgrade a spoofed header aims for, and the one an
+     * application notices as plaintext absolute URLs, a `Secure` cookie
+     * it never sets, and an OAuth redirect pointing somewhere it
+     * shouldn't.
+     *
+     * Wherever a plaintext request is possible at all, the trust rule
+     * decides this the same way it decides a forwarded `https`: an edge
+     * is describing what it terminated, so the request is `http`, and a
+     * directly reachable client is describing its own request, so the
+     * header is ignored and the scheme the environment serves stands —
+     * `https` included, since ignoring a header means the request is
+     * what it would have been without it.
+     *
+     * An environment no plaintext request can reach —
+     * {@see RuntimeAdapterDriver::supportsPlaintextRequests()} says so —
+     * has neither to honor nor to ignore: the header describes a request
+     * that cannot have arrived, which is a contradiction in the input
+     * rather than a scheme to settle, and it is refused before the
+     * handler.
      */
-    final public function test_a_forwarded_scheme_naming_http_cannot_downgrade_an_https_environment(): void
+    final public function test_a_forwarded_scheme_naming_http_is_honored_only_from_a_trusted_edge_or_refused_outright(): void
     {
         $outcome = $this->dispatch(new WireRequest(headers: [
             ['Host', self::CLIENT_HOST],
             ['X-Forwarded-Proto', 'http'],
         ]));
+
+        if (!$this->driver()->supportsPlaintextRequests()) {
+            self::assertInstanceOf(AdapterRejection::class, $outcome->response, 'an environment no plaintext request can reach must refuse this input rather than serve it');
+            self::assertNull($outcome->observed, 'and it has to refuse before the handler, not after');
+
+            return;
+        }
 
         $expected = $this->driver()->trustsTheConnectingClient() ? 'http' : $this->driver()->expectedScheme();
 

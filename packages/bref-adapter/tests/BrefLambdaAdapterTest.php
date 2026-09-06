@@ -146,6 +146,22 @@ final class BrefLambdaAdapterTest extends TestCase
     }
 
     /**
+     * An HTTP API and a Function URL are TLS-only, so the scheme is a
+     * platform fact and `x-forwarded-proto` is only checked against it.
+     * That check is a comparison, so it has to hold for the value cased
+     * and padded the way a header value may be — a spelling the shared
+     * conformance suite, which sends the exact value, says nothing
+     * about.
+     */
+    public function test_the_gateways_own_scheme_is_matched_however_the_header_spells_it(): void
+    {
+        $request = BrefLambdaAdapter::requestFromEvent(self::event(['headers' => ['x-forwarded-proto' => ' HTTPS ']]));
+
+        self::assertSame('https', $request->getUri()->getScheme());
+        self::assertSame([self::DOMAIN], $request->getHeader('Host'), '443 is the default port for https, so it is not part of the authority');
+    }
+
+    /**
      * The raw query is what the parameters come from — not the event's
      * own `queryStringParameters`, which comma-joins a repeated
      * parameter into one value PHP would then read as a single
@@ -177,7 +193,10 @@ final class BrefLambdaAdapterTest extends TestCase
             'different ports',
         ];
 
-        yield 'a forwarded scheme that is not http or https' => [
+        // A forwarded scheme naming plaintext belongs to the shared
+        // conformance suite, which asserts it against every adapter —
+        // see LambdaConformanceTest.
+        yield 'a forwarded scheme that is not a scheme this platform serves' => [
             ['headers' => ['x-forwarded-proto' => 'gopher']],
             'x-forwarded-proto',
         ];

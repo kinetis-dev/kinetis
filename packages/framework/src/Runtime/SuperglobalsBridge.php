@@ -13,6 +13,7 @@ use Nyholm\Psr7\Stream;
 use Nyholm\Psr7Server\ServerRequestCreator;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Throwable;
 
 /**
  * The superglobals-to-PSR-7 conversion and response emission FpmAdapter
@@ -45,9 +46,13 @@ use Psr\Http\Message\ServerRequestInterface;
  * forwarded header from an untrusted source, which decides the request's
  * own scheme and client address and so has to be settled while the
  * request is still being built. It is answered with the same fixed `400`
- * a malformed body gets. Anything else — a bug, an environment that
- * cannot be read — propagates, because it is this worker's failure and
- * not a client's.
+ * a malformed body gets. Anything else raised while the request is being
+ * built or handled — a bug, an environment that cannot be read —
+ * propagates, because it is this worker's failure and not a client's.
+ *
+ * The one exception is a streamed body's emitter, which runs after the
+ * status and headers are already on the wire: see {@see emit()} for why
+ * that failure is contained here and nowhere else.
  */
 final class SuperglobalsBridge
 {
@@ -131,6 +136,32 @@ final class SuperglobalsBridge
         }
     }
 
+    /**
+     * The SAPI emission boundary both adapters share, and the last point
+     * either of them controls.
+     *
+     * A streamed body's emitter is the only thing here that runs after
+     * the response has begun leaving the process, so it is the only
+     * throwable this class contains rather than propagates. By the time
+     * it fails the status, the headers and some number of body bytes are
+     * on the wire: there is no replacement response to send, and under
+     * FrankenPHP an escaping throwable leaves the request callback and
+     * terminates the worker, discarding the warm state every subsequent
+     * request on that thread would have used — one client's broken
+     * stream taken out on every client after it. Contained, reported to
+     * the SAPI error log, and the loop goes on to the next request; the
+     * client sees a truncated body, which is the only thing a half-sent
+     * response can look like.
+     *
+     * Only the emitter call is inside the `try`. Status and headers are
+     * sent before it, request construction and the handler before that,
+     * and every failure there is still this worker's to propagate.
+     *
+     * The containment lives here rather than in the Kernel: the emitter
+     * a `StreamableResponseInterface` from `Kernel::handle()` carries
+     * releases the request scope and then re-raises what failed, which is
+     * what any direct caller of it is entitled to see.
+     */
     public static function emit(ResponseInterface $response): void
     {
         http_response_code($response->getStatusCode());
@@ -147,7 +178,17 @@ final class SuperglobalsBridge
         // context where flush() reaches the client immediately rather than
         // being buffered until the script ends.
         if ($response instanceof StreamableResponseInterface) {
-            ($response->getEmitter())();
+            try {
+                ($response->getEmitter())();
+            } catch (Throwable $e) {
+                error_log(sprintf(
+                    'Streamed response emitter failed after the status and headers were sent; the client keeps whatever body was written: %s: %s in %s:%d',
+                    $e::class,
+                    $e->getMessage(),
+                    $e->getFile(),
+                    $e->getLine(),
+                ));
+            }
 
             return;
         }

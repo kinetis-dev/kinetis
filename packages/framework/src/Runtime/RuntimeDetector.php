@@ -33,14 +33,20 @@ final class RuntimeDetector
 
     /**
      * $trustedProxies is the application's own, built once from its
-     * Config at the entry point and handed to whichever adapter is
-     * chosen. Required, and first: an adapter decides a request's scheme
-     * and client address before the Kernel or its container exist, so it
-     * cannot resolve that policy and must not invent one — a proxy policy
-     * an adapter guessed at is a proxy policy the application never
-     * configured. The request body needs no such argument: an adapter
-     * hands it on raw, and the Kernel's own RequestBodyMiddleware bounds
-     * and parses it under the FormLimits bound in the container.
+     * Config at the entry point and handed to every adapter whose
+     * request arrives over a socket some peer connected to: the two SAPI
+     * adapters and RoadRunner's. Required, and first: those adapters
+     * decide a request's scheme and client address before the Kernel or
+     * its container exist, so they cannot resolve that policy and must
+     * not invent one — a proxy policy an adapter guessed at is a proxy
+     * policy the application never configured.
+     *
+     * BrefLambdaAdapter takes the Runtime API endpoint instead and no
+     * policy at all: an invocation has no connecting peer to weigh, and
+     * the event API Gateway built is the edge itself. The request body
+     * needs no argument here either — an adapter hands it on raw, and
+     * the Kernel's own RequestBodyMiddleware bounds and parses it under
+     * the FormLimits bound in the container.
      */
     public static function detect(
         TrustedProxies $trustedProxies,
