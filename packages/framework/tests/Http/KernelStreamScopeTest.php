@@ -14,6 +14,7 @@ use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Http\Fixtures\StreamHeaderMiddleware;
 use Kinetis\Tests\Http\Fixtures\StreamingFixtureController;
 use Kinetis\Tests\Http\Fixtures\StreamProbe;
+use Kinetis\Tests\Http\Fixtures\StreamReplacingMiddleware;
 use Kinetis\Tests\Http\Fixtures\StreamShortCircuitMiddleware;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
@@ -25,9 +26,11 @@ require_once __DIR__ . '/Fixtures/gc_collect_cycles_spy.php';
 
 /**
  * A successful StreamableResponseInterface keeps its RequestScope alive
- * through body emission, and Kernel owns the release on all three paths
- * that can reach it: the emitter's own completion, the next request,
- * and the wrapper simply being dropped.
+ * through body emission, and Kernel owns the release on every path that
+ * can reach it: the emitter's own completion, `abandon()` from an owner
+ * that will never write the body, the global pipeline answering with a
+ * buffered response instead, the next request, and the wrapper simply
+ * being dropped.
  */
 final class KernelStreamScopeTest extends TestCase
 {
@@ -70,6 +73,12 @@ final class KernelStreamScopeTest extends TestCase
     {
         self::assertInstanceOf(StreamableResponseInterface::class, $response);
         ($response->getEmitter())();
+    }
+
+    private static function abandon(ResponseInterface $response): void
+    {
+        self::assertInstanceOf(StreamableResponseInterface::class, $response);
+        $response->abandon();
     }
 
     /**
@@ -170,14 +179,125 @@ final class KernelStreamScopeTest extends TestCase
     }
 
     /**
-     * The wrapper leaves Kernel, so any owner up the stack can hold the
-     * last reference to it without ever emitting: an adapter that refuses
-     * to stream, a middleware that replaces it, a caller that reads its
-     * status and drops it, an exception trace pinning it as a frame
-     * argument. The next request releases it before it has a scope at
-     * all.
+     * The settlement an adapter that cannot stream performs: the scope
+     * is released and the body is never written.
      */
-    public function test_a_stream_that_is_never_emitted_is_released_by_the_next_request(): void
+    public function test_abandoning_a_returned_stream_releases_its_scope_without_emitting(): void
+    {
+        $response = $this->stream($this->kernel(isPersistent: true), tag: 'alpha');
+
+        self::abandon($response);
+
+        self::assertSame(['dispatch:alpha', 'disposed'], StreamProbe::$events);
+        self::assertTrue(StreamProbe::$scopes[0]->isDisposed());
+        self::assertSame(1, StreamProbe::collections(), 'a collection cycle follows the release');
+    }
+
+    /**
+     * Abandonment settles the request, so the next one has nothing left
+     * to clean up and nothing to warn about.
+     */
+    public function test_an_abandoned_stream_is_not_released_again_by_the_next_request(): void
+    {
+        $kernel = $this->kernel(isPersistent: true);
+
+        self::abandon($this->stream($kernel, tag: 'one'));
+        $this->stream($kernel, tag: 'two');
+
+        self::assertSame(['dispatch:one', 'disposed', 'dispatch:two'], StreamProbe::$events);
+        self::assertSame([], $this->records('warning'), 'an abandoned stream is a settled one');
+    }
+
+    /**
+     * A `with*` clone rebuilds the wrapper around both of its closures,
+     * so a middleware that only touched a header hands on a response an
+     * adapter can still abandon.
+     */
+    public function test_a_middleware_header_clone_can_still_be_abandoned(): void
+    {
+        $response = $this->stream($this->kernel(globalMiddleware: [StreamHeaderMiddleware::class]), tag: 'alpha');
+
+        self::assertSame('yes', $response->getHeaderLine('X-Wrapped'));
+
+        self::abandon($response);
+
+        self::assertSame(['dispatch:alpha', 'disposed'], StreamProbe::$events);
+        self::assertTrue(StreamProbe::$scopes[0]->isDisposed());
+    }
+
+    /**
+     * The two settlements are alternatives, not a sequence: whichever
+     * one arrives first disposes, and the other finds nothing to do.
+     */
+    public function test_a_stream_is_disposed_once_however_many_settlements_reach_it(): void
+    {
+        $response = $this->stream($this->kernel(), tag: 'one');
+
+        self::emit($response);
+        self::abandon($response);
+        self::abandon($response);
+
+        self::assertSame(['dispatch:one', 'emitted:one', 'disposed'], StreamProbe::$events);
+    }
+
+    /**
+     * Global middleware can answer with a buffered response of its own
+     * instead of the wrapper dispatch produced. Nothing downstream will
+     * ever emit that wrapper, so Kernel settles it on this request
+     * rather than leaving it for the next one.
+     */
+    public function test_a_middleware_replacing_the_stream_releases_its_scope_before_handle_returns(): void
+    {
+        $kernel = $this->kernel(isPersistent: true, globalMiddleware: [StreamReplacingMiddleware::class]);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/stream', [
+            'X-Tag' => 'one',
+            StreamReplacingMiddleware::HEADER => 'yes',
+        ]));
+
+        self::assertSame(202, $response->getStatusCode());
+        self::assertNotInstanceOf(StreamableResponseInterface::class, $response);
+        self::assertSame(
+            ['dispatch:one', 'replaced', 'disposed'],
+            StreamProbe::$events,
+            'the replaced stream is released before handle() hands the buffered response back',
+        );
+        self::assertTrue(StreamProbe::$scopes[0]->isDisposed());
+        self::assertSame([], $this->records('warning'), 'a replaced stream is settled, not abandoned by omission');
+        self::assertSame(1, StreamProbe::collections());
+    }
+
+    /**
+     * A wrapper stays abandonable after the request that produced it has
+     * been replaced by later ones, and abandoning it then must settle
+     * only its own scope — never the lease the current request is
+     * holding.
+     */
+    public function test_abandoning_a_stream_from_an_earlier_request_leaves_the_current_one_pending(): void
+    {
+        $kernel = $this->kernel(isPersistent: true);
+
+        $first = $this->stream($kernel, tag: 'one');
+        $this->stream($kernel, tag: 'two');
+
+        self::abandon($first);
+        self::assertSame(['dispatch:one', 'disposed', 'dispatch:two'], StreamProbe::$events);
+        self::assertFalse(StreamProbe::$scopes[1]->isDisposed(), 'the current request keeps its own scope');
+
+        $this->stream($kernel, tag: 'three');
+
+        self::assertTrue(StreamProbe::$scopes[1]->isDisposed(), 'and the next request still releases it');
+        self::assertCount(2, $this->records('warning'));
+    }
+
+    /**
+     * The defensive path, for a wrapper an owner settled neither way: a
+     * caller that reads its status and drops it, an exception trace
+     * pinning it as a frame argument, an adapter that refuses a stream
+     * without abandoning it. The next request releases it before it has
+     * a scope at all.
+     */
+    public function test_a_stream_that_is_settled_neither_way_is_released_by_the_next_request(): void
     {
         $kernel = $this->kernel(isPersistent: true);
 
@@ -189,7 +309,7 @@ final class KernelStreamScopeTest extends TestCase
         self::assertSame(
             ['dispatch:one', 'disposed', 'dispatch:two'],
             StreamProbe::$events,
-            'the abandoned scope is released before the next request reaches a controller',
+            'the unsettled scope is released before the next request reaches a controller',
         );
         self::assertTrue(StreamProbe::$scopes[0]->isDisposed());
         self::assertFalse(StreamProbe::$scopes[1]->isDisposed());

@@ -7,6 +7,7 @@ namespace Kinetis\BrefAdapter\Tests;
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
+use Kinetis\Http\StreamedResponse;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -343,6 +344,38 @@ final class BrefLambdaAdapterTest extends TestCase
 
         self::assertFalse($payload['isBase64Encoded']);
         self::assertSame('café ☕', $payload['body']);
+    }
+
+    /**
+     * One invocation carries one payload, so a streamed response is
+     * abandoned before the refusal is raised: that releases the request
+     * scope the Kernel is holding open for the emitter, on this
+     * invocation, rather than leaving it live across the freeze until
+     * the next one.
+     */
+    public function test_a_streaming_response_is_abandoned_before_the_refusal_is_raised(): void
+    {
+        $emitted = false;
+        $released = 0;
+        $streamed = new StreamedResponse(
+            new Response(200),
+            static function () use (&$emitted): void {
+                $emitted = true;
+            },
+            static function () use (&$released): void {
+                $released++;
+            },
+        );
+
+        try {
+            BrefLambdaAdapter::handleEvent(self::event(), static fn (): Response|StreamedResponse => $streamed);
+            self::fail('a streamed response must be refused');
+        } catch (BrefAdapterException $e) {
+            self::assertStringContainsString('cannot emit a streaming response', $e->getMessage());
+        }
+
+        self::assertSame(1, $released, 'the refusal must settle the stream, not drop it');
+        self::assertFalse($emitted, 'this runtime cannot write the body, so it must not run the emitter');
     }
 
     /**

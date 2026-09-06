@@ -390,8 +390,13 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         // invocation → one response payload. Lambda response streaming
         // needs Function URLs with InvokeMode: RESPONSE_STREAM — a
         // different invocation model this next/response-polling adapter
-        // doesn't implement.
+        // doesn't implement. Abandoned before the refusal is raised: this
+        // invocation never writes the body, so the request scope the
+        // emitter would have resolved from is released here rather than
+        // staying live across the freeze until the next invocation.
         if ($response instanceof StreamableResponseInterface) {
+            $response->abandon();
+
             throw BrefAdapterException::streamingNotSupported();
         }
 

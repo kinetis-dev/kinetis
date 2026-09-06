@@ -626,9 +626,11 @@ target is request smuggling looking for somewhere to land.
   strictly one invocation → one response payload; a controller
   returning a `Kinetis\Runtime\StreamableResponseInterface` throws
   immediately rather than silently buffering or dropping the stream.
-  Real Lambda response streaming needs a Function URL configured with
-  `InvokeMode: RESPONSE_STREAM`, a different invocation model this
-  adapter doesn't implement.
+  The response is abandoned first, so the request scope behind it is
+  released on the invocation that created it rather than surviving the
+  container's freeze. Real Lambda response streaming needs a Function
+  URL configured with `InvokeMode: RESPONSE_STREAM`, a different
+  invocation model this adapter doesn't implement.
 - **ALB and REST API (payload format 1.0) events.** Only the HTTP API's
   format 2.0 shape is understood — see the event-validation paragraph
   above for exactly what's checked and how an unsupported or malformed
@@ -839,7 +841,9 @@ already left the process. See "Writing your own adapter" below.
   used here: their output would be silently redirected the same way,
   with nothing erroring anywhere. A controller returning a
   `Kinetis\Runtime\StreamableResponseInterface` gets a real `501`
-  instead, after the handler runs — never buffered or dropped silently.
+  instead, after the handler runs — never buffered or dropped silently,
+  and abandoned before the refusal goes back, so the request scope
+  behind it is released on that request.
   RoadRunner's own `HttpWorker::respondStream()` is a genuinely
   different, lower-level generator-based API than `PSR7Worker::respond()`,
   and bridging one onto the other needs its own design pass.
@@ -907,9 +911,13 @@ the status and headers from the response itself, then invokes
 `getEmitter()` — that closure writes body bytes and nothing else. The
 request's `RequestScope` is still alive while it runs, so a controller's
 streaming code resolves from its own container, and the scope is released
-as soon as the emitter returns. An adapter that can't stream answers with
-its own response and never invokes the emitter; the Kernel releases that
-scope at the start of the next request.
+as soon as the emitter returns. An adapter that can't stream calls
+`abandon()` on the response and answers with its own instead: that
+releases the same scope, on the same request, without writing a byte of
+the body. Settling one of those two ways is the whole contract — the
+Kernel's own release at the start of the next request is the defensive
+path for a response that reached neither, and it logs a warning naming
+the method and path when it fires.
 
 An emitter that throws is the one failure an adapter contains rather than
 lets propagate. By then the status, the headers and some number of body

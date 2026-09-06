@@ -18,18 +18,36 @@ use Psr\Http\Message\StreamInterface;
  * package's internals. Implements Kinetis\Runtime\StreamableResponseInterface
  * so SuperglobalsBridge/adapters can recognize it without Runtime needing to
  * know this concrete Http-layer class exists.
+ *
+ * $onAbandon is the other half of that interface's settlement contract:
+ * what to release when the body will never be written. Kernel puts the
+ * release of the request scope its emitter resolves from there; a
+ * response that holds nothing leaves it null. Every `with*` clone carries
+ * both closures forward, so a middleware editing a header or a status
+ * hands on a response that can still be emitted or abandoned.
  */
 final class StreamedResponse implements ResponseInterface, StreamableResponseInterface
 {
     public function __construct(
         private readonly ResponseInterface $inner,
         private readonly Closure $emitter,
+        private readonly ?Closure $onAbandon = null,
     ) {}
 
     #[\Override]
     public function getEmitter(): Closure
     {
         return $this->emitter;
+    }
+
+    #[\Override]
+    public function abandon(): void
+    {
+        if ($this->onAbandon === null) {
+            return;
+        }
+
+        ($this->onAbandon)();
     }
 
     #[\Override]
@@ -41,7 +59,7 @@ final class StreamedResponse implements ResponseInterface, StreamableResponseInt
     #[\Override]
     public function withProtocolVersion(string $version): static
     {
-        return new self($this->inner->withProtocolVersion($version), $this->emitter);
+        return new self($this->inner->withProtocolVersion($version), $this->emitter, $this->onAbandon);
     }
 
     #[\Override]
@@ -71,19 +89,19 @@ final class StreamedResponse implements ResponseInterface, StreamableResponseInt
     #[\Override]
     public function withHeader(string $name, $value): static
     {
-        return new self($this->inner->withHeader($name, $value), $this->emitter);
+        return new self($this->inner->withHeader($name, $value), $this->emitter, $this->onAbandon);
     }
 
     #[\Override]
     public function withAddedHeader(string $name, $value): static
     {
-        return new self($this->inner->withAddedHeader($name, $value), $this->emitter);
+        return new self($this->inner->withAddedHeader($name, $value), $this->emitter, $this->onAbandon);
     }
 
     #[\Override]
     public function withoutHeader(string $name): static
     {
-        return new self($this->inner->withoutHeader($name), $this->emitter);
+        return new self($this->inner->withoutHeader($name), $this->emitter, $this->onAbandon);
     }
 
     #[\Override]
@@ -95,7 +113,7 @@ final class StreamedResponse implements ResponseInterface, StreamableResponseInt
     #[\Override]
     public function withBody(StreamInterface $body): static
     {
-        return new self($this->inner->withBody($body), $this->emitter);
+        return new self($this->inner->withBody($body), $this->emitter, $this->onAbandon);
     }
 
     #[\Override]
@@ -107,7 +125,7 @@ final class StreamedResponse implements ResponseInterface, StreamableResponseInt
     #[\Override]
     public function withStatus(int $code, string $reasonPhrase = ''): static
     {
-        return new self($this->inner->withStatus($code, $reasonPhrase), $this->emitter);
+        return new self($this->inner->withStatus($code, $reasonPhrase), $this->emitter, $this->onAbandon);
     }
 
     #[\Override]

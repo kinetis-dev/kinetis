@@ -36,8 +36,9 @@ use Throwable;
  *
  * Owns the per-request lifecycle: a fresh RequestScope is created before
  * routing/dispatch and disposed once the response is settled — before
- * `handle()` returns for an ordinary buffered response, and after body
- * emission for a StreamableResponseInterface, see `deferDisposal()`.
+ * `handle()` returns for an ordinary buffered response, and on emission
+ * or abandonment for a StreamableResponseInterface, see
+ * `deferDisposal()`.
  * `/openapi.json` and `/openapi` are ordinary routes on a discovered
  * controller ({@see \Kinetis\Http\OpenApi\DocumentationController}), not
  * something this class intercepts — all it still owns is the access
@@ -73,9 +74,10 @@ use Throwable;
  *
  * `$pendingStream` is the one piece of mutable state on this class: the
  * lease for the streamed response this Kernel handed back most recently,
- * held only until that stream is emitted or the next request arrives.
- * A Kernel belongs to one worker thread — `bootstrap.php` runs per
- * thread — so this is per-thread state, not shared.
+ * held only until that stream is settled — emitted, abandoned, or found
+ * still pending by the next request. A Kernel belongs to one worker
+ * thread — `bootstrap.php` runs per thread — so this is per-thread state,
+ * not shared.
  */
 final class Kernel
 {
@@ -141,9 +143,20 @@ final class Kernel
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $this->releaseAbandonedStream();
+        $this->releaseUnsettledStream();
 
-        return $this->globalPipeline->handle($request);
+        $response = $this->globalPipeline->handle($request);
+
+        // Global middleware receives whatever dispatchCore produced and
+        // may answer with a buffered response of its own instead. That
+        // response is the final one, so nothing will ever emit the
+        // wrapper it displaced: its lease is settled here, while this
+        // request still owns it.
+        if (!$response instanceof StreamableResponseInterface && $this->pendingStream !== null) {
+            $this->abandonStream($this->pendingStream);
+        }
+
+        return $response;
     }
 
     /**
@@ -251,18 +264,19 @@ final class Kernel
     }
 
     /**
-     * Keeps $scope alive through body emission, and returns a
-     * StreamedResponse whose emitter runs the original one and then
-     * releases the scope.
+     * Keeps $scope alive past dispatch, and returns a StreamedResponse
+     * that releases it when its body is emitted or the response is
+     * abandoned.
      *
      * A streamed body is written after `handle()` has returned, by an
      * adapter, against code that resolves from this request's own
      * container — so disposing before returning would tear the scope out
      * from under the emitter. Ownership of the release sits in one
-     * {@see StreamScopeLease}, which the wrapper's emitter closure
-     * carries: every `with*` clone a middleware makes rebuilds the
-     * wrapper around that same closure, so a header or status edit after
-     * dispatch keeps the same lease rather than orphaning it.
+     * {@see StreamScopeLease}, which both of the wrapper's closures
+     * carry: the emitter, and the `abandon()` an owner that will never
+     * write the body calls instead. Every `with*` clone a middleware
+     * makes rebuilds the wrapper around both, so a header or status edit
+     * after dispatch keeps the same lease rather than orphaning it.
      *
      * Status, headers, protocol version and reason phrase all come from
      * $response, which the wrapper composes unchanged.
@@ -276,34 +290,41 @@ final class Kernel
         $this->pendingStream = $lease;
         $emitter = $response->getEmitter();
 
-        return new StreamedResponse($response, function () use ($emitter, $lease): void {
-            try {
-                $emitter();
-            } finally {
-                // release() never throws, so an emitter failure stays
-                // the one that propagates.
-                $this->releaseStream($lease);
-            }
-        });
+        return new StreamedResponse(
+            $response,
+            function () use ($emitter, $lease): void {
+                try {
+                    $emitter();
+                } finally {
+                    // release() never throws, so an emitter failure stays
+                    // the one that propagates.
+                    $this->releaseStream($lease);
+                }
+            },
+            function () use ($lease): void {
+                $this->abandonStream($lease);
+            },
+        );
     }
 
     /**
-     * Releases the lease of a streamed response this Kernel handed back
-     * and nothing ever emitted.
+     * The defensive path, for a streamed response an owner neither
+     * emitted nor abandoned.
      *
      * The wrapper is returned to the caller, so anything up the stack can
-     * hold the last reference to it past the request: an adapter that
-     * refuses to stream, a middleware that replaces it, a direct caller
+     * hold the last reference to it past the request: a direct caller
      * that reads its status and drops it, an exception trace pinning it
-     * as a frame argument. Every one of those leaves a live RequestScope
-     * from a finished request, which is exactly what must not reach the
-     * next one in a persistent worker. Kernel is the only owner that
-     * knows the next request has started, so it releases at the top of
-     * `handle()` — ahead of the global pipeline, which can answer a
-     * request outright (a CORS preflight, a rejected body, a rate limit)
-     * without ever reaching `dispatchCore()`.
+     * as a frame argument, an adapter that refuses a stream it cannot
+     * emit without abandoning it first. Every one of those leaves a live
+     * RequestScope from a finished request, which is exactly what must
+     * not reach the next one in a persistent worker. Kernel is the only
+     * owner that knows the next request has started, so it releases at
+     * the top of `handle()` — ahead of the global pipeline, which can
+     * answer a request outright (a CORS preflight, a rejected body, a
+     * rate limit) without ever reaching `dispatchCore()`. The warning
+     * names the request whose scope was carried this far.
      */
-    private function releaseAbandonedStream(): void
+    private function releaseUnsettledStream(): void
     {
         $lease = $this->pendingStream;
         $this->pendingStream = null;
@@ -315,12 +336,30 @@ final class Kernel
         SafeLogger::logFrom(
             fn (): LoggerInterface => $this->app->get(LoggerInterface::class),
             LogLevel::WARNING,
-            'Streamed response for {method} {path} was never emitted; releasing its request scope.',
+            'Streamed response for {method} {path} was neither emitted nor abandoned; releasing its request scope.',
             [
                 'method' => $lease->method,
                 'path' => $lease->path,
             ],
         );
+
+        $this->releaseStream($lease);
+    }
+
+    /**
+     * Settles one lease for a body that will never be written: what the
+     * `abandon()` on every wrapper `deferDisposal()` returns does, and
+     * what `handle()` does for a stream the global pipeline replaced.
+     *
+     * The identity check is what keeps an owner abandoning a wrapper
+     * from an earlier request from dropping the lease a later one is
+     * still holding.
+     */
+    private function abandonStream(StreamScopeLease $lease): void
+    {
+        if ($this->pendingStream === $lease) {
+            $this->pendingStream = null;
+        }
 
         $this->releaseStream($lease);
     }

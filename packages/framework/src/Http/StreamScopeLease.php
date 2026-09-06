@@ -13,21 +13,27 @@ use Throwable;
 
 /**
  * The single owner of one streamed response's RequestScope, released
- * exactly once by whichever of Kernel's paths reaches it first.
+ * exactly once by whichever of Kernel's paths reaches it first: the
+ * wrapper's emitter finishing, the wrapper being abandoned, or the next
+ * request finding this one still pending.
  *
  * release() contains and logs a disposal failure instead of raising it:
- * by the time a streamed response's scope is disposed its status,
- * headers and some of its body are already on the wire, so there is no
- * response left to turn into the generic 500 a buffered response's
- * disposal failure legitimately becomes ({@see Kernel::disposeScope()}).
- * A failure raised by the emitter itself stays primary.
+ * every path that reaches it has already settled what the client gets —
+ * an emitted stream's status, headers and part of its body are on the
+ * wire, and an abandoned one's replacement is the adapter's or the
+ * middleware's own response — so there is nothing left to turn into the
+ * generic 500 a buffered response's disposal failure legitimately
+ * becomes ({@see Kernel::disposeScope()}). A failure raised by the
+ * emitter itself stays primary.
  *
  * The destructor is prompt cleanup for a wrapper that is simply dropped,
  * not the isolation guarantee — a fatal bailout skips it, and an
  * exception trace or a retaining logger can hold the last reference past
- * the request that created it. Isolation in a persistent worker comes
- * from Kernel releasing any still-pending lease at the top of
- * `handle()`, before the next request runs anything of its own.
+ * the request that created it. An owner that knows the body will never
+ * be written says so instead, through
+ * {@see \Kinetis\Runtime\StreamableResponseInterface::abandon()}; what
+ * neither of those covers, Kernel releases at the top of the next
+ * `handle()`, before that request runs anything of its own.
  *
  * @internal
  */
