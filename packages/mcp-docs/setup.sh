@@ -123,19 +123,12 @@ echo "OK - the server responded correctly."
 echo
 echo "Registering \"${SERVER_NAME}\" with ${CLIENT}..."
 
-# The registered command runs on every session start, in every project,
-# whether or not that session calls into it. So it checks for a newer
-# release at most once a day, from a timestamp inside the install
-# directory: a composer update costs a couple of seconds even when
-# nothing has changed. The check writes to stderr, since everything on
-# stdout past this point has to be a JSON-RPC frame; a failed check (no
-# network, say) leaves the timestamp alone and starts the installed
-# server anyway, so the next spawn retries rather than waiting out the
-# rest of the window.
-#
-# shellcheck disable=SC2016 # single-quoted on purpose: $now/$last are
-# for the container's own sh, and must not expand here.
-SERVER_COMMAND=("${DOCKER_RUN[@]}" -i composer:2 sh -c 'now=$(date +%s); last=$(cat .last-update-check 2>/dev/null || echo 0); if [ $((now - last)) -gt 86400 ]; then composer update kinetis/mcp-docs --with-all-dependencies --no-interaction --prefer-dist 1>&2 && echo "$now" > .last-update-check; fi; exec php vendor/bin/kinetis-mcp-docs')
+# start.sh, out of the package just installed, is what the client
+# spawns: it runs the once-a-day update check - locked, since every
+# session shares this one directory - and then hands stdin and stdout
+# to the server. Running it from vendor/ rather than from a copy means
+# that same update carries changes to it too.
+SERVER_COMMAND=("${DOCKER_RUN[@]}" -i composer:2 sh vendor/kinetis/mcp-docs/start.sh)
 
 if [ "$CLIENT" = "claude" ]; then
     claude mcp remove "$SERVER_NAME" -s user >/dev/null 2>&1 || true

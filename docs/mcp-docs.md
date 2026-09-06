@@ -42,11 +42,14 @@ The target directory must be empty or already carry the marker file the
 script writes into the installs it owns; a directory holding anything
 else is refused rather than reused.
 
-The registered command checks for a newer release before it starts, at
-most once a day. A spawn inside that window starts immediately, a failed
+The registered command is the package's own `start.sh`: it looks for a
+newer release, at most once a day, and then hands stdin and stdout to
+the server. A spawn inside that window starts immediately, a failed
 check still starts the installed server, and only a successful update
 moves the timestamp, so the next spawn retries rather than waiting out
-the rest of the window.
+the rest of the window. The check and any update it runs hold an
+exclusive lock on the install directory, so a spawn arriving while
+another one is updating waits for it and starts from the finished tree.
 
 ## Running it directly
 

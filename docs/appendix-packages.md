@@ -220,7 +220,7 @@ surface without it.
 
 ## `packages/mcp-docs` (`kinetis/mcp-docs`)
 
-Separate Composer package, depending on no Kinetis package at all — the standalone MCP server for this documentation site, described in full in {doc}`mcp-docs`. Namespace `Kinetis\McpDocs`, one binary (`bin/kinetis-mcp-docs`), and `setup.sh`, which installs and registers it with Claude Code or Codex.
+Separate Composer package, depending on no Kinetis package at all — the standalone MCP server for this documentation site, described in full in {doc}`mcp-docs`. Namespace `Kinetis\McpDocs`, one binary (`bin/kinetis-mcp-docs`), `setup.sh`, which installs and registers it with Claude Code or Codex, and `start.sh`, the command that registration spawns.
 
 - `DocsCatalogue` — the fixed list of pages this server serves, as `DocsPage` entries, plus `find()` for the URI a `resources/read` names. Three constants fix the resource URI prefix, the raw source base URL, and the `text/markdown` type; nothing about any of them is configurable. `tests/DocsCatalogueTest.php` pairs the list against the repository's own `docs/*.md`, so a page added without an entry, or an entry naming a page that no longer exists, fails the suite.
 - `DocsPage` — one entry: `slug`, `name`, `description`, and the `uri()`/`sourceUrl()` both derived from the slug.
