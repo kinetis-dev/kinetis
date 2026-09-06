@@ -86,6 +86,20 @@ A malformed line is `-32700`, a malformed envelope or parameter is
 that could not be read is `-32603`, with the URL and the real reason
 going to stderr rather than into the response.
 
+`params` must be an object whenever it is present. A JSON array is a
+params shape JSON-RPC itself allows, but every method here takes named
+parameters, so an array, a scalar or an explicit `null` is `-32602`.
+
+Every code above answers a *request*. A notification — `jsonrpc`, a
+string `method`, and no `id` at all — draws no line back under any of
+them, including for an unknown method or a `params` shape a request
+would be refused for: JSON-RPC 2.0 leaves its sender no response to
+read an error from, and a frame a client has no outstanding request to
+match is one a strict client can desynchronize on. A message that fails
+the envelope check is not a notification — a missing `id` says nothing
+in an envelope that could not be read — and still answers with its
+`-32600` or `-32700` under a null id.
+
 ## Resources
 
 Each page is one resource, at `kinetis://docs/<slug>`, where the slug is

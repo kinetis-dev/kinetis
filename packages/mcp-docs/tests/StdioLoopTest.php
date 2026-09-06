@@ -9,6 +9,7 @@ use Kinetis\McpDocs\Exception\StdioWriteException;
 use Kinetis\McpDocs\McpDocsServer;
 use Kinetis\McpDocs\StdioLoop;
 use Kinetis\McpDocs\Tests\Fixtures\WriteControllableStreamWrapper;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
@@ -41,6 +42,62 @@ final class StdioLoopTest extends TestCase
 
         self::assertCount(1, $lines);
         self::assertSame(1, json_decode($lines[0], true)['id']);
+    }
+
+    public static function unansweredNotificationProvider(): iterable
+    {
+        yield 'array params' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":[1,2]}'];
+        yield 'empty array params' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":[]}'];
+        yield 'string params' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":"nope"}'];
+        yield 'number params' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":7}'];
+        yield 'boolean params' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":true}'];
+        yield 'null params' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":null}'];
+        yield 'an unknown method' => ['{"jsonrpc":"2.0","method":"notifications/cancelled"}'];
+        yield 'an unknown method with array params' => ['{"jsonrpc":"2.0","method":"notifications/cancelled","params":[]}'];
+    }
+
+    #[DataProvider('unansweredNotificationProvider')]
+    public function test_a_notification_this_server_cannot_act_on_produces_no_line_either(string $raw): void
+    {
+        $lines = $this->drive([$raw, '{"jsonrpc":"2.0","id":1,"method":"ping"}']);
+
+        self::assertCount(1, $lines);
+        self::assertSame(1, json_decode($lines[0], true)['id']);
+    }
+
+    public static function requestWithUnusableParamsProvider(): iterable
+    {
+        yield 'array params' => ['{"jsonrpc":"2.0","id":1,"method":"ping","params":[1,2]}'];
+        yield 'empty array params' => ['{"jsonrpc":"2.0","id":1,"method":"ping","params":[]}'];
+        yield 'string params' => ['{"jsonrpc":"2.0","id":1,"method":"ping","params":"nope"}'];
+        yield 'number params' => ['{"jsonrpc":"2.0","id":1,"method":"ping","params":7}'];
+        yield 'boolean params' => ['{"jsonrpc":"2.0","id":1,"method":"ping","params":true}'];
+        yield 'null params' => ['{"jsonrpc":"2.0","id":1,"method":"ping","params":null}'];
+    }
+
+    #[DataProvider('requestWithUnusableParamsProvider')]
+    public function test_the_same_params_on_a_request_are_answered_with_invalid_params(string $raw): void
+    {
+        $lines = $this->drive([$raw]);
+
+        self::assertCount(1, $lines);
+
+        $response = json_decode($lines[0], true);
+
+        self::assertSame(-32602, $response['error']['code']);
+        self::assertSame(1, $response['id']);
+    }
+
+    public function test_a_message_with_no_id_whose_envelope_is_broken_is_still_answered(): void
+    {
+        $lines = $this->drive(['{"jsonrpc":"2.0","method":42,"params":[]}']);
+
+        self::assertCount(1, $lines);
+
+        $response = json_decode($lines[0], true);
+
+        self::assertSame(-32600, $response['error']['code']);
+        self::assertNull($response['id']);
     }
 
     public function test_blank_lines_between_messages_are_skipped(): void

@@ -15,7 +15,9 @@ use stdClass;
  *
  * `$params` stays a stdClass rather than being flattened to an array:
  * `{}` and `[]` are different values on the wire, and PHP's associative
- * decode mode spells both `[]`.
+ * decode mode spells both `[]`. A notification whose `params` are some
+ * other shape arrives with `$params` null — it is never dispatched, so
+ * the value nothing could have read goes no further.
  */
 final readonly class JsonRpcRequest
 {

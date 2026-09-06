@@ -114,6 +114,64 @@ final class JsonRpcEnvelopeTest extends TestCase
         self::assertNull($decoded['request']->params);
     }
 
+    public static function notificationWithMalformedParamsProvider(): iterable
+    {
+        yield 'an array' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":[1,2]}'];
+        yield 'an empty array' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":[]}'];
+        yield 'a string' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":"nope"}'];
+        yield 'a number' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":7}'];
+        yield 'a boolean' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":true}'];
+        yield 'an explicit null' => ['{"jsonrpc":"2.0","method":"notifications/initialized","params":null}'];
+    }
+
+    #[DataProvider('notificationWithMalformedParamsProvider')]
+    public function test_params_this_server_cannot_use_still_decode_a_notification_as_one(string $raw): void
+    {
+        $decoded = JsonRpcEnvelope::decode($raw);
+
+        self::assertArrayHasKey('request', $decoded);
+        self::assertFalse($decoded['request']->isRequest);
+        self::assertSame('notifications/initialized', $decoded['request']->method);
+        self::assertNull($decoded['request']->id);
+        self::assertNull($decoded['request']->params);
+    }
+
+    public function test_a_notification_naming_an_unknown_method_decodes_rather_than_erroring(): void
+    {
+        $decoded = JsonRpcEnvelope::decode('{"jsonrpc":"2.0","method":"notifications/cancelled","params":[]}');
+
+        self::assertArrayHasKey('request', $decoded);
+        self::assertFalse($decoded['request']->isRequest);
+        self::assertSame('notifications/cancelled', $decoded['request']->method);
+    }
+
+    public function test_a_notification_keeps_params_it_carries_as_an_object(): void
+    {
+        $decoded = JsonRpcEnvelope::decode('{"jsonrpc":"2.0","method":"notifications/initialized","params":{"a":1}}');
+
+        self::assertArrayHasKey('request', $decoded);
+        self::assertFalse($decoded['request']->isRequest);
+        self::assertSame(1, $decoded['request']->params?->a);
+    }
+
+    public function test_a_present_null_id_with_unusable_params_is_still_invalid_params(): void
+    {
+        $decoded = JsonRpcEnvelope::decode('{"jsonrpc":"2.0","id":null,"method":"ping","params":[]}');
+
+        self::assertArrayHasKey('errorResponse', $decoded);
+        self::assertSame(-32602, $decoded['errorResponse']['error']['code']);
+        self::assertNull($decoded['errorResponse']['id']);
+    }
+
+    public function test_an_envelope_that_cannot_be_read_is_answered_even_without_an_id(): void
+    {
+        $decoded = JsonRpcEnvelope::decode('{"jsonrpc":"2.0","method":42,"params":[]}');
+
+        self::assertArrayHasKey('errorResponse', $decoded);
+        self::assertSame(-32600, $decoded['errorResponse']['error']['code']);
+        self::assertNull($decoded['errorResponse']['id']);
+    }
+
     public function test_an_explicit_null_id_is_a_request_rather_than_a_notification(): void
     {
         $decoded = JsonRpcEnvelope::decode('{"jsonrpc":"2.0","id":null,"method":"ping"}');

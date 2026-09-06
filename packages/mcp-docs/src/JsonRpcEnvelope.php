@@ -57,11 +57,24 @@ final class JsonRpcEnvelope
         }
 
         // Present-but-null is not the same as absent: JSON-RPC 2.0
-        // allows `params` to be omitted, never to be null.
+        // allows `params` to be omitted, never to be null. A JSON array
+        // is a params shape JSON-RPC itself allows, but every method
+        // here takes named parameters, so it is refused alongside a
+        // scalar.
         $hasParams = property_exists($decoded, 'params');
         $params = $hasParams ? $decoded->params : null;
 
         if ($hasParams && !$params instanceof stdClass) {
+            // A notification is answered with nothing, and JSON-RPC 2.0
+            // holds that rule for a call that would have failed on its
+            // params too. The envelope is intact, so the message stays
+            // the notification it is and reaches McpDocsServer to be
+            // dropped undispatched, rather than drawing a -32602 its
+            // sender has no response to read.
+            if (!$hasId) {
+                return ['request' => new JsonRpcRequest($decoded->method, false, null, null)];
+            }
+
             return ['errorResponse' => self::errorEnvelope(
                 $id,
                 JsonRpcException::invalidParams('The "params" member must be an object.'),
