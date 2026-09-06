@@ -27,6 +27,8 @@ same way as any other DTO in Kinetis:
 
 ```{code-block} php
 use Kinetis\Queue\Job;
+use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mime\Email;
 
 final readonly class SendWelcomeEmail implements Job
 {
@@ -35,9 +37,13 @@ final readonly class SendWelcomeEmail implements Job
         public string $name,
     ) {}
 
-    public function handle(Mailer $mailer): void
+    public function handle(MailerInterface $mailer): void
     {
-        $mailer->send($this->email, "Welcome, {$this->name}!");
+        $mailer->send(new Email()
+            ->from('noreply@example.com')
+            ->to($this->email)
+            ->subject("Welcome, {$this->name}!")
+            ->text('Thanks for signing up.'));
     }
 }
 ```
@@ -733,6 +739,8 @@ has no business in a log aggregator. Mark those constructor parameters
 ```{code-block} php
 use Kinetis\Queue\Attributes\Sensitive;
 use Kinetis\Queue\Job;
+use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mime\Email;
 
 final readonly class SendPasswordReset implements Job
 {
@@ -744,9 +752,13 @@ final readonly class SendPasswordReset implements Job
         public string $resetToken,
     ) {}
 
-    public function handle(Mailer $mailer, UrlSigner $signer): void
+    public function handle(MailerInterface $mailer, UrlSigner $signer): void
     {
-        $mailer->send($this->email, $signer->resetLink($this->resetToken));
+        $mailer->send(new Email()
+            ->from('noreply@example.com')
+            ->to($this->email)
+            ->subject('Reset your password')
+            ->text($signer->resetLink($this->resetToken)));
     }
 }
 ```

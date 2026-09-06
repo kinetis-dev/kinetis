@@ -1,6 +1,6 @@
 {
     "name": "kinetis/mailer",
-    "description": "Non-blocking mail sending for Kinetis — Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
+    "description": "Mail sending for Kinetis — Symfony\\Component\\Mailer behind a closed, Kinetis-owned transport registry and DSN policy, with API transports running over kinetis/revolt-http-client and one send at a time per mailer.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -12,13 +12,31 @@
         "php": "^8.4",
         "kinetis/framework": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
-        "symfony/mailer": "^8.1.2"
+        "amphp/sync": "^2.3",
+        "symfony/http-client-contracts": "^3.7.1",
+        "symfony/mailer": "^8.1.2",
+        "symfony/mime": "^8.1.4"
     },
     "require-dev": {
+        "amphp/amp": "^3.1",
+        "amphp/http-client": "^5.3.6",
         "infection/infection": "^0.35.0",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^12.5.33",
+        "symfony/amazon-mailer": "^8.1.5",
+        "symfony/google-mailer": "^8.1.0",
+        "symfony/http-client": "^8.1.4",
+        "symfony/mailgun-mailer": "^8.1.6",
+        "symfony/postmark-mailer": "^8.1.6",
+        "symfony/sendgrid-mailer": "^8.1.6",
         "vimeo/psalm": "^6.16.1"
+    },
+    "suggest": {
+        "symfony/sendgrid-mailer": "Needed by the sendgrid+api, sendgrid, sendgrid+smtp and sendgrid+smtps MAILER_DSN schemes.",
+        "symfony/amazon-mailer": "Needed by the ses+api, ses+https, ses, ses+smtp and ses+smtps MAILER_DSN schemes.",
+        "symfony/mailgun-mailer": "Needed by the mailgun+api, mailgun+https and mailgun MAILER_DSN schemes.",
+        "symfony/postmark-mailer": "Needed by the postmark+api MAILER_DSN scheme.",
+        "symfony/google-mailer": "Needed by the gmail, gmail+smtp and gmail+smtps MAILER_DSN schemes."
     },
     "autoload": {
         "psr-4": {

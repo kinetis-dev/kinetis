@@ -89,8 +89,11 @@ disguised PHPUnit test.
   rollback/`rollbackDangling()`; `kinetis/cache-redis`'s
   `RedisSimpleCache`: the full PSR-16 surface, TTL expiry. Neither class
   lives in core — see {doc}`persistence` and {doc}`appendix-packages`.
-- **`mailer`** (Mailpit) — `MailerFactory`: a real SMTP send, read back
-  through the mail server's own API.
+- **`mailer`** (Mailpit) — `MailerFactory`: the same plaintext loopback
+  DSN refused without `MAILER_ALLOW_INSECURE_LOCAL=true`, refused again
+  with the flag set outside `APP_ENV=development`, and then a real SMTP
+  send under the explicit local profile, read back through the mail
+  server's own API.
 - **`search-opensearch`** (two real OpenSearch containers, one with the
   security plugin disabled and one enabled with a self-signed
   certificate) — `OpenSearchClientFactory`: index/search/delete against

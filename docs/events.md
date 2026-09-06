@@ -24,15 +24,21 @@ own single parameter type:
 
 ```{code-block} php
 use Kinetis\Events\Listener;
+use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mime\Email;
 
 final readonly class SendOrderConfirmation
 {
-    public function __construct(private Mailer $mailer) {}
+    public function __construct(private MailerInterface $mailer) {}
 
     #[Listener]
     public function onOrderPlaced(OrderPlaced $event): void
     {
-        $this->mailer->send($event->customerEmail, 'Order confirmed');
+        $this->mailer->send(new Email()
+            ->from('orders@example.com')
+            ->to($event->customerEmail)
+            ->subject('Order confirmed')
+            ->text('Thanks for your order.'));
     }
 }
 ```
@@ -138,15 +144,21 @@ directly:
 ```{code-block} php
 use Kinetis\Events\Listener;
 use Kinetis\Events\ShouldQueue;
+use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mime\Email;
 
 final readonly class SendOrderConfirmation implements ShouldQueue
 {
-    public function __construct(private Mailer $mailer) {}
+    public function __construct(private MailerInterface $mailer) {}
 
     #[Listener]
     public function onOrderPlaced(OrderPlaced $event): void
     {
-        $this->mailer->send($event->customerEmail, 'Order confirmed');
+        $this->mailer->send(new Email()
+            ->from('orders@example.com')
+            ->to($event->customerEmail)
+            ->subject('Order confirmed')
+            ->text('Thanks for your order.'));
     }
 }
 ```

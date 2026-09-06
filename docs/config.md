@@ -379,7 +379,15 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
+| `MAILER_DSN` | *(required)* | Transport DSN (`smtps://...`, `sendgrid+api://...`, ...). Unset or blank binds nothing. |
+| `MAILER_ALLOW_INSECURE_LOCAL` | `false` | Admit one direct loopback `smtp://` or `smtps://` leaf without authentication, and for `smtp://` without required TLS. Valid only with `APP_ENV=development`, and only for a host in `127.0.0.0/8`, `localhost` or `::1`. Selecting it anywhere else fails the boot. |
+
+`kinetis/mailer` parses and judges the whole DSN before Symfony sees any
+of it, and builds only the schemes in its own supported registry:
+production SMTP has to be encrypted, authenticated and peer-verified, and
+each scheme's query options are exactly what its official factory reads.
+See {doc}`mailer` for the registry, the grammar, the caps and the option
+table.
 
 ### Search (`kinetis/search-opensearch`) — all scoped
 
