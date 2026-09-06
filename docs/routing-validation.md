@@ -618,10 +618,14 @@ final readonly class PagesController
         return HtmlResponse::create('<h1>Welcome</h1>');
     }
 
-    #[Get('/avatars/{id}')]
-    public function avatar(int $id): ResponseInterface
+    #[Get('/reports/{id}.csv')]
+    public function report(int $id): ResponseInterface
     {
-        return FileResponse::fromPath("/storage/avatars/{$id}.png");
+        return FileResponse::fromContents(
+            "id,total\n{$id},42\n",
+            'text/csv',
+            downloadFilename: "report-{$id}.csv",
+        );
     }
 
     #[Get('/old-url')]
@@ -642,12 +646,10 @@ final readonly class PagesController
   `Content-Type: text/html`.
 - `PlainTextResponse::create(string $text, int $status = 200)` sets
   `Content-Type: text/plain`.
-- `FileResponse::fromPath(string $path, int $status = 200, ?string $contentType = null, ?string $downloadFilename = null)`
-  reads a file from disk and detects its content type automatically when
-  `$contentType` is omitted. `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
-  does the same for data you already have in memory — a generated image
-  or PDF, for instance. Either one adds a `Content-Disposition: attachment`
-  header when `$downloadFilename` is given — see below.
+- `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
+  builds a response around bytes you already hold — a generated CSV,
+  image or PDF — and adds a `Content-Disposition: attachment` header when
+  `$downloadFilename` is given, see below.
 - `RedirectResponse::to(string $url, int $status = 302)` sets a `Location`
   header.
 - `ErrorResponse::create(int $status, string $message, array $headers = [])` builds
@@ -655,6 +657,22 @@ final readonly class PagesController
   404/405/500 responses already use — a real 405 (a path matches, but not
   this method) carries a real RFC 9110 `Allow` header listing every
   method the path *does* support, via this same `$headers` parameter.
+
+No response builder takes a filesystem path. Reading one synchronously
+holds the worker thread for the length of the I/O, and core carries no
+asynchronous filesystem client.
+
+- Files the deployment owns — CSS, images, downloads shipped with the
+  release — are served by the web server in front of the application
+  (Caddy's `file_server`, nginx's `root`), which answers them without
+  entering a worker at all.
+- Files the application owns are read through
+  [kinetis/storage](storage.md), whose local adapter suspends the Fiber
+  rather than blocking, and the bytes it returns are passed to
+  `fromContents()`.
+- A body too large to hold in memory is written incrementally by a route
+  returning a `Kinetis\Http\StreamedResponse`, whose emitter writes and
+  flushes each chunk itself.
 
 ### Download filenames are treated as untrusted
 

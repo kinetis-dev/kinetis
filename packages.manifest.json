@@ -37,7 +37,6 @@
                 "nikic/php-parser": "^5.8.0"
             },
             "require": {
-                "ext-fileinfo": "*",
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
                 "psr/container": "^2.0.2",
