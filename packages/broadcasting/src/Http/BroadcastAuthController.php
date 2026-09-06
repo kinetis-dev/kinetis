@@ -64,7 +64,15 @@ final readonly class BroadcastAuthController
             throw BroadcastingException::authNotSupported($this->broadcaster::class);
         }
 
-        $data = $this->formData($request);
+        // RequestBodyMiddleware is the one place a body becomes fields:
+        // it bounds the bytes and, for the form media types alone,
+        // publishes them as getParsedBody(). Anything it did not parse —
+        // no body at all, form-looking bytes under an unrelated content
+        // type — reaches here with nothing to read and meets the
+        // required-fields 422 below.
+        $parsed = $request->getParsedBody();
+        $data = is_array($parsed) ? $parsed : [];
+
         $socketId = $data['socket_id'] ?? null;
         $channelName = $data['channel_name'] ?? null;
 
@@ -131,36 +139,5 @@ final readonly class BroadcastAuthController
         }
 
         return ['auth' => $this->broadcaster->authorizeChannel($socketId, $channelName)];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function formData(ServerRequestInterface $request): array
-    {
-        $parsed = $request->getParsedBody();
-
-        if (is_array($parsed) && $parsed !== []) {
-            return $parsed;
-        }
-
-        // The body reaching here is bounded and complete:
-        // RequestBodyMiddleware stages it whole against the byte ceiling
-        // and parses the form media types into getParsedBody() before
-        // any handler runs, so an oversized request is a 413 that never
-        // arrives here and this branch sees only a body that carried no
-        // fields. getContents() rather than a string cast, because the
-        // staged stream is what carries the accepted bytes.
-        parse_str($request->getBody()->getContents(), $fallback);
-
-        $result = [];
-
-        foreach ($fallback as $key => $value) {
-            if (is_string($key)) {
-                $result[$key] = $value;
-            }
-        }
-
-        return $result;
     }
 }

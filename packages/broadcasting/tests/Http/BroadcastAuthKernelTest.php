@@ -16,24 +16,27 @@ use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\Router;
 use Kinetis\RevoltHttpClient\Http;
 use Nyholm\Psr7\ServerRequest;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpClient\MockHttpClient;
 
 /**
- * BroadcastAuthController::formData()'s raw application/x-www-form-urlencoded
- * fallback — reachable only when getParsedBody() is empty, which
- * BroadcastAuthControllerTest's own withParsedBody()-built requests
- * never exercise — driven through a real Kernel, the same RequestBodyMiddleware
- * every other route runs behind. authorizeLobby() (matched via the
- * private-lobby channel, stripped to "lobby") needs no CurrentUserInterface,
- * which keeps these regressions focused on the body-size boundary rather
- * than authentication wiring.
+ * The body boundary this endpoint sits behind, driven through a real
+ * Kernel: RequestBodyMiddleware bounds the bytes and decides, from the
+ * content type, whether they are form fields at all, and the controller
+ * reads what that leaves in getParsedBody() and nothing else.
+ *
+ * authorizeLobby() (matched via the private-lobby channel, stripped to
+ * "lobby") needs no CurrentUserInterface, which keeps these cases on the
+ * body boundary rather than on authentication wiring.
  */
 final class BroadcastAuthKernelTest extends TestCase
 {
     private const string KEY = 'testkey';
 
     private const string SECRET = 'testsecret';
+
+    private const string FORM = 'application/x-www-form-urlencoded';
 
     /**
      * @param array<string, string> $config
@@ -62,23 +65,91 @@ final class BroadcastAuthKernelTest extends TestCase
     }
 
     /**
+     * @param array<string, string> $headers
+     */
+    private function request(
+        string $body,
+        array $headers = ['Content-Type' => self::FORM],
+    ): ServerRequest {
+        return new ServerRequest('POST', '/broadcasting/auth', headers: $headers, body: $body);
+    }
+
+    private function lobbyForm(int $padding = 0): string
+    {
+        $fields = ['socket_id' => '1234.1234', 'channel_name' => 'private-lobby'];
+
+        if ($padding > 0) {
+            $fields['padding'] = str_repeat('x', $padding);
+        }
+
+        return http_build_query($fields);
+    }
+
+    /**
+     * The ordinary client request: pusher-js posts socket_id and
+     * channel_name as application/x-www-form-urlencoded,
+     * RequestBodyMiddleware parses them into getParsedBody(), and the
+     * channel authorizes with a signed response.
+     */
+    public function test_a_form_encoded_body_authorizes_through_the_request_body_middleware(): void
+    {
+        $kernel = $this->kernel(['MAX_BODY_SIZE' => '50']);
+
+        $body = $this->lobbyForm();
+        self::assertLessThanOrEqual(50, strlen($body));
+
+        $response = $kernel->handle($this->request($body));
+
+        self::assertSame(200, $response->getStatusCode());
+        $decoded = json_decode((string) $response->getBody(), true);
+        self::assertIsArray($decoded);
+        self::assertSame(
+            self::KEY . ':' . hash_hmac('sha256', '1234.1234:private-lobby', self::SECRET),
+            $decoded['auth'] ?? null,
+        );
+    }
+
+    /**
+     * @return iterable<string, array{array<string, string>}>
+     */
+    public static function nonFormContentTypes(): iterable
+    {
+        yield 'text/plain' => [['Content-Type' => 'text/plain']];
+        yield 'application/json' => [['Content-Type' => 'application/json']];
+        yield 'no content type at all' => [[]];
+    }
+
+    /**
+     * The media type is what makes bytes fields. Under anything but a
+     * form one, RequestBodyMiddleware leaves the identical bytes
+     * unparsed, so the endpoint has nothing to read and answers with the
+     * required-fields 422 instead of authorizing a channel named by a
+     * body no one declared as form input.
+     *
+     * @param array<string, string> $headers
+     */
+    #[DataProvider('nonFormContentTypes')]
+    public function test_form_looking_bytes_under_a_non_form_content_type_are_not_read_as_fields(array $headers): void
+    {
+        $response = $this->kernel()->handle($this->request($this->lobbyForm(), $headers));
+
+        self::assertSame(422, $response->getStatusCode());
+    }
+
+    /**
      * No Content-Length header at all — the declared-length check in
      * RequestBodyMiddleware cannot catch this; only the byte count it
      * takes while staging the body can, and it takes that before this
      * controller runs at all.
      */
-    public function test_an_oversized_raw_form_body_with_no_content_length_is_rejected_with_413(): void
+    public function test_an_oversized_form_body_with_no_content_length_is_rejected_with_413(): void
     {
         $kernel = $this->kernel(['MAX_BODY_SIZE' => '50']);
 
-        $body = http_build_query([
-            'socket_id' => '1234.1234',
-            'channel_name' => 'private-lobby',
-            'padding' => str_repeat('x', 200),
-        ]);
+        $body = $this->lobbyForm(padding: 200);
         self::assertGreaterThan(50, strlen($body));
 
-        $response = $kernel->handle(new ServerRequest('POST', '/broadcasting/auth', body: $body));
+        $response = $kernel->handle($this->request($body));
 
         self::assertSame(413, $response->getStatusCode());
     }
@@ -88,47 +159,18 @@ final class BroadcastAuthKernelTest extends TestCase
      * size below the configured cap — the fast path passes this
      * through, so only the backstop closes it.
      */
-    public function test_an_oversized_raw_form_body_with_an_understated_content_length_is_rejected_with_413(): void
+    public function test_an_oversized_form_body_with_an_understated_content_length_is_rejected_with_413(): void
     {
         $kernel = $this->kernel(['MAX_BODY_SIZE' => '50']);
 
-        $body = http_build_query([
-            'socket_id' => '1234.1234',
-            'channel_name' => 'private-lobby',
-            'padding' => str_repeat('x', 200),
-        ]);
+        $body = $this->lobbyForm(padding: 200);
         self::assertGreaterThan(50, strlen($body));
 
-        $response = $kernel->handle(new ServerRequest(
-            'POST',
-            '/broadcasting/auth',
-            headers: ['Content-Length' => '10'],
-            body: $body,
-        ));
+        $response = $kernel->handle($this->request($body, [
+            'Content-Type' => self::FORM,
+            'Content-Length' => '10',
+        ]));
 
         self::assertSame(413, $response->getStatusCode());
-    }
-
-    /**
-     * The control: a genuinely small raw form body, under the same
-     * configured cap, still reaches formData()'s fallback, parses
-     * correctly, and authorizes the channel normally — the fix closes a
-     * real gap without breaking the fallback path itself.
-     */
-    public function test_a_small_raw_form_body_under_the_configured_limit_still_parses_and_authorizes(): void
-    {
-        $kernel = $this->kernel(['MAX_BODY_SIZE' => '50']);
-
-        $body = http_build_query([
-            'socket_id' => '1234.1234',
-            'channel_name' => 'private-lobby',
-        ]);
-        self::assertLessThanOrEqual(50, strlen($body));
-
-        $response = $kernel->handle(new ServerRequest('POST', '/broadcasting/auth', body: $body));
-
-        self::assertSame(200, $response->getStatusCode());
-        $decoded = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('auth', $decoded);
     }
 }
