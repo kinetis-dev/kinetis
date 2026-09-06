@@ -501,8 +501,9 @@ final class Route
      *
      * Applied to the request path too, in matchPath() — so `/users/` and
      * `/users` are one route answering one set of requests, rather than
-     * one route and a 404. Public because Kernel compares its own `/mcp`
-     * endpoint the same way, and there should be one rule.
+     * one route and a 404. Public so anything comparing a request path
+     * against a registered one applies this same rule rather than
+     * reimplementing it.
      */
     public static function normalizePath(string $path): string
     {

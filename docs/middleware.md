@@ -49,21 +49,23 @@ $app->boot();
 Registered on `AppScope` (locked after `boot()`, the same discipline as
 `bind()`/`instance()` — see {doc}`container`), in registration order,
 outermost first. This wraps `Kernel::handle()`'s *entire* body — the
-OpenAPI/MCP short-circuits, routing itself, and a `404`/`405` from a
+`RequestScope`'s own creation, routing itself, and a `404`/`405` from a
 failed route match — not just a successfully dispatched request. That's
 why logging or CORS belongs here: you want it to see every request, not
 only the ones that happened to match something.
 
 Global middleware is resolved from `AppScope`, not a per-request scope —
-it has to wrap the request *before* any `RequestScope` exists (the
-OpenAPI/MCP branches deliberately never create one at all; see
-{doc}`core-concepts`), so it can't depend on one at construction time.
-Practically, this makes a global middleware instance a worker-lifetime
-singleton by default — the same "singleton via the container" pattern
-{doc}`container` documents for a plain service. If your middleware holds
-no per-request state as an instance property, that's exactly as safe as
-any other `AppScope`-resolved service; if it needs something that varies
-per request, reach for route middleware instead.
+it has to wrap the request *before* any `RequestScope` exists. The scope
+is created by the pipeline's innermost handler, the one that routes and
+dispatches (see {doc}`core-concepts`), and a global middleware returning
+its own response never reaches it, so it can't depend on one at
+construction time. Practically, this makes a global middleware instance
+a worker-lifetime singleton by default — the same "singleton via the
+container" pattern {doc}`container` documents for a plain service. If
+your middleware holds no per-request state as an instance property,
+that's exactly as safe as any other `AppScope`-resolved service; if it
+needs something that varies per request, reach for route middleware
+instead.
 
 (discoverable-global-middleware)=
 ### Discoverable global middleware — no `AppScope::middleware()` call needed
