@@ -44,9 +44,9 @@ final readonly class MigrationContext
 
         // Explicitly PDO, whatever DB_DRIVER says: the advisory lock is
         // scoped to the database session, so the runner needs one
-        // connection that is never replaced. The native drivers pool and
-        // reconnect. These commands are strictly serial, and blocking on
-        // a query costs them nothing.
+        // session for the whole run. The native drivers pool, handing
+        // out a different one per operation. These commands are strictly
+        // serial, and blocking on a query costs them nothing.
         $db = SqlConnectionFactory::fromConfig($this->config, $connectionName, driver: 'pdo');
 
         return new MigrationRunner($db, new SqlMigrationRepository($db), $this->migrationsPath);

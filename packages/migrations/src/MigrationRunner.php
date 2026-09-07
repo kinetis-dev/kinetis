@@ -33,12 +33,12 @@ use Throwable;
  * released by MySQL's implicit per-DDL commit partway through a run — and
  * both release on their own when the session closes, gracefully or not.
  *
- * $db must be a single connection that is never replaced for this
- * object's lifetime: a lock acquired on one connection is not held on
- * another. A PDO client is exactly that, which is what
- * {@see \Kinetis\Migrations\Console\MigrationContext} builds for the
- * migrate:* commands. A pooled or reconnecting link can move between
- * connections and drop the lock mid-run.
+ * $db must hold one session for the whole run: a lock taken on one
+ * session is not held on another. A PDO client is that — one connection,
+ * replaced only where the session itself is gone and has taken the lock
+ * with it — which is what {@see \Kinetis\Migrations\Console\MigrationContext}
+ * builds for the migrate:* commands. A pooling link moves between
+ * sessions per operation and would drop the lock mid-run.
  */
 final readonly class MigrationRunner
 {

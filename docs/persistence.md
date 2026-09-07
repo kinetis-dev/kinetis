@@ -289,6 +289,16 @@ queries leave nothing to overlap); under a persistent worker, connections
 amortize across requests and native async fan-out keeps its benefits at
 native protocol cost.
 
+A PDO client holds one connection at a time and opens it lazily. A
+session it can carry no more work on — abandoned by a transaction, ended
+by a terminal MySQL lock failure (1205/1213), or left in a result state
+that could not be cleared — goes back to the server, and the next call
+opens a fresh one. `close()` is the separate, final ending: it takes the
+client itself out of service, and every later call throws
+`Exception\ConnectionException`. The two differ wherever a process
+outlives one session, which under `auto` is every process that is not a
+persistent worker — a `queue:work` CLI worker included.
+
 The PDO drivers run with *native* (non-emulated) prepares, where every
 `prepare()` is its own server round trip — so `execute()` memoizes
 prepared statements per SQL string for the connection's lifetime. A
@@ -296,10 +306,10 @@ loop issuing the same parameterized statement N times costs N+1 round
 trips instead of 2N; against a sub-millisecond database that's the
 difference between paying the network once or twice per query. The cache holds at most 256 statements (workloads that
 interpolate values into their SQL text instead of binding reset it on
-overflow rather than growing it forever) and is dropped with the
-connection on `close()`. A transaction runs on the client's own
-connection, so it shares that one cache rather than re-preparing what it
-already holds.
+overflow rather than growing it forever) and goes with the connection it
+was built on, so a replacement connection starts an empty one. A
+transaction runs on the client's own connection, so it shares that one
+cache rather than re-preparing what it already holds.
 
 ```{warning}
 Server-side prepared statements are scoped to a **database connection**
@@ -639,9 +649,9 @@ is not a `ROLLBACK` it acknowledged — and the span says so rather than
 claiming one.
 
 What that costs is the connection: an async client's pool opens a
-replacement, and a PDO client, holding one connection and never
-reopening it, closes. `TransactionGuard::transaction()` costs neither —
-it ends the transaction on every path out of the work, so the connection
+replacement, and a PDO client, holding one at a time, opens a fresh one
+on its next call. `TransactionGuard::transaction()` costs neither — it
+ends the transaction on every path out of the work, so the connection
 goes back to the pool with the outcome the server confirmed. Use the
 guard; the discard is a safety net for a connection, not a way to end a
 transaction.
