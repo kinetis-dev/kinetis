@@ -61,4 +61,33 @@ final class MediaTypeTest extends TestCase
         self::assertFalse(MediaType::isFormEncoded('application/json'));
         self::assertFalse(MediaType::isMultipartFormData('application/x-www-form-urlencoded'));
     }
+
+    public function test_json_is_application_json_and_any_plus_json_subtype(): void
+    {
+        self::assertTrue(MediaType::isJson('application/json'));
+        self::assertTrue(MediaType::isJson('Application/JSON; charset=utf-8'));
+        self::assertTrue(MediaType::isJson('application/vnd.api+json'));
+        self::assertTrue(MediaType::isJson('application/hal+json; profile="https://example.com/p"'));
+        self::assertTrue(MediaType::isJson('  application/problem+json  '));
+    }
+
+    /**
+     * The suffix needs a subtype in front of it and a top-level type of
+     * `application`, so the shapes below name something else — including
+     * the comma-joined pair two Content-Type headers arrive as, and a
+     * longer subtype that merely starts with `json`.
+     */
+    public function test_media_types_that_only_resemble_json_are_not_json(): void
+    {
+        self::assertFalse(MediaType::isJson('text/json'));
+        self::assertFalse(MediaType::isJson('text/plain'));
+        self::assertFalse(MediaType::isJson('+json'));
+        self::assertFalse(MediaType::isJson('application/+json'));
+        self::assertFalse(MediaType::isJson('application/jsonx'));
+        self::assertFalse(MediaType::isJson('application/json-seq'));
+        self::assertFalse(MediaType::isJson('application/octet-stream'));
+        self::assertFalse(MediaType::isJson('multipart/form-data; boundary=----XYZ'));
+        self::assertFalse(MediaType::isJson('application/json, text/plain'));
+        self::assertFalse(MediaType::isJson(''));
+    }
 }

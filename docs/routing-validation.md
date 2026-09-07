@@ -396,18 +396,31 @@ from the request's `Content-Type`:
 
 | Content-Type | Read from |
 |---|---|
-| `application/json` (or anything else) | `json_decode()` on the raw body |
+| `application/json`, or an `application/*+json` subtype | `json_decode()` on the raw body |
 | `multipart/form-data` | `getParsedBody()` |
 | `application/x-www-form-urlencoded` | `getParsedBody()` |
+
+A nonblank body under any other media type — or under no `Content-Type`
+at all — is refused with a `415` before the DTO is hydrated and before
+the controller is constructed, so a handler never receives bytes read
+under a header that did not describe them, and neither its constructor
+nor a factory registered for it runs. The error names the supported media
+types and never echoes the one received. A blank or whitespace-only body
+still hydrates an all-optional DTO from its own defaults whatever the
+header says: there are no bytes for a media type to describe. A route
+that has to accept arbitrary or binary bytes takes a
+`ServerRequestInterface` parameter instead of `#[Body]`, and receives
+them untouched.
 
 A `Content-Type` is matched on its type and subtype alone — everything
 before the first `;`, so a `charset` or a multipart `boundary` parameter
 changes nothing — and compared ASCII-case-insensitively, as RFC 9110
 §8.3.1 requires: `Application/X-WWW-Form-Urlencoded; charset=UTF-8`
 lands on the same row as `application/x-www-form-urlencoded`. The match
-is exact, so a longer media type that merely begins with one of them —
-`application/x-www-form-urlencodedevil` — is a different media type and
-takes the first row. `Kinetis\Http\MediaType` is that classification,
+is exact on the subtype apart from RFC 6839's `+json` suffix, so a
+longer media type that merely begins with a listed one —
+`application/x-www-form-urlencodedevil` — names none of these rows and
+is refused. `Kinetis\Http\MediaType` is that classification,
 and the one place a `Content-Type` is read — by `Dispatcher` here, and by
 the Kernel's own `RequestBodyMiddleware` before it — so an application
 gets the same answer under every runtime (see {doc}`runtime-adapters`).

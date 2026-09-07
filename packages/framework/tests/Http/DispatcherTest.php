@@ -9,8 +9,11 @@ use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Exception\UnresolvableParameterException;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Instrumentation\NullTelemetry;
+use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
+use Kinetis\Tests\Http\Fixtures\ConstructionCountingController;
 use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathArrayController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathNullController;
@@ -30,6 +33,7 @@ use Kinetis\Tests\Http\Fixtures\UnsupportedBodyFieldController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedCallableBodyFieldController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Tests\Instrumentation\RecordingTelemetry;
 use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Nyholm\Psr7\ServerRequest;
 use Nyholm\Psr7\Stream;
@@ -39,6 +43,19 @@ use PHPUnit\Framework\TestCase;
 
 final class DispatcherTest extends TestCase
 {
+    /**
+     * Dispatcher reads a #[Body] DTO's raw bytes as JSON only under a
+     * media type that names JSON; the media-type cases below send their
+     * own header instead of this one.
+     */
+    private const array JSON_HEADERS = ['Content-Type' => 'application/json'];
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        Telemetry::global()->swap(new NullTelemetry());
+    }
+
     private function dispatcher(): Dispatcher
     {
         $app = new AppScope();
@@ -59,7 +76,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('POST', '/users');
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -81,7 +98,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('POST', '/users');
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $body = $request->getBody();
         $body->getContents();
@@ -200,11 +217,10 @@ final class DispatcherTest extends TestCase
 
     /**
      * A longer media type that merely starts with a form one is a
-     * different media type, and its body is whatever it says it is —
-     * decoded as JSON here, the default for anything not form-encoded,
-     * with getParsedBody() ignored.
+     * different media type: not form-encoded, and not JSON either, so
+     * neither getParsedBody() nor the raw bytes are read for it.
      */
-    public function test_a_content_type_that_only_looks_like_a_form_type_is_json_decoded(): void
+    public function test_a_content_type_that_only_looks_like_a_form_type_is_refused(): void
     {
         $router = $this->uploadRouter();
         $match = $router->match('POST', '/avatars');
@@ -217,7 +233,166 @@ final class DispatcherTest extends TestCase
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
-        self::assertSame('From the body', json_decode((string) $response->getBody(), true)['name']);
+        self::assertSame(415, $response->getStatusCode());
+        self::assertStringNotContainsString(
+            'urlencodedevil',
+            (string) $response->getBody(),
+            'the error may not echo the header the client sent',
+        );
+    }
+
+    /**
+     * `text/plain` is CORS-safelisted, so a browser sends it without a
+     * preflight; a JSON document arriving under it is refused before the
+     * DTO is hydrated or the controller runs.
+     */
+    public function test_a_json_document_sent_as_text_plain_is_refused_before_the_controller_runs(): void
+    {
+        $recording = new RecordingTelemetry();
+        Telemetry::global()->swap($recording);
+
+        $router = $this->router();
+        $match = $router->match('POST', '/users');
+        $request = new ServerRequest(
+            'POST',
+            '/users',
+            ['Content-Type' => 'text/plain'],
+            body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
+        );
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(415, $response->getStatusCode());
+        self::assertNull($recording->firstCall('hydrationStarted'));
+        self::assertNull($recording->firstCall('controllerInvoked'));
+        self::assertStringNotContainsString('text/plain', (string) $response->getBody());
+    }
+
+    /**
+     * The 415 lands before the container is asked for the controller, so
+     * a constructor — or a factory registered for it — runs no
+     * application side effect on behalf of a request that is refused.
+     * The accepted request that follows proves the counter is live.
+     */
+    public function test_a_refused_media_type_never_constructs_the_controller(): void
+    {
+        ConstructionCountingController::$constructions = 0;
+
+        $router = new Router();
+        $router->register(ConstructionCountingController::class);
+        $match = $router->match('POST', '/counted-users');
+        $payload = json_encode(['name' => 'Alon', 'email' => 'alon@example.com']);
+
+        $refused = $this->dispatcher()->dispatch(
+            $match,
+            new ServerRequest('POST', '/counted-users', ['Content-Type' => 'text/plain'], body: $payload),
+        );
+
+        self::assertSame(415, $refused->getStatusCode());
+        self::assertSame(0, ConstructionCountingController::$constructions);
+
+        $accepted = $this->dispatcher()->dispatch(
+            $match,
+            new ServerRequest('POST', '/counted-users', self::JSON_HEADERS, body: $payload),
+        );
+
+        self::assertSame(201, $accepted->getStatusCode());
+        self::assertSame(1, ConstructionCountingController::$constructions);
+    }
+
+    /**
+     * A body with no Content-Type at all describes nothing, so it is not
+     * read as JSON either.
+     */
+    public function test_a_nonblank_body_with_no_content_type_is_refused_before_the_controller_runs(): void
+    {
+        $recording = new RecordingTelemetry();
+        Telemetry::global()->swap($recording);
+
+        $router = $this->router();
+        $match = $router->match('POST', '/users');
+        $request = new ServerRequest(
+            'POST',
+            '/users',
+            body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
+        );
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(415, $response->getStatusCode());
+        self::assertNull($recording->firstCall('hydrationStarted'));
+        self::assertNull($recording->firstCall('controllerInvoked'));
+    }
+
+    /**
+     * A subtype carrying the `+json` structured suffix is a JSON
+     * document, and a media type matches whatever case it is spelled in.
+     */
+    #[DataProvider('jsonContentTypes')]
+    public function test_a_json_media_type_hydrates_a_body_dto(string $contentType): void
+    {
+        $router = $this->router();
+        $match = $router->match('POST', '/users');
+        $request = new ServerRequest(
+            'POST',
+            '/users',
+            ['Content-Type' => $contentType],
+            body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
+        );
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(
+            ['name' => 'Alon', 'email' => 'alon@example.com'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function jsonContentTypes(): iterable
+    {
+        yield 'structured suffix' => ['application/vnd.api+json'];
+        yield 'mixed case with a parameter' => ['Application/JSON; charset=utf-8'];
+    }
+
+    /**
+     * A route whose DTO is entirely optional accepts a request with no
+     * body: there are no bytes for a media type to describe, so the
+     * header is not consulted and the DTO hydrates from its own
+     * defaults.
+     *
+     * @param array<string, string> $headers
+     */
+    #[DataProvider('blankBodiesWithUnreadableContentTypes')]
+    public function test_a_blank_body_hydrates_an_all_optional_dto_whatever_the_content_type(
+        string $body,
+        array $headers,
+    ): void {
+        $router = $this->router();
+        $match = $router->match('PATCH', '/users/42/preferences');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', $headers, body: $body);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(
+            ['id' => 42, 'theme' => null, 'notificationsEnabled' => true],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string, array<string, string>}>
+     */
+    public static function blankBodiesWithUnreadableContentTypes(): iterable
+    {
+        yield 'empty, no header' => ['', []];
+        yield 'empty, unsupported header' => ['', ['Content-Type' => 'application/octet-stream']];
+        yield 'whitespace only, no header' => ["  \n\t ", []];
+        yield 'whitespace only, unsupported header' => ["  \n\t ", ['Content-Type' => 'text/plain']];
     }
 
     public function test_an_uploaded_file_typed_parameter_receives_it_directly_without_body(): void
@@ -239,7 +414,7 @@ final class DispatcherTest extends TestCase
         $router->register(OrderController::class);
         $match = $router->match('POST', '/orders');
 
-        $request = new ServerRequest('POST', '/orders', body: json_encode([
+        $request = new ServerRequest('POST', '/orders', self::JSON_HEADERS, body: json_encode([
             'customerName' => 'Alon',
             'shippingAddress' => ['street' => '1 Infinite Loop', 'city' => 'Cupertino'],
         ]));
@@ -259,7 +434,7 @@ final class DispatcherTest extends TestCase
         $router->register(OrderController::class);
         $match = $router->match('POST', '/orders');
 
-        $request = new ServerRequest('POST', '/orders', body: json_encode([
+        $request = new ServerRequest('POST', '/orders', self::JSON_HEADERS, body: json_encode([
             'customerName' => 'Alon',
             'shippingAddress' => ['street' => 'x', 'city' => 'Cupertino'],
         ]));
@@ -303,7 +478,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('POST', '/users');
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Al', 'email' => 'not-an-email']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Al', 'email' => 'not-an-email']));
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -323,7 +498,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('POST', '/users');
-        $request = new ServerRequest('POST', '/users', body: '{"name": "unterminated');
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: '{"name": "unterminated');
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -350,7 +525,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('POST', '/users');
-        $request = new ServerRequest('POST', '/users', body: $body);
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: $body);
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -365,7 +540,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('PATCH', '/users/42/preferences');
-        $request = new ServerRequest('PATCH', '/users/42/preferences', body: '');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', self::JSON_HEADERS, body: '');
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -383,7 +558,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('PATCH', '/users/42/preferences');
-        $request = new ServerRequest('PATCH', '/users/42/preferences', body: 'null');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', self::JSON_HEADERS, body: 'null');
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -399,7 +574,7 @@ final class DispatcherTest extends TestCase
     {
         $router = $this->router();
         $match = $router->match('PATCH', '/users/42/preferences');
-        $request = new ServerRequest('PATCH', '/users/42/preferences', body: '[]');
+        $request = new ServerRequest('PATCH', '/users/42/preferences', self::JSON_HEADERS, body: '[]');
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -665,7 +840,7 @@ final class DispatcherTest extends TestCase
         $router = new Router();
         $router->register(NoteController::class);
         $match = $router->match('POST', '/notes');
-        $request = new ServerRequest('POST', '/notes', body: json_encode(['title' => null, 'subtitle' => null]));
+        $request = new ServerRequest('POST', '/notes', self::JSON_HEADERS, body: json_encode(['title' => null, 'subtitle' => null]));
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -680,7 +855,7 @@ final class DispatcherTest extends TestCase
         $router = new Router();
         $router->register(NoteController::class);
         $match = $router->match('POST', '/notes');
-        $request = new ServerRequest('POST', '/notes', body: json_encode(['title' => 'hello', 'subtitle' => null]));
+        $request = new ServerRequest('POST', '/notes', self::JSON_HEADERS, body: json_encode(['title' => 'hello', 'subtitle' => null]));
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -745,7 +920,7 @@ final class DispatcherTest extends TestCase
     public function test_a_defaultless_nullable_field_rejects_omission(): void
     {
         $match = $this->nullableFieldsRouter()->match('POST', '/nullable-fields');
-        $request = new ServerRequest('POST', '/nullable-fields', body: '{}');
+        $request = new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: '{}');
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -758,7 +933,7 @@ final class DispatcherTest extends TestCase
     public function test_a_defaultless_nullable_field_accepts_an_explicit_null(): void
     {
         $match = $this->nullableFieldsRouter()->match('POST', '/nullable-fields');
-        $request = new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => null]));
+        $request = new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => null]));
 
         $response = $this->dispatcher()->dispatch($match, $request);
 
@@ -775,11 +950,11 @@ final class DispatcherTest extends TestCase
 
         $omitted = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => 'x'])),
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => 'x'])),
         );
         $explicitNull = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => 'x', 'optionalNullable' => null])),
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => 'x', 'optionalNullable' => null])),
         );
 
         self::assertSame(200, $omitted->getStatusCode());
@@ -794,15 +969,15 @@ final class DispatcherTest extends TestCase
 
         $omitted = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => 'x'])),
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => 'x'])),
         );
         $explicitNull = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => 'x', 'optionalItem' => null])),
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => 'x', 'optionalItem' => null])),
         );
         $present = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode([
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode([
                 'requiredNullable' => 'x',
                 'optionalItem' => ['product' => 'widget', 'quantity' => 3],
             ])),
@@ -822,15 +997,15 @@ final class DispatcherTest extends TestCase
 
         $omitted = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => 'x'])),
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => 'x'])),
         );
         $explicitNull = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode(['requiredNullable' => 'x', 'optionalItems' => null])),
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode(['requiredNullable' => 'x', 'optionalItems' => null])),
         );
         $present = $this->dispatcher()->dispatch(
             $match,
-            new ServerRequest('POST', '/nullable-fields', body: json_encode([
+            new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: json_encode([
                 'requiredNullable' => 'x',
                 'optionalItems' => [['product' => 'a', 'quantity' => 1], ['product' => 'b', 'quantity' => 2]],
             ])),
@@ -854,7 +1029,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: json_encode(['tags' => 'not-an-array']));
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode(['tags' => 'not-an-array']));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
@@ -869,7 +1044,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: json_encode(['tags' => ['a', 'b']]));
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode(['tags' => ['a', 'b']]));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
@@ -886,7 +1061,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: json_encode(['tags' => ['a']]));
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode(['tags' => ['a']]));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
@@ -899,7 +1074,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: json_encode(['tags' => ['a'], 'optionalTags' => null]));
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode(['tags' => ['a'], 'optionalTags' => null]));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
@@ -912,7 +1087,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: json_encode([
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode([
             'tags' => ['a'],
             'optionalTags' => ['b', 'c'],
         ]));
@@ -928,7 +1103,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: json_encode([
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode([
             'tags' => ['a'],
             'optionalTags' => ['key' => 'value'],
         ]));
@@ -958,7 +1133,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: '{"tags": {"0": "a", "1": "b"}}');
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: '{"tags": {"0": "a", "1": "b"}}');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
@@ -973,7 +1148,7 @@ final class DispatcherTest extends TestCase
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
-        $request = new ServerRequest('POST', '/plain-array-field', body: '{"tags": {}}');
+        $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: '{"tags": {}}');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
@@ -994,7 +1169,7 @@ final class DispatcherTest extends TestCase
         $router->register(OrderItemsController::class);
         $match = $router->match('POST', '/orders-with-items');
 
-        $request = new ServerRequest('POST', '/orders-with-items', body: '{"customerName": "Alon", "items": [{"product": "widget", "quantity": 3}]}');
+        $request = new ServerRequest('POST', '/orders-with-items', self::JSON_HEADERS, body: '{"customerName": "Alon", "items": [{"product": "widget", "quantity": 3}]}');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(201, $response->getStatusCode());
@@ -1016,7 +1191,7 @@ final class DispatcherTest extends TestCase
         $router->register(BuiltinCoverageController::class);
         $match = $router->match('POST', '/builtin-coverage');
 
-        $request = new ServerRequest('POST', '/builtin-coverage', body: '{"tags": [], "items": [], "note": {"nested": "value"}}');
+        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "note": {"nested": "value"}}');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
@@ -1085,7 +1260,7 @@ final class DispatcherTest extends TestCase
         $router->register(BuiltinCoverageController::class);
         $match = $router->match('POST', '/builtin-coverage');
 
-        $request = new ServerRequest('POST', '/builtin-coverage', body: '{"tags": [], "items": [], "confirmed": true}');
+        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "confirmed": true}');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
@@ -1104,7 +1279,7 @@ final class DispatcherTest extends TestCase
         $router->register(BuiltinCoverageController::class);
         $match = $router->match('POST', '/builtin-coverage');
 
-        $request = new ServerRequest('POST', '/builtin-coverage', body: '{"tags": [], "items": [], "confirmed": "true"}');
+        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "confirmed": "true"}');
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
@@ -1125,7 +1300,7 @@ final class DispatcherTest extends TestCase
         $router->register(BuiltinCoverageController::class);
         $match = $router->match('POST', '/builtin-coverage');
 
-        $request = new ServerRequest('POST', '/builtin-coverage', body: json_encode([
+        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: json_encode([
             'tags' => ['a', 'b'],
             'items' => ['c'],
             'note' => 42,
@@ -1148,7 +1323,7 @@ final class DispatcherTest extends TestCase
         $router->register(BuiltinCoverageController::class);
         $match = $router->match('POST', '/builtin-coverage');
 
-        $request = new ServerRequest('POST', '/builtin-coverage', body: json_encode([
+        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: json_encode([
             'tags' => [],
             'items' => [],
             'declined' => 'nope',
@@ -1178,7 +1353,7 @@ final class DispatcherTest extends TestCase
         $router->register(UnsupportedBodyFieldController::class);
         $match = $router->match('POST', '/unsupported-body-field');
 
-        $request = new ServerRequest('POST', '/unsupported-body-field', body: json_encode(['extra' => ['a' => 1]]));
+        $request = new ServerRequest('POST', '/unsupported-body-field', self::JSON_HEADERS, body: json_encode(['extra' => ['a' => 1]]));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
@@ -1204,7 +1379,7 @@ final class DispatcherTest extends TestCase
         $router->register(UnsupportedCallableBodyFieldController::class);
         $match = $router->match('POST', '/unsupported-callable-body-field');
 
-        $request = new ServerRequest('POST', '/unsupported-callable-body-field', body: json_encode(['handler' => 'strtoupper']));
+        $request = new ServerRequest('POST', '/unsupported-callable-body-field', self::JSON_HEADERS, body: json_encode(['handler' => 'strtoupper']));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
@@ -1229,7 +1404,7 @@ final class DispatcherTest extends TestCase
         $router->register(MultipleUnsupportedFieldsController::class);
         $match = $router->match('POST', '/multiple-unsupported-fields');
 
-        $request = new ServerRequest('POST', '/multiple-unsupported-fields', body: json_encode([
+        $request = new ServerRequest('POST', '/multiple-unsupported-fields', self::JSON_HEADERS, body: json_encode([
             'extra' => ['a' => 1],
             'handler' => 'strtoupper',
         ]));

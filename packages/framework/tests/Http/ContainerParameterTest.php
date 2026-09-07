@@ -139,6 +139,7 @@ final class ContainerParameterTest extends TestCase
         $request = new ServerRequest(
             'POST',
             '/scoped/7?sort=name',
+            headers: ['Content-Type' => 'application/json'],
             body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
         );
 

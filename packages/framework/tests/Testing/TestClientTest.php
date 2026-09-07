@@ -116,6 +116,24 @@ final class TestClientTest extends TestCase
         );
     }
 
+    /**
+     * The shape check is {@see \Kinetis\Http\MediaType::isJson()}, the
+     * classifier Dispatcher reads a typed body through, so a `+json`
+     * suffix under a top-level type other than `application` names no
+     * JSON media type here either.
+     */
+    public function test_request_rejects_an_array_body_under_a_plus_json_suffix_outside_application(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('is not JSON-shaped');
+
+        $this->client()->post(
+            '/raw-request',
+            body: ['anything' => true],
+            headers: ['Content-Type' => 'text/x+json'],
+        );
+    }
+
     public function test_post_form_sends_a_genuinely_form_encoded_body_and_populates_parsed_body(): void
     {
         $response = $this->client()->postForm('/raw-request', ['name' => 'Alon', 'role' => 'admin']);

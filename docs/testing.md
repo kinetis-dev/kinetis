@@ -97,9 +97,10 @@ $this->client->delete('/users/42', headers: ['Authorization' => 'Bearer test-tok
 
 `body` is a plain array, JSON-encoded automatically, with
 `Content-Type: application/json` set unless you pass your own — and that
-override must itself be JSON-shaped (`application/json`, or a `+json`
-structured suffix for a vendor media type; a `; charset=...` parameter is
-fine, since only the bare media type is checked); anything else throws,
+override must itself be JSON-shaped (`application/json`, or an
+`application/*+json` structured suffix for a vendor media type; a
+`; charset=...` parameter is fine, since only the bare media type is
+checked); anything else throws,
 rather than silently sending JSON bytes under a Content-Type that claims
 otherwise. The header is resolved case-insensitively (`content-type`
 works exactly like `Content-Type`): two differently-cased keys naming the

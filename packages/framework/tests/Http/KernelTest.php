@@ -60,6 +60,13 @@ require_once __DIR__ . '/Fixtures/gc_collect_cycles_spy.php';
 
 final class KernelTest extends TestCase
 {
+    /**
+     * Dispatcher reads a #[Body] DTO's raw bytes as JSON only under a
+     * media type that names JSON, so every request built here carries
+     * one; DispatcherTest owns the rejection cases.
+     */
+    private const array JSON_HEADERS = ['Content-Type' => 'application/json'];
+
     private function kernel(?bool $exposeOpenApi = null): Kernel
     {
         $app = new AppScope();
@@ -74,7 +81,7 @@ final class KernelTest extends TestCase
 
     public function test_handles_a_registered_route_end_to_end(): void
     {
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $this->kernel()->handle($request);
 
@@ -101,7 +108,7 @@ final class KernelTest extends TestCase
     {
         self::assertFalse(class_exists('Kinetis\Persistence\TransactionGuard'));
 
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $this->kernel()->handle($request);
 
@@ -148,7 +155,7 @@ final class KernelTest extends TestCase
 
     public function test_handles_a_body_dto_with_an_asymmetric_visibility_property(): void
     {
-        $request = new ServerRequest('PATCH', '/users/1/status', body: json_encode(['status' => 'active']));
+        $request = new ServerRequest('PATCH', '/users/1/status', self::JSON_HEADERS, body: json_encode(['status' => 'active']));
 
         $response = $this->kernel()->handle($request);
 
@@ -393,7 +400,7 @@ final class KernelTest extends TestCase
         $compiled = $compiler->compile($router);
 
         $kernel = new Kernel($app, $router, httpCache: $compiled->http);
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $kernel->handle($request);
 
@@ -402,6 +409,34 @@ final class KernelTest extends TestCase
             ['name' => 'Alon', 'email' => 'alon@example.com'],
             json_decode((string) $response->getBody(), true),
         );
+    }
+
+    /**
+     * The media-type check lives in Dispatcher rather than in a binding
+     * plan, so a compiled plan refuses an unreadable typed body on the
+     * same terms live dispatch does.
+     */
+    public function test_compiled_dispatch_refuses_a_typed_body_under_an_unsupported_media_type(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+
+        $compiled = new Compiler()->compile($router);
+
+        $kernel = new Kernel($app, $router, httpCache: $compiled->http);
+        $request = new ServerRequest(
+            'POST',
+            '/users',
+            ['Content-Type' => 'text/plain'],
+            body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
+        );
+
+        $response = $kernel->handle($request);
+
+        self::assertSame(415, $response->getStatusCode());
     }
 
     protected function setUp(): void
@@ -786,7 +821,7 @@ final class KernelTest extends TestCase
     {
         Telemetry::global()->swap(new ThrowingTelemetry());
 
-        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
 
         $response = $this->kernel()->handle($request);
 

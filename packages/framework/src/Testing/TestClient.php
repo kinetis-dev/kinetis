@@ -137,13 +137,13 @@ final readonly class TestClient
      * The JSON shorthand every method above delegates to. An array
      * `$body` is always sent as JSON — `Content-Type` defaults to
      * `application/json`, and an explicit override must itself be a
-     * JSON media type (`application/json`, or a `+json` structured
-     * suffix for a real API's own vendor media type — RFC 6839;
-     * parameters like `; charset=UTF-8` are fine) — anything else
-     * throws rather than silently sending JSON bytes under a
-     * Content-Type that claims otherwise. postForm()/raw()/send() are
-     * the explicit, honest way to send a body this shorthand can't; see
-     * each one's own docblock.
+     * JSON media type as {@see MediaType::isJson()} classifies one
+     * (`application/json`, or an `application/*+json` structured suffix
+     * for a real API's own vendor media type — RFC 6839; parameters like
+     * `; charset=UTF-8` are fine) — anything else throws rather than
+     * silently sending JSON bytes under a Content-Type that claims
+     * otherwise. postForm()/raw()/send() are the explicit, honest way to
+     * send a body this shorthand can't; see each one's own docblock.
      *
      * @param array<string, mixed> $body
      * @param array<string, string> $headers
@@ -165,8 +165,9 @@ final readonly class TestClient
             ? self::withValidatedContentType(
                 $headers,
                 default: 'application/json',
-                isAllowed: self::isJsonMediaType(...),
-                describeAllowed: 'JSON-shaped (application/json, or a "+json" suffix, parameters allowed)',
+                isAllowed: MediaType::isJson(...),
+                describeAllowed: 'JSON-shaped (application/json, or an "application/*+json" suffix, '
+                    . 'parameters allowed)',
                 methodHint: 'Use postForm()/putForm()/patchForm() for a form-encoded body, raw() for a plain '
                     . 'string body, or send() for a fully hand-built PSR-7 request.',
             )
@@ -270,6 +271,10 @@ final readonly class TestClient
      * header string, so a `; charset=...` parameter never causes a
      * legitimate override to be rejected.
      *
+     * $isAllowed receives the bare media type, which {@see MediaType}'s
+     * own predicates re-normalize harmlessly — {@see MediaType::of()} is
+     * idempotent — so one of them can be passed straight in.
+     *
      * @param array<string, string> $headers
      * @param callable(string): bool $isAllowed
      * @return array<string, string>
@@ -348,11 +353,6 @@ final readonly class TestClient
         $headers['Content-Type'] = $value;
 
         return [$headers, $value];
-    }
-
-    private static function isJsonMediaType(string $mediaType): bool
-    {
-        return $mediaType === 'application/json' || \str_ends_with($mediaType, '+json');
     }
 
     private static function isFormUrlencodedMediaType(string $mediaType): bool

@@ -11,6 +11,7 @@ use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Exception\UnresolvableParameterException;
+use Kinetis\Http\Exception\UnsupportedBodyMediaTypeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
@@ -37,19 +38,25 @@ use ReflectionParameter;
 use ReflectionType;
 
 /**
- * Resolves a matched route's controller through the container, binds each
- * method parameter from the request (#[Body] DTO, #[Query] scalar, a
- * same-named path parameter, a ServerRequestInterface-typed parameter that
- * receives the raw request directly, or an UploadedFileInterface-typed
- * parameter pulled from the request's uploaded-files bag by name), invokes
- * it, and encodes the return value as a JSON PSR-7 response. A #[Body] DTO
- * is decoded as JSON by default, or read from getParsedBody() for
- * multipart/form-data and application/x-www-form-urlencoded, as
- * {@see MediaType} classifies them — an UploadedFileInterface-typed
+ * Binds each of a matched route's method parameters from the request
+ * (#[Body] DTO, #[Query] scalar, a same-named path parameter, a
+ * ServerRequestInterface-typed parameter that receives the raw request
+ * directly, or an UploadedFileInterface-typed parameter pulled from the
+ * request's uploaded-files bag by name), resolves the controller through
+ * the container, invokes it, and encodes the return value as a JSON
+ * PSR-7 response. Binding comes first so that a request rejected as a
+ * 400, 415 or 422 never constructs the controller, and no constructor or
+ * registered factory runs on its behalf. A #[Body] DTO is read from
+ * getParsedBody() for multipart/form-data and
+ * application/x-www-form-urlencoded, and decoded as JSON for
+ * application/json and any application/*+json subtype, as
+ * {@see MediaType} classifies them; a nonblank body under any other
+ * media type — or under none at all — is a 415 raised before hydration.
+ * A parameter typed ServerRequestInterface is untouched by that rule and
+ * still receives any raw or binary body. An UploadedFileInterface-typed
  * constructor parameter on that same DTO needs no special handling in
  * Hydrator itself, since the files bag is merged into the data array
- * before hydration. A failed #[Body] validation short-circuits into a
- * 422 response instead of ever reaching the controller.
+ * before hydration.
  *
  * $bindingPlans/$hydrationPlans are optional, compiled-ahead-of-time
  * replacements for what derivePlan()/Hydrator::compilePlan() would otherwise
@@ -97,18 +104,27 @@ final class Dispatcher
     public function dispatch(RouteMatch $match, ServerRequestInterface $request): ResponseInterface
     {
         $route = $match->route;
-        $controller = $this->container->get($route->controllerClass);
         $key = "{$route->controllerClass}::{$route->controllerMethod}";
+        // The uncached plan reflects the controller *class string*, so no
+        // instance is needed to derive it. That keeps container
+        // resolution of the controller — and with it its constructor or
+        // registered factory — behind the argument-binding step below, so
+        // a request rejected as a 400/415/422 never constructs the
+        // controller.
         $plan = $this->bindingPlans[$key]
-            ?? self::derivePlan(new ReflectionMethod($controller, $route->controllerMethod), $route);
+            ?? self::derivePlan(new ReflectionMethod($route->controllerClass, $route->controllerMethod), $route);
 
         try {
             $arguments = $this->resolveFromPlan($plan, $match, $request);
         } catch (MalformedRequestBodyException $e) {
             return ErrorResponse::create(400, $e->getMessage());
+        } catch (UnsupportedBodyMediaTypeException $e) {
+            return ErrorResponse::create(415, $e->getMessage());
         } catch (ValidationException $e) {
             return $this->json(['errors' => $e->errors], 422);
         }
+
+        $controller = $this->container->get($route->controllerClass);
 
         // Router only ever registers public methods (getMethods(IS_PUBLIC)),
         // so a named-argument dynamic call is always legal here — and,
@@ -367,20 +383,36 @@ final class Dispatcher
      * @param HttpBindingPlan $param
      * @throws ValidationException
      * @throws MalformedRequestBodyException
+     * @throws UnsupportedBodyMediaTypeException
      */
     private function resolveBodyFromPlan(array $param, ServerRequestInterface $request): object
     {
         $contentType = $request->getHeaderLine('Content-Type');
 
         $formEncoded = MediaType::isFormEncoded($contentType);
-        // Cast rather than getContents(): RequestBodyMiddleware has
-        // staged a seekable, replayable body, and the cast is the
-        // representation that rewinds first — so a middleware that
-        // already inspected the body hands this the whole document
-        // rather than the remainder past its cursor.
-        $decoded = $formEncoded
-            ? $this->parsedBodyAsArray($request)
-            : $this->decodeJsonBody((string) $request->getBody());
+
+        if ($formEncoded) {
+            $decoded = $this->parsedBodyAsArray($request);
+        } else {
+            // Cast rather than getContents(): RequestBodyMiddleware has
+            // staged a seekable, replayable body, and the cast is the
+            // representation that rewinds first — so a middleware that
+            // already inspected the body hands this the whole document
+            // rather than the remainder past its cursor. Read once, so
+            // the media-type check and the decoder see the same bytes.
+            $body = (string) $request->getBody();
+
+            // Blank under decodeJsonBody()'s own trim semantics keeps
+            // its meaning of "no fields", whatever the header says — a
+            // route with an all-optional DTO and a bodiless request has
+            // nothing for a media type to describe. Anything else must
+            // say it is JSON to be read as JSON.
+            if (trim($body) !== '' && !MediaType::isJson($contentType)) {
+                throw UnsupportedBodyMediaTypeException::forTypedBody();
+            }
+
+            $decoded = $this->decodeJsonBody($body);
+        }
 
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];
