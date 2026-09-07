@@ -128,31 +128,68 @@ place directly in an `Authorization` header with no escaping. Generation
 only — issuing a token to a user (verifying a password, calling this,
 storing the hash) is your own login endpoint's job.
 
-## `PasswordHasher`
+## Passwords
+
+Kinetis has no password API. Use PHP's own —
+`password_hash()`/`password_verify()`/`password_needs_rehash()` with
+`PASSWORD_DEFAULT`, so hashing follows whatever PHP itself currently
+recommends. Verifying credentials is your application's own boundary:
+`UserProviderInterface` above resolves an already-issued token, not an
+email and password.
+
+Give the login endpoint one interface of your own to depend on:
 
 ```{code-block} php
-use Kinetis\Auth\PasswordHasher;
+use Kinetis\Http\CurrentUserInterface;
 
-$hash = PasswordHasher::hash($request->password); // at registration
+interface Credentials
+{
+    public function verify(
+        string $email,
+        #[\SensitiveParameter] string $password,
+    ): ?CurrentUserInterface;
+}
 ```
+
+`#[\SensitiveParameter]` redacts that argument in a PHP stack trace: a
+backtrace through this frame renders a placeholder rather than the
+submitted password. It reaches nothing else — keeping the password out
+of what your own application logs stays your code's job.
+
+One `null` covers an unknown email and a wrong password alike; verify
+against a fixed dummy hash when no user matches, so the time taken
+doesn't disclose which of the two it was.
+
+Registration hashes the submitted password once and stores the result:
 
 ```{code-block} php
-if (!PasswordHasher::verify($request->password, $user->passwordHash)) {
-    return ErrorResponse::create(401, 'Invalid credentials.');
+$storedHash = password_hash($password, PASSWORD_DEFAULT);
+```
+
+`verify()` loads that stored hash for the given email and checks the
+submitted password against it:
+
+```{code-block} php
+if (!password_verify($password, $storedHash)) {
+    return null;
 }
 
-if (PasswordHasher::needsRehash($user->passwordHash)) {
-    $this->users->updatePasswordHash($user->id, PasswordHasher::hash($request->password));
+if (password_needs_rehash($storedHash, PASSWORD_DEFAULT)) {
+    $storedHash = password_hash($password, PASSWORD_DEFAULT);
+    // Store $storedHash against the same user.
 }
 ```
 
-`hash()`/`verify()`/`needsRehash()` wrap PHP's own
-`password_hash()`/`password_verify()`/`password_needs_rehash()`, always
-with `PASSWORD_DEFAULT` — so a hash produced under an older PHP version
-still verifies correctly, and `needsRehash()` tells you when it's worth
-upgrading to whatever PHP now recommends. Storage — where the hash lives,
-when to call `needsRehash()` — is your own concern; this covers only the
-three primitives.
+```{warning}
+**Hashing and verifying a password is CPU work, not a wait.** A worker
+running `password_hash()`/`password_verify()` spends CPU for the whole
+call, and there is nothing to yield to the way a database or HTTP wait
+yields. Cross-request concurrency is already bounded by the runtime's
+thread or process count ({doc}`runtime-adapters`), so keep the
+algorithm's cost parameters inside the latency budget you accept for a
+login request, and throttle the endpoint (below) rather than letting a
+burst of attempts spend every worker's CPU on hashing.
+```
 
 ## Preventing brute-force login attempts
 
@@ -167,7 +204,7 @@ final readonly class LoginController
 {
     public function __construct(
         private AttemptThrottle $throttle,
-        private UserProviderInterface $users,
+        private Credentials $credentials,
     ) {}
 
     #[Post('/login')]
@@ -179,7 +216,7 @@ final readonly class LoginController
             ]);
         }
 
-        $user = $this->users->verify($data->email, $data->password);
+        $user = $this->credentials->verify($data->email, $data->password);
 
         if ($user === null) {
             $this->throttle->recordFailure($data->email);

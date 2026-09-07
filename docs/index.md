@@ -46,8 +46,8 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
   and request-scoped transaction safety.
 - **Background work** — queues on Redis, SQL, Amazon SQS, or RabbitMQ,
   with retries, delays, priorities, and graceful shutdown.
-- **Auth** — bearer tokens or JWT, password hashing, refresh tokens, and
-  per-token revocation.
+- **Auth** — bearer tokens or JWT, refresh tokens, and per-token
+  revocation.
 - **Web essentials** — sessions with CSRF protection, rate limiting, CORS,
   security headers, and a body-size cap, all opt-in middleware.
 - **Infrastructure** — file storage on local disk or S3, mail, OpenSearch,
