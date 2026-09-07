@@ -327,6 +327,7 @@ final class Dispatcher
      * @return array<string, mixed>
      * @throws ValidationException
      * @throws MalformedRequestBodyException
+     * @throws UnsupportedBodyMediaTypeException
      */
     private function resolveFromPlan(array $plan, RouteMatch $match, ServerRequestInterface $request): array
     {

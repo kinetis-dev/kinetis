@@ -559,7 +559,10 @@ final class Hydrator
         }
 
         if ($parameter['dtoClass'] !== null) {
-            return self::resolveClassTypedValue($name, $value, $parameter['dtoClass'], $parameter['nestedPlan'], $normalizeFormLiterals);
+            /** @var HydrationPlan|null $nestedPlan */
+            $nestedPlan = $parameter['nestedPlan'];
+
+            return self::resolveClassTypedValue($name, $value, $parameter['dtoClass'], $nestedPlan, $normalizeFormLiterals);
         }
 
         if ($parameter['listItemClass'] !== null) {
@@ -705,6 +708,8 @@ final class Hydrator
 
         /** @var class-string $listItemClass */
         $listItemClass = $parameter['listItemClass'];
+        /** @var HydrationPlan|null $listItemPlan */
+        $listItemPlan = $parameter['listItemPlan'];
         $items = [];
         $errors = [];
 
@@ -713,7 +718,7 @@ final class Hydrator
                 "{$name}.{$index}",
                 $item,
                 $listItemClass,
-                $parameter['listItemPlan'],
+                $listItemPlan,
                 $normalizeFormLiterals,
             );
 

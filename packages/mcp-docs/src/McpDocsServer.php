@@ -99,7 +99,7 @@ final class McpDocsServer
 
     private function initialize(?stdClass $params): stdClass
     {
-        $requested = $params?->protocolVersion ?? null;
+        $requested = $params->protocolVersion ?? null;
 
         if (!is_string($requested) || $requested === '') {
             throw JsonRpcException::invalidParams('The "protocolVersion" member must be a non-empty string.');
@@ -145,7 +145,7 @@ final class McpDocsServer
 
     private function readResource(?stdClass $params): stdClass
     {
-        $uri = $params?->uri ?? null;
+        $uri = $params->uri ?? null;
 
         if (!is_string($uri) || $uri === '') {
             throw JsonRpcException::invalidParams('The "uri" member must be a non-empty string.');
