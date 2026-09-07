@@ -140,6 +140,15 @@ its Fiber to itself until it finishes — up to a bounded number of them: a
 wider burst still runs, on fresh Fibers that aren't retained afterwards. None of it is visible in the API: you write plain closures,
 exactly as above.
 
+A resident Fiber outlives the task that parked it, so the next task to
+run on it may belong to a later batch — and, in a persistent worker, to a
+later request. Anything that attaches Fiber-local or Fiber-keyed state
+must detach or release it before the task returns, on both the success
+and the failure path, or a later task inherits it. Fiber identity is the
+carrier that executes a task, not an identifier for that task, its batch,
+or its request; do not key anything on it that has to outlive the task.
+Span scopes follow this rule — see {ref}`telemetry-fiber-scopes`.
+
 While tasks are in flight, the caller waits on a Revolt suspension that
 the last task to finish resumes — the event loop drives every suspended
 task no matter how many times each one suspends internally, or in what
