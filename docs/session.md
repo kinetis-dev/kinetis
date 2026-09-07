@@ -65,33 +65,25 @@ The three drivers:
 expired on both, not one second short of it. `cache` has no boundary of
 its own to state: expiry is entirely the backend's own TTL semantics.
 
-**`$lifetimeSeconds` (`SESSION_LIFETIME`) is validated the same way
-everywhere the package uses it, regardless of driver** — zero or
-negative is rejected outright, and any value that would push the
-expiry past `9999-12-31 23:59:59 UTC` is rejected too: MySQL's own
-`DATETIME` column — the type this package's own MySQL migration stub
-uses — can't store a later date (confirmed directly against a real
-server — a value one second past this fails with a genuine `Incorrect
-datetime value` error, not a silent clamp), so this is the portable
-ceiling every driver enforces, even `cache`, which never computes an
-absolute timestamp of its own. `SESSION_LIFETIME` is checked at
-middleware construction — before the handler ever runs — so a
-misconfigured value never lets a request perform real work only to fail
-afterward when the session is written.
+**`$lifetimeSeconds` (`SESSION_LIFETIME`) is checked the same way
+everywhere the package uses it, regardless of driver** — it must be a
+positive number of seconds, and adding it to the current Unix timestamp
+must stay inside PHP's integer range. Every driver applies both, `cache`
+included, even though it never computes an absolute timestamp of its
+own. `SESSION_LIFETIME` is checked at middleware construction — before
+the handler ever runs — so a misconfigured value never lets a request
+perform real work only to fail afterward when the session is written.
 
 The `sql` driver's migration stubs use `DATETIME` on MySQL and
 `TIMESTAMP` (without time zone) on Postgres, never MySQL's own
-`TIMESTAMP` type or Postgres's `TIMESTAMPTZ` — both store the exact
-literal UTC wall-clock value this package writes, unaffected by
-whatever timezone the database connection itself happens to be
-configured with. MySQL's `TIMESTAMP` type, by contrast, reinterprets a
-bound value through the connection's own session timezone, confirmed
-directly against a real server: the same literal string can be stored
-as a materially different absolute instant, or rejected outright even
-when comfortably within the range above, purely depending on that
-setting. Sessions are never expected to expire early — or fail to write
-at all — because of how a shared connection's session timezone happens
-to be configured.
+`TIMESTAMP` type or Postgres's `TIMESTAMPTZ`. The store binds a bare
+`Y-m-d H:i:s` UTC wall-clock string with no embedded offset, which a
+timezone-naive column stores exactly as given. MySQL's `TIMESTAMP`
+reinterprets a bound value through the connection's session timezone,
+so the same literal can land as a different absolute instant. Choosing
+a timezone-naive column keeps a shared connection's session timezone
+out of when a session expires; the package never changes that setting
+itself.
 
 ### Cookie name prefixes
 

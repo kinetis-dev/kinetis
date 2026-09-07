@@ -90,13 +90,12 @@ final readonly class SessionMiddleware implements MiddlewareInterface
 
         $lifetime = $config->int('SESSION_LIFETIME', 7200);
 
-        // The full shared contract — not just "positive" — so a
-        // SESSION_LIFETIME too large for every backend this package
-        // ships to store fails here, at construction, before the
-        // handler ever runs: a request must never perform real
-        // application side effects only to have commit() throw
-        // afterward for a value that was already known bad.
-        SessionExpiry::assertValidLifetime($lifetime, 'SESSION_LIFETIME');
+        // Checked here, at construction, before the handler ever runs:
+        // a request must never perform real application side effects
+        // only to have commit() throw afterward for a value that was
+        // already known bad. The timestamp itself is the stores' to
+        // compute at write time.
+        SessionExpiry::timestampFor($lifetime, 'SESSION_LIFETIME');
 
         $this->lifetime = $lifetime;
 

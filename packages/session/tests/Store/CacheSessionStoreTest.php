@@ -26,13 +26,11 @@ final class CacheSessionStoreTest extends TestCase
     }
 
     /**
-     * CacheSessionStore itself computes no expiry at all — the backend
-     * does, from whatever TTL it's given. Seeded directly on the cache
-     * (bypassing write(), which now rejects a non-positive lifetime —
-     * KINETIS-68) with a TTL already in the past, using the same
-     * "session." key prefix write()'s own private keyFor() applies —
-     * so read() must observe the backend's own expiry, not anything
-     * this store tracks itself.
+     * CacheSessionStore computes no expiry itself — the backend does,
+     * from whatever TTL it is given. Seeded directly on the cache
+     * (bypassing write(), which rejects a non-positive lifetime) with a
+     * TTL already in the past, under the same "session." key prefix
+     * keyFor() applies, so read() observes the backend's own expiry.
      */
     public function test_expiry_is_the_backends_ttl(): void
     {
@@ -45,11 +43,9 @@ final class CacheSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-68: aligned with the other two stores as far as this store
-     * actually controls — it never computes an absolute timestamp
-     * itself, so there's no overflow arithmetic to guard here, but a
-     * non-positive lifetime is still rejected before the cache backend
-     * is ever touched, the same as File/SqlSessionStore.
+     * This store never uses the absolute timestamp it computes, but a
+     * lifetime means the same thing here as in File/SqlSessionStore: a
+     * non-positive one is rejected before the cache backend is touched.
      */
     public function test_write_rejects_a_non_positive_lifetime_before_touching_the_cache(): void
     {

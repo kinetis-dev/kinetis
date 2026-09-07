@@ -59,19 +59,19 @@ final readonly class CacheSessionStore implements SessionStoreInterface
      * of returning `false` is left alone — its own exception is what
      * propagates, never replaced by a `SessionException` here.
      *
-     * $lifetimeSeconds itself is validated via {@see SessionExpiry} —
-     * this store never computes an absolute expiry timestamp (the
-     * relative TTL goes straight to the cache backend, which computes
-     * its own), but a non-positive lifetime must be rejected here the
-     * same way the other stores reject it, rather than silently
-     * deferring to whatever the backend happens to do with one.
+     * $lifetimeSeconds goes through {@see SessionExpiry::timestampFor()}
+     * and the timestamp is discarded: the relative TTL goes straight to
+     * the cache backend, which computes its own expiry, but the
+     * lifetime a caller may pass means the same thing here as it does
+     * in every other store rather than deferring to whatever the
+     * backend happens to do with an invalid one.
      *
      * @param array<string, mixed> $data
      */
     #[\Override]
     public function write(string $id, array $data, int $lifetimeSeconds): void
     {
-        SessionExpiry::assertValidLifetime($lifetimeSeconds);
+        SessionExpiry::timestampFor($lifetimeSeconds);
 
         if (!$this->cache->set(self::keyFor($id), $data, $lifetimeSeconds)) {
             throw new SessionException("Session data for \"{$id}\" could not be written to the cache.");

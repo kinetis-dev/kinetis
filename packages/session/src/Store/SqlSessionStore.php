@@ -24,25 +24,23 @@ use Kinetis\Session\Support\SessionExpiry;
  * `expires_at` is strictly in the future (`expires_at > now`); `gc()`
  * deletes the exact complement (`expires_at <= now`) — the same
  * boundary {@see FileSessionStore} enforces, so both stores agree on
- * the exact second a session actually expires. The absolute timestamp
- * itself is computed and validated via {@see SessionExpiry} — never
- * `time() + $lifetimeSeconds` directly — so an invalid or
- * unrepresentable `$lifetimeSeconds` fails with a clear package
- * exception rather than a raw `TypeError` out of formatTimestamp().
+ * the exact second a session expires. The absolute timestamp itself
+ * comes from {@see SessionExpiry::timestampFor()} — never `time() +
+ * $lifetimeSeconds` directly — so an invalid `$lifetimeSeconds` fails
+ * with a package exception rather than a raw `TypeError` out of
+ * formatTimestamp().
  *
  * `expires_at` must be a *timezone-naive* column type — MySQL's
  * `DATETIME`, or Postgres's `TIMESTAMP` (without time zone, the
- * default) — never MySQL's own `TIMESTAMP`, which is deliberately not
- * used by the shipped migration stub; see {@see SessionExpiry}'s own
- * `MAX_EXPIRES_AT` docblock for why. Every value this class binds is a
- * literal `gmdate()`-formatted UTC wall-clock string with no embedded
- * offset, which is what a genuinely timezone-naive column stores
- * exactly as given, making the comparison against `self::now()`'s own
- * identically-formatted string correct regardless of the connection's
- * own session timezone. This class never mutates the connection's own
- * timezone itself: a shared application connection's session settings
- * are not this package's to change, so the fix is choosing a column
- * type the ambient setting cannot affect in the first place.
+ * default) — never MySQL's own `TIMESTAMP`, which reinterprets a bound
+ * literal through the connection's session timezone. Every value this
+ * class binds is a bare `gmdate()`-formatted UTC wall-clock string with
+ * no embedded offset, which a timezone-naive column stores exactly as
+ * given, making the comparison against `self::now()`'s identically
+ * formatted string correct whatever the connection's session timezone
+ * is. This class never changes that setting: a shared application
+ * connection's session state is not this package's to mutate, so the
+ * column type is what keeps the ambient setting out of the comparison.
  */
 final readonly class SqlSessionStore implements SessionStoreInterface, GarbageCollectableStoreInterface
 {

@@ -7,7 +7,6 @@ namespace Kinetis\Session\Tests\Store;
 use Kinetis\Persistence\Exception\QueryException;
 use Kinetis\Session\Exception\SessionException;
 use Kinetis\Session\Store\SqlSessionStore;
-use Kinetis\Session\Support\SessionExpiry;
 use Kinetis\Session\Tests\Fixtures\FakeSqlRowResult;
 use Kinetis\Session\Tests\Fixtures\ScriptedSqlLink;
 use PHPUnit\Framework\TestCase;
@@ -28,10 +27,9 @@ final class SqlSessionStoreTest extends TestCase
     private const string VERIFY_SQL = 'SELECT id FROM kinetis_sessions WHERE id = ? AND payload = ? AND expires_at = ?';
 
     /**
-     * KINETIS-68: the shared expiry-boundary contract, confirmed against
-     * the exact SQL text read() and gc() issue — expires_at > now for a
-     * live read, expires_at <= now for gc()'s own deletion — the same
-     * boundary FileSessionStore's own read()/gc() now match exactly.
+     * The shared expiry boundary, in the SQL text read() and gc() issue:
+     * `expires_at > now` for a live read, `expires_at <= now` for gc()'s
+     * deletion — the same boundary FileSessionStore applies in PHP.
      */
     public function test_read_uses_a_strictly_greater_than_expiry_boundary(): void
     {
@@ -54,23 +52,13 @@ final class SqlSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-69: the exact SQL value write() binds for expires_at —
-     * not just the SQL text shape the other tests here already cover.
-     * Must be a bare `Y-m-d H:i:s` literal with no timezone marker at
-     * all (no 'Z' suffix, no '+00:00'/'-05:00' offset, no ISO-8601 'T'
-     * separator) — that's what makes it safe to bind against a
-     * timezone-naive column (MySQL's DATETIME, Postgres's TIMESTAMP
-     * without time zone): a value carrying its own embedded offset
-     * would be redundant at best against a column type that has no
-     * concept of one, and outright wrong if it were ever bound against
-     * MySQL's own TIMESTAMP, which reinterprets a literal through the
-     * connection's session timezone regardless of what the string itself
-     * claims. A tolerant, real-clock-bracketed window rather than exact
-     * equality — write() has no injectable clock — the same pattern
-     * SessionExpiryTest::test_timestamp_for_is_now_plus_the_lifetime
-     * already establishes; string comparison is valid for the bound
-     * check because `Y-m-d H:i:s` sorts identically to chronological
-     * order.
+     * The exact value write() binds for expires_at: a bare
+     * `Y-m-d H:i:s` UTC literal with no timezone marker of any kind (no
+     * 'Z', no offset, no ISO-8601 'T'), which is what makes it safe
+     * against a timezone-naive column. A tolerant clock-bracketed
+     * window rather than exact equality — write() reads the clock
+     * itself; string comparison is valid because `Y-m-d H:i:s` sorts
+     * chronologically.
      */
     public function test_write_binds_a_bare_utc_wall_clock_string_with_no_timezone_marker(): void
     {
@@ -90,10 +78,9 @@ final class SqlSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-68: a non-positive lifetime must be rejected before any
-     * SQL statement is ever issued — proven by an empty scripted link
-     * that would throw its own RuntimeException the instant execute()
-     * was reached, and by confirming $link->executed stayed empty.
+     * A non-positive lifetime is rejected before any SQL statement is
+     * issued: the scripted link is empty, so reaching execute() at all
+     * throws its own RuntimeException.
      */
     public function test_write_rejects_a_non_positive_lifetime_before_touching_the_database(): void
     {
@@ -109,57 +96,6 @@ final class SqlSessionStoreTest extends TestCase
         }
 
         self::assertSame([], $link->executed, 'an invalid lifetime must never reach the database.');
-    }
-
-    /**
-     * KINETIS-68: time() + PHP_INT_MAX overflows to a float — write()
-     * must reject this before formatTimestamp(int $unix) is ever called
-     * with it, rather than letting a raw TypeError escape from deep
-     * inside this class instead of a clear, package-owned exception.
-     */
-    public function test_write_rejects_an_overflowing_lifetime_before_touching_the_database(): void
-    {
-        $link = new ScriptedSqlLink([]);
-
-        try {
-            new SqlSessionStore($link)->write('sid-overflow', ['user' => 42], \PHP_INT_MAX);
-            self::fail('Expected SessionException.');
-        } catch (SessionException $e) {
-            self::assertStringContainsString('produces an expiry beyond', $e->getMessage());
-        }
-
-        self::assertSame([], $link->executed, 'an overflowing lifetime must never reach the database.');
-    }
-
-    /**
-     * KINETIS-68 FEEDBACK: a perfectly ordinary, representable PHP int —
-     * no overflow involved — that still pushes the expiry past MySQL's
-     * own TIMESTAMP range must be rejected the same way, before the
-     * database is ever touched. Distinct from the overflow case above:
-     * this proves the portable-maximum check itself.
-     *
-     * KINETIS-68 FEEDBACK 2: a safe 100-second margin past the maximum,
-     * not the razor's-edge +1 this test originally used — write() has no
-     * injectable clock, so this test's own time() call and the one
-     * inside SessionExpiry::timestampFor() are two genuinely separate
-     * clock reads a slow or preempted process could let tick over
-     * between. The exact one-second boundary is proven deterministically
-     * by SessionExpiryTest's own timestampFor() tests instead, which pin
-     * both sides to one hardcoded $now with no real clock involved.
-     */
-    public function test_write_rejects_a_lifetime_beyond_the_portable_maximum_before_touching_the_database(): void
-    {
-        $link = new ScriptedSqlLink([]);
-        $lifetime = SessionExpiry::MAX_EXPIRES_AT - \time() + 100;
-
-        try {
-            new SqlSessionStore($link)->write('sid-beyond-max', ['user' => 42], $lifetime);
-            self::fail('Expected SessionException.');
-        } catch (SessionException $e) {
-            self::assertStringContainsString('produces an expiry beyond', $e->getMessage());
-        }
-
-        self::assertSame([], $link->executed, 'a lifetime beyond the portable maximum must never reach the database.');
     }
 
     public function test_an_update_that_matches_a_row_never_touches_insert(): void

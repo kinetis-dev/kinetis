@@ -680,14 +680,11 @@ final class SessionKernelTest extends TestCase
     }
 
     /**
-     * SessionMiddleware now parses and validates SESSION_LIFETIME in its
-     * own constructor — before the request reaches the inner handler at
-     * all — so an invalid value must mean the controller genuinely never
-     * runs, not just that the response eventually comes back 500. A
-     * shared InvocationRecorder is what makes that observable: a
-     * middleware construction failure never reaches the controller, so
-     * the count staying zero is what proves it, independent of the
-     * response status.
+     * SessionMiddleware checks SESSION_LIFETIME in its constructor,
+     * before the request reaches the inner handler, so an invalid value
+     * means the controller never runs at all rather than the response
+     * merely coming back 500. The shared InvocationRecorder is what
+     * makes that observable.
      */
     public function test_the_inner_handler_never_runs_with_an_invalid_session_lifetime(): void
     {
@@ -708,39 +705,6 @@ final class SessionKernelTest extends TestCase
         $client->get('/side-effect-probe')->assertOk();
 
         self::assertSame(1, $recorder->calls);
-    }
-
-    /**
-     * KINETIS-68 FEEDBACK: a SESSION_LIFETIME too large for every
-     * backend this package ships to store (unlike the data-provider
-     * cases above, this value is a syntactically ordinary PHP int —
-     * Config::int() accepts it without complaint, so this is genuinely
-     * exercising SessionExpiry's own MAX_EXPIRES_AT check, not Config's
-     * separate int-range check) must fail at middleware construction,
-     * before the handler ever runs — a request must never perform real
-     * application side effects only to have commit() throw afterward
-     * for a value that was already known bad.
-     *
-     * KINETIS-69: this value is chosen relative to SessionExpiry's own
-     * MAX_EXPIRES_AT rather than hardcoded independently of it — a fixed
-     * literal here silently stopped testing anything real once
-     * MAX_EXPIRES_AT's own value changed (this exact test passed for the
-     * wrong reason, with the handler genuinely running, until this fix
-     * was caught by re-running the full suite after that change). Even
-     * at today's real time(), 260 billion seconds is comfortably past
-     * MAX_EXPIRES_AT (roughly 8,000 years from now) regardless of when
-     * this test actually runs, so no time()-tolerant window is needed
-     * here the way SessionExpiryTest's own boundary tests need one.
-     */
-    public function test_the_inner_handler_never_runs_with_a_session_lifetime_beyond_the_portable_maximum(): void
-    {
-        [$client, $recorder] = $this->clientWithRecorder(['SESSION_LIFETIME' => '260000000000', 'APP_ENV' => 'development']);
-
-        $response = $client->get('/side-effect-probe');
-
-        $response->assertStatus(500);
-        self::assertStringContainsString('SESSION_LIFETIME', (string) $response->getBody());
-        self::assertSame(0, $recorder->calls, 'the handler must never run for a SESSION_LIFETIME beyond the portable maximum.');
     }
 
     public function test_an_unrecognised_same_site_value_is_refused(): void

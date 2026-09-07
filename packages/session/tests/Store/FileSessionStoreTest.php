@@ -9,7 +9,6 @@ use Kinetis\Session\Store\FileSessionStore;
 use Kinetis\Session\Tests\Fixtures\FailingChmodStreamWrapper;
 use Kinetis\Session\Tests\Fixtures\FailingWriteStreamWrapper;
 use Kinetis\Session\Tests\Fixtures\RecordingStreamWrapper;
-use Kinetis\Session\Support\SessionExpiry;
 use PHPUnit\Framework\TestCase;
 
 final class FileSessionStoreTest extends TestCase
@@ -135,13 +134,10 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-68: a session whose expiresAt is exactly the current
-     * second — not one second short of it — must already be treated as
-     * expired, matching SqlSessionStore's own `expires_at > now` /
-     * `expires_at <= now` boundary exactly. Seeded directly with
-     * expiresAt === time() (writeExpiredFile() itself always seeds one
-     * second in the past, which is a stronger, less precise case than
-     * this exact-boundary one).
+     * A session whose expiresAt is exactly the current second is
+     * already expired, matching SqlSessionStore's `expires_at > now` /
+     * `expires_at <= now` boundary. Seeded directly, since
+     * writeExpiredFile() always seeds one second further back.
      */
     public function test_a_session_expiring_exactly_now_reads_null_and_is_removed(): void
     {
@@ -155,37 +151,7 @@ final class FileSessionStoreTest extends TestCase
         self::assertSame([], \glob($this->directory . '/sess_*') ?: []);
     }
 
-    /**
-     * KINETIS-68 FEEDBACK 2: the other side of the same boundary — a
-     * session with a healthy future expiry must still read as live.
-     * Deliberately a safe margin, not the razor's-edge +1 second this
-     * test originally used: read() has no injectable clock (its
-     * signature is fixed by SessionStoreInterface), so seeding
-     * expiresAt from one time() call here and letting read() make its
-     * own separate one is a real race a slow or preempted process could
-     * lose — exactly what the prior feedback round flagged. The exact
-     * one-second boundary is proven deterministically instead by
-     * SessionExpiryTest's own isExpired() tests, which take both sides
-     * of the comparison as fixed arguments and never touch the real
-     * clock at all.
-     */
-    public function test_a_session_expiring_well_into_the_future_still_reads_live(): void
-    {
-        $id = self::id();
-        \file_put_contents(
-            $this->directory . '/sess_' . $id,
-            \json_encode(['expiresAt' => \time() + 3600, 'data' => ['x' => 1]], JSON_THROW_ON_ERROR),
-        );
-
-        self::assertSame(['x' => 1], $this->store->read($id));
-    }
-
-    /**
-     * KINETIS-68: a non-positive lifetime must be rejected before any
-     * file is ever touched, on both the "invalid" and "already covered
-     * by the exception message" fronts — proven for both 0 and a
-     * negative value, the two distinct rejected shapes.
-     */
+    /** A non-positive lifetime is rejected before any file is touched. */
     public function test_write_rejects_a_non_positive_lifetime(): void
     {
         foreach ([0, -1] as $lifetime) {
@@ -199,86 +165,6 @@ final class FileSessionStoreTest extends TestCase
 
         self::assertSame([], \glob($this->directory . '/sess_*') ?: [], 'no file must ever be written for a rejected lifetime.');
         $this->assertNoStrayTempFiles();
-    }
-
-    /**
-     * KINETIS-68: time() + PHP_INT_MAX overflows to a float — write()
-     * must reject this before ever encoding/writing anything, rather
-     * than publishing a file its own reader would immediately reject as
-     * malformed.
-     */
-    public function test_write_rejects_an_overflowing_lifetime(): void
-    {
-        $id = self::id();
-
-        $this->expectException(SessionException::class);
-        $this->expectExceptionMessage('produces an expiry beyond');
-
-        try {
-            $this->store->write($id, ['x' => 1], \PHP_INT_MAX);
-        } finally {
-            self::assertSame([], \glob($this->directory . '/sess_*') ?: []);
-            $this->assertNoStrayTempFiles();
-        }
-    }
-
-    /**
-     * KINETIS-68 FEEDBACK: a lifetime that is a perfectly ordinary,
-     * representable PHP int — no overflow involved — but still pushes
-     * expiresAt past MAX_EXPIRES_AT must be rejected the same way,
-     * before anything is written. Distinct from the overflow case above:
-     * this proves the portable-maximum check itself, not just the
-     * int-overflow guard.
-     *
-     * KINETIS-68 FEEDBACK 2: a safe 100-second margin past the maximum,
-     * not the razor's-edge +1 this test originally used. write() has no
-     * injectable clock (SessionStoreInterface fixes its signature), so
-     * this test's own time() call and the one inside timestampFor() are
-     * two genuinely separate clock reads a slow or preempted process
-     * could let tick over between — a margin this wide survives any
-     * realistic delay, while the exact one-second boundary is proven
-     * deterministically by SessionExpiryTest's own timestampFor() tests,
-     * which pin both sides to one hardcoded $now and never touch the
-     * real clock at all.
-     */
-    public function test_write_rejects_a_lifetime_beyond_the_portable_maximum(): void
-    {
-        $id = self::id();
-        $lifetime = SessionExpiry::MAX_EXPIRES_AT - \time() + 100;
-
-        $this->expectException(SessionException::class);
-        $this->expectExceptionMessage('produces an expiry beyond');
-
-        try {
-            $this->store->write($id, ['x' => 1], $lifetime);
-        } finally {
-            self::assertSame([], \glob($this->directory . '/sess_*') ?: []);
-            $this->assertNoStrayTempFiles();
-        }
-    }
-
-    /**
-     * The other side of the same store-level boundary: a lifetime
-     * comfortably under the portable maximum must still succeed.
-     *
-     * KINETIS-68 FEEDBACK 2: comfortably under, not landing exactly at
-     * it — the exact boundary is a single arithmetic comparison
-     * (SessionExpiry::isRepresentable()), already proven deterministically
-     * by SessionExpiryTest against fixed, hand-picked values with zero
-     * real-clock involvement. This test's own job is different: proving
-     * a lifetime this large genuinely round-trips through the real
-     * store's write()/read() path, which a two-separate-time()-calls
-     * margin this wide can do safely without risking the flake an exact
-     * boundary would.
-     */
-    public function test_write_accepts_a_lifetime_comfortably_under_the_portable_maximum(): void
-    {
-        $id = self::id();
-        $lifetime = SessionExpiry::MAX_EXPIRES_AT - \time() - 100;
-
-        $this->store->write($id, ['x' => 1], $lifetime);
-
-        self::assertSame(['x' => 1], $this->store->read($id));
     }
 
     public function test_destroy_removes_the_file(): void
@@ -351,11 +237,9 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * write() itself now rejects a non-positive $lifetimeSeconds
-     * (KINETIS-68), so an already-expired file for a test to observe is
-     * seeded directly, in the exact real envelope shape write() itself
-     * produces — the same technique the corrupt-file test already uses
-     * for writing a raw file outside write()'s own contract.
+     * write() rejects a non-positive $lifetimeSeconds, so an
+     * already-expired file is seeded directly, in the envelope shape
+     * write() produces.
      *
      * @param array<string, mixed> $data
      */

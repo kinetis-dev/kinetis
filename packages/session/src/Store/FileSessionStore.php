@@ -16,17 +16,12 @@ use Kinetis\Session\Support\SessionExpiry;
  * expired file is deleted when next read, and gc() sweeps the rest —
  * schedule the `session:gc` command for that, nothing runs it
  * implicitly. A session is live only while `expiresAt` is strictly in
- * the future — read() and gc() (via isCollectable()) both check this
- * through {@see SessionExpiry::isExpired()}, the one shared predicate,
- * rather than either comparing `expiresAt` against `time()` inline —
- * the same `expires_at > now`/`expires_at <= now` boundary
- * {@see SqlSessionStore} already enforces at the database level, so
- * both stores agree on the exact second a session actually expires.
- * `expiresAt` itself, and every `$lifetimeSeconds` a caller can pass,
- * is computed and validated via {@see SessionExpiry::timestampFor()} —
- * never `time() + $lifetimeSeconds` directly — so an invalid or
- * unrepresentable lifetime fails loudly, here, rather than silently
- * corrupting the stored envelope.
+ * the future, the same `expires_at > now`/`expires_at <= now` boundary
+ * {@see SqlSessionStore} enforces at the database level, so both stores
+ * agree on the exact second a session expires. `expiresAt` comes from
+ * {@see SessionExpiry::timestampFor()} — never `time() +
+ * $lifetimeSeconds` directly — so an invalid lifetime fails here rather
+ * than corrupting the stored envelope.
  *
  * Multi-process safe only in the last-write-wins sense the store
  * contract already declares; not intended for production fleets, where
@@ -101,7 +96,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
             return null;
         }
 
-        if (SessionExpiry::isExpired($envelope['expiresAt'], \time())) {
+        if ($envelope['expiresAt'] <= \time()) {
             @\unlink($path);
 
             return null;
@@ -229,7 +224,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
 
         return !\is_array($envelope)
             || !\is_int($envelope['expiresAt'] ?? null)
-            || SessionExpiry::isExpired($envelope['expiresAt'], \time());
+            || $envelope['expiresAt'] <= \time();
     }
 
     private function pathFor(string $id): string
