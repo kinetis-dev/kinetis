@@ -372,8 +372,9 @@ keys as persistence.
 | `FILESYSTEM_S3_BUCKET` | *(required for s3)* | Bucket name. |
 | `FILESYSTEM_S3_REGION` | *(required for s3)* | AWS region. |
 | `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
-| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO). |
-| `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing, needed by most non-AWS S3 services. |
+| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO) — one origin, addressed path-style. |
+| `FILESYSTEM_S3_PLAINTEXT` | `false` | Allow an `http://` endpoint. |
+| `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds per S3 request — connect, idle and transfer. |
 
 `FILESYSTEM_DRIVER` has no default at the container level: `kinetis/storage` binds `FilesystemOperator` only when the key is set, and installing the package alone registers nothing. `FilesystemFactory::fromConfig()`, called directly, falls back to `local`.
 

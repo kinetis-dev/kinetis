@@ -110,7 +110,8 @@ disguised PHPUnit test.
   against a real fixture migration file.
 - **`localstack`** (LocalStack: SQS + S3) — `SqsQueue`: push/pop/ack/
   release/fail, `maxAttempts`, priority queues; `S3FilesystemFactory`:
-  write/read/exists/list/delete.
+  write/read/exists/list/copy/move/delete/deleteDirectory over the
+  plain-HTTP endpoint its opt-in covers.
 - **`redis-cluster`** (`grokzen/redis-cluster`, 3 masters + 3 replicas) —
   `kinetis/redis`'s `ClusterClient`: keys routed to the master that owns
   them, `nodes()` against the live topology, and forced migrations
