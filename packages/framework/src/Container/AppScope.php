@@ -293,24 +293,6 @@ final class AppScope implements ContainerInterface
         return isset($this->bindings[$id]);
     }
 
-    /**
-     * Whether resolution would be attempted for `$id`: it has a binding,
-     * or it is a concrete class this scope would autowire. Reports on
-     * `$id` alone — no binding is invoked and no dependency of the class
-     * is examined, so the answer costs one reflection and changes
-     * nothing.
-     *
-     * `RequestScope::class` is reported as available here and fails in
-     * get(), because a request-scoped id resolved from the application
-     * scope is a wiring defect, not an absent dependency.
-     *
-     * @internal Asked through ResolutionAvailability, not by consumers.
-     */
-    public function canResolve(string $id): bool
-    {
-        return $this->has($id) || ResolutionAvailability::isAutowireable($id);
-    }
-
     #[\Override]
     public function get(string $id): mixed
     {

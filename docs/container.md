@@ -137,32 +137,28 @@ A class- or interface-typed constructor parameter with a default value,
 or a nullable type, says one thing: **the dependency may be absent.** It
 never says a broken one is acceptable.
 
-The container answers "absent?" structurally, from the type alone,
-before resolving anything. The dependency is available when something
-registered the id, or when the id is a concrete, instantiable class the
-container would autowire. It is absent when neither holds — an interface
-or abstract class nobody bound, an enum, a class whose constructor is
-private.
+Absence is decided from the id alone, before anything is resolved: a
+dependency is absent when nothing registered the id and the id is an
+interface, an enum, or a name that declares nothing at all. Everything
+else is resolved, and every failure that resolution meets reaches the
+caller: a binding factory that throws, a nested dependency that cannot
+be built, a cycle
+(`Kinetis\Container\Exception\CircularDependencyException`), a
+request-scoped id asked for from `AppScope`
+(`DisconnectedRequestScopeException`). A declared class that cannot be
+constructed — abstract, or a non-public constructor — is a wiring error,
+not an absent dependency.
 
-- **Available** → it is resolved, and every failure along the way
-  reaches the caller: a factory that throws, a nested dependency that
-  cannot be built, a dependency cycle
-  (`Kinetis\Container\Exception\CircularDependencyException`), a
-  request-scoped id asked for from `AppScope`
-  (`DisconnectedRequestScopeException`).
-- **Absent** → the parameter's own default value stands in, or `null`
-  when it is nullable with no explicit default. Nothing is constructed
-  and no binding factory runs while deciding this, so a named
-  constructor on the absent class is never invoked as a side effect.
-- **Absent with neither a default nor a nullable type** → the container
-  states the absence in its own terms, naming the id nobody bound.
+An absent dependency takes the parameter's own default value, or `null`
+when the type is nullable with no default written out. With neither, the
+container reports the absence itself, naming the id nobody bound.
 
 ```{code-block} php
 final class ReportGenerator
 {
     public function __construct(
-        // Nothing binds this interface and the container cannot build
-        // one, so the dependency is absent and this stays null.
+        // Nothing binds this interface, so the dependency is absent and
+        // this stays null.
         private ?WatermarkerInterface $watermarker = null,
     ) {}
 }
@@ -171,19 +167,14 @@ final class ReportGenerator
 That is what makes "inject this if it's available, otherwise use a sane
 default" — the standard PHP idiom for an optional collaborator — usable
 for a dependency rather than only for a scalar argument, without the
-default doubling as a place for real failures to disappear into. A
-concrete class is *available* even with nothing registering it: it
-autowires normally, exactly as point 2 above describes, and if it cannot
-be built you hear about it.
+default doubling as a place for real failures to disappear into. An
+ordinary class is never absent: it autowires normally, exactly as point
+2 above describes, and a failure to construct it propagates.
 
-`Kinetis\Http\Dispatcher` draws the same line for a controller
+`Kinetis\Http\Dispatcher` applies this same rule to a controller
 method's class-typed parameter, so a dependency behaves identically
 whether it arrives through a constructor or a method signature — see
 {doc}`routing-validation`.
-
-An external PSR-11 container has no such structural question to ask, so
-Kinetis uses its `has()`: false means absent, and true means every
-`get()` failure propagates.
 
 ### Resolving `RequestScope` itself, from the wrong scope
 

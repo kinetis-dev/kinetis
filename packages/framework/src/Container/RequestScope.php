@@ -63,24 +63,6 @@ final class RequestScope implements ContainerInterface
     }
 
     /**
-     * Whether resolution would be attempted for `$id`, following the same
-     * order get() does: a local binding, an explicit registration on the
-     * parent, or a concrete class this scope would autowire locally.
-     *
-     * A disposed scope resolves nothing at all, so it says so rather than
-     * reporting an id absent and letting a caller manufacture a default
-     * from it.
-     *
-     * @internal Asked through ResolutionAvailability, not by consumers.
-     */
-    public function canResolve(string $id): bool
-    {
-        $this->assertNotDisposed();
-
-        return isset($this->bindings[$id]) || $this->parent->canResolve($id);
-    }
-
-    /**
      * Whether something actually registered this id — a local binding,
      * or an explicit one on AppScope.
      *

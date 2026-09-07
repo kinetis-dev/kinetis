@@ -24,7 +24,7 @@ use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Response;
-use Kinetis\Container\ResolutionAvailability;
+use Kinetis\Container\Autowire;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 use Throwable;
@@ -543,21 +543,15 @@ final class Dispatcher
     /**
      * A class-typed parameter, resolved from the request container.
      *
-     * A default value, or a nullable type, says the dependency may be
-     * absent — nothing registered the id and nothing could be built for
-     * it. It never covers a dependency the container does have and
-     * cannot supply: a service whose factory throws, a nested dependency
-     * that will not build, a cycle, a disposed scope. Each of those is a
-     * defect, and its own exception propagates rather than arriving at
-     * the controller as null.
+     * A default value, or a nullable type, stands in for an absent
+     * dependency and never for a broken one — the same rule constructor
+     * autowiring applies, so moving a dependency between a constructor
+     * and a method signature never changes what happens when it breaks.
      *
      * Absence with nothing to stand in for it is reported against the
      * parameter rather than against whatever the container failed to
      * autowire: the useful fact is which route is missing which
      * middleware, not that some constructor deep inside wanted a string.
-     *
-     * Kinetis\Container\ResolutionAvailability draws the line, so a
-     * dependency behaves the same here as it does in a constructor.
      *
      * @param HttpBindingPlan $param
      */
@@ -569,7 +563,7 @@ final class Dispatcher
             throw UnresolvableParameterException::forParameter($param['name']);
         }
 
-        if (ResolutionAvailability::canResolve($this->container, $class)) {
+        if (Autowire::isAvailable($this->container, $class)) {
             return $this->container->get($class);
         }
 

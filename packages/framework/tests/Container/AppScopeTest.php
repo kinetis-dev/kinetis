@@ -17,6 +17,7 @@ use Kinetis\Logging\ErrorLogLogger;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Container\Fixtures\CircularA;
 use Kinetis\Tests\Container\Fixtures\Counter;
+use Kinetis\Tests\Container\Fixtures\OptionalInterface;
 use Kinetis\Tests\Container\Fixtures\ServiceA;
 use Kinetis\Tests\Container\Fixtures\ServiceB;
 use Kinetis\Tests\Container\Fixtures\Unresolvable;
@@ -36,6 +37,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Psr\SimpleCache\CacheInterface;
+use RuntimeException;
 
 final class AppScopeTest extends TestCase
 {
@@ -147,9 +149,8 @@ final class AppScopeTest extends TestCase
         $app->get(Unresolvable::class);
     }
 
-    // --- AppScope resolves itself. A class/interface-typed parameter's
-    // own default value stands in for an absent dependency, never for a
-    // broken one. ---
+    // --- AppScope resolves itself. An optional class- or
+    // interface-typed parameter: absence versus a broken dependency. ---
 
     public function test_app_scope_resolves_to_the_exact_same_instance_after_boot(): void
     {
@@ -169,9 +170,23 @@ final class AppScopeTest extends TestCase
     }
 
     /**
-     * Unresolvable is a concrete class, so the dependency is present and
-     * the failure to build it is a defect the default cannot answer for.
+     * A bound factory that throws is the dependency's own failure, not
+     * its absence, so the parameter's default never stands in for it.
      */
+    public function test_a_bound_factory_that_throws_propagates_through_an_optional_parameter(): void
+    {
+        $app = new AppScope();
+        $app->bind(
+            OptionalInterface::class,
+            static fn (): OptionalInterface => throw new RuntimeException('backend offline'),
+        );
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('backend offline');
+
+        $app->get(WithOptionalInterfaceDependency::class);
+    }
+
     public function test_a_concrete_class_typed_parameter_that_fails_to_autowire_propagates(): void
     {
         $app = new AppScope();

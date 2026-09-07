@@ -362,12 +362,10 @@ public function maybe(?CurrentUserInterface $user = null): array
 }
 ```
 
-That covers absence only, and `Dispatcher` decides what absence is with
-the same structural rule constructor autowiring uses — see
-{doc}`container`. An interface nobody bound is absent. A service that
-*was* registered and then failed to construct, a concrete class whose
-own dependencies cannot be built, and a dependency cycle are all
-defects, so they are reported rather than quietly arriving as `null`.
+That covers absence only — an id the container could never supply.
+Everything else is a defect and is reported rather than quietly arriving
+as `null`; {doc}`container` states the rule constructor autowiring and
+`Dispatcher` share.
 
 ```{note}
 This applies to HTTP controllers. An MCP tool's arguments arrive as one

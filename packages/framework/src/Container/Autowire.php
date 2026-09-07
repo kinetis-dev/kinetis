@@ -17,21 +17,9 @@ use ReflectionParameter;
  * and RequestScope so autowiring behaves identically regardless of which
  * scope triggered it.
  *
- * A class/interface-typed parameter's own default value or nullability
- * stands for one thing: the dependency is absent. The container is asked
- * whether it can resolve the id at all — a binding, or a concrete class
- * the scope would autowire — before a default is considered, and once
- * the answer is yes the dependency is resolved with every failure
- * propagating: a factory that throws, a nested dependency that cannot be
- * built, a cycle, a request-scoped id reached from the application
- * scope, a disposed scope. That is the same decision
- * Kinetis\Http\Dispatcher makes for a controller method parameter, so
- * moving a dependency between a constructor and a method signature never
- * changes what happens when it is broken.
- *
- * An absent dependency with neither a default nor a nullable type is
- * resolved anyway, so the container reports its own absence failure
- * rather than this class paraphrasing it.
+ * A class- or interface-typed parameter's declared default, or its
+ * nullable type, stands in only for a dependency the container would not
+ * attempt at all. See `docs/container.md` for that rule.
  */
 final class Autowire
 {
@@ -75,12 +63,34 @@ final class Autowire
     }
 
     /**
-     * One constructor parameter's value: the container's, when the
-     * parameter is class/interface-typed and the container can resolve
-     * that id; otherwise the parameter's own declared default, then null
-     * when the type allows it. A builtin, union or intersection type is
-     * never resolved from the container and reaches the same default/null
-     * chain directly.
+     * Whether the container could supply `$id`: something registered it,
+     * or a class of that name is declared. Registration is read through
+     * isRegistered() on a request scope, whose has() also answers true
+     * for any autowirable class. An enum is declared and is never a
+     * container's to build, so an unregistered one is absent alongside
+     * an unregistered interface — the types an optional dependency is
+     * written against. Anything else is resolved, and every failure that
+     * resolution meets propagates.
+     *
+     * @internal Shared with Kinetis\Http\Dispatcher, so a dependency
+     *           behaves the same in a constructor and in a controller
+     *           method signature.
+     */
+    public static function isAvailable(ContainerInterface $container, string $id): bool
+    {
+        $registered = $container instanceof RequestScope
+            ? $container->isRegistered($id)
+            : $container->has($id);
+
+        return $registered || (class_exists($id) && !enum_exists($id));
+    }
+
+    /**
+     * One constructor parameter's value: the container's when the
+     * parameter is class- or interface-typed and that dependency is
+     * available, then the parameter's own declared default, then null if
+     * the type allows it. A builtin, union or intersection type is never
+     * resolved from the container.
      */
     private static function resolveParameter(
         ReflectionParameter $parameter,
@@ -90,7 +100,7 @@ final class Autowire
         $type = $parameter->getType();
         $id = $type instanceof ReflectionNamedType && !$type->isBuiltin() ? $type->getName() : null;
 
-        if ($id !== null && ResolutionAvailability::canResolve($container, $id)) {
+        if ($id !== null && self::isAvailable($container, $id)) {
             return $container->get($id);
         }
 

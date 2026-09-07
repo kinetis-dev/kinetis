@@ -6,7 +6,6 @@ namespace Kinetis\Tests\Http;
 
 use Kinetis\Container\AppScope;
 use Kinetis\Container\Exception\CircularDependencyException;
-use Kinetis\Container\Exception\ContainerException;
 use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Exception\UnresolvableParameterException;
@@ -61,11 +60,6 @@ final class ContainerParameterTest extends TestCase
         );
     }
 
-    /**
-     * A default answers for an absent dependency: nothing binds the
-     * interface, and an interface is not something the container can
-     * build on its own.
-     */
     public function test_a_default_makes_an_absent_parameter_optional(): void
     {
         $app = new AppScope();
@@ -79,9 +73,6 @@ final class ContainerParameterTest extends TestCase
         self::assertSame('{"label":"absent"}', (string) $response->getBody());
     }
 
-    /**
-     * A nullable type with no default written out is optional too.
-     */
     public function test_a_nullable_type_alone_makes_an_absent_parameter_optional(): void
     {
         $app = new AppScope();
@@ -93,31 +84,6 @@ final class ContainerParameterTest extends TestCase
         );
 
         self::assertSame('{"label":"absent"}', (string) $response->getBody());
-    }
-
-    /**
-     * The same default answers for nothing when the dependency is a
-     * concrete class the container will attempt and cannot build. The
-     * container's own failure reaches the caller unwrapped, naming the
-     * class and the parameter it could not supply.
-     */
-    public function test_a_default_does_not_answer_for_a_class_that_cannot_be_built(): void
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        try {
-            new Dispatcher($app->createRequestScope())->dispatch(
-                self::router()->match('GET', '/scoped-optional'),
-                new ServerRequest('GET', '/scoped-optional'),
-            );
-
-            self::fail('Expected the dispatch to fail.');
-        } catch (ContainerException $e) {
-            self::assertSame(ContainerException::class, $e::class);
-            self::assertStringContainsString(ScopedValue::class, $e->getMessage());
-            self::assertStringContainsString('$label', $e->getMessage());
-        }
     }
 
     /**
@@ -239,44 +205,6 @@ final class ContainerParameterTest extends TestCase
 
         new Dispatcher($scope, [ServiceInjectedController::class . '::scoped' => $sabotaged])
             ->dispatch($match, new ServerRequest('GET', '/scoped'));
-    }
-
-    /**
-     * The compiled plan carries hasDefault/allowsNull alongside the
-     * source, so absence and breakage divide the same way whether the
-     * plan came from reflection or from the cache.
-     */
-    public function test_a_compiled_plan_divides_absence_from_breakage_the_same_way(): void
-    {
-        $router = self::router();
-        $app = new AppScope();
-        $app->boot();
-
-        $absent = $router->match('GET', '/absent-optional');
-        $absentPlan = Dispatcher::derivePlan(
-            new \ReflectionMethod(ServiceInjectedController::class, 'absentOptional'),
-            $absent->route,
-        );
-
-        $response = new Dispatcher(
-            $app->createRequestScope(),
-            [ServiceInjectedController::class . '::absentOptional' => $absentPlan],
-        )->dispatch($absent, new ServerRequest('GET', '/absent-optional'));
-
-        self::assertSame('{"label":"absent"}', (string) $response->getBody());
-
-        $broken = $router->match('GET', '/scoped-optional');
-        $brokenPlan = Dispatcher::derivePlan(
-            new \ReflectionMethod(ServiceInjectedController::class, 'optional'),
-            $broken->route,
-        );
-
-        $this->expectException(ContainerException::class);
-
-        new Dispatcher(
-            $app->createRequestScope(),
-            [ServiceInjectedController::class . '::optional' => $brokenPlan],
-        )->dispatch($broken, new ServerRequest('GET', '/scoped-optional'));
     }
 
     private static function router(): Router

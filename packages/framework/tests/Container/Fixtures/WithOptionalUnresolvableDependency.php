@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Container\Fixtures;
 
 /**
- * Unresolvable is a real, instantiable class, so this dependency is
- * available rather than absent — and its own required string parameter
- * cannot be supplied. That failure belongs to the dependency and reaches
- * the caller; the default never stands in for it.
+ * Unresolvable is a declared class, so it is resolved rather than
+ * treated as absent — and its own required string parameter cannot be
+ * supplied. That failure belongs to the dependency and reaches the
+ * caller.
  */
 final class WithOptionalUnresolvableDependency
 {
