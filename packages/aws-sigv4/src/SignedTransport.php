@@ -27,15 +27,15 @@ use Symfony\Contracts\HttpClient\ResponseStreamInterface;
  *
  * The delegate create() builds is a Symfony `AmpHttpClient` over a bare
  * `Amp\Http\Client\PooledHttpClient` — the client configurator pins that
- * pool as the whole client. Symfony's own default configurator wraps the
- * pool in an `InterceptedHttpClient` carrying `RetryRequests(2)`, which
- * replays a request underneath Symfony's API where no PSR-18 caller and
- * no Symfony option can see it happen; a configurator supplied to
- * `AmpHttpClientFactory::create()` can equally install
- * `FollowRedirects`, and AMPHP keeps `Authorization` across a redirect
- * whose authority matches — an `https` → `http` hop on the same host
- * included. The pinned configurator is what keeps both out of the chain
- * that a signed `Authorization` and `X-Amz-Security-Token` travel down.
+ * pool as the whole client, decided by this package's own construction
+ * rather than inherited from a dependency's default. A configurator is
+ * the seam an AMPHP interceptor gets in through: `RetryRequests` replays
+ * a request underneath Symfony's API where no PSR-18 caller and no
+ * Symfony option can see it happen, and `FollowRedirects` sends one on,
+ * with AMPHP keeping `Authorization` across a redirect whose authority
+ * matches — an `https` → `http` hop on the same host included. The
+ * pinned configurator is what keeps both out of the chain that a signed
+ * `Authorization` and `X-Amz-Security-Token` travel down.
  *
  * ## No redirect
  *

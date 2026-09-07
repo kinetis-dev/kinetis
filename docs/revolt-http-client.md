@@ -570,9 +570,9 @@ the transport's cooperation:
   inject it: a second retry layer under this one multiplies the attempts
   and spends the total timeout outside it. Configure retries with
   `withRetries()` on the client that owns them. A retry layer *inside* a
-  transport is invisible to that check, which is why `Http` builds its
-  own transport with `AmpHttpClientFactory::createWithoutRetries()`; a
-  transport you build yourself is yours to keep to one wire attempt.
+  transport is invisible to that check; the default transport
+  `AmpHttpClientFactory::create()` builds makes one wire attempt per
+  request, and a transport you build yourself is yours to keep to one.
 - **It must not carry credentials or a base URI of its own.** Default
   options set on the transport are invisible here, so the origin pinning
   above cannot pin them. A transport that carries them answers for where
@@ -603,24 +603,24 @@ $client = AmpHttpClientFactory::create();
 $response = $client->request('GET', 'https://example.com/');
 ```
 
-`create()` mirrors Symfony's own constructor, which means it also
-inherits Symfony's own default: the Amp delegate is wrapped in an
-interceptor that repeats a failed request twice more. That is a retry
-layer, and it is one `Http` will not sit on top of, so `Http` builds its
-transport with `createWithoutRetries()` instead — the same client with
-the pooled delegate handed back untouched, one wire attempt per request.
-Use that one wherever a second retry layer would be a problem.
+One request through it is one wire attempt: the Amp delegate is the
+connection pool itself, with no interceptor above it to repeat a failed
+request. That is what leaves the retry decision with whoever can count
+it — `withRetries()` for `Http`, which is built on this same transport,
+or an SDK's own retry policy for a client handed one. Pass a
+`$clientConfigurator` to build the delegate yourself, and the
+interceptors it installs are yours.
 
 ```{warning}
 This is a plain Symfony client, not the boundary `Http` puts in front of
 one — a deliberate escape hatch for standalone use, kept because a
-library that wants a client of its own wants a real one. Nothing on this
-page applies to it. Symfony's full option grammar, its streaming API,
-its own exception types, its redirect following (which does not know
-what a credential is for), its Amp-level request retries, and its own
-size and lifecycle behavior are what you get, and whatever you hand it
-is what it does: no preflight validation, no origin pinning, no owned
-retry layer, no total deadline, no response-byte ceiling.
+library that wants a client of its own wants a real one. Nothing else on
+this page applies to it. Symfony's full option grammar, its streaming
+API, its own exception types, its redirect following (which does not
+know what a credential is for), and its own size and lifecycle behavior
+are what you get, and whatever you hand it is what it does: no preflight
+validation, no origin pinning, no owned retry layer, no total deadline,
+no response-byte ceiling.
 ```
 
 ## Using it outside Kinetis entirely

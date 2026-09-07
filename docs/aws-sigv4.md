@@ -129,17 +129,16 @@ another layer could merge over. Its delegate is a Symfony
 AMPHP client configurator is pinned to one that installs no interceptor,
 so nothing in the chain retries a request or follows a `Location`.
 
-Both halves of that need owning rather than configuring. Symfony's own
-default configurator wraps the pool in an `InterceptedHttpClient`
-carrying `RetryRequests(2)`, which replays a request below the PSR-18
-boundary where no option and no caller sees it happen; a configurator
-can equally install `FollowRedirects`, and AMPHP keeps `Authorization`
-across a redirect whose authority matches — an `https` to `http` hop on
-the same host included. Above the same boundary, Symfony's
-`RetryableHttpClient` with a strategy that treats a 302 as retryable
-sends the signed request a second time and answers with what the retry
-said, and `ScopingHttpClient` merges its own per-URL defaults over every
-request it forwards.
+Both halves of that need owning rather than configuring. An AMPHP client
+configurator is what installs an interceptor: `RetryRequests` replays a
+request below the PSR-18 boundary where no option and no caller sees it
+happen, and `FollowRedirects` sends one on, with AMPHP keeping
+`Authorization` across a redirect whose authority matches — an `https`
+to `http` hop on the same host included. Above the same boundary,
+Symfony's `RetryableHttpClient` with a strategy that treats a 302 as
+retryable sends the signed request a second time and answers with what
+the retry said, and `ScopingHttpClient` merges its own per-URL defaults
+over every request it forwards.
 
 So `transport:` takes a `SignedTransport` and nothing else. Its
 constructor is private, and `create()` takes default options — a
