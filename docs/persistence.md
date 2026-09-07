@@ -166,13 +166,25 @@ non-default connection is always retrieved explicitly
 
 | value | what you get |
 |---|---|
-| `auto` (default) | FrankenPHP worker mode or RoadRunner → `native`; PHP-FPM → `pdo`. |
+| `auto` (default) | FrankenPHP worker mode or RoadRunner → `native`; every other runtime, PHP-FPM and AWS Lambda included → `pdo`. |
 | `native` | mysqli's `MYSQLI_ASYNC` (`Driver\MysqliAsyncClient`) or ext-pgsql's `pg_send_query` (`Driver\PgsqlAsyncClient`): the wire protocol runs at C speed inside the extension, queries overlap across connections, and each waits by suspending only its own Fiber — full `concurrently()` support. The Postgres client also needs `ext-sockets` and refuses to construct without it. |
 | `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
 
 `fromConfig()`'s `$driver` argument overrides the key for one call.
 `kinetis/migrations` passes `'pdo'` for the session-scoped connection
 its advisory lock needs (see {doc}`migrations`).
+
+`auto` reads two signals — `frankenphp_handle_request()` and
+`RR_MODE=http` — so AWS Lambda gets `pdo` even though its PHP process is
+reused across invocations. The standard Bref runtime carries the PDO
+drivers, while `native` on Postgres needs `ext-pgsql`, which a Lambda
+deployment provides through an extension layer it provisions itself; and
+the native pool's `DB_MAX_CONNECTIONS` is per execution environment, so
+its connection count multiplies with the function's concurrency rather
+than being bounded by a fixed worker count. Lambda is also outside the
+measurements behind the `native` default (see {doc}`benchmarks`). A
+deployment that provides the extension and budgets its pool against the
+function's concurrency limit sets `DB_DRIVER=native` explicitly.
 
 Every driver returns fully-buffered results (part of the `SqlResult`
 contract — stop iterating whenever you like, nothing is left to drain),

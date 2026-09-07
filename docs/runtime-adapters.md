@@ -485,6 +485,12 @@ configure. It's a separate install because Lambda is one deployment
 target among several; it needs nothing beyond what core already ships
 with.
 
+Databases are the one place Lambda differs from the other adapters by
+default: `DB_DRIVER=auto` selects a PDO client here, not the native
+async drivers. See {doc}`persistence`'s "Driver selection" section for
+the reasons and for what a deployment needs before selecting
+`DB_DRIVER=native` on Lambda.
+
 `Kinetis\BrefAdapter\BrefLambdaAdapter` speaks the Lambda Runtime API
 directly (poll `.../invocation/next`, run the request, post the response
 to `.../invocation/{id}/response`) and converts to/from API Gateway's
