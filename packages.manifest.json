@@ -401,6 +401,9 @@
             "require": {
                 "symfony/mailer": "^8.1.2"
             },
+            "requireDevExtra": {
+                "symfony/sendgrid-mailer": "^8.1.6"
+            },
             "kinetis": {
                 "bootstrap": "Kinetis\\Mailer\\PackageBootstrap"
             }

@@ -3,10 +3,9 @@
 declare(strict_types=1);
 
 /**
- * Real-backend regression coverage for MailerFactory — a genuine SMTP
- * send through a real Mailpit container, confirmed by reading the
- * message back through Mailpit's own HTTP API rather than trusting a
- * non-throwing send() call alone.
+ * Real-backend coverage for MailerFactory: an SMTP send through a Mailpit
+ * container, checked by reading the message back through Mailpit's own
+ * HTTP API rather than by a non-throwing send() call alone.
  */
 
 require __DIR__ . '/../vendor/autoload.php';

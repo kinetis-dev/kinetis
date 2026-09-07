@@ -383,6 +383,7 @@ keys as persistence.
 | Key | Default | Purpose |
 |---|---|---|
 | `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
+| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it. |
 
 ### Search (`kinetis/search-opensearch`) — all scoped
 
