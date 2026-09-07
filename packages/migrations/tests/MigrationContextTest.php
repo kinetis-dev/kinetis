@@ -15,14 +15,16 @@ use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
 
 /**
- * The migrate:* commands always run on a PDO client, whatever DB_DRIVER
- * a deployment sets: the advisory lock MigrationRunner holds is scoped
- * to the database session, and only a connection that is never replaced
- * keeps the acquire and the release on the same one.
+ * The migrate:* commands always run on a single-session PDO client,
+ * whatever DB_DRIVER a deployment sets: the advisory lock
+ * MigrationRunner holds is scoped to the database session, and only a
+ * client that never replaces that session keeps the whole run on the one
+ * holding the lock.
  *
  * Nothing here reaches a database. Every driver the factory can build
  * validates its options at construction and connects lazily on first
- * use.
+ * use. What losing that session costs a run is
+ * {@see Integration\MigrationSessionLossTest}.
  */
 final class MigrationContextTest extends TestCase
 {

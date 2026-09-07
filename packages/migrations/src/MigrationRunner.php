@@ -34,11 +34,14 @@ use Throwable;
  * both release on their own when the session closes, gracefully or not.
  *
  * $db must hold one session for the whole run: a lock taken on one
- * session is not held on another. A PDO client is that — one connection,
- * replaced only where the session itself is gone and has taken the lock
- * with it — which is what {@see \Kinetis\Migrations\Console\MigrationContext}
- * builds for the migrate:* commands. A pooling link moves between
- * sessions per operation and would drop the lock mid-run.
+ * session is not held on another. That is what
+ * {@see \Kinetis\Persistence\SqlConnectionFactory::singleSession()}
+ * builds, and what {@see \Kinetis\Migrations\Console\MigrationContext}
+ * passes the migrate:* commands. A pooling link moves between sessions
+ * per operation, and a reconnecting one replaces a session it loses —
+ * either would go on running migrations with the lock gone. A
+ * single-session client closes instead, so the run stops where its
+ * session did.
  */
 final readonly class MigrationRunner
 {

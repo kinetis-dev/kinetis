@@ -158,7 +158,11 @@ gracefully or not — with nothing to clean up by hand if a process is
 killed mid-migration. Session scope is also why the `migrate*` commands
 connect over PDO whatever `DB_DRIVER` says: one session, held for the
 whole run, where the pooling drivers could acquire and release the lock
-on two different ones. These commands are serial, so blocking on a query
+on two different ones. That client is single-session — if the session
+goes, which a migration abandoning a transaction is enough to do, it
+closes instead of opening a replacement, and the run stops there with
+`Kinetis\Persistence\Exception\ConnectionException` rather than
+carrying on unlocked. These commands are serial, so blocking on a query
 costs them nothing. Waiting longer than 10 seconds throws
 `Exception\MigrationLockTimeoutException`, most often meaning another
 `migrate`/`migrate:rollback` is already running elsewhere; retry once it

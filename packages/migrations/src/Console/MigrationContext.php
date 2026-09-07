@@ -42,12 +42,12 @@ final readonly class MigrationContext
         $connectionName = $arguments->option('connection')
             ?? $this->config->string('MIGRATE_CONNECTION_NAME', 'default');
 
-        // Explicitly PDO, whatever DB_DRIVER says: the advisory lock is
-        // scoped to the database session, so the runner needs one
-        // session for the whole run. The native drivers pool, handing
-        // out a different one per operation. These commands are strictly
+        // One session for the whole run, whatever DB_DRIVER says: the
+        // advisory lock is scoped to that session, so a client that
+        // pooled — or that replaced a discarded session — would run
+        // migrations without holding it. These commands are strictly
         // serial, and blocking on a query costs them nothing.
-        $db = SqlConnectionFactory::fromConfig($this->config, $connectionName, driver: 'pdo');
+        $db = SqlConnectionFactory::singleSession($this->config, $connectionName);
 
         return new MigrationRunner($db, new SqlMigrationRepository($db), $this->migrationsPath);
     }

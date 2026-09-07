@@ -299,6 +299,14 @@ client itself out of service, and every later call throws
 outlives one session, which under `auto` is every process that is not a
 persistent worker — a `queue:work` CLI worker included.
 
+`SqlConnectionFactory::singleSession()` builds the other policy: a PDO
+client pinned to the session it opens, closing rather than reconnecting
+if that session is discarded. It is for work that lives in the session
+itself — a session-scoped advisory lock, a temporary table — where a
+replacement is a different session holding none of it, and running on
+one quietly would be worse than stopping. `kinetis/migrations` builds
+its `migrate*` connection this way (see {doc}`migrations`).
+
 The PDO drivers run with *native* (non-emulated) prepares, where every
 `prepare()` is its own server round trip — so `execute()` memoizes
 prepared statements per SQL string for the connection's lifetime. A
