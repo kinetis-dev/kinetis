@@ -206,6 +206,15 @@ to PHP-FPM — or have the response carry `X-Accel-Buffering: no`. The
 conformance suite's FPM run (see {doc}`testing`) fails without it, on
 purpose.
 
+The server in front of PHP-FPM reads and bounds the body before PHP
+runs, so its cap has to be at least `MAX_BODY_SIZE`: a request over the
+server's own limit is answered there, with the server's `413`, and never
+reaches Kinetis. nginx's `client_max_body_size` defaults to 1 MiB, under
+the 2 MiB `MAX_BODY_SIZE` default, so `kinetis/skeleton` sets it to `2m`
+to match — an application that raises one raises both. See "Request
+bodies: one contract under every runtime" below for what Kinetis
+enforces once it holds the bytes.
+
 Both this adapter and the FrankenPHP one run the shared runtime
 conformance suite against their real SAPI in CI — a FrankenPHP worker
 behind Caddy, PHP-FPM behind nginx — not only against the `php -S`
