@@ -102,7 +102,7 @@ The request-body contract every runtime adapter answers to — see "Request bodi
 - `Socket` — non-blocking TCP, Fiber-suspending `connect()`/`read()`/`write()`.
 - `Timer::delay()` — Fiber-suspending delay.
 - `concurrently(array $tasks)` — runs each task in its own `Fiber` drawn from `FiberPool`, collects results in task order, and rethrows the first failure (in task order) once every task has finished. Nested calls are supported. A task that suspends with nothing registered to resume it surfaces as `Exception\DeadlockException` naming the task's index.
-- `FiberPool` — resident worker Fibers that park between jobs instead of terminating, so the steady state allocates no Fiber stacks (per-task `mmap`/`munmap` churn serializes every thread of a ZTS process against the kernel's address-space lock). Per PHP thread, retains at most 64 idle residents; a Fiber suspended mid-job is never returned to service. `@internal` — only `concurrently()` submits jobs.
+- `FiberPool` — resident worker Fibers that park between jobs instead of terminating, so a job served from the idle list allocates no Fiber stack. Per PHP thread, retains at most 64 idle residents; a Fiber suspended mid-job is never returned to service. `@internal` — only `concurrently()` submits jobs.
 - `ConcurrentBatch` — one `concurrently()` call's coordination state: records each task's result or failure, parks the caller on a Revolt suspension the last task resumes, diagnoses deadlocks by first unfinished index, and assembles results. `@internal`.
 
 ## `Kinetis\SimpleCache`

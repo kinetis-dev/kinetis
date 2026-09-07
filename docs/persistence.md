@@ -5,11 +5,10 @@ the runtime actually serving your application. Under a persistent worker
 (FrankenPHP or RoadRunner), queries suspend only their own request's
 Fiber — a request waiting on the database doesn't stop the worker's
 request from making progress on anything else it has in flight. Under
-PHP-FPM, where a worker
-serves exactly one request at a time from a fresh process, Kinetis uses a
-plain blocking PDO connection instead — measured to be the faster choice
-there by a wide margin, since nothing else could have used the wait time
-anyway and PDO's native protocol handling costs a fraction of the CPU.
+PHP-FPM, a worker process is reused across requests but handles one at a
+time, and `DB_DRIVER=auto` selects a blocking PDO connection there;
+database calls made through `concurrently()` therefore execute
+sequentially.
 
 You never pick this per call site: `SqlConnectionFactory` selects the
 driver from the runtime (see "Driver selection" below), every driver

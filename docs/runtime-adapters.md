@@ -851,26 +851,23 @@ already left the process. See "Writing your own adapter" below.
   and bridging one onto the other needs its own design pass.
 - **A purely-numeric header name.** `"123"` is a valid RFC 9110 header
   name (digits are ordinary token characters), and every other adapter
-  here maps it correctly — but `spiral/roadrunner-http`'s own request
+  here maps it correctly, but `spiral/roadrunner-http`'s own request
   decoding drops it before this adapter ever sees the request: PHP
   coerces a numeric string array key to an `int`, and that library's
-  `is_string($key)` filter then deletes it. Confirmed by reading its
-  source directly, not inferred from the symptom. Recovering it would
-  mean reimplementing that library's own JSON/protobuf request decoding
-  in this package instead of using `PSR7Worker` — disproportionate to
-  how narrow the trigger is. A permanent limitation until the upstream
-  library fixes it, and one the shared conformance suite asserts rather
-  than skips: this adapter's driver declares that the header does not
-  survive, and the suite then requires it to be *absent*, never present
-  under some other name or carrying some other value.
+  `is_string($key)` filter then deletes it. Recovering it would mean
+  reimplementing that library's own JSON/protobuf request decoding in
+  this package instead of using `PSR7Worker`. The shared conformance
+  suite asserts this rather than skipping it: this adapter's driver
+  declares that the header does not survive, and the suite then requires
+  it to be *absent*, never present under some other name or carrying
+  some other value.
 - **Cookie order.** Every other adapter here preserves the exact order a
   client sent its cookies in. RoadRunner represents cookies as a Go
   `map[string]string` on the way to PHP, and Go randomizes map iteration
-  order by design — a request's cookies can arrive re-ordered, observed
-  at roughly 1 request in 10 across repeated real runs, not
-  deterministic. Declared and asserted the same way as the header above:
-  the names and values are checked on every run, the order only where
-  the environment can keep it.
+  order by design, so a request's cookies can arrive re-ordered.
+  Declared and asserted the same way as the header above: the names and
+  values are checked on every run, the order only where the environment
+  can keep it.
 
 ## Writing your own adapter
 

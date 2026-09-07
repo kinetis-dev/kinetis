@@ -11,10 +11,9 @@ use Kinetis\Instrumentation\Telemetry;
  * suspends waiting on I/O (via Socket, Timer, or anything else built the
  * same suspend/resume way), the others keep making progress instead of
  * waiting their turn. The Fibers come from {@see FiberPool} — resident
- * workers reused across calls — because creating a Fiber per task
- * allocates and frees a whole C stack each time, and those mmap/munmap
- * cycles serialize every thread of a ZTS process against the kernel's
- * address-space lock (see the pool's docblock for the measurements).
+ * workers reused across calls — because constructing a Fiber per task
+ * allocates a whole C stack and discarding it frees one (see the pool's
+ * docblock).
  * {@see ConcurrentBatch} holds one call's coordination state and wait
  * mechanics.
  *
