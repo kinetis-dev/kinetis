@@ -426,12 +426,9 @@ on its spans.
 - `Kinetis\Telemetry\PackageBootstrap` — binds
   `OpenTelemetry\API\Trace\TracerProviderInterface` on `AppScope`: the
   OTLP-exporting provider when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, a
-  `NoopTracerProvider` otherwise. Also replaces OTel's fiber-bound
-  default context storage with the shared `ContextStorage` — Kinetis
-  Fibers are scheduling units within one request, not independent
-  execution contexts, and the swap is what lets a span begun by the
-  middleware parent spans created inside `concurrently()` tasks.
-  Registers the provider's `shutdown()` via
+  `NoopTracerProvider` otherwise. Leaves OTel's default Fiber-bound
+  context storage in place, so a scope belongs to the Fiber that
+  attached it. Registers the provider's `shutdown()` via
   `register_shutdown_function` — request end under boot-and-die,
   worker exit under a persistent runtime, so both shapes flush.
 - `Kinetis\Telemetry\TracerFactory::fromConfig(Config): ?TracerProvider` —
@@ -514,12 +511,17 @@ on its spans.
   hook is handed. The MCP tool name and resource URI it does export are
   registry-resolved definitions rather than caller-supplied text.
   Which hooks *activate* their span (parenting whatever starts next) is the
-  load-bearing choice: only strictly-nested single-fiber pairs do —
-  middleware, controller, event/listener, the `concurrently()` batch,
-  MCP tool calls, worker jobs. Query and per-task spans never activate:
-  they can overlap across fibers on the shared context, and activating
-  them would interleave the scope stack. `jobPushMetadata()` injects a
-  `traceparent` carrier the backend stores with the job;
+  load-bearing choice. The nested, same-Fiber pairs activate on the
+  context their Fiber already carries — middleware, controller,
+  event/listener, the `concurrently()` batch, MCP tool calls.
+  `taskStarted()` and `jobStarted()` activate on a parent context they
+  name themselves — the batch span reached through the batch token
+  `taskStarted()` is handed, the propagated or root context for a job —
+  because each begins on a Fiber that carries no context of its own.
+  Query spans never activate: they overlap within one Fiber, and
+  activating them would interleave that Fiber's own stack.
+  `jobPushMetadata()` injects a `traceparent` carrier the backend
+  stores with the job;
   `jobStarted()` extracts it, parenting the consumer span into the
   producer's trace — one trace across processes. A failure in any of
   its own methods — an unreachable collector, a bad export — never

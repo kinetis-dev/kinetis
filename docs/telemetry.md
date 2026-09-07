@@ -58,7 +58,31 @@ request span carrying the template as `http.route`.
 
 The request span is *active* while the request runs, which is what
 parents every other span below under it automatically — including
-inside `concurrently()` tasks.
+inside `concurrently()` tasks, whose own hooks carry the request's
+context across the Fiber boundary explicitly. See
+{ref}`telemetry-fiber-scopes`.
+
+(telemetry-fiber-scopes)=
+
+## Scope ownership across Fibers
+
+An active span's scope belongs to the Fiber that started it. This
+package leaves OpenTelemetry's default Fiber-bound context storage in
+place, so two `concurrently()` tasks that overlap in time each keep
+their own stack: a span one task activates is neither visible to nor
+detachable by the other, whatever order they suspend and resume in.
+
+Parentage across a Fiber boundary is therefore explicit rather than
+ambient. `concurrently()` hands each task hook the token its batch hook
+returned, and the task span parents to the batch span that token names —
+which is what keeps a task, and everything nested inside it, under the
+request span the batch itself hangs from. A task that reaches no batch
+span roots its own trace instead of joining a sibling's.
+
+The same rule applies wherever a span starts on a Fiber that carries no
+context: the request span names the extracted `traceparent` (or the
+trace root) as its parent, and a worker's job span names the job's
+propagated context, or the trace root for a job carrying none.
 
 ## SQL query spans
 
@@ -88,10 +112,11 @@ for an acknowledged `COMMIT`, `rollback` for an acknowledged
 connection, a finish nothing answered, a transaction the server ended
 on its own.
 
-Query spans are never activated. They can overlap across fibers on the
-shared context, so they read whichever span is active as their parent —
-normally the request span — and end immediately, and concurrent queries
-inside `concurrently()` never interleave anyone's scope stack.
+Query spans are never activated. They read whichever span is active on
+their own Fiber as their parent — the request span, or the task span
+when the query runs inside a `concurrently()` task — and end
+immediately, so overlapping queries never interleave that Fiber's scope
+stack.
 
 ## Queue spans
 
@@ -360,6 +385,8 @@ report becomes a span with zero configuration beyond the same
   reported from inside the drivers.
 - **`concurrently()`** — a span for the batch and one per task, so
   overlap is visible even for tasks that aren't queries or HTTP calls.
+  The batch hook hands its own token to each task hook, which is what
+  parents a task to its batch across the Fiber boundary.
 - **Events and listeners, MCP tool calls and resource reads** — each a
   named span pair.
 - **Queue push and worker jobs** — the producer and consumer spans

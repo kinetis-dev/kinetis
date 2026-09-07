@@ -36,7 +36,12 @@ final class ConcurrentBatch
     /** @var Suspension<null> */
     private readonly Suspension $suspension;
 
-    public function __construct(private readonly int $taskCount)
+    /**
+     * @param mixed $batchToken the opaque token telemetry returned for
+     *     this batch, handed to each task's own hook so a backend can
+     *     parent the task to it, and never inspected here
+     */
+    public function __construct(private readonly int $taskCount, private readonly mixed $batchToken)
     {
         $this->remaining = $taskCount;
         $this->suspension = EventLoop::getSuspension();
@@ -54,7 +59,7 @@ final class ConcurrentBatch
     {
         return function () use ($index, $task): void {
             $telemetry = Telemetry::global();
-            $token = $telemetry->taskStarted($index);
+            $token = $telemetry->taskStarted($index, $this->batchToken);
 
             try {
                 $this->results[$index] = $task();

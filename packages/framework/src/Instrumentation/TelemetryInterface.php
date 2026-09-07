@@ -13,10 +13,13 @@ use Throwable;
  *
  * Hooks come in started/ended pairs joined by an opaque `mixed` token —
  * whatever the started call returns is handed back to the ended call,
- * and no caller ever inspects it. `phase()` is the one exception: the
- * earliest lifecycle phases run before any telemetry backend can exist,
- * so entry points measure them with plain timestamps and report them
- * after the fact.
+ * and no caller ever inspects it. `taskStarted()` is additionally handed
+ * its batch's token — the one place a token travels between pairs,
+ * because a task runs on a Fiber of its own and its enclosing batch has
+ * to be named rather than read from there. `phase()` is the one
+ * exception to the pairing: the earliest lifecycle phases run before any
+ * telemetry backend can exist, so entry points measure them with plain
+ * timestamps and report them after the fact.
  *
  * Implemented by {@see NullTelemetry} and by kinetis/telemetry's
  * OTel-backed implementation — and by nothing else. This is not a
@@ -82,8 +85,14 @@ interface TelemetryInterface
 
     public function taskBatchEnded(mixed $token): void;
 
-    /** One task within a concurrently() batch. */
-    public function taskStarted(int $index): mixed;
+    /**
+     * One task within a concurrently() batch, reported from inside the
+     * task's own Fiber. $batchToken is the token `taskBatchStarted()`
+     * returned, carried through so a backend can parent the task to its
+     * batch explicitly: a task runs on a Fiber of its own, so there is
+     * no ambient parent to read there.
+     */
+    public function taskStarted(int $index, mixed $batchToken): mixed;
 
     public function taskEnded(mixed $token, ?Throwable $failure): void;
 

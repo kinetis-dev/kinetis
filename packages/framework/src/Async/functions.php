@@ -36,9 +36,9 @@ function concurrently(array $tasks): array
     }
 
     $pool = FiberPool::instance();
-    $batch = new ConcurrentBatch(\count($tasks));
     $telemetry = Telemetry::global();
     $batchToken = $telemetry->taskBatchStarted(\count($tasks));
+    $batch = new ConcurrentBatch(\count($tasks), $batchToken);
 
     foreach ($tasks as $index => $task) {
         $pool->submit($batch->jobFor($index, $task));
