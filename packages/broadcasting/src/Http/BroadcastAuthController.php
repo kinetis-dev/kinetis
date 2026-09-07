@@ -26,15 +26,20 @@ use Psr\Http\Message\ServerRequestInterface;
  * (`extra.kinetis.scan` names this class's own `Http` segment), never
  * hand-registered.
  *
- * Depends on the concrete {@see PusherBroadcaster}, not the generic
- * {@see BroadcasterInterface} — signing an authorization response is
- * inherently protocol-specific (HMAC-SHA256 over a Pusher-shaped string,
- * see that class), not something a driver-agnostic contract could
- * express. Resolved through the request's own {@see RequestScope}
- * (constructor-injected directly, the same self-injection
- * `BearerAuthMiddleware`/`EventDispatcher` already rely on), so a
- * `CurrentUserInterface` an upstream auth middleware registered on this
- * request is visible here.
+ * Takes the bound {@see BroadcasterInterface} —
+ * {@see \Kinetis\Broadcasting\PackageBootstrap} binds that one id for
+ * whichever driver `BROADCAST_DRIVER` names, so the route resolves under
+ * every driver, `"null"` included. Signing an authorization response is
+ * Pusher-protocol-specific (HMAC-SHA256 over a Pusher-shaped string, see
+ * {@see PusherBroadcaster}), so `auth()` requires the bound broadcaster
+ * to be that driver and throws
+ * {@see BroadcastingException::authNotSupported()} for any other.
+ *
+ * The controller is resolved through the request's own
+ * {@see RequestScope} (constructor-injected directly, the same
+ * self-injection `BearerAuthMiddleware`/`EventDispatcher` already rely
+ * on), so a `CurrentUserInterface` an upstream auth middleware
+ * registered on this request is visible here.
  *
  * That middleware joins the `broadcasting` group with
  * `#[AsMiddlewareGroup('broadcasting')]`, keeping authentication on this
