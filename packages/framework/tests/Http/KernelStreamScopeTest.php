@@ -6,11 +6,14 @@ namespace Kinetis\Tests\Http;
 
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
+use Kinetis\Http\Middleware\SecurityHeadersMiddleware;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Http\StreamedResponse;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\StreamableResponseInterface;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
+use Kinetis\Tests\Http\Fixtures\StreamDisplacingMiddleware;
+use Kinetis\Tests\Http\Fixtures\StreamFailingMiddleware;
 use Kinetis\Tests\Http\Fixtures\StreamHeaderMiddleware;
 use Kinetis\Tests\Http\Fixtures\StreamingFixtureController;
 use Kinetis\Tests\Http\Fixtures\StreamProbe;
@@ -28,9 +31,9 @@ require_once __DIR__ . '/Fixtures/gc_collect_cycles_spy.php';
  * A successful StreamableResponseInterface keeps its RequestScope alive
  * through body emission, and Kernel owns the release on every path that
  * can reach it: the emitter's own completion, `abandon()` from an owner
- * that will never write the body, the global pipeline answering with a
- * buffered response instead, the next request, and the wrapper simply
- * being dropped.
+ * that will never write the body, the global pipeline displacing the
+ * wrapper — with a buffered response, with a stream of its own, or by
+ * failing — the next request, and the wrapper simply being dropped.
  */
 final class KernelStreamScopeTest extends TestCase
 {
@@ -44,13 +47,23 @@ final class KernelStreamScopeTest extends TestCase
     }
 
     /**
+     * $outermost stands in for SecurityHeadersMiddleware, the one global
+     * position outside ExceptionHandlerMiddleware — the only place a
+     * middleware failure reaches `handle()`'s caller rather than becoming
+     * that middleware's own 500.
+     *
      * @param list<class-string<\Psr\Http\Server\MiddlewareInterface>> $globalMiddleware
+     * @param class-string<\Psr\Http\Server\MiddlewareInterface>|null $outermost
      */
-    private function kernel(bool $isPersistent = false, array $globalMiddleware = []): Kernel
+    private function kernel(bool $isPersistent = false, array $globalMiddleware = [], ?string $outermost = null): Kernel
     {
         $app = new AppScope();
         $app->instance(AppEnvironment::class, AppEnvironment::Production);
         $app->instance(LoggerInterface::class, $this->logger);
+
+        if ($outermost !== null) {
+            $app->bind(SecurityHeadersMiddleware::class, $outermost);
+        }
 
         foreach ($globalMiddleware as $middleware) {
             $app->middleware($middleware);
@@ -75,7 +88,7 @@ final class KernelStreamScopeTest extends TestCase
         ($response->getEmitter())();
     }
 
-    private static function abandon(ResponseInterface $response): void
+    private static function abandon(?ResponseInterface $response): void
     {
         self::assertInstanceOf(StreamableResponseInterface::class, $response);
         $response->abandon();
@@ -265,6 +278,85 @@ final class KernelStreamScopeTest extends TestCase
         self::assertTrue(StreamProbe::$scopes[0]->isDisposed());
         self::assertSame([], $this->records('warning'), 'a replaced stream is settled, not abandoned by omission');
         self::assertSame(1, StreamProbe::collections());
+    }
+
+    /**
+     * Global middleware can answer with a stream of its own. The final
+     * response streams, but it is not the wrapper this request produced:
+     * the replacement stays emittable, and the wrapper it displaced is
+     * released before handle() returns.
+     */
+    public function test_a_middleware_replacing_the_stream_with_another_stream_releases_only_the_displaced_scope(): void
+    {
+        $kernel = $this->kernel(isPersistent: true, globalMiddleware: [StreamDisplacingMiddleware::class]);
+
+        $response = $kernel->handle(new ServerRequest('GET', '/stream', [
+            'X-Tag' => 'one',
+            StreamDisplacingMiddleware::HEADER => 'yes',
+        ]));
+
+        self::assertInstanceOf(StreamableResponseInterface::class, $response);
+        self::assertSame(203, $response->getStatusCode());
+        self::assertSame(
+            ['dispatch:one', 'displaced', 'disposed'],
+            StreamProbe::$events,
+            'the displaced wrapper is released before handle() hands the replacement back',
+        );
+        self::assertTrue(StreamProbe::$scopes[0]->isDisposed());
+        self::assertSame([], $this->records('warning'), 'a displaced stream is settled, not abandoned by omission');
+        self::assertSame(1, StreamProbe::collections());
+
+        self::emit($response);
+
+        self::assertSame(
+            ['dispatch:one', 'displaced', 'disposed', 'replacement-emitted'],
+            StreamProbe::$events,
+            'the replacement is still the response an adapter emits',
+        );
+
+        self::abandon(StreamProbe::$displaced);
+
+        self::assertSame(
+            ['dispatch:one', 'displaced', 'disposed', 'replacement-emitted'],
+            StreamProbe::$events,
+            'settling the displaced wrapper afterwards releases nothing further',
+        );
+        self::assertSame(1, StreamProbe::collections());
+    }
+
+    /**
+     * A middleware that takes delivery of the stream and then fails
+     * leaves handle() exceptionally, so nothing downstream will ever
+     * settle the wrapper. Its scope is released before the exception
+     * escapes, and the request that follows finds nothing left over.
+     */
+    public function test_a_middleware_failing_after_the_stream_releases_its_scope_before_handle_throws(): void
+    {
+        $kernel = $this->kernel(isPersistent: true, outermost: StreamFailingMiddleware::class);
+
+        try {
+            $kernel->handle(new ServerRequest('GET', '/stream', [
+                'X-Tag' => 'one',
+                StreamFailingMiddleware::HEADER => 'yes',
+            ]));
+            self::fail('the middleware failure must propagate');
+        } catch (RuntimeException $e) {
+            self::assertSame(StreamFailingMiddleware::MESSAGE, $e->getMessage());
+            self::assertTrue(
+                StreamProbe::$scopes[0]->isDisposed(),
+                'the scope is released before the exception leaves handle()',
+            );
+        }
+
+        self::assertSame(['dispatch:one', 'disposed'], StreamProbe::$events);
+        self::assertSame(1, StreamProbe::collections());
+
+        self::abandon(StreamProbe::$displaced);
+        $this->stream($kernel, tag: 'two');
+
+        self::assertSame(['dispatch:one', 'disposed', 'dispatch:two'], StreamProbe::$events);
+        self::assertSame(1, StreamProbe::collections(), 'the failed request released its scope once');
+        self::assertSame([], $this->records('warning'), 'the failing request settled its own stream');
     }
 
     /**

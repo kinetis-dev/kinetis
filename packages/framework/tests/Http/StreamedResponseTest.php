@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Http;
 
+use Kinetis\Container\AppScope;
+use Kinetis\Container\RequestScope;
+use Kinetis\Http\StreamScopeLease;
 use Kinetis\Http\StreamedResponse;
 use Kinetis\Runtime\StreamableResponseInterface;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\Stream;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
+use RuntimeException;
 
 /**
  * A response whose body is written incrementally by a closure rather than
@@ -19,21 +23,40 @@ use Psr\Http\Message\ResponseInterface;
  * It composes a plain response rather than extending one, so every PSR-7
  * method is hand-written delegation. That is the risk worth testing: a
  * delegation that returns the inner response instead of a new
- * StreamedResponse silently drops the emitter and the release with it,
- * and the stream simply stops working with nothing to indicate why.
+ * StreamedResponse silently drops the emitter and the lease with it, and
+ * the stream simply stops working with nothing to indicate why.
  */
 final class StreamedResponseTest extends TestCase
 {
+    private int $releases = 0;
+
     private function streamed(
         ?ResponseInterface $inner = null,
         ?\Closure $emitter = null,
-        ?\Closure $onAbandon = null,
+        ?StreamScopeLease $lease = null,
     ): StreamedResponse {
         return new StreamedResponse(
             $inner ?? new Response(200, ['X-Kind' => 'stream']),
             $emitter ?? static function (): void {},
-            $onAbandon,
+            $lease,
         );
+    }
+
+    /**
+     * A lease over a real RequestScope, so a test asserting on release is
+     * asserting on the disposal that actually happens. Resets the counter,
+     * so a loop building one per iteration counts that iteration only.
+     */
+    private function lease(): StreamScopeLease
+    {
+        $this->releases = 0;
+        $app = new AppScope();
+        $scope = new RequestScope($app);
+        $scope->onDispose(function (): void {
+            $this->releases++;
+        });
+
+        return new StreamScopeLease($app, $scope, 'GET', '/stream');
     }
 
     public function test_is_recognisable_to_a_runtime_adapter(): void
@@ -72,21 +95,92 @@ final class StreamedResponseTest extends TestCase
      * The other half of the settlement contract: what an owner that will
      * never write the body calls instead of the emitter.
      */
-    public function test_abandoning_releases_what_the_response_holds_and_never_emits(): void
+    public function test_abandoning_releases_the_lease_and_never_emits(): void
     {
-        $settled = [];
+        $emitted = false;
         $response = $this->streamed(
-            emitter: static function () use (&$settled): void {
-                $settled[] = 'emitted';
+            emitter: static function () use (&$emitted): void {
+                $emitted = true;
             },
-            onAbandon: static function () use (&$settled): void {
-                $settled[] = 'abandoned';
-            },
+            lease: $this->lease(),
         );
 
         $response->abandon();
 
-        self::assertSame(['abandoned'], $settled);
+        self::assertSame(1, $this->releases);
+        self::assertFalse($emitted);
+    }
+
+    public function test_emitting_the_body_releases_the_lease_after_the_last_byte(): void
+    {
+        $releasesDuringEmission = null;
+        $response = $this->streamed(
+            emitter: function () use (&$releasesDuringEmission): void {
+                $releasesDuringEmission = $this->releases;
+            },
+            lease: $this->lease(),
+        );
+
+        ($response->getEmitter())();
+
+        self::assertSame(0, $releasesDuringEmission, 'the scope is alive for as long as the emitter is writing');
+        self::assertSame(1, $this->releases);
+    }
+
+    /**
+     * Part of the body is on the wire by the time an emitter fails, so
+     * its own failure is the outcome — the release still happens under
+     * it, and adds nothing of its own.
+     */
+    public function test_an_emitter_failure_still_releases_the_lease_and_stays_primary(): void
+    {
+        $response = $this->streamed(
+            emitter: static function (): void {
+                throw new RuntimeException('the emitter itself failed');
+            },
+            lease: $this->lease(),
+        );
+
+        try {
+            ($response->getEmitter())();
+            self::fail('the emitter failure must propagate');
+        } catch (RuntimeException $e) {
+            self::assertSame('the emitter itself failed', $e->getMessage());
+        }
+
+        self::assertSame(1, $this->releases);
+    }
+
+    /**
+     * The settlements are alternatives, not a sequence: the first one to
+     * arrive releases, and every later one finds nothing to do.
+     */
+    public function test_the_lease_is_released_once_however_many_settlements_reach_it(): void
+    {
+        $response = $this->streamed(lease: $this->lease());
+
+        ($response->getEmitter())();
+        $response->abandon();
+        ($response->getEmitter())();
+        $response->withHeader('X-Late', 'v')->abandon();
+
+        self::assertSame(1, $this->releases);
+    }
+
+    /**
+     * How the Kernel tells a clone of the wrapper it built — which still
+     * owns the request scope, and which an adapter will settle — from a
+     * response a middleware put in its place.
+     */
+    public function test_the_response_and_its_clones_carry_the_lease_they_were_built_with(): void
+    {
+        $lease = $this->lease();
+        $response = $this->streamed(lease: $lease);
+
+        self::assertTrue($response->carries($lease));
+        self::assertTrue($response->withHeader('X-New', 'v')->withStatus(206)->carries($lease));
+        self::assertFalse($this->streamed(lease: $this->lease())->carries($lease));
+        self::assertFalse($this->streamed()->carries($lease));
     }
 
     /**
@@ -140,16 +234,11 @@ final class StreamedResponseTest extends TestCase
 
     /**
      * The emitter's counterpart: a clone that kept the emitter but
-     * dropped the release would leave an adapter that cannot stream with
+     * dropped the lease would leave an adapter that cannot stream with
      * no way to settle the response at all.
      */
-    public function test_every_with_method_preserves_the_release(): void
+    public function test_every_with_method_preserves_the_lease(): void
     {
-        $released = 0;
-        $onAbandon = static function () use (&$released): void {
-            $released++;
-        };
-
         $mutations = [
             'withStatus' => static fn (StreamedResponse $r): ResponseInterface => $r->withStatus(500),
             'withProtocolVersion' => static fn (StreamedResponse $r): ResponseInterface => $r->withProtocolVersion('2'),
@@ -160,13 +249,12 @@ final class StreamedResponseTest extends TestCase
         ];
 
         foreach ($mutations as $name => $mutate) {
-            $result = $mutate($this->streamed(onAbandon: $onAbandon));
+            $result = $mutate($this->streamed(lease: $this->lease()));
 
             self::assertInstanceOf(StreamableResponseInterface::class, $result, "{$name}() dropped the streaming response");
 
-            $released = 0;
             $result->abandon();
-            self::assertSame(1, $released, "{$name}() lost the release");
+            self::assertSame(1, $this->releases, "{$name}() lost the lease");
         }
     }
 

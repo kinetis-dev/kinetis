@@ -7,6 +7,9 @@ namespace Kinetis\BrefAdapter\Tests;
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
+use Kinetis\Container\AppScope;
+use Kinetis\Container\RequestScope;
+use Kinetis\Http\StreamScopeLease;
 use Kinetis\Http\StreamedResponse;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -356,15 +359,14 @@ final class BrefLambdaAdapterTest extends TestCase
     public function test_a_streaming_response_is_abandoned_before_the_refusal_is_raised(): void
     {
         $emitted = false;
-        $released = 0;
+        $app = new AppScope();
+        $scope = new RequestScope($app);
         $streamed = new StreamedResponse(
             new Response(200),
             static function () use (&$emitted): void {
                 $emitted = true;
             },
-            static function () use (&$released): void {
-                $released++;
-            },
+            new StreamScopeLease($app, $scope, 'GET', '/'),
         );
 
         try {
@@ -374,7 +376,7 @@ final class BrefLambdaAdapterTest extends TestCase
             self::assertStringContainsString('cannot emit a streaming response', $e->getMessage());
         }
 
-        self::assertSame(1, $released, 'the refusal must settle the stream, not drop it');
+        self::assertTrue($scope->isDisposed(), 'the refusal must settle the stream, not drop it');
         self::assertFalse($emitted, 'this runtime cannot write the body, so it must not run the emitter');
     }
 

@@ -92,15 +92,16 @@ from that same scope. `Kernel` hands back a `StreamedResponse` wrapper
 and releases the scope the moment the emitter finishes. An owner that
 will never write that body settles it the other way instead, through
 `Kinetis\Runtime\StreamableResponseInterface::abandon()` — an adapter
-that cannot stream calls it before answering with a refusal of its own,
-and `Kernel` releases the scope the same way, before returning, when a
-global middleware replaces the wrapper with a buffered response. Either
-settlement happens on the request that created the scope. What neither
-emits nor abandons, such as an exception trace holding the wrapper as a
-frame argument, the next request releases first thing, before any of its
-own global middleware runs.
-Either way a finished request's scope is unreachable from the one after
-it.
+that cannot stream calls it before answering with a refusal of its own.
+`Kernel` releases the scope the same way, before `handle()` answers,
+whenever the response leaving its global pipeline is not the wrapper it
+handed that pipeline: a middleware's own reply, buffered or streamed, or
+a failure on its way out. A `with*` clone is still that wrapper, and is
+left to the adapter. Either settlement happens on the request that
+created the scope. What reaches none of them — an exception trace
+holding the wrapper as a frame argument, say — the next request releases
+first thing, before any of its own global middleware runs. Either way a
+finished request's scope is unreachable from the one after it.
 
 You will almost never call `createRequestScope()`/`dispose()`
 yourself — this is `Kernel`'s job — but understanding what happens inside

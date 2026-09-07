@@ -35,12 +35,13 @@ interface StreamableResponseInterface
      * written, without invoking the emitter.
      *
      * A stream `Kinetis\Http\Kernel` hands back holds that request's own
-     * RequestScope open for its emitter to resolve from, so an owner that
-     * decides not to emit — a runtime adapter that cannot stream, a
-     * middleware pipeline answering with a buffered response instead —
-     * calls this and settles the request there rather than leaving a live
-     * scope behind it. Doing nothing is the correct implementation for a
-     * response that holds nothing.
+     * RequestScope open for its emitter to resolve from, so a runtime
+     * adapter that cannot stream calls this and settles the request there
+     * rather than leaving a live scope behind it. A middleware that
+     * answers with a response of its own needs no such call: the Kernel
+     * settles the stream it displaced before `handle()` returns. Doing
+     * nothing is the correct implementation for a response that holds
+     * nothing.
      */
     public function abandon(): void;
 }

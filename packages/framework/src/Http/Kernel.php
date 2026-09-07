@@ -36,9 +36,9 @@ use Throwable;
  *
  * Owns the per-request lifecycle: a fresh RequestScope is created before
  * routing/dispatch and disposed once the response is settled — before
- * `handle()` returns for an ordinary buffered response, and on emission
- * or abandonment for a StreamableResponseInterface, see
- * `deferDisposal()`.
+ * `handle()` returns for an ordinary buffered response, and for a
+ * StreamableResponseInterface on whichever settlement reaches its lease
+ * first, see `deferDisposal()` and `settlePendingStream()`.
  * `/openapi.json` and `/openapi` are ordinary routes on a discovered
  * controller ({@see \Kinetis\Http\OpenApi\DocumentationController}), not
  * something this class intercepts — all it still owns is the access
@@ -51,10 +51,12 @@ use Throwable;
  * nothing when it is not.
  *
  * `$isPersistent` — set from the driving RuntimeAdapterInterface — gates
- * a `gc_collect_cycles()` call at the end of `handle()`, forcing cleanup
- * of circular references (including Fibers) between requests in a
- * persistent worker; skipped for a boot-and-die process about to have
- * the OS reclaim everything anyway.
+ * the `gc_collect_cycles()` call that follows every request-scope
+ * disposal, forcing cleanup of circular references (including Fibers)
+ * between requests in a persistent worker; skipped for a boot-and-die
+ * process about to have the OS reclaim everything anyway. A streamed
+ * response's disposal happens after `handle()` has returned, so the flag
+ * travels with its {@see StreamScopeLease}.
  *
  * Every request runs through a global PSR-15 middleware pipeline, in the
  * order {@see GlobalMiddlewareOrder::resolve()} computes from `$app`'s
@@ -74,10 +76,11 @@ use Throwable;
  *
  * `$pendingStream` is the one piece of mutable state on this class: the
  * lease for the streamed response this Kernel handed back most recently,
- * held only until that stream is settled — emitted, abandoned, or found
- * still pending by the next request. A Kernel belongs to one worker
- * thread — `bootstrap.php` runs per thread — so this is per-thread state,
- * not shared.
+ * held only until that stream is settled — emitted, abandoned, displaced
+ * from the response leaving the global pipeline, or found still pending
+ * by the next request. A Kernel belongs to one worker thread —
+ * `bootstrap.php` runs per thread — so this is per-thread state, not
+ * shared.
  */
 final class Kernel
 {
@@ -145,18 +148,45 @@ final class Kernel
     {
         $this->releaseUnsettledStream();
 
-        $response = $this->globalPipeline->handle($request);
+        try {
+            $response = $this->globalPipeline->handle($request);
+        } catch (Throwable $e) {
+            $this->settlePendingStream(null);
 
-        // Global middleware receives whatever dispatchCore produced and
-        // may answer with a buffered response of its own instead. That
-        // response is the final one, so nothing will ever emit the
-        // wrapper it displaced: its lease is settled here, while this
-        // request still owns it.
-        if (!$response instanceof StreamableResponseInterface && $this->pendingStream !== null) {
-            $this->abandonStream($this->pendingStream);
+            throw $e;
         }
 
+        $this->settlePendingStream($response);
+
         return $response;
+    }
+
+    /**
+     * Releases the lease this request opened, unless $final is still the
+     * wrapper carrying it.
+     *
+     * Global middleware takes delivery of whatever `dispatchCore()`
+     * produced and is under no obligation to hand it back: it can answer
+     * with a buffered response, with a stream of its own, or with an
+     * exception — $final is null for the last of those. In every one of
+     * them the wrapper has left the response chain and nothing
+     * downstream will ever emit or abandon it, so its scope is released
+     * here, while the request that opened it is still on the stack. A
+     * `with*` clone is the one response that is not a replacement: it
+     * carries the same lease, so settling it stays the adapter's to do.
+     * A response built *around* the wrapper carries no lease and is
+     * settled here like any other.
+     */
+    private function settlePendingStream(?ResponseInterface $final): void
+    {
+        $lease = $this->pendingStream;
+
+        if ($lease === null || ($final instanceof StreamedResponse && $final->carries($lease))) {
+            return;
+        }
+
+        $this->pendingStream = null;
+        $lease->release();
     }
 
     /**
@@ -266,17 +296,16 @@ final class Kernel
     /**
      * Keeps $scope alive past dispatch, and returns a StreamedResponse
      * that releases it when its body is emitted or the response is
-     * abandoned.
+     * settled without one.
      *
      * A streamed body is written after `handle()` has returned, by an
      * adapter, against code that resolves from this request's own
      * container — so disposing before returning would tear the scope out
      * from under the emitter. Ownership of the release sits in one
-     * {@see StreamScopeLease}, which both of the wrapper's closures
-     * carry: the emitter, and the `abandon()` an owner that will never
-     * write the body calls instead. Every `with*` clone a middleware
-     * makes rebuilds the wrapper around both, so a header or status edit
-     * after dispatch keeps the same lease rather than orphaning it.
+     * {@see StreamScopeLease}, which the wrapper holds and every `with*`
+     * clone of it carries, so a header or status edit after dispatch
+     * hands on a response that still owns the scope — and one this class
+     * still recognizes as its own when the pipeline returns.
      *
      * Status, headers, protocol version and reason phrase all come from
      * $response, which the wrapper composes unchanged.
@@ -286,25 +315,17 @@ final class Kernel
         ServerRequestInterface $request,
         ResponseInterface&StreamableResponseInterface $response,
     ): ResponseInterface {
-        $lease = new StreamScopeLease($this->app, $scope, $request->getMethod(), $request->getUri()->getPath());
-        $this->pendingStream = $lease;
-        $emitter = $response->getEmitter();
-
-        return new StreamedResponse(
-            $response,
-            function () use ($emitter, $lease): void {
-                try {
-                    $emitter();
-                } finally {
-                    // release() never throws, so an emitter failure stays
-                    // the one that propagates.
-                    $this->releaseStream($lease);
-                }
-            },
-            function () use ($lease): void {
-                $this->abandonStream($lease);
-            },
+        $lease = new StreamScopeLease(
+            $this->app,
+            $scope,
+            $request->getMethod(),
+            $request->getUri()->getPath(),
+            $this->isPersistent,
         );
+
+        $this->pendingStream = $lease;
+
+        return new StreamedResponse($response, $response->getEmitter(), $lease);
     }
 
     /**
@@ -343,39 +364,7 @@ final class Kernel
             ],
         );
 
-        $this->releaseStream($lease);
-    }
-
-    /**
-     * Settles one lease for a body that will never be written: what the
-     * `abandon()` on every wrapper `deferDisposal()` returns does, and
-     * what `handle()` does for a stream the global pipeline replaced.
-     *
-     * The identity check is what keeps an owner abandoning a wrapper
-     * from an earlier request from dropping the lease a later one is
-     * still holding.
-     */
-    private function abandonStream(StreamScopeLease $lease): void
-    {
-        if ($this->pendingStream === $lease) {
-            $this->pendingStream = null;
-        }
-
-        $this->releaseStream($lease);
-    }
-
-    /**
-     * The deferred counterpart of disposeScope()'s own `finally`: a
-     * collection cycle follows a released stream scope for the same
-     * reason it follows an ordinary disposal.
-     */
-    private function releaseStream(StreamScopeLease $lease): void
-    {
         $lease->release();
-
-        if ($this->isPersistent) {
-            gc_collect_cycles();
-        }
     }
 
     private function matchAndDispatch(RequestScope $scope, ServerRequestInterface $request): ResponseInterface

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Http\Fixtures;
 
 use Kinetis\Container\RequestScope;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * A static handoff recording, in order, what each streamed request did —
@@ -25,6 +26,13 @@ final class StreamProbe
     public static ?int $collectionsAtDisposal = null;
 
     /**
+     * The streamed response a middleware took delivery of and did not
+     * hand on, kept so a test can settle it after the fact and prove
+     * that releases nothing a second time.
+     */
+    public static ?ResponseInterface $displaced = null;
+
+    /**
      * A Kernel holds a reference to itself through its own global
      * pipeline, so a previous test's Kernel — and the pending lease on
      * it — survives until a collection cycle runs. Forcing one here
@@ -38,6 +46,7 @@ final class StreamProbe
 
         self::$events = [];
         self::$collectionsAtDisposal = null;
+        self::$displaced = null;
         $GLOBALS['kinetisGcCollectCyclesCallCount'] = 0;
     }
 

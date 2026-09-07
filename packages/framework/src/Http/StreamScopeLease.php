@@ -12,19 +12,31 @@ use Psr\Log\LogLevel;
 use Throwable;
 
 /**
- * The single owner of one streamed response's RequestScope, released
- * exactly once by whichever of Kernel's paths reaches it first: the
- * wrapper's emitter finishing, the wrapper being abandoned, or the next
- * request finding this one still pending.
+ * The single owner of one streamed response's RequestScope, and the
+ * identity of that ownership: the wrapper {@see Kernel} hands back holds
+ * this object, every `with*` clone of that wrapper holds the same one,
+ * and holding it is what makes a response the one still carrying the
+ * scope.
+ *
+ * Released exactly once, by whichever settlement reaches it first: the
+ * wrapper's emitter finishing, the wrapper being abandoned, Kernel
+ * finding the wrapper displaced from the response leaving its global
+ * pipeline, or the next request finding this one still pending.
  *
  * release() contains and logs a disposal failure instead of raising it:
  * every path that reaches it has already settled what the client gets —
  * an emitted stream's status, headers and part of its body are on the
- * wire, and an abandoned one's replacement is the adapter's or the
- * middleware's own response — so there is nothing left to turn into the
- * generic 500 a buffered response's disposal failure legitimately
- * becomes ({@see Kernel::disposeScope()}). A failure raised by the
- * emitter itself stays primary.
+ * wire, and a displaced or abandoned one's replacement is the adapter's
+ * or the middleware's own response — so there is nothing left to turn
+ * into the generic 500 a buffered response's disposal failure
+ * legitimately becomes ({@see Kernel::disposeScope()}). A failure raised
+ * by the emitter itself stays primary.
+ *
+ * $collectCycles is Kernel's own `isPersistent`: a collection cycle
+ * follows a released stream scope for the same reason it follows an
+ * ordinary disposal, and it belongs here because the settlements that
+ * reach this lease through the response never pass through Kernel at
+ * all.
  *
  * The destructor is prompt cleanup for a wrapper that is simply dropped,
  * not the isolation guarantee — a fatal bailout skips it, and an
@@ -46,6 +58,7 @@ final class StreamScopeLease
         private readonly RequestScope $scope,
         public readonly string $method,
         public readonly string $path,
+        private readonly bool $collectCycles = false,
     ) {}
 
     public function isReleased(): bool
@@ -86,6 +99,10 @@ final class StreamScopeLease
                     'exception' => $disposeFailure,
                 ],
             );
+        } finally {
+            if ($this->collectCycles) {
+                gc_collect_cycles();
+            }
         }
     }
 
