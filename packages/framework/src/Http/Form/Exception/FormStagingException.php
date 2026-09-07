@@ -22,7 +22,7 @@ final class FormStagingException extends RuntimeException
 {
     public static function couldNotOpenTempStream(): self
     {
-        return new self('Failed to open a php://temp stream to stage a request body.');
+        return new self('Failed to open an in-memory stream to stage a request body.');
     }
 
     /**

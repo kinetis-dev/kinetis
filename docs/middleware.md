@@ -684,9 +684,9 @@ Three things happen, in order.
 honestly labels itself oversized is refused without being read.
 
 **Then the body is staged** — read once, incrementally, counted, into a
-seekable temporary stream, and rewound. This is what bounds a request
-with no `Content-Length` at all, or one that under-reports its real
-size. It happens for every request, not only for forms, and it is what
+seekable `php://memory` stream, and rewound. This is what bounds a
+request with no `Content-Length` at all, or one that under-reports its
+real size. It happens for every request, not only for forms, and it is what
 lets everything downstream see one body and one length. The staged
 stream is complete, seekable and replayable: staging and size
 enforcement are finished before the handler runs, so no later read
@@ -695,6 +695,14 @@ the cursor stands, so code that needs the whole body — after another
 middleware may already have read it — uses a plain `(string)` cast,
 which rewinds first, or rewinds explicitly. A raw or binary body reaches the handler
 untouched apart from being staged.
+
+```{note}
+The staged copy is held in memory, so `MAX_BODY_SIZE` bounds what one
+concurrent request's body occupies there. Parsing a form builds further
+values from that copy, so a form request holds more than the ceiling at
+its peak. Choose `MAX_BODY_SIZE` and PHP's `memory_limit` together,
+leaving room above the ceiling for the parse.
+```
 
 **Then a form is parsed.** For `application/x-www-form-urlencoded` and
 `multipart/form-data` on a method that carries a body, the staged bytes

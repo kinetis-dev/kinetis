@@ -322,6 +322,29 @@ final class RequestBodyMiddlewareTest extends TestCase
         );
     }
 
+    /**
+     * A body past 2 MiB, under a ceiling that admits it, stages whole
+     * and in memory — so accepting a request of any size the operator
+     * allows carries no dependency on temporary file storage.
+     */
+    public function test_a_body_past_two_mebibytes_stages_whole_in_memory(): void
+    {
+        $body = str_repeat('k', 3 * 1024 * 1024);
+
+        $staged = \Kinetis\Http\Form\StagedRequestBody::stage(
+            Stream::create($body),
+            new FormLimits(4 * 1024 * 1024),
+            null,
+        );
+
+        self::assertSame($body, (string) $staged);
+
+        $resource = $staged->detach();
+        self::assertIsResource($resource);
+        self::assertSame('php://memory', stream_get_meta_data($resource)['uri']);
+        fclose($resource);
+    }
+
     public function test_defaults_to_two_mebibytes_when_unconfigured(): void
     {
         $middleware = new RequestBodyMiddleware(FormLimits::fromConfig(new Config([])));

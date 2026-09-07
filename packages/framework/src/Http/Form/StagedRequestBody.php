@@ -35,6 +35,10 @@ use Throwable;
  * whole accepted body, while `read()` and `getContents()` answer from
  * wherever the cursor stands.
  *
+ * The staging stream is `php://memory`: accepting a request depends on
+ * no temporary file storage, and the byte ceiling below is what bounds
+ * what that stream holds.
+ *
  * A body past the ceiling is a {@see BodyTooLargeException} — the
  * client's, answered with a `413`. A temporary stream that will not open,
  * a read that stalls, a write that stops short — those are this worker's,
@@ -60,13 +64,13 @@ final class StagedRequestBody
      * @param ?Closure(): (resource|false) $openStream a seam for tests,
      *     which need a temporary stream that short-writes, refuses to
      *     write, or fails to close on demand — none of which
-     *     `php://temp` can be made to do
+     *     `php://memory` can be made to do
      */
     public static function stage(StreamInterface $body, FormLimits $limits, ?int $declaredBytes, ?Closure $openStream = null): StreamInterface
     {
         $limits->assertBodyWithinLimit(0, $declaredBytes);
 
-        $stream = ($openStream ?? static fn (): mixed => fopen('php://temp', 'r+'))();
+        $stream = ($openStream ?? static fn (): mixed => fopen('php://memory', 'r+'))();
 
         if (!is_resource($stream)) {
             throw FormStagingException::couldNotOpenTempStream();
