@@ -12,8 +12,12 @@ File storage against `League\Flysystem`'s `FilesystemOperator` interface —
 read, write, delete, and list files through one interface, swappable to a
 different backend with no application-code changes. The local backend
 runs on `Amp\File`: a driver call suspends the calling Fiber rather than
-blocking the worker. S3 (and S3-compatible services) is the second
-backend — see {doc}`storage-s3`.
+blocking the worker. The resource methods are the exception —
+`readStream()` and `writeStream()` move bytes with PHP's own stream
+functions, which block the thread wherever they reach a disk, and
+[Resource methods](#resource-methods) states those boundaries in full.
+S3 (and S3-compatible services) is the second backend — see
+{doc}`storage-s3`.
 
 With `FILESYSTEM_DRIVER` set, installing the package is the whole
 setup: it binds `FilesystemOperator`, so a controller or command
