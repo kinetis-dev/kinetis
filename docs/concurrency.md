@@ -177,14 +177,17 @@ being called from a task, is correct and safe.
 ## Composing across clients
 
 Kinetis's database drivers (see {doc}`persistence`) and the Redis client
-(`amphp/redis`, chosen because it's Revolt-native) all wait by suspending
-the calling Fiber on the same underlying Revolt loop — the native
-Postgres driver through a real socket watcher, the native MySQL driver
-through its poll bridge, Redis through `Amp\Future` internally. Different
-API shapes, one loop: a `concurrently()` call can freely mix tasks built
-on any of them and still run every one genuinely in parallel — a MySQL
-query, a Postgres query, and a Redis command issued together complete in
-roughly the time the slowest one alone takes, not the sum of all three.
+(`Kinetis\Redis\Client`, over the non-replaying transport `kinetis/redis`
+owns — see {doc}`redis`) all wait by suspending the calling Fiber on the
+same underlying Revolt loop — the native Postgres driver through a real
+socket watcher, the native MySQL driver through its poll bridge, Redis
+through `Amp\Future` internally. `Amp\Redis\RedisClient` is an optional
+typed command facade over that same transport, reached through
+`Client::link()`, and suspends the same way. Different API shapes, one
+loop: a `concurrently()` call can freely mix tasks built on any of them
+and still run every one genuinely in parallel — a MySQL query, a
+Postgres query, and a Redis command issued together complete in roughly
+the time the slowest one alone takes, not the sum of all three.
 
 ## See also
 

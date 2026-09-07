@@ -959,8 +959,9 @@ foreach ([1, 2, 3] as $id) {
 ```
 
 ```{note}
-The Redis client is `amphp/redis`, a pure-PHP implementation of the
-protocol on the Revolt event loop. Its overhead is paid per event-loop
+The Redis client is `Kinetis\Redis\Client`: `kinetis/redis`'s own
+non-replaying transport, running on the Revolt event loop under
+`amphp/redis`'s protocol types. Its overhead is paid per event-loop
 wakeup rather than per command, so it amortizes across whatever else is
 in flight at the same time. Under a persistent worker that is the normal
 state: once around eight concurrent requests hold an outstanding Redis
@@ -1029,13 +1030,6 @@ before any connection is attempted.
 `CacheInterface` resolves to the same interface either way — application
 code never needs to know whether it's talking to a single node or a
 cluster.
-
-```{note}
-`getMultiple()`/`deleteMultiple()`/`clear()` each dispatch several Redis
-commands concurrently internally. Don't call any of them from inside a
-task you're already running through `concurrently()` yourself — nesting
-one Fiber-driven event loop run inside another isn't supported.
-```
 
 ## See also
 
