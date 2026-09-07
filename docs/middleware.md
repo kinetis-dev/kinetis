@@ -680,10 +680,13 @@ honestly labels itself oversized is refused without being read.
 seekable temporary stream, and rewound. This is what bounds a request
 with no `Content-Length` at all, or one that under-reports its real
 size. It happens for every request, not only for forms, and it is what
-lets everything downstream see one body and one length: `read()`,
-`getContents()` and a plain `(string)` cast all return the identical
-accepted bytes. A raw or binary body reaches the handler untouched apart
-from being staged.
+lets everything downstream see one body and one length. The staged
+stream is complete, seekable and replayable, and no way of reading it
+can fail. `read()` and `getContents()` answer from wherever the cursor
+stands, so code that needs the whole body — after another middleware may
+already have read it — uses a plain `(string)` cast, which rewinds
+first, or rewinds explicitly. A raw or binary body reaches the handler
+untouched apart from being staged.
 
 **Then a form is parsed.** For `application/x-www-form-urlencoded` and
 `multipart/form-data` on a method that carries a body, the staged bytes

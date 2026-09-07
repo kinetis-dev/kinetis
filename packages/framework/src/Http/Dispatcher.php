@@ -373,9 +373,14 @@ final class Dispatcher
         $contentType = $request->getHeaderLine('Content-Type');
 
         $formEncoded = MediaType::isFormEncoded($contentType);
+        // Cast rather than getContents(): RequestBodyMiddleware has
+        // staged a seekable, replayable body, and the cast is the
+        // representation that rewinds first — so a middleware that
+        // already inspected the body hands this the whole document
+        // rather than the remainder past its cursor.
         $decoded = $formEncoded
             ? $this->parsedBodyAsArray($request)
-            : $this->decodeJsonBody($request->getBody()->getContents());
+            : $this->decodeJsonBody((string) $request->getBody());
 
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];

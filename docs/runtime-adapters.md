@@ -407,11 +407,12 @@ Over the ceiling is a `413` and the handler never runs. A body that is
 not a form goes no further than this — nothing parses it, and nothing
 invents a `getParsedBody()` for it.
 
-Everything downstream therefore sees one body and one length: `read()`,
-`getContents()` and a plain `(string)` cast all return the identical
-accepted bytes, and any of them can be used after the others. A handler
-may read the body any way it likes, because by then there is no cap left
-to enforce.
+Everything downstream therefore sees one body and one length, and no way
+of reading it can fail — by then there is no cap left to enforce.
+`read()` and `getContents()` answer from wherever the cursor stands, so
+code that needs the whole body, after another middleware may already
+have read it, uses a plain `(string)` cast — which rewinds first — or
+rewinds explicitly.
 
 Settling it in front of the handler is the only way to get that. The
 alternative — a stream wrapper that counts as the handler reads — cannot

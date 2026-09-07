@@ -169,20 +169,16 @@ surface without it.
   those as distinct, and this checks presence, not truthiness. Then the
   spec's error-code-to-HTTP-status mapping (`-32600` included), `202` for
   notification-only bodies, and the SSE progress stream itself (a
-  `StreamedResponse` whose emitter runs the streamed call on a scope of
-  its own — with the request's
-  `CurrentUserInterface` carried across, and, when the same instance was
-  *also* explicitly registered under its own concrete class in the
-  original scope (`isRegistered($concreteClass) && get($concreteClass) === $currentUser`,
-  checked before the original scope disposes), that concrete class id
-  too, so a tool typed against either resolves to the exact same object —
-  `kinetis/auth-jwt`'s `JwtAuthMiddleware` publishes its `JwtUser` this
-  way, and any other middleware following the identical pattern gets the
-  same treatment with no dependency this package takes on either auth
-  package — disposed after the final event is already written, not
-  before: a disposal failure there is logged separately, through
-  `AppScope`'s own logger, rather than suppressing that event or
-  aborting the stream). GET/DELETE declare
+  `StreamedResponse` whose emitter dispatches on the `RequestScope`
+  injected into the controller — the request's own, which `Kernel` keeps
+  alive for a streamed body and disposes through its lease once the
+  emitter returns or fails, so a tool sees every binding an `mcp`-group
+  middleware published, under every id it used, exactly as an ordinary
+  call does; this package owns none of that lifecycle). The body is read
+  with a `(string)` cast, not `getContents()`: the staged stream is
+  replayable, and the cast is the representation that rewinds first, so a
+  middleware that already inspected the body cannot shorten the envelope
+  this decodes. GET/DELETE declare
   no routes: the router's own `405` with `Allow: POST` is exactly what
   the 2026-07-28 spec asks for.
 - `Http\McpOriginMiddleware` — the spec-required `Origin` validation,

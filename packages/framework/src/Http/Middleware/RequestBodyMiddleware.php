@@ -43,17 +43,19 @@ use Psr\Http\Server\RequestHandlerInterface;
  * `getParsedBody()`/`getUploadedFiles()`.
  *
  * Staging happens for every request, not only for forms, and it is what
- * lets everything downstream see one body and one length. `read()`,
- * `getContents()` and a plain `(string)` cast all return the identical
- * accepted bytes, because by the time any of them is called there is no
- * limit left to enforce and nothing that can fail. That is the property
- * a counting stream wrapper cannot have: `Stringable` forbids
- * `__toString()` from throwing, so such a wrapper has to answer a cast
- * with an empty string once the cap is crossed — which a handler, or any
- * vendor middleware in between, reads as an absent optional body and
- * carries on with. A raw or binary body reaches the handler untouched
- * apart from being staged, and a body this class parsed is still
- * readable in full afterwards, rewound.
+ * lets everything downstream see one body and one length. The staged
+ * stream is complete, seekable and replayable, and no way of reading it
+ * can fail: by the time a handler reaches it there is no limit left to
+ * enforce. `read()` and `getContents()` still answer from wherever the
+ * cursor stands, so a consumer that needs the whole body casts to
+ * string — which rewinds first — or rewinds explicitly. Reading it in
+ * full is what a counting stream wrapper cannot make safe: `Stringable`
+ * forbids `__toString()` from throwing, so such a wrapper has to answer
+ * a cast with an empty string once the cap is crossed — which a handler,
+ * or any vendor middleware in between, reads as an absent optional body
+ * and carries on with. A raw or binary body reaches the handler
+ * untouched apart from being staged, and a body this class parsed is
+ * still readable in full afterwards, rewound.
  *
  * Two answers to a bad body, and only two. One that cannot be parsed is
  * a `400` carrying the fixed

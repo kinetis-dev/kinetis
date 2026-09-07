@@ -194,28 +194,17 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
    A tool that constructor-injects `CurrentUserInterface` (or resolves
    it from its injected `RequestScope`) sees exactly the identity the
    middleware resolved for this message — the same mechanism an HTTP
-   controller already uses. This holds for an ordinary call and a
-   progress-streamed one alike: a streamed `tools/call` runs on a
-   *second* scope of its own (see below), and this identity is carried
-   across to it.
+   controller already uses.
 
-   **The portable identity handoff carries both `CurrentUserInterface`
-   and a concrete class, when one was published too.**
-   `JwtAuthMiddleware` publishes the same authenticated instance under
-   both `CurrentUserInterface` *and* its own concrete `JwtUser` class —
-   documented on that class specifically because a tool needing a claim
-   only `JwtUser` itself exposes (`jti`, for revocation, most commonly)
-   has to inject the concrete class directly rather than the interface.
-   Both ids resolve to the exact same object, on an ordinary call and a
-   streamed one alike; a custom middleware publishing an authenticated
-   user under its own concrete class the identical way gets the same
-   treatment automatically — the mechanism only ever asks "what else, if
-   anything, already resolves to this exact instance," so it works for
-   any concrete class, not one hardcoded to a particular auth package
-   (this package has no dependency on `kinetis/auth-jwt`/`kinetis/auth`
-   at all). A middleware that publishes only `CurrentUserInterface` (the
-   plain `BearerAuthMiddleware` case) carries only that — there is no
-   second id to preserve.
+   **A progress-streamed call is no different.** The tool runs on the
+   request's own scope in both shapes: `Kernel` keeps that scope alive
+   for a response that streams its own body and disposes it once the
+   stream is settled (see {doc}`container`), and the SSE emitter
+   dispatches on it. So everything the middleware published is simply
+   still there, under every id it used — the interface, a concrete class
+   alongside it the way `JwtAuthMiddleware` publishes `JwtUser`, and
+   anything else request-scoped a middleware registers for a tool to
+   inject.
 
 3. **The identity guard, last.** `McpIdentityGuardMiddleware` is a
    permanent group member at priority `0`, so it sees the scope
@@ -540,24 +529,27 @@ process over what was only ever an observability failure.
 
 ### A disposal failure never suppresses an already-computed response
 
-Both transports that create a per-message `RequestScope` — `bin/kinetis
-mcp:serve`'s stdio loop, and the streamed HTTP response a `_meta.progressToken`
-request gets — attempt to write the JSON-RPC response the message already
-produced, then dispose that scope in a `finally` around the whole attempt.
-That ordering is deliberately different from a naive `finally`-wraps-
+`bin/kinetis mcp:serve`'s stdio loop creates a `RequestScope` per
+message: it writes the JSON-RPC response that message already produced,
+then disposes that scope in a `finally` around the whole attempt. That
+ordering is deliberately different from a naive `finally`-wraps-
 everything shape: the disposal step itself is guaranteed never to throw
 (any failure disposing is caught, logged separately through `AppScope`'s
 own logger — the message's own scope is already disposed by then — and
 discarded), which is exactly what makes it safe to run from inside a
 `finally` at all; see {doc}`container`'s own general explanation of why an
-ordinary `finally`-based dispose is unsafe everywhere else. Two outcomes
-follow from this: a disposal failure can never suppress a response that
-was successfully written, and never surfaces as a second JSON-RPC
-message; and if the write itself genuinely fails — a closed or broken
-stdio stream, or (over the streamed HTTP transport specifically) an
-output-buffer handler installed further up the call stack throwing when
-the final flush invokes it — that failure still propagates as the real
-primary failure exactly as it always would have. This is not a path a
+ordinary `finally`-based dispose is unsafe everywhere else. Over HTTP the
+scope is the request's own and `Kernel` owns disposing it, on the same
+terms: the streamed response releases it once the emitter returns or
+fails, containing and logging a disposal failure rather than raising it.
+
+Two outcomes follow, on either transport: a disposal failure can never
+suppress a response that was successfully written, and never surfaces as
+a second JSON-RPC message; and if the write itself genuinely fails — a
+closed or broken stdio stream, or (over the streamed HTTP transport
+specifically) an output-buffer handler installed further up the call
+stack throwing when the final flush invokes it — that failure still
+propagates as the real primary failure. This is not a path a
 tool's own result can trigger: every JSON-RPC response `handle()` builds
 is already `json_encode()`d, and any failure doing so, internally, is
 already caught and converted to the ordinary `isError: true` result

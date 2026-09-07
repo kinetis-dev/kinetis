@@ -71,6 +71,31 @@ final class DispatcherTest extends TestCase
         );
     }
 
+    /**
+     * A middleware that inspected the staged body leaves its cursor at
+     * the end, where `getContents()` answers with an empty string. The
+     * whole DTO still hydrates, because the body is read through the
+     * representation that rewinds first.
+     */
+    public function test_a_body_bound_dto_hydrates_after_something_upstream_already_read_the_body(): void
+    {
+        $router = $this->router();
+        $match = $router->match('POST', '/users');
+        $request = new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+
+        $body = $request->getBody();
+        $body->getContents();
+        self::assertSame($body->getSize(), $body->tell(), 'the cursor has to be at the end for this to prove anything');
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(
+            ['name' => 'Alon', 'email' => 'alon@example.com'],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
     public function test_dispatches_query_bound_scalars_with_defaults(): void
     {
         $router = $this->router();
