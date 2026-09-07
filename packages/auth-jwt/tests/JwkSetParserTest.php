@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt\Tests;
 
-use BadMethodCallException;
 use Firebase\JWT\Key;
 use Kinetis\AuthJwt\Base64Url;
-use Kinetis\AuthJwt\Exception\ParsedJwkSetException;
+use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 use Kinetis\AuthJwt\JwkSet;
+use Kinetis\AuthJwt\JwkSetParser;
 use Kinetis\AuthJwt\JwtKeyValidator;
-use Kinetis\AuthJwt\ParsedJwkSet;
 use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\SecondRsaKeyPair;
@@ -18,10 +17,42 @@ use Kinetis\AuthJwt\Tests\Fixtures\UndersizedRsaKeyPair;
 use OpenSSLAsymmetricKey;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use UnexpectedValueException;
 
-final class ParsedJwkSetTest extends TestCase
+final class JwkSetParserTest extends TestCase
 {
+    /**
+     * The kids a parsed set holds, in document order. The map itself is
+     * keyed by JwkSetParser::LOOKUP_PREFIX . kid, so that a kid PHP
+     * would read as a number stays the exact string the document
+     * published.
+     *
+     * @param array<string, Key> $keys
+     * @return list<string>
+     */
+    private static function kids(array $keys): array
+    {
+        return array_values(array_map(
+            static fn (string $lookupKey): string => substr($lookupKey, strlen(JwkSetParser::LOOKUP_PREFIX)),
+            array_keys($keys),
+        ));
+    }
+
+    /**
+     * @param array<string, Key> $keys
+     */
+    private static function key(array $keys, string $kid): Key
+    {
+        return $keys[JwkSetParser::LOOKUP_PREFIX . $kid];
+    }
+
+    /**
+     * @param array<string, Key> $keys
+     */
+    private static function has(array $keys, string $kid): bool
+    {
+        return isset($keys[JwkSetParser::LOOKUP_PREFIX . $kid]);
+    }
+
     /**
      * One JWK exactly as this package publishes it.
      *
@@ -115,47 +146,53 @@ final class ParsedJwkSetTest extends TestCase
             JSON_THROW_ON_ERROR,
         );
 
-        $set = ParsedJwkSet::fromJson($document);
+        $set = JwkSetParser::parse($document);
 
-        self::assertSame(['2025-key', '2026-key'], $set->kids());
-        self::assertSame(self::normalizedPem(RsaKeyPair::PUBLIC_KEY), self::publicKeyPem($set['2025-key']));
-        self::assertSame(self::normalizedPem(SecondRsaKeyPair::publicKey()), self::publicKeyPem($set['2026-key']));
-        self::assertSame('RS256', $set['2025-key']->getAlgorithm());
+        self::assertSame(['2025-key', '2026-key'], self::kids($set));
+        self::assertSame(self::normalizedPem(RsaKeyPair::PUBLIC_KEY), self::publicKeyPem(self::key($set, '2025-key')));
+        self::assertSame(
+            self::normalizedPem(SecondRsaKeyPair::publicKey()),
+            self::publicKeyPem(self::key($set, '2026-key')),
+        );
+        self::assertSame('RS256', self::key($set, '2025-key')->getAlgorithm());
     }
 
     public function test_the_kids_0_and_00_select_their_own_keys_and_nothing_else(): void
     {
-        $set = ParsedJwkSet::fromJson(self::document(
+        $set = JwkSetParser::parse(self::document(
             self::jwk(RsaKeyPair::PUBLIC_KEY, '0'),
             self::jwk(SecondRsaKeyPair::publicKey(), '00'),
         ));
 
-        self::assertSame(['0', '00'], $set->kids());
-        self::assertTrue($set->has('0'));
-        self::assertTrue($set->has('00'));
-        self::assertFalse($set->has('000'));
-        self::assertFalse($set->has(''));
-        self::assertSame(self::normalizedPem(RsaKeyPair::PUBLIC_KEY), self::publicKeyPem($set['0']));
-        self::assertSame(self::normalizedPem(SecondRsaKeyPair::publicKey()), self::publicKeyPem($set['00']));
+        self::assertSame(['0', '00'], self::kids($set));
+        self::assertTrue(self::has($set, '0'));
+        self::assertTrue(self::has($set, '00'));
+        self::assertFalse(self::has($set, '000'));
+        self::assertFalse(self::has($set, ''));
+        self::assertSame(self::normalizedPem(RsaKeyPair::PUBLIC_KEY), self::publicKeyPem(self::key($set, '0')));
+        self::assertSame(
+            self::normalizedPem(SecondRsaKeyPair::publicKey()),
+            self::publicKeyPem(self::key($set, '00')),
+        );
     }
 
     public function test_a_decimal_kid_and_ordinary_text_stay_separate_keys(): void
     {
-        $set = ParsedJwkSet::fromJson(self::document(
+        $set = JwkSetParser::parse(self::document(
             self::jwk(RsaKeyPair::PUBLIC_KEY, '0'),
             self::jwk(SecondRsaKeyPair::publicKey(), 'zero'),
         ));
 
-        self::assertSame(['0', 'zero'], $set->kids());
-        self::assertNotSame(self::publicKeyPem($set['0']), self::publicKeyPem($set['zero']));
+        self::assertSame(['0', 'zero'], self::kids($set));
+        self::assertNotSame(self::publicKeyPem(self::key($set, '0')), self::publicKeyPem(self::key($set, 'zero')));
     }
 
     public function test_a_kid_claimed_twice_is_rejected_before_any_set_exists(): void
     {
-        $this->expectException(ParsedJwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage('index 1 repeats a kid');
 
-        ParsedJwkSet::fromJson(self::document(
+        JwkSetParser::parse(self::document(
             self::jwk(RsaKeyPair::PUBLIC_KEY, 'shared'),
             self::jwk(SecondRsaKeyPair::publicKey(), 'shared'),
         ));
@@ -167,10 +204,10 @@ final class ParsedJwkSetTest extends TestCase
      */
     public function test_one_unusable_key_refuses_the_whole_document(): void
     {
-        $this->expectException(ParsedJwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage('index 1');
 
-        ParsedJwkSet::fromJson(self::document(
+        JwkSetParser::parse(self::document(
             self::jwk(RsaKeyPair::PUBLIC_KEY, 'good'),
             self::rawJwk(UndersizedRsaKeyPair::PUBLIC_KEY, 'undersized'),
         ));
@@ -197,7 +234,7 @@ final class ParsedJwkSetTest extends TestCase
                 'not a well-formed JSON object',
             ],
             'more bytes than the parser accepts' => [
-                '{"keys":[' . str_repeat(' ', ParsedJwkSet::MAXIMUM_JSON_BYTES) . ']}',
+                '{"keys":[' . str_repeat(' ', JwkSetParser::MAXIMUM_JSON_BYTES) . ']}',
                 'not a well-formed JSON object',
             ],
             'a root object with no keys member' => ['{"extra":1}', 'has no "keys" member'],
@@ -207,10 +244,10 @@ final class ParsedJwkSetTest extends TestCase
             'an empty keys list' => ['{"keys":[]}', 'must be a non-empty JSON array'],
             'more keys than the parser accepts' => [
                 json_encode(
-                    ['keys' => array_fill(0, ParsedJwkSet::MAXIMUM_KEYS + 1, ['kty' => 'RSA'])],
+                    ['keys' => array_fill(0, JwkSetParser::MAXIMUM_KEYS + 1, ['kty' => 'RSA'])],
                     JSON_THROW_ON_ERROR,
                 ),
-                'holds more than the ' . ParsedJwkSet::MAXIMUM_KEYS . ' keys',
+                'holds more than the ' . JwkSetParser::MAXIMUM_KEYS . ' keys',
             ],
             'a key that is a string' => ['{"keys":["a"]}', 'index 0 is not a non-empty JSON object'],
             'a key that is a list' => ['{"keys":[[1,2]]}', 'index 0 is not a non-empty JSON object'],
@@ -221,10 +258,10 @@ final class ParsedJwkSetTest extends TestCase
     #[DataProvider('malformedDocuments')]
     public function test_a_malformed_document_is_rejected(string $document, string $expectedMessage): void
     {
-        $this->expectException(ParsedJwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage($expectedMessage);
 
-        ParsedJwkSet::fromJson($document);
+        JwkSetParser::parse($document);
     }
 
     /**
@@ -249,10 +286,10 @@ final class ParsedJwkSetTest extends TestCase
             ],
             'an elliptic-curve key' => [
                 ['kty' => 'EC', 'kid' => 'a', 'alg' => 'ES256', 'crv' => 'P-256', 'x' => 'AQ', 'y' => 'AQ'],
-                'declares a kty ParsedJwkSet does not verify with',
+                'declares a kty other than "RSA"',
             ],
-            'no kty' => [$without('kty'), 'declares a kty ParsedJwkSet does not verify with'],
-            'a kty that is an array' => [$with(['kty' => ['RSA']]), 'declares a kty ParsedJwkSet does not verify with'],
+            'no kty' => [$without('kty'), 'declares a kty other than "RSA"'],
+            'a kty that is an array' => [$with(['kty' => ['RSA']]), 'declares a kty other than "RSA"'],
             'an RSA private exponent' => [$with(['d' => 'AQAB']), 'carries private or secret key material'],
             'an RSA prime factor' => [$with(['p' => 'AQAB']), 'carries private or secret key material'],
             'a symmetric key value' => [$with(['k' => 'AQAB']), 'carries private or secret key material'],
@@ -301,14 +338,14 @@ final class ParsedJwkSetTest extends TestCase
     #[DataProvider('malformedKeys')]
     public function test_a_malformed_key_is_rejected(array $key, string $expectedMessage): void
     {
-        $this->expectException(ParsedJwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage($expectedMessage);
 
-        ParsedJwkSet::fromJson(self::document($key));
+        JwkSetParser::parse(self::document($key));
     }
 
     /**
-     * Members ParsedJwkSet does not read, at the root and inside a key,
+     * Members this parser does not read, at the root and inside a key,
      * including the certificate metadata providers commonly publish.
      *
      * @return array<string, array{string}>
@@ -332,10 +369,10 @@ final class ParsedJwkSetTest extends TestCase
     #[DataProvider('ignoredMetadata')]
     public function test_a_member_this_parser_does_not_understand_is_ignored(string $document): void
     {
-        $set = ParsedJwkSet::fromJson($document);
+        $set = JwkSetParser::parse($document);
 
-        self::assertSame(['a'], $set->kids());
-        self::assertSame(self::normalizedPem(RsaKeyPair::PUBLIC_KEY), self::publicKeyPem($set['a']));
+        self::assertSame(['a'], self::kids($set));
+        self::assertSame(self::normalizedPem(RsaKeyPair::PUBLIC_KEY), self::publicKeyPem(self::key($set, 'a')));
     }
 
     /**
@@ -359,9 +396,9 @@ final class ParsedJwkSetTest extends TestCase
     #[DataProvider('acceptedMetadata')]
     public function test_standard_metadata_this_parser_understands_is_accepted(array $key): void
     {
-        $set = ParsedJwkSet::fromJson(self::document($key));
+        $set = JwkSetParser::parse(self::document($key));
 
-        self::assertSame(['a'], $set->kids());
+        self::assertSame(['a'], self::kids($set));
     }
 
     public function test_a_rejection_message_names_no_part_of_the_document(): void
@@ -370,9 +407,9 @@ final class ParsedJwkSetTest extends TestCase
         $key = self::rawJwk(UndersizedRsaKeyPair::PUBLIC_KEY, $kid);
 
         try {
-            ParsedJwkSet::fromJson(self::document($key));
-            self::fail('Expected a ParsedJwkSetException.');
-        } catch (ParsedJwkSetException $exception) {
+            JwkSetParser::parse(self::document($key));
+            self::fail('Expected a JwtConfigurationException.');
+        } catch (JwtConfigurationException $exception) {
             $modulus = (string) $key['n'];
 
             self::assertNull($exception->getPrevious());
@@ -385,44 +422,9 @@ final class ParsedJwkSetTest extends TestCase
         }
     }
 
-    public function test_a_key_set_cannot_be_written_into(): void
-    {
-        $set = ParsedJwkSet::fromJson(self::document(self::jwk(RsaKeyPair::PUBLIC_KEY, 'a')));
 
-        $this->expectException(BadMethodCallException::class);
-        $this->expectExceptionMessage('read-only');
 
-        $set['b'] = new Key(RsaKeyPair::PUBLIC_KEY, 'RS256');
-    }
 
-    public function test_a_key_cannot_be_removed_from_a_key_set(): void
-    {
-        $set = ParsedJwkSet::fromJson(self::document(self::jwk(RsaKeyPair::PUBLIC_KEY, 'a')));
-
-        $this->expectException(BadMethodCallException::class);
-        $this->expectExceptionMessage('read-only');
-
-        unset($set['a']);
-    }
-
-    public function test_reading_an_absent_kid_directly_fails_the_way_a_decode_lookup_does(): void
-    {
-        $set = ParsedJwkSet::fromJson(self::document(self::jwk(RsaKeyPair::PUBLIC_KEY, 'a')));
-
-        self::assertFalse(isset($set['b']));
-
-        $this->expectException(UnexpectedValueException::class);
-
-        self::assertInstanceOf(Key::class, $set['b']);
-    }
-
-    public function test_a_non_string_offset_matches_nothing(): void
-    {
-        $set = ParsedJwkSet::fromJson(self::document(self::jwk(RsaKeyPair::PUBLIC_KEY, '0')));
-
-        self::assertFalse($set->offsetExists(0));
-        self::assertTrue($set->offsetExists('0'));
-    }
 
     /**
      * @return array<string, array{string}>
@@ -442,7 +444,7 @@ final class ParsedJwkSetTest extends TestCase
         // A 2048-bit modulus encodes to 4n+2 characters and this
         // exponent to 4n+3, so both carry unused bits to set.
         $key = ['e' => 'AQE'] + self::jwk(RsaKeyPair::PUBLIC_KEY, 'a');
-        self::assertSame(['a'], ParsedJwkSet::fromJson(self::document($key))->kids());
+        self::assertSame(['a'], self::kids(JwkSetParser::parse(self::document($key))));
 
         $canonical = (string) $key[$field];
         $key[$field] = self::withUnusedBitsSet($canonical);
@@ -450,9 +452,9 @@ final class ParsedJwkSetTest extends TestCase
         self::assertNotSame($canonical, $key[$field]);
         self::assertSame(Base64Url::decode($canonical), base64_decode(strtr($key[$field], '-_', '+/')));
 
-        $this->expectException(ParsedJwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage("has a malformed \"{$field}\"");
 
-        ParsedJwkSet::fromJson(self::document($key));
+        JwkSetParser::parse(self::document($key));
     }
 }

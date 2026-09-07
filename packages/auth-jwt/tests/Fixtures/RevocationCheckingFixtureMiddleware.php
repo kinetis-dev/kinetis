@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\AuthJwt\Tests\Fixtures;
 
 use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\Container\RequestScope;
 
@@ -24,7 +25,7 @@ final class RevocationCheckingFixtureMiddleware extends JwtAuthMiddleware
     public function __construct(RequestScope $scope)
     {
         parent::__construct(
-            self::SECRET,
+            JwtVerificationKeys::hmacSecret(self::SECRET),
             $scope,
             revocationStore: new RevocationStore(new InMemorySimpleCache()),
         );

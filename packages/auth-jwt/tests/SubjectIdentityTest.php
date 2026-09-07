@@ -6,7 +6,9 @@ namespace Kinetis\AuthJwt\Tests;
 
 use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtIssuer;
+use Kinetis\AuthJwt\JwtSigningKey;
 use Kinetis\AuthJwt\JwtUser;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\RefreshTokenStore;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
@@ -37,7 +39,8 @@ final class SubjectIdentityTest extends TestCase
 
         // A login endpoint: one access token and one refresh token, both
         // issued from the application's own integer id.
-        $accessToken = new JwtIssuer(self::SECRET)->issue(self::APPLICATION_ID);
+        $signingKey = JwtSigningKey::hmacSecret(self::SECRET);
+        $accessToken = new JwtIssuer($signingKey)->issue(self::APPLICATION_ID);
         $refreshToken = $refreshTokens->issue(self::APPLICATION_ID);
 
         $scope = $this->scope();
@@ -64,7 +67,9 @@ final class SubjectIdentityTest extends TestCase
 
     private function middleware(RequestScope $scope, RevocationStore $revocations): JwtAuthMiddleware
     {
-        return new JwtAuthMiddleware(self::SECRET, $scope, revocationStore: $revocations);
+        $keys = JwtVerificationKeys::hmacSecret(self::SECRET);
+
+        return new JwtAuthMiddleware($keys, $scope, revocationStore: $revocations);
     }
 
     private function scope(): RequestScope

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\AuthJwt\Tests\Fixtures;
 
 use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\Container\RequestScope;
 
 /**
@@ -19,6 +20,6 @@ final class FixtureJwtAuthMiddleware extends JwtAuthMiddleware
 
     public function __construct(RequestScope $scope)
     {
-        parent::__construct(self::SECRET, $scope);
+        parent::__construct(JwtVerificationKeys::hmacSecret(self::SECRET), $scope);
     }
 }

@@ -4,41 +4,25 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt;
 
-use Firebase\JWT\JWT;
+use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 use Kinetis\AuthJwt\Exception\JwtIssuerException;
 
 /**
- * Stateless by design — no storage, since that's the entire point of a
- * JWT. Signs claims with the key JwtAuthMiddleware verifies against — the
- * *same* key for a symmetric algorithm (`HS256`/`HS384`/`HS512`), or the
- * *private* half of a key pair for an asymmetric one (`RS256`/`RS384`/
- * `RS512`), passed as a PEM-format string; JwtAuthMiddleware takes the
- * public half in that case. Issuing a token to a user (verifying a
- * password, calling this, returning the result to the client) is your own
- * login endpoint's job; this only covers "given a subject, produce a
- * signed token."
- *
- * $algorithm and $key are validated at construction, via
- * JwtKeyValidator — never on the first issue() call. $algorithm must be
- * one of the six this package supports; $key must fit it (an HMAC
- * secret at least as long as the algorithm's digest, or a parseable RSA
- * private key of at least 2048 bits). A misconfigured issuer throws
- * immediately, naming what's wrong but never the key material itself,
- * rather than producing a token whose signature quietly can't be
- * trusted, or throwing an unrelated OpenSSL/library error from inside
- * the first real issue() call.
+ * Stateless by design — no storage, since that is the entire point of a
+ * JWT. Signs claims with a JwtSigningKey, which owns the algorithm and
+ * the `kid` header and validated both when it was built. Issuing a token
+ * to a user (verifying a password, calling this, returning the result to
+ * the client) is your own login endpoint's job; this only covers "given
+ * a subject, produce a signed token."
  *
  * $issuer/$audience stamp fixed `iss`/`aud` claims on every token this
  * instance issues — the trusted-configuration side of
- * JwtAuthMiddleware's own $expectedIssuer/$acceptedAudiences. Deliberately
- * not settable through $claims: a value an application could override
- * per call wouldn't be trustworthy configuration, the same reasoning
- * `sub`/`iat`/`jti`/`exp` already follow. $audience accepts either a
- * single string or a list, matching `aud`'s own JWT-standard
- * flexibility — a token intended for more than one service audience at
- * once. Neither is set unless configured; a JwtIssuer built with both
- * left `null` (the default) never writes `iss`/`aud` at all, exactly as
- * before either existed.
+ * JwtAuthMiddleware's own $expectedIssuer/$acceptedAudiences.
+ * Deliberately not settable through $claims: a value an application
+ * could override per call would not be trustworthy configuration, the
+ * same reasoning `sub`/`iat`/`jti`/`exp` already follow. $audience
+ * accepts either a single string or a list, matching `aud`'s own
+ * JWT-standard flexibility. Neither is written unless configured.
  *
  * A subject is one canonical non-empty string: issue() accepts
  * `string|int` so an application keying its users by integer id can hand
@@ -46,104 +30,32 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
  * anything else in this package sees it. The `sub` claim, JwtUser::id(),
  * and both stores' per-subject revocation keys all carry that identical
  * string, so a token and the revocation covering it can never name the
- * subject two different ways. An empty subject is rejected — a token
- * whose subject names nobody is not a token this class will sign.
- *
- * $kid, when given, is written into the token's own header — pair it
- * with JwtAuthMiddleware's own multi-key `$key` support to roll a
- * signing key over without invalidating every token issued under the
- * previous one: publish both keys, each under its own kid, during the
- * overlap window. Must be `null` (no `kid` header at all) or a kid
- * JwtKeyValidator::isUsableKid() accepts — the same rule every other
- * side of a rotation applies, so this class cannot stamp a kid its own
- * verifier would then refuse to select.
+ * subject two different ways.
  */
 final readonly class JwtIssuer
 {
     /**
      * A given array $audience must be list-shaped and every element a
      * non-empty string — checked below, never declared here as
-     * array<string> or list<string>, since this constructor's own body
-     * is what establishes that stronger guarantee for a caller;
-     * declaring it already-true on entry would make the validation that
-     * enforces it look like unreachable code. mixed is a real, if
-     * unhelpful, answer to PHPStan's own "specify the array's value
-     * type" requirement — deliberately not a more specific one.
+     * list<string>, since this constructor's own body is what
+     * establishes that guarantee for a caller.
      *
      * @param string|array<mixed>|null $audience
      */
     public function __construct(
-        private string $key,
-        private string $algorithm = 'HS256',
-        private ?string $kid = null,
+        private JwtSigningKey $key,
         private ?string $issuer = null,
         private string|array|null $audience = null,
     ) {
-        JwtKeyValidator::assertSupportedAlgorithm(
-            $algorithm,
-            static fn () => JwtIssuerException::unsupportedAlgorithm($algorithm),
-        );
-
-        JwtKeyValidator::assertKeyMaterial(
-            $algorithm,
-            $key,
-            'private',
-            static fn () => JwtKeyValidator::isHmacAlgorithm($algorithm)
-                ? JwtIssuerException::hmacSecretTooShort($algorithm)
-                : JwtIssuerException::invalidRsaPrivateKey(),
-        );
-
-        self::assertValidKidIssuerAudience($kid, $issuer, $audience);
-    }
-
-    /**
-     * @param string|array<mixed>|null $audience
-     */
-    private static function assertValidKidIssuerAudience(?string $kid, ?string $issuer, string|array|null $audience): void
-    {
-        if ($kid !== null && !JwtKeyValidator::isUsableKid($kid)) {
-            throw JwtIssuerException::invalidKid();
-        }
-
-        if ($issuer === '') {
-            throw JwtIssuerException::emptyIssuer();
-        }
-
-        if (is_string($audience) && $audience === '') {
-            throw JwtIssuerException::emptyAudience();
-        }
-
-        if (is_array($audience)) {
-            if ($audience === []) {
-                throw JwtIssuerException::emptyAudience();
-            }
-
-            if (!array_is_list($audience)) {
-                throw JwtIssuerException::audienceNotAList();
-            }
-
-            foreach ($audience as $value) {
-                if (!is_string($value) || $value === '') {
-                    throw JwtIssuerException::invalidAudienceElement();
-                }
-            }
-        }
+        self::assertValidIssuerAndAudience($issuer, $audience);
     }
 
     /**
      * $ttlSeconds is null for a token with no `exp` claim at all — a
      * genuinely non-expiring token, not a stand-in for "a very long
-     * lifetime" — or a positive number of seconds until expiry; zero or
-     * negative is rejected outright, since it would produce a token
-     * that's already expired or expires before it could ever be used.
-     * A $ttlSeconds large enough that `time() + $ttlSeconds` would
-     * overflow this platform's integer range is rejected the same way,
-     * rather than silently letting PHP promote the sum to a float and
-     * corrupt the resulting `exp` claim.
-     *
-     * $subject is canonicalized to a non-empty string here — see this
-     * class's own docblock — and every other subject-carrying surface in
-     * this package reads that same string.
+     * lifetime" — or a positive number of seconds until expiry. Zero,
+     * negative, and a value large enough that `time() + $ttlSeconds`
+     * would overflow this platform's integer range are all rejected.
      *
      * @param array<string, mixed> $claims extra claims merged in alongside `sub`/`iat`/`exp`/`jti` (and `iss`/`aud`, when configured), which always win if duplicated
      */
@@ -178,6 +90,50 @@ final readonly class JwtIssuer
             $payload['exp'] = $now + $ttlSeconds;
         }
 
-        return JWT::encode($payload, $this->key, $this->algorithm, $this->kid);
+        return $this->key->sign($payload);
+    }
+
+    /**
+     * @param string|array<mixed>|null $audience
+     */
+    private static function assertValidIssuerAndAudience(?string $issuer, string|array|null $audience): void
+    {
+        if ($issuer === '') {
+            throw JwtConfigurationException::invalidClaimConstraint(
+                'an issuer must be a non-empty string, or null to omit the "iss" claim',
+            );
+        }
+
+        if ($audience === null) {
+            return;
+        }
+
+        if (is_string($audience)) {
+            if ($audience === '') {
+                throw JwtConfigurationException::invalidClaimConstraint(
+                    'an audience must be a non-empty string, or null to omit the "aud" claim',
+                );
+            }
+
+            return;
+        }
+
+        // An associative or sparse array serializes as a JSON object,
+        // not the JWT standard's array-of-strings "aud" form, so every
+        // verifier's audience check would fail against a token this
+        // issuer accepted.
+        if ($audience === [] || !array_is_list($audience)) {
+            throw JwtConfigurationException::invalidClaimConstraint(
+                'an audience given as an array must be a non-empty list (sequential integer keys from 0)',
+            );
+        }
+
+        foreach ($audience as $value) {
+            if (!is_string($value) || $value === '') {
+                throw JwtConfigurationException::invalidClaimConstraint(
+                    'an audience list must contain only non-empty strings',
+                );
+            }
+        }
     }
 }

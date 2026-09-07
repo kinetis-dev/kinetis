@@ -250,10 +250,11 @@ stay route-only. Two layers, in the order they run:
    ```
 
    `kinetis/auth-jwt`'s middleware takes the same shape, with the
-   constructor its own `$key` parameter needs — see {doc}`auth-jwt`:
+   constructor its own keys parameter needs — see {doc}`auth-jwt`:
 
    ```{code-block} php
    use Kinetis\AuthJwt\JwtAuthMiddleware;
+   use Kinetis\AuthJwt\JwtVerificationKeys;
    use Kinetis\Config\Config;
    use Kinetis\Container\RequestScope;
    use Kinetis\Http\Attributes\AsMiddlewareGroup;
@@ -263,7 +264,10 @@ stay route-only. Two layers, in the order they run:
    {
        public function __construct(RequestScope $scope, Config $config)
        {
-           parent::__construct($config->required('JWT_SECRET'), $scope);
+           parent::__construct(
+               JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
+               $scope,
+           );
        }
    }
    ```

@@ -1,11 +1,11 @@
 parameters:
     level: 8
-    # JwkSet/JwtAuthMiddleware both validate untrusted input (a published
-    # JWKS document, a decoded JWT's own header/claims) against a shape
-    # their own @param/@var docblocks describe as already guaranteed —
-    # the validation is what establishes that guarantee, not a precondition
-    # PHPStan can assume true on entry. Same reasoning as framework's own
-    # phpstan.neon, first applied there.
+    # JwkSet/JwkSetParser/JwtAuthMiddleware all validate untrusted or
+    # caller-supplied input (a published JWKS document, a decoded JWT's
+    # own header/claims) against a shape their own @param/@var docblocks
+    # describe as already guaranteed — the validation is what establishes
+    # that guarantee, not a precondition PHPStan can assume true on entry.
+    # Same reasoning as framework's own phpstan.neon.
     treatPhpDocTypesAsCertain: false
     paths:
         - src

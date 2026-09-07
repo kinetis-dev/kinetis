@@ -4,17 +4,17 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt\Tests;
 
-use ErrorException;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
-use Kinetis\AuthJwt\Exception\JwtAuthMiddlewareException;
+use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 use Kinetis\AuthJwt\JoseHeader;
 use Kinetis\AuthJwt\JwkSet;
 use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\JwtKeyValidator;
+use Kinetis\AuthJwt\JwtSigningKey;
 use Kinetis\AuthJwt\JwtUser;
-use Kinetis\AuthJwt\ParsedJwkSet;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\AuthJwt\Tests\Fixtures\DualBindingFixtureController;
@@ -28,7 +28,6 @@ use Kinetis\AuthJwt\Tests\Fixtures\RevocationCheckedFixtureController;
 use Kinetis\AuthJwt\Tests\Fixtures\RevocationCheckingFixtureMiddleware;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\SecondRsaKeyPair;
-use Kinetis\AuthJwt\Tests\Fixtures\UndersizedRsaKeyPair;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\CallableRequestHandler;
@@ -47,6 +46,20 @@ final class JwtAuthMiddlewareTest extends TestCase
     // Long enough (85 bytes) to satisfy HS256/HS384/HS512's minimum
     // alike — self::SECRET (40 bytes) only clears HS256's.
     private const string LONG_SECRET = 'this-is-a-generously-long-test-secret-key-well-over-64-bytes-do-not-use-in-production';
+
+    /**
+     * The HS256 configuration these tests default to: two views of
+     * self::SECRET, one for verification and one for signing.
+     */
+    private static function keys(): JwtVerificationKeys
+    {
+        return JwtVerificationKeys::hmacSecret(self::SECRET);
+    }
+
+    private static function signingKey(): JwtSigningKey
+    {
+        return JwtSigningKey::hmacSecret(self::SECRET);
+    }
 
     private function scope(): RequestScope
     {
@@ -94,8 +107,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_valid_token_registers_the_resolved_user_and_passes_through(): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope);
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -106,8 +119,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_lowercase_scheme_is_accepted(): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope);
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $request = new ServerRequest('GET', '/', headers: ['Authorization' => "bearer {$token}"]);
         $response = $middleware->process($request, $this->handler());
@@ -118,7 +131,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_missing_authorization_header_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
 
         $response = $middleware->process(new ServerRequest('GET', '/'), $this->handler());
 
@@ -129,7 +142,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_non_bearer_authorization_header_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
 
         $request = new ServerRequest('GET', '/', headers: ['Authorization' => 'Basic dXNlcjpwYXNz']);
         $response = $middleware->process($request, $this->handler());
@@ -139,7 +152,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_an_empty_bearer_token_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
 
         $request = new ServerRequest('GET', '/', headers: ['Authorization' => 'Bearer ']);
         $response = $middleware->process($request, $this->handler());
@@ -149,7 +162,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_malformed_token_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
 
         $response = $middleware->process($this->requestWithToken('not-a-jwt-at-all'), $this->handler());
 
@@ -158,8 +171,9 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_signed_with_a_different_key_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
-        $token = new JwtIssuer('a-completely-different-secret-key-of-sufficient-length')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
+        $otherKey = JwtSigningKey::hmacSecret('a-completely-different-secret-key-of-sufficient-length');
+        $token = new JwtIssuer($otherKey)->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -168,7 +182,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_an_expired_token_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
         $token = JWT::encode(
             ['sub' => 'user-42', 'iat' => time() - 3600, 'exp' => time() - 1800],
             self::SECRET,
@@ -182,7 +196,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_no_subject_claim_is_rejected_with_401(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
         $token = JWT::encode(['iat' => time()], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -200,7 +214,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     #[DataProvider('nonCanonicalSubjectClaims')]
     public function test_a_token_whose_subject_is_not_a_non_empty_string_is_rejected_with_401(mixed $sub): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
         $token = JWT::encode(['sub' => $sub, 'iat' => time()], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -219,7 +233,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_the_inner_handler_never_runs_when_unauthenticated(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
         $calls = 0;
         $handler = new CallableRequestHandler(function () use (&$calls) {
             $calls++;
@@ -241,7 +255,7 @@ final class JwtAuthMiddlewareTest extends TestCase
         $router->register(ProtectedFixtureController::class);
         $kernel = new Kernel($app, $router);
 
-        $token = new JwtIssuer(FixtureJwtAuthMiddleware::SECRET)->issue('user-42');
+        $token = new JwtIssuer(JwtSigningKey::hmacSecret(FixtureJwtAuthMiddleware::SECRET))->issue('user-42');
 
         $unauthenticated = $kernel->handle(new ServerRequest('GET', '/me'));
         $authenticated = $kernel->handle(new ServerRequest('GET', '/me', headers: ['Authorization' => "Bearer {$token}"]));
@@ -260,7 +274,7 @@ final class JwtAuthMiddlewareTest extends TestCase
         $router->register(ProtectedFixtureController::class);
         $kernel = new Kernel($app, $router);
 
-        $token = new JwtIssuer(FixtureJwtAuthMiddleware::SECRET)->issue('user-42');
+        $token = new JwtIssuer(JwtSigningKey::hmacSecret(FixtureJwtAuthMiddleware::SECRET))->issue('user-42');
 
         $response = $kernel->handle(new ServerRequest('GET', '/me', headers: ['Authorization' => "bearer {$token}"]));
 
@@ -284,7 +298,8 @@ final class JwtAuthMiddlewareTest extends TestCase
         $router->register(DualBindingFixtureController::class);
         $kernel = new Kernel($app, $router);
 
-        $token = new JwtIssuer(FixtureJwtAuthMiddleware::SECRET)->issue('user-42', ['role' => 'admin']);
+        $signingKey = JwtSigningKey::hmacSecret(FixtureJwtAuthMiddleware::SECRET);
+        $token = new JwtIssuer($signingKey)->issue('user-42', ['role' => 'admin']);
 
         $authenticated = $kernel->handle(new ServerRequest('GET', '/dual', headers: ['Authorization' => "Bearer {$token}"]));
 
@@ -310,7 +325,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_neither_binding_is_registered_on_authentication_failure(): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope);
 
         $middleware->process(new ServerRequest('GET', '/dual'), $this->handler());
 
@@ -321,8 +336,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_revoked_token_is_rejected_with_401(): void
     {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
         $claims = JWT::decode($token, new Key(self::SECRET, 'HS256'));
         $revocationStore->revoke($claims->jti, 60);
 
@@ -334,8 +349,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_non_revoked_token_still_passes_through_when_a_revocation_store_is_configured(): void
     {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -345,13 +360,13 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_revoking_one_token_does_not_reject_a_different_one(): void
     {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
-        $revoked = new JwtIssuer(self::SECRET)->issue('user-42');
+        $revoked = new JwtIssuer(self::signingKey())->issue('user-42');
         $claims = JWT::decode($revoked, new Key(self::SECRET, 'HS256'));
         $revocationStore->revoke($claims->jti, 60);
 
-        $stillValid = new JwtIssuer(self::SECRET)->issue('user-42');
+        $stillValid = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($stillValid), $this->handler());
 
@@ -361,7 +376,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_revoke_all_for_user_rejects_a_token_issued_before_the_call(): void
     {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
         // Built with an explicit past `iat`, not JwtIssuer's own time() —
         // issuing then immediately revoking-all could otherwise land both
@@ -380,7 +395,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_revoke_all_for_user_does_not_reject_a_token_issued_after_the_call(): void
     {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
         $revocationStore->revokeAllForUser('user-42', 60);
         // A fresh login well after "log out everywhere" must still work.
@@ -397,7 +412,7 @@ final class JwtAuthMiddlewareTest extends TestCase
         // guarantees the token's own real iat lands in a later second
         // than the cutoff, not just usually.
         sleep(1);
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -407,10 +422,10 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_revoke_all_for_user_does_not_reject_a_different_users_token(): void
     {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
         $revocationStore->revokeAllForUser('user-42', 60);
-        $token = new JwtIssuer(self::SECRET)->issue('user-99');
+        $token = new JwtIssuer(self::signingKey())->issue('user-99');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -448,7 +463,7 @@ final class JwtAuthMiddlewareTest extends TestCase
         mixed $jti,
     ): void {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
         $claims = ['sub' => 'user-42'];
 
@@ -491,7 +506,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     {
         $cache = new RecordingSimpleCache();
         $revocationStore = new RevocationStore($cache);
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
         // A valid iat but no jti at all — under independent per-claim
         // checks this would still have run the per-user cutoff lookup;
@@ -540,8 +555,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     {
         // The default — revocationStore is optional and null by default,
         // matching every existing test above that never mentions it.
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -551,8 +566,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_rs256_verifies_a_token_signed_with_the_matching_private_key(): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(RsaKeyPair::PUBLIC_KEY, $scope, algorithm: 'RS256');
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(JwtVerificationKeys::rsaPublicKey(RsaKeyPair::PUBLIC_KEY), $scope);
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY))->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -562,7 +577,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_rs256_rejects_a_token_that_was_never_signed_with_the_private_key(): void
     {
-        $middleware = new JwtAuthMiddleware(RsaKeyPair::PUBLIC_KEY, $this->scope(), algorithm: 'RS256');
+        $middleware = new JwtAuthMiddleware(JwtVerificationKeys::rsaPublicKey(RsaKeyPair::PUBLIC_KEY), $this->scope());
         // Signed with an HS256 secret, not the RSA private key — the
         // middleware only ever tries to verify as RS256 against the
         // configured public key, so this must fail, not silently
@@ -574,32 +589,12 @@ final class JwtAuthMiddlewareTest extends TestCase
         self::assertSame(401, $response->getStatusCode());
     }
 
-    public function test_a_multi_key_map_verifies_a_token_signed_under_a_matching_kid(): void
-    {
-        $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $scope);
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');
 
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
-    }
-
-    public function test_a_multi_key_map_rejects_a_token_with_an_unrecognized_kid(): void
-    {
-        $middleware = new JwtAuthMiddleware(['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $this->scope());
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'retired')->issue('user-42');
-
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(401, $response->getStatusCode());
-    }
 
     public function test_a_token_with_the_matching_issuer_passes_through(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), expectedIssuer: 'my-app');
-        $token = new JwtIssuer(self::SECRET, issuer: 'my-app')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), expectedIssuer: 'my-app');
+        $token = new JwtIssuer(self::signingKey(), issuer: 'my-app')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -608,9 +603,9 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_no_iss_is_rejected_when_an_issuer_is_expected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), expectedIssuer: 'my-app');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), expectedIssuer: 'my-app');
         // No issuer configured on this JwtIssuer at all.
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -619,8 +614,8 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_the_wrong_issuer_is_rejected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), expectedIssuer: 'my-app');
-        $token = new JwtIssuer(self::SECRET, issuer: 'someone-elses-app')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), expectedIssuer: 'my-app');
+        $token = new JwtIssuer(self::signingKey(), issuer: 'someone-elses-app')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -641,7 +636,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     #[DataProvider('malformedIssuerValues')]
     public function test_a_token_with_a_malformed_iss_is_rejected(mixed $iss): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), expectedIssuer: 'my-app');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), expectedIssuer: 'my-app');
         $token = JWT::encode(['sub' => 'user-42', 'iat' => time(), 'iss' => $iss], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -651,8 +646,8 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_a_matching_string_audience_passes_through(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
-        $token = new JwtIssuer(self::SECRET, audience: 'svc-a')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
+        $token = new JwtIssuer(self::signingKey(), audience: 'svc-a')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -663,8 +658,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     {
         // Any-match semantics: only one of the token's own audiences
         // needs to be present in the accepted list.
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-b']);
-        $token = new JwtIssuer(self::SECRET, audience: ['svc-a', 'svc-b'])->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-b']);
+        $token = new JwtIssuer(self::signingKey(), audience: ['svc-a', 'svc-b'])->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -673,8 +668,8 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_no_matching_audience_is_rejected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
-        $token = new JwtIssuer(self::SECRET, audience: 'svc-c')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
+        $token = new JwtIssuer(self::signingKey(), audience: 'svc-c')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -683,9 +678,9 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_no_aud_is_rejected_when_audiences_are_expected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
         // No audience configured on this JwtIssuer at all.
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -694,7 +689,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_an_empty_string_audience_is_rejected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
         $token = JWT::encode(['sub' => 'user-42', 'iat' => time(), 'aud' => ''], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -704,7 +699,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_an_empty_audience_list_is_rejected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
         $token = JWT::encode(['sub' => 'user-42', 'iat' => time(), 'aud' => []], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -714,7 +709,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_a_token_with_a_mixed_type_audience_list_is_rejected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
         $token = JWT::encode(['sub' => 'user-42', 'iat' => time(), 'aud' => ['svc-a', 123]], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -725,12 +720,12 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_both_issuer_and_audience_matching_passes_through(): void
     {
         $middleware = new JwtAuthMiddleware(
-            self::SECRET,
+            self::keys(),
             $this->scope(),
             expectedIssuer: 'my-app',
             acceptedAudiences: ['svc-a'],
         );
-        $token = new JwtIssuer(self::SECRET, issuer: 'my-app', audience: 'svc-a')->issue('user-42');
+        $token = new JwtIssuer(self::signingKey(), issuer: 'my-app', audience: 'svc-a')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -740,12 +735,12 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_matching_issuer_alone_is_not_enough_when_audience_is_also_required(): void
     {
         $middleware = new JwtAuthMiddleware(
-            self::SECRET,
+            self::keys(),
             $this->scope(),
             expectedIssuer: 'my-app',
             acceptedAudiences: ['svc-a'],
         );
-        $token = new JwtIssuer(self::SECRET, issuer: 'my-app', audience: 'svc-wrong')->issue('user-42');
+        $token = new JwtIssuer(self::signingKey(), issuer: 'my-app', audience: 'svc-wrong')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -755,12 +750,12 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_matching_audience_alone_is_not_enough_when_issuer_is_also_required(): void
     {
         $middleware = new JwtAuthMiddleware(
-            self::SECRET,
+            self::keys(),
             $this->scope(),
             expectedIssuer: 'my-app',
             acceptedAudiences: ['svc-a'],
         );
-        $token = new JwtIssuer(self::SECRET, issuer: 'someone-else', audience: 'svc-a')->issue('user-42');
+        $token = new JwtIssuer(self::signingKey(), issuer: 'someone-else', audience: 'svc-a')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -772,8 +767,8 @@ final class JwtAuthMiddlewareTest extends TestCase
         // Backward compatible: a token carrying real iss/aud claims still
         // passes through when neither constraint is configured on this
         // middleware.
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
-        $token = new JwtIssuer(self::SECRET, issuer: 'my-app', audience: 'svc-a')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
+        $token = new JwtIssuer(self::signingKey(), issuer: 'my-app', audience: 'svc-a')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -791,7 +786,7 @@ final class JwtAuthMiddlewareTest extends TestCase
         $revocationStore = new RevocationStore($cache);
         $scope = $this->scope();
         $middleware = new JwtAuthMiddleware(
-            self::SECRET,
+            self::keys(),
             $scope,
             revocationStore: $revocationStore,
             expectedIssuer: 'my-app',
@@ -802,7 +797,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
             return new Response(200);
         });
-        $token = new JwtIssuer(self::SECRET, issuer: 'someone-else')->issue('user-42');
+        $token = new JwtIssuer(self::signingKey(), issuer: 'someone-else')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $handler);
 
@@ -818,31 +813,31 @@ final class JwtAuthMiddlewareTest extends TestCase
      * kid) must not bypass the issuer check — the two are independent
      * gates.
      */
-    public function test_a_multi_key_map_still_enforces_issuer_after_verifying_under_the_matching_kid(): void
+    public function test_a_key_set_still_enforces_issuer_after_verifying_under_the_matching_kid(): void
     {
         $middleware = new JwtAuthMiddleware(
-            ['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')],
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
             $this->scope(),
             expectedIssuer: 'my-app',
         );
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current', issuer: 'someone-else')
-            ->issue('user-42');
+        $signingKey = JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: 'current');
+        $token = new JwtIssuer($signingKey, issuer: 'someone-else')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
         self::assertSame(401, $response->getStatusCode());
     }
 
-    public function test_a_multi_key_map_passes_through_when_kid_and_issuer_both_match(): void
+    public function test_a_key_set_passes_through_when_kid_and_issuer_both_match(): void
     {
         $scope = $this->scope();
         $middleware = new JwtAuthMiddleware(
-            ['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')],
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
             $scope,
             expectedIssuer: 'my-app',
         );
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current', issuer: 'my-app')
-            ->issue('user-42');
+        $signingKey = JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: 'current');
+        $token = new JwtIssuer($signingKey, issuer: 'my-app')->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -852,30 +847,30 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     public function test_construction_throws_when_expected_issuer_is_an_empty_string(): void
     {
-        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectException(JwtConfigurationException::class);
 
-        new JwtAuthMiddleware(self::SECRET, $this->scope(), expectedIssuer: '');
+        new JwtAuthMiddleware(self::keys(), $this->scope(), expectedIssuer: '');
     }
 
     public function test_construction_throws_when_accepted_audiences_is_an_empty_array(): void
     {
-        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectException(JwtConfigurationException::class);
 
-        new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: []);
+        new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: []);
     }
 
     public function test_construction_throws_when_accepted_audiences_contains_an_empty_string(): void
     {
-        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectException(JwtConfigurationException::class);
 
-        new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a', '']);
+        new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a', '']);
     }
 
     public function test_construction_throws_when_accepted_audiences_contains_a_non_string(): void
     {
-        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectException(JwtConfigurationException::class);
 
-        new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a', 123]);
+        new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a', 123]);
     }
 
     /**
@@ -885,16 +880,16 @@ final class JwtAuthMiddlewareTest extends TestCase
      */
     public function test_construction_throws_when_accepted_audiences_is_an_associative_array(): void
     {
-        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectException(JwtConfigurationException::class);
 
-        new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['primary' => 'svc-a']);
+        new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['primary' => 'svc-a']);
     }
 
     public function test_construction_throws_when_accepted_audiences_is_a_sparse_numeric_array(): void
     {
-        $this->expectException(JwtAuthMiddlewareException::class);
+        $this->expectException(JwtConfigurationException::class);
 
-        new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: [0 => 'svc-a', 2 => 'svc-b']);
+        new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: [0 => 'svc-a', 2 => 'svc-b']);
     }
 
     /**
@@ -922,8 +917,8 @@ final class JwtAuthMiddlewareTest extends TestCase
         string|array $issuedAudience,
         array $acceptedAudiences,
     ): void {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: $acceptedAudiences);
-        $token = new JwtIssuer(self::SECRET, audience: $issuedAudience)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: $acceptedAudiences);
+        $token = new JwtIssuer(self::signingKey(), audience: $issuedAudience)->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -939,7 +934,7 @@ final class JwtAuthMiddlewareTest extends TestCase
      */
     public function test_a_token_whose_aud_claim_is_a_json_object_is_rejected(): void
     {
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope(), acceptedAudiences: ['svc-a']);
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), acceptedAudiences: ['svc-a']);
         // A PHP associative array here serializes via JWT::encode()'s own
         // json_encode() call as a JSON object, e.g. {"primary":"svc-a"}.
         $token = JWT::encode(
@@ -966,19 +961,21 @@ final class JwtAuthMiddlewareTest extends TestCase
         $router->register(IssuerAudienceCheckedFixtureController::class);
         $kernel = new Kernel($app, $router);
 
+        $signingKey = JwtSigningKey::hmacSecret(IssuerAudienceCheckingFixtureMiddleware::SECRET);
+
         $validToken = new JwtIssuer(
-            IssuerAudienceCheckingFixtureMiddleware::SECRET,
+            $signingKey,
             issuer: IssuerAudienceCheckingFixtureMiddleware::ISSUER,
             audience: IssuerAudienceCheckingFixtureMiddleware::AUDIENCE,
         )->issue('user-42');
 
         $wrongIssuerToken = new JwtIssuer(
-            IssuerAudienceCheckingFixtureMiddleware::SECRET,
+            $signingKey,
             issuer: 'someone-else',
             audience: IssuerAudienceCheckingFixtureMiddleware::AUDIENCE,
         )->issue('user-42');
 
-        $noClaimsToken = new JwtIssuer(IssuerAudienceCheckingFixtureMiddleware::SECRET)->issue('user-42');
+        $noClaimsToken = new JwtIssuer($signingKey)->issue('user-42');
 
         $valid = $kernel->handle(new ServerRequest(
             'GET',
@@ -1022,12 +1019,12 @@ final class JwtAuthMiddlewareTest extends TestCase
      */
     public static function grammarMatrix(): iterable
     {
-        $validToken = new JwtIssuer(self::SECRET)->issue('user-42');
+        $validToken = new JwtIssuer(self::signingKey())->issue('user-42');
         // A real, validly-signed, but deliberately oversized token —
         // JwtIssuer::issue() itself, not a synthetic long string, so
         // this both proves "very long is accepted" and reuses the
         // exact code path every other accept case in this matrix does.
-        $longToken = new JwtIssuer(self::SECRET)->issue('user-42', ['padding' => str_repeat('a', 8000)]);
+        $longToken = new JwtIssuer(self::signingKey())->issue('user-42', ['padding' => str_repeat('a', 8000)]);
 
         yield 'multiple SP separator' => ["Bearer  {$validToken}", true];
         yield 'tab separator' => ["Bearer\t{$validToken}", false];
@@ -1041,7 +1038,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_the_grammar_matrix_authenticates_or_rejects_correctly(string $headerValue, bool $accepted): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope);
 
         $request = new ServerRequest('GET', '/', headers: ['Authorization' => $headerValue]);
         $response = $middleware->process($request, $this->handler());
@@ -1064,8 +1061,8 @@ final class JwtAuthMiddlewareTest extends TestCase
      */
     public function test_duplicate_authorization_headers_are_rejected(): void
     {
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
-        $middleware = new JwtAuthMiddleware(self::SECRET, $this->scope());
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope());
 
         $request = new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer {$token}"]);
         $request = $request->withAddedHeader('Authorization', "Bearer {$token}");
@@ -1090,14 +1087,14 @@ final class JwtAuthMiddlewareTest extends TestCase
         $cache = new RecordingSimpleCache();
         $revocationStore = new RevocationStore($cache);
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope, revocationStore: $revocationStore);
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope, revocationStore: $revocationStore);
         $calls = 0;
         $handler = new CallableRequestHandler(function () use (&$calls) {
             $calls++;
 
             return new Response(200);
         });
-        $token = new JwtIssuer(self::SECRET)->issue('user-42');
+        $token = new JwtIssuer(self::signingKey())->issue('user-42');
 
         $request = new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer\t{$token}"]);
         $response = $middleware->process($request, $handler);
@@ -1109,166 +1106,21 @@ final class JwtAuthMiddlewareTest extends TestCase
         self::assertFalse($scope->isRegistered(JwtUser::class));
     }
 
-    // --- Cryptographic configuration, validated at construction ---
-    //
-    // Every test in this section proves the failure happens at
-    // construction — new JwtAuthMiddleware(...) itself throws — not that
-    // a later process() call happens to 401. A misconfigured middleware
-    // can never be built at all, so it can never become a live 401 loop
-    // masking the real, server-side mistake.
 
-    public function test_construction_throws_for_an_unsupported_algorithm(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware(self::LONG_SECRET, $this->scope(), algorithm: 'ES256');
-    }
 
-    public function test_construction_throws_for_a_too_short_hmac_secret(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware(str_repeat('a', 16), $this->scope());
-    }
 
-    public function test_construction_throws_for_an_empty_hmac_secret(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware('', $this->scope());
-    }
 
-    public function test_construction_throws_for_a_malformed_rsa_public_key(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware('not a real pem', $this->scope(), algorithm: 'RS256');
-    }
 
-    public function test_construction_throws_for_an_undersized_rsa_public_key(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware(UndersizedRsaKeyPair::PUBLIC_KEY, $this->scope(), algorithm: 'RS256');
-    }
 
-    public function test_construction_throws_when_an_rsa_private_key_is_given_as_the_public_key(): void
-    {
-        // A real, valid, correctly-sized RSA key — just the wrong half.
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware(RsaKeyPair::PRIVATE_KEY, $this->scope(), algorithm: 'RS256');
-    }
 
-    public function test_construction_throws_for_an_empty_key_map(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
 
-        new JwtAuthMiddleware([], $this->scope());
-    }
 
-    public function test_construction_throws_for_a_key_map_with_a_non_string_kid(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-
-        new JwtAuthMiddleware([0 => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $this->scope());
-    }
-
-    public function test_construction_throws_for_a_key_map_with_a_kid_outside_utf8(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-        $this->expectExceptionMessage('valid UTF-8');
-
-        new JwtAuthMiddleware(["key-\xFF" => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $this->scope());
-    }
-
-    public function test_construction_throws_for_a_key_map_with_an_empty_string_kid(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-
-        new JwtAuthMiddleware(['' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')], $this->scope());
-    }
-
-    public function test_construction_throws_for_a_key_map_entry_that_is_not_a_key_instance(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-
-        new JwtAuthMiddleware(['current' => 'not-a-key-object'], $this->scope());
-    }
-
-    public function test_construction_throws_for_a_key_map_entry_with_an_unsupported_algorithm(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-
-        new JwtAuthMiddleware(['current' => new Key(self::LONG_SECRET, 'ES256')], $this->scope());
-    }
-
-    public function test_construction_throws_for_a_key_map_entry_with_a_too_short_hmac_secret(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-
-        new JwtAuthMiddleware(['current' => new Key(str_repeat('a', 16), 'HS256')], $this->scope());
-    }
-
-    public function test_construction_throws_for_a_key_map_entry_with_an_undersized_rsa_key(): void
-    {
-        $this->expectException(JwtAuthMiddlewareException::class);
-
-        new JwtAuthMiddleware(
-            ['current' => new Key(UndersizedRsaKeyPair::PUBLIC_KEY, 'RS256')],
-            $this->scope(),
-        );
-    }
-
-    /**
-     * The exact scenario a PHP warning-to-exception error handler
-     * (a real, legitimate application pattern) could otherwise let leak
-     * through as an unrelated exception: a Key wrapping an already-
-     * parsed *private* OpenSSLAsymmetricKey object, handed in where the
-     * key map only ever needs a public one. Confirmed this construction
-     * ends in JwtAuthMiddlewareException specifically, not some other
-     * exception type a leaked PHP warning would produce, even under
-     * that adversarial handler.
-     */
-    public function test_construction_throws_cleanly_for_a_key_map_entry_wrapping_a_private_key_object(): void
-    {
-        $privateKeyObject = openssl_pkey_get_private(RsaKeyPair::PRIVATE_KEY);
-        self::assertNotFalse($privateKeyObject);
-
-        set_error_handler(static function (int $errno, string $errstr): never {
-            throw new ErrorException($errstr, 0, $errno);
-        });
-
-        try {
-            $this->expectException(JwtAuthMiddlewareException::class);
-
-            new JwtAuthMiddleware(
-                ['current' => new Key($privateKeyObject, 'RS256')],
-                $this->scope(),
-            );
-        } finally {
-            restore_error_handler();
-        }
-    }
-
-    /**
-     * $algorithm has no effect at all once $key is an array — a
-     * nonsensical top-level $algorithm must not make construction fail,
-     * since it's never even read in that case (see the class docblock).
-     */
-    public function test_an_unsupported_top_level_algorithm_is_ignored_when_a_key_map_is_given(): void
-    {
-        $middleware = new JwtAuthMiddleware(
-            ['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')],
-            $this->scope(),
-            algorithm: 'this-is-not-a-real-algorithm',
-        );
-
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(200, $response->getStatusCode());
-    }
 
     /**
      * @return iterable<string, array{string}>
@@ -1284,8 +1136,8 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_real_token_authenticates_under_every_hmac_algorithm(string $algorithm): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::LONG_SECRET, $scope, algorithm: $algorithm);
-        $token = new JwtIssuer(self::LONG_SECRET, algorithm: $algorithm)->issue('user-42');
+        $middleware = new JwtAuthMiddleware(JwtVerificationKeys::hmacSecret(self::LONG_SECRET, $algorithm), $scope);
+        $token = new JwtIssuer(JwtSigningKey::hmacSecret(self::LONG_SECRET, $algorithm))->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -1307,8 +1159,9 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_real_token_authenticates_under_every_rsa_algorithm(string $algorithm): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(RsaKeyPair::PUBLIC_KEY, $scope, algorithm: $algorithm);
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: $algorithm)->issue('user-42');
+        $keys = JwtVerificationKeys::rsaPublicKey(RsaKeyPair::PUBLIC_KEY, $algorithm);
+        $middleware = new JwtAuthMiddleware($keys, $scope);
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, $algorithm))->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -1316,42 +1169,6 @@ final class JwtAuthMiddlewareTest extends TestCase
         self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
     }
 
-    /**
-     * A valid multi-key map, mixing an HMAC and an RSA entry under
-     * different kids — each entry's own algorithm and key material
-     * validated independently at construction, and each still correctly
-     * selectable and verifiable at request time.
-     */
-    public function test_a_valid_multi_key_map_with_mixed_algorithms_verifies_either_kid(): void
-    {
-        $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(
-            [
-                'hmac-key' => new Key(self::LONG_SECRET, 'HS256'),
-                'rsa-key' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256'),
-            ],
-            $scope,
-        );
-
-        $hmacToken = new JwtIssuer(self::LONG_SECRET, algorithm: 'HS256', kid: 'hmac-key')->issue('user-42');
-        $rsaToken = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'rsa-key')->issue('user-99');
-
-        $hmacResponse = $middleware->process($this->requestWithToken($hmacToken), $this->handler());
-        self::assertSame(200, $hmacResponse->getStatusCode());
-        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
-
-        $rsaScope = $this->scope();
-        $rsaMiddleware = new JwtAuthMiddleware(
-            [
-                'hmac-key' => new Key(self::LONG_SECRET, 'HS256'),
-                'rsa-key' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256'),
-            ],
-            $rsaScope,
-        );
-        $rsaResponse = $rsaMiddleware->process($this->requestWithToken($rsaToken), $this->handler());
-        self::assertSame(200, $rsaResponse->getStatusCode());
-        self::assertSame('user-99', $rsaScope->get(CurrentUserInterface::class)->id());
-    }
 
     /**
      * A JWK Set published by JwkSet, serialized the way a
@@ -1359,16 +1176,16 @@ final class JwtAuthMiddlewareTest extends TestCase
      *
      * @param list<PublishedRsaKey> $keys
      */
-    private static function publishedKeySet(array $keys): ParsedJwkSet
+    private static function publishedKeySet(array $keys): JwtVerificationKeys
     {
-        return ParsedJwkSet::fromJson((string) json_encode(JwkSet::fromRsaPublicKeys($keys), JSON_THROW_ON_ERROR));
+        return JwtVerificationKeys::jwks((string) json_encode(JwkSet::fromRsaPublicKeys($keys), JSON_THROW_ON_ERROR));
     }
 
     /**
      * Two kids under two different key pairs, so which one a token
      * reaches is observable.
      */
-    private static function keySetWithKids(string $firstKid, string $secondKid): ParsedJwkSet
+    private static function keySetWithKids(string $firstKid, string $secondKid): JwtVerificationKeys
     {
         return self::publishedKeySet([
             new PublishedRsaKey($firstKid, RsaKeyPair::PUBLIC_KEY),
@@ -1417,11 +1234,9 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_published_key_set_verifies_a_token_signed_under_a_matching_kid(): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(
-            self::keySetWithKids('2025-key', '2026-key'),
-            $scope,
-        );
-        $token = new JwtIssuer(SecondRsaKeyPair::privateKey(), algorithm: 'RS256', kid: '2026-key')->issue('user-42');
+        $middleware = new JwtAuthMiddleware(self::keySetWithKids('2025-key', '2026-key'), $scope);
+        $signingKey = JwtSigningKey::rsaPrivateKey(SecondRsaKeyPair::privateKey(), kid: '2026-key');
+        $token = new JwtIssuer($signingKey)->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -1432,7 +1247,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     /**
      * Each kid selects its own published key and no other. "0" and
      * "00" are the pair a PHP array key cannot hold apart (see
-     * ParsedJwkSet); "ordinary" shares its key pair with "0", so a
+     * JwkSetParser); "ordinary" shares its key pair with "0", so a
      * token verifying under one of them is a fact about the kid the
      * document published, not about which key happens to be in the set.
      *
@@ -1453,19 +1268,16 @@ final class JwtAuthMiddlewareTest extends TestCase
     #[DataProvider('publishedKidSelections')]
     public function test_a_published_kid_selects_its_own_key_through_the_whole_path(
         string $kid,
-        string $signingKey,
+        string $privateKey,
         bool $verifies,
     ): void {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(
-            self::publishedKeySet([
+        $middleware = new JwtAuthMiddleware(self::publishedKeySet([
                 new PublishedRsaKey('0', RsaKeyPair::PUBLIC_KEY),
                 new PublishedRsaKey('00', SecondRsaKeyPair::publicKey()),
                 new PublishedRsaKey('ordinary', RsaKeyPair::PUBLIC_KEY),
-            ]),
-            $scope,
-        );
-        $token = new JwtIssuer($signingKey, algorithm: 'RS256', kid: $kid)->issue('user-42');
+            ]), $scope);
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey($privateKey, kid: $kid))->issue('user-42');
 
         if (!$verifies) {
             $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
@@ -1480,20 +1292,17 @@ final class JwtAuthMiddlewareTest extends TestCase
     }
 
     /**
-     * Publisher, parser, issuer and header boundary hold a kid to the
-     * one rule, so the longest kid JwkSet will emit is one the rest of
-     * the path still accepts.
+     * Publisher, parser, signing key and header boundary hold a kid to
+     * the one rule, so the longest kid JwkSet will emit is one the rest
+     * of the path still accepts.
      */
     public function test_the_longest_publishable_kid_survives_the_whole_path(): void
     {
         $kid = str_repeat('k', JwtKeyValidator::MAXIMUM_KID_LENGTH);
         $scope = $this->scope();
         $keySet = self::publishedKeySet([new PublishedRsaKey($kid, RsaKeyPair::PUBLIC_KEY)]);
-
-        self::assertSame([$kid], $keySet->kids());
-
         $middleware = new JwtAuthMiddleware($keySet, $scope);
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: $kid)->issue('user-42');
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: $kid))->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -1508,7 +1317,7 @@ final class JwtAuthMiddlewareTest extends TestCase
             self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
             $scope,
         );
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'retired')->issue('user-42');
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: 'retired'))->issue('user-42');
 
         $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
     }
@@ -1520,29 +1329,11 @@ final class JwtAuthMiddlewareTest extends TestCase
             self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
             $scope,
         );
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256')->issue('user-42');
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY))->issue('user-42');
 
         $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
     }
 
-    /**
-     * Matches the `array<string, Key>` form: $algorithm goes unread, and
-     * so unvalidated, once $key selects by kid.
-     */
-    public function test_construction_over_a_published_key_set_leaves_the_unused_algorithm_alone(): void
-    {
-        $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(
-            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
-            $scope,
-            'not-an-algorithm',
-        );
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');
-
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(200, $response->getStatusCode());
-    }
 
     /**
      * Header shapes JWT::decode() reaches by a path that raises a raw
@@ -1658,7 +1449,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_malformed_compact_token_is_rejected_without_reaching_the_handler(string $token): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope);
 
         $this->assertRejectedWithoutTouchingTheRequest($middleware, $scope, $token);
     }
@@ -1671,7 +1462,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     public function test_a_single_key_middleware_refuses_a_malformed_kid_it_would_never_read(): void
     {
         $scope = $this->scope();
-        $middleware = new JwtAuthMiddleware(self::SECRET, $scope);
+        $middleware = new JwtAuthMiddleware(self::keys(), $scope);
 
         $this->assertRejectedWithoutTouchingTheRequest(
             $middleware,
@@ -1713,7 +1504,7 @@ final class JwtAuthMiddlewareTest extends TestCase
 
         $scope = $this->scope();
 
-        $this->assertRejectedWithoutTouchingTheRequest(new JwtAuthMiddleware(self::SECRET, $scope), $scope, $token);
+        $this->assertRejectedWithoutTouchingTheRequest(new JwtAuthMiddleware(self::keys(), $scope), $scope, $token);
     }
 
     /**
@@ -1725,10 +1516,11 @@ final class JwtAuthMiddlewareTest extends TestCase
     {
         $scope = $this->scope();
         $middleware = new JwtAuthMiddleware(
-            ['current' => new Key(RsaKeyPair::PUBLIC_KEY, 'RS256')],
+            self::publishedKeySet([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]),
             $scope,
         );
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: 'current')->issue('user-42');
+        $signingKey = JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: 'current');
+        $token = new JwtIssuer($signingKey)->issue('user-42');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 

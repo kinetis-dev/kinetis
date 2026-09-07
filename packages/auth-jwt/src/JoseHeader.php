@@ -57,10 +57,10 @@ final class JoseHeader
      * compact JWS this package can verify.
      *
      * $kidRequired states whether the verifying key is selected by
-     * `kid` — true for every multi-key form, where a token with no
-     * usable `kid` selects nothing. A present `kid` is held to
-     * JwtKeyValidator's own kid rule either way, whether or not the
-     * configured key would have read it.
+     * `kid` — true for a JWK Set, where a token with no usable `kid`
+     * selects nothing. A present `kid` is held to JwtKeyValidator's own
+     * kid rule either way, whether or not the configured key would have
+     * read it.
      */
     public static function parse(#[\SensitiveParameter] string $token, bool $kidRequired): ?self
     {

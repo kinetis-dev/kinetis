@@ -18,7 +18,7 @@ use JsonException;
  * compared decoded, so a `\uXXXX` spelling is caught as the same member
  * as its plain form.
  *
- * @internal Boundary helper for ParsedJwkSet and JoseHeader.
+ * @internal Boundary helper for JwkSetParser and JoseHeader.
  */
 final class StrictJson
 {

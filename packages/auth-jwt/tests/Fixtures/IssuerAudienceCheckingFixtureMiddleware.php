@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\AuthJwt\Tests\Fixtures;
 
 use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\Container\RequestScope;
 
 /**
@@ -22,7 +23,7 @@ final class IssuerAudienceCheckingFixtureMiddleware extends JwtAuthMiddleware
     public function __construct(RequestScope $scope)
     {
         parent::__construct(
-            self::SECRET,
+            JwtVerificationKeys::hmacSecret(self::SECRET),
             $scope,
             expectedIssuer: self::ISSUER,
             acceptedAudiences: [self::AUDIENCE],
