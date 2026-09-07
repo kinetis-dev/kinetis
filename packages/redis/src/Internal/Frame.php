@@ -17,6 +17,7 @@ use Amp\Redis\Protocol\RedisResponse;
  */
 final class Frame
 {
+    /** @var DeferredFuture<RedisResponse> */
     private readonly DeferredFuture $deferred;
 
     private bool $settled = false;

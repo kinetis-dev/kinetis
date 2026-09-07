@@ -45,6 +45,7 @@ final class S3Client extends AsyncAwsS3Client
     /**
      * @param array<string, mixed>|PutObjectRequest $input
      */
+    #[\Override]
     public function putObject($input): PutObjectOutput
     {
         $request = PutObjectRequest::create($input);
@@ -60,6 +61,7 @@ final class S3Client extends AsyncAwsS3Client
     /**
      * @param array<string, mixed>|CopyObjectRequest $input
      */
+    #[\Override]
     public function copyObject($input): CopyObjectOutput
     {
         $request = CopyObjectRequest::create($input);
@@ -79,9 +81,10 @@ final class S3Client extends AsyncAwsS3Client
     /**
      * @param array<string, mixed>|DeleteObjectsRequest $input
      */
+    #[\Override]
     public function deleteObjects($input): DeleteObjectsOutput
     {
-        $result = parent::deleteObjects($input);
+        $result = parent::deleteObjects(DeleteObjectsRequest::create($input));
         $result->resolve();
 
         if ($result->getErrors() !== []) {

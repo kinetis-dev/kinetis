@@ -75,7 +75,6 @@ final class Link implements RedisLink
         private readonly Connector $connector,
         private readonly float $timeout,
     ) {
-        /** @var \SplQueue<Frame> */
         $this->pending = new \SplQueue();
     }
 

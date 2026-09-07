@@ -40,6 +40,7 @@ use Revolt\EventLoop;
  */
 final class Connection
 {
+    /** @var ConcurrentIterator<RedisResponse> */
     private readonly ConcurrentIterator $replies;
 
     public function __construct(private readonly Socket $socket)
@@ -96,7 +97,10 @@ final class Connection
     {
         $writing = true;
         $id = $cancellation->subscribe(function () use (&$writing): void {
-            if ($writing) {
+            // $writing is captured by reference, so a callback the loop
+            // already queued after a completed write reads the false the
+            // finally block below leaves behind.
+            if ($writing) { // @phpstan-ignore if.alwaysTrue
                 $this->socket->close();
             }
         });

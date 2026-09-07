@@ -77,7 +77,7 @@ final class ClusterClient implements RoutedExecutor
         private readonly ClientOptions $options,
     ) {}
 
-    /** @param non-empty-list<Endpoint> $seeds */
+    /** @param list<Endpoint> $seeds */
     public static function create(array $seeds, #[\SensitiveParameter] ClientOptions $options): self
     {
         if ($seeds === []) {
@@ -281,7 +281,7 @@ final class ClusterClient implements RoutedExecutor
         }
 
         throw new TopologyUnavailable(
-            'No Redis Cluster seed returned a usable slot map: ' . ($failure?->getMessage() ?? 'no seeds were tried.'),
+            'No Redis Cluster seed returned a usable slot map: ' . $failure->getMessage(),
             0,
             $failure,
         );
