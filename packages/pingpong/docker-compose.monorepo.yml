@@ -1,0 +1,45 @@
+# Contributor-only, for running this project from inside the kinetis
+# monorepo:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.monorepo.yml up --build
+#
+# Here composer.json still carries the `path` repositories the monorepo
+# develops against (the released package has none), and a path
+# repository resolves relative to the composer.json's own directory. The
+# project is /app in every mode, so `../<sibling>` is /<sibling> — and
+# mounting each declared sibling there is the entire difference between
+# the two modes. Every container path stays exactly what the released
+# package uses, so the Dockerfile and the base compose file need no
+# monorepo variant of their own.
+#
+# One entry per `repositories` entry in composer.json, and no more:
+# path repositories are not transitive, so composer.json already names
+# every sibling this project resolves. Every service that runs PHP needs
+# them, not just the one that installs — Composer symlinks each of them
+# into vendor/kinetis/, and the symlink has to lead somewhere in the
+# container that follows it.
+x-monorepo-siblings: &monorepo-siblings
+  - ../framework:/framework
+  - ../migrations:/migrations
+  - ../persistence:/persistence
+  - ../redis:/redis
+  - ../cache-redis:/cache-redis
+  - ../query-builder:/query-builder
+  - ../queue:/queue
+  - ../mcp:/mcp
+  - ../queue-redis:/queue-redis
+  - ../broadcasting:/broadcasting
+  - ../revolt-http-client:/revolt-http-client
+
+services:
+  app:
+    volumes: *monorepo-siblings
+
+  migrate:
+    volumes: *monorepo-siblings
+
+  queue-worker:
+    volumes: *monorepo-siblings
+
+  cron:
+    volumes: *monorepo-siblings

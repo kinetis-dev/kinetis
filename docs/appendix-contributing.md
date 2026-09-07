@@ -112,10 +112,6 @@ docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php ve
 docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress
 ```
 
-`kinetis/pingpong` has no PHPUnit suite — it's a runnable demo
-application, not a library (see {doc}`appendix-packages`). Every other
-package, core included, has one.
-
 `RedisQueue`, `SqlQueue`, `SqsQueue`, and `RabbitMqQueue` (in
 `kinetis/queue`, `kinetis/queue-sqs`, and `kinetis/queue-rabbitmq`) have
 no PHPUnit tests — they're tested only against real backend containers,

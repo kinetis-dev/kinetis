@@ -653,6 +653,14 @@ jobs:
     # above: this exercises the whole compose stack (app, mysql, redis,
     # soketi, migrate, queue-worker, cron) together, not one package's
     # own composer dependencies in isolation.
+    env:
+      # A checkout of this repo resolves the kinetis/* siblings through
+      # `path` repositories, which the released package has no trace of
+      # — so the monorepo override goes on top of the package's own
+      # standalone compose file, for the reason its header gives. Every
+      # step below is then the command it would be against the released
+      # package, unchanged.
+      COMPOSE_FILE: docker-compose.yml:docker-compose.monorepo.yml
     steps:
       - uses: actions/checkout@v7
 

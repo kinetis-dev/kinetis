@@ -33,7 +33,6 @@ generated `composer.json` carries no version field:
 - `composer audit` — checks every installed dependency against the
   FriendsOfPHP security advisory database.
 - PHPUnit — every package's own existing, fake-backed unit test suite.
-  Skipped for `kinetis/pingpong`, which has none by design.
   `kinetis/persistence` runs its suite in a container that compiles
   `ext-sockets` first: its native Postgres driver refuses to construct
   without it, and the suite constructs one. Only that step needs the
@@ -160,7 +159,11 @@ disguised PHPUnit test.
 - **`pingpong`** — not a package's own real-backend script like every
   job above; the real `docker compose up --build` stack (`app`, `mysql`,
   `redis`, `soketi`, `migrate`, `queue-worker`, `cron`) brought up from
-  cold and exercised over real HTTP/SQL: `GET /` (200), a real
+  cold and exercised over real HTTP/SQL. `COMPOSE_FILE` puts this
+  repo's `docker-compose.monorepo.yml` on top of the package's own
+  standalone compose file, so the stack runs against the sibling
+  checkouts; every step is otherwise the command it would be against the
+  released package. `GET /` (200), a real
   `POST /pong/direct` request checked against the resulting database row
   going straight to `ponged`, a real `POST /pong/queued` request checked
   as `pending` immediately and polled until the separate `queue-worker`
@@ -198,9 +201,10 @@ incrementing a constant, ...) and re-runs the covering tests per
 mutant — a mutant the suite doesn't catch ("escaped") is a gap in
 assertion rigor, not just a coverage gap.
 
-One matrix job per package that has a PHPUnit suite. `kinetis/pingpong`
-is excluded (no tests, nothing to mutate against), and `tools/` is the
-monorepo's own tooling rather than a published package. Each job runs
+One matrix job per package carrying its own `infection.json5`.
+`kinetis/pingpong` has none — it is a demo application, read as example
+code rather than called as an API — and `tools/` is the monorepo's own
+tooling rather than a published package. Each job runs
 `composer install`, then Infection with PCOV as the coverage driver,
 gated on `--min-msi`/`--min-covered-msi` — a real, non-zero threshold per
 package, set with a margin below that package's own measured score. Runs
