@@ -655,6 +655,13 @@ makes a job retry forever — `QueueWorker`'s own default is likewise `0`,
 not unlimited, so a job with no `maxAttempts` of its own is only ever
 retried if something has explicitly set a cap above `1`.
 
+Retries are immediate. Every backend makes a released job available to
+the next `pop()` straight away, and there is no retry backoff to
+configure, so `maxAttempts` bounds how many times a job is tried and
+nothing about how long those attempts are spread over: a job failing on
+a dependency that is still down spends its whole budget as fast as the
+workers watching that queue can take it.
+
 ```{code-block} json
 {
     "level": "error",

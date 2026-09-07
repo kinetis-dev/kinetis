@@ -342,7 +342,7 @@ separate capability". And it is what makes a listener marked
 |---|---|---|
 | `QUEUE_CONNECTION` | *(required)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
-| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. |
+| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only — retries are immediate, with no backoff (see {doc}`queue`). |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a finite, positive number — `0` (or negative) is rejected, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
 | `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | `kinetis/queue-sql` only: reclaim a crashed worker's reserved job after this long; unset means never. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
