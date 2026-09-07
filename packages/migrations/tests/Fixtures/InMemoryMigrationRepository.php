@@ -8,13 +8,15 @@ use Kinetis\Migrations\MigrationRepositoryInterface;
 
 /**
  * A real, array-backed MigrationRepositoryInterface — no database, no
- * mocking framework — so MigrationRunner's ordering and diffing logic is
- * tested against real applied()/highestApplied() behavior instead of
- * pre-programmed return values.
+ * mocking framework — so MigrationRunner's ordering, diffing and
+ * integrity logic is tested against real applied() behavior instead of
+ * pre-programmed return values. Insertion order stands in for
+ * SqlMigrationRepository's application_order column, down to a migration
+ * recorded again after a rollback landing last.
  */
 final class InMemoryMigrationRepository implements MigrationRepositoryInterface
 {
-    /** @var list<string> */
+    /** @var array<string, string> */
     private array $applied = [];
 
     public bool $tableEnsured = false;
@@ -26,32 +28,18 @@ final class InMemoryMigrationRepository implements MigrationRepositoryInterface
 
     public function applied(): array
     {
-        $sorted = $this->applied;
-        sort($sorted);
-
-        return $sorted;
+        return $this->applied;
     }
 
-    public function markApplied(string $migration): void
+    public function markApplied(string $migration, string $checksum): void
     {
-        $this->applied[] = $migration;
+        unset($this->applied[$migration]);
+
+        $this->applied[$migration] = $checksum;
     }
 
     public function markRolledBack(string $migration): void
     {
-        $this->applied = array_values(array_filter(
-            $this->applied,
-            static fn (string $name): bool => $name !== $migration,
-        ));
-    }
-
-    public function highestApplied(): ?string
-    {
-        $sorted = $this->applied;
-        sort($sorted);
-
-        $lastKey = array_key_last($sorted);
-
-        return $lastKey === null ? null : $sorted[$lastKey];
+        unset($this->applied[$migration]);
     }
 }

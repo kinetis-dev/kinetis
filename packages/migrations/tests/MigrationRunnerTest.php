@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Migrations\Tests;
 
 use InvalidArgumentException;
-use Kinetis\Migrations\Exception\MigrationFileMissingException;
+use Kinetis\Migrations\Exception\MigrationIntegrityException;
 use Kinetis\Migrations\Exception\MigrationLockTimeoutException;
+use Kinetis\Migrations\MigrationFile;
 use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Migrations\Tests\Fixtures\FakeMysqlLink;
 use Kinetis\Migrations\Tests\Fixtures\FakePostgresLink;
@@ -98,13 +99,58 @@ final class MigrationRunnerTest extends TestCase
         return new MigrationRunner($link ?? new FakeMysqlLink(), $repository, $this->migrationsPath);
     }
 
+    private function checksumOf(string $name): string
+    {
+        return new MigrationFile($name, $this->migrationsPath . "/{$name}.php")->checksum();
+    }
+
+    /**
+     * Records $name as applied with the checksum its file has right now —
+     * the state a database that ran that exact file would be in, and what
+     * every command verifies against.
+     */
+    private function recordApplied(InMemoryMigrationRepository $repository, string $name): void
+    {
+        $repository->markApplied($name, $this->checksumOf($name));
+    }
+
+    /**
+     * pending(), migrate(), rollback() and status() each refuse, and the
+     * ledger is still $ledger afterwards: migrate() applied nothing
+     * further, rollback() removed nothing.
+     *
+     * @param array<string, string> $ledger
+     */
+    private function assertEveryOperationRefuses(InMemoryMigrationRepository $repository, array $ledger): void
+    {
+        $runner = $this->runner($repository);
+
+        $operations = [
+            'pending()' => $runner->pending(...),
+            'migrate()' => $runner->migrate(...),
+            'rollback()' => $runner->rollback(...),
+            'status()' => $runner->status(...),
+        ];
+
+        foreach ($operations as $label => $operation) {
+            try {
+                $operation();
+                self::fail("Expected {$label} to throw MigrationIntegrityException.");
+            } catch (MigrationIntegrityException) {
+                // Expected.
+            }
+        }
+
+        self::assertSame($ledger, $repository->applied());
+    }
+
     public function test_pending_returns_migrations_not_yet_applied(): void
     {
         $this->writeMigration('20260101000000_first');
         $this->writeMigration('20260102000000_second');
 
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
+        $this->recordApplied($repository, '20260101000000_first');
 
         $pending = $this->runner($repository)->pending();
 
@@ -121,7 +167,24 @@ final class MigrationRunnerTest extends TestCase
         $applied = $this->runner($repository)->migrate();
 
         self::assertSame(['20260101000000_first', '20260102000000_second'], $applied);
-        self::assertSame(['20260101000000_first', '20260102000000_second'], $repository->applied());
+        self::assertSame(['20260101000000_first', '20260102000000_second'], array_keys($repository->applied()));
+    }
+
+    public function test_migrate_records_the_checksum_of_every_migration_it_runs(): void
+    {
+        $this->writeMigration('20260101000000_first');
+        $this->writeMigration('20260102000000_second');
+
+        $repository = new InMemoryMigrationRepository();
+        $this->runner($repository)->migrate();
+
+        self::assertSame(
+            [
+                '20260101000000_first' => $this->checksumOf('20260101000000_first'),
+                '20260102000000_second' => $this->checksumOf('20260102000000_second'),
+            ],
+            $repository->applied(),
+        );
     }
 
     public function test_migrate_with_nothing_pending_returns_an_empty_list(): void
@@ -129,45 +192,72 @@ final class MigrationRunnerTest extends TestCase
         self::assertSame([], $this->runner(new InMemoryMigrationRepository())->migrate());
     }
 
-    public function test_rollback_targets_the_highest_named_applied_migration(): void
+    public function test_rollback_undoes_the_migration_applied_most_recently(): void
     {
         $this->writeMigration('20260101000000_first');
         $this->writeMigration('20260102000000_second');
 
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
-        $repository->markApplied('20260102000000_second');
+        $this->recordApplied($repository, '20260101000000_first');
+        $this->recordApplied($repository, '20260102000000_second');
 
         $rolledBack = $this->runner($repository)->rollback();
 
         self::assertSame('20260102000000_second', $rolledBack);
-        self::assertSame(['20260101000000_first'], $repository->applied());
+        self::assertSame(['20260101000000_first'], array_keys($repository->applied()));
     }
 
     /**
-     * Name order, not application order: a migration merged from another
-     * branch is applied after a later-timestamped one, and rollback still
-     * undoes the name that sorts last.
+     * Application order, not name order: a migration merged from another
+     * branch is applied after a later-timestamped one, and is the first
+     * to come back off.
      */
-    public function test_rollback_targets_the_highest_name_even_when_it_was_applied_first(): void
+    public function test_rollback_undoes_the_last_applied_migration_even_with_an_earlier_name(): void
     {
         $this->writeMigration('20260101000000_first');
         $this->writeMigration('20260102000000_second');
         $this->writeMigration('20260103000000_third');
 
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
-        $repository->markApplied('20260103000000_third');
-        $repository->markApplied('20260102000000_second');
+        $this->recordApplied($repository, '20260101000000_first');
+        $this->recordApplied($repository, '20260103000000_third');
+        $this->recordApplied($repository, '20260102000000_second');
 
-        self::assertSame('20260103000000_third', $this->runner($repository)->rollback());
+        self::assertSame('20260102000000_second', $this->runner($repository)->rollback());
+    }
+
+    /**
+     * A migration applied again after a rollback takes the newest
+     * position, so it is what the next rollback() undoes — not whichever
+     * name happens to sort last.
+     */
+    public function test_a_migration_applied_again_after_a_rollback_becomes_the_newest(): void
+    {
+        $this->writeMigration('20260101000000_first');
+        $this->writeMigration('20260103000000_third');
+
+        $repository = new InMemoryMigrationRepository();
+        $runner = $this->runner($repository);
+        $runner->migrate();
+
+        // Merged from another branch once the other two were applied.
+        $this->writeMigration('20260102000000_second');
+        $runner->migrate();
+        $runner->rollback();
+        $runner->migrate();
+
+        self::assertSame(
+            ['20260101000000_first', '20260103000000_third', '20260102000000_second'],
+            array_keys($repository->applied()),
+        );
+        self::assertSame('20260102000000_second', $runner->rollback());
     }
 
     public function test_rollback_ensures_the_tracking_table_exists(): void
     {
         $this->writeMigration('20260101000000_first');
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
+        $this->recordApplied($repository, '20260101000000_first');
         self::assertFalse($repository->tableEnsured);
 
         $this->runner($repository)->rollback();
@@ -184,7 +274,7 @@ final class MigrationRunnerTest extends TestCase
         $markerPath = sys_get_temp_dir() . '/kinetis-migrations-down-marker-' . bin2hex(random_bytes(8));
         $this->writeMigrationWithObservableDown('20260101000000_first', $markerPath);
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
+        $this->recordApplied($repository, '20260101000000_first');
 
         try {
             self::assertFileDoesNotExist($markerPath);
@@ -202,14 +292,49 @@ final class MigrationRunnerTest extends TestCase
         self::assertNull($this->runner(new InMemoryMigrationRepository())->rollback());
     }
 
-    public function test_rollback_throws_when_the_migration_file_no_longer_exists(): void
+    /**
+     * The file that ran is gone, so nothing can say what SQL this
+     * database actually holds — every entry point refuses, rather than
+     * only the one that needs a down().
+     */
+    public function test_a_deleted_applied_migration_fails_every_operation_without_touching_the_ledger(): void
     {
+        $this->writeMigration('20260101000000_first');
+        $this->writeMigration('20260102000000_second');
+
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_deleted_file');
+        $this->recordApplied($repository, '20260101000000_first');
+        $ledger = $repository->applied();
 
-        $this->expectException(MigrationFileMissingException::class);
+        unlink($this->migrationsPath . '/20260101000000_first.php');
 
-        $this->runner($repository)->rollback();
+        $this->assertEveryOperationRefuses($repository, $ledger);
+    }
+
+    /**
+     * An applied migration whose file now holds different SQL is the same
+     * failure: the recorded checksum is what that database ran, and the
+     * observable down() proves the file is never loaded on the way to
+     * refusing it.
+     */
+    public function test_a_modified_applied_migration_fails_every_operation_without_running_it(): void
+    {
+        $markerPath = sys_get_temp_dir() . '/kinetis-migrations-down-marker-' . bin2hex(random_bytes(8));
+        $this->writeMigration('20260101000000_first');
+        $this->writeMigration('20260102000000_second');
+
+        $repository = new InMemoryMigrationRepository();
+        $this->recordApplied($repository, '20260101000000_first');
+        $ledger = $repository->applied();
+
+        $this->writeMigrationWithObservableDown('20260101000000_first', $markerPath);
+
+        try {
+            $this->assertEveryOperationRefuses($repository, $ledger);
+            self::assertFileDoesNotExist($markerPath);
+        } finally {
+            @unlink($markerPath);
+        }
     }
 
     public function test_status_reports_applied_and_pending_migrations(): void
@@ -218,7 +343,7 @@ final class MigrationRunnerTest extends TestCase
         $this->writeMigration('20260102000000_second');
 
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
+        $this->recordApplied($repository, '20260101000000_first');
 
         $status = $this->runner($repository)->status();
 
@@ -267,7 +392,7 @@ final class MigrationRunnerTest extends TestCase
         $link = new FakeMysqlLink();
         $this->writeMigration('20260101000000_first');
         $repository = new InMemoryMigrationRepository();
-        $repository->markApplied('20260101000000_first');
+        $this->recordApplied($repository, '20260101000000_first');
 
         $this->runner($repository, $link)->rollback();
 

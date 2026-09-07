@@ -66,7 +66,7 @@ vendor/bin/kinetis migrate:make "create orders table"
 
 ```{code-block} sh
 vendor/bin/kinetis migrate           # runs every pending migration, in filename order
-vendor/bin/kinetis migrate:rollback  # rolls back the applied migration whose name sorts last
+vendor/bin/kinetis migrate:rollback  # rolls back the migration applied most recently
 vendor/bin/kinetis migrate:status    # lists every migration with its applied/pending state
 ```
 
@@ -111,6 +111,31 @@ per migration it actually runs, in the order they ran;
 undoes one. Both are ordinary events — write a `#[Listener]` for
 whichever one you need (a deploy notification, for one). See
 {doc}`events` for the full catalog.
+
+## What the ledger records, and what it checks
+
+`kinetis_migrations` holds one row per applied migration: the `migration`
+name, the `checksum` (SHA-256) of the file that ran, and the
+`application_order` this database applied it in.
+
+`migrate`, `migrate:rollback` and `migrate:status` all verify that ledger
+against the `migrations/` directory before doing anything else. Every
+applied migration must still have a file, and that file must still hash
+to the checksum recorded when it ran. The first one that fails either
+check throws `Exception\MigrationIntegrityException`, naming the
+migration and the reason, before any `up()`, `down()` or ledger write —
+so a database whose applied SQL is no longer the SQL on disk gets no
+further migrations run against it. Restore the migration file that was
+deployed and the commands run again; nothing here rewrites the ledger to
+match a file that changed, because only the file that ran describes what
+the database actually holds.
+
+`migrate:rollback` undoes the migration with the highest
+`application_order` — the one this database applied most recently, which
+is not always the one whose name sorts last. A migration merged from
+another branch and applied after a later-timestamped one is the first to
+come back off, and a migration rolled back and applied again is the
+newest one from then on.
 
 ## Transactions are not automatic
 

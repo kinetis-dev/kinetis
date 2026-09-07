@@ -57,10 +57,18 @@ return new class implements Migration
 
 ```sh
 vendor/bin/kinetis migrate                     # runs every pending migration
-vendor/bin/kinetis migrate:rollback            # rolls back the applied migration whose name sorts last
+vendor/bin/kinetis migrate:rollback            # rolls back the migration applied most recently
 vendor/bin/kinetis migrate:status              # lists applied/pending migrations
 vendor/bin/kinetis migrate:make <description>
 ```
+
+The ledger holds one row per applied migration: its name, the SHA-256 of
+the file that ran, and the order this database applied it in. Every
+command verifies that against the `migrations/` directory first — an
+applied migration whose file is gone, or whose contents no longer hash to
+what was recorded, throws `Exception\MigrationIntegrityException` before
+any `up()`, `down()` or ledger write, and restoring the deployed file is
+what clears it.
 
 ## Provides
 

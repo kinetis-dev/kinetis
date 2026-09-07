@@ -7,7 +7,7 @@ namespace Kinetis\Migrations;
 use InvalidArgumentException;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
-use Kinetis\Migrations\Exception\MigrationFileMissingException;
+use Kinetis\Migrations\Exception\MigrationIntegrityException;
 use Kinetis\Migrations\Exception\MigrationLockTimeoutException;
 use Throwable;
 
@@ -32,6 +32,15 @@ use Throwable;
  * what a migration's DDL needs — a transaction-held row lock would be
  * released by MySQL's implicit per-DDL commit partway through a run — and
  * both release on their own when the session closes, gracefully or not.
+ *
+ * Every entry point verifies the ledger against the migrations
+ * directory before acting on it: each applied migration still has a file,
+ * and that file still hashes to the checksum recorded when it ran. The
+ * first migration failing either check throws
+ * MigrationIntegrityException, before any up(), down() or ledger write —
+ * a database whose applied SQL is not the SQL on disk is not one more
+ * migrations can be reasoned about. migrate() and rollback() verify
+ * inside the lock, pending() and status() directly.
  *
  * $db must hold one session for the whole run: a lock taken on one
  * session is not held on another. That is what
@@ -82,30 +91,43 @@ final readonly class MigrationRunner
 
     /**
      * @return list<MigrationFile>
+     * @throws MigrationIntegrityException
      */
     public function pending(): array
     {
-        $this->repository->ensureTableExists();
-        $applied = $this->repository->applied();
+        $files = MigrationFile::discover($this->migrationsPath);
+        $applied = $this->verifiedApplied($files);
 
         return array_values(array_filter(
-            MigrationFile::discover($this->migrationsPath),
-            fn (MigrationFile $file): bool => !in_array($file->name, $applied, true),
+            $files,
+            static fn (MigrationFile $file): bool => !isset($applied[$file->name]),
         ));
     }
 
     /**
      * @return list<string> names of the migrations actually run, in the
      *     order they ran
+     * @throws MigrationIntegrityException
      */
     public function migrate(): array
     {
         return $this->withLock(function (): array {
+            $files = MigrationFile::discover($this->migrationsPath);
+            $applied = $this->verifiedApplied($files);
             $names = [];
 
-            foreach ($this->pending() as $file) {
+            foreach ($files as $file) {
+                if (isset($applied[$file->name])) {
+                    continue;
+                }
+
+                // Hashed immediately before the file is loaded and run, so
+                // the ledger records the source that up() executed, and
+                // records it only once up() has returned: a migration that
+                // throws leaves no row behind claiming it applied.
+                $checksum = $file->checksum();
                 $file->load()->up($this->db);
-                $this->repository->markApplied($file->name);
+                $this->repository->markApplied($file->name, $checksum);
                 $names[] = $file->name;
             }
 
@@ -114,28 +136,27 @@ final readonly class MigrationRunner
     }
 
     /**
-     * Undoes the applied migration whose name sorts last — one migration,
-     * with no batch or group concept. Run it again to reach earlier ones.
+     * Undoes the migration this database applied most recently — one
+     * migration, with no batch or group concept. Run it again to reach
+     * earlier ones. Application order, not name order: a migration merged
+     * from another branch is applied after a later-timestamped one and is
+     * the first to come back off, and a migration rolled back and applied
+     * again is the newest one from then on.
      *
-     * @throws MigrationFileMissingException
+     * @throws MigrationIntegrityException
      */
     public function rollback(): ?string
     {
         return $this->withLock(function (): ?string {
-            $this->repository->ensureTableExists();
-            $name = $this->repository->highestApplied();
+            $files = MigrationFile::discover($this->migrationsPath);
+            $applied = $this->verifiedApplied($files);
+            $name = array_key_last($applied);
 
             if ($name === null) {
                 return null;
             }
 
-            $file = $this->findFile($name);
-
-            if ($file === null) {
-                throw MigrationFileMissingException::forName($name);
-            }
-
-            $file->load()->down($this->db);
+            $this->byName($files)[$name]->load()->down($this->db);
             $this->repository->markRolledBack($name);
 
             return $name;
@@ -175,16 +196,59 @@ final readonly class MigrationRunner
 
     /**
      * @return list<array{name: string, applied: bool}>
+     * @throws MigrationIntegrityException
      */
     public function status(): array
     {
-        $this->repository->ensureTableExists();
-        $applied = $this->repository->applied();
+        $files = MigrationFile::discover($this->migrationsPath);
+        $applied = $this->verifiedApplied($files);
 
         return array_map(
-            static fn (MigrationFile $file): array => ['name' => $file->name, 'applied' => in_array($file->name, $applied, true)],
-            MigrationFile::discover($this->migrationsPath),
+            static fn (MigrationFile $file): array => ['name' => $file->name, 'applied' => isset($applied[$file->name])],
+            $files,
         );
+    }
+
+    /**
+     * The ledger, verified against $files before its caller acts on it.
+     * Discovery belongs to the caller so that one listing serves both the
+     * check and the work that follows it.
+     *
+     * @param list<MigrationFile> $files
+     * @return array<string, string> name => recorded checksum, in
+     *     application order
+     * @throws MigrationIntegrityException
+     */
+    private function verifiedApplied(array $files): array
+    {
+        $this->repository->ensureTableExists();
+        $applied = $this->repository->applied();
+        $byName = $this->byName($files);
+
+        foreach ($applied as $name => $checksum) {
+            $file = $byName[$name] ?? throw MigrationIntegrityException::forMissingSource($name);
+
+            if ($file->checksum() !== $checksum) {
+                throw MigrationIntegrityException::forChecksumMismatch($name);
+            }
+        }
+
+        return $applied;
+    }
+
+    /**
+     * @param list<MigrationFile> $files
+     * @return array<string, MigrationFile>
+     */
+    private function byName(array $files): array
+    {
+        $byName = [];
+
+        foreach ($files as $file) {
+            $byName[$file->name] = $file;
+        }
+
+        return $byName;
     }
 
     private function acquireLock(): void
@@ -237,16 +301,5 @@ final readonly class MigrationRunner
         $this->db->query(
             'SELECT pg_advisory_unlock(' . self::PG_LOCK_NAMESPACE . ', ' . self::PG_LOCK_KEY . ')',
         );
-    }
-
-    private function findFile(string $name): ?MigrationFile
-    {
-        foreach (MigrationFile::discover($this->migrationsPath) as $file) {
-            if ($file->name === $name) {
-                return $file;
-            }
-        }
-
-        return null;
     }
 }
