@@ -1343,9 +1343,10 @@ route's default — nothing checks that the method actually produces the
 status it declares, the same trust already placed in the route attribute's
 own default.
 
-Both are served **ahead of** the routing pipeline — they read `Router`'s
-already-registered routes, not application state, so they need no
-`RequestScope` at all.
+Both routes resolve like any other: the `openapi` middleware group runs
+through the normal pipeline, and `Kernel` registers `OpenApiAccess` and
+`OpenApiDocumentProvider` on each request scope for the controller's
+constructor to be autowired from.
 
 ### Choosing where the documentation is reachable
 
