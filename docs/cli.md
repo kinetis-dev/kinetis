@@ -126,11 +126,13 @@ Compiles a fresh cache — routing and validation plans, commands, and
 event listeners — from your project's own source, and replaces
 `.kinetis-cache/compiled.php` with it. The published artifact is an
 output of this command, never an input to it, and a previously-published
-one stays exactly as it was until the new one is written whole and read
-back intact, so a failed compile or write never takes down a cache a
-previous build already produced. Run this as part of your deploy pipeline
-to pre-warm the cache before real traffic arrives — see {doc}`caching`
-for exactly what gets written and how publishing works.
+one stays exactly as it was until the new one has been reconstructed
+into the live objects a boot needs, written whole, and read back intact.
+A failed compile, a section that will not reconstruct, or a failed write
+never takes down a cache a previous build already produced, and never
+reports success. Run this as part of your deploy pipeline to pre-warm
+the cache before real traffic arrives — see {doc}`caching` for exactly
+what gets written and how publishing works.
 
 Build into the artifact or image you deploy, before any worker starts.
 This command runs in its own CLI process, which is what decides where it

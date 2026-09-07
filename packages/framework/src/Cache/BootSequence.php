@@ -57,6 +57,13 @@ use Kinetis\Http\Routing\Router;
  * gates the bootstrap chain on top of them. Every other caller leaves
  * this at its default, `true`, running package bootstraps first and the
  * application's own `bootstrap.php` last.
+ *
+ * Reconstruction is this class's other half — where every section's own
+ * `fromArray()` contract is applied together: `resolveHttp()`/
+ * `resolveCli()` turn a published artifact, or a fresh compile, into
+ * the live objects one entry point needs, and `assertReconstructable()`
+ * turns a whole artifact into every object it can produce, the gate
+ * `kinetis build` publishes through.
  */
 final class BootSequence
 {
@@ -207,6 +214,35 @@ final class BootSequence
     }
 
     /**
+     * Reconstructs everything one artifact can produce, once each: both
+     * entry points' registries — `Router` and `CommandRegistry` — and
+     * the sections they share. Exactly the contracts a boot enforces,
+     * applied to a whole artifact in one pass, which is what
+     * `kinetis build` publishes through: a section whose `compile()`
+     * output its own `fromArray()` rejects fails the build that produced
+     * it rather than every worker that later reads it.
+     *
+     * Once each because `fromArray()` is construction, not a pure
+     * validator — a second call can cost real work, have side effects,
+     * or fail where the first succeeded. The objects go nowhere: a build
+     * has no boot to hand them to, and what it publishes is the compiled
+     * data itself.
+     *
+     * The package-bootstrap list is carried rather than reconstructed.
+     * It is class names `RoutesFile::loadBootstrap()` resolves at boot,
+     * skipping with a warning any whose package has since been removed,
+     * so there is no construction step here for a build to run early.
+     *
+     * @throws CacheArtifactExceptionInterface
+     */
+    public static function assertReconstructable(CompiledCache $compiled): void
+    {
+        self::sharedBundle($compiled);
+        Router::fromArray($compiled->http->routes);
+        CommandRegistry::fromArray($compiled->commands->commands);
+    }
+
+    /**
      * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     private static function httpBundle(CompiledCache $compiled): array
@@ -214,9 +250,7 @@ final class BootSequence
         return [
             'httpCache' => $compiled->http,
             'router' => Router::fromArray($compiled->http->routes),
-            'listenerRegistry' => EventListenerRegistry::fromArray($compiled->events->listeners),
-            'pluginInstances' => PluginDiscovery::reconstruct($compiled->plugins->data),
-            'packageBootstraps' => $compiled->packageBootstraps,
+            ...self::sharedBundle($compiled),
         ];
     }
 
@@ -227,6 +261,23 @@ final class BootSequence
     {
         return [
             'registry' => CommandRegistry::fromArray($compiled->commands->commands),
+            ...self::sharedBundle($compiled),
+        ];
+    }
+
+    /**
+     * The sections every entry point reconstructs identically, in one
+     * place, so an HTTP boot, a CLI boot and a build cannot drift on
+     * them. What stays outside is what an entry point pays for only
+     * because it is that entry point: the `Router` an HTTP boot needs
+     * and the `CommandRegistry` it never touches, and the reverse for
+     * the CLI.
+     *
+     * @return array{listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
+     */
+    private static function sharedBundle(CompiledCache $compiled): array
+    {
+        return [
             'listenerRegistry' => EventListenerRegistry::fromArray($compiled->events->listeners),
             'pluginInstances' => PluginDiscovery::reconstruct($compiled->plugins->data),
             'packageBootstraps' => $compiled->packageBootstraps,

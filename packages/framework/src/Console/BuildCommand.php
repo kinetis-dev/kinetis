@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Console;
 
+use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
 use Kinetis\Console\Attributes\Command;
@@ -53,12 +54,23 @@ final readonly class BuildCommand
 
         // Compiles from the project's own source every time, never from
         // whatever artifact happens to be sitting there — the published
-        // file is an output of this command, never an input to it. The
-        // staged file only replaces the live one once it has been written
-        // whole and read back intact (see CacheStore::write()), so a
-        // compile or publish failure leaves the previous artifact exactly
-        // as it was.
-        $store->write((new Compiler())->compileProject($projectRoot));
+        // file is an output of this command, never an input to it.
+        $compiled = new Compiler()->compileProject($projectRoot);
+
+        // The whole artifact, through the same reconstruction contracts a
+        // boot enforces, before any of it is written: a section whose
+        // compiled data its own fromArray() rejects fails here, where the
+        // developer or the deploy pipeline sees it, rather than being
+        // published for every worker to reject and recompile. Both
+        // registries, the event listeners and every plugin, once each.
+        BootSequence::assertReconstructable($compiled);
+
+        // The staged file only replaces the live one once it has been
+        // written whole and read back intact (see CacheStore::write()), so
+        // a compile, validation or publish failure leaves the previous
+        // artifact exactly as it was — and leaves this command with
+        // nothing to report as success.
+        $store->write($compiled);
 
         fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, and event listeners written to {$store->path()}\n");
 

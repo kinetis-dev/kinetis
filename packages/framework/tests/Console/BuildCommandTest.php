@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Console;
 
 use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Console\BuildCommand;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Tests\Cache\Fixtures\StrictPlugin\CountingCacheableDiscovery;
+use Kinetis\Tests\Cache\Fixtures\StrictPlugin\SelfRejectingCacheableDiscovery;
 use Kinetis\Validation\Hydrator;
 use PHPUnit\Framework\TestCase;
 
@@ -111,6 +114,78 @@ final class BuildCommandTest extends TestCase
         $after = (new CacheStore($this->projectRoot . '/.kinetis-cache'))->load();
         self::assertEquals($before, $after);
         self::assertSame([], glob($this->projectRoot . '/.kinetis-cache/*.tmp') ?: []);
+    }
+
+    /**
+     * A build reconstructs the whole artifact through the same contracts
+     * a boot enforces before publishing any of it, so an installed
+     * package whose compiled data its own fromArray() rejects fails the
+     * command — the exception leaves run() before its success line, and
+     * the artifact a previous build published stays exactly as it was
+     * rather than being replaced by one every worker rejects and
+     * recompiles.
+     */
+    public function test_a_plugin_rejecting_its_own_compiled_data_fails_the_build_and_publishes_nothing(): void
+    {
+        $command = new BuildCommand(projectRootOverride: $this->projectRoot);
+        $command->run();
+
+        $before = (string) file_get_contents($this->cacheStore()->path());
+
+        $this->installDiscoveryPackage(SelfRejectingCacheableDiscovery::class);
+
+        try {
+            $command->run();
+            self::fail('Expected the build to fail against a plugin that rejects its own compiled data.');
+        } catch (InvalidCacheArtifactException $rejection) {
+            self::assertStringContainsString(SelfRejectingCacheableDiscovery::REJECTION, $rejection->getMessage());
+        }
+
+        self::assertSame($before, (string) file_get_contents($this->cacheStore()->path()));
+        self::assertNotNull($this->cacheStore()->load());
+
+        // The artifact itself, and nothing beside it: no second copy, no
+        // staged temporary file from the failed run.
+        self::assertSame([$this->cacheStore()->path()], glob($this->projectRoot . '/.kinetis-cache/*') ?: []);
+    }
+
+    /**
+     * fromArray() is construction rather than a pure validator, so the
+     * build runs it once per section: what it validates and what it
+     * publishes come from one compile, and a plugin whose reconstruction
+     * costs real work or has side effects pays for it once.
+     */
+    public function test_a_build_reconstructs_a_discovered_plugin_exactly_once(): void
+    {
+        CountingCacheableDiscovery::$constructions = 0;
+
+        $this->installDiscoveryPackage(CountingCacheableDiscovery::class);
+
+        self::assertSame(0, new BuildCommand(projectRootOverride: $this->projectRoot)->run());
+        self::assertSame(1, CountingCacheableDiscovery::$constructions);
+    }
+
+    /**
+     * Installs a package declaring $discoveryClass as its extra.kinetis
+     * discovery class, through a real vendor/composer/installed.json — so
+     * PackageDiscovery finds it, the compile calls its compile(), and the
+     * build reconstructs the result exactly as a production build does.
+     *
+     * @param class-string $discoveryClass
+     */
+    private function installDiscoveryPackage(string $discoveryClass): void
+    {
+        mkdir($this->projectRoot . '/vendor/composer', 0775, true);
+
+        file_put_contents($this->projectRoot . '/vendor/composer/installed.json', json_encode([
+            'packages' => [
+                [
+                    'name' => 'acme/discovery-fixture',
+                    'install-path' => '../acme/discovery-fixture',
+                    'extra' => ['kinetis' => ['discovery' => $discoveryClass]],
+                ],
+            ],
+        ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
     }
 
     /**

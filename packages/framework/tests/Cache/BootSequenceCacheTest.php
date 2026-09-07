@@ -10,6 +10,7 @@ use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\CommandCache;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\EventCache;
+use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Cache\Exception\UnexportableArtifactException;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\PluginCache;
@@ -24,15 +25,16 @@ use RuntimeException;
 
 /**
  * BootSequence::loadHttpFromCache()/loadCliFromCache() (the cache-hit
- * half) and resolveHttp()/resolveCli() (the full cache-or-compile
- * decision) against a real published artifact — proving every runtime
- * object a boot needs (Router/CommandRegistry included, not just the
- * raw DTOs) is reconstructed exactly once, that a corrupt artifact is a
- * clean miss rather than an uncaught fatal, and that a genuine defect
- * in a plugin's own reconstruction never gets misclassified as cache
- * corruption. Every test publishes through a real CacheStore, then
- * corrupts the real file on disk before reading it back — not a mock of
- * any fromArray() method.
+ * half), resolveHttp()/resolveCli() (the full cache-or-compile
+ * decision) and assertReconstructable() (the whole artifact, which is
+ * what a build publishes through) against a real published artifact —
+ * proving every runtime object a boot needs (Router/CommandRegistry
+ * included, not just the raw DTOs) is reconstructed exactly once, that
+ * a corrupt artifact is a clean miss rather than an uncaught fatal, and
+ * that a genuine defect in a plugin's own reconstruction never gets
+ * misclassified as cache corruption. Every test publishes through a
+ * real CacheStore, then corrupts the real file on disk before reading
+ * it back — not a mock of any fromArray() method.
  */
 final class BootSequenceCacheTest extends TestCase
 {
@@ -526,6 +528,55 @@ final class BootSequenceCacheTest extends TestCase
             new CacheStore($this->directory),
             fn (): CompiledCache => new CompiledCache($poisoned, $cache->commands, $cache->events, $cache->plugins),
         );
+    }
+
+    // --- assertReconstructable(): the whole artifact, in one pass ---
+
+    /**
+     * Two commands sharing a name is the shape that separates the two
+     * halves exactly: CommandCache::fromArray() accepts it and
+     * CommandRegistry::fromArray() rejects it, so an HTTP boot reads
+     * such an artifact as a hit — it builds no CommandRegistry at all —
+     * while the CLI misses on it. One artifact carries both entry
+     * points, so a build validates both and refuses it.
+     */
+    public function test_a_command_section_only_the_registry_rejects_is_an_http_hit_a_cli_miss_and_a_build_failure(): void
+    {
+        $cache = $this->validCompiledCache();
+        $entry = $cache->commands->commands[0];
+        $compiled = new CompiledCache(
+            $cache->http,
+            new CommandCache([$entry, $entry]),
+            $cache->events,
+            $cache->plugins,
+        );
+        $this->publish($compiled);
+
+        self::assertNotNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
+        self::assertNull(BootSequence::loadCliFromCache(new CacheStore($this->directory)));
+
+        $this->expectException(InvalidCacheArtifactException::class);
+        $this->expectExceptionMessage('duplicate command name "app:x"');
+
+        BootSequence::assertReconstructable($compiled);
+    }
+
+    /**
+     * The event and plugin sections both entry points share are
+     * reconstructed once for the whole artifact, not once per half.
+     */
+    public function test_assert_reconstructable_reconstructs_a_plugin_exactly_once(): void
+    {
+        $cache = $this->validCompiledCache();
+
+        BootSequence::assertReconstructable(new CompiledCache(
+            $cache->http,
+            $cache->commands,
+            $cache->events,
+            new PluginCache([CountingCacheableDiscovery::class => []]),
+        ));
+
+        self::assertSame(1, CountingCacheableDiscovery::$constructions);
     }
 
     private function compiledCacheWithUnreconstructablePlugin(): CompiledCache

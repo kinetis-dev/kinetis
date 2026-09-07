@@ -164,6 +164,14 @@ middleware, event listeners, and every installed package's own
 `CacheableDiscoveryInterface` data are all found by namespace — see
 {doc}`cli` for how.
 
+Before anything is written, the whole compiled artifact is reconstructed
+through the same contracts a boot enforces: both the route table and the
+command list, the event listeners, and every installed package's own
+`CacheableDiscoveryInterface` data, once each. A section whose compiled
+data its own `fromArray()` rejects fails the command, publishes nothing
+and leaves the previous artifact in place, rather than shipping one every
+worker rejects and recompiles.
+
 Build it into the image or artifact you deploy, before any worker
 starts — see "Deploying a rebuilt artifact" below for why the shared
 path matters.
@@ -174,11 +182,17 @@ If `APP_ENV=production` and no cache exists yet, the very first request
 compiles and publishes it — safely, even under concurrent PHP-FPM
 workers racing to be "first" against an empty cache directory: each one
 publishes its own complete artifact (see "Publishing atomically" above),
-never a corrupted or partial one. Every request after that, on any
-worker, just loads what's already published. Once the artifact exists,
-live discovery never runs again: your `Http`/`Console`/`Events` classes,
-and any `#[AsGlobalMiddleware]`-attributed class, aren't reflected again
-until the cache is rebuilt with `bin/kinetis build`.
+never a corrupted or partial one. A boot publishes only what it is
+already serving: the fresh compile is reconstructed into live objects
+first, so one that cannot become them fails the request instead of being
+published for the next process to reject and recompile into the
+identical failure. That covers the sections this entry point uses;
+`kinetis build`, which has no boot of its own to serve, reconstructs the
+whole artifact instead. Every request after that, on any worker, just
+loads what's already published. Once the artifact exists, live discovery
+never runs again: your `Http`/`Console`/`Events` classes, and any
+`#[AsGlobalMiddleware]`-attributed class, aren't reflected again until
+the cache is rebuilt with `bin/kinetis build`.
 
 A machine that cannot be written to — a read-only mount, a full disk —
 does not take the application down. The boot serves from the value it
