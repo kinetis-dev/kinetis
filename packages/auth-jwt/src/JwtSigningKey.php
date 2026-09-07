@@ -57,7 +57,7 @@ final readonly class JwtSigningKey
     /**
      * @param array<string, mixed> $payload
      */
-    public function sign(array $payload): string
+    public function sign(#[\SensitiveParameter] array $payload): string
     {
         return JWT::encode($payload, $this->material, $this->algorithm, $this->kid);
     }

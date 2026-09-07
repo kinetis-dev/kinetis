@@ -43,7 +43,7 @@ final readonly class JwtIssuer
      * @param string|array<mixed>|null $audience
      */
     public function __construct(
-        private JwtSigningKey $key,
+        #[\SensitiveParameter] private JwtSigningKey $key,
         private ?string $issuer = null,
         private string|array|null $audience = null,
     ) {
@@ -59,8 +59,11 @@ final readonly class JwtIssuer
      *
      * @param array<string, mixed> $claims extra claims merged in alongside `sub`/`iat`/`exp`/`jti` (and `iss`/`aud`, when configured), which always win if duplicated
      */
-    public function issue(string|int $subject, array $claims = [], ?int $ttlSeconds = 3600): string
-    {
+    public function issue(
+        string|int $subject,
+        #[\SensitiveParameter] array $claims = [],
+        ?int $ttlSeconds = 3600,
+    ): string {
         $sub = (string) $subject;
 
         if ($sub === '') {

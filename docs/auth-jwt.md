@@ -492,6 +492,16 @@ An empty or malformed key on your own side is not caught here — that's a
 misconfiguration, not a client-supplied bad token, and surfaces as a real
 error rather than a silent `401`.
 
+### Credentials stay out of this package's frames
+
+A stack frame carries the arguments it was called with, so any backtrace
+renders them. Key material, issued claims, the request a bearer token
+arrived in, a refresh token, and a revocation id are marked
+`#[\SensitiveParameter]` where this package passes them, so a trace
+through its own frames shows a redacted placeholder instead. Frames
+owned by `firebase/php-jwt`, PSR-7, or your own application are outside
+its reach.
+
 ## Algorithms
 
 `HS256` by default — a shared secret, symmetric algorithm, passed as the

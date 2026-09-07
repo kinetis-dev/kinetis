@@ -73,8 +73,11 @@ final readonly class RefreshTokenStore
      *
      * @param array<string, mixed> $claims
      */
-    public function issue(string|int $subject, array $claims = [], int $ttlSeconds = 1_209_600): string
-    {
+    public function issue(
+        string|int $subject,
+        #[\SensitiveParameter] array $claims = [],
+        int $ttlSeconds = 1_209_600,
+    ): string {
         $storedSubject = (string) $subject;
 
         if ($storedSubject === '') {
@@ -103,7 +106,7 @@ final readonly class RefreshTokenStore
     /**
      * @return array{subject: string, claims: array<string, mixed>}|null
      */
-    public function redeem(string $token): ?array
+    public function redeem(#[\SensitiveParameter] string $token): ?array
     {
         $entry = $this->entry($token);
 
@@ -118,7 +121,7 @@ final readonly class RefreshTokenStore
         return ['subject' => $entry['subject'], 'claims' => $entry['claims']];
     }
 
-    public function revoke(string $token): void
+    public function revoke(#[\SensitiveParameter] string $token): void
     {
         if (!$this->cache->delete($this->key($token))) {
             throw RefreshTokenUnavailableException::revokeFailed();
@@ -159,7 +162,7 @@ final readonly class RefreshTokenStore
      *
      * @return array{subject: string, claims: array<string, mixed>, issuedAt: int}|null
      */
-    private function entry(string $token): ?array
+    private function entry(#[\SensitiveParameter] string $token): ?array
     {
         // Reads and deletes the token in one atomic operation — see the
         // constructor's AtomicConsumeInterface requirement. A get() then

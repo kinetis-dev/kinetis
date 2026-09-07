@@ -103,7 +103,7 @@ class JwtAuthMiddleware implements MiddlewareInterface
      * @param list<string>|null $acceptedAudiences
      */
     public function __construct(
-        private JwtVerificationKeys $keys,
+        #[\SensitiveParameter] private JwtVerificationKeys $keys,
         private RequestScope $scope,
         private ?RevocationStore $revocationStore = null,
         private ?string $expectedIssuer = null,
@@ -113,8 +113,10 @@ class JwtAuthMiddleware implements MiddlewareInterface
     }
 
     #[\Override]
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
-    {
+    public function process(
+        #[\SensitiveParameter] ServerRequestInterface $request,
+        RequestHandlerInterface $handler,
+    ): ResponseInterface {
         $token = BearerCredentialParser::parse($request);
 
         if ($token === null) {

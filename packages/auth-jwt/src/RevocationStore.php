@@ -73,7 +73,7 @@ final readonly class RevocationStore
      * instance; see its own set()). Zero or negative is rejected
      * outright rather than clamped — see this class's own docblock.
      */
-    public function revoke(string $jti, ?int $ttlSeconds): void
+    public function revoke(#[\SensitiveParameter] string $jti, ?int $ttlSeconds): void
     {
         if ($ttlSeconds !== null && $ttlSeconds <= 0) {
             throw RevocationUnavailableException::nonPositiveRevokeTtl();
@@ -100,7 +100,7 @@ final readonly class RevocationStore
      * remains fully valid is exactly the failure mode this store exists
      * to prevent.
      */
-    public function revokeToken(JwtUser $user): void
+    public function revokeToken(#[\SensitiveParameter] JwtUser $user): void
     {
         $jti = $user->claim('jti');
 
@@ -131,7 +131,7 @@ final readonly class RevocationStore
         $this->revoke($jti, $ttlSeconds);
     }
 
-    public function isRevoked(string $jti): bool
+    public function isRevoked(#[\SensitiveParameter] string $jti): bool
     {
         return (bool) $this->cache->get($this->key($jti), false);
     }
