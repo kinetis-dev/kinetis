@@ -65,9 +65,8 @@ cause via `getPrevious()` when there was one.
 This log call is best-effort: a registered logger that itself throws
 cannot prevent the `500` this middleware exists to guarantee. The same
 is true wherever else a framework internal logs from inside a fallback
-it must still honor regardless — `Http\OpenApi\DocumentationController`'s
-cache read/write-failure warnings, for one, see {doc}`appendix`. See
-`Kinetis\Logging\SafeLogger`.
+it must still honor regardless — `Http\Kernel`'s request-scope disposal,
+for one, see {doc}`appendix`. See `Kinetis\Logging\SafeLogger`.
 
 ### `TransactionGuard::rollbackDangling()`
 

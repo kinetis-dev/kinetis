@@ -1382,26 +1382,19 @@ according to whichever environment compiled it rather than the one it is
 running in. The routes always exist — `routes:list` shows them either
 way — and a closed one answers exactly as an unregistered path does.
 
-### Clearing the cached document
+### When the document is generated
 
 In development the document is generated per request, so an attribute
-you change is visible on the next reload. In production it is generated
-once and cached in whatever `CacheInterface` the application has bound,
-with no expiry: the route table cannot change without a deployment, and
-a document that expired on a timer would spend that window describing an
-API the deployment no longer serves.
+you change is visible on the next reload.
 
-The consequence is that a deployment which changes routes, DTOs, or
-constraints has to drop it:
-
-```{code-block} sh
-php vendor/bin/kinetis openapi:clear
-```
-
-Run it alongside `kinetis build`. It is safe when nothing is cached, and
-in development, where nothing ever is. With no cache configured — the
-default `NullSimpleCache` — nothing is stored and every request
-regenerates, which is correct but slower for a large route table.
+In production it is generated once per process and held in memory for
+that process's lifetime, by a provider the `Kernel` builds for its own
+router. The route table cannot change under a running process, and a
+deployment that changes routes, DTOs, or constraints starts new
+processes, each with its own router and its own provider. So the
+document a process serves always describes the routes that process
+dispatches: there is nothing to clear, no expiry to wait out, and no
+cached entry a previous deployment could leave behind.
 
 ### Hiding a route from the document
 

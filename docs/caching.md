@@ -140,11 +140,11 @@ is treated as absent: the boot compiles in memory and publishes the
 result. Nothing is retained, pinned, or garbage-collected — there is one
 file, replaced in place.
 
-The OpenAPI document is deliberately not among these. It is generated
-per request in development and cached in whatever `CacheInterface` the
-application has bound in production, so a deployment that changes routes
-or DTOs runs `kinetis openapi:clear` alongside `kinetis build` — see
-{doc}`routing-validation`.
+The OpenAPI document is not among these. It is generated per request in
+development, and in production held in memory by the provider `Kernel`
+builds for its own router, for that process's lifetime alone. Nothing is
+written anywhere, so a deployment that changes routes or DTOs has
+nothing to clear — see {doc}`routing-validation`.
 
 ## Two ways to build it
 

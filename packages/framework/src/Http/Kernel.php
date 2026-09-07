@@ -21,6 +21,8 @@ use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Logging\SafeLogger;
 use Kinetis\OpenApi\OpenApiAccess;
+use Kinetis\OpenApi\OpenApiDocumentProvider;
+use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\StreamableResponseInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -41,9 +43,10 @@ use Throwable;
  * first, see `deferDisposal()` and `settlePendingStream()`.
  * `/openapi.json` and `/openapi` are ordinary routes on a discovered
  * controller ({@see \Kinetis\Http\OpenApi\DocumentationController}), not
- * something this class intercepts — all it still owns is the access
- * policy, which folds $exposeOpenApi over OPENAPI_ENVIRONMENTS and is
- * handed to that controller through the request scope.
+ * something this class intercepts — what it still owns is the access
+ * policy, which folds $exposeOpenApi over OPENAPI_ENVIRONMENTS, and the
+ * {@see \Kinetis\OpenApi\OpenApiDocumentProvider} bound to this Kernel's
+ * own Router. Both reach that controller through the request scope.
  * Every request also runs {@see TransactionGuardHook::registerIfAvailable()}
  * against its RequestScope — the shared hook that registers
  * `Kinetis\Persistence\TransactionGuard::rollbackDangling()` as a dispose
@@ -86,6 +89,8 @@ final class Kernel
 {
     private readonly OpenApiAccess $openApiAccess;
 
+    private readonly OpenApiDocumentProvider $openApiDocuments;
+
     /** @var array<string, list<class-string>> */
     private readonly array $groups;
 
@@ -116,6 +121,20 @@ final class Kernel
                 // was never booted — so both paths stay closed.
                 : OpenApiAccess::disabled(),
         };
+
+        // Built here, from this Kernel's own Router, so the document can
+        // only ever describe the route table this process dispatches
+        // against — a deployment brings a new Kernel and with it a new
+        // provider, which is the whole invalidation story. A scope that
+        // was never booted has no AppEnvironment to consult, the same
+        // case that leaves both paths closed above; Production is the
+        // side AppEnvironment itself lands an unrecognized name on.
+        $this->openApiDocuments = new OpenApiDocumentProvider(
+            $this->router,
+            $app->has(AppEnvironment::class) && ($environment = $app->get(AppEnvironment::class)) instanceof AppEnvironment
+                ? $environment
+                : AppEnvironment::Production,
+        );
 
         // The built-in `openapi` group: what discovery found, plus this
         // application's own AppScope::openApiMiddleware() registrations,
@@ -258,12 +277,14 @@ final class Kernel
 
         // Kinetis\Http\OpenApi\DocumentationController is discovered and
         // dispatched like any other controller, so what it needs has to
-        // be resolvable — and neither of these can come from AppScope:
-        // the Router is built after boot() has locked it, and the access
-        // policy folds in $exposeOpenApi, which Kernel owns. Registering
-        // them here keeps every entry point unchanged.
+        // be resolvable — and none of these can come from AppScope: the
+        // Router is built after boot() has locked it, the access policy
+        // folds in $exposeOpenApi, which Kernel owns, and the document
+        // provider is tied to that same Router. Registering them here
+        // keeps every entry point unchanged.
         $scope->instance(Router::class, $this->router);
         $scope->instance(OpenApiAccess::class, $this->openApiAccess);
+        $scope->instance(OpenApiDocumentProvider::class, $this->openApiDocuments);
 
         TransactionGuardHook::registerIfAvailable($scope);
 
