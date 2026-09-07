@@ -211,15 +211,15 @@ behind an unrelated "cleanup failed" error the moment disposal itself had
 a problem — worse than the failure it was supposed to be reporting on.
 
 Every place in Kinetis that disposes a `RequestScope` — `Kernel`,
-`kinetis/queue`'s `QueueWorker`/`SyncQueue`, the MCP transports, and
-`bin/kinetis` — disposes it *outside* any `finally` that could still
+`kinetis/queue`'s `QueueWorker`/`SyncQueue`, `kinetis/mcp`'s
+`StdioTransport`, and `bin/kinetis` — disposes it *outside* any `finally` that could still
 discard an already-decided outcome, and defines an explicit precedence
 instead: whatever the unit of work already produced (a response, a job's
 durable transition, a command's exit code) is preserved exactly, and a
 disposal failure on top of it is logged separately rather than allowed to
 overwrite it. Each owner's exact rule is documented on its own page —
 {doc}`routing-validation` for HTTP, {doc}`queue` for the worker/sync
-queue, {doc}`mcp` for the stdio and streamed HTTP transports, and
+queue, {doc}`mcp` for the stdio transport, and
 {doc}`cli` for `bin/kinetis` — since what "the real outcome" means differs
 per owner (a response that hasn't left the process yet is not the same
 situation as a queue job whose `ack()` already ran).

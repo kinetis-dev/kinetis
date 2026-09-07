@@ -726,8 +726,9 @@ MCP support is (see {doc}`mcp`):
 - `bin/kinetis`, for every CLI command that hasn't declared
   `#[Command(bootstrap: false)]` — a bootstrap-free command has no
   database connection to guard in the first place.
-- `kinetis/mcp`'s `Transport\StdioTransport` and `Http\McpController`,
-  for every MCP message, over stdio and over HTTP alike.
+- `kinetis/mcp`'s `Transport\StdioTransport`, for every MCP message over
+  stdio — over HTTP the message runs on the request scope `Kernel`
+  already registered the hook against.
 - `kinetis/queue`'s `QueueWorker`, for every popped job's own
   `RequestScope`, and `SyncQueue`, for every `push()`'s own `RequestScope`
   — a job that begins a transaction and returns or throws without closing
