@@ -95,7 +95,7 @@ final class Router
      * candidate this same call has staged so far, since two methods on
      * one controller can conflict with each other too) — nothing is
      * committed to `$routes`/`$routesByConflictKey` until the whole
-     * controller succeeds. A later method's bad path/prefix/constraint,
+     * controller succeeds. A later method's bad path or prefix,
      * or any conflict, therefore leaves *zero* of this controller's
      * routes installed, not just the ones reflected before the failure
      * — the same all-or-nothing discipline `EventListenerRegistry::

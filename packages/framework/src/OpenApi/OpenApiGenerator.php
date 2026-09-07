@@ -95,7 +95,7 @@ final class OpenApiGenerator
                 continue;
             }
 
-            $paths[$route->openApiPathTemplate()][strtolower($route->httpMethod)] = $this->describeOperation($route);
+            $paths[$route->pathTemplate][strtolower($route->httpMethod)] = $this->describeOperation($route);
         }
 
         $document = [
@@ -157,24 +157,11 @@ final class OpenApiGenerator
             }
 
             if (in_array($name, $route->pathParameterNames(), true)) {
-                $schema = JsonSchema::schemaForScalar($parameter, $parameter->getType());
-                $constraintPattern = $route->pathParameterPattern($name);
-
-                if ($constraintPattern !== null) {
-                    // schemaForScalar() can return a real stdClass (an
-                    // unconstrained `mixed`/untyped path parameter with no
-                    // Constraint attributes of its own) — `$schema['pattern']
-                    // = ...` array-write syntax throws on a plain object, so
-                    // an empty schema becomes a fresh array carrying only the
-                    // pattern rather than being mutated in place.
-                    $schema = $schema instanceof \stdClass ? ['pattern' => $constraintPattern] : [...$schema, 'pattern' => $constraintPattern];
-                }
-
                 $parameters[] = [
                     'name' => $name,
                     'in' => 'path',
                     'required' => true,
-                    'schema' => $schema,
+                    'schema' => JsonSchema::schemaForScalar($parameter, $parameter->getType()),
                 ];
             }
         }

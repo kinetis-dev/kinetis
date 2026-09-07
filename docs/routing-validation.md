@@ -48,18 +48,15 @@ the route is registered — not on every request.
 Matching follows a stable, content-only specificity order — never
 registration or discovery-scan order, so live discovery and a compiled
 cache always agree on which route wins for the same set of routes. Each
-real `/`-delimited path segment ranks into one of four tiers, most to
+real `/`-delimited path segment ranks into one of three tiers, most to
 least specific: fully static (`self`, `report-2026.pdf`); a placeholder
 mixed with literal text in the same segment (`report-{id}.pdf`); a
-constrained placeholder occupying the whole segment (`{id:\d+}`); an
-unconstrained one (`{id}`). The tier always wins first — a mixed segment
-beats *any* pure placeholder, constrained or not — with a constrained
-placeholder only outranking an unconstrained one when they'd otherwise
-tie in the same tier. Once every shared segment ties, the route with more
-segments is treated as the deeper, more specific match. `/users/{id:\d+}`
-alongside `/users/{id}`, `/users/self` alongside `/users/{id}`, or
+placeholder occupying the whole segment (`{id}`). The tier always wins
+first — a mixed segment beats a pure placeholder. Once every shared
+segment ties, the route with more segments is treated as the deeper,
+more specific match. `/users/self` alongside `/users/{id}`, or
 `/files/report-{id}.pdf` alongside `/files/report-2026.pdf`, can
-therefore all be registered, in either order, and the more specific one
+therefore both be registered, in either order, and the more specific one
 always wins for a path it also matches. A second route claiming
 *exactly* the same requests (the same method and path shape — placeholder
 names don't count, so `/users/{id}` and `/users/{userId}` collide) is
@@ -82,95 +79,38 @@ such scan shares the one project-wide global-middleware list. A second
 registration under a genuinely different context is rejected instead of
 silently kept under the first one.
 
-### Constraining a placeholder's shape
+### What a placeholder matches
 
-A plain `{id}` matches any run of characters up to the next `/`. Add an
-optional `:pattern` suffix — a raw regex fragment, no delimiters, no
-anchors — to constrain it further:
+A path template describes URL structure and nothing else. `{id}` occupies
+one whole segment and matches any run of characters up to the next `/`;
+there is no inline syntax for narrowing that. What a captured value may
+actually hold is described where the value is consumed — by the
+controller parameter's own type and its validation attributes:
 
 ```{code-block} php
-#[Get('/orders/{id:\d+}')]
-public function show(int $id): array { /* ... */ }
+#[Get('/orders/{id}')]
+public function show(#[GreaterThan(0)] int $id): array { /* ... */ }
 
-#[Get('/files/{hash:[0-9a-f]{40}}')]
-public function download(string $hash): array { /* ... */ }
+#[Get('/files/{hash}')]
+public function download(#[Regex('#^[0-9a-f]{40}$#')] string $hash): array { /* ... */ }
 ```
 
-A path segment that doesn't match the constraint never matches the route
-at all — `GET /orders/abc` against the first example above 404s the same
-way a completely unregistered path would, rather than reaching the
-controller with a value that would go on to fail a `#[Query]`/`#[Body]`
-constraint check instead. `{id:\d+}` and a `#[GreaterThan(0)]` on the
-same `int $id` parameter are complementary, not redundant: the route
-constraint decides whether this path matches *this route at all* (versus
-falling through to a 404, or to a different route registered for the
-same literal segment shape); a parameter constraint decides whether an
-already-matched value is *valid* (versus a 422). A fixed-length
-constraint like the SHA-1 example above needs its own `{n}`/`{n,m}`
-repetition quantifier, which is handled correctly even though it
-contains braces of its own — nothing about the placeholder syntax gets
-confused by a `{...}` inside the constraint.
+`GET /orders/abc` therefore reaches the route and fails binding with a
+`422` naming `id`, rather than falling through to a 404. That single
+place is also what the generated OpenAPI document reads: the path key is
+the plain template, and the parameter's declared type and constraints
+become its `schema`.
 
-A pattern is regex text Kinetis inserts rather than rewrites, and the
-brace scanner that finds where the placeholder ends reads enough PCRE to
-know where a `}` is *not* that end. All of these parse and match
-correctly:
-
-| constraint | matches |
-|---|---|
-| `{value:\}}` | a literal `}` — an escaped brace |
-| `{value:[{]}` | a literal `{` — a brace as an ordinary character-class member |
-| `{value:[[:alpha:]{]}` | a letter or a literal `{` — a POSIX sub-form inside a class |
-| `{value:a\Q{\E}` | a literal `a{` — a `\Q...\E` quoted span |
-| `{value:\Q~\E}` | a literal `~` — the delimiter itself, inside a quoted span |
-| `{value:(?#})a}` | `a` — a `}` inside a `(?#...)` comment group |
-| `{value:[#~!%@|+\-=]+}` | any of those characters, delimiter included |
-
-The delimiter is `~`, and a literal occurrence of it in a pattern is
-escaped rather than dodged by picking a different one. Inside a `\Q...\E`
-span that escape needs a rewrite rather than a plain backslash — a
-backslash is literal text there, so `\~` would match two characters
-instead of one — so the span is closed and reopened around it. That
-happens automatically; the pattern you write is the pattern that runs.
-
-```{warning}
-The scanner is a bounded reader of those constructs, not a full PCRE
-parser, and the supported constraint grammar is exactly what it can read
-faithfully. Two things fall outside it, and both are rejected at
-registration with an error naming them rather than mis-scanned:
-
-**Extended mode** — the `x` flag, via `(?x)`, `(?x:...)`, or `x` among a
-set that enables it like `(?imx:...)`. In extended mode an unescaped `#`
-starts a comment running to the end of the line, so a `}` after one would
-stop closing the placeholder; unlike every construct in the table above,
-whether the mode is on at a given point is flag *scope* rather than
-something with a fixed opener and closer. A route constraint is a single
-fragment, with no real need for the whitespace and comments extended mode
-exists to allow. Only flags a run actually *enables* count — everything
-after a `-` is being switched off, so `(?-x:...)` and `(?im-sx:...)`
-register and match normally.
-
-**Control verbs** — anything spelled `(*...)`, such as `(*MARK:name)` or
-`(*atomic:...)`. Their shape varies by verb: some end at their first `)`
-while others hold a whole nested sub-pattern, so a `}` inside one can't
-be told apart from the brace closing the placeholder. Use `(?>...)` for
-atomic grouping; the backtracking verbs have no meaning in a
-single-fragment constraint.
-
-Both exclusions are about a construct being *active*, not about the
-characters that spell it. The constructs in the table above compose with
-them exactly as you'd expect: `{value:[(*]}` is a character class
-matching `(` or `*`, `{value:\Q(?x)\E}` matches that literal text, and
-`{value:(?#(*)a}` is a comment followed by `a` — none of them turns
-anything on, and all three register and match.
-```
-
-This is purely a routing-time detail: `/orders/{id}` and `/orders/{id:\d+}`
-are indistinguishable to a client, to `#[Query]`/`#[Body]` binding, and
-in the generated OpenAPI document — the constraint moves into the path
-parameter's own `schema.pattern` there, and the path key itself always
-reads as plain `{id}`, since OpenAPI's own path-templating syntax has no
-concept of an inline regex.
+A `{...}` expression that isn't a plain placeholder name — `{id:\d+}`,
+`{not a name}`, or an unclosed `{id` — is a mistake in the template, not
+literal text, and is rejected at registration with an
+`InvalidRoutePathException` naming the expression. Placeholder names
+follow PHP's identifier grammar restricted to ASCII, and the same name
+may appear only once in one template. Two placeholders may not sit
+directly against each other either — `{first}{second}` gives nothing to
+split a segment on, so it is rejected the same way; separate them with
+literal text (`{first}-{second}`) or capture the segment as one
+placeholder.
 
 ## Sharing routes across controllers
 

@@ -196,25 +196,6 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame('#^[A-Z]{3}$#', $parameters[0]['schema']['pattern']);
     }
 
-    public function test_a_route_placeholder_constraint_is_stripped_from_the_path_key_but_kept_in_the_schema(): void
-    {
-        // Distinct from the attribute-based constraint above: this is the
-        // {id:\d+} route-template syntax itself, which OpenAPI's own path
-        // templating has no concept of — the constraint has to move into
-        // the parameter's schema, and the path key has to go back to
-        // plain {id}.
-        $router = new Router();
-        $router->register(ConstrainedParametersController::class);
-        $spec = (new OpenApiGenerator($router))->generate();
-
-        self::assertArrayHasKey('/products/{id}', $spec['paths']);
-        self::assertArrayNotHasKey('/products/{id:\d+}', $spec['paths']);
-
-        $parameters = $spec['paths']['/products/{id}']['get']['parameters'];
-        self::assertSame('id', $parameters[0]['name']);
-        self::assertSame('\d+', $parameters[0]['schema']['pattern']);
-    }
-
     public function test_uses_the_route_configured_status_code_in_responses(): void
     {
         $spec = $this->generate();

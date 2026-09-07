@@ -25,10 +25,4 @@ final readonly class ConstrainedParametersController
     {
         return ['code' => $code];
     }
-
-    #[Get('/products/{id:\d+}')]
-    public function product(int $id): array
-    {
-        return ['id' => $id];
-    }
 }
