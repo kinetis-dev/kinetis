@@ -184,7 +184,7 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame(['asc', 'desc'], $byName['sort']['schema']['enum']);
     }
 
-    public function test_a_path_parameters_constraint_is_reflected_in_its_schema(): void
+    public function test_a_path_parameter_length_bound_reaches_its_schema_while_its_regex_does_not(): void
     {
         $router = new Router();
         $router->register(ConstrainedParametersController::class);
@@ -193,7 +193,9 @@ final class OpenApiGeneratorTest extends TestCase
         $parameters = $spec['paths']['/items/{code}']['get']['parameters'];
 
         self::assertSame('code', $parameters[0]['name']);
-        self::assertSame('#^[A-Z]{3}$#', $parameters[0]['schema']['pattern']);
+        self::assertSame('string', $parameters[0]['schema']['type']);
+        self::assertSame(3, $parameters[0]['schema']['minLength']);
+        self::assertArrayNotHasKey('pattern', $parameters[0]['schema']);
     }
 
     public function test_uses_the_route_configured_status_code_in_responses(): void

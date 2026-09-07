@@ -7,6 +7,9 @@ namespace Kinetis\Validation\Constraints;
 use Kinetis\Validation\Constraint;
 use Attribute;
 
+/**
+ * Matches a value against a delimited PHP PCRE with `preg_match()`.
+ */
 #[Attribute(Attribute::TARGET_PARAMETER | Attribute::TARGET_PROPERTY)]
 final readonly class Regex implements Constraint
 {
@@ -22,10 +25,5 @@ final readonly class Regex implements Constraint
         }
 
         return null;
-    }
-
-    public function pattern(): string
-    {
-        return $this->pattern;
     }
 }

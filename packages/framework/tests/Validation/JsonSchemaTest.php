@@ -223,7 +223,6 @@ final class JsonSchemaTest extends TestCase
         self::assertSame(['maxLength' => 20], JsonSchema::forConstraint(new MaxLength(20)));
         self::assertSame(['exclusiveMinimum' => 0], JsonSchema::forConstraint(new GreaterThan(0)));
         self::assertSame(['exclusiveMaximum' => 120], JsonSchema::forConstraint(new LessThan(120)));
-        self::assertSame(['pattern' => '/^[A-Z]+$/'], JsonSchema::forConstraint(new Regex('/^[A-Z]+$/')));
         self::assertSame(['enum' => ['admin', 'member']], JsonSchema::forConstraint(new In(['admin', 'member'])));
         self::assertSame(['format' => 'uri'], JsonSchema::forConstraint(new Url()));
         self::assertSame(['format' => 'uuid'], JsonSchema::forConstraint(new Uuid()));
@@ -232,6 +231,22 @@ final class JsonSchemaTest extends TestCase
     public function test_not_blank_has_no_distinct_json_schema_keyword(): void
     {
         self::assertSame([], JsonSchema::forConstraint(new NotBlank()));
+    }
+
+    public function test_regex_contributes_no_json_schema_keyword(): void
+    {
+        self::assertSame([], JsonSchema::forConstraint(new Regex('/^[A-Z]+$/')));
+    }
+
+    public function test_a_regex_leaves_the_rest_of_a_parameters_schema_intact(): void
+    {
+        $fn = static function (#[Regex('/^[A-Z]+$/')] #[MinLength(3)] string $code) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'string', 'minLength' => 3],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 
     public function test_a_parameter_list_with_no_parameters_encodes_properties_as_a_json_object_not_an_array(): void

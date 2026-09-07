@@ -74,6 +74,10 @@ more on that distinction [below](#error-handling).
 The tool's JSON Schema input is built automatically from the method's
 parameters, so `#[Email]`/`#[MinLength]`/etc. describe an MCP tool's
 arguments exactly as precisely as they describe an HTTP request body.
+`#[Regex]` and `#[NotBlank]` are the exceptions in both: no JSON Schema
+keyword carries a PHP PCRE, and none carries `#[NotBlank]`'s trim-aware
+blank-string semantics, so those two check an argument at runtime only.
+See {doc}`routing-validation`'s "Validation constraints".
 
 ## Transports
 

@@ -8,6 +8,7 @@ use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Query;
 use Kinetis\Validation\Constraints\GreaterThan;
 use Kinetis\Validation\Constraints\In;
+use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Constraints\Regex;
 
 final readonly class ConstrainedParametersController
@@ -21,7 +22,7 @@ final readonly class ConstrainedParametersController
     }
 
     #[Get('/items/{code}')]
-    public function item(#[Regex('#^[A-Z]{3}$#')] string $code): array
+    public function item(#[Regex('#^[A-Z]{3}$#'), MinLength(3)] string $code): array
     {
         return ['code' => $code];
     }

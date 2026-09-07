@@ -99,7 +99,8 @@ public function download(#[Regex('#^[0-9a-f]{40}$#')] string $hash): array { /* 
 `422` naming `id`, rather than falling through to a 404. That single
 place is also what the generated OpenAPI document reads: the path key is
 the plain template, and the parameter's declared type and constraints
-become its `schema`.
+become its `schema`, minus any constraint with no JSON Schema keyword to
+map onto (see [Validation constraints](#validation-constraints)).
 
 A `{...}` expression that isn't a plain placeholder name — `{id:\d+}`,
 `{not a name}`, or an unclosed `{id` — is a mistake in the template, not
@@ -675,6 +676,15 @@ final readonly class CreateProductRequest
 | `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* |
 | `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* |
 
+`#[Regex]` and `#[NotBlank]` are runtime-only: neither has an equivalent
+JSON Schema keyword. `pattern` holds an undelimited ECMA-262 expression, a
+different dialect from the delimited PHP PCRE `#[Regex]` takes, and no
+keyword carries `#[NotBlank]`'s trim-aware blank-string semantics —
+`minLength: 1` rejects the empty string, not `"   "`. For those two a
+generated OpenAPI or MCP schema is broader than the check the request
+actually gets. Every other constraint in the table maps onto a keyword; see
+[Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
+
 `#[MinLength]`/`#[MaxLength]` and `#[GreaterThan]`/`#[LessThan]` compose on
 the same field for a length or numeric range — `Hydrator` runs every
 `Constraint`-implementing attribute on a parameter, not just the first
@@ -1225,9 +1235,9 @@ attach to them behaves like middleware anywhere else.
 
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,
-`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `pattern`,
-`enum`, `format: uri`, `format: uuid`) — except `#[NotBlank]`, which has no
-distinct JSON Schema keyword of its own. `#[Query]` parameters and path
+`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `enum`,
+`format: uri`, `format: uuid`) — except `#[NotBlank]` and `#[Regex]`, which
+have no JSON Schema keyword to map onto. `#[Query]` parameters and path
 parameters become `parameters` entries, with the identical constraint-to-
 keyword mapping applied to their own `schema` when they carry one. A
 controller method's declared return type becomes the default response's

@@ -11,7 +11,6 @@ use Kinetis\Validation\Constraints\In;
 use Kinetis\Validation\Constraints\LessThan;
 use Kinetis\Validation\Constraints\MaxLength;
 use Kinetis\Validation\Constraints\MinLength;
-use Kinetis\Validation\Constraints\Regex;
 use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
 use Psr\Http\Message\UploadedFileInterface;
@@ -25,9 +24,9 @@ use ReflectionType;
  * Maps reflection type/constraint metadata to JSON Schema fragments.
  * Extracted out of OpenApiGenerator once McpRegistry needed the identical
  * mapping for MCP tool input schemas — the same DTO constructor and
- * #[Email]/#[MinLength]/#[GreaterThan]/#[Regex] constraint attributes
- * describe both an HTTP request body and an MCP tool call's arguments,
- * so the type-to-schema logic shouldn't live twice.
+ * #[Email]/#[MinLength]/#[GreaterThan] constraint attributes describe
+ * both an HTTP request body and an MCP tool call's arguments, so the
+ * type-to-schema logic shouldn't live twice.
  *
  * Nullability and required presence are deliberately independent: a
  * nullable type (`?string`, a nullable class-typed/#[ListOf] field) is
@@ -417,12 +416,11 @@ final class JsonSchema
             $constraint instanceof MaxLength => ['maxLength' => $constraint->length()],
             $constraint instanceof GreaterThan => ['exclusiveMinimum' => $constraint->threshold()],
             $constraint instanceof LessThan => ['exclusiveMaximum' => $constraint->threshold()],
-            $constraint instanceof Regex => ['pattern' => $constraint->pattern()],
             $constraint instanceof In => ['enum' => $constraint->choices()],
             $constraint instanceof Url => ['format' => 'uri'],
             $constraint instanceof Uuid => ['format' => 'uuid'],
-            // NotBlank has no distinct JSON Schema keyword — falls through
-            // to the default case below.
+            // A constraint without an equivalent JSON Schema keyword
+            // leaves the schema unchanged.
             default => [],
         };
     }
