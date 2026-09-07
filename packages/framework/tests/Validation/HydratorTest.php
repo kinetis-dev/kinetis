@@ -39,7 +39,6 @@ use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Kinetis\Tests\Validation\Fixtures\TrueTypedFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\UnionTypedFieldRequest;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
-use Kinetis\Validation\Exception\UnsupportedScalarTypeException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonObject;
@@ -647,10 +646,9 @@ final class HydratorTest extends TestCase
     }
 
     /**
-     * KINETIS-76: a plain `array` field (no #[ListOf]) previously reached
-     * `new $className(...)` unchecked for a non-array value, surfacing as
-     * a raw TypeError instead of the same 422/validation-error contract
-     * every other builtin type already gets.
+     * A plain `array` field (no #[ListOf]) gets the same
+     * 422/validation-error contract every other builtin type does, never
+     * a raw TypeError from `new $className(...)`.
      */
     public function test_a_non_array_value_for_a_plain_array_field_is_a_validation_error_not_a_type_error(): void
     {
@@ -707,12 +705,11 @@ final class HydratorTest extends TestCase
         self::assertSame([], $instance->tags);
     }
 
-    // KINETIS-76 follow-up: the complete, audited policy for every one of
-    // the twelve builtin type names PHP can attach to a parameter (see
-    // JsonSchema::forType()'s own docblock for how this list was derived).
-    // typeMismatchMessage() is the one boundary shared by #[Body] fields
-    // here, #[Query]/path parameters via Dispatcher, and MCP tool
-    // arguments via McpDispatcher — proving it here proves it everywhere.
+    // Hydrator::SUPPORTED_BUILTIN_TYPES is the closed set a request value
+    // may be bound to. typeMismatchMessage() is the one boundary shared by
+    // #[Body] fields here, #[Query]/path parameters via Dispatcher, and MCP
+    // tool arguments via McpDispatcher — proving it here proves it
+    // everywhere.
 
     public function test_iterable_gets_the_identical_array_check_as_plain_array(): void
     {
@@ -741,144 +738,41 @@ final class HydratorTest extends TestCase
         }
     }
 
-    public function test_a_non_null_value_for_a_standalone_null_typed_field_is_a_validation_error(): void
-    {
-        try {
-            Hydrator::hydrate(NullTypedFieldRequest::class, ['marker' => 'not-null']);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(['marker' => ['must be null, value given.']], $e->errors);
-        }
-    }
-
-    public function test_an_explicit_null_value_for_a_standalone_null_typed_field_hydrates_normally(): void
-    {
-        $instance = Hydrator::hydrate(NullTypedFieldRequest::class, ['marker' => null]);
-
-        self::assertNull($instance->marker);
-    }
-
-    public function test_a_non_true_value_for_a_standalone_true_typed_field_is_a_validation_error(): void
-    {
-        try {
-            Hydrator::hydrate(TrueTypedFieldRequest::class, ['confirmed' => false]);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(['confirmed' => ['must be true, boolean given.']], $e->errors);
-        }
-    }
-
-    public function test_the_literal_true_value_for_a_standalone_true_typed_field_hydrates_normally(): void
-    {
-        $instance = Hydrator::hydrate(TrueTypedFieldRequest::class, ['confirmed' => true]);
-
-        self::assertTrue($instance->confirmed);
-    }
-
-    public function test_a_non_false_value_for_a_standalone_false_typed_field_is_a_validation_error(): void
-    {
-        try {
-            Hydrator::hydrate(FalseTypedFieldRequest::class, ['declined' => true]);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(['declined' => ['must be false, boolean given.']], $e->errors);
-        }
-    }
-
-    public function test_the_literal_false_value_for_a_standalone_false_typed_field_hydrates_normally(): void
-    {
-        $instance = Hydrator::hydrate(FalseTypedFieldRequest::class, ['declined' => false]);
-
-        self::assertFalse($instance->declined);
-    }
-
-    /**
-     * `object` has no truthful JSON representation this framework
-     * accepts — a decoded JSON body only ever produces arrays/scalars,
-     * never a real PHP object — so any real value supplied for it is
-     * rejected outright rather than reaching `new $className(...)`
-     * unchecked and surfacing as a raw TypeError.
-     */
-    public function test_any_value_for_an_object_typed_field_is_a_validation_error(): void
-    {
-        try {
-            Hydrator::hydrate(ObjectFieldRequest::class, ['extra' => ['a' => 1]]);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(
-                ['extra' => ['cannot be provided through JSON input — no request value can construct a plain object.']],
-                $e->errors,
-            );
-        }
-    }
-
-    public function test_an_omitted_object_typed_field_with_no_default_is_reported_as_required_not_rejected(): void
-    {
-        try {
-            Hydrator::hydrate(ObjectFieldRequest::class, []);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(['extra' => ['is required.']], $e->errors);
-        }
-    }
-
-    /**
-     * `callable` is rejected unconditionally, not just because it has no
-     * truthful JSON shape but because it's a real security boundary: a
-     * JSON string reaching a callable-typed parameter is exactly the
-     * shape of an arbitrary-function-name-injection risk if the
-     * constructor ever invokes it. `"strtoupper"` is a genuinely valid
-     * PHP callable — proving this is rejected regardless of whether the
-     * attacker-supplied string happens to name something harmless.
-     */
-    public function test_any_value_for_a_callable_typed_field_is_a_validation_error(): void
-    {
-        try {
-            Hydrator::hydrate(CallableFieldRequest::class, ['handler' => 'strtoupper']);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(
-                ['handler' => ['cannot be provided through JSON input — callable values are not accepted.']],
-                $e->errors,
-            );
-        }
-    }
-
-    public function test_an_omitted_callable_typed_field_with_no_default_is_reported_as_required_not_rejected(): void
-    {
-        try {
-            Hydrator::hydrate(CallableFieldRequest::class, []);
-            self::fail('Expected a ValidationException.');
-        } catch (ValidationException $e) {
-            self::assertSame(['handler' => ['is required.']], $e->errors);
-        }
-    }
-
-    /**
-     * Every one of the twelve real builtin type names has its own arm in
-     * typeMismatchMessage() now (see the class docblock) — a genuinely
-     * unrecognized scalarType string can only reach the fail-closed
-     * default arm, which throws rather than silently returning null
-     * (accept-anything). This is the exact fail-open pattern that let
-     * object/callable/iterable/null/true/false all reach a raw
-     * constructor unchecked before this class's own audit gave each of
-     * them a real policy; a future/unknown type must not get the same
-     * silent treatment.
-     */
-    public function test_a_genuinely_unrecognized_scalar_type_fails_closed_not_open(): void
-    {
-        $this->expectException(UnsupportedScalarTypeException::class);
-        $this->expectExceptionMessage('not-a-real-builtin-type');
-
-        Hydrator::typeMismatchMessage('not-a-real-builtin-type', 'some value');
-    }
-
-    public function test_mixed_has_its_own_explicit_arm_and_accepts_any_non_null_value(): void
+    public function test_mixed_accepts_any_non_null_value(): void
     {
         self::assertNull(Hydrator::typeMismatchMessage('mixed', 'anything'));
         self::assertNull(Hydrator::typeMismatchMessage('mixed', 42));
         self::assertNull(Hydrator::typeMismatchMessage('mixed', ['a', 'b']));
         self::assertNull(Hydrator::typeMismatchMessage('mixed', true));
+    }
+
+    /**
+     * A builtin outside the supported set fails as a definition, while
+     * the plan is compiled — at build time for an AOT plan, on the first
+     * hydrate() call for a live one — never as a per-request branch that
+     * every supported field pays for.
+     *
+     * @param class-string $class
+     */
+    #[DataProvider('unsupportedBuiltinFieldProvider')]
+    public function test_an_unsupported_builtin_field_is_rejected_when_the_plan_is_compiled(string $class, string $type): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage($type);
+
+        Hydrator::compilePlan($class);
+    }
+
+    /**
+     * @return iterable<string, array{class-string, string}>
+     */
+    public static function unsupportedBuiltinFieldProvider(): iterable
+    {
+        yield 'null' => [NullTypedFieldRequest::class, 'null'];
+        yield 'true' => [TrueTypedFieldRequest::class, 'true'];
+        yield 'false' => [FalseTypedFieldRequest::class, 'false'];
+        yield 'object' => [ObjectFieldRequest::class, 'object'];
+        yield 'callable' => [CallableFieldRequest::class, 'callable'];
     }
 
     // --- A class-typed field and a #[ListOf] element accept exactly two

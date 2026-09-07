@@ -302,49 +302,17 @@ final class JsonSchema
     }
 
     /**
-     * The complete, audited policy for every builtin type name PHP can
-     * actually attach to a parameter via `ReflectionNamedType` — confirmed
-     * empirically against a real PHP 8.4 reflection dump, not assumed from
-     * the manual: `int`, `float`, `bool`, `string`, `array`, `iterable`,
-     * `callable`, `object`, `mixed`, `null`, `false`, `true`. (`void`/
-     * `never` fatal at declaration time on a parameter, so they can never
-     * reach here; `self`/`parent`/`static` report `isBuiltin() === false`
-     * and are routed through the class-typed branch in forParameters()
-     * instead, never this method.) Each of the twelve gets one explicit
-     * arm below — deliberately supported or deliberately rejected, never
-     * left to an implicit default:
-     *
-     * - `int`/`float`/`bool`/`string`/`array`/`mixed`: supported, as
-     *   before.
-     * - `iterable`: supported, identically to `array` — a JSON body can
-     *   only ever decode into a PHP array (never a real `Traversable`),
-     *   and a plain array genuinely satisfies PHP's `iterable` type, so
-     *   the wire contract and the accepted value are the same as `array`'s.
-     * - `null`: supported — a genuinely degenerate but truthful type
-     *   (`{type: 'null'}`); the only value that can ever satisfy it is a
-     *   literal JSON `null`.
-     * - `true`/`false`: supported — PHP 8.2's standalone literal-boolean
-     *   types, narrower than `bool`. Represented as `{type: 'boolean',
-     *   const: true}`/`{type: 'boolean', const: false}`, the standard JSON
-     *   Schema way to say "not just any boolean, this exact one."
-     * - `object`: rejected. JSON input in this framework always decodes
-     *   into arrays and scalars (`json_decode(..., associative: true)`),
-     *   never a real PHP object, so no request value can ever truthfully
-     *   satisfy a bare `object` parameter — there's nothing correct this
-     *   method could describe.
-     * - `callable`: rejected, for a security reason as much as a
-     *   representational one — a JSON string handed to a `callable`-typed
-     *   parameter is exactly the shape of an arbitrary-function-name
-     *   injection risk if it's ever invoked downstream, so this is refused
-     *   outright rather than described as if it were safe to accept.
-     *
-     * `object`/`callable` throw here (schema-generation time) as they
-     * always have; Kinetis\Validation\Hydrator::typeMismatchMessage()
-     * additionally rejects both with a normal 422/MCP validation error at
-     * hydrate time — the guaranteed-to-run boundary that fires on every
-     * request regardless of whether OpenAPI/MCP schema generation ever
-     * runs at all, so a route or tool carrying one of these can never let
-     * a real value reach the constructor unchecked.
+     * The JSON Schema fragment for one builtin type. Only
+     * `Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES` is
+     * describable: every other builtin — `null`, `true`, `false`,
+     * `object`, `callable` — has no request value that could satisfy it,
+     * and is refused here rather than published as a schema no client
+     * could ever meet. `iterable` shares `array`'s fragment: decoded
+     * JSON input only ever produces a PHP array, never a real
+     * `Traversable`, and a plain array satisfies PHP's `iterable`.
+     * (`void`/`never` fatal at declaration time on a parameter;
+     * `self`/`parent`/`static` report `isBuiltin() === false` and are
+     * routed through forParameters()'s class-typed branch instead.)
      *
      * `mixed` and an untyped/union/intersection parameter (never a
      * ReflectionNamedType, so caught by the guard clause immediately
@@ -369,29 +337,16 @@ final class JsonSchema
             return [];
         }
 
-        // A standalone `null` type's own allowsNull() is always true, and
-        // {type: 'null'} already says everything withNullableSchema()
-        // below would otherwise try to additionally widen it into — so
-        // it's returned directly rather than risk a duplicated
-        // ['null', 'null'].
-        if ($type->getName() === 'null') {
-            return ['type' => 'null'];
-        }
-
         $schema = match ($type->getName()) {
             'int' => ['type' => 'integer'],
             'float' => ['type' => 'number'],
             'bool' => ['type' => 'boolean'],
             'string' => ['type' => 'string'],
             // A plain `array` (no #[ListOf]) is a real JSON array on the
-            // wire — Hydrator::typeMismatchMessage() now rejects anything
-            // else for it (see this class's own docblock) — never the
-            // `object` this used to fall through to, which described the
-            // wrong wire shape entirely. `iterable` shares the exact same
-            // wire shape, per this method's own docblock above.
+            // wire, which is what Hydrator::typeMismatchMessage() also
+            // enforces — never an `object`, which would describe the
+            // wrong wire shape entirely.
             'array', 'iterable' => ['type' => 'array'],
-            'true' => ['type' => 'boolean', 'const' => true],
-            'false' => ['type' => 'boolean', 'const' => false],
             // `mixed` genuinely accepts every JSON value, null included —
             // the empty schema (`{}` once schemaForScalar() casts it, see
             // this method's own docblock for why not here) is JSON

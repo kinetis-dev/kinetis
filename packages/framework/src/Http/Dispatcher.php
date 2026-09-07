@@ -214,10 +214,8 @@ final class Dispatcher
      * identical for every call this route will ever receive. Used both by
      * the live per-request fallback above (when no compiled plan exists)
      * and by Kinetis\Cache\Compiler ahead of time — one derivation algorithm,
-     * not two that could drift apart. Also where a required standalone-
-     * `null`-typed #[Query]/path parameter — impossible for any request to
-     * ever satisfy — is rejected; see
-     * UnresolvableParameterException::forImpossibleQueryOrPathNull().
+     * not two that could drift apart. Also where a #[Query]/path parameter
+     * no request value could satisfy is rejected.
      *
      * @return list<HttpBindingPlan>
      * @throws UnresolvableParameterException
@@ -235,25 +233,14 @@ final class Dispatcher
             [$source, $dtoClass] = self::resolveSource($parameter, $name, $type, $pathParameterNames);
             $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
 
-            // A standalone-`null`-typed #[Query]/path parameter can never
-            // be satisfied by any request: query/path values are always
-            // raw, non-empty strings when present, never PHP's real null.
-            // A `#[Query]` field is rejected only when defaultless — a
-            // defaulted one has a genuine working path, an *absent* query
-            // key. A path parameter has no such path regardless of
-            // whether it declares a default: a matched route's own
-            // placeholder capture always supplies a real string, so
-            // resolveScalarFromPlan()'s "value missing, use the default"
-            // branch is unreachable dead code for a path source — the
-            // rejection therefore applies unconditionally there. Either
-            // way, every possible request to the affected route fails —
-            // rejected here, at plan derivation, rather than silently
-            // shipping a route that can never dispatch successfully.
-            $nullQueryOrPathIsImpossible = $scalarType === 'null'
-                && (($source === 'query' && !$parameter->isDefaultValueAvailable()) || $source === 'path');
+            // Only a query or path parameter reads request input here. A
+            // 'default'-source parameter is filled from its own default
+            // value and never touches the request, so any legal type
+            // stays legal for it.
+            $readsRequestInput = $source === 'query' || $source === 'path';
 
-            if ($nullQueryOrPathIsImpossible) {
-                throw UnresolvableParameterException::forImpossibleQueryOrPathNull($name, $source);
+            if ($readsRequestInput && $scalarType !== null && !in_array($scalarType, Hydrator::SUPPORTED_BUILTIN_TYPES, true)) {
+                throw UnresolvableParameterException::forUnsupportedBuiltinType($name, $source, $scalarType);
             }
 
             // An array/iterable-typed path parameter is equally
@@ -429,10 +416,8 @@ final class Dispatcher
 
         try {
             // normalizeFormLiterals is scoped to genuinely form-encoded
-            // requests specifically — a JSON request for the identical
-            // DTO class must keep rejecting a real "true"/"false" JSON
-            // string the same way it always has; see Hydrator::hydrate()'s
-            // own docblock for the full reasoning.
+            // requests: a JSON request for the identical DTO class keeps
+            // rejecting the JSON string "true".
             return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null, normalizeFormLiterals: $formEncoded);
         } finally {
             Telemetry::global()->hydrationEnded($hydrationToken);
@@ -679,12 +664,11 @@ final class Dispatcher
      *
      * The check itself is genuinely the same method regardless of source
      * — but a #[Query]/path *value* is not: it only ever arrives as a raw
-     * string (or, for a #[Query] array-style parameter, a PHP array —
-     * unaffected by the normalization below), never a real JSON-decoded
-     * bool the way a request body's own `true`/`false` literal is. This
-     * source-specific normalization step exists so the shared check still
-     * receives a genuinely equivalent value, not a string standing in for
-     * one; see normalizeQueryOrPathLiteral()'s own docblock.
+     * string (or, for a #[Query] array-style parameter, a PHP array),
+     * never a real JSON-decoded bool the way a request body's own
+     * `true`/`false` literal is, so
+     * Hydrator::normalizeTextualBoolean() runs first; see its own
+     * docblock.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException
@@ -708,7 +692,7 @@ final class Dispatcher
         }
 
         $scalarType = $param['scalarType'];
-        $raw = self::normalizeQueryOrPathLiteral($scalarType, $raw);
+        $raw = Hydrator::normalizeTextualBoolean($scalarType, $raw);
 
         if ($scalarType !== null) {
             $message = Hydrator::typeMismatchMessage($scalarType, $raw);
@@ -738,37 +722,6 @@ final class Dispatcher
         }
 
         return $value;
-    }
-
-    /**
-     * A #[Query]/path value is a raw string when present, never PHP's
-     * real `true`/`false` the way an already-decoded JSON body's own
-     * boolean literal is — but OpenAPI's own query-serialization
-     * convention for a boolean-shaped value documents exactly the
-     * literal spellings "true"/"false" (the same spelling a JSON
-     * boolean prints as), which is what a client generated from this
-     * route's own schema actually sends. Translating those two spellings
-     * into the real PHP `true`/`false` here — the one place a #[Query]/
-     * path *source* genuinely differs from a JSON body — is what lets
-     * Hydrator::typeMismatchMessage()'s shared check (built against
-     * genuinely JSON-decoded values) treat them correctly, for both
-     * `bool` and the narrower standalone `true`/`false` types. `bool`'s
-     * own pre-existing `"1"`/`"0"` spellings are untouched — they already
-     * pass typeMismatchMessage()'s check as raw strings, unaffected by
-     * this. Anything else — including the list a #[Query] array-style
-     * parameter (`?tags=a&tags=b`) produces — passes through unchanged.
-     */
-    private static function normalizeQueryOrPathLiteral(?string $scalarType, mixed $raw): mixed
-    {
-        if (!in_array($scalarType, ['bool', 'true', 'false'], true) || !is_string($raw)) {
-            return $raw;
-        }
-
-        return match ($raw) {
-            'true' => true,
-            'false' => false,
-            default => $raw,
-        };
     }
 
     private function json(mixed $data, int $status): ResponseInterface

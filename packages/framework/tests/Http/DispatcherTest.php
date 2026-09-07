@@ -16,9 +16,6 @@ use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
 use Kinetis\Tests\Http\Fixtures\ConstructionCountingController;
 use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathArrayController;
-use Kinetis\Tests\Http\Fixtures\ImpossiblePathNullController;
-use Kinetis\Tests\Http\Fixtures\ImpossibleQueryNullController;
-use Kinetis\Tests\Http\Fixtures\MultipleUnsupportedFieldsController;
 use Kinetis\Tests\Http\Fixtures\NoteController;
 use Kinetis\Tests\Http\Fixtures\NullableFieldsController;
 use Kinetis\Tests\Http\Fixtures\ObjectDefaultParameterController;
@@ -29,8 +26,8 @@ use Kinetis\Tests\Http\Fixtures\QueryLiteralController;
 use Kinetis\Tests\Http\Fixtures\RawRequestController;
 use Kinetis\Tests\Http\Fixtures\RequiredTagSearchController;
 use Kinetis\Tests\Http\Fixtures\TagSearchController;
-use Kinetis\Tests\Http\Fixtures\UnsupportedBodyFieldController;
-use Kinetis\Tests\Http\Fixtures\UnsupportedCallableBodyFieldController;
+use Kinetis\Tests\Http\Fixtures\UnsupportedPathTypeController;
+use Kinetis\Tests\Http\Fixtures\UnsupportedQueryTypeController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Instrumentation\RecordingTelemetry;
@@ -40,6 +37,7 @@ use Nyholm\Psr7\Stream;
 use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\ResponseInterface;
 
 final class DispatcherTest extends TestCase
 {
@@ -1019,9 +1017,9 @@ final class DispatcherTest extends TestCase
         self::assertSame(2, json_decode((string) $present->getBody(), true)['optionalItems']);
     }
 
-    // KINETIS-76 follow-up: runtime HTTP coverage for a wrong-shaped
-    // plain-array #[Body] field and the complete builtin-type policy,
-    // through a real dispatched request — not just a Hydrator unit call.
+    // Runtime HTTP coverage for a wrong-shaped plain-array #[Body] field
+    // and the supported builtin set, through a real dispatched request —
+    // not just a Hydrator unit call.
 
     public function test_a_wrong_shaped_plain_array_body_field_returns_422_not_a_type_error(): void
     {
@@ -1198,39 +1196,69 @@ final class DispatcherTest extends TestCase
         self::assertSame(['nested' => 'value'], json_decode((string) $response->getBody(), true)['note']);
     }
 
-    // KINETIS-76 third follow-up: a form-encoded #[Body] shares its DTO
-    // class with the JSON-body path — the same field can arrive either
-    // way depending on the client's own Content-Type — so `bool`/`true`/
-    // `false`-typed fields get the identical "true"/"false" literal
-    // normalization #[Query]/path already has, scoped to genuinely
-    // form-encoded requests specifically so a JSON request for the same
-    // DTO class still rejects a wrong-shaped value exactly as before.
-    // See "Form-encoded and multipart bodies get the raw-string rules
-    // too" in routing-validation.md. Verified for real here, not just
-    // documented in prose.
+    // A form-encoded #[Body] shares its DTO class with the JSON-body path
+    // — the same field can arrive either way depending on the client's own
+    // Content-Type — so a `bool`-typed field gets the identical
+    // "true"/"false" literal normalization #[Query]/path already has,
+    // scoped to form-encoded requests so a JSON request for the same DTO
+    // class still rejects a wrong-shaped value. See "Form-encoded
+    // and multipart bodies get the raw-string rules too" in
+    // routing-validation.md.
 
-    public function test_a_form_encoded_standalone_true_field_accepts_the_string_true_spelling(): void
+    public function test_a_form_encoded_boolean_field_accepts_the_string_true_spelling(): void
     {
-        $router = new Router();
-        $router->register(BuiltinCoverageController::class);
-        $match = $router->match('POST', '/builtin-coverage');
-
-        $request = (new ServerRequest('POST', '/builtin-coverage'))
-            ->withHeader('Content-Type', 'application/x-www-form-urlencoded')
-            ->withParsedBody(['tags' => [], 'items' => [], 'confirmed' => 'true']);
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $response = $this->formEncodedFlag('true');
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertTrue(json_decode((string) $response->getBody(), true)['confirmed']);
+        self::assertTrue(json_decode((string) $response->getBody(), true)['flag']);
+    }
+
+    public function test_a_form_encoded_boolean_field_accepts_the_string_false_spelling(): void
+    {
+        $response = $this->formEncodedFlag('false');
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertFalse(json_decode((string) $response->getBody(), true)['flag']);
     }
 
     /**
      * A spelling that is neither the normalized "true"/"false" form nor
-     * the raw PHP literal still 422s — proving normalizeFormLiteral()
-     * genuinely narrows the accepted spelling, rather than making the
-     * check pass unconditionally once form encoding is involved at all.
+     * the raw PHP literal still 422s — the normalization narrows the
+     * accepted spellings rather than making the check pass once form
+     * encoding is involved at all.
      */
-    public function test_a_form_encoded_standalone_true_field_still_rejects_a_spelling_that_is_neither_convention(): void
+    public function test_a_form_encoded_boolean_field_still_rejects_a_spelling_that_is_neither_convention(): void
+    {
+        $response = $this->formEncodedFlag('yes');
+
+        self::assertSame(422, $response->getStatusCode());
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['must be a boolean, value given.'], $body['errors']['flag']);
+    }
+
+    /**
+     * The identical DTO class over a real JSON body on the same route:
+     * the JSON *string* "true" (as opposed to the JSON boolean literal)
+     * is still rejected, so the form-encoded normalization above is
+     * scoped to a form-encoded request.
+     */
+    public function test_a_json_body_still_rejects_the_string_true_for_a_boolean_field(): void
+    {
+        $router = new Router();
+        $router->register(BuiltinCoverageController::class);
+        $match = $router->match('POST', '/builtin-coverage');
+
+        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "flag": "true"}');
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['must be a boolean, value given.'], $body['errors']['flag']);
+    }
+
+    private function formEncodedFlag(string $spelling): ResponseInterface
     {
         $router = new Router();
         $router->register(BuiltinCoverageController::class);
@@ -1238,61 +1266,15 @@ final class DispatcherTest extends TestCase
 
         $request = (new ServerRequest('POST', '/builtin-coverage'))
             ->withHeader('Content-Type', 'application/x-www-form-urlencoded')
-            ->withParsedBody(['tags' => [], 'items' => [], 'confirmed' => 'yes']);
-        $response = $this->dispatcher()->dispatch($match, $request);
+            ->withParsedBody(['tags' => [], 'items' => [], 'flag' => $spelling]);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be true, value given.'], $body['errors']['confirmed']);
+        return $this->dispatcher()->dispatch($match, $request);
     }
 
     /**
-     * The identical DTO class still works correctly for the exact same
-     * field over a real JSON body, on the same route — proving the
-     * form-encoded normalization above is genuinely scoped to a
-     * form-encoded request specifically, not a change to standalone
-     * true/false's own policy for a real JSON boolean.
-     */
-    public function test_the_same_route_still_accepts_a_real_json_true_for_the_identical_field(): void
-    {
-        $router = new Router();
-        $router->register(BuiltinCoverageController::class);
-        $match = $router->match('POST', '/builtin-coverage');
-
-        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "confirmed": true}');
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertTrue(json_decode((string) $response->getBody(), true)['confirmed']);
-    }
-
-    /**
-     * A JSON body's own real "true"/"false" *strings* (not the literal
-     * boolean) still correctly fail on the same field — the
-     * normalization above never applies outside a genuinely
-     * form-encoded request, so this is not weakened by it.
-     */
-    public function test_a_json_body_still_rejects_the_string_true_for_a_standalone_true_field(): void
-    {
-        $router = new Router();
-        $router->register(BuiltinCoverageController::class);
-        $match = $router->match('POST', '/builtin-coverage');
-
-        $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "confirmed": "true"}');
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be true, value given.'], $body['errors']['confirmed']);
-    }
-
-    /**
-     * The full builtin-category sweep, through a real dispatched request:
-     * a correct payload succeeds across array/iterable/mixed/null/true/
-     * false in one call, and a single wrong-shaped field among otherwise-
-     * correct ones still reports only that field's own error.
+     * The array/iterable/mixed categories through a real dispatched
+     * request: a correct payload succeeds across all three in one call,
+     * and a single wrong-shaped field still reports only its own error.
      */
     public function test_a_correct_payload_across_every_supported_builtin_category_dispatches_normally(): void
     {
@@ -1304,20 +1286,17 @@ final class DispatcherTest extends TestCase
             'tags' => ['a', 'b'],
             'items' => ['c'],
             'note' => 42,
-            'marker' => null,
-            'confirmed' => true,
-            'declined' => false,
         ]));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame(
-            ['tags' => ['a', 'b'], 'items' => ['c'], 'note' => 42, 'marker' => null, 'confirmed' => true, 'declined' => false],
+            ['tags' => ['a', 'b'], 'items' => ['c'], 'note' => 42, 'flag' => false],
             json_decode((string) $response->getBody(), true),
         );
     }
 
-    public function test_a_wrong_shaped_standalone_false_body_field_returns_422_alongside_a_correct_payload(): void
+    public function test_a_wrong_shaped_iterable_body_field_returns_422_alongside_a_correct_payload(): void
     {
         $router = new Router();
         $router->register(BuiltinCoverageController::class);
@@ -1325,126 +1304,40 @@ final class DispatcherTest extends TestCase
 
         $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: json_encode([
             'tags' => [],
-            'items' => [],
-            'declined' => 'nope',
+            'items' => 'nope',
         ]));
         $response = $this->dispatcher()->dispatch($match, $request);
 
         self::assertSame(422, $response->getStatusCode());
         /** @var array{errors: array<string, list<string>>} $body */
         $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be false, value given.'], $body['errors']['declined']);
+        self::assertSame(['must be an array, value given.'], $body['errors']['items']);
     }
 
-    /**
-     * The core guarantee item 2 of this issue closes: a route whose
-     * #[Body] DTO carries a genuinely unsupported builtin type
-     * (`object`) still registers and dispatches — Router::register()
-     * never needs OpenAPI generation to have run — and a real request
-     * carrying a value for that field gets a clean 422, never a raw
-     * TypeError escaping the constructor. This holds regardless of
-     * whether OpenApiGenerator::generate() (which does still refuse to
-     * describe this same route, see OpenApiGeneratorTest) is ever called
-     * for this application at all.
-     */
-    public function test_a_route_with_an_unsupported_body_field_still_dispatches_and_returns_422_not_a_type_error(): void
+    // A #[Query]/path value is a raw string, never an already-decoded JSON
+    // value the way a #[Body] field's is — the shared type-mismatch check
+    // is identical, but the value reaching it is normalized by source
+    // first. Proven here through real dispatched requests.
+
+    public function test_a_query_boolean_accepts_the_openapi_documented_true_spelling(): void
     {
-        $router = new Router();
-        $router->register(UnsupportedBodyFieldController::class);
-        $match = $router->match('POST', '/unsupported-body-field');
-
-        $request = new ServerRequest('POST', '/unsupported-body-field', self::JSON_HEADERS, body: json_encode(['extra' => ['a' => 1]]));
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(
-            ['cannot be provided through JSON input — no request value can construct a plain object.'],
-            $body['errors']['extra'],
-        );
-    }
-
-    /**
-     * `callable`'s own equivalent of the `object` test above — proving
-     * the identical runtime guarantee for the second rejected category:
-     * the route still registers and dispatches, and a genuinely valid
-     * PHP callable string ("strtoupper") is still rejected rather than
-     * silently accepted, matching HydratorTest's own unit-level proof of
-     * this but through a real dispatched HTTP request.
-     */
-    public function test_a_route_with_an_unsupported_callable_body_field_still_dispatches_and_returns_422(): void
-    {
-        $router = new Router();
-        $router->register(UnsupportedCallableBodyFieldController::class);
-        $match = $router->match('POST', '/unsupported-callable-body-field');
-
-        $request = new ServerRequest('POST', '/unsupported-callable-body-field', self::JSON_HEADERS, body: json_encode(['handler' => 'strtoupper']));
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(
-            ['cannot be provided through JSON input — callable values are not accepted.'],
-            $body['errors']['handler'],
-        );
-    }
-
-    /**
-     * Failure atomicity: both rejected categories in one request must
-     * both surface in the same 422, matching Hydrator's own "all fields
-     * validated up front, not just the first" promise (see its class
-     * docblock) — proven here for object/callable specifically, not just
-     * for ordinary constraint violations.
-     */
-    public function test_both_unsupported_fields_report_together_in_one_response(): void
-    {
-        $router = new Router();
-        $router->register(MultipleUnsupportedFieldsController::class);
-        $match = $router->match('POST', '/multiple-unsupported-fields');
-
-        $request = new ServerRequest('POST', '/multiple-unsupported-fields', self::JSON_HEADERS, body: json_encode([
-            'extra' => ['a' => 1],
-            'handler' => 'strtoupper',
-        ]));
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('extra', $body['errors']);
-        self::assertArrayHasKey('handler', $body['errors']);
-    }
-
-    // KINETIS-76 follow-up: a #[Query]/path value is a raw string, never
-    // an already-decoded JSON value the way a #[Body] field's is — the
-    // shared type-mismatch check is genuinely identical, but the *value*
-    // reaching it depends on source-specific normalization first. Proven
-    // here through real dispatched requests, not just the normalization
-    // helper in isolation.
-
-    public function test_a_query_boolean_accepts_the_openapi_documented_true_false_spelling(): void
-    {
-        $router = new Router();
-        $router->register(QueryLiteralController::class);
-        $match = $router->match('GET', '/query-literals');
-
-        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['flag' => 'true']);
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $response = $this->queryFlag('true');
 
         self::assertSame(200, $response->getStatusCode());
         self::assertTrue(json_decode((string) $response->getBody(), true)['flag']);
     }
 
+    public function test_a_query_boolean_accepts_the_openapi_documented_false_spelling(): void
+    {
+        $response = $this->queryFlag('false');
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertFalse(json_decode((string) $response->getBody(), true)['flag']);
+    }
+
     public function test_a_query_boolean_still_accepts_the_pre_existing_one_zero_spelling(): void
     {
-        $router = new Router();
-        $router->register(QueryLiteralController::class);
-        $match = $router->match('GET', '/query-literals');
-
-        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['flag' => '0']);
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $response = $this->queryFlag('0');
 
         self::assertSame(200, $response->getStatusCode());
         self::assertFalse(json_decode((string) $response->getBody(), true)['flag']);
@@ -1452,58 +1345,10 @@ final class DispatcherTest extends TestCase
 
     public function test_a_query_boolean_rejects_a_spelling_that_is_neither_convention(): void
     {
-        $router = new Router();
-        $router->register(QueryLiteralController::class);
-        $match = $router->match('GET', '/query-literals');
-
-        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['flag' => 'yes']);
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(422, $response->getStatusCode());
+        self::assertSame(422, $this->queryFlag('yes')->getStatusCode());
     }
 
-    public function test_a_query_standalone_true_typed_parameter_accepts_the_true_spelling(): void
-    {
-        $router = new Router();
-        $router->register(QueryLiteralController::class);
-        $match = $router->match('GET', '/query-literals');
-
-        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['confirmed' => 'true']);
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertTrue(json_decode((string) $response->getBody(), true)['confirmed']);
-    }
-
-    public function test_a_query_standalone_true_typed_parameter_rejects_the_false_spelling(): void
-    {
-        $router = new Router();
-        $router->register(QueryLiteralController::class);
-        $match = $router->match('GET', '/query-literals');
-
-        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['confirmed' => 'false']);
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be true, boolean given.'], $body['errors']['confirmed']);
-    }
-
-    public function test_a_query_standalone_false_typed_parameter_accepts_the_false_spelling(): void
-    {
-        $router = new Router();
-        $router->register(QueryLiteralController::class);
-        $match = $router->match('GET', '/query-literals');
-
-        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['declined' => 'false']);
-        $response = $this->dispatcher()->dispatch($match, $request);
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertFalse(json_decode((string) $response->getBody(), true)['declined']);
-    }
-
-    public function test_omitted_query_literals_use_their_defaults(): void
+    public function test_an_omitted_query_boolean_uses_its_default(): void
     {
         $router = new Router();
         $router->register(QueryLiteralController::class);
@@ -1512,47 +1357,47 @@ final class DispatcherTest extends TestCase
         $response = $this->dispatcher()->dispatch($match, new ServerRequest('GET', '/query-literals'));
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame(
-            ['flag' => false, 'confirmed' => true, 'declined' => false],
-            json_decode((string) $response->getBody(), true),
-        );
+        self::assertSame(['flag' => false], json_decode((string) $response->getBody(), true));
+    }
+
+    private function queryFlag(string $spelling): ResponseInterface
+    {
+        $router = new Router();
+        $router->register(QueryLiteralController::class);
+        $match = $router->match('GET', '/query-literals');
+
+        $request = (new ServerRequest('GET', '/query-literals'))->withQueryParams(['flag' => $spelling]);
+
+        return $this->dispatcher()->dispatch($match, $request);
     }
 
     /**
-     * The core guarantee: a required standalone-`null`-typed #[Query]
-     * parameter can never be satisfied by any request, so it's rejected
-     * at register() itself — the guaranteed boundary every route passes
-     * through regardless of deployment shape (live discovery, or
-     * Kinetis\Cache\Compiler's own AOT build, which discovers routes to
-     * compile via this exact same call) — rather than deferred to this
-     * route's first real dispatch, which would have let it register and
-     * be advertised by OpenApiGenerator with no error at all.
+     * A query or path value carries text only, so a parameter typed
+     * outside Hydrator::SUPPORTED_BUILTIN_TYPES is rejected at
+     * register() itself — the boundary every route passes through
+     * regardless of deployment shape (live discovery, or
+     * Kinetis\Cache\Compiler's AOT build, which discovers routes through
+     * this same call) — rather than deferred to a first dispatch that
+     * could never succeed.
      */
-    public function test_a_required_standalone_null_typed_query_parameter_is_rejected_at_registration(): void
+    public function test_an_unsupported_builtin_query_parameter_is_rejected_at_registration(): void
     {
         $router = new Router();
 
         $this->expectException(UnresolvableParameterException::class);
         $this->expectExceptionMessage('marker');
 
-        $router->register(ImpossibleQueryNullController::class);
+        $router->register(UnsupportedQueryTypeController::class);
     }
 
-    /**
-     * The path-sourced sibling: unconditionally rejected regardless of
-     * any declared default, since a matched route's own placeholder
-     * capture always supplies a real, non-empty string — there is no
-     * "value missing, use the default" case a default could ever help
-     * with here, unlike #[Query].
-     */
-    public function test_a_standalone_null_typed_path_parameter_is_rejected_at_registration(): void
+    public function test_an_unsupported_builtin_path_parameter_is_rejected_at_registration(): void
     {
         $router = new Router();
 
         $this->expectException(UnresolvableParameterException::class);
         $this->expectExceptionMessage('marker');
 
-        $router->register(ImpossiblePathNullController::class);
+        $router->register(UnsupportedPathTypeController::class);
     }
 
     /**

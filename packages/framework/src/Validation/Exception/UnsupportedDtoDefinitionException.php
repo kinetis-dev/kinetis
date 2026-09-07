@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Validation\Exception;
 
+use Kinetis\Validation\Hydrator;
 use RuntimeException;
 
 /**
@@ -59,6 +60,16 @@ final class UnsupportedDtoDefinitionException extends RuntimeException
             $parameter,
             "#[ListOf({$itemClass}::class)] names a class that cannot be instantiated, so no element could "
             . 'ever be hydrated into it.',
+        );
+    }
+
+    public static function unsupportedBuiltinType(string $class, string $parameter, string $type): self
+    {
+        return self::forParameter(
+            $class,
+            $parameter,
+            "\"{$type}\" is not a builtin type a request value can be bound to. Kinetis accepts "
+            . implode(', ', Hydrator::SUPPORTED_BUILTIN_TYPES) . ', or a class type.',
         );
     }
 

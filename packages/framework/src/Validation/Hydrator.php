@@ -10,7 +10,6 @@ use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
 use Kinetis\Reflection\ParameterDefault;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
-use Kinetis\Validation\Exception\UnsupportedScalarTypeException;
 use Kinetis\Validation\Exception\ValidationException;
 use ReflectionAttribute;
 use ReflectionClass;
@@ -27,8 +26,8 @@ use ReflectionType;
  * A DTO is described by a hydration plan compiled from its constructor.
  * compilePlan() accepts a finite set of parameter shapes:
  *
- * - A builtin-typed parameter. typeMismatchMessage() carries the policy for
- *   every builtin type name PHP can attach to a parameter.
+ * - A parameter typed with one of the builtin types in
+ *   SUPPORTED_BUILTIN_TYPES.
  * - A parameter typed as a single instantiable class: an object-shaped
  *   value is hydrated into that class recursively — its own errors
  *   surfacing under a dotted "field.nestedField" key — and a value that is
@@ -52,8 +51,9 @@ use ReflectionType;
  * recursive class reference (a plan embeds each nested class inline, so
  * recursion has no finite plan and nothing var_export() could bake into a
  * cache file), a class type reflection cannot resolve (self/parent/static),
- * #[ListOf] on a parameter that isn't typed `array`, and #[ListOf] naming a
- * class that cannot be instantiated.
+ * a builtin type outside SUPPORTED_BUILTIN_TYPES, #[ListOf] on a parameter
+ * that isn't typed `array`, and #[ListOf] naming a class that cannot be
+ * instantiated.
  *
  * A parameter's own default value is captured under the rule
  * Kinetis\Reflection\ParameterDefault owns, shared with Dispatcher's
@@ -68,13 +68,8 @@ use ReflectionType;
  * differently-spelled value (`"42.0"`, `"4.2e1"`) rather than truncating or
  * reinterpreting it; `float` accepts a real number or a numeric string and
  * rejects anything not finite; `bool` accepts only `true`, `false`, `1`,
- * `0`, `"1"`, `"0"`; `array`/`iterable` both require a real JSON array; a
- * standalone `null` type accepts only a literal null; standalone
- * `true`/`false` accept only that one literal boolean; `object`/`callable`
- * are rejected unconditionally — no JSON value can construct a plain
- * object, and a callable-typed parameter fed an attacker-controlled string
- * is an injection risk if it is ever invoked downstream. `mixed` accepts
- * anything by definition.
+ * `0`, `"1"`, `"0"`; `array`/`iterable` both require a real JSON array.
+ * `mixed` accepts anything by definition.
  *
  * A missing or explicitly-null value is a separate concern from a
  * wrong-shaped one: a missing key on a defaultless parameter is "is
@@ -83,9 +78,8 @@ use ReflectionType;
  * errors, never a raw TypeError escaping the constructor. typeMismatchMessage()
  * is the one boundary shared by every hydration call site — a #[Body] DTO
  * field here, a #[Query]/path parameter via Dispatcher, and an MCP tool
- * argument via McpDispatcher — so an unsupported value can never reach a
- * real constructor unchecked regardless of which one dispatched it, or
- * whether OpenAPI/MCP schema generation ever ran at all.
+ * argument via McpDispatcher — so a wrong-shaped value can never reach a
+ * real constructor unchecked regardless of which one dispatched it.
  *
  * Holds exactly one piece of static state: a memoization cache of
  * compilePlan() output, keyed by DTO class. This is a deliberate,
@@ -136,6 +130,19 @@ final class Hydrator
 
     private const string NOT_AN_INTEGER = 'must be an integer within the platform integer range.';
 
+    /**
+     * The builtin types a request-bound parameter may declare. A DTO
+     * field outside this set fails when its plan is compiled; a
+     * #[Query]/path parameter outside it fails when
+     * Kinetis\Http\Dispatcher derives the route's binding plan; and
+     * Kinetis\Validation\JsonSchema describes exactly this set. Every
+     * other builtin — `null`, `true`, `false`, `object`, `callable` —
+     * has no request representation worth the machinery to accept it.
+     *
+     * @var list<string>
+     */
+    public const array SUPPORTED_BUILTIN_TYPES = ['string', 'int', 'float', 'bool', 'array', 'iterable', 'mixed'];
+
     private const array HYDRATION_PLAN_KEYS = ['className', 'hasConstructor', 'parameters'];
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
@@ -152,16 +159,10 @@ final class Hydrator
     private static array $planCache = [];
 
     /**
-     * $normalizeFormLiterals — appended last, default `false`, so every
-     * existing positional call keeps its exact current behavior — when
-     * `true`, applies the identical "true"/"false" string-to-PHP-boolean
-     * translation `Dispatcher::normalizeQueryOrPathLiteral()` already
-     * applies for `#[Query]`/path values, scoped here to a `bool`/`true`/
-     * `false`-typed field whenever `Dispatcher` knows the whole request
-     * body is form-encoded (never JSON) — see resolveParameterValue()'s
-     * own docblock for why this can't be applied unconditionally, the
-     * same source-specific-value reasoning that already governs
-     * `#[Query]`/path.
+     * $normalizeFormLiterals applies normalizeTextualBoolean() to a
+     * `bool`-typed field, and is set only when `Dispatcher` knows the
+     * whole request body is form-encoded rather than JSON — see that
+     * method's own docblock for why the source has to decide it.
      *
      * @template T of object
      * @param class-string<T> $class
@@ -334,10 +335,15 @@ final class Hydrator
     {
         $type = $parameter->getType();
         [$dtoClass, $nestedPlan, $listItemClass, $listItemPlan] = self::compileNesting($type, $parameter, $class, $visiting);
+        $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
+
+        if ($scalarType !== null && !in_array($scalarType, self::SUPPORTED_BUILTIN_TYPES, true)) {
+            throw UnsupportedDtoDefinitionException::unsupportedBuiltinType($class, $parameter->getName(), $scalarType);
+        }
 
         return [
             'name' => $parameter->getName(),
-            'scalarType' => $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null,
+            'scalarType' => $scalarType,
             'dtoClass' => $dtoClass,
             'nestedPlan' => $nestedPlan,
             'listItemClass' => $listItemClass,
@@ -533,17 +539,12 @@ final class Hydrator
      * constraints loop and assigning $arguments[$name] for it.
      *
      * $normalizeFormLiterals — see hydrate()'s own docblock. Applied
-     * *before* the type-mismatch check, so the check itself still receives
-     * an equivalent value, not a string standing in for one — the identical
-     * two-step shape `Dispatcher::resolveScalarFromPlan()` already uses for
-     * `#[Query]`/path. Never applied when a `dtoClass`/`listItemClass`
-     * field routes elsewhere below: standard form encoding has no
-     * nested-object wire representation at all, so this only ever matters
-     * for a flat scalar field — but the flag itself still threads through
-     * both recursive branches, since a form-encoded body reaching a
-     * nested/list DTO's own scalar fields (via PHP's bracket-style
-     * `field[sub]=value` form-field-name convention) is exactly as non-JSON
-     * a source as the top level.
+     * before the type-mismatch check, so the check receives an equivalent
+     * value rather than a string standing in for one. It threads through
+     * both recursive branches: a form-encoded body reaching a nested or
+     * list DTO's own scalar fields (via PHP's bracket-style
+     * `field[sub]=value` convention) is exactly as non-JSON a source as
+     * the top level.
      *
      * @param HydrationPlanParameter $parameter
      * @return array{0: mixed, 1: array<string, list<string>>}
@@ -566,7 +567,7 @@ final class Hydrator
         }
 
         if ($normalizeFormLiterals) {
-            $value = self::normalizeFormLiteral($parameter['scalarType'], $value);
+            $value = self::normalizeTextualBoolean($parameter['scalarType'], $value);
         }
 
         if ($parameter['scalarType'] !== null) {
@@ -591,18 +592,23 @@ final class Hydrator
     }
 
     /**
-     * A form-encoded #[Body] value is a raw string when present, never
+     * A query string, a path segment and a form-encoded body all carry
+     * text only: a `bool` value arrives as a raw string there, never
      * PHP's real `true`/`false` the way an already-decoded JSON body's
-     * own boolean literal is — mirroring `Dispatcher::normalizeQueryOrPathLiteral()`'s
-     * own reasoning exactly, just applied to the one other non-JSON source
-     * this codebase has. `bool`'s own `"1"`/`"0"` spellings are unaffected
-     * — they already pass typeMismatchMessage()'s check as raw strings.
-     * Anything else (including a real array a repeated/bracketed form field
-     * name produces) passes through unchanged.
+     * own boolean literal does. Translating the two canonical spellings
+     * OpenAPI documents for a boolean is what lets those sources reach
+     * typeMismatchMessage()'s shared check with an equivalent value.
+     * `bool`'s own `"1"`/`"0"` spellings already pass that check as raw
+     * strings; anything else — including a real array a repeated query
+     * key or bracketed form field name produces — passes through
+     * unchanged.
+     *
+     * Called only from those three sources, never for a JSON body: the
+     * JSON *string* `"true"` stays a string, and stays a 422.
      */
-    private static function normalizeFormLiteral(?string $scalarType, mixed $value): mixed
+    public static function normalizeTextualBoolean(?string $scalarType, mixed $value): mixed
     {
-        if (!in_array($scalarType, ['bool', 'true', 'false'], true) || !is_string($value)) {
+        if ($scalarType !== 'bool' || !is_string($value)) {
             return $value;
         }
 
@@ -757,44 +763,10 @@ final class Hydrator
             // `iterable` — so the wire contract and the accepted shape
             // are the same as `array`'s.
             'array', 'iterable' => self::listShapeMismatchMessage($value),
-            // A standalone `null` type accepts nothing but JSON null
-            // itself — the `$value === null` exemption above already
-            // covers that case, so reaching this arm means a non-null
-            // value was given for a field that can never legally
-            // hold one.
-            'null' => 'must be null, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            // PHP 8.2's standalone `true`/`false` types each accept
-            // exactly one literal boolean value — narrower than `bool`,
-            // which accepts either.
-            'true' => $value === true ? null : 'must be true, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            'false' => $value === false ? null : 'must be false, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            // `object` and `callable` have no truthful representation
-            // this codebase accepts (see JsonSchema::forType()'s own
-            // docblock for the full reasoning): JSON input never decodes
-            // into a real PHP object, and a `callable`-typed parameter fed
-            // an attacker-controlled string is a real arbitrary-function-
-            // name-injection risk if it's ever invoked downstream. Both
-            // are rejected unconditionally the moment a real value is
-            // actually supplied — this is the guaranteed-to-run boundary
-            // that closes the gap regardless of whether OpenAPI/MCP schema
-            // generation (which already refuses to describe either type at
-            // all) ever runs for this route/tool.
-            'object' => 'cannot be provided through JSON input — no request value can construct a plain object.',
-            'callable' => 'cannot be provided through JSON input — callable values are not accepted.',
-            // `mixed` accepts anything by definition — nothing to check;
-            // an explicit arm rather than falling to default below, so
-            // the fail-closed guard there only ever catches an
-            // unrecognized type name.
-            'mixed' => null,
-            // Every one of the twelve builtin type names ReflectionNamedType
-            // can actually attach to a parameter has its own arm above —
-            // reaching here means $scalarType isn't one of them at all.
-            // Throwing (fail closed) rather than silently accepting is
-            // deliberate: a bare `default => null` here is exactly the
-            // fail-open pattern a future builtin type PHP adds, or a
-            // caller passing a scalarType this method never derived from
-            // reflection, must not get.
-            default => throw UnsupportedScalarTypeException::forType($scalarType),
+            // `mixed` accepts anything by definition. No other builtin
+            // reaches here: SUPPORTED_BUILTIN_TYPES is enforced where
+            // each plan is built.
+            default => null,
         };
     }
 

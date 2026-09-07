@@ -741,11 +741,13 @@ first — casting only ever happens once that check passes. This is the
 one check shared by every source of typed input: a `#[Body]` DTO field,
 a `#[Query]`/path parameter, and — since `Kinetis\Mcp\McpDispatcher`
 delegates to the identical `Hydrator::typeMismatchMessage()` method — an
-MCP tool's own top-level argument. Every builtin type PHP can attach to
-a constructor or method parameter gets one of the two policies below,
-never left to fall through silently:
+MCP tool's own top-level argument.
 
-**Supported — checked, cast, and accepted:**
+A request value binds to one of seven builtin types:
+`string`, `int`, `float`, `bool`, `array`, `iterable`, `mixed`. Every
+other builtin — `null`, `true`, `false`, `object`, `callable` — is a
+definition error, not a runtime one: see "Builtin types outside the
+supported set" below.
 
 - A `string`-typed field/parameter must actually be a string. An array,
   object, number, or boolean is rejected.
@@ -787,51 +789,48 @@ never left to fall through silently:
   a bare `[]` — PHP has no native empty-object type, so a naive empty
   PHP array would otherwise serialize as the invalid JSON array `[]`
   where JSON Schema requires an object.
-- A standalone `null`-typed field/parameter (PHP's own literal-null
-  type) accepts only a literal JSON `null` — any other value is
-  rejected. See "Query and path values are raw strings" below for why
-  this type can never be satisfied by a `#[Query]`/path source at all.
-- Standalone `true`/`false`-typed fields (PHP 8.2's literal-boolean
-  types) each accept exactly that one boolean value — narrower than
-  `bool`, which accepts either.
-
-**Rejected — no value is ever accepted, once one is actually supplied:**
-
-- `object`-typed fields/parameters are always rejected. A JSON object on
-  the wire is always either hydrated into a nested DTO (a class-typed
-  field) or, for a `mixed`/array-element field, unwrapped back into a
-  plain PHP array/scalar tree before it ever reaches application code —
-  never handed through as a raw PHP `object`, so there is no request
-  value that could ever truthfully construct a bare `object`-typed
-  parameter.
-- `callable`-typed fields/parameters are always rejected, for a
-  security reason as much as a representational one: a JSON string
-  handed to a `callable`-typed constructor parameter is exactly the
-  shape of an arbitrary-function-name-injection risk if that value is
-  ever invoked downstream, so it's refused outright rather than treated
-  as though it were safe.
-
-Both are also refused earlier, at OpenAPI-document/MCP-tool-schema
-generation time, since neither has a truthful JSON Schema representation
-this framework produces — but that generation step is optional
-(`/openapi.json`, `tools/list`) and never a prerequisite for a route or
-tool to register and dispatch real requests. The type-mismatch check
-above is what closes the gap for every deployment shape: it runs on
-every real request/tool call regardless of whether schema generation
-ever executes.
 
 A mismatch is a `422` with a message under that field's key, in the same
 `errors` structure a failed constraint produces — not a value silently
 coerced into something that happens to look plausible (an array becoming
 the literal string `"Array"`, a non-numeric string becoming `0`), and
-never a raw `TypeError` escaping the constructor for a genuinely
-unsupported type. Every field's own errors are collected together before
-throwing once, so two independently-invalid fields in the same request —
-including two rejected-category fields at once — both surface in the
+never a raw `TypeError` escaping the constructor. Every field's own
+errors are collected together before throwing once, so two
+independently-invalid fields in the same request both surface in the
 same response, not just whichever one happened to be checked first. An
 MCP tool's own validation failure surfaces the same `{field: [messages]}`
 shape inside a `tools/call` result's `isError: true` content, rather than
 a JSON-RPC-level error — see {doc}`mcp`.
+
+### Builtin types outside the supported set
+
+`null`, `true`, `false`, `object` and `callable` are rejected as
+declarations, before any request reaches them. A JSON body decodes into
+arrays and scalars, never a real PHP object; a query string and a path
+segment carry text only; and a `callable`-typed parameter fed an
+attacker-controlled string is an arbitrary-function-name-injection risk
+if it is ever invoked downstream. None of them has a request value worth
+supporting, so none of them is accepted anywhere a request value is
+bound.
+
+The rejection fires wherever the binding is described:
+
+- A `#[Body]` DTO field is rejected with
+  `Exception\UnsupportedDtoDefinitionException` when its hydration plan
+  is compiled — at build time for an AOT-compiled plan, on the first
+  hydration for a live one.
+- A `#[Query]` or path parameter is rejected with
+  `Kinetis\Http\Exception\UnresolvableParameterException` when the route's
+  binding plan is derived, which `Router::register()` does eagerly — so
+  the route never registers, is never advertised at `/openapi.json`, and
+  never accepts traffic.
+- An OpenAPI or MCP schema is refused with
+  `Exception\JsonSchemaException`, since there is no shape a client could
+  be told to send.
+
+A controller parameter that reads no request value at all — one filled
+from the request container or from its own default — is unaffected;
+its type is that parameter's own business.
 
 ### Query and path values are raw strings
 
@@ -840,34 +839,18 @@ source — but the *value* it checks is not. A `#[Body]`/MCP value is
 already a real, JSON-decoded PHP value (a genuine `bool`, `array`, ...);
 a `#[Query]`/path value only ever arrives as a raw string (or, for a
 `#[Query]` array-style parameter — `?tags=a&tags=b` — a list of them).
-Two consequences follow directly from this:
+Several consequences follow directly from this:
 
-- **`bool`/`true`/`false` accept the OpenAPI-documented `"true"`/`"false"`
-  spelling too, not just `"1"`/`"0"`.** `Dispatcher` translates those two
-  literal string spellings into real PHP `true`/`false` before the shared
-  check runs — the one place a `#[Query]`/path *source* genuinely differs
-  from a JSON body, so the same check still receives a genuinely
-  equivalent value. `bool`'s own pre-existing `"1"`/`"0"` spellings are
-  unaffected.
-- **A standalone `null`-typed `#[Query]`/path parameter is rejected at
-  registration, not at request time.** There is no established, safe
-  string convention for "this means explicit null" the way `"true"`/
-  `"false"` is an established convention for booleans, so this
-  declaration is unconditionally impossible to satisfy: a `#[Query]`
-  parameter with no default fails "is required." when omitted and
-  "must be null, ... given." for any value actually sent; a path
-  parameter fails the same way *regardless* of any declared default,
-  since a matched route's own placeholder capture always supplies a
-  real, non-empty string — there is no "value missing" case a default
-  could ever be reached from. Both are rejected at `Router::register()`
-  itself — the one boundary every route passes through regardless of
-  deployment shape, so a route that could never succeed is rejected
-  before it can ever register, be advertised at `/openapi.json`, or
-  accept traffic, rather than only failing the first time a real client
-  actually dispatches to it — a `#[Query]` field genuinely optional at
-  this type needs a default (so omitting it is the only way to reach
-  it); a path parameter needs a different type, or to move to
-  `#[Body]`, where a real JSON `null` is representable.
+- **`bool` accepts the OpenAPI-documented `"true"`/`"false"` spelling
+  too, not just `"1"`/`"0"`.** `Hydrator::normalizeTextualBoolean()`
+  translates those two literal string spellings into real PHP
+  `true`/`false` before the shared check runs — the one place a
+  `#[Query]`/path *source* differs from a JSON body, so the same check
+  still receives an equivalent value. `bool`'s own `"1"`/`"0"`
+  spellings are unaffected.
+- **A `#[Query]`/path parameter typed outside the supported set is
+  rejected at registration**, not at request time — see "Builtin types
+  outside the supported set" above.
 - **An `array`/`iterable`-typed path parameter is rejected at
   registration too, unconditionally.** A `#[Query]` array works via the
   repeated-key form below, but a route placeholder is always exactly
@@ -913,22 +896,12 @@ schema under all three, since `Dispatcher` hydrates the same DTO class
 regardless of which the client sent; the wire representation is what
 differs, laid out below.
 
-- `bool`/standalone `true`/`false` accept both the pre-existing
-  `"1"`/`"0"` spelling *and* the `"true"`/`"false"` spelling for a
-  form-encoded value — the identical normalization `#[Query]`/path
-  already has, applied here only when `Dispatcher` knows the whole
-  request body is form-encoded, so a real JSON request for the same
-  field still correctly rejects the JSON *string* `"true"` (as opposed
-  to the JSON boolean literal `true`) exactly as it always has.
-- Standalone `null` can never be satisfied by a form-encoded value at
-  all, for the identical reason a `#[Query]`/path value can't (there is
-  no established string convention for "this means explicit null") —
-  but since the *same* DTO class can also be reached via a genuine JSON
-  body on the same route, this is a per-request outcome, not a
-  registration-time impossibility the way a `#[Query]`/path parameter's
-  own type is: a route accepting a `#[Body]` DTO with a standalone-null
-  field still registers and works correctly over JSON, and only fails a
-  request that happens to arrive form-encoded instead.
+- `bool` accepts both the `"1"`/`"0"` spelling *and* the
+  `"true"`/`"false"` spelling for a form-encoded value — the identical
+  normalization `#[Query]`/path already has, applied here only when
+  `Dispatcher` knows the whole request body is form-encoded, so a real
+  JSON request for the same field still rejects the JSON *string*
+  `"true"` (as opposed to the JSON boolean literal `true`).
 - `array`/`iterable` get the identical map-shaped-value rejection
   documented above (a form-encoded field parsed into a genuinely
   associative PHP array is rejected the same way a JSON object is), but
@@ -1142,10 +1115,10 @@ item class must be a class that can be instantiated.
 
 A hydration plan is compiled from a DTO's constructor by reflection —
 ahead of time by `kinetis build`, or on that class's first hydration
-otherwise. It supports a finite set of parameter shapes: a builtin type,
-a single named class (hydrated when it can be instantiated, instance-only
-when it can't), an `array` carrying `#[ListOf]`, and nullable variants of
-each.
+otherwise. It supports a finite set of parameter shapes: one of the seven supported
+builtin types, a single named class (hydrated when it can be
+instantiated, instance-only when it can't), an `array` carrying
+`#[ListOf]`, and nullable variants of each.
 
 Anything else is rejected while the plan is compiled, with an
 `UnsupportedDtoDefinitionException` naming the class and the parameter —
@@ -1163,6 +1136,8 @@ in development, rather than as a `TypeError` on a live one:
   `array` field, or model the deeper level as its own request.
 - A class type reflection cannot resolve to a real class: `self`,
   `parent`, `static`.
+- A builtin type outside the supported set — see "Builtin types outside
+  the supported set" above.
 - `#[ListOf]` on a parameter that isn't typed `array`, or naming a class
   that cannot be instantiated.
 - A `#[Body]` DTO class that cannot itself be instantiated.
