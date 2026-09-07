@@ -15,7 +15,7 @@ use Psr\Http\Client\RequestExceptionInterface;
  *
  * Not `final` — it exists to be extended by the concrete failures in
  * this namespace, each `final` with its own fixed message. See
- * {@see ClientFailureException} for the request, message, cause, and
- * serialization rules every failure here shares.
+ * {@see ClientFailureException} for the request, message and cause
+ * rules every failure here shares.
  */
 abstract class RequestFailureException extends ClientFailureException implements RequestExceptionInterface {}

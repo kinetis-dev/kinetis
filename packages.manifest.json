@@ -429,7 +429,7 @@
         },
         "aws-sigv4": {
             "name": "kinetis/aws-sigv4",
-            "description": "A PSR-18 client that signs outgoing requests with AWS Signature Version 4 (SigV4) for one configured origin — reused signing logic from async-aws/core, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
+            "description": "A PSR-18 client that signs outgoing requests with AWS Signature Version 4 (SigV4) for one configured origin — checked against AWS's published SigV4 test vectors, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
             "version": "1.3.0",

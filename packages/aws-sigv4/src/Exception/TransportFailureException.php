@@ -17,8 +17,7 @@ use SensitiveParameter;
  * `Authorization` and `X-Amz-Security-Token` headers included — through
  * `RequestExceptionInterface::getRequest()`, so it is replaced here
  * rather than rethrown. See {@see ClientFailureException} for the
- * message, cause, and serialization rules every failure in this
- * namespace shares.
+ * message and cause rules every failure in this namespace shares.
  */
 final class TransportFailureException extends RequestFailureException
 {

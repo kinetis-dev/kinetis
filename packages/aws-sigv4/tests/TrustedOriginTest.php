@@ -54,16 +54,6 @@ final class TrustedOriginTest extends TestCase
             'target' => '/health',
             'url' => 'http://127.0.0.1:8080/health',
         ];
-        yield 'bracketed IPv6 host' => [
-            'origin' => 'http://[2001:DB8::1]:8080',
-            'target' => '/health',
-            'url' => 'http://[2001:db8::1]:8080/health',
-        ];
-        yield 'expanded IPv6 loopback' => [
-            'origin' => 'http://[0:0:0:0:0:0:0:1]:8080',
-            'target' => '/health',
-            'url' => 'http://[::1]:8080/health',
-        ];
         yield 'base path' => [
             'origin' => 'https://api.example.com/prod',
             'target' => '/users',
@@ -224,17 +214,17 @@ final class TrustedOriginTest extends TestCase
         yield 'five-octet IPv4' => [
             'origin' => 'https://1.2.3.4.5', 'message' => SigningException::ORIGIN_INVALID_HOST,
         ];
+        // An IPv6 origin is out of scope, and a bracket is reported as
+        // the host it stands in rather than as the port the rest of the
+        // authority would otherwise parse as.
+        yield 'IPv6 literal' => [
+            'origin' => 'https://[::1]', 'message' => SigningException::ORIGIN_INVALID_HOST,
+        ];
+        yield 'IPv6 literal with a port' => [
+            'origin' => 'https://[2001:db8::1]:8080', 'message' => SigningException::ORIGIN_INVALID_HOST,
+        ];
         yield 'unterminated IPv6 bracket' => [
             'origin' => 'https://[2001:db8::1', 'message' => SigningException::ORIGIN_INVALID_HOST,
-        ];
-        // The bracket is missing and what precedes the final colon is a
-        // whole address on its own, so an authority read without the
-        // closing bracket parses as a host this origin never named.
-        yield 'unterminated IPv6 bracket around a complete address' => [
-            'origin' => 'https://[::1:', 'message' => SigningException::ORIGIN_INVALID_HOST,
-        ];
-        yield 'invalid IPv6' => [
-            'origin' => 'https://[2001:db8:::1]', 'message' => SigningException::ORIGIN_INVALID_HOST,
         ];
         yield 'non-numeric port' => [
             'origin' => 'https://api.example.com:https', 'message' => SigningException::ORIGIN_INVALID_PORT,
@@ -458,11 +448,6 @@ final class TrustedOriginTest extends TestCase
             'target' => new RawUri('HTTPS', '', 'API.EXAMPLE.COM', null, '/users'),
             'url' => 'https://api.example.com/users',
         ];
-        yield 'IPv6 host in another spelling' => [
-            'origin' => 'https://[::1]',
-            'target' => new RawUri('https', '', '[0:0:0:0:0:0:0:1]', null, '/users'),
-            'url' => 'https://[::1]/users',
-        ];
         // The spelling that varies is the configured origin's. It is
         // canonicalized once, at construction, so the comparison has a
         // single form on both sides rather than a case-folding rule.
@@ -474,12 +459,11 @@ final class TrustedOriginTest extends TestCase
     }
 
     /**
-     * Scheme and host are case-insensitive and an IPv6 address has more
-     * than one spelling, so a target a PSR-7 implementation normalized
-     * neither of — {@see RawUri} — still names the configured origin,
-     * and so does a target spelled unlike the origin it names. Both
-     * sides are compared in canonical form, and the wire URL is the
-     * origin's own however either was spelled.
+     * Scheme and host are case-insensitive, so a target a PSR-7
+     * implementation left uppercase — {@see RawUri} — still names the
+     * configured origin, and so does a target spelled unlike the origin
+     * it names. Both sides are compared in canonical form, and the wire
+     * URL is the origin's own however either was spelled.
      */
     #[DataProvider('onOriginSpellingProvider')]
     public function test_an_on_origin_target_matches_however_it_is_spelled(

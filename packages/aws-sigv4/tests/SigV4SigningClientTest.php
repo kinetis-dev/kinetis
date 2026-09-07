@@ -12,43 +12,14 @@ use Nyholm\Psr7\Request;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Signing behavior: what reaches the transport for a request that is
- * already on the configured origin.
+ * What reaches the transport for a request that is already on the
+ * configured origin: the headers the signer owns, the headers it leaves
+ * alone, and the body. {@see SignatureTest} covers the algorithm those
+ * headers carry.
  */
 final class SigV4SigningClientTest extends TestCase
 {
     private const string ORIGIN = 'https://example.amazonaws.com';
-
-    /**
-     * AWS's published "get-vanilla" SigV4 test vector: a fixed date
-     * (2015-08-30T12:36:00Z), the static AKIDEXAMPLE credentials, region
-     * "us-east-1", the placeholder service name "service", and a plain
-     * GET with no extra headers or query string. The expected
-     * `Authorization` header is AWS's own ground truth, byte for byte.
-     */
-    public function test_matches_the_aws_published_get_vanilla_test_vector(): void
-    {
-        $transport = new RecordingTransport();
-        $client = new SigV4SigningClient(
-            self::ORIGIN,
-            'us-east-1',
-            'service',
-            FixedCredentialProvider::example(),
-            new \DateTimeImmutable('2015-08-30T12:36:00Z'),
-            $transport->asTransport(),
-        );
-
-        $client->sendRequest(new Request('GET', 'https://example.amazonaws.com/'));
-
-        self::assertSame(
-            'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, '
-            . 'SignedHeaders=host;x-amz-date, '
-            . 'Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31',
-            $transport->headerLineOfCall(0, 'Authorization'),
-        );
-        self::assertSame('example.amazonaws.com', $transport->headerLineOfCall(0, 'Host'));
-        self::assertSame('20150830T123600Z', $transport->headerLineOfCall(0, 'X-Amz-Date'));
-    }
 
     public function test_returns_the_transport_response(): void
     {
@@ -59,6 +30,25 @@ final class SigV4SigningClientTest extends TestCase
 
         self::assertSame(201, $response->getStatusCode());
         self::assertSame('created', (string) $response->getBody());
+    }
+
+    /**
+     * `Host` names the trusted origin whatever the caller's own header
+     * said, and the timestamp is the signer's, so the two headers the
+     * signature is built on cannot be set from outside.
+     */
+    public function test_the_signer_owns_the_host_and_date_headers(): void
+    {
+        $transport = new RecordingTransport();
+
+        $this->client($transport)->sendRequest(
+            (new Request('GET', 'https://example.amazonaws.com/'))
+                ->withHeader('Host', 'evil.example.com')
+                ->withHeader('X-Amz-Date', '19700101T000000Z'),
+        );
+
+        self::assertSame('example.amazonaws.com', $transport->headerLineOfCall(0, 'Host'));
+        self::assertNotSame('19700101T000000Z', $transport->headerLineOfCall(0, 'X-Amz-Date'));
     }
 
     public function test_a_session_token_is_signed_in_as_a_header(): void
@@ -79,9 +69,30 @@ final class SigV4SigningClientTest extends TestCase
     }
 
     /**
+     * Credentials without a token own the header too: a caller's own
+     * `X-Amz-Security-Token` would otherwise be signed and sent as if it
+     * came with the credentials the request is signed under.
+     */
+    public function test_a_caller_security_token_is_removed_when_the_credentials_carry_none(): void
+    {
+        $transport = new RecordingTransport();
+
+        $this->client($transport)->sendRequest(
+            (new Request('GET', 'https://example.amazonaws.com/'))
+                ->withHeader('X-Amz-Security-Token', 'a-caller-token'),
+        );
+
+        self::assertSame('', $transport->headerLineOfCall(0, 'X-Amz-Security-Token'));
+        self::assertStringContainsString(
+            'SignedHeaders=host;x-amz-date,',
+            $transport->headerLineOfCall(0, 'Authorization'),
+        );
+    }
+
+    /**
      * A plain PSR-7 withHeader() call already puts X-Custom on the
      * outgoing request whatever this class does; what has to be checked
-     * is whether SignerV4 signed over it, which the `SignedHeaders`
+     * is whether the signature covers it, which the `SignedHeaders`
      * portion of the Authorization header is the evidence for.
      */
     public function test_an_existing_header_is_included_in_the_signature(): void
@@ -99,10 +110,8 @@ final class SigV4SigningClientTest extends TestCase
     }
 
     /**
-     * A repeated header is folded into one comma-joined string as
-     * SignerV4's canonical signing input only. Writing that folded
-     * string back onto the outgoing request would merge the caller's two
-     * distinct values into one.
+     * A repeated header is joined for the canonical request only. The
+     * outgoing request keeps every value it was given, in order.
      */
     public function test_a_repeated_header_survives_signing_with_its_values_and_order_intact(): void
     {
@@ -123,11 +132,11 @@ final class SigV4SigningClientTest extends TestCase
 
     /**
      * A header value carrying its own comma (a Cookie-shaped one) must
-     * arrive byte-identical, proving the fold-for-signing step never
-     * leaks into what is sent even where the folded string would, if
-     * re-split on commas, look like more values than there are. The
-     * session token alongside it confirms every signer-owned header
-     * still reaches the transport at the same time.
+     * arrive byte-identical, proving the canonical join never leaks into
+     * what is sent even where the joined string would, if re-split on
+     * commas, look like more values than there are. The session token
+     * alongside it confirms every signer-owned header still reaches the
+     * transport at the same time.
      */
     public function test_a_header_with_an_embedded_comma_survives_signing_byte_identical(): void
     {
@@ -171,8 +180,8 @@ final class SigV4SigningClientTest extends TestCase
 
     /**
      * PSR-7 permits a stream that cannot be seeked at all — a chunked
-     * request body, or a pipe. Such a body is read from where it is
-     * rather than rewound, and both signing and sending still work.
+     * request body, or a pipe. It is read where it stands, like every
+     * other body, and both signing and sending still work.
      */
     public function test_a_non_seekable_request_body_is_signed_and_sent(): void
     {
@@ -189,9 +198,26 @@ final class SigV4SigningClientTest extends TestCase
     }
 
     /**
-     * `SpooledStream` is backed by `php://temp`, which stays in memory
-     * up to 2MB before spilling to a real temp file; a body past that
-     * boundary round-trips through both signing and the transport.
+     * Signing reads the caller's stream from where it stands through
+     * EOF and consumes it: what is signed and sent is what was left to
+     * read, and the caller's stream is at its end afterwards.
+     */
+    public function test_signing_consumes_the_request_body_from_its_current_position(): void
+    {
+        $transport = new RecordingTransport();
+        $request = new Request('POST', 'https://example.amazonaws.com/', [], 'abcdef');
+        $body = $request->getBody();
+        $body->seek(2);
+
+        $this->client($transport)->sendRequest($request);
+
+        self::assertSame('cdef', $transport->bodyOfCall(0));
+        self::assertTrue($body->eof());
+    }
+
+    /**
+     * A body past `php://temp`'s 2MB in-memory threshold round-trips
+     * through both signing and the transport.
      */
     public function test_a_large_request_body_past_the_in_memory_threshold_is_signed_and_sent(): void
     {
@@ -204,26 +230,6 @@ final class SigV4SigningClientTest extends TestCase
 
         self::assertStringContainsString('Signature=', $transport->headerLineOfCall(0, 'Authorization'));
         self::assertSame($largeBody, $transport->bodyOfCall(0));
-    }
-
-    /**
-     * The stream a caller built their request with is the one this class
-     * reads to compute the signature, so rewinding and reading it is a
-     * visible mutation of their own object unless the original position
-     * is restored: a 6-byte body seeked to offset 2 before sendRequest()
-     * still reads offset 2 afterward.
-     */
-    public function test_a_seekable_request_bodys_original_cursor_position_is_restored(): void
-    {
-        $transport = new RecordingTransport();
-        $request = new Request('POST', 'https://example.amazonaws.com/', [], 'abcdef');
-        $body = $request->getBody();
-        $body->seek(2);
-
-        $this->client($transport)->sendRequest($request);
-
-        self::assertSame(2, $body->tell());
-        self::assertSame('abcdef', $transport->bodyOfCall(0));
     }
 
     /**

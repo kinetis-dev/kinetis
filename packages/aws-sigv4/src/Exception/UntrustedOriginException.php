@@ -17,8 +17,8 @@ use SensitiveParameter;
  * Raised before the credential provider is called, before the request
  * body is read, and before anything is handed to the transport, so a
  * rejected request costs no credential resolution and produces no
- * network traffic. See {@see ClientFailureException} for the message,
- * cause, and serialization rules every failure in this namespace shares.
+ * network traffic. See {@see ClientFailureException} for the message
+ * and cause rules every failure in this namespace shares.
  */
 final class UntrustedOriginException extends RequestFailureException
 {

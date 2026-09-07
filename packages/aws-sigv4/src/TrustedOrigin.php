@@ -25,8 +25,8 @@ use SensitiveParameter;
  *   `scheme://`.
  * - authority: a host, optionally followed by `:` and a decimal port in
  *   1–65535. No userinfo, no percent sign.
- * - host: a registered name of dot-separated LDH labels, a dotted-quad
- *   IPv4 address, or a bracketed IPv6 address.
+ * - host: a registered name of dot-separated LDH labels, or a
+ *   dotted-quad IPv4 address. An IPv6 origin is out of scope.
  * - path: empty, or `/`-prefixed and built from unreserved,
  *   sub-delimiter, `:`, `@`, `/` and well-formed `%XX` characters, with
  *   no `.` or `..` segment.
@@ -34,10 +34,9 @@ use SensitiveParameter;
  * - no whitespace, control character, or backslash anywhere in the
  *   value.
  *
- * Comparison is on scheme, host, and effective port: the scheme and a
- * registered name are lowercased, an IPv6 address is compared in its
- * packed form so `[0:0:0:0:0:0:0:1]` and `[::1]` are one origin, and an
- * absent port resolves to 80 for `http` and 443 for `https`.
+ * Comparison is on scheme, host, and effective port: the scheme and the
+ * host are lowercased, and an absent port resolves to 80 for `http` and
+ * 443 for `https`.
  *
  * The base path is a second, separate constraint, and it binds every
  * request: a relative one is joined onto it, an absolute one must
@@ -117,7 +116,7 @@ final class TrustedOrigin
             return false;
         }
 
-        if (self::comparableHost($uri->getHost()) !== $this->host) {
+        if (strtolower($uri->getHost()) !== $this->host) {
             return false;
         }
 
@@ -184,20 +183,16 @@ final class TrustedOrigin
      */
     private static function splitAuthority(#[SensitiveParameter] string $authority, int $defaultPort): array
     {
-        if (str_starts_with($authority, '[')) {
-            $close = strpos($authority, ']');
-
-            if ($close === false) {
-                throw SigningException::originHasInvalidHost();
-            }
-
-            $host = self::normalizeIpV6(substr($authority, 1, $close - 1));
-            $portPart = substr($authority, $close + 1);
-        } else {
-            $colon = strpos($authority, ':');
-            $host = self::normalizeRegisteredName($colon === false ? $authority : substr($authority, 0, $colon));
-            $portPart = $colon === false ? '' : substr($authority, $colon);
+        // A bracket is only ever an IPv6 literal, which this package
+        // does not sign for; it is named here so the failure reports the
+        // host rather than the port the remainder parses as.
+        if (strpbrk($authority, '[]') !== false) {
+            throw SigningException::originHasInvalidHost();
         }
+
+        $colon = strpos($authority, ':');
+        $host = self::normalizeRegisteredName($colon === false ? $authority : substr($authority, 0, $colon));
+        $portPart = $colon === false ? '' : substr($authority, $colon);
 
         if ($portPart === '') {
             return [$host, $defaultPort];
@@ -234,27 +229,6 @@ final class TrustedOrigin
     }
 
     /**
-     * Returns the bracketed, packed-then-printed form, which is the one
-     * comparison uses: `inet_ntop(inet_pton(...))` collapses every
-     * spelling of one address onto a single string.
-     */
-    private static function normalizeIpV6(#[SensitiveParameter] string $address): string
-    {
-        if (filter_var($address, \FILTER_VALIDATE_IP, \FILTER_FLAG_IPV6) === false) {
-            throw SigningException::originHasInvalidHost();
-        }
-
-        $packed = inet_pton($address);
-        $printed = $packed === false ? false : inet_ntop($packed);
-
-        if ($printed === false) {
-            throw SigningException::originHasInvalidHost();
-        }
-
-        return '[' . strtolower($printed) . ']';
-    }
-
-    /**
      * A base path is rejected rather than repaired when it carries a `.`
      * or `..` segment — an origin is configuration, and configuration
      * that does not say what it means is a mistake to report, not one to
@@ -272,7 +246,7 @@ final class TrustedOrigin
             throw SigningException::originHasInvalidPath();
         }
 
-        $normalized = rtrim(WireTarget::normalizeEncoding($path), '/');
+        $normalized = WireTarget::normalizeEncoding($path);
 
         foreach (explode('/', $normalized) as $segment) {
             if ($segment === '.' || $segment === '..') {
@@ -280,18 +254,6 @@ final class TrustedOrigin
             }
         }
 
-        return $normalized;
-    }
-
-    private static function comparableHost(string $host): string
-    {
-        if (!str_starts_with($host, '[') || !str_ends_with($host, ']')) {
-            return strtolower($host);
-        }
-
-        $packed = inet_pton(substr($host, 1, -1));
-        $printed = $packed === false ? false : inet_ntop($packed);
-
-        return $printed === false ? strtolower($host) : '[' . strtolower($printed) . ']';
+        return rtrim(WireTarget::collapseSlashes($normalized), '/');
     }
 }
