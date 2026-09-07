@@ -37,7 +37,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  * write — even one that leaves the id itself unchanged — sends a fresh
  * Set-Cookie too, so the browser's own Max-Age keeps counting from the
  * same moment {@see Session::commit()}'s store TTL does; a mutated
- * session's two expirations never drift apart.
+ * session's two expirations never drift apart. A write the store
+ * refuses, because another request removed the id meanwhile, sends no
+ * cookie at all.
  *
  * Cookie attributes: HttpOnly always (script access to a session id has
  * no legitimate use), SameSite and Secure from configuration —

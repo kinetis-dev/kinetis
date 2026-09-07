@@ -12,9 +12,9 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * SqlSessionStore against a real MySQL, because the one thing worth
- * pinning here is not expressible against a fake: the store writes with
- * an UPDATE followed by an INSERT, and whether that is correct depends
- * on how the server counts affected rows.
+ * pinning here is not expressible against a fake: update() reads the
+ * server's own affected-row count, and MySQL counts changed rows rather
+ * than matched ones.
  *
  * Environment-gated on MYSQL_HOST, like every other real-backend test in
  * this repository.
@@ -80,7 +80,7 @@ final class SqlSessionStoreIntegrationTest extends TestCase
 
     public function test_a_session_round_trips(): void
     {
-        $this->store()->write('sid-1', ['user' => 42, 'theme' => 'dark'], 3600);
+        $this->store()->create('sid-1', ['user' => 42, 'theme' => 'dark'], 3600);
 
         self::assertSame(['user' => 42, 'theme' => 'dark'], $this->store()->read('sid-1'));
     }
@@ -92,28 +92,46 @@ final class SqlSessionStoreIntegrationTest extends TestCase
 
     /**
      * The reason this test exists. MySQL reports zero affected rows for
-     * an UPDATE whose values are byte-identical to the stored row, so a
-     * store that treats "nothing updated" as "no row yet" falls through
-     * to an INSERT and collides with its own primary key. Writing the
-     * same payload twice is the ordinary case — a request that reads a
-     * session and changes nothing about it.
+     * an UPDATE whose values are byte-identical to the stored row — the
+     * ordinary case of a request that read a session and changed
+     * nothing in it. Reading that as "the record is gone" would discard
+     * a live session and drop its cookie.
      */
-    public function test_writing_identical_data_twice_does_not_collide(): void
+    public function test_an_update_that_changes_no_bytes_still_reports_the_live_record(): void
     {
         $store = $this->store();
-        $store->write('sid-2', ['user' => 42], 3600);
-        $store->write('sid-2', ['user' => 42], 3600);
+        $store->create('sid-2', ['user' => 42], 3600);
 
+        self::assertTrue($store->update('sid-2', ['user' => 42], 3600));
         self::assertSame(['user' => 42], $store->read('sid-2'));
     }
 
-    public function test_a_write_replaces_the_previous_payload(): void
+    public function test_an_update_replaces_the_previous_payload(): void
     {
         $store = $this->store();
-        $store->write('sid-3', ['step' => 1], 3600);
-        $store->write('sid-3', ['step' => 2], 3600);
+        $store->create('sid-3', ['step' => 1], 3600);
 
+        self::assertTrue($store->update('sid-3', ['step' => 2], 3600));
         self::assertSame(['step' => 2], $store->read('sid-3'));
+    }
+
+    public function test_an_update_after_the_record_was_destroyed_is_refused(): void
+    {
+        $store = $this->store();
+        $store->create('sid-terminal', ['user' => 42], 3600);
+        $store->destroy('sid-terminal');
+
+        self::assertFalse($store->update('sid-terminal', ['user' => 42], 3600));
+        self::assertNull($store->read('sid-terminal'));
+        self::assertSame(0, $this->rowCount(), 'a refused update must not recreate the row.');
+    }
+
+    public function test_an_update_against_an_expired_row_is_refused(): void
+    {
+        $this->writeExpiredRow('sid-expired', ['user' => 42]);
+
+        self::assertFalse($this->store()->update('sid-expired', ['user' => 43], 3600));
+        self::assertNull($this->store()->read('sid-expired'));
     }
 
     /**
@@ -163,7 +181,7 @@ final class SqlSessionStoreIntegrationTest extends TestCase
 
         try {
             $store = new SqlSessionStore($link);
-            $store->write('sid-tz-plus5', ['user' => 42], 3600);
+            $store->create('sid-tz-plus5', ['user' => 42], 3600);
 
             self::assertSame(['user' => 42], $store->read('sid-tz-plus5'));
         } finally {
@@ -194,7 +212,7 @@ final class SqlSessionStoreIntegrationTest extends TestCase
         $before = \gmdate('Y-m-d H:i:s', \time() + 3600);
 
         try {
-            new SqlSessionStore($writeLink)->write('sid-tz-shift-check', ['user' => 42], 3600);
+            new SqlSessionStore($writeLink)->create('sid-tz-shift-check', ['user' => 42], 3600);
         } finally {
             $writeLink->close();
         }
@@ -220,7 +238,7 @@ final class SqlSessionStoreIntegrationTest extends TestCase
     public function test_destroy_removes_the_row(): void
     {
         $store = $this->store();
-        $store->write('sid-5', ['user' => 42], 3600);
+        $store->create('sid-5', ['user' => 42], 3600);
         $store->destroy('sid-5');
 
         self::assertNull($store->read('sid-5'));
@@ -230,7 +248,7 @@ final class SqlSessionStoreIntegrationTest extends TestCase
     public function test_gc_removes_only_what_has_expired_and_reports_how_many(): void
     {
         $store = $this->store();
-        $store->write('sid-live', ['a' => 1], 3600);
+        $store->create('sid-live', ['a' => 1], 3600);
         $this->writeExpiredRow('sid-dead-1', ['b' => 2]);
         $this->writeExpiredRow('sid-dead-2', ['c' => 3]);
 
@@ -248,7 +266,7 @@ final class SqlSessionStoreIntegrationTest extends TestCase
     }
 
     /**
-     * write() rejects a non-positive $lifetimeSeconds, so an
+     * create() rejects a non-positive $lifetimeSeconds, so an
      * already-expired row is inserted directly, one second in the past
      * via the server's own NOW().
      *

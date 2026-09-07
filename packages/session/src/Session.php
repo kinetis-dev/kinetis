@@ -347,6 +347,15 @@ final class Session
      * the new id's data leaves the old, still-genuine session untouched
      * rather than already gone.
      *
+     * An id this request read out of storage and did not rotate goes
+     * back through update(), which refuses once that record is gone —
+     * an overlapping logout or rotation retired it, and a stale write
+     * must not recreate it. A refusal reports false, so no cookie claims
+     * a session that is no longer there. Every other id — brand new, or
+     * one regenerate() just minted — is a create(), which always
+     * succeeds; a rotation is therefore not coordinated with a logout
+     * running alongside it.
+     *
      * Every successful write reports true, even when the id itself is
      * unchanged — $lifetimeSeconds is counted from *this* write, and
      * SessionMiddleware's own cookie carries the browser-side half of
@@ -390,9 +399,13 @@ final class Session
             unset($data[self::FLASH_OLD]);
         }
 
-        $this->store->write($this->id, $data, $lifetimeSeconds);
+        if ($this->persistedId === $this->id) {
+            return $this->store->update($this->id, $data, $lifetimeSeconds);
+        }
 
-        if ($this->persistedId !== null && $this->persistedId !== $this->id) {
+        $this->store->create($this->id, $data, $lifetimeSeconds);
+
+        if ($this->persistedId !== null) {
             $this->store->destroy($this->persistedId);
         }
 

@@ -7,9 +7,8 @@ namespace Kinetis\Session\Tests\Console;
 use Kinetis\Container\AppScope;
 use Kinetis\Session\Console\GcCommand;
 use Kinetis\Session\SessionStoreInterface;
-use Kinetis\Session\Store\CacheSessionStore;
 use Kinetis\Session\Store\FileSessionStore;
-use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
+use Kinetis\Session\Tests\Fixtures\RecordingSessionStore;
 use PHPUnit\Framework\TestCase;
 
 final class GcCommandTest extends TestCase
@@ -19,11 +18,11 @@ final class GcCommandTest extends TestCase
         $directory = \sys_get_temp_dir() . '/kinetis-gc-command-' . \bin2hex(\random_bytes(6));
         $store = new FileSessionStore($directory);
         $live = \bin2hex(\random_bytes(16));
-        $store->write($live, ['keep' => true], 60);
+        $store->create($live, ['keep' => true], 60);
 
-        // write() rejects a negative $lifetimeSeconds, so an
+        // create() rejects a negative $lifetimeSeconds, so an
         // already-expired file is seeded directly, in the envelope shape
-        // FileSessionStore's write() produces.
+        // FileSessionStore produces.
         $dead = \bin2hex(\random_bytes(16));
         \file_put_contents(
             $directory . '/sess_' . $dead,
@@ -42,7 +41,7 @@ final class GcCommandTest extends TestCase
 
     public function test_a_backend_expiring_store_reports_nothing_to_collect(): void
     {
-        [$exitCode, $output] = self::runCommand(new CacheSessionStore(new InMemorySessionCache()));
+        [$exitCode, $output] = self::runCommand(new RecordingSessionStore());
 
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('expires entries on its own', $output);

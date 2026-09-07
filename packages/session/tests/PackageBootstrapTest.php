@@ -9,10 +9,10 @@ use Kinetis\Container\AppScope;
 use Kinetis\Session\Exception\SessionException;
 use Kinetis\Session\PackageBootstrap;
 use Kinetis\Session\SessionStoreInterface;
-use Kinetis\Session\Store\CacheSessionStore;
 use Kinetis\Session\Store\FileSessionStore;
+use Kinetis\Session\Store\RedisSessionStore;
 use Kinetis\Session\Store\SqlSessionStore;
-use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
+use Kinetis\SimpleCache\NullSimpleCache;
 use PHPUnit\Framework\TestCase;
 use Psr\SimpleCache\CacheInterface;
 
@@ -40,14 +40,40 @@ final class PackageBootstrapTest extends TestCase
         @\rmdir($directory);
     }
 
-    public function test_cache_driver_stores_through_the_bound_cache_interface(): void
+    /**
+     * The store takes whatever cache AppScope::boot() bound. Building
+     * that client opens no connection, so no server is needed here.
+     */
+    public function test_redis_driver_uses_the_bound_redis_cache(): void
     {
+        $config = new Config(['SESSION_DRIVER' => 'redis', 'REDIS_HOST' => 'localhost']);
         $app = new AppScope();
-        $app->instance(CacheInterface::class, new InMemorySessionCache());
-        new PackageBootstrap()->register($app, new Config(['SESSION_DRIVER' => 'cache']));
+        $app->instance(Config::class, $config);
+        new PackageBootstrap()->register($app, $config);
         $app->boot();
 
-        self::assertInstanceOf(CacheSessionStore::class, $app->get(SessionStoreInterface::class));
+        self::assertInstanceOf(RedisSessionStore::class, $app->get(SessionStoreInterface::class));
+    }
+
+    /**
+     * The binding decides, not the configuration: Redis is configured
+     * here, so a factory building its own client would have succeeded.
+     * Reading the bound cache instead is what keeps one client per
+     * application, and the refusal names every way to configure Redis.
+     */
+    public function test_redis_driver_refuses_a_cache_binding_that_is_not_redis(): void
+    {
+        $config = new Config(['SESSION_DRIVER' => 'redis', 'REDIS_HOST' => 'localhost']);
+        $app = new AppScope();
+        $app->instance(Config::class, $config);
+        $app->instance(CacheInterface::class, new NullSimpleCache());
+        new PackageBootstrap()->register($app, $config);
+        $app->boot();
+
+        $this->expectException(SessionException::class);
+        $this->expectExceptionMessage('REDIS_CLUSTER_SEEDS');
+
+        $app->get(SessionStoreInterface::class);
     }
 
     public function test_sql_driver_resolves_whatever_link_is_bound(): void
@@ -78,7 +104,7 @@ final class PackageBootstrapTest extends TestCase
     public function test_an_unknown_driver_throws_naming_the_valid_set(): void
     {
         $this->expectException(SessionException::class);
-        $this->expectExceptionMessage('file, cache, sql');
+        $this->expectExceptionMessage('file, redis, sql');
 
         new PackageBootstrap()->register(new AppScope(), new Config(['SESSION_DRIVER' => 'memcached']));
     }

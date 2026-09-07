@@ -42,9 +42,17 @@ final readonly class PreferencesController
 
 Sessions load lazily and persist only when written: a route that never
 touches its session performs no storage round trip and sends no cookie.
-Payloads are JSON, never PHP `serialize()` — a crafted payload can't
-become an object-injection vector. Concurrency is last-write-wins by
-design (no session locking to serialize a browser's parallel requests).
+Session values are JSON-serializable application data: every store
+projects the session to JSON, and a read decodes it back to plain
+arrays and scalars. Concurrent updates of one live session are
+last-write-wins by design (no session locking to serialize a browser's
+parallel requests), and removing a stored id is terminal: a request
+writing back the unchanged id it read has that write refused, and sends
+no cookie, once a logout or rotation has removed it, so a stale write
+cannot recreate a retired id. A concurrent request that calls
+`regenerate()` itself writes under a new id and is not coordinated with
+that logout.
+
 A cookie id that is wellformed but unknown to the store — fabricated,
 or expired — is never trusted as-is: the first real access rotates it
 to a fresh id before anything can be exposed or written under it. That
@@ -70,16 +78,17 @@ Installing this package auto-registers, via `extra.kinetis`:
 
 - **A container binding** for `SessionStoreInterface`, driven by
   `SESSION_DRIVER` — `file` (one JSON file per session, suited to
-  development), `cache` (sessions through the PSR-16 binding, which with
-  [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) and `REDIS_HOST` configured means Redis-backed
-  sessions with zero further code, cluster and TLS included), or `sql`
+  development), `redis` (the `CacheInterface` binding Kinetis already
+  builds from your Redis configuration, so one client serves the whole
+  application — needs [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) and `REDIS_URL`,
+  `REDIS_HOST`, or `REDIS_CLUSTER` with `REDIS_CLUSTER_SEEDS`), or `sql`
   (a `kinetis_sessions` table over the persistence contracts, migration
   stubs shipped in `resources/migrations/`). Unset means the package
   binds nothing.
 - **One command** on `vendor/bin/kinetis`: `session:gc`, deleting
   expired sessions from the bound store — schedule it with cron or an
-  equivalent for the `file` and `sql` drivers. The `cache` driver needs
-  no collection: its backend (Redis TTL) expires entries itself.
+  equivalent for the `file` and `sql` drivers. The `redis` driver needs
+  no collection: the key's own TTL expires it.
 
 Nothing else. Both middlewares are explicit opt-ins attached per route
 or controller — `SessionMiddleware` registers the request's `Session`
@@ -91,7 +100,7 @@ form's `_token` field, with `hash_equals()` comparison.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SESSION_DRIVER` | — | `file`, `cache`, or `sql`; unset = inert. |
+| `SESSION_DRIVER` | — | `file`, `redis`, or `sql`; unset = inert. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write — the cookie's `Max-Age` and the store's own TTL always refresh together. |
 | `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
 | `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute: `Strict`, `Lax`, or `None`, any casing. `None` requires `SESSION_SECURE`. |

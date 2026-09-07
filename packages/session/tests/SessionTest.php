@@ -5,20 +5,18 @@ declare(strict_types=1);
 namespace Kinetis\Session\Tests;
 
 use Kinetis\Session\Session;
-use Kinetis\Session\Store\CacheSessionStore;
-use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
 use Kinetis\Session\Tests\Fixtures\RecordingSessionStore;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 final class SessionTest extends TestCase
 {
-    private CacheSessionStore $store;
+    private RecordingSessionStore $store;
 
     #[\Override]
     protected function setUp(): void
     {
-        $this->store = new CacheSessionStore(new InMemorySessionCache());
+        $this->store = new RecordingSessionStore();
     }
 
     public function test_values_round_trip_through_commit_and_a_second_session(): void
@@ -46,9 +44,16 @@ final class SessionTest extends TestCase
                 return null;
             }
 
-            public function write(string $id, array $data, int $lifetimeSeconds): void
+            public function create(string $id, array $data, int $lifetimeSeconds): void
             {
                 $this->writes++;
+            }
+
+            public function update(string $id, array $data, int $lifetimeSeconds): bool
+            {
+                $this->writes++;
+
+                return true;
             }
 
             public function destroy(string $id): void {}
@@ -74,14 +79,14 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-67: the ordinary, by-far-most-common case — mutating an
-     * existing session with no regenerate()/destroy() involved — must
-     * still request a cookie refresh, even though the id itself never
-     * changes. $lifetimeSeconds is counted from *this* write; without a
-     * refreshed Set-Cookie, the browser's own Max-Age would keep counting
-     * down from whenever the cookie was first issued while the store's
-     * expiry kept advancing on every mutation, letting the browser
-     * discard a cookie the store still considers perfectly live.
+     * The ordinary case — mutating an existing session with no
+     * regenerate()/destroy() involved — must still request a cookie
+     * refresh, even though the id never changes. $lifetimeSeconds is
+     * counted from *this* write; without a refreshed Set-Cookie the
+     * browser's Max-Age would keep counting down from when the cookie
+     * was first issued while the store's expiry advanced on every
+     * mutation, letting the browser discard a cookie the store still
+     * considers live.
      */
     public function test_mutating_an_existing_session_still_requires_a_cookie_refresh(): void
     {
@@ -95,6 +100,48 @@ final class SessionTest extends TestCase
 
         self::assertTrue($second->commit(60), 'a real mutation must refresh the cookie even though the id is unchanged.');
         self::assertSame($id, $second->id(), 'this is an ordinary mutation, not a regeneration — the id itself must not change.');
+    }
+
+    public function test_an_unchanged_stored_id_is_written_back_as_an_update(): void
+    {
+        $store = new RecordingSessionStore();
+        $id = self::establishedSession($store);
+
+        $second = new Session($store, $id);
+        $second->set('user', 43);
+
+        self::assertTrue($second->commit(60));
+        self::assertSame([['create', $id], ['update', $id]], $store->operations);
+    }
+
+    /**
+     * The terminal rule. This request read the session and then another
+     * one logged it out, so the payload it is holding is stale: the
+     * store refuses the update, commit() reports no cookie, and nothing
+     * puts the authenticated record back.
+     */
+    public function test_a_commit_is_discarded_once_another_request_destroyed_the_id(): void
+    {
+        $store = new RecordingSessionStore();
+        $id = self::establishedSession($store);
+
+        $second = new Session($store, $id);
+        $second->set('user', 43);
+        $store->destroy($id);
+
+        self::assertFalse($second->commit(60), 'a stale commit must not ask for a cookie.');
+        self::assertNull($store->read($id));
+        self::assertSame([['create', $id], ['destroy', $id]], $store->operations);
+    }
+
+    /** A session an earlier request created and stored, and its id. */
+    private static function establishedSession(RecordingSessionStore $store): string
+    {
+        $first = new Session($store, null);
+        $first->set('user', 42);
+        $first->commit(60);
+
+        return $first->id();
     }
 
     public function test_remove_and_all_behave(): void
@@ -124,11 +171,10 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-67: reading a flashed value ages it — the OLD generation
-     * has to be removed from the store at the next commit — which is
-     * itself a real write, not a read, and must refresh the cookie the
-     * same as an explicit set() would, even though nothing was ever
-     * explicitly written this request.
+     * Reading a flashed value ages it — the OLD generation has to be
+     * removed from the store at the next commit — which is a write, not
+     * a read, and must refresh the cookie the same as an explicit set()
+     * would.
      */
     public function test_reading_a_flashed_value_still_requires_a_cookie_refresh(): void
     {
@@ -155,11 +201,10 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-67: generating the CSRF token for the first time on an
-     * already-existing session (not a brand-new one) is itself a real
-     * write — the token has to be persisted to be checked against
-     * later — so it must refresh the cookie too, even though the id
-     * itself is unchanged and nothing was ever explicitly set().
+     * Generating the CSRF token for the first time on an already-existing
+     * session is a write — the token has to be persisted to be checked
+     * against later — so it refreshes the cookie too, even though the id
+     * is unchanged and nothing was explicitly set().
      */
     public function test_generating_the_csrf_token_on_an_existing_session_still_requires_a_cookie_refresh(): void
     {
@@ -184,12 +229,11 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-70: the whole reason verifyCsrfToken() exists — checking a
-     * submitted token, right or wrong, against a session with no token
-     * yet must never itself create one, unlike csrfToken() (which
-     * exists specifically to do that, for the legitimate form-rendering
-     * case). A brand-new session has nothing to match, so any submitted
-     * value is rejected.
+     * The reason verifyCsrfToken() exists: checking a submitted token,
+     * right or wrong, against a session with no token yet must never
+     * create one, unlike csrfToken(), which exists to do exactly that
+     * for the form-rendering case. A brand-new session has nothing to
+     * match, so any submitted value is rejected.
      */
     public function test_verify_csrf_token_never_generates_a_token(): void
     {
@@ -329,11 +373,10 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * The order KINETIS-64's own fix depends on: the replacement id's
-     * data must be durably written before the old, now-superseded id is
-     * removed — never the other way around, which would make a
-     * mid-commit failure lose the one copy of the session that still
-     * genuinely existed.
+     * The replacement id's data must be durably written before the old,
+     * superseded id is removed — never the other way around, which would
+     * make a mid-commit failure lose the one remaining copy of the
+     * session.
      */
     public function test_a_regenerate_writes_the_replacement_before_destroying_the_old_id(): void
     {
@@ -346,7 +389,7 @@ final class SessionTest extends TestCase
         $newId = $session->id();
         $session->commit(60);
 
-        self::assertSame([['write', $newId], ['destroy', $oldId]], $store->operations);
+        self::assertSame([['create', $newId], ['destroy', $oldId]], $store->operations);
     }
 
     /**
@@ -366,7 +409,7 @@ final class SessionTest extends TestCase
         $newId = $session->id();
         $session->commit(60);
 
-        self::assertSame([['write', $newId], ['destroy', $oldId]], $store->operations);
+        self::assertSame([['create', $newId], ['destroy', $oldId]], $store->operations);
         self::assertSame([[$newId, ['user' => 42]]], $store->writes);
     }
 
@@ -384,15 +427,14 @@ final class SessionTest extends TestCase
         $session->commit(60);
 
         self::assertNotSame(\str_repeat('a', 40), $fresh);
-        self::assertSame([['write', $newId], ['destroy', $oldId]], $store->operations);
+        self::assertSame([['create', $newId], ['destroy', $oldId]], $store->operations);
         self::assertSame([[$newId, ['user' => 42, '_csrf' => $fresh]]], $store->writes);
     }
 
     /**
-     * If the store's destroy() call itself fails partway through commit()
-     * — a real, disclosed possibility, not hypothetical — the replacement
-     * data written just before it is not lost: it already survived its
-     * own, independent write() call by the time destroy() ever runs.
+     * If the store's destroy() call fails partway through commit(), the
+     * replacement data written just before it is not lost: it already
+     * survived its own create() call by the time destroy() ran.
      */
     public function test_a_failing_destroy_during_commit_after_regenerate_still_leaves_the_replacement_written(): void
     {
@@ -766,16 +808,11 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-70: distinct from the untouched case directly above — this
-     * one genuinely accesses the session (get() does call load(), which
-     * does read the store and does rotate the id), but a plain read
-     * against a rejected cookie must still cost no write and need no
-     * cookie. Before this fix, load() itself marked the session dirty
-     * the moment it saw a rejected cookie, so even this read-only access
-     * would have persisted a fresh, empty session — the amplification
-     * path this fix closes, reproduced here at the lowest level that can
-     * show it: a genuine load() call that finds nothing, with no
-     * mutating accessor anywhere in the request.
+     * Distinct from the untouched case directly above: this one does
+     * access the session (get() calls load(), which reads the store and
+     * rotates the id), but a plain read against a rejected cookie must
+     * still cost no write and need no cookie. Otherwise an attacker
+     * could force one stored session per read-only request.
      */
     public function test_a_read_only_access_to_an_unknown_cookie_id_remains_lazy_and_uncommitted(): void
     {
@@ -789,11 +826,10 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-70's exact scenario: an attacker submits a CSRF token —
-     * right or wrong doesn't matter here, since a rejected cookie's
-     * session has no real token to match against regardless — against a
-     * cookie the store has never heard of. Checking it must never itself
-     * allocate and persist a session; repeating this request any number
+     * An attacker submits a CSRF token — right or wrong is immaterial,
+     * since a rejected cookie's session has no token to match against —
+     * for a cookie the store has never heard of. Checking it must never
+     * allocate and persist a session; repeating the request any number
      * of times must never grow the store.
      */
     public function test_verify_csrf_token_on_an_unknown_cookie_id_remains_lazy_and_uncommitted(): void
@@ -826,13 +862,11 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-70: the amplification path closed by this fix is about
-     * sessions that don't exist yet — this proves the opposite direction
-     * holds too. A genuinely existing session, presented with the wrong
-     * CSRF token, must be left completely untouched: not destroyed, not
-     * rewritten, not even re-cookied. The store's own entry for it is
-     * read back directly afterward, not inferred from commit()'s return
-     * value alone.
+     * The opposite direction of the case above. An existing session
+     * presented with the wrong CSRF token must be left untouched: not
+     * destroyed, not rewritten, not re-cookied. The store's own entry is
+     * read back afterward rather than inferred from commit()'s return
+     * value.
      */
     public function test_verify_csrf_token_on_a_genuinely_existing_session_with_a_wrong_token_does_not_mutate_it(): void
     {
@@ -854,16 +888,12 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-70 FEEDBACK: the sharper version of the test directly
-     * above — a genuinely existing session with pending flash data.
-     * verifyCsrfToken() calls load(), and load() marks a session dirty
-     * whenever flash data is present, entirely independent of anything
-     * CSRF-related — a real, pre-existing design for the ordinary case
-     * (reading is itself what ages a flash value, so its removal has to
-     * be persisted even if nothing else changes). A rejected token must
-     * not ride along on that: checking it must never itself schedule
-     * the ordinary aging a real access would, so the flash generation
-     * is still there, completely unaged, afterward.
+     * The sharper version of the test above: an existing session with
+     * pending flash data. load() marks a session dirty whenever flash
+     * data is present, independent of anything CSRF-related, because
+     * reading is what ages a flash value. A rejected token must not ride
+     * along on that, so the flash generation is still there, unaged,
+     * afterward.
      */
     public function test_verify_csrf_token_on_a_genuinely_existing_session_with_pending_flash_data_and_a_wrong_token_does_not_age_it(): void
     {
@@ -885,15 +915,12 @@ final class SessionTest extends TestCase
     }
 
     /**
-     * KINETIS-70 FEEDBACK 2: the other half of the same fix — a
-     * *successful* verification must itself schedule the ordinary
-     * flash-aging a real access needs, immediately, not merely once
-     * (and only if) something else later happens to touch the session
-     * too. A guarded handler that never otherwise reads/writes Session
-     * at all must still see its pending flash correctly aged, so the
-     * success path promotes the exact snapshot it already read into
-     * the session's real loaded state right away — no second store
-     * read, confirmed directly here, not just inferred from behavior.
+     * The other half: a *successful* verification schedules the ordinary
+     * flash-aging a real access needs immediately, not only if something
+     * else later touches the session. A guarded handler that never
+     * otherwise uses Session must still see its pending flash aged, so
+     * the success path promotes the snapshot it already read into the
+     * loaded state — with no second store read.
      */
     public function test_verify_csrf_token_on_a_genuinely_existing_session_with_pending_flash_data_and_the_real_token_ages_it_immediately(): void
     {

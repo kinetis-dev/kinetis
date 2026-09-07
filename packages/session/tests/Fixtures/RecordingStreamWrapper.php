@@ -7,10 +7,9 @@ namespace Kinetis\Session\Tests\Fixtures;
 /**
  * A stream wrapper that behaves like a normal filesystem — every path
  * under its scheme is translated onto a real backing directory and
- * genuinely persisted there — while recording the exact path of every
- * write, so a test can assert on the real filename FileSessionStore's
- * write() chose for its temp file without touching that class's own
- * internals.
+ * persisted there — while recording the path of every write, so a test
+ * can assert on the filename FileSessionStore::create() chose for its
+ * temp file without reaching into that class.
  *
  * @internal test fixture only
  */
@@ -81,7 +80,7 @@ final class RecordingStreamWrapper
     /**
      * chmod() (STREAM_META_ACCESS) delegated onto the real backing path,
      * the same translation every other method already applies — needed
-     * so FileSessionStore::write()'s own chmod(0600)/fileperms() checks
+     * so FileSessionStore::create()'s own chmod(0600)/fileperms() checks
      * see genuine results rather than every chmod() silently failing
      * because this wrapper never implemented stream_metadata() at all.
      */

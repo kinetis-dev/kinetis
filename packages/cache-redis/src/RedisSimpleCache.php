@@ -172,6 +172,31 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
         return true;
     }
 
+    /**
+     * `SET key value EX ttl XX`: one round trip that writes only if the
+     * key is there, and reports false when it is not. Redis answers a
+     * refused XX write with a null reply.
+     *
+     * Not part of PSR-16, which has no conditional write at all. It
+     * exists for a caller that must not recreate a record another
+     * process removed — `kinetis/session`'s terminal update rule.
+     */
+    public function replace(string $key, mixed $value, int $ttlSeconds): bool
+    {
+        $physical = $this->physical($key);
+        $payload = $this->serializer->serialize($value);
+
+        return $this->guard('replace', fn (): mixed => $this->client->executeKeyed(
+            $physical,
+            'SET',
+            $physical,
+            $payload,
+            'EX',
+            $ttlSeconds,
+            'XX',
+        )) !== null;
+    }
+
     #[\Override]
     public function delete(string $key): bool
     {

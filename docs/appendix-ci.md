@@ -94,8 +94,12 @@ disguised PHPUnit test.
 - **`persistence-and-cache-redis`** (MySQL 8.4, MariaDB 11.4, Postgres 16,
   Redis 7) — `kinetis/persistence`'s `TransactionGuard`: commit/
   rollback/`rollbackDangling()`; `kinetis/cache-redis`'s
-  `RedisSimpleCache`: the full PSR-16 surface, TTL expiry. Neither class
-  lives in core — see {doc}`persistence` and {doc}`appendix-packages`.
+  `RedisSimpleCache`: the full PSR-16 surface, TTL expiry, and the
+  conditional `replace()`; `kinetis/session`'s `SqlSessionStore` and
+  `RedisSessionStore`: the terminal update rule, which rests on MySQL's
+  changed-row count and Redis's `SET ... XX` refusal. None of these
+  classes lives in core — see {doc}`persistence`, {doc}`session` and
+  {doc}`appendix-packages`.
 - **`mailer`** (Mailpit) — `MailerFactory`: a real SMTP send, read back
   through the mail server's own API.
 - **`search-opensearch`** (two real OpenSearch containers, one with the

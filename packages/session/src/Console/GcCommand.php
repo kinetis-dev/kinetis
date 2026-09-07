@@ -14,8 +14,8 @@ use Kinetis\Session\SessionStoreInterface;
  * discovered via this package's extra.kinetis scan root. Schedule it
  * with whatever the deployment already uses (cron, a Kubernetes
  * CronJob, ...) — expired sessions in the `file` and `sql` drivers stay
- * in storage until this runs; the `cache` driver needs no collection at
- * all, since its backend (Redis TTL, for one) expires entries itself.
+ * in storage until this runs; the `redis` driver needs no collection at
+ * all, since the key's own TTL expires it.
  */
 final readonly class GcCommand
 {
@@ -32,7 +32,7 @@ final readonly class GcCommand
     public function run(): int
     {
         if (!$this->scope->has(SessionStoreInterface::class)) {
-            \fwrite($this->output, "No session store is bound — set SESSION_DRIVER (file, cache, or sql).\n");
+            \fwrite($this->output, "No session store is bound — set SESSION_DRIVER (file, redis, or sql).\n");
 
             return 1;
         }

@@ -8,9 +8,10 @@ use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\PackageBootstrapInterface;
 use Kinetis\Session\Exception\SessionException;
-use Kinetis\Session\Store\CacheSessionStore;
 use Kinetis\Session\Store\FileSessionStore;
+use Kinetis\Session\Store\RedisSessionStore;
 use Kinetis\Session\Store\SqlSessionStore;
+use Kinetis\SimpleCache\RedisSimpleCache;
 use Psr\Container\ContainerInterface;
 use Psr\SimpleCache\CacheInterface;
 
@@ -21,12 +22,11 @@ use Psr\SimpleCache\CacheInterface;
  * convention as kinetis/persistence's own bootstrap and DB_CONNECTION.
  *
  * The bindings are factories, resolved on first use rather than here:
- * the `cache` driver needs the CacheInterface binding AppScope::boot()
- * registers, and the `sql` driver needs whatever link
- * kinetis/persistence's bootstrap binds — both of which may not exist
- * yet at package-bootstrap time, since neither boot() nor sibling
- * bootstraps are guaranteed to have run first. By first *use*, they all
- * have.
+ * the `redis` driver consumes the CacheInterface binding
+ * AppScope::boot() registers, and the `sql` driver the link
+ * kinetis/persistence's bootstrap binds — neither of which need exist
+ * yet at package-bootstrap time, since boot() and sibling bootstraps are
+ * not guaranteed to have run first. By first *use*, they have.
  */
 final readonly class PackageBootstrap implements PackageBootstrapInterface
 {
@@ -47,19 +47,41 @@ final readonly class PackageBootstrap implements PackageBootstrapInterface
             'file' => static fn (): FileSessionStore => new FileSessionStore(
                 $config->string('SESSION_FILES_DIR', \sys_get_temp_dir() . '/kinetis-sessions'),
             ),
-            'cache' => static function (ContainerInterface $container): CacheSessionStore {
-                /** @var CacheInterface $cache */
-                $cache = $container->get(CacheInterface::class);
-
-                return new CacheSessionStore($cache);
-            },
+            'redis' => self::redisFactory(...),
             'sql' => self::sqlFactory(...),
             default => throw new SessionException(
-                "Unknown SESSION_DRIVER \"{$driver}\" — valid values: file, cache, sql.",
+                "Unknown SESSION_DRIVER \"{$driver}\" — valid values: file, redis, sql.",
             ),
         };
 
         $app->bind(SessionStoreInterface::class, $factory);
+    }
+
+    /**
+     * Takes the application's own cache binding — AppScope::boot()
+     * resolves RedisSimpleCache when Redis is configured, and a consumer
+     * that bound its own wins — and requires it to be the concrete
+     * optional class, since update() needs its conditional replace().
+     */
+    private static function redisFactory(ContainerInterface $container): RedisSessionStore
+    {
+        if (!\class_exists(RedisSimpleCache::class)) {
+            throw new SessionException(
+                'SESSION_DRIVER=redis needs kinetis/cache-redis: composer require kinetis/cache-redis.',
+            );
+        }
+
+        $cache = $container->get(CacheInterface::class);
+
+        if (!$cache instanceof RedisSimpleCache) {
+            throw new SessionException(
+                'SESSION_DRIVER=redis found no Redis cache binding — configure Redis (REDIS_URL, REDIS_HOST, '
+                . 'or REDIS_CLUSTER with REDIS_CLUSTER_SEEDS) so AppScope::boot() binds RedisSimpleCache, or '
+                . 'bind one in bootstrap.php.',
+            );
+        }
+
+        return new RedisSessionStore($cache);
     }
 
     private static function sqlFactory(ContainerInterface $container): SqlSessionStore

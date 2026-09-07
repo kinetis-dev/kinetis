@@ -402,7 +402,7 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset leaves the package inert — no store is bound. |
+| `SESSION_DRIVER` | — | `file`, `redis`, or `sql`. Unset leaves the package inert — no store is bound. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write; must be positive. Every write refreshes the browser cookie's `Max-Age` alongside the backend's own storage TTL, so the two never drift apart. |
 | `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
 | `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute: `Strict`, `Lax`, or `None`. `None` requires `SESSION_SECURE`. |

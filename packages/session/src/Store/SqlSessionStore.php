@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Session\Store;
 
 use Kinetis\Persistence\Contract\SqlLink;
-use Kinetis\Persistence\Exception\QueryException;
 use Kinetis\Session\GarbageCollectableStoreInterface;
 use Kinetis\Session\SessionStoreInterface;
 use Kinetis\Session\Support\SessionExpiry;
@@ -72,69 +71,45 @@ final readonly class SqlSessionStore implements SessionStoreInterface, GarbageCo
      * @param array<string, mixed> $data
      */
     #[\Override]
-    public function write(string $id, array $data, int $lifetimeSeconds): void
+    public function create(string $id, array $data, int $lifetimeSeconds): void
     {
-        $payload = \json_encode($data, JSON_THROW_ON_ERROR);
-        $expiresAt = self::formatTimestamp(SessionExpiry::timestampFor($lifetimeSeconds));
+        $this->db->execute(
+            'INSERT INTO ' . self::TABLE . ' (id, payload, expires_at) VALUES (?, ?, ?)',
+            [$id, self::encode($data), self::expiresAt($lifetimeSeconds)],
+        );
+    }
 
-        // Portable upsert without dialect-specific ON DUPLICATE KEY /
-        // ON CONFLICT syntax: an UPDATE first, an INSERT when nothing
-        // matched. Two traps this shape has to survive: MySQL reports 0
-        // affected rows for an UPDATE whose values are byte-identical to
-        // the stored row (so "0 updated" does not prove absence), and
-        // two parallel first requests of a brand-new session can race
-        // their INSERTs. Both resolve the same way — when the INSERT
-        // hits the primary key, the row provably exists, and a repeat
-        // UPDATE lands the write under this store's declared
-        // last-write-wins model.
-        $updateSql = 'UPDATE ' . self::TABLE . ' SET payload = ?, expires_at = ? WHERE id = ?';
-        $updated = $this->db->execute($updateSql, [$payload, $expiresAt, $id])->getRowCount();
+    /**
+     * @param array<string, mixed> $data
+     */
+    #[\Override]
+    public function update(string $id, array $data, int $lifetimeSeconds): bool
+    {
+        $payload = self::encode($data);
+        $expiresAt = self::expiresAt($lifetimeSeconds);
 
-        if ($updated === 0 || $updated === null) {
-            try {
-                $this->db->execute(
-                    'INSERT INTO ' . self::TABLE . ' (id, payload, expires_at) VALUES (?, ?, ?)',
-                    [$id, $payload, $expiresAt],
-                );
-            } catch (QueryException $insertFailure) {
-                // The INSERT's own QueryException is not proof of a
-                // duplicate-key race specifically — it's equally what a
-                // connection failure, a constraint violation, an
-                // encoding/payload-size rejection, or a permissions
-                // error looks like. Retrying the UPDATE and trusting a
-                // nonzero row count is safe (it's a real, driver-reported
-                // change), but a retry reporting 0/null proves nothing
-                // either way — that's legitimate driver behavior for a
-                // byte-identical repeat write, not evidence the row
-                // exists at all. Only a direct existence check settles
-                // it, and it's pushed into the WHERE clause itself
-                // (id/payload/expires_at all bound as params) rather
-                // than compared in PHP against whatever format the
-                // driver happens to return a TIMESTAMP column as — the
-                // database's own typed comparison is what actually
-                // proves the intended values landed, not a string match
-                // against unknown driver-specific formatting.
-                $retried = $this->db->execute($updateSql, [$payload, $expiresAt, $id])->getRowCount();
+        $updated = $this->db->execute(
+            'UPDATE ' . self::TABLE . ' SET payload = ?, expires_at = ? WHERE id = ? AND expires_at > ?',
+            [$payload, $expiresAt, $id, self::now()],
+        )->getRowCount();
 
-                if ($retried === 0 || $retried === null) {
-                    // Deliberately not wrapped in try/catch: a failure
-                    // here is a genuinely new, distinct error and must
-                    // propagate as itself — never silently swallowed
-                    // into a false "recovered" or misattributed to the
-                    // original insert failure.
-                    $verified = $this->db
-                        ->execute(
-                            'SELECT id FROM ' . self::TABLE . ' WHERE id = ? AND payload = ? AND expires_at = ?',
-                            [$id, $payload, $expiresAt],
-                        )
-                        ->fetchRow();
-
-                    if ($verified === null) {
-                        throw $insertFailure;
-                    }
-                }
-            }
+        if ($updated !== null && $updated > 0) {
+            return true;
         }
+
+        // MySQL counts changed rows, not matched ones, so it reports 0
+        // for an UPDATE whose values equal the stored row byte for byte
+        // — the ordinary case of a request that read a session and
+        // changed nothing in it. Zero therefore does not prove the row
+        // is gone, and neither does a driver that cannot count at all.
+        // One existence check against the same live-row condition
+        // settles which it was.
+        return $this->db
+            ->execute(
+                'SELECT id FROM ' . self::TABLE . ' WHERE id = ? AND expires_at > ?',
+                [$id, self::now()],
+            )
+            ->fetchRow() !== null;
     }
 
     #[\Override]
@@ -149,6 +124,19 @@ final readonly class SqlSessionStore implements SessionStoreInterface, GarbageCo
         return $this->db
             ->execute('DELETE FROM ' . self::TABLE . ' WHERE expires_at <= ?', [self::now()])
             ->getRowCount() ?? 0;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function encode(array $data): string
+    {
+        return \json_encode($data, JSON_THROW_ON_ERROR);
+    }
+
+    private static function expiresAt(int $lifetimeSeconds): string
+    {
+        return self::formatTimestamp(SessionExpiry::timestampFor($lifetimeSeconds));
     }
 
     private static function now(): string

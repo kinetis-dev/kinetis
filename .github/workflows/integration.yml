@@ -258,7 +258,7 @@ jobs:
     # RedisSimpleCache both moved out of kinetis/framework into their own
     # satellite packages (kinetis/persistence, kinetis/cache-redis), so
     # core itself has no remaining real-backend-dependent code at all.
-    name: persistence + cache-redis (TransactionGuard on ${{ matrix.mysql.name }} + RedisSimpleCache, PHP ${{ matrix.php-version }})
+    name: persistence + cache-redis + session (TransactionGuard on ${{ matrix.mysql.name }} + RedisSimpleCache, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -402,6 +402,21 @@ jobs:
         working-directory: packages/cache-redis
         run: vendor/bin/phpunit
         env:
+          REDIS_HOST: 127.0.0.1
+
+      - name: Install session dependencies
+        working-directory: packages/session
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Session store integration tests
+        # The terminal-write rule is a server-side decision on both
+        # backends: MySQL's changed-row count for a byte-identical
+        # UPDATE, and Redis's refusal of a SET ... XX against a missing
+        # key. Same env-gated shape as the two steps above.
+        working-directory: packages/session
+        run: vendor/bin/phpunit
+        env:
+          MYSQL_HOST: 127.0.0.1
           REDIS_HOST: 127.0.0.1
 
   mailer:

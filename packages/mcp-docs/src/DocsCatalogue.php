@@ -51,7 +51,7 @@ final class DocsCatalogue
             new DocsPage('auth', 'Authentication', 'kinetis/auth: opaque Bearer-token authentication middleware'),
             new DocsPage('auth-jwt', 'JWT Authentication', 'kinetis/auth-jwt: stateless JWT authentication (HS256/RS256), with optional per-token revocation'),
             new DocsPage('authorization', 'Authorization', 'kinetis/authorization: ability-based authorization — Gate wraps any callable Policy check'),
-            new DocsPage('session', 'Sessions & CSRF', 'kinetis/session: cookie-backed sessions and CSRF protection — file, PSR-16 cache (Redis), and SQL storage behind one store interface'),
+            new DocsPage('session', 'Sessions & CSRF', 'kinetis/session: cookie-backed sessions and CSRF protection — file, Redis, and SQL storage behind one store interface'),
             new DocsPage('runtime-adapters', 'Runtime Adapters', 'FrankenPHP, PHP-FPM, RoadRunner, and AWS Lambda adapters, and how RuntimeDetector picks one'),
             new DocsPage('concurrency', 'Concurrency', 'Fiber-based concurrency over Revolt: concurrently(), Async\\Socket, and Async\\Timer'),
             new DocsPage('caching', 'Caching & AOT Compilation', 'Production-only AOT caching of routes, commands, event listeners, and validation plans, plus APP_ENV'),

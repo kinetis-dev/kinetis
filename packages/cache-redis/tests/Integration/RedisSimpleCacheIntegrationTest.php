@@ -93,6 +93,24 @@ final class RedisSimpleCacheIntegrationTest extends TestCase
         self::assertFalse($this->cache->has('ttl-key'), 'the key outlived its TTL');
     }
 
+    public function test_replace_overwrites_an_existing_key_and_restarts_its_ttl(): void
+    {
+        $this->cache->set('replace-key', 'first', 1);
+
+        self::assertTrue($this->cache->replace('replace-key', 'second', 60));
+        self::assertSame('second', $this->cache->get('replace-key'));
+
+        sleep(2);
+
+        self::assertSame('second', $this->cache->get('replace-key'), 'the replaced key kept the old TTL');
+    }
+
+    public function test_replace_refuses_a_key_that_is_not_there_and_creates_nothing(): void
+    {
+        self::assertFalse($this->cache->replace('absent-key', 'value', 60));
+        self::assertFalse($this->cache->has('absent-key'));
+    }
+
     /**
      * Amp\Redis\RedisCache::set() silently no-ops for ttl: 0, which would
      * leave stale data at an already-populated key. RedisSimpleCache

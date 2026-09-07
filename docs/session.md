@@ -20,7 +20,7 @@ it on:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset means the package binds nothing. |
+| `SESSION_DRIVER` | — | `file`, `redis`, or `sql`. Unset means the package binds nothing. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable, counted from its last write — the browser cookie's own `Max-Age` and the backend's storage TTL both restart together on every write, never just one. |
 | `SESSION_COOKIE` | `kinetis_session` | The cookie name. A `__Host-`/`__Secure-` prefix is honoured — see [below](#cookie-name-prefixes). |
 | `SESSION_SAMESITE` | `Lax` | The cookie's `SameSite` attribute: `Strict`, `Lax`, or `None`, matched regardless of casing. `None` requires `SESSION_SECURE`. |
@@ -38,15 +38,13 @@ The three drivers:
   to local development. An expired file is deleted the next time it is
   read; files for sessions never touched again stay until `session:gc`
   sweeps them (see below).
-- **`cache`** — sessions through the PSR-16 `CacheInterface` binding.
-  With `REDIS_HOST`/`REDIS_URL` configured and `kinetis/cache-redis`
-  installed, that means **Redis-backed sessions with zero further
-  code** — cluster mode and TLS included, since the same binding
-  already provides both. No garbage collection is needed with this
-  driver: the backend expires entries itself — a Redis session key
-  simply disappears when its TTL lapses. A `NullSimpleCache` binding is
-  rejected at construction: a session store that never stores would
-  mean logins that silently don't stick.
+- **`redis`** — sessions through the `CacheInterface` binding
+  `AppScope::boot()` already creates from your Redis configuration, so
+  the application keeps one client, and cluster mode and TLS come with
+  it. Needs `kinetis/cache-redis` installed and Redis configured —
+  `REDIS_URL`, `REDIS_HOST`, or `REDIS_CLUSTER` with
+  `REDIS_CLUSTER_SEEDS` — and names both in the error otherwise. No
+  garbage collection is needed here: the key's own TTL expires it.
 - **`sql`** — a `kinetis_sessions` table, using the database
   connection `DB_CONNECTION` provides. The table is not created
   automatically; it ships as ready-to-copy {doc}`migrations` stubs:
@@ -62,13 +60,13 @@ The three drivers:
 **A session is live only while its expiry is strictly in the future** —
 `expires_at > now` for `sql`, the identical boundary for `file`'s own
 `expiresAt`. A session expiring at exactly the current second is already
-expired on both, not one second short of it. `cache` has no boundary of
-its own to state: expiry is entirely the backend's own TTL semantics.
+expired on both, not one second short of it. `redis` has no boundary of
+its own to state: expiry is the key's TTL.
 
 **`$lifetimeSeconds` (`SESSION_LIFETIME`) is checked the same way
 everywhere the package uses it, regardless of driver** — it must be a
 positive number of seconds, and adding it to the current Unix timestamp
-must stay inside PHP's integer range. Every driver applies both, `cache`
+must stay inside PHP's integer range. Every driver applies both, `redis`
 included, even though it never computes an absolute timestamp of its
 own. `SESSION_LIFETIME` is checked at middleware construction — before
 the handler ever runs — so a misconfigured value never lets a request
@@ -135,10 +133,9 @@ scheduled. Once a day is plenty for most applications; expired
 sessions are already invisible to reads either way, so the schedule
 only controls how long dead data lingers, never correctness.
 
-With the `cache` driver there is nothing to schedule: the backend
-expires entries on its own (Redis drops a session key the moment its
-TTL lapses), and `session:gc` says so and exits `0`. A custom store
-joins the command by implementing
+With the `redis` driver there is nothing to schedule: a session key
+disappears the moment its TTL lapses, and `session:gc` says so and
+exits `0`. A custom store joins the command by implementing
 `GarbageCollectableStoreInterface` — one method, `gc(): int`.
 
 ## Using the session
@@ -178,9 +175,9 @@ final readonly class PreferencesController
 `get()`/`set()`/`has()`/`remove()`/`all()` are the surface;
 `flash($key, $value)` stores a value that survives exactly one
 following request, read back with `flashed($key)` — the classic
-post-redirect-get companion. Values must be JSON-serializable: stores
-encode with JSON, never PHP's native `serialize()`, so a crafted
-payload can never become an object-injection vector.
+post-redirect-get companion. Values must be JSON-serializable
+application data: every store projects the session to JSON, and a read
+decodes it back to plain arrays and scalars.
 
 Loading is lazy and persisting is conditional: a route that never
 touches its session performs no storage round trip and sends no
@@ -210,6 +207,9 @@ with is exactly as usable afterward as if `regenerate()`/`destroy()`
 had never been called. A regenerated id's replacement data is written
 before the old id is destroyed, so a store failure partway through
 `commit()` never loses a session that was still genuinely recoverable.
+Once either call's `commit()` has run, the old id is retired and a
+stale write cannot recreate it — see
+[Concurrency and terminal writes](#concurrency-and-terminal-writes).
 
 ### A presented cookie id is never trusted just for being wellformed
 
@@ -295,7 +295,7 @@ JSON requests use the header: Kinetis decodes JSON bodies inside the
 dispatcher, so a `_token` field inside a JSON body is not seen by this
 middleware — only form-encoded bodies carry `_token`.
 
-## Concurrency: last-write-wins
+## Concurrency and terminal writes
 
 No store locks. PHP's native session handler locks the session file,
 serializing a browser's parallel requests against each other; that
@@ -303,14 +303,35 @@ would conflict with the concurrent-worker model the whole framework is
 built around. Concurrent requests sharing one session are
 last-write-wins — which is why session data should stay small and
 low-contention (an auth reference, the CSRF token, flash data), not a
-shared mutable workspace. "Last-write-wins" means exactly that, not "a
-reader might see a half-written file": the file store writes to a
-temporary file in the same directory and renames it into place, so a
-concurrent read always sees either the complete previous write or the
-complete new one, never a partial one. That temporary file is named
-`.sess-tmp-*`, deliberately outside `gc()`'s own `sess_*` glob pattern —
-a session mid-write must never be collectable while it's still in
-progress.
+shared mutable workspace.
+
+Removing a stored id is the exception, because it is terminal. A
+request that read a session and writes it back under the same id
+succeeds only while that id is still stored and still live: once
+`destroy()` (logout) or `regenerate()` (privilege change) has committed,
+the id is gone, the overlapping request's write is refused, its commit
+discarded, and no `Set-Cookie` sent. That is what stops a stale write
+from recreating a logged-out or pre-rotation id. Every store enforces
+it: `sql` with a conditional UPDATE, `redis` with a single `SET ... XX`,
+`file` by opening the existing record rather than publishing a new one.
+
+The guarantee covers exactly that case. A request that itself calls
+`regenerate()` writes under a *new* id, which creation always allows, so
+a rotation running alongside a logout is not coordinated with it and can
+carry the session forward under the new id. Call `regenerate()` from the
+request that changes privilege — the login or elevation itself.
+
+"Last-write-wins" is not "a reader might see a half-written file" for a
+newly created session: the file store writes to a temporary file in the
+same directory and renames it into place, so a concurrent read sees
+either the complete previous state or the complete new one. That
+temporary file is named `.sess-tmp-*`, outside `gc()`'s own `sess_*`
+glob pattern, so a sweep cannot collect a creation in progress. An
+*update* to an existing file is written in place, because a rename
+would recreate a record another request may have just removed. A read
+overlapping such an update can therefore land on an incomplete
+envelope, which reads as an absent session: it fails closed, exposing
+nothing.
 
 **The file store enforces confidentiality, not just intends it.** Its
 own session directory must have no group or world permissions at all —
@@ -328,13 +349,17 @@ than publishing something that was never confirmed private.
 (custom-stores)=
 ## Custom stores
 
-`SessionStoreInterface` is three methods — `read`, `write`, `destroy` —
-and anything implementing it can be bound in `bootstrap.php` to replace
-what `SESSION_DRIVER` would have picked:
+`SessionStoreInterface` is four methods — `read`, `create`, `update`,
+`destroy` — and anything implementing it can be bound in `bootstrap.php`
+to replace what `SESSION_DRIVER` would have picked:
 
 ```{code-block} php
 $app->bind(SessionStoreInterface::class, static fn (): MyStore => new MyStore(...));
 ```
+
+`update()` must return `false` when the id has no live record left, so
+a custom store honours the terminal rule above. Throw only for a real
+storage or encoding failure.
 
 ## See also
 
@@ -342,5 +367,5 @@ $app->bind(SessionStoreInterface::class, static fn (): MyStore => new MyStore(..
   API-first counterpart to cookie sessions.
 - {doc}`persistence` — the SQL contracts the `sql` driver builds on.
 - {doc}`middleware` — how route middleware and middleware groups work.
-- {doc}`telemetry` — a span per session read/write/destroy, via the same
+- {doc}`telemetry` — a span per session store call, via the same
   `bootstrap.php` rebind pattern shown above.

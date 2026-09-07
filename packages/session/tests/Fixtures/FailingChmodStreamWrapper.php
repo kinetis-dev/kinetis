@@ -6,13 +6,11 @@ namespace Kinetis\Session\Tests\Fixtures;
 
 /**
  * A stream wrapper behaving like a normal filesystem — every path is
- * translated onto a real backing directory and genuinely persisted
- * there — except its chmod() (STREAM_META_ACCESS) support is
- * deliberately configurable. Proves FileSessionStore::write() treats
- * both a failing chmod() call and a chmod() that reports success
- * without the file's real, resulting mode actually matching as write
- * failures, with cleanup, rather than publishing a temp file whose
- * private permissions were never genuinely verified.
+ * translated onto a real backing directory and persisted there — except
+ * that its chmod() (STREAM_META_ACCESS) support is configurable. Proves
+ * FileSessionStore::create() treats both a failing chmod() and a chmod()
+ * reporting success without the file's real mode matching as write
+ * failures, with cleanup.
  *
  * @internal test fixture only
  */

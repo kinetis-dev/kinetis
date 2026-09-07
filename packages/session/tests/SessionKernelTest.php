@@ -9,9 +9,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Session\SessionStoreInterface;
-use Kinetis\Session\Store\CacheSessionStore;
 use Kinetis\Session\Tests\Fixtures\CsrfWithoutSessionFixtureController;
-use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
 use Kinetis\Session\Tests\Fixtures\InvocationRecorder;
 use Kinetis\Session\Tests\Fixtures\RecordingSessionStore;
 use Kinetis\Session\Tests\Fixtures\SessionFixtureController;
@@ -47,7 +45,7 @@ final class SessionKernelTest extends TestCase
         $app->instance(Config::class, new Config([
             'SESSION_SECURE' => 'false',
         ]));
-        $this->store = new CacheSessionStore(new InMemorySessionCache());
+        $this->store = new RecordingSessionStore();
         $app->instance(SessionStoreInterface::class, $this->store);
 
         $router = new Router();
@@ -403,7 +401,7 @@ final class SessionKernelTest extends TestCase
     public function test_csrf_accepts_a_valid_token_and_ages_pending_flash_data_even_though_the_handler_never_touches_the_session(): void
     {
         $knownId = \str_repeat('5', 32);
-        $this->store->write($knownId, ['_csrf' => 'the-real-token', '_flash.old' => ['status' => 'saved']], 7200);
+        $this->store->create($knownId, ['_csrf' => 'the-real-token', '_flash.old' => ['status' => 'saved']], 7200);
         $cookie = "kinetis_session={$knownId}";
 
         $this->client->post('/guarded', [], ['Cookie' => $cookie, 'X-CSRF-Token' => 'the-real-token'])
@@ -537,7 +535,7 @@ final class SessionKernelTest extends TestCase
         // APP_ENV given here is registered directly, the same as
         // TestApplication does for its own overrides.
         $app->instance(AppEnvironment::class, AppEnvironment::detect($config['APP_ENV'] ?? null));
-        $app->instance(SessionStoreInterface::class, new CacheSessionStore(new InMemorySessionCache()));
+        $app->instance(SessionStoreInterface::class, new RecordingSessionStore());
 
         $router = new Router();
         $router->register(SessionFixtureController::class);
@@ -578,7 +576,7 @@ final class SessionKernelTest extends TestCase
         $app = new AppScope();
         $app->instance(Config::class, new Config($config));
         $app->instance(AppEnvironment::class, AppEnvironment::detect($config['APP_ENV'] ?? null));
-        $app->instance(SessionStoreInterface::class, new CacheSessionStore(new InMemorySessionCache()));
+        $app->instance(SessionStoreInterface::class, new RecordingSessionStore());
         $recorder = new InvocationRecorder();
         $app->instance(InvocationRecorder::class, $recorder);
 

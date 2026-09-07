@@ -46,7 +46,7 @@ tutorial, then read whichever section you have reached.
 
 - [Authentication](https://kinetis.dev/docs/auth.html): kinetis/auth: opaque Bearer-token authentication middleware.
 - [JWT Authentication](https://kinetis.dev/docs/auth-jwt.html): kinetis/auth-jwt: stateless JWT authentication (HS256/RS256), with optional per-token revocation.
-- [Sessions & CSRF](https://kinetis.dev/docs/session.html): kinetis/session: cookie-backed sessions and CSRF protection — file, PSR-16 cache (Redis), and SQL storage behind one store interface.
+- [Sessions & CSRF](https://kinetis.dev/docs/session.html): kinetis/session: cookie-backed sessions and CSRF protection — file, Redis, and SQL storage behind one store interface.
 
 ## Runtime and performance
 

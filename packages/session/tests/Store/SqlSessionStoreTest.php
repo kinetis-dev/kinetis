@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kinetis\Session\Tests\Store;
 
-use Kinetis\Persistence\Exception\QueryException;
 use Kinetis\Session\Exception\SessionException;
 use Kinetis\Session\Store\SqlSessionStore;
 use Kinetis\Session\Tests\Fixtures\FakeSqlRowResult;
@@ -12,19 +11,16 @@ use Kinetis\Session\Tests\Fixtures\ScriptedSqlLink;
 use PHPUnit\Framework\TestCase;
 
 /**
- * SqlSessionStore::write()'s UPDATE-then-INSERT-then-retry-then-verify
- * sequencing, proven deterministically against a scripted fake — a real
- * database's own affected-row-count/duplicate-key behavior is what
- * SqlSessionStoreIntegrationTest exists to prove instead; a fake can't
- * (and shouldn't try to) simulate that authentically.
+ * The SQL text and statement sequencing, against a scripted fake. How a
+ * real server counts affected rows is what SqlSessionStoreIntegrationTest
+ * exists to prove instead; a fake can't simulate that authentically.
  */
 final class SqlSessionStoreTest extends TestCase
 {
-    private const string UPDATE_SQL = 'UPDATE kinetis_sessions SET payload = ?, expires_at = ? WHERE id = ?';
+    private const string UPDATE_SQL =
+        'UPDATE kinetis_sessions SET payload = ?, expires_at = ? WHERE id = ? AND expires_at > ?';
 
-    private const string INSERT_SQL = 'INSERT INTO kinetis_sessions (id, payload, expires_at) VALUES (?, ?, ?)';
-
-    private const string VERIFY_SQL = 'SELECT id FROM kinetis_sessions WHERE id = ? AND payload = ? AND expires_at = ?';
+    private const string EXISTS_SQL = 'SELECT id FROM kinetis_sessions WHERE id = ? AND expires_at > ?';
 
     /**
      * The shared expiry boundary, in the SQL text read() and gc() issue:
@@ -52,24 +48,24 @@ final class SqlSessionStoreTest extends TestCase
     }
 
     /**
-     * The exact value write() binds for expires_at: a bare
+     * The exact value create() binds for expires_at: a bare
      * `Y-m-d H:i:s` UTC literal with no timezone marker of any kind (no
      * 'Z', no offset, no ISO-8601 'T'), which is what makes it safe
      * against a timezone-naive column. A tolerant clock-bracketed
-     * window rather than exact equality — write() reads the clock
+     * window rather than exact equality — create() reads the clock
      * itself; string comparison is valid because `Y-m-d H:i:s` sorts
      * chronologically.
      */
-    public function test_write_binds_a_bare_utc_wall_clock_string_with_no_timezone_marker(): void
+    public function test_create_binds_a_bare_utc_wall_clock_string_with_no_timezone_marker(): void
     {
         $link = new ScriptedSqlLink([new FakeSqlRowResult(rowCount: 1)]);
 
         $before = \gmdate('Y-m-d H:i:s', \time() + 3600);
-        new SqlSessionStore($link)->write('sid-format', ['user' => 42], 3600);
+        new SqlSessionStore($link)->create('sid-format', ['user' => 42], 3600);
         $after = \gmdate('Y-m-d H:i:s', \time() + 3600);
 
         [, $params] = $link->executed[0];
-        $expiresAt = $params[1];
+        $expiresAt = $params[2];
 
         self::assertIsString($expiresAt);
         self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $expiresAt);
@@ -82,13 +78,13 @@ final class SqlSessionStoreTest extends TestCase
      * issued: the scripted link is empty, so reaching execute() at all
      * throws its own RuntimeException.
      */
-    public function test_write_rejects_a_non_positive_lifetime_before_touching_the_database(): void
+    public function test_a_non_positive_lifetime_is_rejected_before_touching_the_database(): void
     {
         $link = new ScriptedSqlLink([]);
 
         foreach ([0, -1] as $lifetime) {
             try {
-                new SqlSessionStore($link)->write('sid-invalid', ['user' => 42], $lifetime);
+                new SqlSessionStore($link)->create('sid-invalid', ['user' => 42], $lifetime);
                 self::fail("Expected SessionException for lifetime {$lifetime}.");
             } catch (SessionException $e) {
                 self::assertStringContainsString('Session lifetime must be a positive number of seconds', $e->getMessage());
@@ -98,154 +94,66 @@ final class SqlSessionStoreTest extends TestCase
         self::assertSame([], $link->executed, 'an invalid lifetime must never reach the database.');
     }
 
-    public function test_an_update_that_matches_a_row_never_touches_insert(): void
+    public function test_create_is_one_plain_insert(): void
     {
-        $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 1),
-        ]);
+        $link = new ScriptedSqlLink([new FakeSqlRowResult(rowCount: 1)]);
 
-        new SqlSessionStore($link)->write('sid-1', ['user' => 42], 3600);
+        new SqlSessionStore($link)->create('sid-1', ['user' => 42], 3600);
 
-        self::assertCount(1, $link->executed, 'A matched UPDATE must be the only statement issued.');
-        self::assertSame(self::UPDATE_SQL, $link->executed[0][0]);
+        self::assertCount(1, $link->executed);
+        self::assertSame('INSERT INTO kinetis_sessions (id, payload, expires_at) VALUES (?, ?, ?)', $link->executed[0][0]);
     }
 
-    public function test_an_ordinary_insert_succeeds_when_no_row_existed(): void
+    public function test_an_update_that_changed_a_row_needs_no_further_statement(): void
     {
-        $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 0),
-            new FakeSqlRowResult(rowCount: 1),
-        ]);
+        $link = new ScriptedSqlLink([new FakeSqlRowResult(rowCount: 1)]);
 
-        new SqlSessionStore($link)->write('sid-2', ['user' => 42], 3600);
+        self::assertTrue(new SqlSessionStore($link)->update('sid-2', ['user' => 42], 3600));
 
-        self::assertCount(2, $link->executed, 'A brand-new row must never trigger the retry/verify path.');
+        self::assertCount(1, $link->executed, 'a reported change is proof enough on its own.');
         self::assertSame(self::UPDATE_SQL, $link->executed[0][0]);
-        self::assertSame(self::INSERT_SQL, $link->executed[1][0]);
     }
 
     /**
-     * The scenario the class docblock names directly: MySQL reports 0
-     * affected rows for a byte-identical UPDATE, so the retry can't prove
-     * anything on its own — but the row genuinely exists with the exact
-     * intended payload/expiry, and the existence check proves it.
+     * MySQL counts changed rows, so a byte-identical UPDATE reports 0
+     * against a row that is still there. The existence check is what
+     * separates that from a record another request removed.
      */
-    public function test_a_byte_identical_retry_with_a_matching_row_recovers(): void
+    public function test_a_zero_row_update_with_a_live_row_present_reports_the_record(): void
     {
-        $duplicateKeyFailure = new QueryException('Duplicate entry for key PRIMARY', self::INSERT_SQL);
         $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 0),
-            $duplicateKeyFailure,
             new FakeSqlRowResult(rowCount: 0),
             new FakeSqlRowResult(row: ['id' => 'sid-3']),
         ]);
 
-        new SqlSessionStore($link)->write('sid-3', ['user' => 42], 3600);
+        self::assertTrue(new SqlSessionStore($link)->update('sid-3', ['user' => 42], 3600));
 
-        self::assertCount(4, $link->executed);
-        self::assertSame(self::VERIFY_SQL, $link->executed[3][0]);
-
-        // The verify query must carry exactly the values write() itself
-        // just tried to persist — not something else — proven by
-        // cross-checking against the earlier UPDATE call's own params
-        // rather than predicting write()'s internal time()-derived
-        // timestamp.
-        [, $updateParams] = $link->executed[0];
-        [, $verifyParams] = $link->executed[3];
-        self::assertSame(['sid-3', $updateParams[0], $updateParams[1]], $verifyParams);
+        self::assertCount(2, $link->executed);
+        self::assertSame(self::EXISTS_SQL, $link->executed[1][0]);
     }
 
-    /**
-     * A genuine concurrent race: the other request's INSERT won, and
-     * this retry's own UPDATE visibly changed the row it left behind —
-     * a real, driver-reported nonzero count needs no further proof.
-     */
-    public function test_a_successful_retry_recovers_without_needing_verification(): void
+    public function test_a_zero_row_update_with_no_live_row_reports_a_stale_write(): void
     {
         $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 0),
-            new QueryException('Duplicate entry for key PRIMARY', self::INSERT_SQL),
-            new FakeSqlRowResult(rowCount: 1),
-        ]);
-
-        new SqlSessionStore($link)->write('sid-4', ['user' => 42], 3600);
-
-        self::assertCount(3, $link->executed, 'A retry that visibly updated a row must skip the verify query entirely.');
-    }
-
-    /**
-     * The INSERT's own QueryException is not proof of a duplicate-key
-     * race — it's equally what a connection failure, a constraint
-     * violation, or a permissions error looks like. A retry that
-     * changes nothing (0) and an existence check that finds no matching
-     * row means the row was never actually written; the original,
-     * genuine insert failure must be what the caller sees.
-     */
-    public function test_a_non_duplicate_insert_failure_with_no_matching_row_rethrows_the_original(): void
-    {
-        $connectionFailure = new QueryException('Connection reset by peer', self::INSERT_SQL);
-        $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 0),
-            $connectionFailure,
             new FakeSqlRowResult(rowCount: 0),
             new FakeSqlRowResult(row: null),
         ]);
 
-        try {
-            new SqlSessionStore($link)->write('sid-5', ['user' => 42], 3600);
-            self::fail('Expected the original QueryException to propagate.');
-        } catch (QueryException $e) {
-            self::assertSame($connectionFailure, $e, 'The exact original failure must propagate, not a new or generic one.');
-        }
+        self::assertFalse(new SqlSessionStore($link)->update('sid-4', ['user' => 42], 3600));
     }
 
     /**
-     * The same rethrow, but through the null-row-count branch — a
-     * driver that can't report affected rows at all is exactly as
-     * inconclusive as reporting 0, and must be treated identically:
-     * proof requires the verify query, not the retry's own count.
+     * A driver that cannot count affected rows at all is exactly as
+     * inconclusive as one reporting 0, and takes the same check.
      */
-    public function test_a_null_retry_row_count_with_no_matching_row_also_rethrows_the_original(): void
+    public function test_a_null_row_count_is_settled_by_the_same_existence_check(): void
     {
-        $insertFailure = new QueryException('constraint violation', self::INSERT_SQL);
         $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 0),
-            $insertFailure,
             new FakeSqlRowResult(rowCount: null),
-            new FakeSqlRowResult(row: null),
+            new FakeSqlRowResult(row: ['id' => 'sid-5']),
         ]);
 
-        try {
-            new SqlSessionStore($link)->write('sid-6', ['user' => 42], 3600);
-            self::fail('Expected the original QueryException to propagate.');
-        } catch (QueryException $e) {
-            self::assertSame($insertFailure, $e);
-        }
-    }
-
-    /**
-     * A failure while verifying is a third, genuinely new error — never
-     * silently treated as success, and never relabeled as the original
-     * insert failure either. Left uncaught deliberately: it must
-     * propagate as itself.
-     */
-    public function test_a_failure_during_verification_propagates_as_itself(): void
-    {
-        $insertFailure = new QueryException('constraint violation', self::INSERT_SQL);
-        $verificationFailure = new QueryException('server has gone away', self::VERIFY_SQL);
-        $link = new ScriptedSqlLink([
-            new FakeSqlRowResult(rowCount: 0),
-            $insertFailure,
-            new FakeSqlRowResult(rowCount: 0),
-            $verificationFailure,
-        ]);
-
-        try {
-            new SqlSessionStore($link)->write('sid-7', ['user' => 42], 3600);
-            self::fail('Expected the verification failure to propagate.');
-        } catch (QueryException $e) {
-            self::assertSame($verificationFailure, $e);
-            self::assertNotSame($insertFailure, $e, 'A verification-time error must not be relabeled as the original insert failure.');
-        }
+        self::assertTrue(new SqlSessionStore($link)->update('sid-5', ['user' => 42], 3600));
+        self::assertCount(2, $link->executed);
     }
 }

@@ -217,7 +217,7 @@ so the key is as sensitive as the value and neither travels.
 
 ## Session spans
 
-Wraps any `SessionStoreInterface`, {doc}`session`'s file/cache/SQL
+Wraps any `SessionStoreInterface`, {doc}`session`'s file/Redis/SQL
 stores included. `SESSION_DRIVER`'s own bindings are lazy factories
 resolved on first use, so re-binding in `bootstrap.php` — the same
 {ref}`custom-stores` pattern the session package's own docs already
@@ -236,7 +236,7 @@ $app->bind(SessionStoreInterface::class, static fn (): TracingSessionStore => ne
 ));
 ```
 
-`read`, `write`, and `destroy` each get a span. A session id is a
+`read`, `create`, `update`, and `destroy` each get a span. A session id is a
 bearer credential — whoever holds it can present the cookie and act as
 that session — so it never reaches a span verbatim: its fingerprint
 travels instead, enough to correlate every span for one session without
