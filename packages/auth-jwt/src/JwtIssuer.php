@@ -28,9 +28,9 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
  * `string|int` so an application keying its users by integer id can hand
  * one straight over, and converts it to that string once, here, before
  * anything else in this package sees it. The `sub` claim, JwtUser::id(),
- * and both stores' per-subject revocation keys all carry that identical
- * string, so a token and the revocation covering it can never name the
- * subject two different ways.
+ * and RefreshTokenStore's own stored subject all carry that identical
+ * string, so an access token and the refresh token issued beside it can
+ * never name the subject two different ways.
  */
 final readonly class JwtIssuer
 {

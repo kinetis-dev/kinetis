@@ -11,11 +11,11 @@ use Kinetis\Container\RequestScope;
 
 /**
  * The same documented subclass pattern as FixtureJwtAuthMiddleware, but
- * with a RevocationStore configured — proving the strict iat/jti claim
+ * with a RevocationStore configured — proving the strict `jti` claim
  * gate activates through a real Kernel request, not just at the
  * middleware-unit level. A fresh InMemorySimpleCache per request is
- * fine here: this fixture exists to prove a malformed token is
- * rejected before either revocation lookup runs, not to test
+ * fine here: this fixture exists to prove a token carrying no usable
+ * `jti` is rejected before the revocation lookup runs, not to test
  * cross-request revocation state.
  */
 final class RevocationCheckingFixtureMiddleware extends JwtAuthMiddleware

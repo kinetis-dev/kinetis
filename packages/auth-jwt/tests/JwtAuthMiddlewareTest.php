@@ -79,31 +79,6 @@ final class JwtAuthMiddlewareTest extends TestCase
         return new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer {$token}"]);
     }
 
-    /**
-     * Hand-crafts a validly-signed token straight from a raw payload,
-     * bypassing JWT::encode()'s own numeric-only validation on iat/exp/
-     * nbf — needed to exercise a claim shape (a boolean iat, for one)
-     * the library itself would otherwise refuse to encode at all. Some
-     * of these cases are still independently caught by JWT::decode()'s
-     * own identical numeric check one layer earlier than
-     * JwtAuthMiddleware's own strict gate; that's fine — the point is
-     * proving the token is rejected end to end, regardless of which
-     * layer is responsible.
-     *
-     * @param array<string, mixed> $payload
-     */
-    private function rawToken(array $payload): string
-    {
-        $header = ['typ' => 'JWT', 'alg' => 'HS256'];
-        $segments = [
-            JWT::urlsafeB64Encode((string) JWT::jsonEncode($header)),
-            JWT::urlsafeB64Encode((string) JWT::jsonEncode($payload)),
-        ];
-        $segments[] = JWT::urlsafeB64Encode(hash_hmac('sha256', implode('.', $segments), self::SECRET, true));
-
-        return implode('.', $segments);
-    }
-
     public function test_a_valid_token_registers_the_resolved_user_and_passes_through(): void
     {
         $scope = $this->scope();
@@ -206,10 +181,9 @@ final class JwtAuthMiddlewareTest extends TestCase
 
     /**
      * A subject is one canonical non-empty string across this package —
-     * the form JwtIssuer writes and both stores key their per-subject
-     * revocation by. A token whose `sub` is a JSON number or an empty
-     * string could not be revoked under the same identity it
-     * authenticated as, so it never authenticates at all.
+     * the form JwtIssuer writes and RefreshTokenStore stores. A token
+     * whose `sub` is a JSON number or an empty string names no user this
+     * package can act on, so it never authenticates at all.
      */
     #[DataProvider('nonCanonicalSubjectClaims')]
     public function test_a_token_whose_subject_is_not_a_non_empty_string_is_rejected_with_401(mixed $sub): void
@@ -373,93 +347,25 @@ final class JwtAuthMiddlewareTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
     }
 
-    public function test_revoke_all_for_user_rejects_a_token_issued_before_the_call(): void
+    /**
+     * @return iterable<string, array{mixed}>
+     */
+    public static function malformedJtiClaims(): iterable
     {
-        $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
-
-        // Built with an explicit past `iat`, not JwtIssuer's own time() —
-        // issuing then immediately revoking-all could otherwise land both
-        // calls in the same wall-clock second, making iat < cutoff false.
-        // Carries a real jti too — without one, the strict claim gate
-        // below would reject this token before ever reaching the
-        // per-user cutoff check this test exists to exercise.
-        $token = JWT::encode(['sub' => 'user-42', 'iat' => time() - 10, 'jti' => 'some-jti'], self::SECRET, 'HS256');
-        $revocationStore->revokeAllForUser('user-42', 60);
-
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(401, $response->getStatusCode());
-    }
-
-    public function test_revoke_all_for_user_does_not_reject_a_token_issued_after_the_call(): void
-    {
-        $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
-
-        $revocationStore->revokeAllForUser('user-42', 60);
-        // A fresh login well after "log out everywhere" must still work.
-        // Can't pin this with an explicit future `iat` the way the
-        // "before" test above pins a past one — firebase/php-jwt itself
-        // rejects a token whose iat is ahead of the current time
-        // (BeforeValidException), confirmed directly rather than
-        // assumed. And two back-to-back real time() calls with no gap
-        // could legitimately land in the same wall-clock second, which
-        // would now make this token *revoked* instead (isRevokedForUser()
-        // uses <=, closing the same-second bypass a strict < left open) —
-        // flipping this test's own expected outcome depending on timing.
-        // A real 1-second sleep between the two calls deterministically
-        // guarantees the token's own real iat lands in a later second
-        // than the cutoff, not just usually.
-        sleep(1);
-        $token = new JwtIssuer(self::signingKey())->issue('user-42');
-
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(200, $response->getStatusCode());
-    }
-
-    public function test_revoke_all_for_user_does_not_reject_a_different_users_token(): void
-    {
-        $revocationStore = new RevocationStore(new InMemorySimpleCache());
-        $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
-
-        $revocationStore->revokeAllForUser('user-42', 60);
-        $token = new JwtIssuer(self::signingKey())->issue('user-99');
-
-        $response = $middleware->process($this->requestWithToken($token), $this->handler());
-
-        self::assertSame(200, $response->getStatusCode());
+        yield 'missing jti' => [null]; // null here means "omit the claim entirely" — see the test body.
+        yield 'empty jti' => [''];
+        yield 'non-string jti' => [12345];
     }
 
     /**
-     * @return iterable<string, array{mixed, mixed}>
+     * A revocation store is configured but the token carries no jti the
+     * denylist could ever name — rejected outright rather than
+     * authenticated with the one check it makes silently skipped. Every
+     * case here is a real, validly-signed token: the rejection is
+     * JwtAuthMiddleware's own, not a signature or decode failure.
      */
-    public static function malformedRevocationClaims(): iterable
-    {
-        yield 'missing iat' => [null, 'the-jti'];
-        yield 'missing jti' => [null, null]; // null iat here means "omit the claim entirely" too — see the test body.
-        yield 'numeric string iat' => ['numeric-string', 'the-jti'];
-        yield 'fractional iat' => ['fractional', 'the-jti'];
-        yield 'exponent string iat' => ['exponent-string', 'the-jti'];
-        yield 'boolean iat' => ['boolean', 'the-jti'];
-        yield 'empty jti' => ['valid', ''];
-        yield 'non-string jti' => ['valid', 12345];
-    }
-
-    /**
-     * A revocation store is configured but the token itself is malformed
-     * on iat and/or jti — every case here must be rejected outright, not
-     * silently reduced to just the one check the well-formed claim would
-     * still support. $iatMode is a marker for a value that can't be
-     * expressed as a plain data-provider literal, resolved in the test
-     * body. Built via rawToken() rather than JwtIssuer/JWT::encode(), so
-     * every case reaches a real, validly-signed token regardless of
-     * whether the underlying library would have refused to encode it.
-     */
-    #[DataProvider('malformedRevocationClaims')]
-    public function test_a_token_with_malformed_iat_or_jti_is_rejected_when_a_revocation_store_is_configured(
-        ?string $iatMode,
+    #[DataProvider('malformedJtiClaims')]
+    public function test_a_token_with_a_malformed_jti_is_rejected_when_a_revocation_store_is_configured(
         mixed $jti,
     ): void {
         $revocationStore = new RevocationStore(new InMemorySimpleCache());
@@ -467,30 +373,11 @@ final class JwtAuthMiddlewareTest extends TestCase
 
         $claims = ['sub' => 'user-42'];
 
-        $iat = match ($iatMode) {
-            null => null,
-            'numeric-string' => (string) time(),
-            // A genuine fraction, not merely a float type — an
-            // integer-valued float (e.g. (float) time()) loses its
-            // float-ness on the JSON round trip PHP performs here
-            // (json_encode(1787669098.0) emits the bare integer
-            // 1787669098, indistinguishable from int on decode), so it
-            // would not actually exercise this case at all.
-            'fractional' => time() + 0.5,
-            'exponent-string' => '1e10',
-            'boolean' => true,
-            'valid' => time(),
-        };
-
-        if ($iat !== null) {
-            $claims['iat'] = $iat;
-        }
-
         if ($jti !== null) {
             $claims['jti'] = $jti;
         }
 
-        $token = $this->rawToken($claims);
+        $token = JWT::encode($claims, self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
 
@@ -498,19 +385,16 @@ final class JwtAuthMiddlewareTest extends TestCase
     }
 
     /**
-     * The strict claim gate must reject a malformed token before either
-     * revocation lookup ever runs — proven against a cache that records
-     * every get() call, not just inferred from the 401 status.
+     * The jti gate must reject a malformed token before the revocation
+     * lookup ever runs — proven against a cache that records every get()
+     * call, not just inferred from the 401 status.
      */
-    public function test_a_malformed_claim_never_reaches_either_revocation_lookup(): void
+    public function test_a_malformed_jti_never_reaches_the_revocation_lookup(): void
     {
         $cache = new RecordingSimpleCache();
         $revocationStore = new RevocationStore($cache);
         $middleware = new JwtAuthMiddleware(self::keys(), $this->scope(), revocationStore: $revocationStore);
 
-        // A valid iat but no jti at all — under independent per-claim
-        // checks this would still have run the per-user cutoff lookup;
-        // the combined gate must reject before either lookup runs.
         $token = JWT::encode(['sub' => 'user-42', 'iat' => time()], self::SECRET, 'HS256');
 
         $response = $middleware->process($this->requestWithToken($token), $this->handler());
@@ -520,7 +404,7 @@ final class JwtAuthMiddlewareTest extends TestCase
     }
 
     /**
-     * The strict claim gate through a real Kernel request, not just the
+     * The jti gate through a real Kernel request, not just the
      * middleware-unit level — the same "prove it end to end, not only in
      * isolation" discipline test_works_as_route_middleware_through_a_real_kernel()
      * already established.

@@ -16,10 +16,9 @@ use UnexpectedValueException;
  * the app's business" spirit CurrentUserInterface itself documents.
  *
  * id() narrows CurrentUserInterface's own `string|int` to the non-empty
- * string a subject always is here (see JwtIssuer), so its return value
- * can be handed straight to RevocationStore::revokeAllForUser() and
- * RefreshTokenStore::revokeAllForUser() — one identity across the access
- * token, the refresh token, and every revocation covering either.
+ * string a subject always is here (see JwtIssuer) — the same identity
+ * RefreshTokenStore::redeem() hands back, so one application id names
+ * one user across the access token and the refresh token alike.
  * JwtAuthMiddleware rejects a token whose `sub` is anything else, so a
  * JwtUser it registered always has one.
  */

@@ -46,19 +46,6 @@ final class RefreshTokenStoreTest extends TestCase
         }
     }
 
-    public function test_revoke_all_for_user_throws_when_the_cache_write_fails(): void
-    {
-        $store = new RefreshTokenStore(new FailingSimpleCache());
-        $secretUserId = 'super-secret-user-id-must-never-leak-into-a-message';
-
-        try {
-            $store->revokeAllForUser($secretUserId, 60);
-            self::fail('Expected a RefreshTokenUnavailableException.');
-        } catch (RefreshTokenUnavailableException $e) {
-            self::assertStringNotContainsString($secretUserId, $e->getMessage());
-        }
-    }
-
     public function test_issue_rejects_a_zero_ttl(): void
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
@@ -75,24 +62,6 @@ final class RefreshTokenStoreTest extends TestCase
         $this->expectException(RefreshTokenUnavailableException::class);
 
         $store->issue('42', ttlSeconds: -60);
-    }
-
-    public function test_revoke_all_for_user_rejects_a_zero_ttl(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $this->expectException(RefreshTokenUnavailableException::class);
-
-        $store->revokeAllForUser('42', 0);
-    }
-
-    public function test_revoke_all_for_user_rejects_a_negative_ttl(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $this->expectException(RefreshTokenUnavailableException::class);
-
-        $store->revokeAllForUser('42', -60);
     }
 
     public function test_a_freshly_issued_token_redeems_to_its_own_subject_and_claims(): void
@@ -145,54 +114,19 @@ final class RefreshTokenStoreTest extends TestCase
         self::assertSame(['subject' => '2', 'claims' => []], $store->redeem($tokenB));
     }
 
-    public function test_revoke_all_for_user_invalidates_a_token_issued_before_the_call(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $token = $store->issue('42');
-        $store->revokeAllForUser('42', 60);
-
-        self::assertNull($store->redeem($token));
-    }
-
-    public function test_revoke_all_for_user_does_not_affect_a_token_issued_after_the_call(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $store->revokeAllForUser('42', 60);
-        // A real second elapsed to guarantee this token's issuedAt is
-        // strictly after the cutoff above, not tied to it — avoids
-        // depending on two real time() calls landing in the same second.
-        sleep(1);
-        $token = $store->issue('42');
-
-        self::assertSame(['subject' => '42', 'claims' => []], $store->redeem($token));
-    }
-
-    public function test_revoke_all_for_user_does_not_affect_a_different_user(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $token = $store->issue('42');
-        $store->revokeAllForUser('99', 60);
-
-        self::assertSame(['subject' => '42', 'claims' => []], $store->redeem($token));
-    }
-
     /**
-     * An integer application id and the string a token carries name one
-     * subject, so a token issued from either revokes through either —
-     * the property that lets a logout endpoint revoke a refresh token
-     * using JwtUser::id() from the matching access token.
+     * An integer application id and the string an access token carries
+     * name one subject, so a refresh token issued from either redeems
+     * back to the canonical string form — the property that lets a
+     * refresh endpoint reissue under JwtUser::id().
      */
-    public function test_a_token_issued_from_an_int_id_is_revoked_through_its_canonical_string(): void
+    public function test_a_token_issued_from_an_int_id_redeems_to_its_canonical_string(): void
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
         $token = $store->issue(42);
-        $store->revokeAllForUser('42', 60);
 
-        self::assertNull($store->redeem($token));
+        self::assertSame(['subject' => '42', 'claims' => []], $store->redeem($token));
     }
 
     public function test_issue_rejects_an_empty_subject(): void
@@ -202,15 +136,6 @@ final class RefreshTokenStoreTest extends TestCase
         $this->expectException(RefreshTokenUnavailableException::class);
 
         $store->issue('');
-    }
-
-    public function test_revoke_all_for_user_rejects_an_empty_user_id(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $this->expectException(RefreshTokenUnavailableException::class);
-
-        $store->revokeAllForUser('', 60);
     }
 
     /**
@@ -229,7 +154,6 @@ final class RefreshTokenStoreTest extends TestCase
         $cache->set('jwt-refresh.' . hash('sha256', $token), [
             'subject' => $subject,
             'claims' => [],
-            'issuedAt' => time(),
         ], 60);
 
         self::assertNull($store->redeem($token));
@@ -252,9 +176,8 @@ final class RefreshTokenStoreTest extends TestCase
         } catch (RefreshTokenUnavailableException $e) {
             self::assertSame(
                 'RefreshTokenStore requires a real cache: NullSimpleCache never stores anything, so every '
-                . 'issued refresh token would be unredeemable and revokeAllForUser() would have nothing to '
-                . 'affect. Configure Redis (REDIS_URL/REDIS_HOST) or pass another PSR-16 CacheInterface '
-                . 'implementation.',
+                . 'issued refresh token would be unredeemable. Configure Redis (REDIS_URL/REDIS_HOST) or pass '
+                . 'another PSR-16 CacheInterface implementation.',
                 $e->getMessage(),
             );
         }

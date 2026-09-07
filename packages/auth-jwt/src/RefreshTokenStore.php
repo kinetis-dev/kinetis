@@ -24,24 +24,14 @@ use Psr\SimpleCache\CacheInterface;
  * (JwtIssuer) and a fresh refresh token (issue() again) — rotating both
  * together rather than reusing the old refresh token.
  *
- * revokeAllForUser() uses the same cutoff-timestamp mechanism
- * RevocationStore already uses for access tokens, not an enumerated
- * list of a user's outstanding tokens: every token already carries its
- * own subject and issuedAt, so redeem() just checks a token's issuedAt
- * against the latest cutoff for its subject, inclusive, the same
- * fail-closed-on-a-tie reasoning RevocationStore's own per-user
- * revocation already documents. $ttlSeconds must cover the longest
- * lifetime any of this user's currently-outstanding refresh tokens
- * could still have; once it elapses, the cutoff itself is forgotten.
- *
  * A subject is the same canonical non-empty string an access token
  * carries in its `sub` claim: issue() accepts `string|int` and converts
  * it once, exactly as JwtIssuer::issue() does, so one application id
  * produces one identity across both token kinds. redeem() hands that
- * string back, ready to reissue with, and revokeAllForUser() takes it
- * as-is — JwtUser::id() on an authenticated access token names the same
- * subject its refresh token was stored under. A stored record whose
- * subject is anything else is treated as unredeemable.
+ * string back, ready to reissue with — JwtUser::id() on an
+ * authenticated access token names the same subject its refresh token
+ * was stored under. A stored record whose subject is anything else is
+ * treated as unredeemable.
  *
  * Built against plain Psr\SimpleCache\CacheInterface, but requires the
  * cache to also implement AtomicConsumeInterface — NullSimpleCache is
@@ -93,7 +83,6 @@ final readonly class RefreshTokenStore
         $stored = $this->cache->set($this->key($token), [
             'subject' => $storedSubject,
             'claims' => $claims,
-            'issuedAt' => time(),
         ], $ttlSeconds);
 
         if (!$stored) {
@@ -104,65 +93,14 @@ final readonly class RefreshTokenStore
     }
 
     /**
+     * A record whose subject is not the canonical non-empty string
+     * issue() stores — a tampered or foreign cache entry — is
+     * unredeemable rather than reinterpreted, the same null this returns
+     * for a token that never existed.
+     *
      * @return array{subject: string, claims: array<string, mixed>}|null
      */
     public function redeem(#[\SensitiveParameter] string $token): ?array
-    {
-        $entry = $this->entry($token);
-
-        if ($entry === null) {
-            return null;
-        }
-
-        if ($this->isRevokedForSubject($entry['subject'], $entry['issuedAt'])) {
-            return null;
-        }
-
-        return ['subject' => $entry['subject'], 'claims' => $entry['claims']];
-    }
-
-    public function revoke(#[\SensitiveParameter] string $token): void
-    {
-        if (!$this->cache->delete($this->key($token))) {
-            throw RefreshTokenUnavailableException::revokeFailed();
-        }
-    }
-
-    /**
-     * $userId is the canonical subject string — JwtUser::id() on an
-     * access token, or redeem()'s own `subject`.
-     */
-    public function revokeAllForUser(string $userId, int $ttlSeconds): void
-    {
-        if ($userId === '') {
-            throw RefreshTokenUnavailableException::emptySubject();
-        }
-
-        if ($ttlSeconds <= 0) {
-            throw RefreshTokenUnavailableException::nonPositiveRevokeAllForUserTtl();
-        }
-
-        if (!$this->cache->set($this->userKey($userId), time(), $ttlSeconds)) {
-            throw RefreshTokenUnavailableException::revokeAllForUserFailed();
-        }
-    }
-
-    private function isRevokedForSubject(string $subject, int $issuedAt): bool
-    {
-        $cutoff = $this->cache->get($this->userKey($subject));
-
-        return is_int($cutoff) && $issuedAt <= $cutoff;
-    }
-
-    /**
-     * A record whose subject is not the canonical non-empty string
-     * issue() stores — a tampered or foreign cache entry — is
-     * unredeemable rather than reinterpreted, the same null redeem()
-     * already returns for a token that never existed.
-     *
-     * @return array{subject: string, claims: array<string, mixed>, issuedAt: int}|null
-     */
-    private function entry(#[\SensitiveParameter] string $token): ?array
     {
         // Reads and deletes the token in one atomic operation — see the
         // constructor's AtomicConsumeInterface requirement. A get() then
@@ -172,26 +110,27 @@ final readonly class RefreshTokenStore
 
         if (
             !is_array($value)
-            || !isset($value['subject'], $value['claims'], $value['issuedAt'])
+            || !isset($value['subject'], $value['claims'])
             || !is_string($value['subject'])
             || $value['subject'] === ''
             || !is_array($value['claims'])
-            || !is_int($value['issuedAt'])
         ) {
             return null;
         }
 
-        /** @var array{subject: string, claims: array<string, mixed>, issuedAt: int} $value */
-        return $value;
+        /** @var array{subject: string, claims: array<string, mixed>} $value */
+        return ['subject' => $value['subject'], 'claims' => $value['claims']];
+    }
+
+    public function revoke(#[\SensitiveParameter] string $token): void
+    {
+        if (!$this->cache->delete($this->key($token))) {
+            throw RefreshTokenUnavailableException::revokeFailed();
+        }
     }
 
     private function key(string $token): string
     {
         return 'jwt-refresh.' . hash('sha256', $token);
-    }
-
-    private function userKey(string $userId): string
-    {
-        return 'jwt-refresh-user.' . hash('sha256', $userId);
     }
 }

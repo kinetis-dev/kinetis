@@ -12,9 +12,8 @@ final class RefreshTokenUnavailableException extends RuntimeException
     {
         return new self(
             'RefreshTokenStore requires a real cache: NullSimpleCache never stores anything, so every '
-            . 'issued refresh token would be unredeemable and revokeAllForUser() would have nothing to '
-            . 'affect. Configure Redis (REDIS_URL/REDIS_HOST) or pass another PSR-16 CacheInterface '
-            . 'implementation.',
+            . 'issued refresh token would be unredeemable. Configure Redis (REDIS_URL/REDIS_HOST) or pass '
+            . 'another PSR-16 CacheInterface implementation.',
         );
     }
 
@@ -57,22 +56,9 @@ final class RefreshTokenUnavailableException extends RuntimeException
     }
 
     /**
-     * Same reasoning as revokeFailed(), for the per-user cutoff write —
-     * names neither the user id nor any token.
-     */
-    public static function revokeAllForUserFailed(): self
-    {
-        return new self(
-            'RefreshTokenStore::revokeAllForUser() failed: the cache reported a failed write, so none of '
-            . "this user's outstanding refresh tokens have been revoked. Treat this as a hard failure, "
-            . 'not a warning.',
-        );
-    }
-
-    /**
-     * A subject canonicalized to the empty string, on issue() or
-     * revokeAllForUser() — an id naming nobody, and one no access token
-     * this package issues can carry either. Never names the value.
+     * issue() canonicalized its $subject to the empty string — an id
+     * naming nobody, and one no access token this package issues can
+     * carry either. Never names the value.
      */
     public static function emptySubject(): self
     {
@@ -92,20 +78,6 @@ final class RefreshTokenUnavailableException extends RuntimeException
         return new self(
             'RefreshTokenStore::issue() requires a positive $ttlSeconds — a value of zero or less would '
             . 'store a token that is already expired, unredeemable the instant it is issued.',
-        );
-    }
-
-    /**
-     * revokeAllForUser()'s $ttlSeconds was zero or negative — this one
-     * has no single token to bound the cutoff by, so the caller must
-     * supply their own app's longest outstanding refresh-token lifetime.
-     */
-    public static function nonPositiveRevokeAllForUserTtl(): self
-    {
-        return new self(
-            'RefreshTokenStore::revokeAllForUser() requires a positive $ttlSeconds — a value of zero or '
-            . "less would let the cutoff disappear immediately, leaving every one of the user's outstanding "
-            . 'refresh tokens valid.',
         );
     }
 }

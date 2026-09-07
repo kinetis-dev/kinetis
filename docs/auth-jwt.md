@@ -163,26 +163,25 @@ A subject is one non-empty string everywhere in `kinetis/auth-jwt`.
 id to that string at the moment of issuance; `RefreshTokenStore::issue()`
 takes and converts it identically, so the access token and the refresh
 token a login endpoint hands back name the same subject. `JwtUser::id()`
-returns that string, `RevocationStore` and `RefreshTokenStore` key their
-per-user revocation by it, and `redeem()` hands it back ready to reissue
-with. The id a request carries is therefore the id that revokes
-everything issued under it — an integer `42` in your own user table is
-the subject `'42'` on both token kinds.
+returns that string and `redeem()` hands it back ready to reissue with,
+so the id a request carries is the id a refresh reissues under — an
+integer `42` in your own user table is the subject `'42'` on both token
+kinds.
 
 An empty subject throws (`Exception\JwtIssuerException` from
 `JwtIssuer::issue()`, `Exception\RefreshTokenUnavailableException` from
 `RefreshTokenStore`), and `JwtAuthMiddleware` answers a token whose
 `sub` is anything but a non-empty string — absent, a JSON number, empty
-— with the usual `401`: such a token could not be revoked under the
-identity it authenticated as.
+— with the usual `401`: such a token names no user the application can
+act on.
 
 ## Reading claims beyond `id()`
 
 `CurrentUserInterface::id()` only ever guarantees the subject.
 `JwtAuthMiddleware` registers a `JwtUser`, which exposes the rest of the
-token's claims directly, and narrows `id()` to the subject string both
-stores' `revokeAllForUser()` take — inject `JwtUser` instead of
-`CurrentUserInterface` where you need either:
+token's claims directly, and narrows `id()` to the canonical subject
+string — inject `JwtUser` instead of `CurrentUserInterface` where you
+need either:
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwtUser;
@@ -231,33 +230,32 @@ on its own.
 A real, *reachable* cache can still fail a single write — a network
 blip, a full Redis instance — and PSR-16 lets a conforming implementation
 report that by returning `false` rather than throwing.
-`revoke()`/`revokeToken()`/`revokeAllForUser()` all check for this and
-throw `Exception\RevocationUnavailableException` rather than silently
-treating a failed write as a successful revocation; let it propagate
-rather than catching and ignoring it — the whole point is that the
-caller must not proceed as though the token is actually revoked. The
-same applies to `RefreshTokenStore`'s `issue()`/`revoke()`/
-`revokeAllForUser()`, throwing `Exception\RefreshTokenUnavailableException`
-— a failed `issue()` means the token about to be returned was never
-stored, so it must be discarded rather than handed to a client. Neither
-exception's message names the token, `jti`, or subject involved.
+`revoke()`/`revokeToken()` both check for this and throw
+`Exception\RevocationUnavailableException` rather than silently treating
+a failed write as a successful revocation; let it propagate rather than
+catching and ignoring it — the whole point is that the caller must not
+proceed as though the token is actually revoked. The same applies to
+`RefreshTokenStore`'s `issue()`/`revoke()`, throwing
+`Exception\RefreshTokenUnavailableException` — a failed `issue()` means
+the token about to be returned was never stored, so it must be discarded
+rather than handed to a client. Neither exception's message names the
+token, `jti`, or subject involved.
 
-Every `$ttlSeconds` a revocation method accepts as a *duration* —
-`revokeAllForUser()` on both stores, and `RefreshTokenStore::issue()` —
-must be positive; zero or negative throws the same way, rather than
-silently clamping to something that would look like it worked but
-protect nothing. `RevocationStore::revoke()` is the one exception: its
-`$ttlSeconds` also accepts `null`, meaning "revoke with no expiry at
-all" (see the note below) — zero or negative is still rejected.
+`RefreshTokenStore::issue()`'s `$ttlSeconds` must be positive; zero or
+negative throws the same way, rather than silently clamping to something
+that would look like it worked but protect nothing.
+`RevocationStore::revoke()`'s `$ttlSeconds` also accepts `null`, meaning
+"revoke with no expiry at all" (see the note below) — zero or negative
+is still rejected there too.
 
 Configuring `revocationStore` also tightens what counts as a valid
-token. `iat` and `jti` are otherwise optional per the JWT standard, but
-with a revocation store in place both are required — `iat` a plain
-integer, `jti` a non-empty string — before either revocation check
-runs. A token missing or malformed on just one of them is rejected
-outright with the usual 401, not silently exempted from whichever check
-that claim would have driven. Every `JwtIssuer`-issued token already
-satisfies this; it only matters for a hand-built or third-party token.
+token. `jti` is otherwise optional per the JWT standard, but with a
+revocation store in place it is required, and must be a non-empty
+string, before the revocation check runs. A token carrying no usable
+`jti` is rejected outright with the usual 401, rather than
+authenticating with the one check the store makes silently skipped.
+Every `JwtIssuer`-issued token already satisfies this; it only matters
+for a hand-built or third-party token.
 
 ```{code-block} php
 use Kinetis\AuthJwt\RevocationStore;
@@ -320,50 +318,16 @@ that silently did nothing would be worse than one that fails loudly.
 earlier on this page works with zero revocation checking, at zero extra
 cache cost.
 
-## Logging out everywhere
-
-`revokeToken()` only logs out the one token you hand it — "log out this
-session." To invalidate every token a user currently holds, across every
-device they're logged in on, use `revokeAllForUser()` instead:
-
-```{code-block} php
-use Kinetis\AuthJwt\JwtUser;
-use Kinetis\AuthJwt\RevocationStore;
-use Kinetis\Http\Attributes\Post;
-
-final readonly class LogoutEverywhereController
-{
-    public function __construct(
-        private JwtUser $user,
-        private RevocationStore $revocationStore,
-    ) {}
-
-    #[Post('/logout-everywhere')]
-    public function invoke(): array
-    {
-        $this->revocationStore->revokeAllForUser($this->user->id(), ttlSeconds: 3600);
-
-        return ['loggedOut' => true];
-    }
-}
-```
-
-Any token issued before this call stops working immediately; a fresh
-login right afterward — including the user's own, if they log back in on
-this device — still works normally, since its own `iat` is after the
-cutoff.
-
-`ttlSeconds` here isn't a token's own remaining lifetime the way it is for
-`revokeToken()` — there's no single token to derive it from, since this
-covers every token the user might be holding. Pass however long your app's
-longest-lived token can stay valid (matching whatever `ttlSeconds` you
-pass to `JwtIssuer::issue()`); anything shorter risks the cutoff itself
-expiring while an old token is technically still unexpired.
-
-The user id this is keyed by is the token's own `sub` claim — pass
-`JwtUser::id()` straight through, as the controller above does. Both
-stores' `revokeAllForUser()` take exactly that string and reject an
-empty one; see "The subject is one canonical string" above.
+Revocation here is always per token: `revokeToken()` logs out the one
+token you hand it. "Log out everywhere" is application policy, not a
+framework call — own a monotonic credential generation per user in your
+identity domain, stamp its current value into both the access token
+(a claim passed to `JwtIssuer::issue()`) and the refresh token (a claim
+passed to `RefreshTokenStore::issue()`), bump it when the user logs out
+everywhere, and reject a stale generation in your own middleware
+alongside `JwtAuthMiddleware`. Only your identity domain can advance
+that value monotonically and stamp it on the replacement credentials a
+refresh mints.
 
 ## Refresh tokens
 
@@ -437,41 +401,20 @@ refresh token can never be redeemed twice — even by two requests racing
 each other, since the cache is required to implement
 `Kinetis\SimpleCache\AtomicConsumeInterface` (`RedisSimpleCache` does;
 construction throws otherwise, the same refusal `NullSimpleCache`
-already gets). `redeem()` also returns
-`null` — the identical "invalid or expired" outcome the endpoint above
-already handles — for a token that's still on record but predates a
-`revokeAllForUser()` cutoff for its own subject (see "Logging out
-everywhere" below): a client sees no difference between "never existed,"
-"already used," or "revoked," which is the point — none of those are a
-distinction a refresh endpoint should leak. `revoke()` invalidates one
-token directly — a "log out this device" action — without needing to
-redeem it first:
+already gets). A client sees no difference between "never existed" and
+"already used" — the identical `null` the endpoint above already handles
+as "invalid or expired" — which is the point: neither is a distinction a
+refresh endpoint should leak. `revoke()` invalidates one token directly
+— a "log out this device" action — without needing to redeem it first:
 
 ```{code-block} php
 $this->refreshTokens->revoke($data->refreshToken);
 ```
 
-`RefreshTokenStore` has its own `revokeAllForUser()`, independent of
-`RevocationStore`'s: revoking every access token a user holds doesn't
-stop a still-valid refresh token from minting new ones, so a complete
-"log out everywhere" calls both together:
-
-```{code-block} php
-#[Post('/logout-everywhere')]
-public function invoke(): array
-{
-    $this->revocationStore->revokeAllForUser($this->user->id(), ttlSeconds: 3600);
-    $this->refreshTokens->revokeAllForUser($this->user->id(), ttlSeconds: 3600 * 24 * 14);
-
-    return ['loggedOut' => true];
-}
-```
-
-Both calls take the same `JwtUser::id()` — the one subject the access
-token and the refresh token were issued under, so a single id covers
-both. Each `ttlSeconds` covers that store's own longest-lived
-outstanding token — an access token's is typically much shorter than a
-refresh token's, so the two calls above commonly pass different values.
+Revoking an access token does not stop a still-valid refresh token from
+minting new ones, so a logout that ends a session revokes both the
+access token (`RevocationStore::revokeToken()`) and the refresh token
+(`revoke()` above).
 
 Defaults to a 14-day expiry (`issue(..., ttlSeconds: 1_209_600)`),
 adjustable per call. `RefreshTokenStore` requires a real cache the same

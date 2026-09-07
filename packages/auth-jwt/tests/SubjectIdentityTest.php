@@ -20,8 +20,8 @@ use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The documented issue / access + refresh / log-out-everywhere flow, run
- * end to end against an ordinary integer application id — the one shape
+ * The documented login / authenticate / refresh / logout flow, run end
+ * to end against an ordinary integer application id — the one shape
  * that would break if a subject had more than one representation across
  * this package.
  */
@@ -31,7 +31,7 @@ final class SubjectIdentityTest extends TestCase
 
     private const int APPLICATION_ID = 42;
 
-    public function test_an_integer_application_id_revokes_both_its_access_and_refresh_credentials(): void
+    public function test_an_integer_application_id_names_one_subject_across_both_credentials(): void
     {
         $cache = new InMemorySimpleCache();
         $revocations = new RevocationStore($cache);
@@ -49,20 +49,28 @@ final class SubjectIdentityTest extends TestCase
 
         self::assertSame(200, $authenticated->getStatusCode());
 
-        $subject = $scope->get(JwtUser::class)->id();
+        $user = $scope->get(JwtUser::class);
 
-        self::assertSame('42', $subject);
+        self::assertSame('42', $user->id());
 
-        // A log-out-everywhere endpoint, holding nothing but the id the
-        // request itself carried.
-        $revocations->revokeAllForUser($subject, ttlSeconds: 3600);
-        $refreshTokens->revokeAllForUser($subject, ttlSeconds: 3600);
+        // A refresh endpoint: the redeemed subject is the same string
+        // the authenticated request itself carried, so the replacement
+        // credentials are issued under one identity.
+        $redeemed = $refreshTokens->redeem($refreshToken);
+
+        self::assertSame(['subject' => '42', 'claims' => []], $redeemed);
+
+        $reissuedRefreshToken = $refreshTokens->issue($redeemed['subject']);
+
+        // A logout endpoint, holding nothing but the credentials in hand.
+        $revocations->revokeToken($user);
+        $refreshTokens->revoke($reissuedRefreshToken);
 
         $afterRevocation = $this->middleware($this->scope(), $revocations)
             ->process($this->requestWithToken($accessToken), $this->handler());
 
         self::assertSame(401, $afterRevocation->getStatusCode());
-        self::assertNull($refreshTokens->redeem($refreshToken));
+        self::assertNull($refreshTokens->redeem($reissuedRefreshToken));
     }
 
     private function middleware(RequestScope $scope, RevocationStore $revocations): JwtAuthMiddleware

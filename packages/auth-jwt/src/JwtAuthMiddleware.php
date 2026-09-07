@@ -40,15 +40,13 @@ use Psr\Http\Server\RequestHandlerInterface;
  * No storage lookup for authentication itself: verifying a JWT's
  * signature is the entire authentication decision, and introducing a
  * UserProviderInterface equivalent would mean a database round trip on
- * every request. $revocationStore is the one optional exception: one or
- * two cache lookups, opt-in, for the one thing a bare signature check
- * structurally cannot do — reject a token before it would otherwise
- * expire, individually (isRevoked()) or as a "log out everywhere" for
- * its subject (isRevokedForUser()). Configuring it also tightens what
- * counts as a valid token: `iat` and `jti` are otherwise optional per
- * the JWT standard, but with a revocation store in place both must be
- * present and well-formed (`iat` a plain integer, `jti` a non-empty
- * string) before either lookup runs.
+ * every request. $revocationStore is the one optional exception: a
+ * single cache lookup, opt-in, for the one thing a bare signature check
+ * structurally cannot do — reject an individual token before it would
+ * otherwise expire (isRevoked()). Configuring it also tightens what
+ * counts as a valid token: `jti` is otherwise optional per the JWT
+ * standard, but with a revocation store in place it must be present and
+ * a non-empty string before the lookup runs.
  *
  * $expectedIssuer/$acceptedAudiences are a second, independent opt-in
  * boundary, closing a different gap: a bare signature check cannot tell
@@ -136,10 +134,10 @@ class JwtAuthMiddleware implements MiddlewareInterface
         }
 
         // A subject is one canonical non-empty string here, the form
-        // JwtIssuer writes and both stores key their per-subject
-        // revocation by. A `sub` of any other shape — absent, a JSON
-        // number, an empty string — is a token this package cannot
-        // revoke consistently, so it never authenticates one.
+        // JwtIssuer writes and RefreshTokenStore stores. A `sub` of any
+        // other shape — absent, a JSON number, an empty string — names
+        // no user this package can act on, so it never authenticates
+        // one.
         $sub = $claims->sub ?? null;
 
         if (!is_string($sub) || $sub === '') {
@@ -159,18 +157,12 @@ class JwtAuthMiddleware implements MiddlewareInterface
         }
 
         if ($this->revocationStore !== null) {
-            $iat = $claims->iat ?? null;
             $jti = $claims->jti ?? null;
 
-            // Both claims are validated together, before either lookup
-            // runs: a numeric-string, fractional, or missing iat, or a
-            // missing/empty jti, is rejected outright rather than
-            // silently skipping the one check that claim would drive.
-            if (!is_int($iat) || !is_string($jti) || $jti === '') {
-                return $this->unauthorized();
-            }
-
-            if ($this->revocationStore->isRevokedForUser($sub, $iat)) {
+            // A missing or empty jti is rejected outright rather than
+            // silently skipping the lookup it would have driven: a token
+            // that cannot be named on the denylist can never be revoked.
+            if (!is_string($jti) || $jti === '') {
                 return $this->unauthorized();
             }
 

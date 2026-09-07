@@ -52,19 +52,6 @@ final class RevocationStoreTest extends TestCase
         }
     }
 
-    public function test_revoke_all_for_user_throws_when_the_cache_write_fails(): void
-    {
-        $store = new RevocationStore(new FailingSimpleCache());
-        $secretUserId = 'super-secret-user-id-must-never-leak-into-a-message';
-
-        try {
-            $store->revokeAllForUser($secretUserId, 60);
-            self::fail('Expected a RevocationUnavailableException.');
-        } catch (RevocationUnavailableException $e) {
-            self::assertStringNotContainsString($secretUserId, $e->getMessage());
-        }
-    }
-
     public function test_a_token_is_not_revoked_by_default(): void
     {
         $store = new RevocationStore(new InMemorySimpleCache());
@@ -192,113 +179,6 @@ final class RevocationStoreTest extends TestCase
         $store->revokeToken($user);
 
         self::assertFalse($store->isRevoked('the-jti'));
-    }
-
-    public function test_revoke_all_for_user_rejects_a_zero_ttl(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-
-        $this->expectException(RevocationUnavailableException::class);
-
-        $store->revokeAllForUser('user-42', 0);
-    }
-
-    public function test_revoke_all_for_user_rejects_a_negative_ttl(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-
-        $this->expectException(RevocationUnavailableException::class);
-
-        $store->revokeAllForUser('user-42', -60);
-    }
-
-    public function test_a_user_is_not_revoked_by_default(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-
-        self::assertFalse($store->isRevokedForUser('user-42', time()));
-    }
-
-    public function test_revoke_all_for_user_rejects_a_token_issued_before_the_call(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-        $issuedAt = time() - 10;
-
-        $store->revokeAllForUser('user-42', 60);
-
-        self::assertTrue($store->isRevokedForUser('user-42', $issuedAt));
-    }
-
-    public function test_revoke_all_for_user_does_not_reject_a_token_issued_after_the_call(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-
-        $store->revokeAllForUser('user-42', 60);
-
-        self::assertFalse($store->isRevokedForUser('user-42', time() + 10));
-    }
-
-    public function test_a_token_issued_in_the_exact_same_second_as_the_cutoff_is_revoked(): void
-    {
-        // The cutoff is inclusive by design (see RevocationStore's own
-        // docblock): a same-second tie fails closed, revoked, rather
-        // than open. This is the one case that flipped when the cutoff
-        // comparison changed from a strict < to <=.
-        //
-        // Reads the literal cutoff value back out of the cache directly
-        // (using RevocationStore's own documented key-naming scheme)
-        // instead of sampling time() a second time in this test — two
-        // separate real time() calls straddling a second boundary is
-        // exactly the flakiness this avoids, even though the odds of it
-        // are low.
-        $cache = new InMemorySimpleCache();
-        $store = new RevocationStore($cache);
-        $store->revokeAllForUser('user-42', 60);
-
-        $cutoff = $cache->get('jwt-revoked-user.' . hash('sha256', 'user-42'));
-        self::assertIsInt($cutoff);
-
-        self::assertTrue($store->isRevokedForUser('user-42', $cutoff));
-    }
-
-    public function test_revoking_all_for_one_user_does_not_affect_another(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-        $issuedAt = time() - 10;
-
-        $store->revokeAllForUser('user-42', 60);
-
-        self::assertTrue($store->isRevokedForUser('user-42', $issuedAt));
-        self::assertFalse($store->isRevokedForUser('user-99', $issuedAt));
-    }
-
-    /**
-     * The user id is the token's own `sub` claim, which JwtIssuer writes
-     * as a canonical string — so the string '42' an integer application
-     * id becomes there is the one identity revoked here.
-     */
-    public function test_revoke_all_for_the_string_form_of_an_int_application_id(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-        $issuedAt = time() - 10;
-
-        $store->revokeAllForUser('42', 60);
-
-        self::assertTrue($store->isRevokedForUser('42', $issuedAt));
-        self::assertFalse($store->isRevokedForUser('43', $issuedAt));
-    }
-
-    /**
-     * No token this package issues carries an empty subject, so a cutoff
-     * written under one could never be checked against anything.
-     */
-    public function test_revoke_all_for_user_rejects_an_empty_user_id(): void
-    {
-        $store = new RevocationStore(new InMemorySimpleCache());
-
-        $this->expectException(RevocationUnavailableException::class);
-
-        $store->revokeAllForUser('', 60);
     }
 
     public function test_construction_over_a_null_cache_throws_instead_of_silently_not_revoking(): void

@@ -35,18 +35,6 @@ final class RevocationUnavailableException extends RuntimeException
     }
 
     /**
-     * Same reasoning as revokeFailed(), for the per-user cutoff write —
-     * names neither the user id nor any token.
-     */
-    public static function revokeAllForUserFailed(): self
-    {
-        return new self(
-            'RevocationStore::revokeAllForUser() failed: the cache reported a failed write, so none of '
-            . "this user's existing tokens have been revoked. Treat this as a hard failure, not a warning.",
-        );
-    }
-
-    /**
      * revoke()'s $ttlSeconds was zero or negative — a value with no
      * real meaning: it would either write an entry that's already
      * expired or be rejected by the backend outright. Pass null for
@@ -59,34 +47,6 @@ final class RevocationUnavailableException extends RuntimeException
             'RevocationStore::revoke() requires a positive $ttlSeconds, or null for its indefinite form — '
             . 'a value of zero or less has no meaning: it would either expire immediately or before it '
             . 'could ever apply. Pass null to revoke without an expiry, or a real positive number of seconds.',
-        );
-    }
-
-    /**
-     * revokeAllForUser()'s $ttlSeconds was zero or negative — unlike
-     * revoke(), this one has no indefinite form: it has no single token
-     * to bound the cutoff by, so the caller must supply their own app's
-     * longest outstanding token lifetime.
-     */
-    public static function nonPositiveRevokeAllForUserTtl(): self
-    {
-        return new self(
-            'RevocationStore::revokeAllForUser() requires a positive $ttlSeconds — a value of zero or '
-            . "less would let the cutoff disappear immediately, leaving every one of the user's existing "
-            . 'tokens valid.',
-        );
-    }
-
-    /**
-     * revokeAllForUser() was handed an empty subject — no token this
-     * package can issue carries one, so the write would establish a
-     * cutoff nothing is ever checked against. Never names the value.
-     */
-    public static function emptySubject(): self
-    {
-        return new self(
-            'RevocationStore::revokeAllForUser() requires a non-empty $userId: it is the token\'s own '
-            . '"sub" claim, and no token this package issues carries an empty one. Pass JwtUser::id().',
         );
     }
 

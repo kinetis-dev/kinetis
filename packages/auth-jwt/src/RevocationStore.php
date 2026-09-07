@@ -9,43 +9,22 @@ use Kinetis\SimpleCache\NullSimpleCache;
 use Psr\SimpleCache\CacheInterface;
 
 /**
- * A cache-backed denylist, supporting two independent revocation
- * mechanisms.
- *
- * Per-token — "log this session out" — keyed by a token's own `jti`
- * claim; JwtIssuer::issue() always includes one, so every token it
- * produces is revocable. Bounded when the token itself is: revoke()'s
- * $ttlSeconds is the token's own remaining lifetime, not a fixed
- * duration — once the token would have expired naturally anyway, the
- * denylist entry has nothing left to revoke and can be dropped. A
- * token issued with no expiry at all (JwtIssuer::issue() called with
- * ttlSeconds: null) has no such natural point, so pass null instead —
- * revoke() then writes the entry with no expiry of its own, a genuine
- * indefinite revocation rather than a TTL standing in for "forever."
- * revokeToken() derives this automatically from the token's own `exp`
- * claim (or lack of one); call revoke() directly if you're revoking by
- * `jti` alone without a decoded token on hand. Every TTL-accepting
- * method here rejects zero or a negative value outright rather than
- * clamping it — a non-positive TTL was never a real revocation, just
- * one that looked like it succeeded.
- *
- * Per-user — "log out everywhere" — keyed by the user's own id, storing
- * a cutoff timestamp rather than any specific token. A token issued at
- * or before that cutoff (per its own `iat` claim) is rejected; anything
- * issued strictly after is unaffected. The cutoff itself is inclusive
- * deliberately, not off-by-one: this is a security action, and failing
- * closed on the rare same-second tie (a token that happened to be
- * minted in the exact wall-clock second as the revocation call) is the
- * correct tradeoff against failing open on it — the cost of the false
- * positive is "log in again," the cost of the alternative is a
- * revoked session that isn't actually revoked. A fresh login one full
- * second after the call, the overwhelmingly common case, is unaffected
- * either way. Unlike revokeToken(), $ttlSeconds on revokeAllForUser()
- * has no single token to derive from — pass your own app's longest
- * token lifetime. The user id is the canonical subject string a token
- * carries in its `sub` claim — JwtUser::id() hands back exactly that,
- * and JwtIssuer::issue() is where an application's own integer id
- * becomes it.
+ * A cache-backed denylist of individual access tokens — "log this
+ * session out" — keyed by a token's own `jti` claim; JwtIssuer::issue()
+ * always includes one, so every token it produces is revocable.
+ * Bounded when the token itself is: revoke()'s $ttlSeconds is the
+ * token's own remaining lifetime, not a fixed duration — once the token
+ * would have expired naturally anyway, the denylist entry has nothing
+ * left to revoke and can be dropped. A token issued with no expiry at
+ * all (JwtIssuer::issue() called with ttlSeconds: null) has no such
+ * natural point, so pass null instead — revoke() then writes the entry
+ * with no expiry of its own, a genuine indefinite revocation rather
+ * than a TTL standing in for "forever." revokeToken() derives this
+ * automatically from the token's own `exp` claim (or lack of one); call
+ * revoke() directly if you're revoking by `jti` alone without a decoded
+ * token on hand. revoke() rejects a zero or negative TTL outright
+ * rather than clamping it — a non-positive TTL was never a real
+ * revocation, just one that looked like it succeeded.
  *
  * Built against plain Psr\SimpleCache\CacheInterface, the same "don't
  * hard-couple to Redis specifically" reasoning
@@ -136,42 +115,8 @@ final readonly class RevocationStore
         return (bool) $this->cache->get($this->key($jti), false);
     }
 
-    /**
-     * Invalidates every token already issued to $userId — any token
-     * whose `iat` predates this call. $userId is the token's own `sub`
-     * claim, straight from JwtUser::id(). $ttlSeconds must cover the
-     * longest lifetime any of your app's currently-outstanding tokens
-     * could still have; once it elapses, this cutoff itself is forgotten.
-     */
-    public function revokeAllForUser(string $userId, int $ttlSeconds): void
-    {
-        if ($userId === '') {
-            throw RevocationUnavailableException::emptySubject();
-        }
-
-        if ($ttlSeconds <= 0) {
-            throw RevocationUnavailableException::nonPositiveRevokeAllForUserTtl();
-        }
-
-        if (!$this->cache->set($this->userKey($userId), time(), $ttlSeconds)) {
-            throw RevocationUnavailableException::revokeAllForUserFailed();
-        }
-    }
-
-    public function isRevokedForUser(string $userId, int $issuedAt): bool
-    {
-        $cutoff = $this->cache->get($this->userKey($userId));
-
-        return is_int($cutoff) && $issuedAt <= $cutoff;
-    }
-
     private function key(string $jti): string
     {
         return 'jwt-revoked.' . hash('sha256', $jti);
-    }
-
-    private function userKey(string $userId): string
-    {
-        return 'jwt-revoked-user.' . hash('sha256', $userId);
     }
 }
