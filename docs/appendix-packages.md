@@ -451,20 +451,21 @@ on its spans.
   a child span, as `http.route`. The span is active while the handler
   runs — the parent for everything below.
 - `Kinetis\Telemetry\HttpClient\TracingHttpClient`/`TracingResponse` —
-  a client span per outgoing request with `traceparent` injection
-  (appended in Symfony's `"Name: value"` string form, coexisting with
-  any existing header shape), carrying `http.request.method` from the
-  method vocabulary, `url.scheme`/`server.address`/`server.port` and
-  `kinetis.http.url_fingerprint` — never the URL's userinfo, path,
+  a client span per outgoing request, carrying `http.request.method`
+  from the method vocabulary, `url.scheme`/`server.address`/`server.port`
+  and `kinetis.http.url_fingerprint` — never the URL's userinfo, path,
   query string or fragment, each of which routinely holds a credential
   or an identifier, while `$inner` is handed the URL and the method
-  exactly as the caller wrote them. The span
-  ends when the response is consumed — `getContent()`/`toArray()`, an
-  error, `cancel()`, or destruct as the safety net — never when
-  `request()` returns, since requests through this transport complete
-  later by design. `stream()` unwraps to the inner client's own
-  responses (Symfony clients only stream responses they created), so
-  stream consumers get destruct-time span timing.
+  exactly as the caller wrote them. A stale `traceparent`/`tracestate`
+  on the `headers` option is replaced, so the injected carrier reaches
+  `$inner` exactly once; every unrelated entry of that iterable arrives
+  with its own value and its own position, neither regrouped nor
+  repaired here. The span ends when the response is consumed —
+  `getContent()`/`toArray()`, an error, `cancel()`, or destruct as the
+  safety net — never when `request()` returns, since requests through
+  this transport complete later by design. `stream()` unwraps to the
+  inner client's own responses (Symfony clients only stream responses
+  they created), so stream consumers get destruct-time span timing.
 - `Kinetis\Telemetry\Logging\TraceAwareLogger` — PSR-3 decorator adding
   `trace_id`/`span_id` to entry context when a span is recording;
   caller-supplied keys win.
