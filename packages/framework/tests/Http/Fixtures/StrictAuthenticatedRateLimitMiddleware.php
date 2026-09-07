@@ -12,6 +12,6 @@ final class StrictAuthenticatedRateLimitMiddleware extends AuthenticatedRateLimi
 {
     public function __construct(CacheInterface $cache, RequestScope $scope)
     {
-        parent::__construct($cache, $scope, maxAttempts: 1, windowSeconds: 60);
+        parent::__construct($cache, 'fixture-strict-user', $scope, maxAttempts: 1, windowSeconds: 60);
     }
 }

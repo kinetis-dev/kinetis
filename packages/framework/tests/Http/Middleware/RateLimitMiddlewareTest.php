@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Http\Middleware;
 
 use Kinetis\Container\AppScope;
-use Kinetis\Http\Attributes\Get;
-use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
@@ -19,6 +17,7 @@ use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Kinetis\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\Tests\Fixtures\NonAtomicCache;
 use Kinetis\Tests\Http\Fixtures\RateLimitedFixtureController;
+use Kinetis\Tests\Http\Fixtures\SharedRateLimitMiddleware;
 use Kinetis\Tests\Http\Fixtures\StrictRouteRateLimitedFixtureController;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
@@ -46,7 +45,7 @@ final class RateLimitMiddlewareTest extends TestCase
 
     public function test_a_request_under_the_limit_passes_through_with_rate_limit_headers(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 2, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 2, windowSeconds: 60);
 
         $response = $middleware->process($this->request(), $this->handler());
 
@@ -57,7 +56,7 @@ final class RateLimitMiddlewareTest extends TestCase
 
     public function test_remaining_decreases_with_each_request_in_the_same_window(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 2, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 2, windowSeconds: 60);
 
         $first = $middleware->process($this->request(), $this->handler());
         $second = $middleware->process($this->request(), $this->handler());
@@ -68,7 +67,7 @@ final class RateLimitMiddlewareTest extends TestCase
 
     public function test_a_request_at_the_limit_is_rejected_with_429(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 2, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 2, windowSeconds: 60);
 
         $middleware->process($this->request(), $this->handler());
         $middleware->process($this->request(), $this->handler());
@@ -83,7 +82,7 @@ final class RateLimitMiddlewareTest extends TestCase
 
     public function test_the_inner_handler_never_runs_once_the_limit_is_reached(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 1, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 1, windowSeconds: 60);
         $calls = 0;
         $handler = new CallableRequestHandler(function () use (&$calls) {
             $calls++;
@@ -99,7 +98,7 @@ final class RateLimitMiddlewareTest extends TestCase
 
     public function test_different_identifiers_get_independent_buckets(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 1, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 1, windowSeconds: 60);
 
         $first = $middleware->process($this->request('127.0.0.1'), $this->handler());
         $second = $middleware->process($this->request('192.168.1.1'), $this->handler());
@@ -112,7 +111,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         // The whole reason the identifier is sha256-hashed before use: PSR-16
         // forbids ":" in a key, and a bare IPv6 address is full of them.
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 1, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 1, windowSeconds: 60);
 
         $response = $middleware->process($this->request('2001:db8::1'), $this->handler());
 
@@ -121,7 +120,7 @@ final class RateLimitMiddlewareTest extends TestCase
 
     public function test_a_request_after_the_window_resets_is_allowed_again(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 1, windowSeconds: 1);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 1, windowSeconds: 1);
 
         $middleware->process($this->request(), $this->handler());
         $rejected = $middleware->process($this->request(), $this->handler());
@@ -142,6 +141,7 @@ final class RateLimitMiddlewareTest extends TestCase
         $app->middleware(RateLimitMiddleware::class);
         $app->bind(RateLimitMiddleware::class, static fn ($c) => new RateLimitMiddleware(
             $c->get(CacheInterface::class),
+            'global',
             maxAttempts: 1,
             windowSeconds: 60,
         ));
@@ -166,7 +166,7 @@ final class RateLimitMiddlewareTest extends TestCase
         $middleware = new class (new InMemorySimpleCache()) extends RateLimitMiddleware {
             public function __construct(CacheInterface $cache)
             {
-                parent::__construct($cache, maxAttempts: 1, windowSeconds: 60);
+                parent::__construct($cache, 'login', maxAttempts: 1, windowSeconds: 60);
             }
         };
 
@@ -177,39 +177,43 @@ final class RateLimitMiddlewareTest extends TestCase
         self::assertSame(429, $second->getStatusCode());
     }
 
+    /**
+     * SharedRateLimitMiddleware is the thin subclass an application writes
+     * so #[Middleware(...)], which carries only a class-string, reaches a
+     * policy with a real ID and limits.
+     */
     public function test_works_as_route_middleware_through_a_real_kernel(): void
     {
         $app = new AppScope();
         $app->instance(CacheInterface::class, new InMemorySimpleCache());
-        $app->bind(RateLimitMiddleware::class, static fn ($c) => new RateLimitMiddleware(
-            $c->get(CacheInterface::class),
-            maxAttempts: 1,
-            windowSeconds: 60,
-        ));
         $app->boot();
 
         $router = new Router();
         $router->register(RateLimitedFixtureController::class);
         $kernel = new Kernel($app, $router);
 
-        $first = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: ['REMOTE_ADDR' => '127.0.0.1']));
-        $second = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: ['REMOTE_ADDR' => '127.0.0.1']));
+        $ip = ['REMOTE_ADDR' => '127.0.0.1'];
+
+        // The fixture allows 2 per window, and nothing else is registered.
+        $first = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
+        $second = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
+        $third = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
 
         self::assertSame(200, $first->getStatusCode());
-        self::assertSame(429, $second->getStatusCode());
+        self::assertSame(200, $second->getStatusCode());
+        self::assertSame(429, $third->getStatusCode());
     }
 
     public function test_a_subclass_can_override_the_identifier_used_for_keying(): void
     {
         // identifierFor() is protected, not private, specifically so a
-        // subclass's override actually takes effect when cacheKey() (still
-        // defined on the parent) calls it — a real, previously-unexercised
-        // constraint: a private method binds statically to its defining
-        // class regardless of subclassing.
+        // subclass's override actually takes effect when dedupeKey() (still
+        // defined on the parent) calls it: a private method binds statically
+        // to its defining class regardless of subclassing.
         $middleware = new class (new InMemorySimpleCache()) extends RateLimitMiddleware {
             public function __construct(CacheInterface $cache)
             {
-                parent::__construct($cache, maxAttempts: 1, windowSeconds: 60);
+                parent::__construct($cache, 'api', maxAttempts: 1, windowSeconds: 60);
             }
 
             protected function identifierFor(ServerRequestInterface $request): string
@@ -231,7 +235,7 @@ final class RateLimitMiddlewareTest extends TestCase
         // (untrusted) REMOTE_ADDR share one bucket regardless of what
         // X-Forwarded-For claims, since a client can set that header to
         // anything it likes.
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: 1, windowSeconds: 60);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: 1, windowSeconds: 60);
 
         $first = $middleware->process($this->request('203.0.113.1', ['X-Forwarded-For' => '1.1.1.1']), $this->handler());
         $second = $middleware->process($this->request('203.0.113.1', ['X-Forwarded-For' => '2.2.2.2']), $this->handler());
@@ -244,6 +248,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $middleware = new RateLimitMiddleware(
             new InMemorySimpleCache(),
+            'api',
             maxAttempts: 1,
             windowSeconds: 60,
             trustedProxies: ['10.0.0.0/8'],
@@ -263,6 +268,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $middleware = new RateLimitMiddleware(
             new InMemorySimpleCache(),
+            'api',
             maxAttempts: 1,
             windowSeconds: 60,
             trustedProxies: ['10.0.0.0/8'],
@@ -283,6 +289,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $middleware = new RateLimitMiddleware(
             new InMemorySimpleCache(),
+            'api',
             maxAttempts: 1,
             windowSeconds: 60,
             trustedProxies: ['2001:db8::/32'],
@@ -299,6 +306,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $middleware = new RateLimitMiddleware(
             new InMemorySimpleCache(),
+            'api',
             maxAttempts: 1,
             windowSeconds: 60,
             trustedProxies: ['10.0.0.1'],
@@ -327,6 +335,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $middleware = new RateLimitMiddleware(
             new InMemorySimpleCache(),
+            'api',
             maxAttempts: 1,
             windowSeconds: 60,
             trustedProxies: ['2001:db8::1'],
@@ -352,9 +361,9 @@ final class RateLimitMiddlewareTest extends TestCase
      */
     public function test_a_forwarded_hop_spelled_another_way_is_still_stepped_over(): void
     {
-        $cache = new InMemorySimpleCache();
         $middleware = new RateLimitMiddleware(
-            $cache,
+            new InMemorySimpleCache(),
+            'api',
             maxAttempts: 1,
             windowSeconds: 60,
             trustedProxies: ['2001:db8::1'],
@@ -373,12 +382,12 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $this->expectException(RateLimitUnavailableException::class);
 
-        new RateLimitMiddleware(new NullSimpleCache());
+        new RateLimitMiddleware(new NullSimpleCache(), 'api');
     }
 
     public function test_construction_over_a_real_cache_succeeds(): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache());
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api');
 
         self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
     }
@@ -393,12 +402,44 @@ final class RateLimitMiddlewareTest extends TestCase
      */
     public function test_an_unavailable_cache_fails_the_request_instead_of_not_enforcing(): void
     {
-        $middleware = new RateLimitMiddleware(new UnavailableSimpleCache());
+        $middleware = new RateLimitMiddleware(new UnavailableSimpleCache(), 'api');
 
         $this->expectException(SimpleCacheUnavailableException::class);
         $this->expectExceptionMessage('kinetis/cache-redis');
         $middleware->process($this->request(), $this->handler());
     }
+
+    /**
+     * @return list<array{string}>
+     */
+    public static function blankPolicyIds(): array
+    {
+        return [[''], [' '], ["\t\n"]];
+    }
+
+    #[DataProvider('blankPolicyIds')]
+    public function test_a_blank_policy_id_is_rejected_at_construction(string $policyId): void
+    {
+        $this->expectException(InvalidRateLimitConfigException::class);
+
+        new RateLimitMiddleware(new InMemorySimpleCache(), $policyId);
+    }
+
+    /**
+     * The ID is trusted application configuration, not request input, so
+     * it is accepted as written and reduced to a fixed-width hash — which
+     * is what keeps PSR-16's forbidden `{}()/\@:` out of the key.
+     */
+    public function test_a_policy_id_containing_psr16_reserved_characters_still_derives_a_safe_key(): void
+    {
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'login:{v1}/@\\', maxAttempts: 1, windowSeconds: 60);
+
+        $subject = (new ReflectionMethod(RateLimitMiddleware::class, 'dedupeKey'))->invoke($middleware, $this->request());
+
+        self::assertMatchesRegularExpression('/^[0-9a-f.]+$/', (string) $subject);
+        self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
+    }
+
     /**
      * @return list<array{int}>
      */
@@ -412,7 +453,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $this->expectException(InvalidRateLimitConfigException::class);
 
-        new RateLimitMiddleware(new InMemorySimpleCache(), windowSeconds: $windowSeconds);
+        new RateLimitMiddleware(new InMemorySimpleCache(), 'api', windowSeconds: $windowSeconds);
     }
 
     /**
@@ -428,7 +469,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $this->expectException(InvalidRateLimitConfigException::class);
 
-        new RateLimitMiddleware(new InMemorySimpleCache(), maxAttempts: $maxAttempts);
+        new RateLimitMiddleware(new InMemorySimpleCache(), 'api', maxAttempts: $maxAttempts);
     }
 
     /**
@@ -452,7 +493,7 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $this->expectException(InvalidRateLimitConfigException::class);
 
-        new RateLimitMiddleware(new InMemorySimpleCache(), trustedProxies: [$proxy]);
+        new RateLimitMiddleware(new InMemorySimpleCache(), 'api', trustedProxies: [$proxy]);
     }
 
     /**
@@ -474,7 +515,7 @@ final class RateLimitMiddlewareTest extends TestCase
     #[DataProvider('usableProxies')]
     public function test_a_usable_trusted_proxy_is_accepted(string $proxy): void
     {
-        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), trustedProxies: [$proxy]);
+        $middleware = new RateLimitMiddleware(new InMemorySimpleCache(), 'api', trustedProxies: [$proxy]);
 
         self::assertSame(200, $middleware->process($this->request(), $this->handler())->getStatusCode());
     }
@@ -484,71 +525,54 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->expectException(RateLimitUnavailableException::class);
         $this->expectExceptionMessage('AtomicCounterInterface');
 
-        new RateLimitMiddleware(new NonAtomicCache());
+        new RateLimitMiddleware(new NonAtomicCache(), 'api');
     }
 
-    public function test_two_instances_with_different_configuration_do_not_share_a_bucket(): void
+    /**
+     * Two policies guarding different things — a login endpoint and a 2FA
+     * endpoint, say — are told apart by their IDs alone, so each keeps its
+     * own budget for the same subject in the same window.
+     */
+    public function test_two_policies_with_different_ids_do_not_share_a_bucket(): void
     {
         $cache = new InMemorySimpleCache();
-        $strict = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60);
-        $generous = new RateLimitMiddleware($cache, maxAttempts: 2, windowSeconds: 60);
+        $login = new RateLimitMiddleware($cache, 'login', maxAttempts: 1, windowSeconds: 60);
+        $twoFactor = new RateLimitMiddleware($cache, '2fa', maxAttempts: 1, windowSeconds: 60);
 
-        // Two real checks against $strict, over its own limit of 1 — a
-        // shared, unscoped counter would already sit at 2 afterward.
+        $login->process($this->request(), $this->handler());
+        $rejected = $login->process($this->request(), $this->handler());
+
+        $stillOk = $twoFactor->process($this->request(), $this->handler());
+
+        self::assertSame(429, $rejected->getStatusCode());
+        self::assertSame(200, $stillOk->getStatusCode());
+    }
+
+    /**
+     * The ID is the whole identity: neither the class nor the limits take
+     * part in it, so two instances sharing an ID count one subject against
+     * one budget. That is what lets a policy be reconfigured — or reached
+     * through a subclass in one place and the base class in another —
+     * without splitting the counter a running deployment already holds.
+     */
+    public function test_two_instances_sharing_a_policy_id_share_one_counter(): void
+    {
+        $cache = new InMemorySimpleCache();
+        $strict = new RateLimitMiddleware($cache, 'api', maxAttempts: 2, windowSeconds: 60);
+        $generous = new class ($cache) extends RateLimitMiddleware {
+            public function __construct(CacheInterface $cache)
+            {
+                parent::__construct($cache, 'api', maxAttempts: 5, windowSeconds: 60);
+            }
+        };
+
         $strict->process($this->request(), $this->handler());
+        $generous->process($this->request(), $this->handler());
+
+        // Two checks have already been counted against the one shared
+        // counter, so the third exceeds $strict's own limit of 2 even
+        // though $generous counted the second one.
         $rejected = $strict->process($this->request(), $this->handler());
-
-        // $generous's own first-ever check, against its own limit of 2.
-        // A shared counter polluted by $strict's two prior increments
-        // would already read 3 here — over $generous's own limit — and
-        // reject a request $generous has never actually seen before.
-        $stillOk = $generous->process($this->request(), $this->handler());
-
-        self::assertSame(429, $rejected->getStatusCode());
-        self::assertSame(200, $stillOk->getStatusCode());
-    }
-
-    /**
-     * Same class, maxAttempts, windowSeconds, and namespace — the only
-     * difference is $trustedProxies — exercised against a request whose
-     * REMOTE_ADDR is trusted by neither, so identifierFor() resolves to
-     * the identical raw IP for both. $trustedProxies still has to be
-     * part of the policy identity: it changes which identifier a
-     * *different* request would resolve to, which is real policy
-     * behavior, not merely cosmetic configuration.
-     */
-    public function test_two_instances_with_different_trusted_proxies_do_not_share_a_bucket_even_when_they_resolve_the_same_subject(): void
-    {
-        $cache = new InMemorySimpleCache();
-        $first = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['10.0.0.0/8']);
-        $second = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['172.16.0.0/12']);
-
-        // 203.0.113.1 is trusted by neither range, so both resolve the
-        // same REMOTE_ADDR as the subject.
-        $first->process($this->request('203.0.113.1'), $this->handler());
-        $rejected = $first->process($this->request('203.0.113.1'), $this->handler());
-
-        $stillOk = $second->process($this->request('203.0.113.1'), $this->handler());
-
-        self::assertSame(429, $rejected->getStatusCode());
-        self::assertSame(200, $stillOk->getStatusCode());
-    }
-
-    /**
-     * Trust is a set-membership check — order and duplicate entries
-     * change nothing about which addresses are actually trusted, so two
-     * constructions of an equivalent list must map to the identical
-     * policy identity and share a bucket, unlike a genuinely different
-     * list (the previous test).
-     */
-    public function test_two_instances_with_a_reordered_or_duplicated_equivalent_trusted_proxies_list_share_a_bucket(): void
-    {
-        $cache = new InMemorySimpleCache();
-        $first = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['10.0.0.0/8', '172.16.0.0/12']);
-        $second = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, trustedProxies: ['172.16.0.0/12', '10.0.0.0/8', '172.16.0.0/12']);
-
-        $first->process($this->request('203.0.113.1'), $this->handler());
-        $rejected = $second->process($this->request('203.0.113.1'), $this->handler());
 
         self::assertSame(429, $rejected->getStatusCode());
     }
@@ -575,20 +599,19 @@ final class RateLimitMiddlewareTest extends TestCase
     }
 
     /**
-     * Deliberately crosses a real window boundary between the outer
-     * occurrence deciding and the inner occurrence running — the same
-     * thing a slow intervening middleware could do in a real pipeline —
-     * by advancing a shared fake clock in-process, deterministically, no
-     * real sleep(). Dedup must key on policy+subject alone, never on
-     * $window, or the two occurrences (each computing a different window
-     * independently) fail to recognize each other as the same check.
+     * Crosses a real window boundary between the outer occurrence
+     * deciding and the inner occurrence running — the same thing a slow
+     * intervening middleware could do in a real pipeline. Dedup keys on
+     * policy+subject alone, never on $window, or the two occurrences
+     * (each computing a different window independently) fail to recognize
+     * each other as the same check.
      */
     public function test_the_dedup_reuses_a_decision_even_if_a_window_boundary_passes_before_the_inner_policy_runs(): void
     {
         $cache = new InMemorySimpleCache();
         [$clock, $advance] = $this->fakeClock(1_000_000);
-        $outer = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 1, clock: $clock);
-        $inner = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 1, clock: $clock); // the identical policy
+        $outer = new RateLimitMiddleware($cache, 'api', maxAttempts: 1, windowSeconds: 1, clock: $clock);
+        $inner = new RateLimitMiddleware($cache, 'api', maxAttempts: 1, windowSeconds: 1, clock: $clock);
 
         $crossingHandler = new CallableRequestHandler(function (ServerRequestInterface $req) use ($inner, $advance) {
             $advance(2); // crosses at least one 1-second window boundary
@@ -601,7 +624,7 @@ final class RateLimitMiddlewareTest extends TestCase
         self::assertSame('0', $response->getHeaderLine('X-RateLimit-Remaining'));
 
         // If $inner had treated the boundary-crossed call as a
-        // genuinely separate check, it would already have consumed the
+        // separate check, it would already have consumed the
         // new window's own budget of 1 — leaving nothing for this
         // direct, undeduped call to $inner alone (still within that
         // same new window) to be the *first* real increment against it.
@@ -612,21 +635,18 @@ final class RateLimitMiddlewareTest extends TestCase
     }
 
     /**
-     * The real pipeline can never construct this input itself — a
-     * rejecting occurrence returns 429 without ever calling the next
-     * handler, so nothing downstream (including a second instance of the
-     * identical policy) ever actually observes a rejected decision
-     * through it. This drives the reuse branch directly, via a manually
-     * recorded rejection, to prove tooManyRequestsResponse() stays
-     * correct against the *original* window regardless — a real, if
-     * currently unreachable-through-the-pipeline, code path worth
-     * pinning on its own.
+     * The real pipeline cannot construct this input itself — a rejecting
+     * occurrence returns 429 without ever calling the next handler, so
+     * nothing downstream observes a rejected decision through it. Driving
+     * the reuse branch directly, via a manually recorded rejection, pins
+     * that tooManyRequestsResponse() answers against the *original*
+     * window.
      */
     public function test_a_reused_rejection_reports_the_original_windows_retry_after_not_a_recomputed_one(): void
     {
         $cache = new InMemorySimpleCache();
         [$clock, $advance] = $this->fakeClock(1_000_000);
-        $middleware = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 10, clock: $clock);
+        $middleware = new RateLimitMiddleware($cache, 'api', maxAttempts: 1, windowSeconds: 10, clock: $clock);
 
         $dedupeKeyMethod = new ReflectionMethod(RateLimitMiddleware::class, 'dedupeKey');
         $attributeName = (string) (new ReflectionClassConstant(RateLimitMiddleware::class, 'EXECUTED_ATTRIBUTE'))->getValue();
@@ -653,24 +673,8 @@ final class RateLimitMiddlewareTest extends TestCase
         self::assertSame('0', $reused->getHeaderLine('Retry-After'));
     }
 
-    public function test_two_instances_with_identical_configuration_but_different_namespaces_do_not_share_a_bucket(): void
-    {
-        $cache = new InMemorySimpleCache();
-        $login = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, namespace: 'login');
-        $twoFactor = new RateLimitMiddleware($cache, maxAttempts: 1, windowSeconds: 60, namespace: '2fa');
-
-        $login->process($this->request(), $this->handler());
-        $rejected = $login->process($this->request(), $this->handler());
-
-        $stillOk = $twoFactor->process($this->request(), $this->handler());
-
-        self::assertSame(429, $rejected->getStatusCode());
-        self::assertSame(200, $stillOk->getStatusCode());
-    }
-
     /**
-     * Simulates the identical policy (same class, configuration, and no
-     * namespace) appearing twice in one request's pipeline — the actual
+     * The same policy appearing twice in one request's pipeline — the
      * shape a global registration plus a redundant route one takes.
      * $second reads $first's already-recorded decision off the request
      * instead of incrementing the shared counter a second time.
@@ -678,8 +682,8 @@ final class RateLimitMiddlewareTest extends TestCase
     public function test_two_instances_of_the_identical_policy_processing_the_same_request_count_once(): void
     {
         $cache = new InMemorySimpleCache();
-        $first = new RateLimitMiddleware($cache, maxAttempts: 2, windowSeconds: 60);
-        $second = new RateLimitMiddleware($cache, maxAttempts: 2, windowSeconds: 60);
+        $first = new RateLimitMiddleware($cache, 'api', maxAttempts: 2, windowSeconds: 60);
+        $second = new RateLimitMiddleware($cache, 'api', maxAttempts: 2, windowSeconds: 60);
         $innerHandler = new CallableRequestHandler(
             fn (ServerRequestInterface $req) => $second->process($req, $this->handler()),
         );
@@ -689,7 +693,7 @@ final class RateLimitMiddlewareTest extends TestCase
         self::assertSame(200, $onlyOneRealRequest->getStatusCode());
         self::assertSame('1', $onlyOneRealRequest->getHeaderLine('X-RateLimit-Remaining'));
 
-        // A genuinely separate HTTP request still counts as a second
+        // A separate HTTP request still counts as a second
         // real check — maxAttempts: 2 allows it, at exactly zero
         // remaining — proving the dedup only ever applies within one
         // request's own attribute chain, never across requests.
@@ -707,11 +711,11 @@ final class RateLimitMiddlewareTest extends TestCase
     public function test_an_inner_policys_headers_survive_being_wrapped_by_an_outer_successful_policy(): void
     {
         $cache = new InMemorySimpleCache();
-        $outer = new RateLimitMiddleware($cache, maxAttempts: 100, windowSeconds: 60);
+        $outer = new RateLimitMiddleware($cache, 'global', maxAttempts: 100, windowSeconds: 60);
         $inner = new class ($cache) extends RateLimitMiddleware {
             public function __construct(CacheInterface $cache)
             {
-                parent::__construct($cache, maxAttempts: 1, windowSeconds: 60);
+                parent::__construct($cache, 'route', maxAttempts: 1, windowSeconds: 60);
             }
         };
         $innerHandler = new CallableRequestHandler(fn ($req) => $inner->process($req, $this->handler()));
@@ -734,9 +738,9 @@ final class RateLimitMiddlewareTest extends TestCase
 
     /**
      * A generous global policy (maxAttempts: 3) wraps a strict route
-     * policy (maxAttempts: 1, a different class — see
-     * StrictRouteRateLimitMiddleware) through a real Kernel — the exact
-     * composition a real application configures both policies through.
+     * policy (maxAttempts: 1 — see StrictRouteRateLimitMiddleware)
+     * through a real Kernel: the exact composition a real application
+     * configures both policies through.
      */
     public function test_a_global_and_a_route_policy_compose_with_independent_counters_and_truthful_headers(): void
     {
@@ -746,6 +750,7 @@ final class RateLimitMiddlewareTest extends TestCase
         $app->middleware(RateLimitMiddleware::class);
         $app->bind(RateLimitMiddleware::class, static fn ($c) => new RateLimitMiddleware(
             $c->get(CacheInterface::class),
+            'global',
             maxAttempts: 3,
             windowSeconds: 60,
         ));
@@ -788,23 +793,15 @@ final class RateLimitMiddlewareTest extends TestCase
     }
 
     /**
-     * The identical class, configuration, and (absent) namespace
-     * registered both globally and, redundantly, on the matched route —
-     * RateLimitedFixtureController's own #[Middleware(RateLimitMiddleware::class)]
-     * alongside a global registration of the same, unconfigured class.
-     * One real request must still cost exactly one increment.
+     * One policy class registered both globally and, redundantly, on the
+     * matched route. It allows 2 per window, so if each request counted
+     * twice the budget would already be gone after the first one.
      */
     public function test_the_identical_policy_registered_both_globally_and_on_the_route_counts_once_per_request(): void
     {
         $app = new AppScope();
-        $cache = new InMemorySimpleCache();
-        $app->instance(CacheInterface::class, $cache);
-        $app->middleware(RateLimitMiddleware::class);
-        $app->bind(RateLimitMiddleware::class, static fn ($c) => new RateLimitMiddleware(
-            $c->get(CacheInterface::class),
-            maxAttempts: 2,
-            windowSeconds: 60,
-        ));
+        $app->instance(CacheInterface::class, new InMemorySimpleCache());
+        $app->middleware(SharedRateLimitMiddleware::class);
         $app->boot();
 
         $router = new Router();
@@ -817,10 +814,6 @@ final class RateLimitMiddlewareTest extends TestCase
         $second = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
         $third = $kernel->handle(new ServerRequest('GET', '/limited', serverParams: $ip));
 
-        // maxAttempts: 2 — if the identical policy present both
-        // globally and on the route counted twice per request, the
-        // budget would already be exhausted after the first real
-        // request. Deduped, exactly one increment happens per request.
         self::assertSame(200, $first->getStatusCode());
         self::assertSame(200, $second->getStatusCode());
         self::assertSame(429, $third->getStatusCode());

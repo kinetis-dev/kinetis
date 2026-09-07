@@ -135,9 +135,10 @@ ordering with nothing left to break a tie on.
 ```{note}
 Kinetis's own built-in middleware (`CorsMiddleware`, `RateLimitMiddleware`,
 `AuthenticatedRateLimitMiddleware`) is never `#[AsGlobalMiddleware]`-attributed
-— each needs app-specific constructor config (allowed origins, a limit) no
-default could supply, so they stay opt-in via `$app->middleware(...)` only,
-exactly as described below. This attribute is for *your* middleware.
+— each needs app-specific constructor config (allowed origins, a policy ID and
+its limits) no default could supply, so they stay opt-in via
+`$app->middleware(...)` only, exactly as described below. This attribute is for
+*your* middleware.
 ```
 
 Restrict the scan for a large application the same way as
@@ -235,13 +236,12 @@ first (outermost), then the `mcp` group, then the MCP request itself.
 ```{code-block} php
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
-use Kinetis\Http\Middleware\RateLimitMiddleware;
 
 #[Middleware(AuthMiddleware::class)]
 final readonly class OrderController
 {
     #[Get('/orders')]
-    #[Middleware(RateLimitMiddleware::class)]
+    #[Middleware(OrderRateLimitMiddleware::class)]
     public function index(): array { /* ... */ }
 }
 ```
@@ -250,7 +250,7 @@ final readonly class OrderController
 levels: class-level applies to every route on the controller and runs
 outermost; method-level appends, closer to the controller. Stack as many
 as you need at either level — in the example above, a request to
-`GET /orders` runs `AuthMiddleware` first, then `RateLimitMiddleware`,
+`GET /orders` runs `AuthMiddleware` first, then `OrderRateLimitMiddleware`,
 then the controller.
 
 `Router::register()` discovers these the same way it discovers
@@ -324,12 +324,12 @@ freely:
 
 ```{code-block} php
 #[Get('/orders/export')]
-#[Middleware(RateLimitMiddleware::class)]
+#[Middleware(OrderRateLimitMiddleware::class)]
 #[Middleware('@admin')]
 public function export(): array { /* ... */ }
 ```
 
-That runs `RateLimitMiddleware`, then the `admin` group's two members, then
+That runs `OrderRateLimitMiddleware`, then the `admin` group's two members, then
 the controller.
 
 Group membership alone never makes a middleware run anywhere — a group
@@ -895,39 +895,85 @@ cache: configure Redis (`REDIS_URL` or `REDIS_HOST` — see
 pass any other real PSR-16 implementation. Construction over
 `NullSimpleCache` — the default binding when no Redis is configured —
 throws, since a counter that never stores anything enforces no limit at
-all while still emitting healthy-looking `X-RateLimit-*` headers. Not
-registered by default — opt in as global or route middleware, whichever
-fits:
+all while still emitting healthy-looking `X-RateLimit-*` headers.
+
+Every policy is constructed with a **policy ID**: a non-empty string
+naming which policy owns the counter. That ID is the whole identity —
+two instances built with the same ID count one client against one
+budget, and two policies that must not share a budget are given
+different IDs. Nothing else takes part: raising a limit, adding a
+trusted proxy, or moving the policy into a subclass leaves the counters
+a running deployment already holds exactly where they are.
+
+Nothing is registered by default. `#[Middleware(...)]` carries a
+class-string and no arguments, so the policy an application actually
+registers is a thin subclass supplying its own ID and limits:
 
 ```{code-block} php
 use Kinetis\Http\Middleware\RateLimitMiddleware;
+use Psr\SimpleCache\CacheInterface;
 
-$app->middleware(RateLimitMiddleware::class); // every request
+final class ApiRateLimitMiddleware extends RateLimitMiddleware
+{
+    public function __construct(CacheInterface $cache)
+    {
+        parent::__construct($cache, 'api', maxAttempts: 60, windowSeconds: 60);
+    }
+}
+
+final class LoginRateLimitMiddleware extends RateLimitMiddleware
+{
+    public function __construct(CacheInterface $cache)
+    {
+        parent::__construct($cache, 'login', maxAttempts: 5, windowSeconds: 60);
+    }
+}
+```
+
+`CacheInterface` autowires from whatever `AppScope::boot()` registered, so
+each of those resolves with no binding at all — global or route,
+whichever fits:
+
+```{code-block} php
+$app->middleware(ApiRateLimitMiddleware::class); // every request
 ```
 
 ```{code-block} php
-use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
-use Kinetis\Http\Middleware\RateLimitMiddleware;
+use Kinetis\Http\Attributes\Post;
 
 final readonly class LoginController
 {
-    #[Get('/login')]
-    #[Middleware(RateLimitMiddleware::class)] // just this route
+    #[Post('/login')]
+    #[Middleware(LoginRateLimitMiddleware::class)] // just this route
     public function attempt(): array { /* ... */ }
 }
 ```
 
-Either way, `CacheInterface` autowires from whatever `AppScope::boot()`
-registered — no extra wiring needed. It's safe as global middleware
-specifically because it holds no per-request state as instance properties,
-the same criterion [above](#global-middleware-every-request-including-ones-that-never-match-a-route)
+An `AppScope::bind()` closure is the alternative wherever the policy
+needs something the constructor cannot autowire — a value read from
+`Config`, for instance:
+
+```{code-block} php
+$app->bind(RateLimitMiddleware::class, fn ($c) => new RateLimitMiddleware(
+    $c->get(Psr\SimpleCache\CacheInterface::class),
+    'api',
+    maxAttempts: 100,
+    windowSeconds: 60,
+));
+$app->middleware(RateLimitMiddleware::class);
+```
+
+It's safe as global middleware specifically because it holds no
+per-request state as instance properties, the same criterion
+[above](#global-middleware-every-request-including-ones-that-never-match-a-route)
 already establishes for any global middleware.
 
-Defaults to 60 attempts per 60-second window, keyed by client IP
-(`REMOTE_ADDR`), sha256-hashed before use — not for concealment, but because
-PSR-16 forbids `{}()/\@:` in a key, and a bare IPv6 address is full of
-colons. A request past the limit gets:
+Limits default to 60 attempts per 60-second window, keyed by client IP
+(`REMOTE_ADDR`). Both the policy ID and the client identifier are
+sha256-hashed before they reach the cache — not for concealment, but
+because PSR-16 forbids `{}()/\@:` in a key, and a bare IPv6 address is
+full of colons. A request past the limit gets:
 
 ```{code-block} json
 :caption: 429, once the limit is reached
@@ -952,7 +998,7 @@ through one of the given CIDR ranges — never unconditionally, since a
 client can set that header to anything it likes:
 
 ```{code-block} php
-new RateLimitMiddleware($cache, trustedProxies: ['10.0.0.0/8']);
+new RateLimitMiddleware($cache, 'api', trustedProxies: ['10.0.0.0/8']);
 ```
 
 ```{code-block} text
@@ -970,6 +1016,7 @@ $app->bind(RateLimitMiddleware::class, function ($c) {
 
     return new RateLimitMiddleware(
         $c->get(CacheInterface::class),
+        'api',
         // Trimmed, so a space after a comma in .env is not read as
         // part of the next range.
         trustedProxies: $trustedProxies === '' ? [] : array_map(trim(...), explode(',', $trustedProxies)),
@@ -999,41 +1046,11 @@ be — a prefix length outside 0-32 for IPv4 or 0-128 for IPv6, or an
 address that isn't one — raises
 `Exception\InvalidRateLimitConfigException` there rather than on the
 first request to reach it, since the list decides who is allowed to set
-`X-Forwarded-For`. `maxAttempts` and `windowSeconds` are checked the same
-way and must both be at least 1: a window of zero has no length to divide
-the clock into, and a negative one stores the counter already expired, so
-nothing is ever counted while the `X-RateLimit-*` headers keep looking
-healthy.
-
-### A different limit for a different route
-
-`#[Middleware(...)]` only ever carries a class-string, no arguments (see
-above) — a login endpoint wanting 5/minute while the rest of the API gets
-60/minute is a thin subclass fixing its own constructor defaults:
-
-```{code-block} php
-use Kinetis\Http\Middleware\RateLimitMiddleware;
-use Psr\SimpleCache\CacheInterface;
-
-final class LoginRateLimitMiddleware extends RateLimitMiddleware
-{
-    public function __construct(CacheInterface $cache)
-    {
-        parent::__construct($cache, maxAttempts: 5, windowSeconds: 60);
-    }
-}
-```
-
-Overriding the global default instead — every route, one new limit — is a
-single `AppScope::bind()` closure rather than a subclass:
-
-```{code-block} php
-$app->bind(RateLimitMiddleware::class, fn ($c) => new RateLimitMiddleware(
-    $c->get(Psr\SimpleCache\CacheInterface::class),
-    maxAttempts: 100,
-    windowSeconds: 60,
-));
-```
+`X-Forwarded-For`. A blank policy ID raises the same exception, and
+`maxAttempts` and `windowSeconds` are checked the same way and must both
+be at least 1: a window of zero has no length to divide the clock into,
+and a negative one stores the counter already expired, so nothing is ever
+counted while the `X-RateLimit-*` headers keep looking healthy.
 
 ```{note}
 **The cache must count atomically, and construction enforces it.**
@@ -1060,26 +1077,15 @@ Implementing the interface yourself is two methods, `increment()` and
 
 A global limiter and a route limiter can both be active for the same
 request — a generous whole-API limit plus a stricter one on a specific
-route, say. Two policies with the same class and the same `maxAttempts`/
-`windowSeconds`/`trustedProxies` guarding two genuinely *different*
-things (a login endpoint and a 2FA endpoint, for instance) look
-identical to `RateLimitMiddleware` unless told otherwise — pass a
-distinct `namespace` to each so they don't share a bucket:
-
-```{code-block} php
-new RateLimitMiddleware($cache, maxAttempts: 5, windowSeconds: 60, namespace: 'login');
-new RateLimitMiddleware($cache, maxAttempts: 5, windowSeconds: 60, namespace: '2fa');
-```
-
-Two policies that differ in class, `maxAttempts`, `windowSeconds`, or
-`trustedProxies` already get independent counters with no `namespace`
-needed — that's the default. `namespace` only exists for the one case
-those alone can't distinguish.
+route. Give each its own policy ID and each keeps its own counter,
+whatever their limits happen to be. Two policies guarding different
+things with identical limits, a login endpoint and a 2FA endpoint for
+instance, are told apart the same way: by their IDs and nothing else.
 
 The same policy accidentally registered twice for one request — globally
 and, redundantly, on the matched route — still counts as exactly one
 check, not two: `process()` records its decision as a request attribute,
-and a second instance of the identical policy reads it back instead of
+and the second occurrence of that policy ID reads it back instead of
 incrementing again. `X-RateLimit-Limit`/`X-RateLimit-Remaining` follow
 the same rule from the other direction — whichever policy actually ran
 closest to the controller is the one whose real numbers reach the
@@ -1087,14 +1093,14 @@ client, success or `429` alike; an outer policy that's itself within
 budget never overwrites them with its own, unrelated ones.
 
 ```{warning}
-**Changing a policy's class, `maxAttempts`, `windowSeconds`,
-`trustedProxies`, or `namespace` changes its cache key.** Deploying that
-change resets the counter for every subject already partway through a
-window — harmless for most policies, but during a rolling deploy, old
-and new worker processes briefly disagree about which key a given
-request counts against, effectively splitting one policy's quota across
-two keys until the older workers finish rolling off and the old key's
-own TTL expires.
+**Changing a policy's ID changes its cache key.** Deploying that change
+resets the counter for every subject already partway through a window —
+harmless for most policies, but during a rolling deploy, old and new
+worker processes briefly disagree about which key a given request counts
+against, effectively splitting one policy's quota across two keys until
+the older workers finish rolling off and the old key's own TTL expires.
+Changing limits, trusted proxies, or the class the policy lives in does
+not have that effect: the ID alone decides the key.
 ```
 
 ### Keying by the authenticated user instead of IP
@@ -1105,16 +1111,32 @@ already been resolved onto the current request (see
 ["Registering a value the controller reads later"](#registering-a-value-the-controller-reads-later)
 above), falling back to the same IP-based identifier otherwise.
 
+It takes the same policy ID as the base class, so the subclass an
+application registers looks the same, one constructor argument longer:
+
+```{code-block} php
+use Kinetis\Container\RequestScope;
+use Kinetis\Http\Middleware\AuthenticatedRateLimitMiddleware;
+use Psr\SimpleCache\CacheInterface;
+
+final class OrderRateLimitMiddleware extends AuthenticatedRateLimitMiddleware
+{
+    public function __construct(CacheInterface $cache, RequestScope $scope)
+    {
+        parent::__construct($cache, 'orders', $scope, maxAttempts: 30, windowSeconds: 60);
+    }
+}
+```
+
 ```{code-block} php
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
-use Kinetis\Http\Middleware\AuthenticatedRateLimitMiddleware;
 
 final readonly class OrderController
 {
     #[Get('/orders')]
-    #[Middleware(AuthMiddleware::class)]                     // resolves CurrentUserInterface first
-    #[Middleware(AuthenticatedRateLimitMiddleware::class)]    // then keys by it
+    #[Middleware(AuthMiddleware::class)]                // resolves CurrentUserInterface first
+    #[Middleware(OrderRateLimitMiddleware::class)]      // then keys by it
     public function index(): array { /* ... */ }
 }
 ```
@@ -1125,19 +1147,17 @@ one reads it.
 
 ```{warning}
 Route middleware only — never register this globally, and never bind
-`AuthenticatedRateLimitMiddleware::class` directly on `AppScope` with a
-factory that also resolves `RequestScope`. A factory calling
-`$c->get(RequestScope::class)` where `$c` is `AppScope` throws
-`DisconnectedRequestScopeException` rather than reaching the real
-per-request one (see {doc}`container`'s "Resolving `RequestScope` itself,
-from the wrong scope"). It's always safe as route middleware, resolved
-fresh per request the normal way — no binding needed at all, the same as
-any other constructor with only class-typed parameters.
+one of these on `AppScope` with a factory that also resolves
+`RequestScope`. A factory calling `$c->get(RequestScope::class)` where
+`$c` is `AppScope` throws `DisconnectedRequestScopeException` rather than
+reaching the real per-request one (see {doc}`container`'s "Resolving
+`RequestScope` itself, from the wrong scope"). The subclass above is
+always safe as route middleware, resolved fresh per request the normal
+way — no binding needed at all, the same as any other constructor with
+only class-typed parameters.
 ```
 
-It counts through the same atomic primitive as the base class, and is
-also deliberately not `final`, so a stricter per-route limit still works
-via the same subclass pattern.
+It counts through the same atomic primitive as the base class.
 
 ## See also
 
