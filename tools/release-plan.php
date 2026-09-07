@@ -400,6 +400,7 @@ function printJson(array $plan): void
 
 /**
  * @param array<string, mixed> $manifest
+ * @param array<string, mixed>|null $oldManifest
  * @param callable(string, string): PublicationRefs $refsFor
  * @param callable(string): list<string> $versionsFor
  * @return list<array{key: string, version: string, problems: list<string>}>

@@ -230,21 +230,27 @@ above the number here by design:
 | Package | min-msi / min-covered-msi |
 |---|---|
 | `auth` | 70% |
-| `auth-jwt` | 70% |
+| `auth-jwt` | 60% |
+| `authorization` | 90% |
 | `aws-sigv4` | 90% |
 | `bref-adapter` | 70% |
+| `broadcasting` | 75% |
 | `cache-redis` | 75% |
 | `core` | 75% |
 | `mailer` | 90% |
+| `mcp` | 75% |
+| `mcp-docs` | 60% |
 | `migrations` | 75% |
-| `persistence` | 85% |
+| `persistence` | 80% |
 | `query-builder` | 80% |
 | `queue` | 60% |
-| `queue-rabbitmq` | 90% |
+| `queue-rabbitmq` | 50% |
+| `queue-redis` | 55% |
+| `queue-sql` | 50% |
 | `queue-sqs` | 55% |
 | `redis` | 60% |
 | `revolt-http-client` | 75% |
-| `roadrunner-adapter` | 80% |
+| `roadrunner-adapter` | 85% |
 | `search-opensearch` | 70% |
 | `session` | 65% |
 | `skeleton` | 90% |

@@ -257,7 +257,7 @@ function parseGateArguments(array $argv): array
 
 /**
  * @param callable(string): array<string, mixed> $read
- * @param callable(int): void $wait
+ * @param callable(int): mixed $wait the return value is unused
  * @throws ReleaseGateFailure
  */
 function waitForRequiredWorkflows(string $repo, string $sha, callable $read, callable $wait, int $deadline): void

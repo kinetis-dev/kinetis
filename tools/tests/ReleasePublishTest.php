@@ -223,9 +223,9 @@ final class ReleasePublishTest extends TestCase
     {
         $source = new SourceCommit(sha: str_repeat('a', 40), date: self::FIXTURE_DATE);
 
-        requireCurrentSource($source, static fn (): string => str_repeat('a', 40));
+        $this->expectNotToPerformAssertions();
 
-        self::assertTrue(true, 'a current source publishes without comment');
+        requireCurrentSource($source, static fn (): string => str_repeat('a', 40));
     }
 
     public function test_a_rerun_after_main_moved_on_publishes_nothing(): void

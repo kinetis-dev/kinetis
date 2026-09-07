@@ -584,7 +584,7 @@ function run(string $workingDirectory, array $command, array $environment = []):
  */
 function git(string $workingDirectory, string ...$arguments): ?string
 {
-    $result = run($workingDirectory, ['git', ...$arguments]);
+    $result = run($workingDirectory, array_values(['git', ...$arguments]));
 
     return $result['code'] === 0 ? $result['out'] : null;
 }

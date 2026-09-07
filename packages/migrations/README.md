@@ -56,10 +56,10 @@ return new class implements Migration
 ```
 
 ```sh
-vendor/bin/kinetis migrate                     # runs every pending migration
-vendor/bin/kinetis migrate:rollback            # rolls back the migration applied most recently
-vendor/bin/kinetis migrate:status              # lists applied/pending migrations
-vendor/bin/kinetis migrate:make <description>
+vendor/bin/kinetis migrate                       # runs every pending migration
+vendor/bin/kinetis migrate:rollback              # rolls back the migration applied most recently
+vendor/bin/kinetis migrate:status                # lists applied/pending migrations
+vendor/bin/kinetis migrate:make "create orders"  # scaffolds a migration file
 ```
 
 The ledger holds one row per applied migration: its name, the SHA-256 of

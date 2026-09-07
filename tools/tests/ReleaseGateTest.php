@@ -322,7 +322,11 @@ final class ReleaseGateTest extends TestCase
         return [self::CI => $ci, self::VALIDATE => $validate, self::SEMGREP => $semgrep];
     }
 
-    /** One push run on main for this commit. @return array<string, mixed> */
+    /**
+     * One push run on main for this commit.
+     *
+     * @return array<string, mixed>
+     */
     private static function pushRun(string $path, string $status, ?string $conclusion): array
     {
         return [
