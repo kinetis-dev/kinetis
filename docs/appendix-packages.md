@@ -443,48 +443,6 @@ on its spans.
   middleware wraps; the hooks below put that template on `route.match`,
   a child span, as `http.route`. The span is active while the handler
   runs — the parent for everything below.
-- `Kinetis\Telemetry\Persistence\TracingMysqlLink`/`TracingPostgresLink`
-  (and the `TracingMysqlTransaction`/`TracingPostgresTransaction` their
-  `beginTransaction()` hands back, plus the `TracingSqlLinkBase`/
-  `TracingSqlTransactionBase` abstract bases) — a client span per
-  `query()`/`execute()` named by the SQL's opening keyword, carrying
-  `db.system.name`, `db.operation.name`,
-  `kinetis.db.query_fingerprint`, and `kinetis.db.parameter_count` for
-  `execute()` alone (`query()` binds none by construction, which the
-  absent attribute says and a `0` would not). The statement, its inline
-  literals and its parameter values reach `$inner` untouched and a span
-  never at all. `COMMIT`/`ROLLBACK` spanned too. Each decorator
-  implements its dialect marker, so query-builder dialect detection is
-  unaffected. Query spans are never activated — they read the current
-  context as parent and end immediately, so concurrent queries can't
-  interleave anyone's scope stack.
-- `Kinetis\Telemetry\Queue\TracingQueue` — wraps any `QueueInterface`.
-  `push()` gets a producer span; a consumer span opens at `pop()` and
-  closes at `ack()`/`release()`/`fail()` (tracked via a
-  `WeakMap<QueuedJob, ...>`), carrying `kinetis.job.class`/`attempt`/
-  `outcome`, error status on `fail()`. Active while the job runs, so
-  the job's own spans nest under it. Producer and consumer spans are
-  separate traces — linking them needs context in the payload, which a
-  decorator can't reach; a disclosed gap. Build it through
-  `TracingQueue::wrap()`, which returns `ClearableTracingQueue` for a
-  backend declaring `Kinetis\Queue\ClearableQueueInterface` and a plain
-  `TracingQueue` otherwise — an interface a decorator declares is fixed
-  at compile time, while what it wraps is not. Its return type is
-  conditional on the argument's (`@return ($inner is
-  ClearableQueueInterface ? ClearableQueueInterface : QueueInterface)`),
-  so a backend already typed as clearable stays clearable in the type
-  and `QueueFactory::fromConfig()`'s own `QueueInterface` result does
-  not pretend otherwise. `TracingQueue::wrapClearable(ClearableQueueInterface,
-  TracerProviderInterface): ClearableQueueInterface` says the same thing
-  without a conditional to read.
-- `Kinetis\Telemetry\Queue\ClearableTracingQueue` — the clearable form
-  of the above, taking one `ClearableQueueInterface` so the traced and
-  cleared halves are always one backend. Extends `TracingQueue` rather
-  than delegating to one: the job lifecycle is inherited whole, and this
-  class adds `clear()` and the interface. `clear()` reaches the backend
-  directly, since an administrative operation on a queue belongs to no
-  job's span — the same reason `size()` is not traced. `TracingQueue` is
-  non-final for exactly this and nothing else.
 - `Kinetis\Telemetry\HttpClient\TracingHttpClient`/`TracingResponse` —
   a client span per outgoing request with `traceparent` injection
   (appended in Symfony's `"Name: value"` string form, coexisting with
@@ -532,13 +490,19 @@ on its spans.
 - `Kinetis\Telemetry\Instrumentation\OtelTelemetry` — implements core's
   `Kinetis\Instrumentation\TelemetryInterface`, turning the framework's
   hooks into spans; `PackageBootstrap` swaps it into
-  `Telemetry::global()` whenever the OTLP endpoint is configured. Its
-  query hook reports the same keyword, `db.operation.name` and
-  `kinetis.db.query_fingerprint` the SQL decorator does, and ends a
-  hook pair by recording the failure's type alone, so the
-  auto-registered path exports no more than the opt-in one. Its
-  `route.match` span carries the method and, once the router answers,
-  the matched template as `http.route` — never the request target the
+  `Telemetry::global()` whenever the OTLP endpoint is configured. It is
+  the whole of Kinetis-owned SQL, transaction and queue tracing: a
+  client span per query named by the statement's opening keyword and
+  carrying `db.system.name`, `db.operation.name` and
+  `kinetis.db.query_fingerprint`, with a `server.started` event marking
+  the end of the wait for a pooled connection; a `transaction` span
+  carrying `db.transaction.outcome`; a `{queue} publish` producer span
+  and a `{queue} process` consumer span carrying
+  `messaging.destination.name`, `kinetis.job.class`,
+  `kinetis.job.attempt` and `kinetis.job.outcome`. A hook pair ends by
+  recording the failure's type alone. Its `route.match` span carries
+  the method and, once the router answers, the matched template as
+  `http.route` — never the request target the
   hook is handed. The MCP tool name and resource URI it does export are
   registry-resolved definitions rather than caller-supplied text.
   Which hooks *activate* their span (parenting whatever starts next) is the
@@ -559,10 +523,10 @@ on its spans.
 - Depends on `kinetis/framework`, `kinetis/revolt-http-client`,
   `open-telemetry/sdk`, `open-telemetry/exporter-otlp`,
   `symfony/http-client`, `nyholm/psr7`, `psr/log`;
-  `kinetis/persistence`/`kinetis/queue`/`kinetis/cache-redis`/
-  `kinetis/session`/`kinetis/search-opensearch` only in `require-dev` —
-  every decorator class loads lazily, so none of the five is forced on
-  an install that only wants request spans. Own
+  `kinetis/persistence`/`kinetis/cache-redis`/`kinetis/session`/
+  `kinetis/search-opensearch` only in `require-dev` — every decorator
+  class loads lazily, so none of them is forced on an install that only
+  wants request spans. Own
   `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
 ## `packages/authorization` (`kinetis/authorization`)

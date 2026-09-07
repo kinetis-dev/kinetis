@@ -1041,5 +1041,6 @@ one Fiber-driven event loop run inside another isn't supported.
   A separate `kinetis/query-builder` package, not core.
 - {doc}`performance-tuning` — the worker-threads x connections
   budget, what to observe under load, and tuning by workload shape.
-- {doc}`telemetry` — a span per SQL query and per cache operation, via
-  `TracingMysqlLink`/`TracingPostgresLink`/`TracingSimpleCache`.
+- {doc}`telemetry` — a span per SQL query and per transaction, which
+  these drivers report through the framework's instrumentation hooks,
+  plus a span per cache operation via `TracingSimpleCache`.

@@ -417,7 +417,7 @@ excludes in-flight work — could not honestly report what it destroyed
 either. Emptying an SQS queue stays an infrastructure step;
 {doc}`queue-sqs` has the reasoning and what to run instead.
 
-Reaching the capability, in the three places it comes up:
+Reaching the capability, in the two places it comes up:
 
 - **Application code** names `ClearableQueueInterface` in its own
   constructor. With `QUEUE_CONNECTION` set, this package's bootstrap
@@ -430,11 +430,6 @@ Reaching the capability, in the three places it comes up:
   jobs keeps taking `QueueInterface` and works against every backend.
 - **A custom backend** declares `ClearableQueueInterface`, which extends
   `QueueInterface` — one `implements` clause covers both.
-- **A traced queue** is built with `TracingQueue::wrap()`, or
-  `TracingQueue::wrapClearable()` where the backend's own type already
-  says it clears (see {doc}`telemetry`), so the decorator keeps the
-  capability the backend has. Constructing `TracingQueue` directly
-  around a clearable backend hides it.
 
 ```{code-block} php
 use Kinetis\Queue\ClearableQueueInterface;
