@@ -67,9 +67,9 @@ final class BinKinetisDisposalTest extends TestCase
                     // no TransactionGuardHook here — kinetis/persistence is
                     // not installed for this package's own test suite)
                     // resolving it first, so a plain always-throwing factory
-                    // is enough — unlike Kernel's/McpController's own
-                    // fixtures, which need to let an earlier, unrelated
-                    // resolution succeed first.
+                    // is enough — unlike Kernel's own fixtures, where
+                    // Kernel owns HTTP request-scope disposal and an
+                    // earlier, unrelated resolution has to succeed first.
                     $app->bind(LoggerInterface::class, static fn (): LoggerInterface => throw new RuntimeException('logger factory failed'), shared: false);
 
                     return;
