@@ -159,21 +159,21 @@ Every backend implements `pop($timeoutSeconds, $queues)` identically:
   order, before a backend is ever allowed to block waiting on one — a job
   already waiting anywhere is always found before that, regardless of
   which position it is in. Only once nothing is found anywhere does a
-  backend with a native blocking primitive (Redis, SQS) wait a short,
-  bounded slice of real time on the highest-priority queue, after which
-  it sweeps every queue again. A backend with none (RabbitMQ) paces
+  backend with a native blocking primitive (SQS) wait a short, bounded
+  slice of real time on the highest-priority queue, after which it
+  sweeps every queue again. A backend with none (Redis, RabbitMQ) paces
   retries the same way, with a bounded pause between sweeps instead.
   `SqlQueue` gets this property from a different shape entirely: its own
   single, priority-ordered SQL query already checks every queue in one
   atomic operation, so it has no per-queue loop to sequence.
 - `$timeoutSeconds` bounds how long a backend keeps looking, not when
   `pop()` returns. Every wait is itself bounded. SQL and RabbitMQ cut
-  their pacing delay to exactly what is left of the deadline. Redis and
-  SQS wait in whole seconds — the smallest unit `BRPOPLPUSH` and SQS's
-  `WaitTimeSeconds` accept, where `0` means "block forever" and "do not
-  block" respectively — so their wait can outlast the deadline, and each
-  rechecks it the moment that wait comes back empty rather than starting
-  another sweep.
+  their pacing delay to exactly what is left of the deadline, and so does
+  Redis, whose sweep is paced by `Amp\delay()` rather than a blocking
+  Redis command. SQS waits in whole seconds — the smallest unit its
+  `WaitTimeSeconds` accepts — so its wait can outlast the deadline, and it
+  rechecks the deadline the moment that wait comes back empty rather than
+  starting another sweep.
 - What no backend can bound is an operation already in flight: a reserve,
   a receive or a settlement runs to its own completion or its transport's
   own timeout. So `pop()` can return after the deadline; `$timeoutSeconds`
@@ -200,8 +200,8 @@ Every backend implements `pop($timeoutSeconds, $queues)` identically:
 ```{note}
 Once a backend finds a job, it is returned immediately, with no attempt
 to re-check higher-priority queues first. Every backend reserves a job
-atomically the instant it finds one (Redis's move to a processing list,
-SQS's receive-triggered invisibility, RabbitMQ's `basic.get`,
+atomically the instant it finds one (Redis's finite lease, SQS's
+receive-triggered invisibility, RabbitMQ's `basic.get`,
 `SqlQueue`'s own row-level lock) — none of them has a "peek without
 reserving" primitive to recheck from. A job arriving on a
 higher-priority queue while the backend is parked on its bounded wait is
@@ -284,7 +284,7 @@ pointed at the same backend.
 
 What every backend guarantees is **reservation**, not exclusivity for
 all time. A `pop()` takes the job out of reach of every other worker in
-one atomic step — Redis moves it to a processing list, `SqlQueue` claims
+one atomic step — Redis leases it in a sorted set, `SqlQueue` claims
 the row under a row lock, SQS makes the message invisible, RabbitMQ
 holds it as an unacked delivery — so two workers popping at the same
 instant never both come back with the same job. What that reservation
@@ -311,8 +311,8 @@ than uniform:
 
 | Backend | A worker that dies mid-job |
 |---|---|
-| `kinetis/queue-redis` | The job stays in the processing list. There is no reaper, so nothing returns it to `pending` — it is stranded, not lost, and no other worker picks it up |
-| `kinetis/queue-sql` | Reclaimed once the reservation passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS`; with the timeout unset, the row stays reserved indefinitely |
+| `kinetis/queue-redis` | Reclaimed once the lease passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, by the next `pop()` any worker makes on that queue |
+| `kinetis/queue-sql` | Reclaimed once the reservation passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS` |
 | `kinetis/queue-sqs` | Redelivered once the message's visibility timeout expires — SQS's own, configured on the queue |
 | `kinetis/queue-rabbitmq` | Redelivered as soon as the connection drops, since an unacked delivery is requeued by the broker |
 
@@ -568,21 +568,19 @@ time counter checks close off most ways a *pushed* value can be
 malformed — but a durable backend's own stored data can still be
 corrupted after the fact: a hand-edited Redis payload, a database row
 populated some other way, an AMQP header set by a non-Kinetis publisher.
-Every durable backend reserves a message from its own storage — moved to
-Redis's processing list, given a SQL `reserved_at`, made invisible by
-SQS, held as an unacked AMQP delivery — *before* it can be decoded into a
-`QueuedJob`, so a decode failure at that point (invalid JSON, a missing
-or wrong-shaped `class`/`args`/`metadata` field, an out-of-range counter)
-would otherwise leave a real reservation with nothing to release it: the
-message strands forever on a backend with no reservation-reclaim
-mechanism (Redis), or replays forever on one that has (SQL, SQS,
-RabbitMQ), since the identical malformed data crashes every retry the
-same way.
+Every durable backend reserves a message from its own storage — leased in
+Redis, given a SQL `reserved_at`, made invisible by SQS, held as an
+unacked AMQP delivery — *before* it can be decoded into a `QueuedJob`, so
+a decode failure at that point (invalid JSON, a missing or wrong-shaped
+`class`/`args`/`metadata` field, an out-of-range counter) would otherwise
+leave a real reservation with nothing to release it: the message replays
+forever once the reservation is reclaimed, since the identical malformed
+data crashes every retry the same way.
 
 Rather than let that exception escape `pop()` and crash the worker loop,
 every backend settles the malformed message permanently — using its own
-existing removal primitive (an exact-payload `LREM` off Redis's
-processing list, a SQL row `DELETE`, SQS's `DeleteMessage`, RabbitMQ's
+existing removal primitive (an exact-member `ZREM` off Redis's leased
+set, a SQL row `DELETE`, SQS's `DeleteMessage`, RabbitMQ's
 `nack(requeue: false)`) — before `pop()` throws
 `Kinetis\Queue\Exception\MalformedJobSettledException` instead of letting
 the original decode failure escape. `QueueWorker` catches this
@@ -838,7 +836,7 @@ varies:
 
 | Backend | Fenced settlements |
 |---|---|
-| `kinetis/queue-redis` | `ack()`, `release()` and `fail()` — each reads back whether its own `LREM` found the reserved entry |
+| `kinetis/queue-redis` | `ack()`, `release()` and `fail()` — each reads back whether its own `ZREM` removed the exact leased member the handle names |
 | `kinetis/queue-sql` | `ack()`, `release()` and `fail()` — each matches on the row id plus the `reserved_token` its own reservation wrote, and reads back the affected-row count |
 | `kinetis/queue-sqs` | None of ours. SQS answers an expired or already-used receipt with its own error, which propagates as itself |
 | `kinetis/queue-rabbitmq` | None of ours. A delivery tag is scoped to its channel, and reusing one is a channel-level protocol error rather than an answer this package can read |

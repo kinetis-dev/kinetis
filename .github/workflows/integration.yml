@@ -157,9 +157,9 @@ jobs:
         env:
           REDIS_HOST: 127.0.0.1
 
-      - name: Run RedisQueue atomic-transition check
+      - name: Run RedisQueue lease-recovery check
         working-directory: packages/queue-redis
-        run: php tests-integration/redis_atomic_transitions.php
+        run: php tests-integration/redis_lease_recovery.php
         env:
           REDIS_HOST: 127.0.0.1
 

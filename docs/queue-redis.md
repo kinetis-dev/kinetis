@@ -15,6 +15,7 @@ switch — only your configuration changes.
 ```{code-block} text
 QUEUE_CONNECTION=redis
 REDIS_HOST=127.0.0.1
+QUEUE_VISIBILITY_TIMEOUT_SECONDS=300
 ```
 
 ```{code-block} sh
@@ -23,48 +24,67 @@ vendor/bin/kinetis queue:work --queue=high,default
 
 ## Configuring
 
-This package introduces no configuration keys of its own — every
-`REDIS_*` setting `RedisSimpleCache` ({doc}`persistence`) already reads
-is the exact one this backend reads too, `REDIS_TLS*` included, scoped by
-`QUEUE_CONNECTION_NAME` the same way as everywhere else in Kinetis.
-`REDIS_CLUSTER` is not among them: this backend is single-node.
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` is the one key this package
+introduces: how many seconds a reservation is leased before any worker
+may reclaim it. It defaults to 300 and must be a positive integer.
 
-The queue opens its own connection over {doc}`redis`'s transport rather
-than sharing the cache's. A blocking `BRPOPLPUSH` parks on its socket for
-up to a second, which would stall every pipelined command sharing it; the
-queue's operation budget is `REDIS_TIMEOUT` plus that same second, so a
-probe that waits out its whole timeout reads as an empty queue rather
-than a lost reply.
+Every other setting this backend reads is a `REDIS_*` one
+`RedisSimpleCache` ({doc}`persistence`) already reads, `REDIS_TLS*`
+included, scoped by `QUEUE_CONNECTION_NAME` the same way as everywhere
+else in Kinetis. `REDIS_CLUSTER` is not among them: this backend is
+single-node. The queue opens its own connection over {doc}`redis`'s
+transport rather than sharing the cache's, so its operation budget is
+`REDIS_TIMEOUT` and its connection lifetime is its own.
 
-## A crashed worker's job is never lost
+## A crashed worker's job comes back
 
 A naive Redis list `pop()` removes the item at pop time — if a worker
 crashed mid-job, it would just be gone, with no way to detect or retry
-it. This backend uses the "reliable queue" pattern instead: `pop()`
-atomically moves a job's payload from a queue's `pending` list to a
-separate `processing` list, rather than deleting it outright. `ack()`
-removes it from `processing`; `release()` moves it back onto `pending`.
-A job whose worker crashes before any of `ack()`/`release()`/`fail()`
-runs is stranded, not lost — it stays exactly where a future reaper
-would find it, though this backend doesn't ship one yet: closing that
-gap is a disclosed, still-open limitation.
+it. This backend reserves under a finite lease instead. Each queue has
+three keys: a `pending` list, a `delayed` sorted set scored by ready-at
+time, and a `leased` sorted set scored by lease expiry. `pop()` adds the
+exact envelope it is about to hand out to `leased` with an expiry of
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` from now, and only then removes it
+from `pending` — that order is what makes a failure on the leased key
+leave the sole pending copy intact.
 
-The two transitions that could otherwise lose a job outright —
-`release()` (`processing` → `pending`) and delayed-job promotion
-(`delayed` → `pending`) — each run as a single Lua script, which Redis
-always executes as one indivisible unit. A process crash can never land
-between the two halves of either move. `release()`'s move is also
-conditional, not just indivisible: calling it a second time with the
-same `QueuedJob` — a duplicate call, or a retry after a connection
-failure whose server-side outcome wasn't known — throws
-`Kinetis\Queue\Exception\StaleJobHandleException` instead of enqueueing
-a second replacement. `QueueWorker` keeps running and reports the lost
-delivery — see {doc}`queue`'s "When a settlement is lost".
+Expiries are compared against Redis's own `TIME`, so every worker shares
+one lease clock regardless of its own. Any worker's `pop()` reclaims
+expired leases for the queues it is asked for, so a job whose worker died
+before `ack()`/`release()`/`fail()` is redelivered with `attempts`
+incremented. There is no reaper process.
 
-`ack()` and `fail()` are fenced the same way, from the same signal:
-`LREM` reports how many entries it removed, so a zero means the
-processing list held nothing for that handle and the settlement raises
-rather than reporting a removal that never happened.
+Every state transition that could otherwise lose or duplicate a job —
+reservation, `release()`, reclaim, and delayed-job promotion — runs as a
+single Lua script, which Redis executes as one indivisible unit, so a
+process crash can never land between the halves of a move. Reclaim and
+`release()` are conditional as well as indivisible: each checks that the
+exact old member is still leased before writing its replacement, so two
+sweepers racing, or a sweep racing a settlement, produce one winner
+rather than a duplicate.
+
+The leased member is the exact envelope string handed back as
+`QueuedJob::$handle`, and a reclaim rewrites it with the incremented
+attempt count. That makes the handle a fence: `ack()`, `release()` and
+`fail()` act only on that exact member, so a settlement for a delivery
+that has already been settled or reclaimed — a duplicate call, or a retry
+after a connection failure whose server-side outcome wasn't known —
+throws `Kinetis\Queue\Exception\StaleJobHandleException` and writes
+nothing. `QueueWorker` keeps running and reports the lost delivery — see
+{doc}`queue`'s "When a settlement is lost".
+
+Expired leases are swept in bounded batches
+(`RedisQueue::LEASE_RECLAIM_BATCH_SIZE`, currently 100) for the same
+reason promotion is. An abandoned lease whose envelope no longer decodes
+is settled as poison data through
+`Kinetis\Queue\QueueContract::settleIfMalformed()`, so it is removed
+rather than reclaimed forever.
+
+A lease is never renewed. A job still running when its lease expires can
+execute alongside its replacement, so set the timeout above the slowest
+job you expect and keep handlers idempotent. `maxAttempts` bounds a
+handler that throws; it cannot bound a succession of processes that each
+die during execution.
 
 Delayed-job promotion also bounds how much it moves in one call
 (`RedisQueue::DELAYED_PROMOTION_BATCH_SIZE`, currently 100) — a large
@@ -79,8 +99,9 @@ for its full duration.
 {doc}`queue`'s "Clearing is a separate capability"). Clearing counts and
 removes the queue's pending and delayed entries in one Lua script, so
 the number it reports is what it removed rather than a count a
-concurrent push could have moved underneath it. The processing list is
-untouched.
+concurrent push could have moved underneath it. Live leases are
+untouched — they are work a running worker still owns. `size()` counts
+pending, delayed and expired leases, and not live ones.
 
 ## Delayed jobs
 

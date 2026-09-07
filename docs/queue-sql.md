@@ -36,6 +36,8 @@ degrade quietly.
 
 `DB_*` are the exact keys `kinetis/persistence` already reads — nothing
 new to set up beyond a working database connection.
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` is the one key this package
+introduces itself; it defaults to 300 and is described below.
 
 ## The queue needs a table
 
@@ -61,13 +63,11 @@ are matched for exact equality; Postgres compares that way already.
 
 ## A crashed worker's job: the visibility timeout
 
-By default, a job that's been popped but whose worker crashes before
-`ack()`/`release()` runs stays reserved **forever** — no other worker can
-ever pick it up again, since nothing ever clears its `reserved_at`.
-
-`SqlQueue`'s second constructor argument, `$visibilityTimeoutSeconds`,
-closes it — the standard "visibility timeout" pattern SQS's own
-`VisibilityTimeout` already uses:
+A job that's been popped but whose worker crashes before
+`ack()`/`release()` runs is reclaimed once its reservation outruns the
+visibility timeout — the standard pattern SQS's own `VisibilityTimeout`
+already uses. `SqlQueue`'s second constructor argument,
+`$visibilityTimeoutSeconds`, sets it, and defaults to 300:
 
 ```{code-block} php
 use Kinetis\QueueSql\SqlQueue;
@@ -77,10 +77,12 @@ $queue = new SqlQueue($db, visibilityTimeoutSeconds: 300);
 
 A row reserved longer than this becomes poppable again by any worker —
 `attempts` is incremented at that point (crediting the crashed attempt,
-the same as an explicit `release()` call would), so `maxAttempts` still
-eventually gives up on a job whose worker keeps crashing rather than
-retrying it forever. `null` (the default) means a reserved row is never
-reclaimed at all.
+the same as an explicit `release()` call would). A reservation is never
+renewed: a job still running when its window expires can execute
+alongside its replacement, so set the timeout above the slowest job you
+expect and keep handlers idempotent. `maxAttempts` bounds a handler that
+throws — `QueueWorker` consults the cap only after one does — so it
+cannot bound a succession of processes that each die during execution.
 
 `reserved_at` is written and compared against the worker process's own
 `time()`, not the database's clock. Clock skew between workers therefore
@@ -93,10 +95,10 @@ one whose reservation timestamp is in the future relative to now) as
 already stale, letting a second worker reclaim an actively-held
 reservation immediately instead of after it genuinely goes stale.
 
-`kinetis queue:work` reads this from the optional
+`kinetis queue:work` reads this from the
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` environment variable (via
 `Config::scopedKey()`, so it respects `QUEUE_CONNECTION_NAME` the same as
-every other queue setting) — absent means `null`, the same as constructing
+every other queue setting); absent, it is 300, the same as constructing
 `SqlQueue` directly with no second argument:
 
 ```{code-block} text

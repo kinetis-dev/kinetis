@@ -119,9 +119,8 @@ non-positive `MAX_BODY_SIZE`, `TracerFactory` rejects an
 into range.
 
 `intOrNull()` exists for the config that means something different when
-it's genuinely absent than when it's zero — `DB_CONNECT_TIMEOUT` and
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` both mean "no timeout at all" only
-when unset, not `0` standing in for it.
+it's genuinely absent than when it's zero — `DB_CONNECT_TIMEOUT` means
+"no timeout at all" only when unset, not `0` standing in for it.
 
 `required()` is for config with no sane default — a missing database
 password should fail fast and clearly, not silently proceed as an empty
@@ -344,7 +343,7 @@ separate capability". And it is what makes a listener marked
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
 | `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only — retries are immediate, with no backoff (see {doc}`queue`). |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a finite, positive number — `0` (or negative) is rejected, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
-| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | `kinetis/queue-sql` only: reclaim a crashed worker's reserved job after this long; unset means never. |
+| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | `300` | `kinetis/queue-redis` and `kinetis/queue-sql`: reclaim a crashed worker's reserved job after this long. Must be a positive integer; set it above the slowest job you expect. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
 | `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). One origin — scheme, host, optional port — and nothing else; unset leaves AsyncAws its regional table and refuses an ambient `AWS_ENDPOINT_URL`. |
 | `QUEUE_SQS_PLAINTEXT` | `false` | Allows an `http://` value for `QUEUE_SQS_ENDPOINT`. |

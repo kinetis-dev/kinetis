@@ -96,9 +96,9 @@ final readonly class Config
     /**
      * Unlike int(), no literal default: null (unset, or explicitly
      * cleared) is itself a real, distinct value some callers need —
-     * SqlConnectionFactory's DB_CONNECT_TIMEOUT and kinetis/queue-sql's
-     * QUEUE_VISIBILITY_TIMEOUT_SECONDS both mean "no timeout" only when
-     * genuinely absent, not some literal integer standing in for it.
+     * SqlConnectionFactory's DB_CONNECT_TIMEOUT means "no timeout" only
+     * when genuinely absent, not some literal integer standing in for
+     * it.
      *
      * Never casts before range validity is proven: a plain `(int)` cast
      * of a decimal string that overflows the platform's integer range
