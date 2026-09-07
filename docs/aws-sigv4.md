@@ -186,8 +186,8 @@ the retry said, and `ScopingHttpClient` merges its own per-URL defaults
 over every request it forwards.
 
 So `transport:` takes a `SignedTransport` and nothing else. Its
-constructor is private, and `create()` takes default options — a
-timeout, headers an endpoint always needs — so no client and no
+constructor is private, and `create()` takes default options — the
+deadlines below, headers an endpoint always needs — so no client and no
 configurator of yours goes underneath a signature. Put a wrapping client
 above `SigV4SigningClient` instead, where a replay costs a fresh
 signature and is visible as one. A `max_redirects` in those options is
@@ -216,6 +216,29 @@ $transport = SignedTransport::answeredInProcess(
         => new MockResponse('{"acknowledged":true}', ['http_code' => 200]),
 );
 ```
+
+## Deadlines
+
+Every request through the transport is bounded twice: 30 seconds idle —
+the longest gap it waits between bytes — and 30 seconds end to end. The
+total bound is the finite one, since a peer that trickles a byte at a
+time never goes idle. Both are `SignedTransport::create()` defaults, and
+either takes a value of your own without moving the other:
+
+```{code-block} php
+use Kinetis\AwsSigV4\SignedTransport;
+
+$idleBounded = SignedTransport::create(['timeout' => 5.0]);
+$fullyBounded = SignedTransport::create(['timeout' => 5.0, 'max_duration' => 5.0]);
+```
+
+`sendRequest()` covers the request through the response headers and
+returns there. The body is read lazily behind that, so a read of it that
+outlives the same deadline, or whose connection fails, throws a PSR
+stream `RuntimeException` rather than anything `sendRequest()` raises.
+Such a message can name the URL it was reading, which carries no
+credential: this package signs with the `Authorization` and
+`X-Amz-Security-Token` headers only.
 
 ## Credentials
 

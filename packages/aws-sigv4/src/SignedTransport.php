@@ -46,15 +46,26 @@ use Symfony\Contracts\HttpClient\ResponseStreamInterface;
  * response, so a `Location` cannot carry a credential off the configured
  * origin.
  *
+ * ## A finite request lifetime
+ *
+ * create() supplies `timeout => 30.0` and `max_duration => 30.0`.
+ * Symfony reads `timeout` as idle time and defaults `max_duration` to
+ * zero, so the total bound is the one a trickling peer cannot outlast.
+ * $defaultOptions moves either independently.
+ *
+ * PSR-18 `sendRequest()` returns once the response headers are in; the
+ * body stays lazy behind it, and a read that outlives the same deadline
+ * throws a PSR stream `RuntimeException`.
+ *
  * ## What is configurable
  *
- * Default options — a timeout, headers an endpoint always needs — reach
- * create(). A client does not: this class has no constructor a caller
- * can reach, so a decorator such as Symfony's `RetryableHttpClient` or
- * `ScopingHttpClient` has no way underneath the signature. Put one above
- * `SigV4SigningClient` instead, where a replay costs a fresh signature
- * and is visible as one. `max_redirects` in $defaultOptions is
- * overridden, since request() fixes it.
+ * Default options — the two bounds above, headers an endpoint always
+ * needs — reach create(). A client does not: this class has no
+ * constructor a caller can reach, so a decorator such as Symfony's
+ * `RetryableHttpClient` or `ScopingHttpClient` has no way underneath the
+ * signature. Put one above `SigV4SigningClient` instead, where a replay
+ * costs a fresh signature and is visible as one. `max_redirects` in
+ * $defaultOptions is overridden, since request() fixes it.
  *
  * answeredInProcess() is the testing seam: it answers from a function on
  * the calling thread and opens no connection at all. A test asserts on
@@ -63,16 +74,24 @@ use Symfony\Contracts\HttpClient\ResponseStreamInterface;
  */
 final class SignedTransport implements HttpClientInterface
 {
+    private const float REQUEST_BOUND_SECONDS = 30.0;
+
     private function __construct(private readonly HttpClientInterface $delegate) {}
 
     /**
      * @param array<string, mixed> $defaultOptions applied to every
-     *     request made through the returned transport
+     *     request made through the returned transport, over the two
+     *     bounds above and under the fixed redirect ceiling
      */
     public static function create(array $defaultOptions = []): self
     {
         return new self(AmpHttpClientFactory::create(
-            [...$defaultOptions, 'max_redirects' => 0],
+            [
+                'timeout' => self::REQUEST_BOUND_SECONDS,
+                'max_duration' => self::REQUEST_BOUND_SECONDS,
+                ...$defaultOptions,
+                'max_redirects' => 0,
+            ],
             static fn (PooledHttpClient $pool): DelegateHttpClient => $pool,
         ));
     }

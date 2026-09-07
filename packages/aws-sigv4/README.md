@@ -50,7 +50,9 @@ it will be sent in before both the check and the signature, so the
 signature covers the bytes that go out. A 3xx response is returned as it
 is: nothing is re-signed and no `Location` is followed, for the signed
 request or for the credential lookups. Signing reads the request body
-once, from where it stands, and consumes it.
+once, from where it stands, and consumes it. A request is bounded at 30
+seconds idle and 30 seconds end to end, each settable on its own through
+`SignedTransport::create()`.
 
 `$service` is the AWS signing service name (`"es"` for Amazon OpenSearch
 Service, `"execute-api"` for API Gateway, and so on) — required, with no
@@ -76,8 +78,8 @@ composer require kinetis/aws-sigv4
 ```
 
 Requires PHP 8.4+ and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation,
-including the origin grammar, failure behavior, and what is buffered or
-blocking:
+including the origin grammar, deadlines, failure behavior, and what is
+buffered or blocking:
 [kinetis.dev/docs/aws-sigv4.html](https://kinetis.dev/docs/aws-sigv4.html).
 
 ## License
