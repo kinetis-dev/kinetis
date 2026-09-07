@@ -41,18 +41,45 @@ the deadline bounds when the backend stops looking rather than when
 Credentials need nothing Kinetis-specific set up at all — see Credentials
 below.
 
-Two optional settings:
+Four optional settings:
 
 ```{code-block} text
-QUEUE_SQS_ENDPOINT=http://localhost:4566
 QUEUE_SQS_QUEUE_PREFIX=myapp-
+QUEUE_SQS_ENDPOINT=http://localstack:4566
+QUEUE_SQS_PLAINTEXT=true
+QUEUE_SQS_TIMEOUT=30
 ```
 
-`QUEUE_SQS_ENDPOINT` points at a local SQS-compatible service (LocalStack,
-for example) instead of real AWS — handy for development and testing.
 `QUEUE_SQS_QUEUE_PREFIX` is prepended to every queue name — useful when
 staging and production share one AWS account and need to stay on separate
 queues without both trying to use a plain name like `default`.
+
+`QUEUE_SQS_ENDPOINT` points at an SQS-compatible service (LocalStack, for
+example) instead of real AWS. It is one origin — a scheme, a host and an
+optional port, with no userinfo, path, query or fragment — and anything
+else is refused when the client is built. Leave the key unset and the
+destination is AsyncAws's regional endpoint table; an `AWS_ENDPOINT_URL`
+sitting in the environment for some other tool is refused rather than
+quietly redirecting this application's signed requests, so name the
+endpoint here when you want one.
+
+`QUEUE_SQS_PLAINTEXT=true` is what allows an `http://` endpoint.
+`http://localstack:4566` between containers on one Compose network is
+ordinary; a public plain-HTTP endpoint carrying credentials and job
+payloads is not, and nothing in the hostname tells those apart, so the
+decision is yours to record.
+
+`QUEUE_SQS_TIMEOUT` (seconds, default `30`) bounds each SQS request on
+its own — idle and total transfer alike — and covers credential lookups
+too, since they travel on the same transport. It is not one deadline
+across a `pop()` that issues several requests.
+
+Any positive value is accepted. Set it above the longest long poll the
+application issues, since SQS holds such a request open on purpose and a
+shorter budget would abort an idle poll as a failure. That slice is at
+most five seconds, and shorter whenever a `pop()` deadline caps it, so
+the default of `30` leaves room for a full one. A request is one wire
+attempt — no retry, and no redirect followed.
 
 ## Credentials
 
@@ -67,7 +94,14 @@ transport as the client itself, so an assume-role or an IMDS lookup
 suspends the calling Fiber like any other call. The shared credentials
 file, the shared config file and any web-identity or pod-identity token
 file are read with native blocking calls, on first resolution and again
-on each refresh. Resolved credentials are held until they expire.
+on each refresh.
+
+Resolved credentials are held until they expire, and only while they are
+unexpired: an expired answer is passed over for the next provider in the
+same lookup, and a round that resolved nothing is not remembered. A role,
+a container credential endpoint or a token file that appears after a
+worker has started is therefore picked up on the next queue operation
+rather than shadowed by an earlier miss.
 
 ## Create your queues ahead of time
 

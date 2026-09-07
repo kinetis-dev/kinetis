@@ -346,7 +346,9 @@ separate capability". And it is what makes a listener marked
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a finite, positive number — `0` (or negative) is rejected, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
 | `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | `kinetis/queue-sql` only: reclaim a crashed worker's reserved job after this long; unset means never. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
-| `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). |
+| `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). One origin — scheme, host, optional port — and nothing else; unset leaves AsyncAws its regional table and refuses an ambient `AWS_ENDPOINT_URL`. |
+| `QUEUE_SQS_PLAINTEXT` | `false` | Allows an `http://` value for `QUEUE_SQS_ENDPOINT`. |
+| `QUEUE_SQS_TIMEOUT` | `30` | Seconds bounding each SQS request and each credential lookup; must be positive, and set above the longest long poll the application issues (at most a five-second slice). |
 | `QUEUE_SQS_QUEUE_PREFIX` | — | Queue-name prefix for shared AWS accounts. |
 | `QUEUE_RABBITMQ_URL` | *(required for rabbitmq)* | `amqp://` URI. |
 | `QUEUE_RABBITMQ_QUEUE_PREFIX` | — | Queue-name prefix. |
