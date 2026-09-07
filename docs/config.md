@@ -14,7 +14,8 @@ DB_PORT=3306
 DEBUG=false
 ```
 
-Both `public/index.php` and `bin/kinetis` call
+Both `Kinetis\Runtime\HttpStartup` — the whole of an application's
+`public/index.php` — and `bin/kinetis` call
 `Kinetis\Config\EnvFile::safeLoad($projectRoot)` unconditionally, before
 `Kinetis\Runtime\AppEnvironment::detect()` — `APP_ENV` itself might be
 defined for the first time in `.env`, not already set in the real process
@@ -184,8 +185,8 @@ service you never explicitly registered on `RequestScope` itself.
 
 ## Registering services before boot: `bootstrap.php`
 
-`public/index.php` and `bin/kinetis` each construct a plain `AppScope`
-and call `boot()` on it — with no bindings of your own registered yet.
+HTTP startup and `bin/kinetis` each construct a plain `AppScope` and
+call `boot()` on it — with no bindings of your own registered yet.
 Two things run before that lock: any installed package's own bootstrap
 class (declared via `extra.kinetis` — see {doc}`cli` — the way
 `kinetis/persistence` and `kinetis/queue` bind a configured connection

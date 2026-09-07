@@ -128,7 +128,7 @@ final class AppScope implements ContainerInterface
      *   through the container.
      * - `Config` → `Config::fromEnvironment()` (see Kinetis\Config) —
      *   populated from `.env` already if Kinetis\Config\EnvFile::safeLoad()
-     *   ran first, as public/index.php and bin/kinetis both do.
+     *   ran first, as Kinetis\Runtime\HttpStartup and bin/kinetis both do.
      * - `Psr\SimpleCache\CacheInterface` → `Kinetis\SimpleCache\RedisSimpleCache::fromConfig()`
      *   when Redis is actually configured (`REDIS_URL`/`REDIS_HOST`/
      *   `REDIS_CLUSTER`), else

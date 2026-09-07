@@ -13,10 +13,10 @@ The argument is the application's own policy, built once from its
 `Config`: whose forwarded headers may decide a request's scheme and
 client address. It is required because an adapter settles that before the
 Kernel or its container exist, so it cannot resolve the policy and must
-not invent one. `public/index.php` registers it on `AppScope` before the
-bootstrap chain runs, so `bootstrap.php` or a package bootstrap can
-replace it, and reads it back out after `boot()` to hand here — whatever
-the container settled on is what the adapter uses.
+not invent one. `Kinetis\Runtime\HttpStartup` registers it on `AppScope`
+before the bootstrap chain runs, so `bootstrap.php` or a package
+bootstrap can replace it, and reads it back out after `boot()` to hand
+here — whatever the container settled on is what the adapter uses.
 
 The request body needs no such argument. An adapter hands it on as raw
 PSR-7 bytes, and `RequestBodyMiddleware` bounds and parses it inside the
@@ -29,9 +29,10 @@ Kernel under the `FormLimits` the container holds.
 | AWS Lambda (via Bref) | A separate install, `kinetis/bref-adapter` — see below. |
 | RoadRunner | A separate install, `kinetis/roadrunner-adapter` — see below. |
 
-`public/index.php` calls `RuntimeDetector::detect()` once, and the exact
-same file works correctly under all four — nothing in your application
-code needs to know or care which one is actually running it.
+Startup calls `RuntimeDetector::detect()` once per worker process, and
+the exact same `public/index.php` works correctly under all four —
+nothing in your application code needs to know or care which one is
+actually running it.
 
 ## Running under FrankenPHP
 
@@ -940,17 +941,27 @@ the Kernel — which is what keeps the accepted spellings, the nesting, and
 the point at which a client is refused identical under every runtime; see
 {ref}`multipart-form-data-file-uploads`.
 
-You can also construct any adapter directly if you want to force a
-specific one instead of relying on automatic detection. The two SAPI
-adapters and RoadRunner's take the same `TrustedProxies` policy
-`RuntimeDetector::detect()` would have handed them, for the same reason —
-they settle a request's identity before the Kernel or its container
-exist:
+A deployment that wants one specific adapter rather than automatic
+detection passes a factory to `HttpStartup::assemble()` and serves from
+what it returns, in place of the `HttpStartup::run()` an entry point
+normally calls. The two SAPI adapters and RoadRunner's take the same
+`TrustedProxies` policy `RuntimeDetector::detect()` would have handed
+them, for the same reason — they settle a request's identity before the
+Kernel or its container exist:
 
 ```{code-block} php
-$adapter = new Kinetis\Runtime\Adapters\FpmAdapter(
-    $app->get(Kinetis\Http\TrustedProxies::class),
-);
+:caption: public/index.php
+
+use Kinetis\Http\TrustedProxies;
+use Kinetis\Runtime\Adapters\FpmAdapter;
+use Kinetis\Runtime\HttpStartup;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+HttpStartup::assemble(
+    dirname(__DIR__),
+    static fn (TrustedProxies $proxies): FpmAdapter => new FpmAdapter($proxies),
+)->serve();
 ```
 
 `BrefLambdaAdapter` takes the Runtime API endpoint instead, and no proxy

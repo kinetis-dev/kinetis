@@ -26,8 +26,8 @@ use Kinetis\Cache\PackageDiscovery;
  *
  * $globalMiddleware is passed straight through to every Router::register()
  * call — see that method's own doc comment for what it does with it. The
- * caller (public/index.php's dev branch, Kinetis\Cache\Compiler) is
- * responsible for discovering it first, via
+ * caller (Kinetis\Runtime\HttpStartup's development branch,
+ * Kinetis\Cache\Compiler) is responsible for discovering it first, via
  * GlobalMiddlewareDiscovery::discoverAll(), since this class has no
  * business knowing how a global middleware list is produced.
  *

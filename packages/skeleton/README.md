@@ -49,9 +49,10 @@ Copy `packages/skeleton/` out into a new project, point its
 `composer.json` at a real [`kinetis/framework`](https://github.com/kinetis-dev/framework) install instead of the `path`
 repository this monorepo uses internally, and build from there. The
 whole app is `src/Http/WelcomeController.php` (one route) and
-`public/index.php` (the standard Kinetis entry point) — read both end to
-end, then add your own controllers anywhere under `App\`; Kinetis
-discovers them automatically.
+`public/index.php`, which is the Composer autoloader plus one
+`Kinetis\Runtime\HttpStartup::run()` call — the framework owns the
+startup program itself. Add your own controllers anywhere under `App\`;
+Kinetis discovers them automatically.
 
 Looking for a larger, more realistic example — a database, a queue,
 scheduled commands, real-time updates? See

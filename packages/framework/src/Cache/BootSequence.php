@@ -14,25 +14,22 @@ use Kinetis\Http\Routing\Router;
 
 /**
  * The one piece of assembly every framework-managed entry point
- * (`public/index.php`, `bin/kinetis`, {@see \Kinetis\Testing\TestApplication},
- * and the identical reference copies in `kinetis/skeleton`/`kinetis/pingpong`)
- * delegates to, rather than each repeating it inline — extracted
- * specifically so none of them can independently drift from the others
- * on this exact ordering again: `PluginDiscovery::bindInstances()` and
- * the discovered `EventListenerRegistry` must both be bound *before* the
+ * ({@see \Kinetis\Runtime\HttpStartup}, `bin/kinetis`,
+ * {@see \Kinetis\Testing\TestApplication}) delegates to, rather than each
+ * repeating it inline: `PluginDiscovery::bindInstances()` and the
+ * discovered `EventListenerRegistry` must both be bound *before* the
  * package/application bootstrap chain runs, or `bootstrap.php`'s own
  * last-write-wins override (resolving and augmenting a discovered
  * instance, or replacing it outright) has nothing yet bound to act on
  * and is silently reasserted over afterward instead.
  *
- * Deliberately stops short of calling `$app->boot()` itself:
- * `TestApplication` needs one more step — its own `$beforeBoot` callback
- * — to run after the bootstrap chain and before the container locks, and
- * folding `boot()` in here would leave no seam for that. Every caller
- * calls `boot()` right after its own final pre-boot seam — immediately
- * for `public/index.php`/`bin/kinetis`, or after `$beforeBoot` for
- * `TestApplication` — this only owns the part that was actually getting
- * the order wrong.
+ * Stops short of calling `$app->boot()` itself: `TestApplication` needs
+ * one more step — its own `$beforeBoot` callback — to run after the
+ * bootstrap chain and before the container locks, and folding `boot()`
+ * in here would leave no seam for that. Every caller calls `boot()`
+ * right after its own final pre-boot seam — immediately for
+ * `HttpStartup`/`bin/kinetis`, or after `$beforeBoot` for
+ * `TestApplication`.
  *
  * $listenerRegistry and $pluginInstances are already-decided values —
  * live-discovered, or reconstructed exactly once from the compiled

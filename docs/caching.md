@@ -25,6 +25,11 @@ included — is `Production`. Local development sets `APP_ENV=development`
 explicitly — see `.env.example` at the project root, or {doc}`config` for
 loading it from a `.env` file automatically.
 
+`Kinetis\Runtime\HttpStartup` reads this once per worker process — it is
+the whole of an application's `public/index.php` — and `bin/kinetis`
+reads it again for the CLI. Development discovers from source on every
+boot; production takes the artifact path described below.
+
 ## What gets cached
 
 Nine things get precomputed:

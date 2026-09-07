@@ -55,7 +55,8 @@ final readonly class Config
     /**
      * Snapshots the real process environment — after Kinetis\Config\EnvFile::safeLoad()
      * has had a chance to populate it from `.env`, if this is called after
-     * that, which is how both public/index.php and bin/kinetis sequence it.
+     * that, which is how both Kinetis\Runtime\HttpStartup and bin/kinetis
+     * sequence it.
      */
     public static function fromEnvironment(): self
     {

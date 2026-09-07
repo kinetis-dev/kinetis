@@ -23,12 +23,12 @@ use PHPUnit\Framework\TestCase;
  * PluginDiscovery::bind() already gets right — otherwise a bootstrap.php
  * override (or a $beforeBoot test double) is silently clobbered by a
  * later, unconditional rebind. `Kinetis\Cache\BootSequence` is the one
- * place this ordering now lives, shared by every framework-managed entry
- * point (public/index.php, bin/kinetis, TestApplication, and the
- * reference copies in kinetis/skeleton/kinetis/pingpong) — every test
- * here either calls it directly or goes through TestApplication, which
- * itself delegates to it, never a hand-reimplementation of the sequence
- * that could silently diverge from what those entry points actually run.
+ * place this ordering lives, shared by every framework-managed entry
+ * point (Kinetis\Runtime\HttpStartup, bin/kinetis, TestApplication) —
+ * every test here either calls it directly or goes through
+ * TestApplication, which itself delegates to it, never a
+ * hand-reimplementation of the sequence that could silently diverge from
+ * what those entry points actually run.
  *
  * Every case dispatches a real event through a real EventDispatcher and
  * reads a real Recorder, rather than settling for

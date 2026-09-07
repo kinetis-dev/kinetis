@@ -378,10 +378,11 @@ package's bootstrap swaps in its OTel backend, at which point every
 report becomes a span with zero configuration beyond the same
 `OTEL_EXPORTER_OTLP_ENDPOINT`:
 
-- **Boot phases** — `bootstrap.env`, `bootstrap.discovery`,
-  `bootstrap.services`, measured by the entry point with plain
-  timestamps and reported once a backend exists. Under boot-and-die
-  runtimes these appear per request; under a worker, once per boot.
+- **Boot phases** — `bootstrap.env`, `bootstrap.services`, and, on a
+  development boot, `bootstrap.discovery`: measured by
+  `Kinetis\Runtime\HttpStartup` with plain timestamps and reported once a
+  backend exists. Under boot-and-die runtimes these appear per request;
+  under a worker, once per boot.
 - **The request pipeline, opened up** — a span per middleware layer,
   `route.match` (carrying the matched template as `http.route`),
   hydration per DTO, `Controller::method`, and `response.encode`: the

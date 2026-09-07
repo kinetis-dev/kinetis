@@ -5,7 +5,7 @@ declare(strict_types=1);
 // The front controller the conformance suite runs the superglobals
 // adapters through — under `php -S` (spawned by SuperglobalsDriver), a
 // real FrankenPHP worker, or PHP-FPM behind nginx (the integration job).
-// RuntimeDetector picks the adapter the way public/index.php does, so
+// RuntimeDetector picks the adapter the way HttpStartup does, so
 // each environment runs its real adapter's run() loop: FrankenPhpAdapter
 // inside frankenphp_handle_request(), FpmAdapter elsewhere. Named
 // index.php because FrankenPHP's php-server routes a worker through the
