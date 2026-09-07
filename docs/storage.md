@@ -263,16 +263,10 @@ either the whole old file or the whole new one. Nothing before step 7
 touches the destination, so a call that fails before it leaves the
 destination exactly as it was.
 
-A failure reported *by* step 7 says less than that. What the adapter
-sees is the driver's acknowledgement, and an acknowledgement can go
-missing after the kernel has already renamed — a worker process dying
-between the two is enough. `UnableToWriteFile` or `UnableToCopyFile`
-from the rename therefore means "no success was reported", not "nothing
-was published": the destination holds the old file or the new one, and
-this adapter cannot tell you which. Read the destination back before
-deciding what to do, and do not retry blindly where republishing this
-call's body over a *later* update by someone else would be wrong — the
-retry writes what this call was given, over whatever is there by then.
+A failure reported *by* step 7 is the operation's own
+`UnableToWriteFile` or `UnableToCopyFile`, the same as a failure at any
+earlier step. Writing and copying replace the destination outright, so
+the answer to one is to run the same call again.
 
 The `0700` directory in step 2 is what makes the new file private from
 creation: `Amp\File` has no mode argument on opening a file, and the
@@ -312,16 +306,10 @@ file's contents: a writer modifying that same file in place while the
 copy runs is read as it goes.
 
 A copy that retains the source's visibility — the default — reads the
-mode it will publish at off the source pathname *before* it opens that
-handle. So it reads the pathname once more with the handle already
-open, and fails the copy with `UnableToCopyFile`, nothing published,
-when the two readings describe different files. That is what stops a
-public file replaced by a private one in between from being published
-at the public mode. Like the symlink checks below it is a check and not
-a lock: a replacement reverted before the second reading, or landing
-after that reading, reads as unchanged. One landing between the open
-and that reading fails the copy, though the handle it holds would have
-read the original file through to the end.
+mode it will publish at off the source pathname before it opens that
+handle. Like the symlink checks below, that is a reading and not a
+lock: a writer replacing the source in between publishes the new file's
+bytes at the replaced file's mode.
 
 ## The staging namespace is reserved
 

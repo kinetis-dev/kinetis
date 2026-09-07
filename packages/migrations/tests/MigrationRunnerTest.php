@@ -510,9 +510,7 @@ final class MigrationRunnerTest extends TestCase
     }
 
     /**
-     * The identical masking hazard Kinetis\Storage\AmpFileAdapter::
-     * readMimeTypeSample() already discloses and guards against, applied
-     * here: PHP's own finally semantics would otherwise make a
+     * PHP's own finally semantics would otherwise make a
      * releaseLock() failure the new outer exception, chaining the
      * migration's own already-in-flight failure beneath it as previous
      * — obscured one level deeper, not discarded. Both fail
