@@ -259,9 +259,9 @@ yours to invent and aren't listed here.
 | `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | `Referrer-Policy` value, or `off` to omit it. |
 | `SECURITY_CSP` | — | `Content-Security-Policy` value. Unset means the header is not sent. |
 | `SECURITY_PERMISSIONS_POLICY` | — | `Permissions-Policy` value. Unset means the header is not sent. |
-| `SECURITY_HSTS_MAX_AGE` | `0` | HSTS max-age in seconds. `0` means the header is not sent (an RFC 6797-meaningful value, not an error); a negative value throws. |
-| `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` when HSTS is sent. |
-| `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` when HSTS is sent. |
+| `SECURITY_HSTS_MAX_AGE` | — | HSTS max-age in seconds. Unset means the header is not sent; an explicit `0` sends `max-age=0`, RFC 6797's withdrawal of a cached policy; a negative value throws. |
+| `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` to a positive max-age. |
+| `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` to a positive max-age. |
 | `SECURITY_COOP` | — | `Cross-Origin-Opener-Policy` value. Unset means the header is not sent. |
 | `SECURITY_CORP` | — | `Cross-Origin-Resource-Policy` value. Unset means the header is not sent. |
 | `SECURITY_COEP` | — | `Cross-Origin-Embedder-Policy` value. Unset means the header is not sent. |

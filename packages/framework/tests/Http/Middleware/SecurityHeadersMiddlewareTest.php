@@ -109,11 +109,28 @@ final class SecurityHeadersMiddlewareTest extends TestCase
         );
     }
 
-    public function test_a_zero_hsts_max_age_disables_the_header_rather_than_throwing(): void
+    public function test_an_explicit_zero_hsts_max_age_withdraws_the_policy(): void
     {
-        // RFC 6797-meaningful: "disable HSTS for this origin," not an
-        // error.
-        self::assertFalse(self::process(['SECURITY_HSTS_MAX_AGE' => '0'])->hasHeader('Strict-Transport-Security'));
+        // RFC 6797's withdrawal value: a browser drops the policy it has
+        // cached for this host, so the header has to be sent. The
+        // directives that qualify a policy being set are left off.
+        self::assertSame(
+            'max-age=0',
+            self::process([
+                'SECURITY_HSTS_MAX_AGE' => '0',
+                'SECURITY_HSTS_INCLUDE_SUBDOMAINS' => 'true',
+                'SECURITY_HSTS_PRELOAD' => 'true',
+            ])->getHeaderLine('Strict-Transport-Security'),
+        );
+    }
+
+    public function test_an_absent_hsts_max_age_sends_no_header(): void
+    {
+        // The other side of the withdrawal case: an application that says
+        // nothing about HSTS leaves whatever a browser already cached
+        // alone. Blank is unset, per Config.
+        self::assertFalse(self::process([])->hasHeader('Strict-Transport-Security'));
+        self::assertFalse(self::process(['SECURITY_HSTS_MAX_AGE' => ''])->hasHeader('Strict-Transport-Security'));
     }
 
     public function test_a_negative_hsts_max_age_throws_rather_than_being_silently_disabled(): void

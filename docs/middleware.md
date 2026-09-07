@@ -613,6 +613,13 @@ not arrive over a secure transport, and a scheme check would suppress
 it behind a proxy that terminates TLS — where it is exactly what you
 want.
 
+Leaving `SECURITY_HSTS_MAX_AGE` unset sends no header, so a policy a
+browser already cached stays as it is. Setting it to `0` sends
+`Strict-Transport-Security: max-age=0` — RFC 6797's withdrawal, and the
+way to tell a browser to drop that cached policy. A withdrawal is sent
+on its own; `includeSubDomains` and `preload` qualify a positive
+max-age. A negative value throws at construction.
+
 The three cross-origin policies each sever something the web allows by
 default, which is the point of them and the reason to reach for one
 deliberately:
