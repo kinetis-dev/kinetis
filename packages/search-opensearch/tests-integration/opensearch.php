@@ -24,7 +24,10 @@ function check(string $label, bool $condition): void
     }
 }
 
-$config = new Config(['SEARCH_OPENSEARCH_HOST' => getenv('SEARCH_OPENSEARCH_HOST') ?: 'http://localhost:9200']);
+$config = new Config([
+    'SEARCH_OPENSEARCH_HOST' => getenv('SEARCH_OPENSEARCH_HOST') ?: 'http://localhost:9200',
+    'SEARCH_OPENSEARCH_PLAINTEXT' => 'true',
+]);
 $client = OpenSearchClientFactory::fromConfig($config);
 
 $index = 'kinetis-verify-' . bin2hex(random_bytes(4));

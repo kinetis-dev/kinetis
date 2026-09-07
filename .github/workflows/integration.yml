@@ -966,6 +966,7 @@ jobs:
         run: php tests-integration/opensearch.php
         env:
           SEARCH_OPENSEARCH_HOST: http://127.0.0.1:9200
+          SEARCH_OPENSEARCH_PLAINTEXT: "true"
 
       - name: Run auth/TLS integration checks
         working-directory: packages/search-opensearch

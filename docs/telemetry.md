@@ -249,9 +249,10 @@ of such a path is index names, aliases and document ids, which say
 which records a call touched rather than what it did, so the path
 travels only as `kinetis.search.path_fingerprint`.
 
-PSR-18's `sendRequest()` always hands back a complete response, so
-unlike the outgoing-HTTP decorator above there is no deferred span
-lifecycle here — the span starts and ends around one call.
+`kinetis/search-opensearch`'s adapter reads the status, headers and body
+before it returns, so unlike the outgoing-HTTP decorator above there is
+no deferred span lifecycle here — the span starts and ends around one
+call, and a failure part-way through a response body falls inside it.
 
 (telemetry-data-minimization)=
 

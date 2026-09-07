@@ -12,6 +12,7 @@
         "php": "^8.4",
         "kinetis/framework": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
+        "nyholm/psr7": "^1.8.2",
         "opensearch-project/opensearch-php": "^2.6.0",
         "symfony/http-client": "^8.1.4"
     },

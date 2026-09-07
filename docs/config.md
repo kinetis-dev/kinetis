@@ -389,7 +389,10 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SEARCH_OPENSEARCH_HOST` | *(required)* | Base URI of the node. |
+| `SEARCH_OPENSEARCH_HOST` | *(required)* | One `http(s)://host[:port]` origin. No userinfo, path, query or fragment. |
+| `SEARCH_OPENSEARCH_PLAINTEXT` | `false` | Accept an `http` origin. |
+| `SEARCH_OPENSEARCH_TIMEOUT` | `30` | Seconds per request — idle and total. Must be positive. |
+| `SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES` | `8388608` | Largest response body accepted. Must be positive. |
 | `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
 | `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
 | `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate. |

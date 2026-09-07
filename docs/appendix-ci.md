@@ -101,10 +101,10 @@ disguised PHPUnit test.
 - **`search-opensearch`** (two real OpenSearch containers, one with the
   security plugin disabled and one enabled with a self-signed
   certificate) — `OpenSearchClientFactory`: index/search/delete against
-  the first; an unauthenticated request rejected, a correctly
-  Basic-authenticated request succeeding, and the default
-  `SEARCH_OPENSEARCH_VERIFY_PEER=true` rejecting the self-signed
-  certificate, against the second.
+  the first, reached over `http` with `SEARCH_OPENSEARCH_PLAINTEXT=true`;
+  an unauthenticated request rejected, a correctly Basic-authenticated
+  request succeeding, and the default `SEARCH_OPENSEARCH_VERIFY_PEER=true`
+  rejecting the self-signed certificate, against the second.
 - **`migrations`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `MigrationRunner`/`SqlMigrationRepository`: migrate/status/rollback
   against a real fixture migration file.
