@@ -78,7 +78,8 @@ disguised PHPUnit test.
 
 - **`query-builder`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `Query::get()`/`first()`/`count()`/`insertGetId()`/`update()`/
-  `delete()`/`join()`/`paginate()`/`cursorPaginate()`.
+  `delete()`/`join()`/`paginate()`/`cursorPaginate()`, and the null
+  predicate forms (`IS NULL`/`IS NOT NULL`).
 - **`queue`** (Redis 7, MySQL 8.4, MariaDB 11.4) — `RedisQueue`/
   `SqlQueue`: push/pop/ack/release/fail, attempts, priority queues.
 - **`queue-rabbitmq`** (RabbitMQ) — `RabbitMqQueue`: push/pop/ack/

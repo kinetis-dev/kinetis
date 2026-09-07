@@ -42,8 +42,10 @@ you pass in:
 ```{code-block} php
 new Query($mysqlDb);    // MySqlDialect
 new Query($postgresDb); // PostgresDialect
-new Query($db, new PostgresDialect()); // explicit override
 ```
+
+The link's own type is the only dialect authority — there is no override
+argument. To build for the other backend, pass a connection to it.
 
 ## A different database: named connections
 
@@ -101,6 +103,15 @@ Pass a DTO class and each row is hydrated through `Hydrator::hydrate()`,
 constraints included (`#[Email]`, `#[MinLength]`, ...); omit it and you get
 plain arrays.
 
+`count()` counts the rows your `where()`/`whereIn()`/`whereRaw()`
+predicates and `join()`s select, as `COUNT(*)`. Order, limit and offset
+play no part in it, and a `selectRaw()` projection is not reinterpreted —
+`selectRaw('SUM(total) AS revenue')` does not turn `count()` into a sum.
+
+`first()` reads one row through a copy of the query, so the `limit(1)` it
+needs is not left behind on the builder you still hold. `paginate()` and
+`cursorPaginate()` do the same with everything they add.
+
 ## Pagination: `paginate()`, `cursorPaginate()`
 
 Two ways to page through a result set, returning a plain value object a
@@ -129,9 +140,24 @@ public function index(#[Query] int $page = 1, #[Query] int $perPage = 20): Pagin
 
 `paginate(int $perPage, int $page = 1, ?string $dtoClass = null)` runs a
 `count()` for `total` and a `limit()`/`offset()`-based `get()` for the
-page itself — both against the same `where()`/`join()` filters already on
-the query. A page past the last one returns an empty `data` array with
+page itself. A page past the last one returns an empty `data` array with
 the real `total`/`lastPage` still reported, not an error.
+
+```{warning}
+`paginate()` requires an `orderBy()`/`orderByRaw()` on the query and
+throws `Kinetis\QueryBuilder\Exception\QueryBuilderException` without
+one. An unordered query lets the server return rows in whatever order it
+finds them, so page 2 can repeat or skip rows from page 1. That is a
+mistake in how the query was built, not a bad request, so it reaches the
+client as an ordinary `500`.
+
+Order by a key that is **unique across the result set** — a primary key,
+or your sort column plus one. Ordering by a column rows can share leaves
+the order inside each run of equal values up to the server, and a page
+boundary landing inside one can still repeat or skip. Kinetis takes the
+order you give it; it does not inspect the table to judge whether that
+order is unique.
+```
 
 Cursor-based pagination advances by the last row's own column value
 instead of a page number, so rows inserted or deleted between requests
@@ -172,9 +198,11 @@ already seen."
 
 `cursorPaginate()` owns the query's ordering, limit and offset: it
 orders by `$cursorColumn`, derives its limit from `perPage`, and tracks
-position by the cursor alone. An `orderBy()`/`orderByRaw()`, `limit()`,
-or `offset()` greater than zero already set on the `Query` throws
-`InvalidPaginationException` instead of being silently kept or dropped —
+position by the cursor alone — on a copy of your query, so none of that
+is left behind on the builder you still hold. An
+`orderBy()`/`orderByRaw()`, `limit()`, or `offset()` greater than zero
+already set on the `Query` throws `InvalidPaginationException` instead of
+being silently kept or dropped —
 each one leaves `WHERE $cursorColumn > ?` describing something other than
 the rows actually delivered. `offset(0)` skips nothing and is accepted.
 Pagination by a different or composite ordering needs its own cursor
@@ -309,16 +337,20 @@ $deleted = new Query($db)->table('users')->where('id', '=', $id)->delete();
 `InvalidArgumentException` — an empty array compiles to invalid SQL
 (`INSERT INTO t () VALUES ()`, `UPDATE t SET  WHERE ...`) rather than
 anything meaningful, and this class has no `DEFAULT VALUES` shorthand for
-the (rare) case that's genuinely intended.
+the (rare) case that is actually intended.
 
 ```{warning}
 `update()` and `delete()` compile the table and the `WHERE` clause, and
-nothing else. A `Query` carrying a `select()`/`selectRaw()`, `join()`/
-`leftJoin()`, `orderBy()`/`orderByRaw()`, `limit()` or `offset()` throws
+nothing else. Both throw
 `Kinetis\QueryBuilder\Exception\QueryBuilderException` before any SQL
-runs — dropping such a clause would widen the statement to every row the
-`WHERE` clause alone matches. Joined, ordered and limited mutations are
-dialect-specific and out of scope here; run one as raw SQL through the
+runs when the `Query` carries no predicate at all, and when it carries a
+`select()`/`selectRaw()`, `join()`/`leftJoin()`, `orderBy()`/
+`orderByRaw()`, `limit()` or `offset()`. Either way the statement would
+affect every row the `WHERE` clause alone matches — every row in the
+table, in the first case.
+
+There is no flag to allow it. A deliberate whole-table `UPDATE`/`DELETE`,
+like a joined, ordered or limited one, runs as raw SQL through the
 connection itself.
 ```
 
@@ -346,6 +378,11 @@ through `$params` reintroduces exactly the injection risk parameterized
 queries exist to prevent.
 ```
 
+`whereRaw()` needs an actual fragment: an empty or whitespace-only `$sql`
+throws `InvalidArgumentException`. It reads as a predicate but compiles
+to nothing, which would satisfy `update()`/`delete()`'s predicate
+requirement while leaving the statement matching every row.
+
 ## Parameter order
 
 Structured `where()` calls, `whereIn()`, and `whereRaw()` fragments can all
@@ -368,6 +405,11 @@ One `Query` instance is one query. `table()`/`select()`/`where()`/...
 mutate and accumulate on the same instance — nothing resets between calls.
 Construct a fresh `new Query($link)` per query; reusing one instance
 across separate queries merges their `where()`s together.
+
+`first()`, `paginate()` and `cursorPaginate()` are the exception: each
+applies the limit, offset, order, cursor filter and projection it needs
+to a copy, so the builder you hold is exactly as you left it when they
+return.
 ```
 
 ## How a value reaches the database: literal or bound parameter
@@ -382,8 +424,9 @@ written as literals.** Neither carries
 `Kinetis\Persistence\Contract\PrefersPreparedStatements`, so a query whose
 values are all safely representable is emitted with no parameter-binding
 path at all. Nothing else is ever inlined: `string`, `null` and `float`
-always bind. A string literal would depend on connection charset and
-SQL-mode state the builder deliberately knows nothing about, and
+always bind. (A null *predicate* has no value to bind either way — it
+compiles to `IS NULL`/`IS NOT NULL`.) A string literal would depend on connection charset and
+SQL-mode state the builder knows nothing about, and
 `(string)` on a float can produce `NAN` or `INF`, neither of which is
 valid SQL.
 
@@ -416,7 +459,7 @@ than reaching the generated SQL:
 ->orderBy('name', $sort)   // throws unless $sort is ASC or DESC
 
 ->join('customers', 'orders.customer_id', '=', 'customers.id', 'left') // ok
-->join('customers', 'orders.customer_id', '=', 'customers.id', $type)  // throws unless $type is INNER, LEFT, RIGHT, FULL, or CROSS
+->join('customers', 'orders.customer_id', '=', 'customers.id', $type)  // throws unless $type is INNER, LEFT, or RIGHT
 
 ->where('active', '=', 1, 'or')            // ok — case-insensitive
 ->where('active', '=', 1, $userBoolean)    // throws unless $userBoolean is AND or OR
@@ -433,11 +476,38 @@ mechanisms. A generic filter builder that maps a request value straight
 into `$boolean` is exactly as real a risk as the operator/direction case
 above — the same check applies to it.
 
+`INNER`, `LEFT` and `RIGHT` are the whole join list. `FULL` has no MySQL
+form at all, and `CROSS` takes no `ON` clause — which is the only join
+shape `join()` builds — so neither has a portable compilation here. A
+query that needs one runs as raw SQL through the connection.
+
 `whereIn()` with an empty array compiles to a constant-false predicate
 (`1 = 0`) instead of the syntactically invalid `IN ()` both MySQL and
 Postgres reject outright — filtering by an empty result set (a user's
-post list, when that user turned out to have no matching orders) is a
-real, common case, not an edge case worth leaving broken.
+post list, when that user has no matching orders) is a real, common case,
+not an edge case worth leaving broken.
+
+### Comparing against null
+
+`null` is not a value SQL compares against: `column = NULL` is never true,
+not even for a row whose column is null. So a null in a `where()` compiles
+to the form that does work, and no parameter is bound for it:
+
+```{code-block} php
+->where('deleted_at', '=', null)    // WHERE `deleted_at` IS NULL
+->where('deleted_at', '!=', null)   // WHERE `deleted_at` IS NOT NULL
+->where('deleted_at', '<>', null)   // the same
+->where('score', '>', null)         // throws InvalidArgumentException
+->whereIn('id', [1, null, 3])       // throws InvalidArgumentException
+```
+
+Every other operator against null is refused rather than compiled: it can
+only ever match nothing, so it is a mistake, not a filter. A null inside
+`whereIn()` is refused for the same reason — `IN (NULL)` never matches,
+and it would narrow the set without changing how the call reads.
+
+This is about predicates only. `insert()`, `insertGetId()` and `update()`
+bind a null value normally, which is how a column is written null.
 
 ## See also
 
