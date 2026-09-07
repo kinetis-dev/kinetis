@@ -21,12 +21,52 @@ final readonly class ServiceInjectedController
     }
 
     /**
+     * Optional, but ScopedValue is a concrete class the container will
+     * attempt: present and unbuildable, which a default cannot answer
+     * for.
+     *
      * @return array<string, mixed>
      */
     #[Get('/scoped-optional')]
     public function optional(?ScopedValue $value = null): array
     {
         return ['label' => $value?->label ?? 'absent'];
+    }
+
+    /**
+     * Nothing can supply this interface, so the declared default is
+     * what absence produces.
+     *
+     * @return array<string, mixed>
+     */
+    #[Get('/absent-optional')]
+    public function absentOptional(?AbsentService $service = null): array
+    {
+        return ['label' => $service?->label() ?? 'absent'];
+    }
+
+    /**
+     * A nullable type with no default written out says the same thing a
+     * default does: null is the only value absence could produce.
+     *
+     * @return array<string, mixed>
+     */
+    #[Get('/absent-nullable')]
+    public function absentNullable(?AbsentService $service): array
+    {
+        return ['label' => $service?->label() ?? 'absent'];
+    }
+
+    /**
+     * Absent with nothing to stand in for it: the parameter, not the
+     * container's own vocabulary, is what the caller needs named.
+     *
+     * @return array<string, mixed>
+     */
+    #[Get('/absent-required')]
+    public function absentRequired(AbsentService $service): array
+    {
+        return ['label' => $service->label()];
     }
 
     /**

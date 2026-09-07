@@ -148,8 +148,8 @@ final class AppScopeTest extends TestCase
     }
 
     // --- AppScope resolves itself. A class/interface-typed parameter's
-    // own default value is honored the same way a builtin-typed one's
-    // already is. ---
+    // own default value stands in for an absent dependency, never for a
+    // broken one. ---
 
     public function test_app_scope_resolves_to_the_exact_same_instance_after_boot(): void
     {
@@ -168,13 +168,22 @@ final class AppScopeTest extends TestCase
         self::assertNull($service->thing);
     }
 
-    public function test_a_concrete_class_typed_parameter_that_fails_to_autowire_falls_back_to_its_default(): void
+    /**
+     * Unresolvable is a concrete class, so the dependency is present and
+     * the failure to build it is a defect the default cannot answer for.
+     */
+    public function test_a_concrete_class_typed_parameter_that_fails_to_autowire_propagates(): void
     {
         $app = new AppScope();
 
-        $service = $app->get(WithOptionalUnresolvableDependency::class);
+        try {
+            $app->get(WithOptionalUnresolvableDependency::class);
 
-        self::assertNull($service->addr);
+            self::fail('Expected resolution to fail.');
+        } catch (ContainerException $e) {
+            self::assertStringContainsString(Unresolvable::class, $e->getMessage());
+            self::assertStringContainsString('$name', $e->getMessage());
+        }
     }
 
     public function test_a_required_unresolvable_class_typed_parameter_still_throws(): void

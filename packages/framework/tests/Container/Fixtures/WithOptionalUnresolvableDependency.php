@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Container\Fixtures;
 
 /**
- * Address is a real, instantiable class — but its own required
- * constructor parameter has no default, so autowiring it fails deep
- * inside Autowire::instantiate()'s recursive resolution, not because
- * Address itself is unregistered. Proves the default-value fallback
- * applies to *that* failure too, not just a plain NotFoundException for
- * a missing binding.
+ * Unresolvable is a real, instantiable class, so this dependency is
+ * available rather than absent — and its own required string parameter
+ * cannot be supplied. That failure belongs to the dependency and reaches
+ * the caller; the default never stands in for it.
  */
 final class WithOptionalUnresolvableDependency
 {

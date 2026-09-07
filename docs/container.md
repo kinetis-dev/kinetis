@@ -110,8 +110,8 @@ it is what the rest of this page is actually about.
 ### Resolution order
 
 When `RequestScope::get($id)` is asked for something it doesn't have a
-local binding for, it doesn't just fall back to constructing anything that
-happens to exist:
+local binding for, it resolves in a fixed order rather than constructing
+anything that happens to exist:
 
 1. **Delegate to `AppScope`, but only if `AppScope` has an *explicit*
    registration for `$id`.** `AppScope::has()` deliberately does not fall
@@ -122,32 +122,6 @@ happens to exist:
    this request* — in `RequestScope`'s own binding table, which is wiped
    entirely on `dispose()` — and it is **never promoted to `AppScope`.**
 
-Autowiring a constructor parameter typed as a class or interface tries to
-resolve it through the container first, but — the same as a plain
-builtin-typed parameter always could — falls back to the parameter's own
-default value (or `null`, if it's nullable with no explicit default) when
-that resolution fails, rather than propagating the failure unconditionally:
-
-```{code-block} php
-final class ReportGenerator
-{
-    public function __construct(
-        // Nothing registers a Watermarker anywhere — resolution fails,
-        // and this constructor gets null instead of a thrown exception.
-        private ?Watermarker $watermarker = null,
-    ) {}
-}
-```
-
-This is what makes "inject this if it's available, otherwise use a sane
-default" — the standard PHP idiom for an optional collaborator — actually
-usable for a dependency, not just for a scalar constructor argument.
-Resolution genuinely is attempted first, though: an unregistered-but-
-real, instantiable class still autowires normally through this same
-mechanism, exactly as point 2 above describes; only an *actual* failure
-(nothing to resolve, or a nested dependency that itself can't be built)
-triggers the fallback.
-
 That second point is the actual guarantee this whole design exists to
 provide: **a stray, unregistered `$container->get(SomeClass::class)` call
 can never accidentally turn into a persistent, cross-request singleton.**
@@ -156,6 +130,60 @@ need, without first explicitly registering it — would be a silent trap:
 the first request to touch that class would decide, by accident, whether
 its state is request-scoped or worker-lifetime-scoped for every request
 after it.
+
+### Absent dependencies, and broken ones
+
+A class- or interface-typed constructor parameter with a default value,
+or a nullable type, says one thing: **the dependency may be absent.** It
+never says a broken one is acceptable.
+
+The container answers "absent?" structurally, from the type alone,
+before resolving anything. The dependency is available when something
+registered the id, or when the id is a concrete, instantiable class the
+container would autowire. It is absent when neither holds — an interface
+or abstract class nobody bound, an enum, a class whose constructor is
+private.
+
+- **Available** → it is resolved, and every failure along the way
+  reaches the caller: a factory that throws, a nested dependency that
+  cannot be built, a dependency cycle
+  (`Kinetis\Container\Exception\CircularDependencyException`), a
+  request-scoped id asked for from `AppScope`
+  (`DisconnectedRequestScopeException`).
+- **Absent** → the parameter's own default value stands in, or `null`
+  when it is nullable with no explicit default. Nothing is constructed
+  and no binding factory runs while deciding this, so a named
+  constructor on the absent class is never invoked as a side effect.
+- **Absent with neither a default nor a nullable type** → the container
+  states the absence in its own terms, naming the id nobody bound.
+
+```{code-block} php
+final class ReportGenerator
+{
+    public function __construct(
+        // Nothing binds this interface and the container cannot build
+        // one, so the dependency is absent and this stays null.
+        private ?WatermarkerInterface $watermarker = null,
+    ) {}
+}
+```
+
+That is what makes "inject this if it's available, otherwise use a sane
+default" — the standard PHP idiom for an optional collaborator — usable
+for a dependency rather than only for a scalar argument, without the
+default doubling as a place for real failures to disappear into. A
+concrete class is *available* even with nothing registering it: it
+autowires normally, exactly as point 2 above describes, and if it cannot
+be built you hear about it.
+
+`Kinetis\Http\Dispatcher` draws the same line for a controller
+method's class-typed parameter, so a dependency behaves identically
+whether it arrives through a constructor or a method signature — see
+{doc}`routing-validation`.
+
+An external PSR-11 container has no such structural question to ask, so
+Kinetis uses its `has()`: false means absent, and true means every
+`get()` failure propagates.
 
 ### Resolving `RequestScope` itself, from the wrong scope
 

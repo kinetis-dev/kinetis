@@ -29,19 +29,21 @@ final class UnresolvableParameterException extends RuntimeException
     }
 
     /**
-     * A class-typed parameter the request container had nothing for.
-     * Points at the likely cause — the middleware that registers the
-     * value is not on this route — rather than at whatever constructor
-     * the container's autowiring gave up on, which is what the
-     * underlying exception (kept as `previous`) already says.
+     * A class-typed parameter nothing can supply, on a signature that
+     * offers no default and no nullable type to stand in for it. Points
+     * at the likely cause — the middleware that registers the value is
+     * not on this route — rather than at the container's own vocabulary,
+     * which the underlying exception (kept as `previous`) already
+     * carries.
      */
     public static function forContainerParameter(string $name, string $class, Throwable $previous): self
     {
         return new self(
             "Cannot resolve controller parameter \"\${$name}\" ({$class}) from the request container: "
-            . 'nothing registered it, and it could not be constructed. If a middleware is meant to '
-            . 'register it, check that middleware is attached to this route; give the parameter a '
-            . 'default value if its absence is acceptable.',
+            . 'nothing registered it, and it is not something the container can build on its own. '
+            . 'If a middleware is meant to register it, check that middleware is attached to this '
+            . 'route; give the parameter a default value, or a nullable type, if its absence is '
+            . 'acceptable.',
             previous: $previous,
         );
     }

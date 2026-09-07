@@ -349,10 +349,10 @@ Anything the container can supply works the same way — a repository, a
 a dependency only one route needs is only built for that route, instead
 of on every request to the class.
 
-If the container cannot supply it, the failure surfaces: a route that
+If nothing can supply the parameter, the failure surfaces: a route that
 forgot the middleware meant to register the value fails loudly rather
-than handing the controller something disconnected. Give the parameter a
-default to say that absence is acceptable instead:
+than handing the controller something disconnected. A default value, or
+a nullable type, says that absence is acceptable instead:
 
 ```{code-block} php
 #[Get('/reports/maybe')]
@@ -362,17 +362,12 @@ public function maybe(?CurrentUserInterface $user = null): array
 }
 ```
 
-A default has to be written out even when the type is nullable — unlike
-`#[Query]` and path parameters, where a nullable type alone is enough.
-Absence means something different here: for those, a missing value is
-ordinary input variation, while a value the container cannot supply is
-usually a route missing its middleware. Writing the default is how you
-say which of the two you meant.
-
-The default covers genuine absence only. A service that *was* registered
-and then failed to construct, or a dependency cycle, is a defect rather
-than an absent value, so it is reported rather than quietly arriving as
-`null`.
+That covers absence only, and `Dispatcher` decides what absence is with
+the same structural rule constructor autowiring uses — see
+{doc}`container`. An interface nobody bound is absent. A service that
+*was* registered and then failed to construct, a concrete class whose
+own dependencies cannot be built, and a dependency cycle are all
+defects, so they are reported rather than quietly arriving as `null`.
 
 ```{note}
 This applies to HTTP controllers. An MCP tool's arguments arrive as one

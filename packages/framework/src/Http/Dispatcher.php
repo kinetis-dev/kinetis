@@ -24,8 +24,7 @@ use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Response;
-use Kinetis\Container\Exception\CircularDependencyException;
-use Kinetis\Container\RequestScope;
+use Kinetis\Container\ResolutionAvailability;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 use Throwable;
@@ -544,18 +543,21 @@ final class Dispatcher
     /**
      * A class-typed parameter, resolved from the request container.
      *
-     * A default value makes the parameter optional, but only against
-     * genuine absence: nothing registered the id and nothing could be
-     * built for it. A service that *was* registered and then failed to
-     * construct, or a dependency cycle, is a defect rather than an
-     * absent value, so its own exception propagates — otherwise a
-     * misconfigured mailer or a circular graph would quietly arrive as
-     * null and be read as "not provided".
+     * A default value, or a nullable type, says the dependency may be
+     * absent — nothing registered the id and nothing could be built for
+     * it. It never covers a dependency the container does have and
+     * cannot supply: a service whose factory throws, a nested dependency
+     * that will not build, a cycle, a disposed scope. Each of those is a
+     * defect, and its own exception propagates rather than arriving at
+     * the controller as null.
      *
-     * Without a default, absence is reported against the parameter
-     * rather than against whatever the container failed to autowire:
-     * the useful fact is which route is missing which middleware, not
-     * that some constructor deep inside wanted a string.
+     * Absence with nothing to stand in for it is reported against the
+     * parameter rather than against whatever the container failed to
+     * autowire: the useful fact is which route is missing which
+     * middleware, not that some constructor deep inside wanted a string.
+     *
+     * Kinetis\Container\ResolutionAvailability draws the line, so a
+     * dependency behaves the same here as it does in a constructor.
      *
      * @param HttpBindingPlan $param
      */
@@ -567,31 +569,23 @@ final class Dispatcher
             throw UnresolvableParameterException::forParameter($param['name']);
         }
 
+        if (ResolutionAvailability::canResolve($this->container, $class)) {
+            return $this->container->get($class);
+        }
+
+        if ($param['hasDefault']) {
+            return $param['defaultValue'];
+        }
+
+        if ($param['allowsNull']) {
+            return null;
+        }
+
         try {
             return $this->container->get($class);
         } catch (ContainerExceptionInterface $e) {
-            if ($this->isRegistered($class) || $e instanceof CircularDependencyException) {
-                throw $e;
-            }
-
-            if ($param['hasDefault']) {
-                return $param['defaultValue'];
-            }
-
             throw UnresolvableParameterException::forContainerParameter($param['name'], $class, $e);
         }
-    }
-
-    /**
-     * Explicit registrations only. RequestScope answers this precisely;
-     * any other PSR-11 container is asked the closest question it can
-     * answer, which for AppScope is exactly this one.
-     */
-    private function isRegistered(string $class): bool
-    {
-        return $this->container instanceof RequestScope
-            ? $this->container->isRegistered($class)
-            : $this->container->has($class);
     }
 
     /**
