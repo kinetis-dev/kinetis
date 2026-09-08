@@ -54,13 +54,20 @@ final readonly class ElasticsearchClient extends AbstractSearchClient
     #[\Override]
     protected function send(SearchCall $call, array $params): array
     {
+        // elasticsearch-php types each endpoint's parameters as that
+        // endpoint's own array shape, and four of the five require a key:
+        // `index` and `body` to index, `id` and `index` to get or delete,
+        // `body` to bulk. AbstractSearchClient assembles those, but the
+        // shape belongs to the SearchCall arm rather than to send()'s one
+        // parameter, so no signature here carries it. A missing key is the
+        // client's own MissingParameterException.
         try {
             $response = match ($call) {
-                SearchCall::Index => $this->client->index($params),
-                SearchCall::Get => $this->client->get($params),
-                SearchCall::Delete => $this->client->delete($params),
+                SearchCall::Index => $this->client->index($params), // @phpstan-ignore argument.type
+                SearchCall::Get => $this->client->get($params), // @phpstan-ignore argument.type
+                SearchCall::Delete => $this->client->delete($params), // @phpstan-ignore argument.type
                 SearchCall::Search => $this->client->search($params),
-                SearchCall::Bulk => $this->client->bulk($params),
+                SearchCall::Bulk => $this->client->bulk($params), // @phpstan-ignore argument.type
             };
         } catch (ClientResponseException | ServerResponseException $e) {
             throw SearchRequestException::status($e->getCode(), $e);
