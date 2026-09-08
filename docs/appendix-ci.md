@@ -218,11 +218,12 @@ package, set with a margin below that package's own measured score.
 for the same requirement its `ci.yml` suite carries above. Runs on PHP
 8.4 only, not matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`.
 
-On a pull request, only the code the PR actually changes is mutated
-(`--git-diff-filter` against the base branch), under the same
-thresholds; a package the PR never touches skips its job outright.
-Every push to `main` runs the full mutation suite, so the complete
-score stays enforced there.
+On a pull request, a package whose own `src/` is unchanged relative to
+the base branch skips its job, and every package the PR does change is
+mutated in full. The thresholds are measured against a whole package
+and are only meaningful against a whole package's mutant set, so a
+changed-lines subset is never scored against them. Every push to `main`
+runs the same full suite.
 
 Thresholds, as declared in `infection.yml` — which is the authority; a
 package's current score is whatever its own job last reported, and sits
