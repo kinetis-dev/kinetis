@@ -16,21 +16,37 @@ declare(strict_types=1);
  *
  * What counts as a run for this commit is narrow, because everything
  * this gate accepts is something it publishes on. A record is evidence
- * only when it is a push to main, at this exact SHA, of one of the three
+ * only when it is a push to main, at this exact SHA, of one of the
  * workflow files below — identified by the path GitHub reports, since a
  * run's display name is whatever the `name:` field said at the time and
  * two workflows can carry the same one. A pull request's own runs sit at
  * the same head SHA as the push that merged it and are not accepted for
- * any of the three: a green pull request alongside a red main is exactly
- * the state a publication must not read as success.
+ * any of them: a green pull request alongside a red main is exactly the
+ * state a publication must not read as success.
  *
- * REQUIRED_WORKFLOWS names the workflows that run on every push to main
- * with no path filter, so "no run at this SHA" is a real failure for
- * each of them rather than a filter deciding not to. Integration is
- * deliberately not among them: it is path-filtered, and requiring it at
- * a fixed SHA means re-deriving that filter here, which is exactly the
- * machinery this gate exists without. Integration's result on the
- * pull request is what a merge is judged on.
+ * REQUIRED_WORKFLOWS is the whole gate, and it names every workflow that
+ * judges the package content this round tags: unit tests and static
+ * analysis, real-backend integration, mutation testing, quality and
+ * coverage, security scanning, and manifest validation. A publication
+ * then carries the verdict main carries, rather than the part of it that
+ * finished first.
+ *
+ * Two workflows are outside the list. Deploy Docs publishes the
+ * documentation site and says nothing about the package content, so a
+ * package release does not wait on a website. Release is this gate's own
+ * workflow, and a run cannot be evidence for itself.
+ *
+ * A workflow with no accepted run at this SHA is not a pass, and this is
+ * where the list meets the path filters. Integration, Infection and
+ * SonarQube Cloud run on a push to main only when it touches
+ * `packages/**` or their own workflow file. In the ordinary case those
+ * coincide with a release round: a version is a candidate because the
+ * package's own content changed, and that content is under
+ * `packages/**`. A round reached the other way — tools/release-plan.php
+ * also finds a current version whose split repository carries no
+ * matching tag — has no evidence from those three and publishes
+ * nothing. The version stays current in the manifest, and the next
+ * commit that runs them publishes it.
  *
  * Waiting is bounded. A required workflow still running at the deadline
  * fails the gate, as does every state that is not a proven success,
@@ -51,12 +67,20 @@ declare(strict_types=1);
  */
 const REQUIRED_WORKFLOWS = [
     '.github/workflows/ci.yml' => 'CI',
-    '.github/workflows/monorepo-validate.yml' => 'Monorepo Validate',
+    '.github/workflows/integration.yml' => 'Integration',
+    '.github/workflows/infection.yml' => 'Infection',
+    '.github/workflows/sonarqube.yml' => 'SonarQube Cloud',
     '.github/workflows/semgrep.yml' => 'Semgrep',
+    '.github/workflows/monorepo-validate.yml' => 'Monorepo Validate',
 ];
 
-/** How long the gate waits for those workflows to finish. */
-const GATE_TIMEOUT_SECONDS = 2400;
+/**
+ * How long the gate waits for those workflows to finish. The window has
+ * to outlast the slowest one — the mutation-testing and real-backend
+ * matrices, not the unit-test matrix — because a workflow still running
+ * at the deadline fails the round.
+ */
+const GATE_TIMEOUT_SECONDS = 5400;
 
 /** How long the gate leaves between two rounds of reads. */
 const GATE_POLL_SECONDS = 20;

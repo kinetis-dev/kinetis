@@ -429,27 +429,33 @@ round finishing its push last is how a split repository ends up with
 `main` behind its own tag.
 
 **A gate for the exact commit.** `tools/release-gate.php` requires CI,
-Monorepo Validate and Semgrep — the three workflows every push to `main`
-runs unconditionally — each proven by a run of that workflow *file*,
-triggered by a push to `main`, at this exact head SHA. A run belonging to
-another commit proves nothing about this one, so a green branch is not
-evidence and neither is a rerun at a different commit. Neither is the
-pull request that merged it: its own runs share the merge commit's head
-SHA, and a green pull request beside a red `main` is the state a
-publication must not read as a pass. Workflows are matched by path
-rather than by display name, which is only whatever the `name:` field
-said when the run started. Waiting is bounded, and a required workflow
-still pending at the deadline fails the gate, as does one that is
-absent, cancelled or failed.
+Integration, Infection, SonarQube Cloud, Semgrep and Monorepo Validate —
+every workflow that judges the package content a round tags — each
+proven by a run of that workflow *file*, triggered by a push to `main`,
+at this exact head SHA. A run belonging to another commit proves nothing
+about this one, so a green branch is not evidence and neither is a rerun
+at a different commit. Neither is the pull request that merged it: its
+own runs share the merge commit's head SHA, and a green pull request
+beside a red `main` is the state a publication must not read as a pass.
+Workflows are matched by path rather than by display name, which is only
+whatever the `name:` field said when the run started. Waiting is
+bounded, and a required workflow still pending at the deadline fails the
+gate, as does one that is absent, cancelled or failed.
 
-Integration is deliberately outside the gate: it is path-filtered on
-`packages/**`, so a commit that touches only tooling or docs never runs
-it and would wait out the deadline for a run that is never coming.
-Deciding which commits owe an Integration run means re-deriving that
-filter from the workflow file, which is the kind of machinery this
-tooling exists without. Integration still runs on every push that
-touches a package, and a red Integration is a red `main` to fix like any
-other.
+Two workflows are outside the list. Deploy Docs publishes the
+documentation site and says nothing about the package content, so a
+package release does not wait on a website. Release is the workflow the
+gate runs inside, and a run cannot be evidence for itself.
+
+Integration, Infection and SonarQube Cloud are path-filtered on
+`packages/**` and their own workflow files, and a commit that touches
+neither has no evidence from them. In the ordinary case those coincide
+with a release round: a version is a candidate because the package's own
+content changed, and that content is under `packages/**`. A round
+reached the other way — the plan also finds a current version whose
+split repository carries no matching tag — publishes nothing. The
+version stays current in the manifest, and the next commit that runs
+those workflows publishes it.
 
 **Release metadata built in the runner, never committed here.** For each
 candidate, `tools/release-publish.php` writes that package's release-mode

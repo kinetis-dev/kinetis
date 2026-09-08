@@ -49,14 +49,16 @@ root) — the canonical source of truth for every `packages/*/composer.json`
   total order all end the run rather than producing a plan that leaves
   work out.
 - `release-gate.php` — decides whether the exact commit being released
-  passed CI, Monorepo Validate and Semgrep, the three workflows every
-  push to `main` runs unconditionally. It accepts a run as evidence only
-  when it is a push to `main`, at that exact head SHA, of one of those
-  three workflow *files* — identified by the path GitHub reports, since
-  a display name is whatever the workflow's `name:` field said at the
-  time. A merged pull request's own runs sit at the same head SHA and
-  answer for none of the three. Waiting is bounded, and every state that
-  is not a proven success ends the run.
+  passed CI, Integration, Infection, SonarQube Cloud, Semgrep and
+  Monorepo Validate, every workflow that judges the package content a
+  round tags. It accepts a run as evidence only when it is a push to
+  `main`, at that exact head SHA, of one of those workflow *files* —
+  identified by the path GitHub reports, since a display name is
+  whatever the workflow's `name:` field said at the time. A merged pull
+  request's own runs sit at the same head SHA and answer for none of
+  them. Deploy Docs publishes the documentation site and is not required;
+  Release is the workflow the gate runs inside. Waiting is bounded, and
+  every state that is not a proven success ends the run.
 - `release-publish.php` — the publication itself, and the only tool that
   writes anything outside this repository. For each candidate in plan
   order it stages that package's release-mode `composer.json` and drops
