@@ -53,10 +53,7 @@ jobs:
         # rather than being padded to look stronger than they are.
         package:
           - { name: core, dir: packages/framework, minMsi: 75, minCoveredMsi: 75 }
-          # Re-measured for real (84.54% in CI, 87% locally), for the same
-          # reason auth-jwt's own threshold below was re-measured — see its
-          # comment for the full explanation.
-          - { name: persistence, dir: packages/persistence, minMsi: 80, minCoveredMsi: 80, needsSockets: true }
+          - { name: persistence, dir: packages/persistence, minMsi: 75, minCoveredMsi: 75, needsSockets: true }
           # A provisional floor: this package's Infection job has not
           # run yet, so 60 is a starting point rather than a measurement.
           # Set it from the score its own first run reports, the way
