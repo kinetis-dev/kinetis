@@ -177,21 +177,21 @@ jobs:
             # other package reaches the database services over
             # --network host.
             NETWORK="host"
-            # Passed only where it is wanted: an empty value is a value,
-            # and a package that reads REDIS_HOST would treat it as a
-            # configured cache.
-            REDIS_ENV=""
+            # Passed only where it is wanted: an empty array contributes
+            # no argument, and a package that reads REDIS_HOST would
+            # treat a passed-but-empty value as a configured cache.
+            REDIS_ENV=()
             if [ "$pkg" = "redis" ]; then NETWORK="kinetis-redis"; fi
-            if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
+            if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV=(-e REDIS_HOST=kinetis-redis); fi
             # roadrunner-adapter's ext-sockets requirement compiles under
             # Alpine fine but isn't worth it here — see ci.yml's matrix
             # for the full reasoning; nothing this coverage run actually
             # loads it.
-            COMPOSER_FLAGS=""
-            if [ "$pkg" = "roadrunner-adapter" ]; then COMPOSER_FLAGS="--ignore-platform-req=ext-sockets"; fi
+            COMPOSER_FLAGS=()
+            if [ "$pkg" = "roadrunner-adapter" ]; then COMPOSER_FLAGS=(--ignore-platform-req=ext-sockets); fi
             {
-              docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist $COMPOSER_FLAGS &&
-              docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 $REDIS_ENV -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
+              docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist "${COMPOSER_FLAGS[@]}" &&
+              docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 "${REDIS_ENV[@]}" -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
             } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
             echo "$pkg done"
           }

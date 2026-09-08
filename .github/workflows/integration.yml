@@ -349,12 +349,12 @@ jobs:
           docker run -d --name pg-tls -p 5433:5432 -v /tmp/tls-certs:/certs-src:ro -v /tmp/pg-socket:/var/run/postgresql \
             -e POSTGRES_DB=testdb -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpass \
             --entrypoint bash postgres:16 -c 'cp /certs-src/server.pem /certs-src/server.key /certs-src/ca.pem /tmp/ && chown postgres /tmp/server.* /tmp/ca.pem && chmod 600 /tmp/server.key && printf "local all all trust\nhostssl all mtlsuser 0.0.0.0/0 scram-sha-256 clientcert=verify-ca\nhost all all 0.0.0.0/0 scram-sha-256\n" > /tmp/pg_hba.conf && chown postgres /tmp/pg_hba.conf && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/ca.pem -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c hba_file=/tmp/pg_hba.conf'
-          for i in $(seq 1 40); do
+          for _ in $(seq 1 40); do
             docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb-admin' || 'mysqladmin' }} ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null && break
             sleep 2
           done
           docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb' || 'mysql' }} -uroot -proot -e "ALTER USER 'testuser'@'%' REQUIRE SSL; CREATE USER 'mtlsuser'@'%' IDENTIFIED BY 'testpass' REQUIRE X509; GRANT ALL ON testdb.* TO 'mtlsuser'@'%'; FLUSH PRIVILEGES;"
-          for i in $(seq 1 20); do
+          for _ in $(seq 1 20); do
             docker exec pg-tls pg_isready -U testuser -d testdb -q 2>/dev/null && break
             sleep 1
           done
@@ -689,7 +689,7 @@ jobs:
 
       - name: Wait for the app to answer real requests
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -sf --connect-timeout 5 --max-time 10 -o /dev/null http://localhost:8080/; then
               exit 0
             fi
@@ -730,7 +730,7 @@ jobs:
             "SELECT status FROM ping_messages WHERE scenario='queued' ORDER BY id DESC LIMIT 1;")
           test "$row" = "pending"
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
               "SELECT status FROM ping_messages WHERE scenario='queued' ORDER BY id DESC LIMIT 1;")
             if [ "$row" = "ponged" ]; then
@@ -744,7 +744,7 @@ jobs:
       - name: The cron container creates and pongs its own rows with no request involved
         working-directory: packages/pingpong
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
               "SELECT status FROM ping_messages WHERE scenario='cron' ORDER BY id DESC LIMIT 1;" 2>/dev/null)
             if [ "$row" = "ponged" ]; then
