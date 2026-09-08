@@ -11,13 +11,39 @@ require_once __DIR__ . '/../release-gate.php';
 final class ReleaseGateTest extends TestCase
 {
     private const string CI = '.github/workflows/ci.yml';
+    private const string INTEGRATION = '.github/workflows/integration.yml';
+    private const string INFECTION = '.github/workflows/infection.yml';
+    private const string SONAR = '.github/workflows/sonarqube.yml';
     private const string VALIDATE = '.github/workflows/monorepo-validate.yml';
     private const string SEMGREP = '.github/workflows/semgrep.yml';
+    private const string DEPLOY_DOCS = '.github/workflows/deploy-docs.yml';
+    private const string RELEASE = '.github/workflows/release.yml';
     private const string SHA = 'deadbeef';
+
+    /**
+     * A workflow this repository runs is either evidence a publication
+     * relies on or an exclusion recorded here: Deploy Docs publishes the
+     * documentation site rather than judging package content, and
+     * Release is the workflow the gate runs inside. A new workflow that
+     * is neither fails this test rather than going unnoticed.
+     */
+    public function test_every_workflow_is_either_required_or_excluded_here(): void
+    {
+        $files = glob(__DIR__ . '/../../.github/workflows/*.yml');
+        $paths = array_map(
+            static fn (string $file): string => '.github/workflows/' . basename($file),
+            $files === false ? [] : $files,
+        );
+
+        self::assertSame(
+            [self::DEPLOY_DOCS, self::RELEASE],
+            array_values(array_diff($paths, array_keys(REQUIRED_WORKFLOWS))),
+        );
+    }
 
     public function test_every_required_workflow_succeeding_is_a_pass(): void
     {
-        $verdict = gateVerdict(self::states('success', 'success', 'success'));
+        $verdict = gateVerdict(self::states());
 
         self::assertTrue($verdict['done']);
         self::assertSame([], $verdict['problems']);
@@ -25,33 +51,50 @@ final class ReleaseGateTest extends TestCase
 
     public function test_a_failed_required_workflow_is_a_problem_rather_than_a_wait(): void
     {
-        $verdict = gateVerdict(self::states('failed', 'success', 'success'));
+        $verdict = gateVerdict(self::states([self::CI => 'failed']));
 
         self::assertSame(['CI did not succeed for this commit.'], $verdict['problems']);
     }
 
+    /**
+     * The verdict reduces the whole required list, so a workflow the
+     * round did not stop for still decides it: green unit tests and a
+     * green security scan do not answer for a mutation score below its
+     * floor.
+     */
+    public function test_a_failed_mutation_run_beside_a_green_ci_and_semgrep_is_a_problem(): void
+    {
+        $verdict = gateVerdict(self::states([self::INFECTION => 'failed']));
+
+        self::assertSame(['Infection did not succeed for this commit.'], $verdict['problems']);
+        self::assertSame([], $verdict['waiting']);
+    }
+
     public function test_a_running_workflow_is_waited_on(): void
     {
-        $verdict = gateVerdict(self::states('pending', 'success', 'success'));
+        $verdict = gateVerdict(self::states([self::CI => 'pending']));
 
         self::assertFalse($verdict['done']);
         self::assertSame(['CI'], $verdict['waiting']);
         self::assertSame([], $verdict['problems']);
     }
 
+    /**
+     * Integration, Infection and SonarQube Cloud are path-filtered, so a
+     * commit that runs none of them has no evidence from them. Absence
+     * is not a pass: the round waits and then ends without publishing.
+     */
     public function test_a_workflow_with_no_run_at_this_commit_is_waited_on(): void
     {
-        $verdict = gateVerdict([self::VALIDATE => 'success', self::SEMGREP => 'success']);
+        $states = self::states();
+        unset($states[self::INTEGRATION], $states[self::INFECTION], $states[self::SONAR]);
 
-        self::assertSame(['CI'], $verdict['waiting']);
+        self::assertSame(['Integration', 'Infection', 'SonarQube Cloud'], gateVerdict($states)['waiting']);
     }
 
     public function test_a_workflow_outside_the_required_set_is_ignored(): void
     {
-        $verdict = gateVerdict([
-            ...self::states('success', 'success', 'success'),
-            '.github/workflows/sonarqube.yml' => 'failed',
-        ]);
+        $verdict = gateVerdict([...self::states(), self::DEPLOY_DOCS => 'failed']);
 
         self::assertTrue($verdict['done']);
         self::assertSame([], $verdict['problems']);
@@ -200,11 +243,18 @@ final class ReleaseGateTest extends TestCase
         self::assertSame([], $states);
     }
 
+    /**
+     * The gate runs inside Release, so that workflow's own run at this
+     * SHA is never in progress evidence it could wait for. Deploy Docs
+     * publishes the documentation site and answers for no package.
+     */
     public function test_a_workflow_outside_the_required_files_is_not_recorded(): void
     {
         $states = self::statesFor([
-            ['name' => 'CI', 'path' => '.github/workflows/sonarqube.yml', 'event' => 'push',
-                'head_branch' => 'main', 'head_sha' => self::SHA, 'status' => 'completed', 'conclusion' => 'success'],
+            ['name' => 'Release', 'path' => self::RELEASE, 'event' => 'push',
+                'head_branch' => 'main', 'head_sha' => self::SHA, 'status' => 'in_progress', 'conclusion' => null],
+            ['name' => 'Deploy Docs', 'path' => self::DEPLOY_DOCS, 'event' => 'push',
+                'head_branch' => 'main', 'head_sha' => self::SHA, 'status' => 'completed', 'conclusion' => 'failure'],
         ]);
 
         self::assertSame([], $states);
@@ -266,7 +316,10 @@ final class ReleaseGateTest extends TestCase
 
     public function test_a_workflow_still_running_at_the_deadline_fails(): void
     {
-        $this->expectExceptionMessage('Still waiting on CI, Monorepo Validate, Semgrep at the deadline.');
+        $this->expectExceptionMessage(
+            'Still waiting on CI, Integration, Infection, SonarQube Cloud, Semgrep, Monorepo Validate '
+            . 'at the deadline.',
+        );
 
         waitForRequiredWorkflows(
             'kinetis-dev/kinetis',
@@ -284,11 +337,24 @@ final class ReleaseGateTest extends TestCase
         waitForRequiredWorkflows(
             'kinetis-dev/kinetis',
             self::SHA,
-            self::listing([
-                self::pushRun(self::CI, 'completed', 'success'),
-                self::pushRun(self::VALIDATE, 'completed', 'success'),
-                self::pushRun(self::SEMGREP, 'completed', 'failure'),
-            ]),
+            self::listing(self::runsFailing(self::SEMGREP)),
+            static fn (): null => null,
+            time() + 3600,
+        );
+    }
+
+    /**
+     * Every other required workflow succeeding at this commit is not a
+     * pass while one of them failed there.
+     */
+    public function test_a_failed_mutation_run_ends_the_round_before_anything_publishes(): void
+    {
+        $this->expectExceptionMessage('Infection did not succeed for this commit.');
+
+        waitForRequiredWorkflows(
+            'kinetis-dev/kinetis',
+            self::SHA,
+            self::listing(self::runsFailing(self::INFECTION)),
             static fn (): null => null,
             time() + 3600,
         );
@@ -316,10 +382,16 @@ final class ReleaseGateTest extends TestCase
         self::assertSame('kinetis-dev/kinetis', $parsed['repo']);
     }
 
-    /** @return array<string, string> */
-    private static function states(string $ci, string $validate, string $semgrep): array
+    /**
+     * Every required workflow settled on success, with the named ones
+     * replaced.
+     *
+     * @param array<string, string> $overrides workflow path => state
+     * @return array<string, string>
+     */
+    private static function states(array $overrides = []): array
     {
-        return [self::CI => $ci, self::VALIDATE => $validate, self::SEMGREP => $semgrep];
+        return [...array_fill_keys(array_keys(REQUIRED_WORKFLOWS), 'success'), ...$overrides];
     }
 
     /**
@@ -354,6 +426,24 @@ final class ReleaseGateTest extends TestCase
     {
         return array_map(
             static fn (string $path): array => self::pushRun($path, $status, $conclusion),
+            array_keys(REQUIRED_WORKFLOWS),
+        );
+    }
+
+    /**
+     * One completed run per required workflow, all successful but the
+     * named one.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private static function runsFailing(string $path): array
+    {
+        return array_map(
+            static fn (string $required): array => self::pushRun(
+                $required,
+                'completed',
+                $required === $path ? 'failure' : 'success',
+            ),
             array_keys(REQUIRED_WORKFLOWS),
         );
     }
