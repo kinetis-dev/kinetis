@@ -986,6 +986,15 @@ jobs:
           path: ${{ github.workspace }}/.composer-cache
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
+      # A pull_request checkout is detached, so Composer guesses each
+      # path repository's version from the commit — dev-<sha>, which the
+      # dev-main sibling constraints generate-composer.php writes cannot
+      # match. Every other job installs the lock as it stands; this one
+      # re-resolves to pin the client major, so it needs a HEAD Composer
+      # reads as main.
+      - name: Put the checkout on a branch named main
+        run: git checkout -B main
+
       - name: Install dependencies
         working-directory: packages/search-elasticsearch
         run: |
