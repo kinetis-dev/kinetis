@@ -192,8 +192,11 @@ final class CacheStore
     private static function assertReconstructs(string $path, array $expected): void
     {
         try {
+            // require, not require_once: the comparison below needs the
+            // array the artifact returns, and a repeated include of the
+            // same path yields true instead.
             /** @var mixed $reread */
-            $reread = require $path;
+            $reread = require $path; // NOSONAR
         } catch (ParseError) {
             throw CacheWriteException::couldNotVerify($path);
         }

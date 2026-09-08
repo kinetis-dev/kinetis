@@ -139,7 +139,10 @@ final class Client implements QueryExecutor, RoutedExecutor
         }
 
         try {
-            return $this->pipeline([['EVALSHA', [sha1($script), ...$body]]], $deadline)[0];
+            // The digest is the Redis protocol's own script identifier for
+            // EVALSHA, which mandates SHA-1: it names an entry in the node's
+            // script cache and carries no security property.
+            return $this->pipeline([['EVALSHA', [sha1($script), ...$body]]], $deadline)[0]; // NOSONAR
         } catch (QueryException $e) {
             if (!str_starts_with($e->getMessage(), 'NOSCRIPT')) {
                 throw $e;
