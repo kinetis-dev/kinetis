@@ -475,11 +475,23 @@ than binding `QueueInterface` to just one of them:
 
 ```{code-block} php
 use Kinetis\QueueRedis\RedisQueue;
+use Kinetis\QueueRedis\RedisQueueFactory;
 use Kinetis\QueueSql\SqlQueue;
+use Kinetis\QueueSql\SqlQueueFactory;
 
-$app->instance(RedisQueue::class, new RedisQueue($redisClient));
-$app->instance(SqlQueue::class, new SqlQueue($db));
+$app->instance(RedisQueue::class, RedisQueueFactory::fromConfig($config, 'fast'));
+$app->instance(SqlQueue::class, SqlQueueFactory::fromConfig($config, 'ledger'));
 ```
+
+Each factory reads its own keys under the connection name it is given —
+`REDIS_FAST_*` and `QUEUE_FAST_VISIBILITY_TIMEOUT_SECONDS` for the
+first, `DB_LEDGER_*` and `QUEUE_LEDGER_VISIBILITY_TIMEOUT_SECONDS` for
+the second — so the two share no configuration. Constructing a backend
+directly instead means supplying its transport yourself: `SqlQueue`
+takes a `Kinetis\Persistence\Contract\SqlLink`, and `RedisQueue` takes
+an `Amp\Redis\RedisClient` built over {doc}`redis`'s own client as
+`new RedisClient($client->link())`, not a `Kinetis\Redis\Client`
+directly.
 
 Application code that pushes to a specific backend constructor-injects
 that concrete class instead of the shared interface:

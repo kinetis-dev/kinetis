@@ -28,7 +28,7 @@ request as both `CurrentUserInterface` and the concrete `JwtUser` (the
 identical object either way — inject `JwtUser` directly when you need a
 claim beyond the subject, `roles` or `jti` for instance), plus an issuer
 for signing tokens.
-Verification via [`firebase/php-jwt`](https://github.com/firebase/php-jwt)
+Verification via [`firebase/php-jwt`](https://github.com/googleapis/php-jwt)
 (HS256/RS256, optional per-token revocation) — no database or cache
 lookup; the signed claims are the entire authentication decision.
 

@@ -118,8 +118,11 @@ FILESYSTEM_ROOT=/var/app/storage
 `FILESYSTEM_DRIVER` set, the package registers nothing at all, since
 binding a filesystem into every application that merely installed the
 package would be guessing at intent. Set the key to get the binding.
-`FILESYSTEM_ROOT` is required either way; there's no sane default to
+`FILESYSTEM_ROOT` is required by the local driver, through the binding
+and a direct `fromConfig()` call alike; there's no sane default to
 guess, since a wrong one could write files somewhere unintended.
+`FILESYSTEM_DRIVER=s3` reads its own keys instead — see
+{doc}`storage-s3`.
 
 It also has to be non-empty. `FILESYSTEM_ROOT=` is a key that is set,
 so it passes the required check, and an empty root would leave every
@@ -267,10 +270,18 @@ either the whole old file or the whole new one. Nothing before step 7
 touches the destination, so a call that fails before it leaves the
 destination exactly as it was.
 
-A failure reported *by* step 7 is the operation's own
-`UnableToWriteFile` or `UnableToCopyFile`, the same as a failure at any
-earlier step. Writing and copying replace the destination outright, so
-the answer to one is to run the same call again.
+A failure reported *by* step 7 carries the same
+`UnableToWriteFile`/`UnableToCopyFile` type as one from any earlier
+step, and not the same outcome. The adapter reports what the rename
+call answered, and a lost answer — a worker-pool acknowledgement that
+never arrives — is not a rename that did not happen, so the destination
+may hold either file. Only a failure raised before step 7 is definite,
+and there the destination is untouched.
+
+Retrying is therefore the caller's decision. Writing and copying
+replace the destination outright, so a retry is safe wherever this
+caller is the only writer to that path. Where writers compete for one,
+serializing ownership of it is an arrangement above this adapter.
 
 The `0700` directory in step 2 is what makes the new file private from
 creation: `Amp\File` has no mode argument on opening a file, and the

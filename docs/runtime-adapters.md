@@ -25,14 +25,13 @@ Kernel under the `FormLimits` the container holds.
 | Deployment | What Kinetis does |
 |---|---|
 | FrankenPHP (worker mode) | One long-running process serves request after request — Kinetis's primary target. |
-| Plain PHP-FPM | The classic model: one request in, one response out, then the script ends. Fully supported, not an afterthought. |
+| Plain PHP-FPM | The classic model: one request in, one response out, then the script ends. |
 | AWS Lambda (via Bref) | A separate install, `kinetis/bref-adapter` — see below. |
 | RoadRunner | A separate install, `kinetis/roadrunner-adapter` — see below. |
 
-Startup calls `RuntimeDetector::detect()` once per worker process, and
-the exact same `public/index.php` works correctly under all four —
-nothing in your application code needs to know or care which one is
-actually running it.
+Startup calls `RuntimeDetector::detect()` once per boot, and the exact
+same `public/index.php` works correctly under all four — nothing in your
+application code needs to know or care which one is running it.
 
 ## Running under FrankenPHP
 
@@ -110,19 +109,18 @@ CPU-bound work, not for the kind of I/O-bound workload (database calls,
 outbound HTTP requests) most real applications actually spend most of
 their time on.
 
-**This number matters more than it might look, and it's easy to
-mistune in both directions.** Each worker thread processes exactly one
-HTTP request at a time, start to finish — `frankenphp_handle_request()`
-is a blocking call that only returns once that request's response has
-been fully sent, then picks up the next one. Kinetis's own
-`Kinetis\Async`/`concurrently()` layer (see {doc}`concurrency`) provides
-real, genuine concurrency *within* one request's own work — but it
-doesn't change this: a thread that's mid-request, even one suspended on
-a Fiber waiting for a database response, isn't available to pick up a
-second, unrelated incoming request. Cross-request concurrency is bounded
-by thread count here, the same way it's bounded by PHP-FPM's own
-worker-process count under that adapter — not something Kinetis's async
-layer can substitute for.
+This number is easy to mistune in both directions. Each worker thread
+processes exactly one HTTP request at a time, start to finish —
+`frankenphp_handle_request()` is a blocking call that returns once that
+request's response has been fully sent, then picks up the next one.
+Kinetis's own `Kinetis\Async`/`concurrently()` layer (see
+{doc}`concurrency`) provides concurrency *within* one request's own work,
+which does not change this: a thread that is mid-request, even one
+suspended on a Fiber waiting for a database response, is not available to
+pick up a second, unrelated incoming request. Cross-request concurrency
+is bounded by thread count here, the same way it's bounded by PHP-FPM's
+own worker-process count under that adapter — not something Kinetis's
+async layer can substitute for.
 
 Which direction to tune depends on what your requests actually wait on:
 
@@ -174,17 +172,17 @@ client, and the HTTP client all register real socket watchers — and
 under FrankenPHP the embedded Go server's client sockets share the same
 process-wide fd table, pushing fd *numbers* past 1024 under load even
 with few PHP worker threads. Any deployment in that second group should
-install one of Revolt's supported extensions — `ext-uv`, `ext-ev`, or
-`ext-event` — each backed by an OS-native mechanism (epoll on Linux)
-with no fd-number ceiling. Revolt selects whichever is available
+install one of Revolt's supported extensions — `ext-event`, `ext-ev`, or
+`ext-uv` — each backed by an OS-native mechanism (epoll on Linux) with
+no fd-number ceiling. Revolt selects whichever is available
 automatically, with no application code to change.
 
-This is a correctness concern, not a performance one — measured
-throughput is identical across drivers for typical workloads; what the
-extensions buy is not being at the mercy of fd numbering. `ext-event`
-has the smoothest install story on current PECL (`pecl install event`);
-`ext-uv` works too but its only release must be pinned explicitly
-(`pecl install uv-0.3.0` — PECL refuses non-stable packages by
+This is a correctness concern, not a performance one: what the
+extensions buy is a loop that keeps watching a descriptor whatever
+number the kernel hands it. `ext-event` is the one to reach for —
+actively maintained, and `pecl install event` on current PECL. `ext-uv`
+works, but its only release is a beta that must be pinned explicitly
+(`pecl install uv-0.3.0`, since PECL refuses non-stable packages by
 default).
 
 ## Running under PHP-FPM
@@ -302,8 +300,8 @@ setting while still inside the contract is a `413` naming the setting an
 operator can fix. Either way the form is refused before it is parsed
 rather than handed on shortened.
 
-**Every count is taken from the raw body, before anything parses it.**
-That is not an optimization, it is the only place the real numbers exist:
+**Every count is taken from the raw body, before anything parses it** —
+the only place the real numbers exist:
 
 - `a=1` repeated a thousand times is a thousand pairs on the wire and
   **one leaf** in the parsed form. A limit checked on the parsed result
@@ -727,8 +725,7 @@ first case would go undetected.
 bound the read that produced it. There is no SAPI here to enforce
 `upload_max_filesize`/`post_max_size` either, and RoadRunner has read the
 whole body into memory as one string before any PHP runs. Left unset,
-RoadRunner's own default is a generous 1000 MB — confirmed directly
-against its Go source, not assumed — which is real but not a sane
+RoadRunner's own default is 1000 MB, which is a real bound but not a sane
 production limit on its own.
 
 **Set `http.max_request_size` explicitly** (real megabytes, RoadRunner's
@@ -772,11 +769,12 @@ exactly that deployment.
 
 ### Sizing RoadRunner's worker processes
 
-The same underlying shape {doc}`runtime-adapters`'s "Sizing FrankenPHP's
-worker threads" section describes applies here, just with a process in
-place of a thread: `.rr.yaml`'s `http.pool.num_workers` sets how many
-PHP worker processes RoadRunner keeps running, each handling exactly
-one HTTP request at a time, start to finish. `bootstrap.php` (and every
+The same underlying shape
+[Sizing FrankenPHP's worker threads](#sizing-frankenphps-worker-threads)
+above describes applies here, just with a process in place of a thread:
+`.rr.yaml`'s `http.pool.num_workers` sets how many PHP worker processes
+RoadRunner keeps running, each handling exactly one HTTP request at a
+time, start to finish. `bootstrap.php` (and every
 `extra.kinetis` package bootstrap) runs once per worker process, so
 each one builds its own separate service instances — including a
 database connection pool via `kinetis/persistence`'s
@@ -805,8 +803,7 @@ transfer unchanged. Measure under realistic load either way.
 Alpine's own `$PHPIZE_DEPS` build-tools set is not enough on its own —
 `docker-php-ext-install sockets` fails there with a missing
 `linux/sock_diag.h` — but adding `apk add linux-headers` alongside it
-closes the gap; confirmed directly, not assumed, against both
-`php:8.3-cli-alpine` and `php:8.4-cli-alpine`:
+closes the gap:
 
 ```{code-block} dockerfile
 FROM php:8.4-cli-alpine
@@ -831,13 +828,11 @@ where the cost is paid once.
 Unlike `FrankenPhpAdapter`, which lets an uncaught exception propagate
 and end the worker process, `RoadRunnerAdapter::run()` catches it,
 reports it to RoadRunner via `Worker::error()` (a clean error response
-to that one client), and keeps serving requests on the same worker —
-confirmed directly, not assumed, by forcing a handler to throw and then
-sending another request to the same running process. Letting an
-exception propagate here would kill the whole persistent worker over
-one bad request, a materially worse failure than any other adapter
-risks, since it costs `AppScope`'s warm state until RoadRunner's own
-supervisor respawns the worker. If you configure a short
+to that one client), and keeps serving requests on the same worker.
+Letting an exception propagate here would kill the whole persistent
+worker over one bad request, a materially worse failure than any other
+adapter risks, since it costs `AppScope`'s warm state until RoadRunner's
+own supervisor respawns the worker. If you configure a short
 `pool.supervisor.exec_ttl` for other reasons, know that it bounds a
 worker's *total* lifetime regardless of this — RoadRunner's own default
 is `0s` (unlimited).
@@ -907,8 +902,9 @@ interface RuntimeAdapterInterface
 ```
 
 `isPersistent()` tells Kinetis whether to force a memory cleanup pass at
-the end of every request — worth doing in a long-running process, pure
-waste in one that's about to exit anyway.
+the end of every request — worth doing in a worker that keeps serving,
+pure waste under a boot-per-request SAPI, where request shutdown releases
+that memory anyway.
 
 Then hold it to the same contract as the built-in ones: implement a
 `Kinetis\Testing\Runtime\RuntimeAdapterDriver` for it and extend

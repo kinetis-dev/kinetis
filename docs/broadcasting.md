@@ -86,24 +86,24 @@ $broadcaster->event(new OrderUpdated($orderId, 'shipped'));
 per channel `broadcastOn()` names, with `broadcastAs()`'s event name and
 `broadcastWith()`'s payload.
 
-`ShouldBroadcast` is deliberately not wired into
-`Kinetis\Events\EventDispatcher` automatically — unlike
-`Kinetis\Events\ShouldQueue` (checked per listener, inside a dispatch
-loop already built for it), whether an event broadcasts is a per-event
-concern with no natural hook in that loop. Call `Broadcaster::event()`
-explicitly, typically from inside the `#[Listener]` method that would
-otherwise dispatch a queued job for the same event.
+`ShouldBroadcast` is not wired into `Kinetis\Events\EventDispatcher`
+automatically — unlike `Kinetis\Events\ShouldQueue` (checked per
+listener, inside a dispatch loop already built for it), whether an event
+broadcasts is a per-event concern with no natural hook in that loop.
+Call `Broadcaster::event()` explicitly, typically from inside the
+`#[Listener]` method that would otherwise dispatch a queued job for the
+same event.
 
 ## Authorizing private and presence channels
 
 A client subscribing to a `private-*` or `presence-*` channel calls
 `POST /broadcasting/auth` automatically — every mainstream Pusher-
-protocol client library (pusher-js, Laravel Echo, `laravel-echo` on the
-JS side, Soketi's own SDKs) does this without being told to. Installing
-this package is the entire registration: the route is discovered the
-same way any `Kinetis\Http\Routing\RouteDiscovery`-found
-controller is, and every `#[BroadcastChannel]` method is itself part of
-the AOT cache — see {doc}`caching`.
+protocol client library (pusher-js, Laravel Echo, Soketi's own SDKs)
+does this without being told to. Installing this package is the entire
+registration: the route is discovered the same way any
+`Kinetis\Http\Routing\RouteDiscovery`-found controller is, and every
+`#[BroadcastChannel]` method is itself part of the AOT cache — see
+{doc}`caching`.
 
 The client sends `socket_id`/`channel_name` as
 `application/x-www-form-urlencoded` fields. `RequestBodyMiddleware` (see
@@ -132,6 +132,7 @@ use Kinetis\Http\CurrentUserInterface;
 
 final class OrderChannels
 {
+    // Your own repository, resolved through the container.
     public function __construct(private OrderRepository $orders) {}
 
     #[BroadcastChannel('orders.{orderId}')]
@@ -173,7 +174,9 @@ missing this, or exceeding either limit, is never signed: the
 subscription is rejected the same way a `false` private-channel result
 is, not a server error.
 
-A channel with no authorizer registered for it is rejected with `403`.
+The endpoint authorizes `private-*` and `presence-*` channels only: a
+channel name carrying neither prefix is `422`. A channel with no
+authorizer registered for it is rejected with `403`.
 
 The leading `CurrentUserInterface` parameter decides whether the channel
 requires an identity. Declaring it means the request must carry a
@@ -360,19 +363,3 @@ TLS on. There is no cluster selector: a Pusher account outside the
 default cluster reaches its own hostname only when `BROADCAST_HOST` is
 set to it explicitly — `api-eu.pusher.com` for the `eu` cluster, and so
 on for the cluster the account's dashboard names.
-
-## Verified
-
-`PusherBroadcaster`'s signing algorithm is checked against
-`pusher/pusher-php-server`'s own real source, not reconstructed from
-documentation, and every private/presence channel authorization and
-trigger request in this package's own test suite is checked against an
-independently computed HMAC-SHA256 signature. Beyond that, the full
-chain — attribute discovery, `CurrentUserInterface` resolution,
-authorization, and both channel-auth response shapes — has been run
-end to end against a real Soketi broker and a real WebSocket client: a
-public-channel broadcast delivered to a subscriber, a private-channel
-subscription signed by this package's own driver accepted by Soketi
-with the triggered event delivered to it, and a presence-channel
-subscription signed by the real `BroadcastAuthController` accepted with
-the correct `channel_data` reflected back.

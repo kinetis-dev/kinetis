@@ -8,7 +8,7 @@ use Throwable;
 
 /**
  * The framework's instrumentation vocabulary: named moments core (and
- * the persistence/queue packages) report as they happen, for a
+ * the persistence, queue and MCP packages) report as they happen, for a
  * telemetry backend to turn into spans, timings, or nothing at all.
  *
  * Hooks come in started/ended pairs joined by an opaque `mixed` token —
@@ -21,13 +21,15 @@ use Throwable;
  * telemetry backend can exist, so entry points measure them with plain
  * timestamps and report them after the fact.
  *
- * Implemented by {@see NullTelemetry} and by kinetis/telemetry's
- * OTel-backed implementation — and by nothing else. This is not a
- * consumer extension point: the hook set is under evaluation and will
- * shrink as measurements decide which hooks earn their cost, so
- * third-party implementations would break on a minor release. An
- * application wanting telemetry data somewhere else consumes it from
- * the exporting backend, not by implementing this interface.
+ * Implemented by {@see Telemetry}, the holder every call site talks to,
+ * by {@see NullTelemetry}, the backend it delegates to until a real one
+ * is installed, and by kinetis/telemetry's OTel-backed backend — and,
+ * outside this repository's own test fixtures, by nothing else. It is
+ * internal to the framework and not a consumer extension point: the
+ * hook set is a minor-release surface, and a third-party implementation
+ * is outside what a minor release keeps working. An application wanting
+ * telemetry data somewhere else consumes it from the exporting backend
+ * rather than implementing this interface.
  */
 interface TelemetryInterface
 {

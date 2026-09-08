@@ -16,12 +16,13 @@ use Kinetis\Container\PackageBootstrapInterface;
  *
  * Registrations must run *before* boot() locks the binding set, so this
  * returns callable(AppScope, Config): void rather than acting on an
- * already-booted one. Config is passed in directly, not resolved from
- * $app, because AppScope::boot() is what registers the default Config
- * binding in the first place — it doesn't exist yet at the point this
- * callable runs. Every caller already has one on hand
- * (Config::fromEnvironment(), after EnvFile::safeLoad()) for exactly
- * this reason.
+ * already-booted one. Config is a parameter because
+ * {@see PackageBootstrapInterface::register()} takes one — a package
+ * bootstrap reads configuration without resolving anything. Every caller
+ * builds that Config (Config::fromEnvironment(), after
+ * EnvFile::safeLoad()) and binds it on $app before running this callable,
+ * so the instance a bootstrap receives is the one the container holds;
+ * AppScope::boot()'s own default only covers a scope booted without one.
  *
  * $packageBootstraps carries the pre-resolved class list out of the AOT
  * cache in production; null (the default) discovers it live — the same

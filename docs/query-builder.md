@@ -451,9 +451,9 @@ unrecognized value throws `InvalidArgumentException` immediately, rather
 than reaching the generated SQL:
 
 ```{code-block} php
-->where('id', '=', 5)      // ok
-->where('id', '>=', 5)     // ok
-->where('id', $userInput)  // throws if $userInput isn't one of =, !=, <>, <, <=, >, >=, LIKE, NOT LIKE
+->where('id', '=', 5)         // ok
+->where('id', '>=', 5)        // ok
+->where('id', $userInput, 5)  // throws unless $userInput is one of =, !=, <>, <, <=, >, >=, LIKE, NOT LIKE
 
 ->orderBy('name', 'asc')   // ok — case-insensitive
 ->orderBy('name', $sort)   // throws unless $sort is ASC or DESC

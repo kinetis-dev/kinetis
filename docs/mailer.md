@@ -18,7 +18,7 @@ use Symfony\Component\Mime\Email;
 
 $mailer = MailerFactory::fromConfig($config);
 
-$email = (new Email())
+$email = new Email()
     ->from('noreply@example.com')
     ->to('user@example.com')
     ->subject('Welcome!')
@@ -103,7 +103,7 @@ final readonly class SendWelcomeEmailJob implements Job
 
     public function handle(MailerInterface $mailer): void
     {
-        $email = (new Email())
+        $email = new Email()
             ->from('noreply@example.com')
             ->to($this->toEmail)
             ->subject('Welcome!')

@@ -1,11 +1,9 @@
 # Concurrency
 
-`Kinetis\Async` is a thin wrapper over [Revolt](https://revolt.run/) — the
-AMPHP v3 event loop — not a hand-rolled reactor. PHP Fibers alone are just
-cooperative coroutines; they need an event loop scheduling I/O around them,
-and Revolt is the PHP ecosystem's de facto standard for that. Nothing in
-this page is Kinetis reinventing an event loop — it's a small, deliberately
-thin layer of primitives built on Revolt's suspend/resume pattern.
+`Kinetis\Async` is a thin wrapper over [Revolt](https://revolt.run/), the
+AMPHP v3 event loop. PHP Fibers are cooperative coroutines; they need an
+event loop scheduling I/O around them. Everything on this page is a small
+set of primitives built on Revolt's suspend/resume pattern.
 
 ## The suspend/resume pattern
 
@@ -98,10 +96,10 @@ worker process handles one request at a time, the fallback is a blocking
 ## `concurrently()` — running tasks side by side
 
 ```{code-block} php
-use Amp\Redis\RedisClient;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\QueryBuilder\Query;
+use Kinetis\Redis\Client;
 
 use function Kinetis\Async\concurrently;
 
@@ -109,7 +107,7 @@ final readonly class OrderController
 {
     public function __construct(
         private MysqlLink $db,
-        private RedisClient $redis,
+        private Client $redis,
     ) {}
 
     #[Get('/orders/{id}/summary')]
@@ -118,13 +116,17 @@ final readonly class OrderController
         [$order, $itemCount, $views] = concurrently([
             fn () => new Query($this->db)->table('orders')->where('id', '=', $id)->first(),
             fn () => new Query($this->db)->table('order_items')->where('order_id', '=', $id)->count(),
-            fn () => $this->redis->get("order:{$id}:views"),
+            fn () => $this->redis->execute('GET', "order:{$id}:views"),
         ]);
 
         return ['order' => $order, 'itemCount' => $itemCount, 'views' => (int) $views];
     }
 }
 ```
+
+`MysqlLink` is bound by `kinetis/persistence` from the `DB_*` keys.
+`Kinetis\Redis\Client` has no boot-time binding — `bootstrap.php` builds
+it from `Client::create()` and binds it, as {doc}`redis` shows.
 
 A database row, a database count, and a Redis read — three independent
 round trips that would otherwise run one after another — complete
@@ -172,8 +174,7 @@ try {
 ```
 
 Three 50ms `Timer::delay()` calls run through `concurrently()` complete in
-well under 100ms total, not the ~150ms+ a sequential fallback would take —
-because they genuinely overlap rather than merely appearing to.
+well under 100ms total, not the ~150ms+ a sequential run would take.
 
 ```{note}
 **Nesting is supported.** A task may itself call `concurrently()` — the
@@ -195,10 +196,10 @@ socket watcher, the native MySQL driver through its poll bridge, Redis
 through `Amp\Future` internally. `Amp\Redis\RedisClient` is an optional
 typed command facade over that same transport, reached through
 `Client::link()`, and suspends the same way. Different API shapes, one
-loop: a `concurrently()` call can freely mix tasks built on any of them
-and still run every one genuinely in parallel — a MySQL query, a
-Postgres query, and a Redis command issued together complete in roughly
-the time the slowest one alone takes, not the sum of all three.
+loop: a `concurrently()` call can mix tasks built on any of them and
+still overlap every one — a MySQL query, a Postgres query, and a Redis
+command issued together complete in roughly the time the slowest one
+alone takes, not the sum of all three.
 
 ## See also
 

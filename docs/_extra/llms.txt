@@ -7,8 +7,9 @@
 > Model Context Protocol server.
 
 Kinetis core ships as a single package, `kinetis/framework`, requiring PHP
-8.4 or later. Narrower and optional pieces ship as separate packages,
-listed under Working with data, Background work, and Integrations below.
+8.4 or later. Narrower and optional pieces ship as separate packages;
+every section below except Start here and Building an application
+documents one or more of them.
 
 The pages are ordered the way an application is built: start with the
 tutorial, then read whichever section you have reached.
@@ -30,7 +31,7 @@ tutorial, then read whichever section you have reached.
 
 ## Working with data
 
-- [Persistence](https://kinetis.dev/docs/persistence.html): The native MySQL/Postgres drivers, the Redis client, and TransactionGuard's commit/rollback protocol.
+- [Persistence](https://kinetis.dev/docs/persistence.html): kinetis/persistence: the native MySQL/Postgres drivers, connection pooling, and TransactionGuard's commit/rollback protocol.
 - [Query Builder](https://kinetis.dev/docs/query-builder.html): kinetis/query-builder: a thin, parameterized SQL query builder — not an ORM.
 - [Migrations](https://kinetis.dev/docs/migrations.html): kinetis/migrations: a thin database migration runner — raw SQL up()/down(), no schema-diffing.
 
@@ -47,6 +48,7 @@ tutorial, then read whichever section you have reached.
 - [Authentication](https://kinetis.dev/docs/auth.html): kinetis/auth: opaque Bearer-token authentication middleware.
 - [JWT Authentication](https://kinetis.dev/docs/auth-jwt.html): kinetis/auth-jwt: stateless JWT authentication (HS256/RS256), with optional per-token revocation.
 - [Sessions & CSRF](https://kinetis.dev/docs/session.html): kinetis/session: cookie-backed sessions and CSRF protection — file, Redis, and SQL storage behind one store interface.
+- [Authorization](https://kinetis.dev/docs/authorization.html): kinetis/authorization: ability-based authorization — Gate wraps any callable Policy check, with no attribute, registry, or type-based dispatch.
 
 ## Runtime and performance
 
@@ -66,7 +68,9 @@ tutorial, then read whichever section you have reached.
 - [Storage](https://kinetis.dev/docs/storage.html): kinetis/storage: file storage on League\Flysystem — an Amp\File-backed local adapter whose driver calls suspend the Fiber.
 - [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, over the Revolt-native transport in kinetis/revolt-http-client.
 - [Mailer](https://kinetis.dev/docs/mailer.html): kinetis/mailer: mail sending via Symfony\Component\Mailer, non-blocking via kinetis/revolt-http-client for API-based transports.
+- [Broadcasting](https://kinetis.dev/docs/broadcasting.html): kinetis/broadcasting: real-time broadcasting over the Pusher Channels protocol, with private/presence channel authorization.
 - [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
+- [Redis Transport](https://kinetis.dev/docs/redis.html): kinetis/redis: a non-replaying, deadline-bounded Redis transport with Cluster slot routing — usable standalone, no Kinetis required.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.
 - [AWS request signing (SigV4)](https://kinetis.dev/docs/aws-sigv4.html): kinetis/aws-sigv4: a PSR-18 client signing requests with AWS Signature Version 4 for one configured origin, non-blocking via kinetis/revolt-http-client — usable standalone.
 

@@ -13,7 +13,7 @@ Usage: kinetis <command>
 
 Available commands:
   routes:list            Displays every discovered route and the full global middleware pipeline
-  build                  Compiles routes, commands, and event listeners ahead of time
+  build                  Compiles routes, MCP tools/resources, commands, and event listeners ahead of time
   mcp:serve              Starts the MCP server over stdio
   app:cleanup-sessions   Deletes sessions older than 30 days
 ```
@@ -357,10 +357,10 @@ scan only ever runs live in development, or once to build the cache.
 Even so, for a large enough codebase, that development-time scan can be
 worth bounding. `COMMAND_DISCOVERY_PATHS` (and its siblings
 `ROUTE_DISCOVERY_PATHS`/`MIDDLEWARE_DISCOVERY_PATHS`/
-`LISTENER_DISCOVERY_PATHS` for HTTP, global-middleware, and event-
-listener discovery — see {doc}`middleware`/{doc}`events` for the last
-two — plus `MCP_DISCOVERY_PATHS`, read by `kinetis/mcp`'s tool and
-resource discovery)
+`LISTENER_DISCOVERY_PATHS` for HTTP, global-middleware and event-listener
+discovery — see {doc}`middleware`/{doc}`events` for the last two — plus
+`MCP_DISCOVERY_PATHS` and `BROADCAST_CHANNEL_DISCOVERY_PATHS`, read by
+`kinetis/mcp` and `kinetis/broadcasting`; {doc}`config` lists all six)
 restricts the scan to one or more comma-separated sub-paths, relative to
 each PSR-4 base directory your `composer.json` declares:
 

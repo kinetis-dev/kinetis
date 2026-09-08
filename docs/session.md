@@ -354,7 +354,15 @@ than publishing something that was never confirmed private.
 to replace what `SESSION_DRIVER` would have picked:
 
 ```{code-block} php
-$app->bind(SessionStoreInterface::class, static fn (): MyStore => new MyStore(...));
+:caption: bootstrap.php
+
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use Kinetis\Session\SessionStoreInterface;
+
+return static function (AppScope $app, Config $config): void {
+    $app->bind(SessionStoreInterface::class, static fn (): MyStore => new MyStore($config));
+};
 ```
 
 `update()` must return `false` when the id has no live record left, so

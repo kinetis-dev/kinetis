@@ -25,7 +25,9 @@ API-first applications, developed in the
 A small, working application showing most of Kinetis at once:
 MySQL + [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) + [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder),
 Redis-backed [`kinetis/queue`](https://github.com/kinetis-dev/queue), `Kinetis\Events`, a
-`Kinetis\Console` command run on a schedule, and real-time browser
+`Kinetis\Console` command run on a schedule, a
+[`kinetis/mcp`](https://github.com/kinetis-dev/mcp) tool an AI agent can
+call for the per-scenario ping breakdown, and real-time browser
 updates over [Soketi](https://soketi.app) — behind a monochrome-amber,
 old-CRT-styled dashboard rendered with [`league/plates`](https://platesphp.com/).
 
@@ -73,8 +75,9 @@ running on nginx + PHP-FPM for exactly that reason.
 Start editing what you just created — every
 piece (`bootstrap.php`, the migration, the repository, the job, the
 scheduled command, the events, the broadcaster and its private-channel
-authorizer, `resources/views/dashboard.php`) is a small, plain file
-meant to be read end to end. Kinetis itself has no opinion on HTML
+authorizer, the MCP tool controller, `resources/views/dashboard.php`) is
+a small, plain file meant to be read end to end. Kinetis itself has no
+opinion on HTML
 templating — `HtmlResponse::create()` just takes a string — so
 `PingController::index()` shows one reasonable way to wire in a small
 templating library ([`league/plates`](https://platesphp.com/)) instead

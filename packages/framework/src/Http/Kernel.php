@@ -56,8 +56,9 @@ use Throwable;
  * `$isPersistent` — set from the driving RuntimeAdapterInterface — gates
  * the `gc_collect_cycles()` call that follows every request-scope
  * disposal, forcing cleanup of circular references (including Fibers)
- * between requests in a persistent worker; skipped for a boot-and-die
- * process about to have the OS reclaim everything anyway. A streamed
+ * between requests in a persistent worker; skipped under a boot-and-die
+ * SAPI, where request shutdown releases the request's memory, uncollected
+ * cycles included, before the script is re-entered. A streamed
  * response's disposal happens after `handle()` has returned, so the flag
  * travels with its {@see StreamScopeLease}.
  *

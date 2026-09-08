@@ -55,22 +55,15 @@ that logout.
 
 A cookie id that is wellformed but unknown to the store — fabricated,
 or expired — is never trusted as-is: the first real access rotates it
-to a fresh id before anything can be exposed or written under it. That
-rotation is itself lazy — a read-only check (including a CSRF token
-comparison) persists nothing and sets no cookie (though it still
-performs the one genuine store read needed to learn the cookie is
-unknown), so checking a token, right or wrong, can never itself be
-what allocates and persists a session. A mismatch against a genuinely
-existing session is equally inert — its data, flash generations, TTL,
-and cookie are left exactly as they were. Something that genuinely
-needs a stable identity — a mutation, an explicit `id()` call,
-generating a CSRF token — still gets one, persisted under the
-already-rotated fresh id. `Session::regenerate()` is the complementary
-session-fixation defense for a *known*, previously-issued id — call it
-on login. It rotates the CSRF token with the id, keeping every
-application key, so a token issued before the privilege change stops
-verifying after it and a form rendered before it needs re-rendering
-with the new token.
+to a fresh id before anything can be exposed or written under it, and
+that rotation persists nothing until something needs a stable identity,
+so checking a CSRF token can never be what allocates a session.
+`Session::regenerate()` is the complementary session-fixation defense
+for a *known*, previously-issued id — call it on login. It rotates the
+CSRF token with the id, keeping every application key, so a form
+rendered before the privilege change needs re-rendering with the new
+token. Full rules:
+[kinetis.dev/docs/session.html](https://kinetis.dev/docs/session.html).
 
 ## Provides
 

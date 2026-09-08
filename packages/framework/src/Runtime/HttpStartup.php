@@ -28,11 +28,12 @@ use Kinetis\Instrumentation\Telemetry;
  *
  *     Kinetis\Runtime\HttpStartup::run(__DIR__);
  *
- * All of it runs once per worker process — `bootstrap.php` runs per
- * FrankenPHP worker thread, and once per process under a boot-and-die
- * SAPI. Nothing here is per-request: the {@see Kernel} it hands the
- * adapter creates and disposes a `RequestScope` around every request it
- * serves.
+ * None of this sits inside the adapter's request loop: the {@see Kernel}
+ * handed to that loop is what creates and disposes a `RequestScope`
+ * around each request served. How often the program itself executes is
+ * the SAPI's to decide — once per FrankenPHP worker thread, for that
+ * thread's whole life, and once for each request under a boot-per-request
+ * SAPI, which re-enters the script every time.
  *
  * The order below is the whole contract, and every step depends on the
  * one before it:

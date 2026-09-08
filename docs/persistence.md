@@ -171,8 +171,8 @@ non-default connection is always retrieved explicitly
 | `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
 
 `fromConfig()`'s `$driver` argument overrides the key for one call.
-`kinetis/migrations` passes `'pdo'` for the session-scoped connection
-its advisory lock needs (see {doc}`migrations`).
+`SqlConnectionFactory::singleSession()`, below, is the stricter form of
+the same override.
 
 `auto` reads two signals — `frankenphp_handle_request()` and
 `RR_MODE=http` — so AWS Lambda gets `pdo` even though its PHP process is
@@ -728,10 +728,6 @@ ever find here. This is the pattern you should reach for by default.
 
 ### The safety net for everything else
 
-```{code-block} php
-public function rollbackDangling(): void
-```
-
 For the case the pattern above doesn't cover — a transaction begun
 through the guard's own `beginTransaction()` and held open across
 multiple calls, that never reaches either `commit()` or `rollback()`
@@ -913,10 +909,9 @@ REDIS_CACHE_NAMESPACE=default
 
 `REDIS_URL`, if set, wins outright over the discrete parts.
 `REDIS_TIMEOUT` is the whole per-operation budget, connect and cluster
-redirects included, not a connect timeout. Values are serialized with the
-same `Amp\Serialization\NativeSerializer` `Amp\Redis\RedisCache` itself
-uses internally, so any serializable PHP value — not just strings — can
-be stored, per the PSR-16 contract.
+redirects included, not a connect timeout. Values are serialized with
+`Amp\Serialization\NativeSerializer`, so any serializable PHP value —
+not just strings — can be stored, per the PSR-16 contract.
 
 Every key is stored as `kinetis_cache:<namespace>:<key>`, where the
 namespace is `REDIS_CACHE_NAMESPACE` (letters, digits, underscores and
@@ -952,33 +947,43 @@ handling.
 
 ### Fetch keys in batches, not one at a time
 
-`getMultiple()`/`setMultiple()`/`deleteMultiple()` are worth reaching for
-whenever you need several keys. On a single-node cache `getMultiple()`
-issues one `MGET`, which costs roughly a tenth of the client CPU per key
-that the same keys fetched one `get()` at a time do — one round trip and
-one reply parsed, instead of N of each. It is the single largest
-performance lever this cache has.
+`getMultiple()` and `deleteMultiple()` are worth reaching for whenever
+you need several keys. On a single node they issue one `MGET` and one
+`DEL`, which costs roughly a tenth of the client CPU per key that the
+same keys fetched one `get()` at a time do — one round trip and one
+reply parsed, instead of N of each. It is the single largest performance
+lever this cache has.
+
+A cluster has no one round trip to offer, since it rejects a multi-key
+command whose keys do not all share a slot: both methods fall back to a
+command per key, still dispatched concurrently rather than one after
+another, so they stay ahead of a sequential loop without collapsing to
+a single trip. `setMultiple()` saves no round trips on any topology.
+{doc}`appendix-packages` gives the commands each case sends.
 
 ```{code-block} php
-// One round trip.
+// One round trip on a single node, one concurrent command per key on a
+// cluster.
 $rows = $this->cache->getMultiple(['user.1', 'user.2', 'user.3']);
 
-// N round trips, each with its own protocol overhead.
+// N sequential round trips either way, each with its own protocol
+// overhead.
 foreach ([1, 2, 3] as $id) {
     $rows[] = $this->cache->get("user.{$id}");
 }
 ```
 
 ```{note}
-The Redis client is `Kinetis\Redis\Client`: `kinetis/redis`'s own
-non-replaying transport, running on the Revolt event loop under
-`amphp/redis`'s protocol types. Its overhead is paid per event-loop
-wakeup rather than per command, so it amortizes across whatever else is
-in flight at the same time. Under a persistent worker that is the normal
-state: once around eight concurrent requests hold an outstanding Redis
-command, per-operation client CPU settles to roughly a quarter of what a
-single isolated command costs, and no request blocks the worker thread
-while it waits.
+The cache holds a `Kinetis\Redis\RoutedExecutor` — `Client` for a single
+node, `ClusterClient` under `REDIS_CLUSTER=true` — which is
+`kinetis/redis`'s own non-replaying transport, running on the Revolt
+event loop under `amphp/redis`'s protocol types. Its overhead is paid
+per event-loop wakeup rather than per command, so it amortizes across
+whatever else is in flight at the same time. Under a persistent worker
+that is the normal state: once around eight concurrent requests hold an
+outstanding Redis command, per-operation client CPU settles to roughly a
+quarter of what a single isolated command costs, and no request blocks
+the worker thread while it waits.
 
 Under PHP-FPM a process handles exactly one request at a time, so there
 is nothing to amortize against and every cache operation pays the full
