@@ -288,7 +288,7 @@
             "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for atomic reservation, token-fenced settlement, and a finite visibility timeout that redelivers a crashed worker's job.",
             "namespace": "Kinetis\\QueueSql\\",
             "testNamespace": "Kinetis\\QueueSql\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework",
                 "queue",
