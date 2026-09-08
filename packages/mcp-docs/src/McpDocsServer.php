@@ -28,7 +28,7 @@ final class McpDocsServer
     public const string SERVER_NAME = 'kinetis-mcp-docs';
 
     /** Paired against this package's manifest version by the suite. */
-    public const string SERVER_VERSION = '1.0.0';
+    public const string SERVER_VERSION = '1.1.0';
 
     /**
      * Every protocol revision this server speaks, oldest first. The

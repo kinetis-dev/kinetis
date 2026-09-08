@@ -168,7 +168,8 @@ never name behaves exactly as if this feature did not exist.
 A named connection is never resolved automatically. Every package
 bootstrap reads its selector unscoped — `DB_CONNECTION`,
 `QUEUE_CONNECTION`, `FILESYSTEM_DRIVER`, `MAILER_DSN`,
-`SEARCH_OPENSEARCH_HOST`, `SESSION_DRIVER`, `BROADCAST_DRIVER` — and
+`SEARCH_OPENSEARCH_HOST`, `SEARCH_ELASTICSEARCH_HOST`, `SESSION_DRIVER`,
+`BROADCAST_DRIVER` — and
 wires the default connection alone. Build a named connection explicitly
 in `bootstrap.php` and register it under an id of your own, or construct
 it where it is needed.
@@ -448,21 +449,24 @@ The gate below is on the unscoped `MAILER_DSN`; both keys are scoped when
 | `MAILER_DSN` | *(unset: no mailer)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
 | `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it and carries its own timeouts from the DSN. |
 
-### Search (`kinetis/search-opensearch`) — scoped
+### Search (`kinetis/search-opensearch`, `kinetis/search-elasticsearch`) — scoped
 
-The gate below is on the unscoped `SEARCH_OPENSEARCH_HOST`; every key is
-scoped when `OpenSearchClientFactory::fromConfig()` is called for a named
-connection.
+Both engine packages read the same keys under their own prefix —
+`SEARCH_OPENSEARCH_` or `SEARCH_ELASTICSEARCH_`, written `SEARCH_..._`
+below. The gate is on the unscoped `..._HOST`; every key is scoped when
+the engine's `fromConfig()` is called for a named connection.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SEARCH_OPENSEARCH_HOST` | *(unset: no client)* | One `http(s)://host[:port]` origin. No userinfo, path, query or fragment. |
-| `SEARCH_OPENSEARCH_PLAINTEXT` | `false` | Accept an `http` origin. |
-| `SEARCH_OPENSEARCH_TIMEOUT` | `30` | Seconds per request — idle and total. Must be positive. |
-| `SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES` | `8388608` | Largest response body accepted. Must be positive. |
-| `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
-| `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
-| `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate. |
+| `SEARCH_..._HOST` | *(unset: no client)* | One `http(s)://host[:port]` origin. No userinfo, path, query or fragment. |
+| `SEARCH_..._PLAINTEXT` | `false` | Accept an `http` origin. |
+| `SEARCH_..._TIMEOUT` | `30` | Seconds per request — idle and total. Must be positive. |
+| `SEARCH_..._MAX_RESPONSE_BYTES` | `8388608` | Largest response body accepted. Must be positive. |
+| `SEARCH_..._USERNAME` | — | Basic-auth user. |
+| `SEARCH_..._PASSWORD` | — | Basic-auth password. |
+| `SEARCH_..._VERIFY_PEER` | `true` | Verify the server certificate. |
+| `SEARCH_ELASTICSEARCH_API_KEY` | — | Elasticsearch only: an API key, instead of a username and password. |
+| `SEARCH_ELASTICSEARCH_API_KEY_ID` | — | Elasticsearch only: the key's id, when it is held separately from its secret. |
 
 ### Sessions (`kinetis/session`)
 

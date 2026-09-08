@@ -349,12 +349,12 @@ jobs:
           docker run -d --name pg-tls -p 5433:5432 -v /tmp/tls-certs:/certs-src:ro -v /tmp/pg-socket:/var/run/postgresql \
             -e POSTGRES_DB=testdb -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpass \
             --entrypoint bash postgres:16 -c 'cp /certs-src/server.pem /certs-src/server.key /certs-src/ca.pem /tmp/ && chown postgres /tmp/server.* /tmp/ca.pem && chmod 600 /tmp/server.key && printf "local all all trust\nhostssl all mtlsuser 0.0.0.0/0 scram-sha-256 clientcert=verify-ca\nhost all all 0.0.0.0/0 scram-sha-256\n" > /tmp/pg_hba.conf && chown postgres /tmp/pg_hba.conf && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/ca.pem -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c hba_file=/tmp/pg_hba.conf'
-          for i in $(seq 1 40); do
+          for _ in $(seq 1 40); do
             docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb-admin' || 'mysqladmin' }} ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null && break
             sleep 2
           done
           docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb' || 'mysql' }} -uroot -proot -e "ALTER USER 'testuser'@'%' REQUIRE SSL; CREATE USER 'mtlsuser'@'%' IDENTIFIED BY 'testpass' REQUIRE X509; GRANT ALL ON testdb.* TO 'mtlsuser'@'%'; FLUSH PRIVILEGES;"
-          for i in $(seq 1 20); do
+          for _ in $(seq 1 20); do
             docker exec pg-tls pg_isready -U testuser -d testdb -q 2>/dev/null && break
             sleep 1
           done
@@ -689,7 +689,7 @@ jobs:
 
       - name: Wait for the app to answer real requests
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -sf --connect-timeout 5 --max-time 10 -o /dev/null http://localhost:8080/; then
               exit 0
             fi
@@ -730,7 +730,7 @@ jobs:
             "SELECT status FROM ping_messages WHERE scenario='queued' ORDER BY id DESC LIMIT 1;")
           test "$row" = "pending"
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
               "SELECT status FROM ping_messages WHERE scenario='queued' ORDER BY id DESC LIMIT 1;")
             if [ "$row" = "ponged" ]; then
@@ -744,7 +744,7 @@ jobs:
       - name: The cron container creates and pongs its own rows with no request involved
         working-directory: packages/pingpong
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             row=$(docker compose exec -T mysql mysql -upingpong -ppingpong pingpong -N -e \
               "SELECT status FROM ping_messages WHERE scenario='cron' ORDER BY id DESC LIMIT 1;" 2>/dev/null)
             if [ "$row" = "ponged" ]; then
@@ -928,6 +928,93 @@ jobs:
       - name: Run the runtime conformance suite against it
         working-directory: packages/roadrunner-adapter
         run: php vendor/bin/phpunit tests/RoadRunnerConformanceTest.php
+
+  search-elasticsearch:
+    name: search-elasticsearch (Elasticsearch ${{ matrix.elasticsearch }}, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The client major has to match the cluster major — a 9.x client
+        # sends compatible-with=9, which an 8.x cluster rejects — so each
+        # leg pins the client to the server it runs against, which is
+        # also the pairing the package documents.
+        include:
+          - { php-version: '8.4', elasticsearch: '9', image: '9.5.3', client: '^9.0' }
+          - { php-version: '8.5', elasticsearch: '9', image: '9.5.3', client: '^9.0' }
+          - { php-version: '8.4', elasticsearch: '8', image: '8.19.21', client: '^8.19' }
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.image }}
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd="curl -sf http://localhost:9200/_cluster/health"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+      elasticsearch-secure:
+        image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.image }}
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "true"
+          # TLS is deliberately off here. Peer verification and the
+          # plain-HTTP opt-in belong to kinetis/search's own transport,
+          # which the search-opensearch job already exercises against a
+          # self-signed cluster; this job proves what is this package's
+          # own — Basic auth, and the API-key path Elastic Cloud uses.
+          xpack.security.http.ssl.enabled: "false"
+          ELASTIC_PASSWORD: Kinetis-CI-Verify-2026
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9202:9200
+        options: >-
+          --health-cmd="curl -sf -u elastic:Kinetis-CI-Verify-2026 http://localhost:9200/_cluster/health"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
+      # A pull_request checkout is detached, so Composer guesses each
+      # path repository's version from the commit — dev-<sha>, which the
+      # dev-main sibling constraints generate-composer.php writes cannot
+      # match. Every other job installs the lock as it stands; this one
+      # re-resolves to pin the client major, so it needs a HEAD Composer
+      # reads as main.
+      - name: Put the checkout on a branch named main
+        run: git checkout -B main
+
+      - name: Install dependencies
+        working-directory: packages/search-elasticsearch
+        run: |
+          composer require --no-update --no-interaction \
+            "elasticsearch/elasticsearch:${{ matrix.client }}"
+          composer update elasticsearch/elasticsearch --with-all-dependencies --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/search-elasticsearch
+        run: php tests-integration/elasticsearch.php
+        env:
+          SEARCH_ELASTICSEARCH_HOST: http://127.0.0.1:9200
+          SEARCH_ELASTICSEARCH_PLAINTEXT: "true"
+
+      - name: Run auth integration checks
+        working-directory: packages/search-elasticsearch
+        run: php tests-integration/elasticsearch-auth.php
+        env:
+          SEARCH_ELASTICSEARCH_SECURE_HOST: http://127.0.0.1:9202
+          SEARCH_ELASTICSEARCH_PASSWORD: Kinetis-CI-Verify-2026
 
   search-opensearch:
     name: search-opensearch (OpenSearch, PHP ${{ matrix.php-version }})

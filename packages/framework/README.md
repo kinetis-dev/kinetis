@@ -155,7 +155,9 @@ documentation from its own README:
 | [`kinetis/storage-s3`](https://github.com/kinetis-dev/storage-s3) | S3 (and S3-compatible) storage for [`kinetis/storage`](https://github.com/kinetis-dev/storage)'s `FILESYSTEM_DRIVER=s3` — non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
 | [`kinetis/mailer`](https://github.com/kinetis-dev/mailer) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
 | [`kinetis/broadcasting`](https://github.com/kinetis-dev/broadcasting) | Real-time broadcasting over the Pusher Channels protocol — private/presence channel authorization, non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
-| [`kinetis/search-opensearch`](https://github.com/kinetis-dev/search-opensearch) | Non-blocking OpenSearch client construction, via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
+| [`kinetis/search`](https://github.com/kinetis-dev/search) | The search transport both engine packages build on, and one engine-neutral client interface over either |
+| [`kinetis/search-opensearch`](https://github.com/kinetis-dev/search-opensearch) | Non-blocking OpenSearch client construction, on [`kinetis/search`](https://github.com/kinetis-dev/search) |
+| [`kinetis/search-elasticsearch`](https://github.com/kinetis-dev/search-elasticsearch) | Non-blocking Elasticsearch client construction, on [`kinetis/search`](https://github.com/kinetis-dev/search) |
 | [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry) | OpenTelemetry tracing — request spans, SQL/queue instrumentation |
 | [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
 | [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone, no Kinetis required |

@@ -246,42 +246,88 @@ travels instead, enough to correlate every span for one session without
 handing a trace reader the credential itself. The payload never travels
 at all.
 
-## OpenSearch spans
+## Search spans
 
-`kinetis/search-opensearch`'s `OpenSearchClientFactory` has no
-Kinetis-owned interface to decorate — it hands back the real,
-unwrapped `OpenSearch\Client` — so tracing plugs in at its own
-`transportDecorator` seam instead, wrapping the fully-configured PSR-18
-client right before it reaches OpenSearch's `TransportFactory`:
+Each engine factory hands back the real, unwrapped engine client, so
+tracing plugs in at the `transportDecorator` seam {doc}`search`
+describes, wrapping the fully-configured PSR-18 client right before the
+engine's own transport is built around it. One decorator serves both
+engines; `SearchSystem` is what tells their spans apart:
 
 ```{code-block} php
 use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
-use Kinetis\Telemetry\Search\TracingOpenSearchTransport;
+use Kinetis\Telemetry\Search\SearchSystem;
+use Kinetis\Telemetry\Search\TracingSearchTransport;
 use OpenTelemetry\API\Trace\TracerProviderInterface;
 use Psr\Http\Client\ClientInterface;
 
 $client = OpenSearchClientFactory::fromConfig(
     $config,
     transportDecorator: static fn (ClientInterface $inner): ClientInterface
-        => new TracingOpenSearchTransport($inner, $app->get(TracerProviderInterface::class)),
+        => new TracingSearchTransport($inner, $app->get(TracerProviderInterface::class), SearchSystem::OpenSearch),
 );
 ```
 
-OpenSearch's REST API is path-based (`POST /orders/_search`,
+That builds one client. An Elasticsearch client must not become a
+worker-lifetime binding, for the reason
+{ref}`why-the-client-is-short-lived` gives, so tracing that engine
+decorates the transport its clients are built over and leaves both
+bindings not shared:
+
+```{code-block} php
+use Elastic\Elasticsearch\Client;
+use Kinetis\Search\SearchClient;
+use Kinetis\Search\SearchTransport;
+use Kinetis\SearchElasticsearch\ElasticsearchClient;
+use Kinetis\SearchElasticsearch\ElasticsearchClientFactory;
+use Kinetis\Telemetry\Search\SearchSystem;
+use Kinetis\Telemetry\Search\TracingSearchTransport;
+use OpenTelemetry\API\Trace\TracerProviderInterface;
+use Psr\Container\ContainerInterface;
+use Psr\Http\Client\ClientInterface;
+
+$transport = SearchTransport::fromConfig(
+    $config,
+    ElasticsearchClientFactory::CONFIG_PREFIX,
+    decorator: static fn (ClientInterface $inner): ClientInterface
+        => new TracingSearchTransport($inner, $app->get(TracerProviderInterface::class), SearchSystem::Elasticsearch),
+);
+
+$app->bind(
+    Client::class,
+    static fn (): Client => ElasticsearchClientFactory::over($transport, $config),
+    shared: false,
+);
+
+$app->bind(
+    SearchClient::class,
+    static fn (ContainerInterface $container): SearchClient
+        => new ElasticsearchClient($container->get(Client::class)),
+    shared: false,
+);
+```
+
+The transport owns the connection pool, so one traced transport serves
+every client the worker builds over it. The package's own untraced
+transport, built while it registered, holds no connection and is left
+with nothing resolving through it.
+
+Both engines answer a path-based REST API (`POST /orders/_search`,
 `GET /orders/_doc/42`), so each span is named from the request's method
 and the action its path performs (`POST _search`, `GET _doc`) rather
 than needing to parse the request body's query DSL. Both halves come
-from a fixed vocabulary: a path segment names a span only when it is
-one of OpenSearch's own actions, and a path that names none — or names
-one this package does not list — produces `request` instead. The rest
-of such a path is index names, aliases and document ids, which say
-which records a call touched rather than what it did, so the path
-travels only as `kinetis.search.path_fingerprint`.
+from a fixed vocabulary: a path segment names a span only when it is one
+of the engines' own actions, and a path that names none — or names one
+this package does not list — produces `request` instead. The rest of
+such a path is index names, aliases and document ids, which say which
+records a call touched rather than what it did, so the path travels only
+as `kinetis.search.path_fingerprint`. `db.system.name` is `opensearch`
+or `elasticsearch`, from the `SearchSystem` the decorator was given.
 
-`kinetis/search-opensearch`'s adapter reads the status, headers and body
-before it returns, so unlike the outgoing-HTTP decorator above there is
-no deferred span lifecycle here — the span starts and ends around one
-call, and a failure part-way through a response body falls inside it.
+`kinetis/search`'s adapter reads the status, headers and body before it
+returns, so unlike the outgoing-HTTP decorator above there is no
+deferred span lifecycle here — the span starts and ends around one call,
+and a failure part-way through a response body falls inside it.
 
 (telemetry-data-minimization)=
 
@@ -303,7 +349,7 @@ credential sitting in an APM backend.
 | A cache key, single or batched, and every cached value | `kinetis.cache.key_fingerprint` over the operation's key list, `db.operation.batch.size` for the multi-key methods |
 | A URL's userinfo, path, query string, and fragment | `url.scheme`, `server.address`, `server.port`, `kinetis.http.url_fingerprint` |
 | An incoming request's path or query string | `http.request.method`, and `http.route` on the `route.match` span once the router resolves a template |
-| An OpenSearch index name, document id or alias | The action from a fixed vocabulary as the span name and `db.operation.name`, `kinetis.search.path_fingerprint` |
+| A search index name, document id or alias | The action from a fixed vocabulary as the span name and `db.operation.name`, `kinetis.search.path_fingerprint` |
 | A session id, and the session payload | `kinetis.session.id_fingerprint` |
 | A failure's message and stack trace | The exception's type — its own class, or an anonymous subclass's nearest named ancestor — as the span status description and as an `exception` event's `exception.type` |
 
@@ -326,7 +372,7 @@ a name assembled from caller-supplied text is both an export of that
 text and an unbounded number of distinct names for a backend to group.
 A statement opening outside the SQL keyword list is named `SQL`, a
 method outside the HTTP method list is `HTTP` on the name and `_OTHER`
-on `http.request.method`, and an OpenSearch path naming no known action
+on `http.request.method`, and a search path naming no known action
 is `request`.
 
 `url.scheme`, `server.address` and `server.port` are the one exported
@@ -457,6 +503,8 @@ stops there.
   wraps.
 - {doc}`session` — the store interface and drivers `TracingSessionStore`
   wraps, and the `bootstrap.php` rebind pattern it reuses.
-- {doc}`search-opensearch` — `OpenSearchClientFactory`'s own
-  `transportDecorator` seam, what `TracingOpenSearchTransport` plugs
+- {doc}`search` — the engine factories' own
+  `transportDecorator` seam, what `TracingSearchTransport` plugs
   into.
+- {doc}`search-elasticsearch` — why that engine's client is bound per
+  resolution, which the wiring above preserves.

@@ -6,7 +6,9 @@ namespace Kinetis\SearchOpenSearch\Tests;
 
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
-use Kinetis\SearchOpenSearch\Exception\OpenSearchConfigurationException;
+use Kinetis\Search\Exception\SearchConfigurationException;
+use Kinetis\Search\SearchClient;
+use Kinetis\SearchOpenSearch\OpenSearchClient;
 use Kinetis\SearchOpenSearch\PackageBootstrap;
 use OpenSearch\Client;
 use OpenSearch\EndpointFactory;
@@ -25,13 +27,14 @@ final class PackageBootstrapTest extends TestCase
         new PackageBootstrap()->register($app, new Config([]));
 
         self::assertFalse($app->has(Client::class));
+        self::assertFalse($app->has(SearchClient::class));
     }
 
     /**
      * Constructing the client opens no connection, so this asserts the
      * binding without needing a live cluster.
      */
-    public function test_a_configured_host_binds_a_client(): void
+    public function test_a_configured_host_binds_the_engine_client(): void
     {
         $app = new AppScope();
         new PackageBootstrap()->register($app, new Config([
@@ -40,6 +43,36 @@ final class PackageBootstrapTest extends TestCase
         $app->boot();
 
         self::assertInstanceOf(Client::class, $app->get(Client::class));
+    }
+
+    public function test_a_configured_host_also_binds_the_engine_neutral_client_over_it(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config([
+            'SEARCH_OPENSEARCH_HOST' => 'https://localhost:9200',
+        ]));
+        $app->boot();
+
+        self::assertInstanceOf(OpenSearchClient::class, $app->get(SearchClient::class));
+    }
+
+    /**
+     * One client for the worker, deliberately: OpenSearch's HttpTransport
+     * keeps nothing between calls and its EndpointFactory builds a fresh
+     * endpoint per call, so nothing request-owned can survive in it. The
+     * Elasticsearch package binds a client per resolution instead,
+     * because its transport keeps the last request and response.
+     */
+    public function test_one_client_serves_the_whole_worker(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config([
+            'SEARCH_OPENSEARCH_HOST' => 'https://localhost:9200',
+        ]));
+        $app->boot();
+
+        self::assertSame($app->get(Client::class), $app->get(Client::class));
+        self::assertSame($app->get(SearchClient::class), $app->get(SearchClient::class));
     }
 
     public function test_the_client_is_built_while_registering_not_on_first_search(): void
@@ -56,7 +89,7 @@ final class PackageBootstrapTest extends TestCase
 
     public function test_configuration_a_client_cannot_be_built_from_fails_while_registering(): void
     {
-        $this->expectException(OpenSearchConfigurationException::class);
+        $this->expectException(SearchConfigurationException::class);
         $this->expectExceptionMessage('SEARCH_OPENSEARCH_PLAINTEXT');
         new PackageBootstrap()->register(new AppScope(), new Config([
             'SEARCH_OPENSEARCH_HOST' => 'http://localhost:9200',

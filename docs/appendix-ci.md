@@ -135,10 +135,27 @@ rather than which form it took.
 - **`search-opensearch`** (two real OpenSearch containers, one with the
   security plugin disabled and one enabled with a self-signed
   certificate) — `OpenSearchClientFactory`: index/search/delete against
-  the first, reached over `http` with `SEARCH_OPENSEARCH_PLAINTEXT=true`;
+  the first, reached over `http` with `SEARCH_OPENSEARCH_PLAINTEXT=true`,
+  and the same five `SearchClient` calls the Elasticsearch job runs, so
+  the engine-neutral contract is proven on a live cluster of each engine,
+  plus a real download abandoned past
+  `SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES`;
   an unauthenticated request rejected, a correctly Basic-authenticated
   request succeeding, and the default `SEARCH_OPENSEARCH_VERIFY_PEER=true`
   rejecting the self-signed certificate, against the second.
+- **`search-elasticsearch`** (two real Elasticsearch containers per
+  matrix leg, one with security disabled and one enabled; legs for
+  clusters 9.x and 8.19, each with the matching client major, since a
+  9.x client's `compatible-with=9` is rejected by an 8.x cluster) —
+  `ElasticsearchClientFactory`: index/search/delete, the `SearchClient`
+  calls, and a real download abandoned past
+  `SEARCH_ELASTICSEARCH_MAX_RESPONSE_BYTES` against the first; against the second, an
+  unauthenticated request and a wrong password both rejected, Basic auth
+  succeeding, and an API key created over the authenticated client then
+  used as the only credential. Peer verification and the plain-HTTP
+  opt-in belong to `kinetis/search`'s transport and are covered by the
+  `search-opensearch` job's self-signed cluster rather than a second
+  time here.
 - **`migrations`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `MigrationRunner`/`SqlMigrationRepository`: migrate/status/rollback
   against a real fixture migration file.
@@ -283,6 +300,8 @@ above the number here by design:
 | `redis` | 60% |
 | `revolt-http-client` | 75% |
 | `roadrunner-adapter` | 85% |
+| `search` | 60% |
+| `search-elasticsearch` | 60% |
 | `search-opensearch` | 70% |
 | `session` | 65% |
 | `skeleton` | 90% |

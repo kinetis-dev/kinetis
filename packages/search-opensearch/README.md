@@ -24,17 +24,17 @@ API-first applications, developed in the
 
 Builds a real `OpenSearch\Client` (from `opensearch-project/opensearch-php`)
 through OpenSearch's own `TransportFactory`/`HttpTransport` construction
-path, over a package-owned PSR-18 adapter on
-[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP transport instead of the
-default blocking one. The returned object is the real, un-wrapped
-client — nothing Kinetis-specific sits on top of it.
+path, over [`kinetis/search`](https://github.com/kinetis-dev/search)'s
+Revolt-native HTTP transport instead of the default blocking one. The
+returned object is the real, un-wrapped client — nothing Kinetis-specific
+sits on top of it.
 
 Each call is one wire attempt against one origin, bounded by one deadline
 and one response size, following no redirect. The status, headers and body
 are complete before the adapter returns, so a transport failure mid-body
-is an `OpenSearchNetworkException` rather than something the official
-client meets while reading a stream. Every status OpenSearch answers with
-stays the official client's to map.
+is a `SearchNetworkException` rather than something the official client
+meets while reading a stream. Every status OpenSearch answers with stays
+the official client's to map.
 
 ```php
 use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
@@ -51,10 +51,13 @@ Installing this package auto-registers, via `extra.kinetis`:
 
 - **A container binding** for `OpenSearch\Client`, built by
   `OpenSearchClientFactory::fromConfig()` when `SEARCH_OPENSEARCH_HOST`
-  is set. Unset means the package binds nothing. The client is built
-  during registration and opens no connection, so unusable configuration
-  fails at boot rather than on the first search; an application's own
-  `bootstrap.php` runs afterwards and can replace the binding.
+  is set, and one for
+  [`kinetis/search`](https://github.com/kinetis-dev/search)'s
+  engine-neutral `SearchClient` over it. Unset means the package binds
+  nothing. The client is built during registration and opens no
+  connection, so unusable configuration fails at boot rather than on the
+  first search; an application's own `bootstrap.php` runs afterwards and
+  can replace either binding.
 
 Nothing else. Named connections stay explicit application wiring.
 
@@ -63,6 +66,10 @@ Nothing else. Named connections stay explicit application wiring.
 ```
 SEARCH_OPENSEARCH_HOST=https://localhost:9200
 ```
+
+The host, deadline, response bound, credentials and TLS switch are
+[`kinetis/search`](https://github.com/kinetis-dev/search)'s, spelled with
+this engine's prefix:
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -76,7 +83,7 @@ SEARCH_OPENSEARCH_HOST=https://localhost:9200
 
 Every key is scoped — `SEARCH_OPENSEARCH_HOST` + `logs` →
 `SEARCH_LOGS_OPENSEARCH_HOST`. Full reference:
-[kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
+[kinetis.dev/docs/search.html](https://kinetis.dev/docs/search.html).
 
 `SEARCH_OPENSEARCH_HOST` is one origin and one node. Userinfo, a path, a
 query and a fragment are all refused: the official client's endpoints are
@@ -86,15 +93,18 @@ multi-node selector or failover — put a load balancer in front of a
 multi-node cluster and point this at it.
 
 An unusable host, an `http` origin without the opt-in, and a
-non-positive timeout or response bound each raise an
-`OpenSearchConfigurationException` naming the key. A request that never
-produces a complete response raises an `OpenSearchNetworkException`
-carrying it. Those two are the package's whole failure surface.
+non-positive timeout or response bound each raise a
+`SearchConfigurationException` naming the key. A request that never
+produces a complete response raises a `SearchNetworkException` carrying
+it. Both belong to
+[`kinetis/search`](https://github.com/kinetis-dev/search), along with the
+`SearchRequestException` its engine-neutral client reports an error
+status as.
 
 `fromConfig()`'s optional `$transportDecorator` parameter wraps the
 fully-configured PSR-18 adapter right before `TransportFactory` gets
-it — the seam [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry)'s `TracingOpenSearchTransport` plugs
-into, without duplicating this method's own config-reading logic.
+it — the seam [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry)'s `TracingSearchTransport` plugs
+into, without duplicating the transport's own config-reading logic.
 
 ## Installation
 
@@ -102,7 +112,7 @@ into, without duplicating this method's own config-reading logic.
 composer require kinetis/search-opensearch
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
+Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/search`](https://github.com/kinetis-dev/search).
 Full documentation:
 [kinetis.dev/docs/search-opensearch.html](https://kinetis.dev/docs/search-opensearch.html).
 

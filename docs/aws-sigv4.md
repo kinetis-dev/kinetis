@@ -351,9 +351,9 @@ carry a password in its userinfo or a token in its query string.
 
 `OpenSearch\TransportFactory::setHttpClient()` (see
 {doc}`search-opensearch`) accepts any PSR-18 client, and
-`SigV4SigningClient` is one, so it drops in directly in place of
-`kinetis/search-opensearch`'s own adapter, replacing Basic auth with
-IAM-based signing:
+`SigV4SigningClient` is one, so it drops in directly in place of the
+adapter `kinetis/search` builds, replacing Basic auth with IAM-based
+signing:
 
 ```{code-block} php
 use Kinetis\AwsSigV4\SignedTransport;

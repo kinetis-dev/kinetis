@@ -87,6 +87,12 @@ jobs:
           # every other threshold here was.
           - { name: mcp-docs, dir: packages/mcp-docs, minMsi: 60, minCoveredMsi: 60 }
           - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
+          # A provisional floor: these two packages' Infection jobs
+          # have not run yet, so 60 is a starting point rather than a
+          # measurement. Set it from the score each one's first run
+          # reports, the way every other threshold here was.
+          - { name: search, dir: packages/search, minMsi: 60, minCoveredMsi: 60 }
+          - { name: search-elasticsearch, dir: packages/search-elasticsearch, minMsi: 60, minCoveredMsi: 60 }
           - { name: search-opensearch, dir: packages/search-opensearch, minMsi: 70, minCoveredMsi: 70 }
           - { name: telemetry, dir: packages/telemetry, minMsi: 70, minCoveredMsi: 70 }
           - { name: session, dir: packages/session, minMsi: 65, minCoveredMsi: 65 }
