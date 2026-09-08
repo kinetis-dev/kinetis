@@ -123,7 +123,9 @@ jobs:
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, phpunit: true }
           - { name: mailer, dir: packages/mailer, phpunit: true }
           - { name: broadcasting, dir: packages/broadcasting, phpunit: true }
+          - { name: search, dir: packages/search, phpunit: true }
           - { name: search-opensearch, dir: packages/search-opensearch, phpunit: true }
+          - { name: search-elasticsearch, dir: packages/search-elasticsearch, phpunit: true }
           - { name: telemetry, dir: packages/telemetry, phpunit: true }
           - { name: session, dir: packages/session, phpunit: true }
           - { name: authorization, dir: packages/authorization, phpunit: true }

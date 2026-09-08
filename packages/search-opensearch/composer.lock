@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "5f157c7e5893dfc888b87ca5cc268138",
+    "content-hash": "3a1b285197a46956fcfac111ab860011",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1358,6 +1358,57 @@
                 }
             ],
             "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/search",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../search",
+                "reference": "ec80e90fa2c70e78738bdc3509efb47b2a2520e9"
+            },
+            "require": {
+                "kinetis/framework": "dev-main",
+                "kinetis/revolt-http-client": "dev-main",
+                "nyholm/psr7": "^1.8.2",
+                "php": "^8.4",
+                "psr/http-client": "^1.0.3",
+                "psr/http-message": "^2.0",
+                "symfony/http-client-contracts": "^3.7.1"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^12.5.33",
+                "symfony/http-client": "^8.1.4",
+                "vimeo/psalm": "^6.16.1"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": []
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Search\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\Search\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "Engine-neutral search contracts for Kinetis: the single-origin, deadline-bounded, non-blocking HTTP transport an engine client is built on, and a narrow client interface over indexing, retrieval, deletion, search, and bulk.",
             "transport-options": {
                 "relative": true
             }
@@ -8091,7 +8142,8 @@
     "minimum-stability": "stable",
     "stability-flags": {
         "kinetis/framework": 20,
-        "kinetis/revolt-http-client": 20
+        "kinetis/revolt-http-client": 20,
+        "kinetis/search": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

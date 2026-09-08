@@ -402,17 +402,41 @@ Separate Composer package, not part of `kinetis/framework` core.
 - `PusherBroadcaster`'s signing algorithm — trigger-request signing (`auth_key`/`auth_timestamp`/`auth_version`/`body_md5`, lexically sorted, HMAC-SHA256 over `"{method}\n{path}\n{params}"`) and channel authorization (`"{socketId}:{channelName}"`, or `"{socketId}:{channelName}:{channelDataJson}"` for presence) — is held to `pusher/pusher-php-server`'s own source, and exercised against a real Soketi broker and a real WebSocket client: a public broadcast delivered, a private-channel subscription signed by this driver accepted with its triggered event delivered, and a presence-channel subscription signed by the real `BroadcastAuthController` accepted with the correct `channel_data`.
 - Depends on `kinetis/framework` and `kinetis/revolt-http-client` (both via `path` repositories), `psr/http-message`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
+## `packages/search` (`kinetis/search`)
+
+Separate Composer package, not part of `kinetis/framework` core. Both
+engine packages depend on it; neither engine's library is a dependency
+of it.
+
+- `Kinetis\Search\SearchTransport::fromConfig(Config $config, string $prefix, string $connection = 'default', ?Closure $decorator = null): self` — the one origin an engine client talks to and the PSR-18 client it talks over, as a readonly `{origin, client}` pair. `$prefix` is the engine's configuration prefix without its trailing underscore (`SEARCH_OPENSEARCH`, `SEARCH_ELASTICSEARCH`), so both engines read the same policy under their own keys. `origin` exists because `Elastic\Elasticsearch\ClientBuilder` needs `setHosts()` while `OpenSearch\TransportFactory` does not.
+- `SEARCH_..._HOST` is exactly one `http(s)://host[:port]` origin — userinfo, a path (the key names one root origin), a query and a fragment are refused, and the accepted parts are rebuilt as a lowercase origin. `SEARCH_..._PLAINTEXT` (default `false`) gates an `http` origin; `SEARCH_..._TIMEOUT` (default `30.0`, positive) is both `timeout` and `max_duration`; `SEARCH_..._MAX_RESPONSE_BYTES` (default `8388608`, positive) is enforced by an `on_progress` guard. Transport options also carry `max_redirects => 0`. `SEARCH_..._USERNAME`/`SEARCH_..._PASSWORD` (Basic auth) and `SEARCH_..._VERIFY_PEER` (default `true`) are optional, all via `Config::scopedKey()` for named connections.
+- `Kinetis\Search\BufferedHttpClient` — the PSR-18 client over a Symfony `HttpClientInterface`. Reads the status, `getHeaders(false)` and `getContent(false)` before returning a buffered `Nyholm\Psr7\Response`, so a body-phase transport failure and the response bound land inside `sendRequest()` and inside any decorator around it. Status, body and headers pass through unchanged, leaving every 4xx/5xx mapping to the engine client and carrying Elasticsearch's `X-Elastic-Product` check and the `Content-Type` its response objects deserialize by; only a Symfony `TransportExceptionInterface` is caught. It also replaces the request's `Accept-Encoding` with `identity`, case-insensitively: the response bound counts wire bytes, and `ClientBuilder` asks for gzip on an Elastic Cloud host unless it recognizes the client class as Symfony's own.
+- `Kinetis\Search\SearchClient` — the engine-neutral contract: `index()`, `get()`, `delete()`, `search()`, `bulk()`. Raw envelopes in and out, absence as `null`/`false` rather than an exception, and a search body passed through untouched. Each engine package binds an implementation beside its own unwrapped client.
+- `Kinetis\Search\BulkOperation` — `index()`, `create()`, `update()` and `delete()` static constructors, and `lines()`, the one or two body lines both engines' bulk endpoints read. Building those here is what makes a bulk batch engine-neutral.
+- `Kinetis\Search\Exception\SearchConfigurationException` (unusable configuration, refused while the client is built), `SearchNetworkException` (PSR-18 `NetworkExceptionInterface`, retaining the request) and `SearchRequestException` (an error status a `SearchClient` call met, carrying `status` and the engine's own exception) are the whole failure surface. Configuration reasons name the scoped key, never its value.
+- Depends on `kinetis/framework` and `kinetis/revolt-http-client` (both via `path` repositories), `psr/http-client`, `psr/http-message`, `symfony/http-client-contracts`, `nyholm/psr7`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
+
 ## `packages/search-opensearch` (`kinetis/search-opensearch`)
 
 Separate Composer package, not part of `kinetis/framework` core.
 
-- `Kinetis\SearchOpenSearch\PackageBootstrap` — declared via `extra.kinetis`; with `SEARCH_OPENSEARCH_HOST` set, builds the client and binds the instance as `OpenSearch\Client`, so unusable configuration fails while registering rather than on the first search; construction opens no connection and the application's own `bootstrap.php` can replace the binding. Inert when the key is unset; the concrete client is the binding id because opensearch-php exposes no interface for it.
-- `Kinetis\SearchOpenSearch\OpenSearchClientFactory::fromConfig(Config $config, string $connection = 'default', ?Closure $transportDecorator = null): OpenSearch\Client` — builds the client through `OpenSearch\TransportFactory::setHttpClient()` (a real PSR-18 injection point, part of the library's own non-deprecated construction path — the older `ClientBuilder`/`Transport`/`ConnectionPool` stack is deprecated since 2.4.0 and has no such injection point) with `OpenSearchHttpClient` over `Kinetis\RevoltHttpClient\AmpHttpClientFactory::create()` as the client. `$transportDecorator` (`Closure(ClientInterface): ClientInterface`), appended last, wraps that fully-configured adapter right before `TransportFactory` receives it — the seam `kinetis/telemetry`'s `TracingOpenSearchTransport` composes through, without duplicating this method's own config-reading logic.
-- `Kinetis\SearchOpenSearch\OpenSearchHttpClient` — the package's PSR-18 client over a Symfony `HttpClientInterface`. Reads the status, `getHeaders(false)` and `getContent(false)` before returning a buffered `Nyholm\Psr7\Response`, so a body-phase transport failure and the response bound land inside `sendRequest()` and inside any decorator around it. Status, body and headers pass through unchanged, leaving every OpenSearch 4xx/5xx mapping to the official client; only a Symfony `TransportExceptionInterface` is caught.
-- `Kinetis\SearchOpenSearch\Exception\OpenSearchConfigurationException` and `Kinetis\SearchOpenSearch\Exception\OpenSearchNetworkException` (PSR-18 `NetworkExceptionInterface`, retaining the request) are the package's whole failure surface. Configuration reasons name the scoped key, never its value.
-- No Kinetis-owned client interface — the real `OpenSearch\Client` is returned directly.
-- `SEARCH_OPENSEARCH_HOST` is exactly one `http(s)://host[:port]` origin — userinfo, a path (upstream endpoints are root-relative), a query and a fragment are refused, and the accepted parts are rebuilt as a lowercase origin. `SEARCH_OPENSEARCH_PLAINTEXT` (default `false`) gates an `http` origin; `SEARCH_OPENSEARCH_TIMEOUT` (default `30.0`, positive) is both `timeout` and `max_duration`; `SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES` (default `8388608`, positive) is enforced by an `on_progress` guard. Transport options also carry `max_redirects => 0` and `Accept-Encoding: identity`. `SEARCH_OPENSEARCH_USERNAME`/`SEARCH_OPENSEARCH_PASSWORD` (Basic auth) and `SEARCH_OPENSEARCH_VERIFY_PEER` (default `true`) are optional, all via `Config::scopedKey()` for named connections.
-- Depends on `kinetis/framework` and `kinetis/revolt-http-client` (both via `path` repositories), `opensearch-project/opensearch-php`, `symfony/http-client`, `nyholm/psr7`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
+- `Kinetis\SearchOpenSearch\PackageBootstrap` — declared via `extra.kinetis`; with `SEARCH_OPENSEARCH_HOST` set, builds the client and binds the one instance as `OpenSearch\Client` — shared for the worker, which `HttpTransport` keeping nothing between calls and `EndpointFactory` building a fresh endpoint per call is what makes safe — plus `Kinetis\Search\SearchClient` as `OpenSearchClient` over it, so unusable configuration fails while registering rather than on the first search; construction opens no connection and the application's own `bootstrap.php` can replace either binding. Inert when the key is unset; the concrete client is the binding id because opensearch-php exposes no interface for it. Installing both engine packages leaves them competing for the `SearchClient` id — the application binds it itself to decide.
+- `Kinetis\SearchOpenSearch\OpenSearchClientFactory::fromConfig(Config $config, string $connection = 'default', ?Closure $transportDecorator = null): OpenSearch\Client` — builds the client through `OpenSearch\TransportFactory::setHttpClient()` (a real PSR-18 injection point, part of the library's own non-deprecated construction path — the older `ClientBuilder`/`Transport`/`ConnectionPool` stack is deprecated since 2.4.0 and has no such injection point) with `SearchTransport`'s client. `$transportDecorator` (`Closure(ClientInterface): ClientInterface`) wraps that fully-configured adapter right before `TransportFactory` receives it — the seam `kinetis/telemetry`'s `TracingSearchTransport` composes through, without duplicating the transport's own config-reading logic. `CONFIG_PREFIX` is `SEARCH_OPENSEARCH`.
+- `Kinetis\SearchOpenSearch\OpenSearchClient` — `SearchClient` over the official client. Assembles each call's parameter array, and maps `OpenSearch\Exception\HttpExceptionInterface` by status: `404` is `null` from `get()` and `false` from `delete()`, everything else a `SearchRequestException`. Response bodies are the cluster's own, untouched.
+- The transport's JSON `Content-Type` default exists for this engine: OpenSearch's own request building never sets one, relying on the HTTP client to default a string body to JSON, while Symfony's clients default an unmarked string body to `application/x-www-form-urlencoded`, which a node answers with `406`. No OpenSearch request replaces that default, so a `_bulk` body travels as NDJSON lines under `application/json`, which the engine's bulk handler accepts and this package's real-cluster checks exercise.
+- Depends on `kinetis/framework` and `kinetis/search` (both via `path` repositories), `opensearch-project/opensearch-php`, `psr/http-client`. `kinetis/revolt-http-client` is a dev dependency only: the transport is `kinetis/search`'s to own and reaches an install transitively, and nothing in this package's source names it. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
+
+## `packages/search-elasticsearch` (`kinetis/search-elasticsearch`)
+
+Separate Composer package, not part of `kinetis/framework` core.
+
+- `Kinetis\SearchElasticsearch\PackageBootstrap` — declared via `extra.kinetis`; with `SEARCH_ELASTICSEARCH_HOST` set, builds the `SearchTransport` once and binds `Elastic\Elasticsearch\Client` and `Kinetis\Search\SearchClient` as **non-shared** bindings over it, so each resolution gets its own client. `Elastic\Transport\Transport` retains `$lastRequest`/`$lastResponse` and `Client::setAsync()` is a mutable mode, so a worker-lifetime client would hold one request's documents and results until the next search displaced them; the transport underneath owns the pool, keeps nothing per call, and is the part that is shared. No client is built at registration; `ElasticsearchClientFactory::assertUsableCredentials()` is what makes a conflicting credential pair fail there. The concrete client is the binding id because `Elastic\Elasticsearch\ClientInterface` carries only the transport and mode accessors — none of `search()`, `index()` or `get()`, which the final `Client` picks up from its endpoint traits. Inert when the key is unset; same registration-time failure and same application override as the OpenSearch package.
+- `Kinetis\SearchElasticsearch\ElasticsearchClientFactory::fromConfig(Config $config, string $connection = 'default', ?Closure $transportDecorator = null): Elastic\Elasticsearch\Client` — builds the client through `ClientBuilder::setHosts()`/`setNodePool()`/`setHttpClient()` over `SearchTransport`'s origin and client. `::over(SearchTransport $transport, Config $config, string $connection = 'default')` is the same assembly over a transport that already exists, which is how the bootstrap gives many clients one pool. `CONFIG_PREFIX` is `SEARCH_ELASTICSEARCH`. Accepts `elasticsearch/elasticsearch` `^8.19 || ^9.0`; the client major must match the cluster's, since a 9.x client sends `compatible-with=9`.
+- Retries are pinned to `0` on the built transport, not through `ClientBuilder::setRetries()`, which cannot express zero: `build()` replaces the value with the host count whenever `empty()` holds for it. Zero is required because `Elastic\Transport\Transport` catches PSR-18's `NetworkExceptionInterface` and re-sends the request, which would replay an `index` or `bulk` whose dispatch outcome is unknown. A request that never completed therefore surfaces as `Elastic\Transport\Exception\NoNodeAvailableException` wrapping `SearchNetworkException`.
+- `Kinetis\SearchElasticsearch\SingleNode` — a `NodePoolInterface` answering the one configured origin with no liveness state. `SimpleNodePool`'s default `NoResurrect` strategy would mark this client's only node dead on the first network failure and never revive it, ending every later request through that client, which for one built outside the container and kept is the rest of the worker's life; keeping the node in service also lets the transport report the exception that actually happened rather than "no alive nodes".
+- `ClientBuilder::setBasicAuthentication()` is never called: it reaches `Transport::setUserInfo()`, which puts credentials into the request URI's userinfo where a transport error can quote them. Basic credentials stay in the HTTP client's `auth_basic` option. `SEARCH_ELASTICSEARCH_API_KEY` (with optional `SEARCH_ELASTICSEARCH_API_KEY_ID`) travels as an `Authorization: ApiKey` header via `setApiKey()`; configuring it alongside `SEARCH_ELASTICSEARCH_USERNAME` raises a `SearchConfigurationException` rather than leaving header precedence to pick a credential. No `setSSL*()`/`setCABundle()` call is made — `ClientBuilder::setOptions()` throws for an HTTP client class it does not recognize, and TLS is `SEARCH_ELASTICSEARCH_VERIFY_PEER`'s.
+- `Kinetis\SearchElasticsearch\ElasticsearchClient` — `SearchClient` over the official client, reading its `Response\Elasticsearch` objects with `asArray()` and mapping `ClientResponseException`/`ServerResponseException` by status, which both carry as their code: `404` is `null` from `get()` and `false` from `delete()`, everything else a `SearchRequestException`.
+- Depends on `kinetis/framework` and `kinetis/search` (both via `path` repositories), `elastic/transport` (named directly: `SingleNode` implements its `NodePoolInterface` and `ElasticsearchClient` maps its `NoNodeAvailableException`), `elasticsearch/elasticsearch`, `psr/container`, `psr/http-client`. `kinetis/revolt-http-client` is a dev dependency only, for the reason the OpenSearch package's entry gives. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
 ## `packages/telemetry` (`kinetis/telemetry`)
 
@@ -489,14 +513,14 @@ on its spans.
   session id never travels verbatim (it's a bearer credential), only
   its fingerprint as `kinetis.session.id_fingerprint`. The payload is
   never recorded.
-- `Kinetis\Telemetry\Search\TracingOpenSearchTransport` — wraps any
-  PSR-18 `ClientInterface`, meant for
-  `OpenSearchClientFactory::fromConfig()`'s `$transportDecorator`
-  parameter. A client span per call, named from the request's method
-  and the action its path performs (`POST _search`, `GET _doc`) rather
-  than parsing the query DSL, both drawn from fixed vocabularies; a
-  path naming no listed action gives `request`. Carries
-  `db.system.name: opensearch`, `db.operation.name` (the same action)
+- `Kinetis\Telemetry\Search\TracingSearchTransport` — wraps any
+  PSR-18 `ClientInterface`, meant for either engine factory's
+  `$transportDecorator` parameter. A client span per call, named from
+  the request's method and the action its path performs (`POST _search`,
+  `GET _doc`) rather than parsing the query DSL, both drawn from fixed
+  vocabularies; a path naming no listed action gives `request`. Carries
+  `db.system.name` from the `SearchSystem` case it was constructed with
+  (`opensearch` or `elasticsearch`), `db.operation.name` (the action)
   and `kinetis.search.path_fingerprint` — index names, aliases and
   document ids identify the records a call touched, so no segment of
   the path names a span or reaches an attribute. PSR-18's
@@ -543,10 +567,10 @@ on its spans.
 - Depends on `kinetis/framework`, `kinetis/revolt-http-client`,
   `open-telemetry/sdk`, `open-telemetry/exporter-otlp`,
   `symfony/http-client`, `nyholm/psr7`, `psr/log`;
-  `kinetis/persistence`/`kinetis/cache-redis`/`kinetis/session`/
-  `kinetis/search-opensearch` only in `require-dev` — every decorator
-  class loads lazily, so none of them is forced on an install that only
-  wants request spans. Own
+  `kinetis/persistence`/`kinetis/cache-redis`/`kinetis/session` only in
+  `require-dev` — every decorator class loads lazily, so none of them is
+  forced on an install that only wants request spans, and the search
+  decorator needs no engine package at all, only PSR-18. Own
   `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
 ## `packages/authorization` (`kinetis/authorization`)
@@ -623,7 +647,8 @@ both middlewares are explicit per-route opt-ins.
   {doc}`query-builder`, {doc}`queue`, {doc}`queue-redis`,
   {doc}`queue-sql`, {doc}`queue-sqs`, {doc}`queue-rabbitmq`,
   {doc}`storage`, {doc}`storage-s3`, {doc}`revolt-http-client`,
-  {doc}`aws-sigv4`, {doc}`mailer`, {doc}`search-opensearch`,
+  {doc}`aws-sigv4`, {doc}`mailer`, {doc}`search`,
+  {doc}`search-opensearch`, {doc}`search-elasticsearch`,
   {doc}`broadcasting`, {doc}`telemetry`, {doc}`auth`, {doc}`auth-jwt`,
   {doc}`session`, {doc}`authorization`, {doc}`mcp`, {doc}`mcp-docs`,
   {doc}`runtime-adapters` — the task-oriented page for each package

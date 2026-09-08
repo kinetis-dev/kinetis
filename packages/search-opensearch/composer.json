@@ -1,6 +1,6 @@
 {
     "name": "kinetis/search-opensearch",
-    "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, via kinetis/revolt-http-client's Revolt-backed HTTP transport.",
+    "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -11,13 +11,13 @@
     "require": {
         "php": "^8.4",
         "kinetis/framework": "dev-main",
-        "kinetis/revolt-http-client": "dev-main",
-        "nyholm/psr7": "^1.8.2",
+        "kinetis/search": "dev-main",
         "opensearch-project/opensearch-php": "^2.6.0",
-        "symfony/http-client": "^8.1.4"
+        "psr/http-client": "^1.0.3"
     },
     "require-dev": {
         "infection/infection": "^0.35.0",
+        "kinetis/revolt-http-client": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^12.5.33",
         "vimeo/psalm": "^6.16.1"
@@ -40,11 +40,15 @@
     "repositories": [
         {
             "type": "path",
+            "url": "../revolt-http-client"
+        },
+        {
+            "type": "path",
             "url": "../framework"
         },
         {
             "type": "path",
-            "url": "../revolt-http-client"
+            "url": "../search"
         }
     ],
     "config": {

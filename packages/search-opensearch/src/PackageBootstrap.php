@@ -7,16 +7,22 @@ namespace Kinetis\SearchOpenSearch;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\PackageBootstrapInterface;
+use Kinetis\Search\SearchClient;
 use OpenSearch\Client;
 
 /**
- * Declared via `extra.kinetis`: with `SEARCH_OPENSEARCH_HOST` set,
- * binds {@see Client} so a controller or job can constructor-inject it
- * with nothing else to register. Unset means inert.
+ * Declared via `extra.kinetis`: with `SEARCH_OPENSEARCH_HOST` set, binds
+ * {@see Client} and the engine-neutral {@see SearchClient} over it, so a
+ * controller or job can constructor-inject either with nothing else to
+ * register. Unset means inert.
  *
  * The concrete client is the binding id because opensearch-php exposes
- * no interface for it — the same shape kinetis/persistence's own
- * dialect contracts take, minus the interface.
+ * no interface for it — the same shape kinetis/persistence's own dialect
+ * contracts take, minus the interface.
+ *
+ * Installing both engine packages leaves them competing for the
+ * {@see SearchClient} id; bind it in the application's own
+ * `bootstrap.php` to say which engine owns it.
  *
  * The client is constructed here, not deferred to first use, so a host
  * that is not one usable origin, a plain-HTTP host without the opt-in,
@@ -34,6 +40,9 @@ final readonly class PackageBootstrap implements PackageBootstrapInterface
             return;
         }
 
-        $app->instance(Client::class, OpenSearchClientFactory::fromConfig($config));
+        $client = OpenSearchClientFactory::fromConfig($config);
+
+        $app->instance(Client::class, $client);
+        $app->instance(SearchClient::class, new OpenSearchClient($client));
     }
 }

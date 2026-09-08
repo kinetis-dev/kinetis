@@ -26,7 +26,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.5.1",
+            "version": "1.5.2",
             "bin": [
                 "bin/kinetis"
             ],
@@ -236,7 +236,7 @@
             "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],
@@ -408,23 +408,69 @@
                 "bootstrap": "Kinetis\\Mailer\\PackageBootstrap"
             }
         },
-        "search-opensearch": {
-            "name": "kinetis/search-opensearch",
-            "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, via kinetis/revolt-http-client's Revolt-backed HTTP transport.",
-            "namespace": "Kinetis\\SearchOpenSearch\\",
-            "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
-            "version": "1.1.0",
+        "search": {
+            "name": "kinetis/search",
+            "description": "Engine-neutral search contracts for Kinetis: the single-origin, deadline-bounded, non-blocking HTTP transport an engine client is built on, and a narrow client interface over indexing, retrieval, deletion, search, and bulk.",
+            "namespace": "Kinetis\\Search\\",
+            "testNamespace": "Kinetis\\Search\\Tests\\",
+            "version": "1.0.0",
             "requires": [
                 "framework",
                 "revolt-http-client"
             ],
             "require": {
                 "nyholm/psr7": "^1.8.2",
-                "opensearch-project/opensearch-php": "^2.6.0",
+                "psr/http-client": "^1.0.3",
+                "psr/http-message": "^2.0",
+                "symfony/http-client-contracts": "^3.7.1"
+            },
+            "requireDevExtra": {
                 "symfony/http-client": "^8.1.4"
+            },
+            "kinetis": []
+        },
+        "search-opensearch": {
+            "name": "kinetis/search-opensearch",
+            "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
+            "namespace": "Kinetis\\SearchOpenSearch\\",
+            "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
+            "version": "1.2.0",
+            "requires": [
+                "framework",
+                "search"
+            ],
+            "requiresDev": [
+                "revolt-http-client"
+            ],
+            "require": {
+                "opensearch-project/opensearch-php": "^2.6.0",
+                "psr/http-client": "^1.0.3"
             },
             "kinetis": {
                 "bootstrap": "Kinetis\\SearchOpenSearch\\PackageBootstrap"
+            }
+        },
+        "search-elasticsearch": {
+            "name": "kinetis/search-elasticsearch",
+            "description": "Fiber-native non-blocking Elasticsearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
+            "namespace": "Kinetis\\SearchElasticsearch\\",
+            "testNamespace": "Kinetis\\SearchElasticsearch\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework",
+                "search"
+            ],
+            "requiresDev": [
+                "revolt-http-client"
+            ],
+            "require": {
+                "elastic/transport": "^8.11 || ^9.0",
+                "elasticsearch/elasticsearch": "^8.19 || ^9.0",
+                "psr/container": "^2.0.2",
+                "psr/http-client": "^1.0.3"
+            },
+            "kinetis": {
+                "bootstrap": "Kinetis\\SearchElasticsearch\\PackageBootstrap"
             }
         },
         "aws-sigv4": {
@@ -494,10 +540,10 @@
         },
         "telemetry": {
             "name": "kinetis/telemetry",
-            "description": "OpenTelemetry tracing for Kinetis — request spans, framework instrumentation hooks, decorators for the cache, session, HTTP and OpenSearch boundaries, and OTLP export over the Revolt-backed client.",
+            "description": "OpenTelemetry tracing for Kinetis — request spans, framework instrumentation hooks, decorators for the cache, session, HTTP and search boundaries, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.4.1",
+            "version": "1.5.0",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -506,8 +552,7 @@
                 "persistence",
                 "cache-redis",
                 "redis",
-                "session",
-                "search-opensearch"
+                "session"
             ],
             "require": {
                 "open-telemetry/sdk": "^1.15.0",
@@ -522,7 +567,7 @@
                 "kinetis/queue": "Producer and consumer job spans, reported by the queue backends and the worker through the framework's instrumentation hooks.",
                 "kinetis/cache-redis": "Enables the TracingSimpleCache decorator — a span per cache operation.",
                 "kinetis/session": "Enables the TracingSessionStore decorator — a span per session read, create, update and destroy.",
-                "kinetis/search-opensearch": "Enables the TracingOpenSearchTransport decorator, via OpenSearchClientFactory's transportDecorator seam — a span per OpenSearch call."
+                "kinetis/search": "Gives TracingSearchTransport the transportDecorator seam each engine factory exposes — a span per search call, on OpenSearch or Elasticsearch."
             },
             "kinetis": {
                 "scan": "Kinetis\\Telemetry\\Middleware\\",

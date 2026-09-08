@@ -2,47 +2,40 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\SearchOpenSearch\Tests;
+namespace Kinetis\Search\Tests;
 
-use Closure;
 use Kinetis\Config\Config;
-use Kinetis\SearchOpenSearch\Exception\OpenSearchNetworkException;
-use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
-use Kinetis\SearchOpenSearch\OpenSearchHttpClient;
+use Kinetis\Search\BufferedHttpClient;
+use Kinetis\Search\Exception\SearchNetworkException;
+use Kinetis\Search\SearchTransport;
 use Nyholm\Psr7\Request;
-use OpenSearch\Client;
-use OpenSearch\EndpointFactory;
-use OpenSearch\Exception\NotFoundHttpException;
-use OpenSearch\TransportFactory;
 use PHPUnit\Framework\TestCase;
-use ReflectionProperty;
 use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
-use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-final class OpenSearchHttpClientTest extends TestCase
+final class BufferedHttpClientTest extends TestCase
 {
     public function test_a_successful_response_is_complete_before_send_request_returns(): void
     {
         $transport = new MockHttpClient(new MockResponse(
             '{"took":3,"hits":{"total":{"value":1}}}',
-            ['response_headers' => ['content-type' => 'application/json', 'x-opensearch' => 'yes']],
+            ['response_headers' => ['content-type' => 'application/json', 'x-elastic-product' => 'Elasticsearch']],
         ));
 
-        $response = new OpenSearchHttpClient($transport)->sendRequest(
+        $response = new BufferedHttpClient($transport)->sendRequest(
             new Request('GET', 'https://localhost:9200/articles/_search'),
         );
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('{"took":3,"hits":{"total":{"value":1}}}', $response->getBody()->getContents());
         self::assertSame('application/json', $response->getHeaderLine('content-type'));
-        self::assertSame('yes', $response->getHeaderLine('x-opensearch'));
+        self::assertSame('Elasticsearch', $response->getHeaderLine('x-elastic-product'));
     }
 
     /**
      * A 4xx is a response, not a transport failure: it reaches the caller
-     * whole so the official client can map it.
+     * whole so the engine client can map it.
      */
     public function test_a_4xx_response_is_buffered_and_passed_through(): void
     {
@@ -51,36 +44,13 @@ final class OpenSearchHttpClientTest extends TestCase
             ['http_code' => 404, 'response_headers' => ['content-type' => 'application/json']],
         ));
 
-        $response = new OpenSearchHttpClient($transport)->sendRequest(
+        $response = new BufferedHttpClient($transport)->sendRequest(
             new Request('GET', 'https://localhost:9200/missing/_doc/1'),
         );
 
         self::assertSame(404, $response->getStatusCode());
         self::assertSame('{"error":{"type":"index_not_found_exception"},"status":404}', (string) $response->getBody());
         self::assertSame('application/json', $response->getHeaderLine('content-type'));
-    }
-
-    public function test_the_official_client_still_owns_status_mapping(): void
-    {
-        $client = $this->openSearchClientOver(new MockHttpClient(new MockResponse(
-            '{"error":{"type":"index_not_found_exception","reason":"no such index"},"status":404}',
-            ['http_code' => 404, 'response_headers' => ['content-type' => 'application/json']],
-        )));
-
-        $this->expectException(NotFoundHttpException::class);
-        $client->get(['index' => 'missing', 'id' => '1']);
-    }
-
-    public function test_the_official_client_reads_a_success_body_through_the_adapter(): void
-    {
-        $client = $this->openSearchClientOver(new MockHttpClient(new MockResponse(
-            '{"_source":{"title":"Kinetis"}}',
-            ['response_headers' => ['content-type' => 'application/json']],
-        )));
-
-        $document = $client->get(['index' => 'articles', 'id' => '1']);
-
-        self::assertSame('Kinetis', $document['_source']['title']);
     }
 
     public function test_the_request_reaches_the_transport_unchanged(): void
@@ -92,11 +62,11 @@ final class OpenSearchHttpClientTest extends TestCase
             return new MockResponse('{}', ['response_headers' => ['content-type' => 'application/json']]);
         });
 
-        new OpenSearchHttpClient($transport)->sendRequest(
+        new BufferedHttpClient($transport)->sendRequest(
             new Request(
                 'POST',
                 'https://localhost:9200/articles/_search',
-                ['Content-Type' => 'application/json'],
+                ['Content-Type' => 'application/x-ndjson'],
                 '{"query":{"match_all":{}}}',
             ),
         );
@@ -104,7 +74,43 @@ final class OpenSearchHttpClientTest extends TestCase
         self::assertSame('POST', $seen['method']);
         self::assertSame('https://localhost:9200/articles/_search', $seen['url']);
         self::assertSame('{"query":{"match_all":{}}}', $seen['options']['body']);
-        self::assertContains('Content-Type: application/json', $seen['options']['headers']);
+        self::assertContains('Content-Type: application/x-ndjson', $seen['options']['headers']);
+    }
+
+    /**
+     * The response bound counts bytes off the wire, so a compressed body
+     * would let a far larger decoded one through it. Elasticsearch's own
+     * ClientBuilder asks for gzip on an Elastic Cloud host.
+     */
+    public function test_a_requested_content_coding_is_replaced_with_identity(): void
+    {
+        $seen = [];
+        $transport = new MockHttpClient(static function (string $method, string $url, array $options) use (&$seen): MockResponse {
+            $seen = $options['headers'];
+
+            return new MockResponse('{}');
+        });
+
+        new BufferedHttpClient($transport)->sendRequest(
+            new Request('GET', 'https://localhost:9200/_search', ['accept-ENCODING' => 'gzip']),
+        );
+
+        self::assertContains('Accept-Encoding: identity', $seen);
+        self::assertNotContains('accept-ENCODING: gzip', $seen);
+    }
+
+    public function test_identity_is_asked_for_even_when_a_request_names_no_coding(): void
+    {
+        $seen = [];
+        $transport = new MockHttpClient(static function (string $method, string $url, array $options) use (&$seen): MockResponse {
+            $seen = $options['headers'];
+
+            return new MockResponse('{}');
+        });
+
+        new BufferedHttpClient($transport)->sendRequest(new Request('GET', 'https://localhost:9200/_search'));
+
+        self::assertContains('Accept-Encoding: identity', $seen);
     }
 
     public function test_a_connection_failure_arrives_as_a_network_exception_carrying_the_request(): void
@@ -113,9 +119,9 @@ final class OpenSearchHttpClientTest extends TestCase
         $request = new Request('GET', 'https://localhost:9200/articles/_search');
 
         try {
-            new OpenSearchHttpClient($transport)->sendRequest($request);
+            new BufferedHttpClient($transport)->sendRequest($request);
             self::fail('the request should not have completed');
-        } catch (OpenSearchNetworkException $e) {
+        } catch (SearchNetworkException $e) {
             self::assertSame($request, $e->getRequest());
             self::assertInstanceOf(TransportException::class, $e->getPrevious());
         }
@@ -137,9 +143,9 @@ final class OpenSearchHttpClientTest extends TestCase
         $request = new Request('GET', 'https://localhost:9200/articles/_search');
 
         try {
-            new OpenSearchHttpClient($transport)->sendRequest($request);
+            new BufferedHttpClient($transport)->sendRequest($request);
             self::fail('the request should not have completed');
-        } catch (OpenSearchNetworkException $e) {
+        } catch (SearchNetworkException $e) {
             self::assertSame($request, $e->getRequest());
         }
     }
@@ -155,12 +161,12 @@ final class OpenSearchHttpClientTest extends TestCase
         $request = new Request('GET', 'https://localhost:9200/articles/_search');
 
         try {
-            new OpenSearchHttpClient($transport)->sendRequest($request);
+            new BufferedHttpClient($transport)->sendRequest($request);
             self::fail('the request should not have completed');
-        } catch (OpenSearchNetworkException $e) {
+        } catch (SearchNetworkException $e) {
             self::assertSame($request, $e->getRequest());
             self::assertStringContainsString(
-                'SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES',
+                'SEARCH_ENGINE_MAX_RESPONSE_BYTES',
                 $e->getPrevious()?->getMessage() ?? '',
             );
         }
@@ -172,40 +178,34 @@ final class OpenSearchHttpClientTest extends TestCase
         $transport = new MockHttpClient(new MockResponse($body))
             ->withOptions(['on_progress' => $this->responseBoundFor('64')]);
 
-        $response = new OpenSearchHttpClient($transport)->sendRequest(
+        $response = new BufferedHttpClient($transport)->sendRequest(
             new Request('GET', 'https://localhost:9200/articles/_search'),
         );
 
         self::assertSame($body, (string) $response->getBody());
     }
 
-    private function openSearchClientOver(HttpClientInterface $transport): Client
-    {
-        return new Client(
-            new TransportFactory()->setHttpClient(new OpenSearchHttpClient($transport))->create(),
-            new EndpointFactory(),
-        );
-    }
-
     /**
-     * The guard the factory installs for a given limit, so this asserts
-     * the configured one rather than a copy of it.
+     * The guard {@see SearchTransport} installs for a given limit, so
+     * this asserts the configured one rather than a copy of it.
      */
-    private function responseBoundFor(string $limit): Closure
+    private function responseBoundFor(string $limit): \Closure
     {
-        $client = OpenSearchClientFactory::fromConfig(new Config([
-            'SEARCH_OPENSEARCH_HOST' => 'https://localhost:9200',
-            'SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES' => $limit,
-        ]));
+        $transport = SearchTransport::fromConfig(
+            new Config([
+                'SEARCH_ENGINE_HOST' => 'https://localhost:9200',
+                'SEARCH_ENGINE_MAX_RESPONSE_BYTES' => $limit,
+            ]),
+            'SEARCH_ENGINE',
+        );
 
-        $httpTransport = new ReflectionProperty($client, 'httpTransport')->getValue($client);
-        $adapter = new ReflectionProperty($httpTransport, 'client')->getValue($httpTransport);
-        $ampClient = new ReflectionProperty($adapter, 'client')->getValue($adapter);
+        $adapter = $transport->client;
+        $ampClient = new \ReflectionProperty($adapter, 'client')->getValue($adapter);
 
         /** @var array<string, mixed> $options */
-        $options = new ReflectionProperty($ampClient, 'defaultOptions')->getValue($ampClient);
+        $options = new \ReflectionProperty($ampClient, 'defaultOptions')->getValue($ampClient);
 
-        /** @var Closure $guard */
+        /** @var \Closure $guard */
         $guard = $options['on_progress'];
 
         return $guard;

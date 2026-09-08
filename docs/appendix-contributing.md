@@ -51,6 +51,11 @@ still declare `A` directly (with its own `path` entry) — Composer won't
 walk `B`'s `repositories` array to find it. Keep this in mind when adding
 a new cross-package dependency by hand rather than through the manifest
 tooling below.
+
+Where `C`'s own source never names `A`, that declaration belongs in
+`requiresDev`: it is what makes `C`'s suite resolve here, while the
+released package still declares only the runtime dependencies it
+consumes, and `A` reaches an installation through `B`.
 ```
 
 ## Setting up a development environment

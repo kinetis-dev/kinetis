@@ -929,6 +929,84 @@ jobs:
         working-directory: packages/roadrunner-adapter
         run: php vendor/bin/phpunit tests/RoadRunnerConformanceTest.php
 
+  search-elasticsearch:
+    name: search-elasticsearch (Elasticsearch ${{ matrix.elasticsearch }}, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The client major has to match the cluster major — a 9.x client
+        # sends compatible-with=9, which an 8.x cluster rejects — so each
+        # leg pins the client to the server it runs against, which is
+        # also the pairing the package documents.
+        include:
+          - { php-version: '8.4', elasticsearch: '9', image: '9.5.3', client: '^9.0' }
+          - { php-version: '8.5', elasticsearch: '9', image: '9.5.3', client: '^9.0' }
+          - { php-version: '8.4', elasticsearch: '8', image: '8.19.21', client: '^8.19' }
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.image }}
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd="curl -sf http://localhost:9200/_cluster/health"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+      elasticsearch-secure:
+        image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.image }}
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "true"
+          # TLS is deliberately off here. Peer verification and the
+          # plain-HTTP opt-in belong to kinetis/search's own transport,
+          # which the search-opensearch job already exercises against a
+          # self-signed cluster; this job proves what is this package's
+          # own — Basic auth, and the API-key path Elastic Cloud uses.
+          xpack.security.http.ssl.enabled: "false"
+          ELASTIC_PASSWORD: Kinetis-CI-Verify-2026
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9202:9200
+        options: >-
+          --health-cmd="curl -sf -u elastic:Kinetis-CI-Verify-2026 http://localhost:9200/_cluster/health"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
+      - name: Install dependencies
+        working-directory: packages/search-elasticsearch
+        run: |
+          composer require --no-update --no-interaction \
+            "elasticsearch/elasticsearch:${{ matrix.client }}"
+          composer update elasticsearch/elasticsearch --with-all-dependencies --no-interaction --prefer-dist
+
+      - name: Run integration checks
+        working-directory: packages/search-elasticsearch
+        run: php tests-integration/elasticsearch.php
+        env:
+          SEARCH_ELASTICSEARCH_HOST: http://127.0.0.1:9200
+          SEARCH_ELASTICSEARCH_PLAINTEXT: "true"
+
+      - name: Run auth integration checks
+        working-directory: packages/search-elasticsearch
+        run: php tests-integration/elasticsearch-auth.php
+        env:
+          SEARCH_ELASTICSEARCH_SECURE_HOST: http://127.0.0.1:9202
+          SEARCH_ELASTICSEARCH_PASSWORD: Kinetis-CI-Verify-2026
+
   search-opensearch:
     name: search-opensearch (OpenSearch, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
