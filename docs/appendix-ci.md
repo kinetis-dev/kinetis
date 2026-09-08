@@ -213,9 +213,10 @@ code rather than called as an API — and `tools/` is the monorepo's own
 tooling rather than a published package. Each job runs
 `composer install`, then Infection with PCOV as the coverage driver,
 gated on `--min-msi`/`--min-covered-msi` — a real, non-zero threshold per
-package, set with a margin below that package's own measured score. Runs
-on PHP 8.4 only, not matrixed across 8.4/8.5 like
-`ci.yml`/`integration.yml`.
+package, set with a margin below that package's own measured score.
+`kinetis/persistence` compiles `ext-sockets` into that container first,
+for the same requirement its `ci.yml` suite carries above. Runs on PHP
+8.4 only, not matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`.
 
 On a pull request, only the code the PR actually changes is mutated
 (`--git-diff-filter` against the base branch), under the same

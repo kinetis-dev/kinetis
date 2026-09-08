@@ -56,7 +56,7 @@ jobs:
           # Re-measured for real (84.54% in CI, 87% locally), for the same
           # reason auth-jwt's own threshold below was re-measured — see its
           # comment for the full explanation.
-          - { name: persistence, dir: packages/persistence, minMsi: 80, minCoveredMsi: 80 }
+          - { name: persistence, dir: packages/persistence, minMsi: 80, minCoveredMsi: 80, needsSockets: true }
           # A provisional floor: this package's Infection job has not
           # run yet, so 60 is a starting point rather than a measurement.
           # Set it from the score its own first run reports, the way
@@ -186,10 +186,16 @@ jobs:
           # ini file itself, so the old `echo 'extension=pcov.so' > ...`
           # step is gone too, not just moved.
           # bash is for mcp-docs' suite, which drives setup.sh; see
-          # ci.yml's own bash leg.
+          # ci.yml's own bash leg. A needsSockets package compiles
+          # ext-sockets for the same requirement ci.yml's matrix records,
+          # and under Alpine that needs linux-headers on top of
+          # $PHPIZE_DEPS.
           docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:8.4-cli-alpine sh -c "
             apk add --no-cache bash git curl
             git config --global safe.directory '*'
+            if [ -n '${{ matrix.package.needsSockets }}' ]; then
+              apk add --no-cache \$PHPIZE_DEPS linux-headers >/dev/null && docker-php-ext-install sockets >/dev/null
+            fi
             curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar
             chmod +x /usr/local/bin/pie.phar
             php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
