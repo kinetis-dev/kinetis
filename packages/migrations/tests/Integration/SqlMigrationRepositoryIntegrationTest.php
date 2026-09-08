@@ -119,9 +119,11 @@ final class SqlMigrationRepositoryIntegrationTest extends TestCase
     /**
      * The order column comes from the table's own COALESCE(MAX(...), 0) +
      * 1 in the insert itself: 1 on an empty table, and one past the
-     * highest row after that — including after a rollback freed the
-     * position it used, which a migration recorded again then lands past
-     * rather than back in.
+     * highest row still in the table after that — not a counter that
+     * remembers positions no row holds any more. Rolling back the
+     * highest row therefore frees its number for the next record, and a
+     * migration recorded again while a higher row remains lands past
+     * that row, newest in application order.
      */
     public function test_application_order_counts_up_from_the_current_maximum(): void
     {
@@ -134,10 +136,14 @@ final class SqlMigrationRepositoryIntegrationTest extends TestCase
 
         $repository->markRolledBack('20260102_create_orders');
         $repository->markApplied('20260102_create_orders', self::CHECKSUM_ORDERS);
+        self::assertSame([1, 2], $this->applicationOrders());
 
-        self::assertSame([1, 3], $this->applicationOrders());
+        $repository->markRolledBack('20260101_create_users');
+        $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
+
+        self::assertSame([2, 3], $this->applicationOrders());
         self::assertSame(
-            ['20260101_create_users', '20260102_create_orders'],
+            ['20260102_create_orders', '20260101_create_users'],
             array_keys($repository->applied()),
         );
     }
