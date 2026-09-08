@@ -23,12 +23,19 @@ This repository is the development monorepo for
 API-first applications. It hosts the shared CI/CD pipeline and the
 documentation site for every package in the ecosystem.
 
-Every push runs the full quality pipeline for all packages: PHPUnit,
+Every change to a package runs the full quality pipeline: PHPUnit,
 PHPStan (level 8), Psalm (including taint analysis), Infection mutation
-testing with per-package MSI gates, Semgrep, SonarCloud analysis, and
-integration tests against real backends — MySQL, MariaDB, Postgres,
-Redis (single-node and Cluster, TLS), RabbitMQ, and LocalStack
-(SQS/S3).
+testing with per-package MSI gates, Semgrep, SonarQube Cloud analysis,
+and integration tests against real backends — MySQL, MariaDB and
+Postgres (TLS and mutual TLS included), Redis single-node and Cluster,
+RabbitMQ, OpenSearch, Mailpit, and LocalStack (SQS/S3), plus the runtime
+adapters against real FrankenPHP, PHP-FPM and RoadRunner servers. On a
+pull request and on a push to `main` alike, the three heaviest workflows
+— integration, mutation testing and the SonarQube scan — are filtered to
+`packages/**`, so a docs- or tooling-only change runs the rest and skips
+them. See
+[the CI appendix](https://kinetis.dev/docs/appendix-ci.html) for what
+each workflow checks.
 
 ## Packages
 
@@ -65,7 +72,7 @@ installable Composer package with its own `README.md` and test suite:
 | [`kinetis/bref-adapter`](packages/bref-adapter) | AWS Lambda (Bref) runtime adapter | [![Version](https://img.shields.io/packagist/v/kinetis/bref-adapter?label=)](https://packagist.org/packages/kinetis/bref-adapter) |
 | [`kinetis/roadrunner-adapter`](packages/roadrunner-adapter) | RoadRunner runtime adapter | [![Version](https://img.shields.io/packagist/v/kinetis/roadrunner-adapter?label=)](https://packagist.org/packages/kinetis/roadrunner-adapter) |
 | [`kinetis/skeleton`](packages/skeleton) | The smallest runnable Kinetis application — a starting point | [![Version](https://img.shields.io/packagist/v/kinetis/skeleton?label=)](https://packagist.org/packages/kinetis/skeleton) |
-| [`kinetis/pingpong`](packages/pingpong) | A full demo app: MySQL, queue, events, cron, live WebSocket updates | [![Version](https://img.shields.io/packagist/v/kinetis/pingpong?label=)](https://packagist.org/packages/kinetis/pingpong) |
+| [`kinetis/pingpong`](packages/pingpong) | A full demo app: MySQL, queue, events, cron, an MCP tool, live WebSocket updates | [![Version](https://img.shields.io/packagist/v/kinetis/pingpong?label=)](https://packagist.org/packages/kinetis/pingpong) |
 
 ## Documentation
 

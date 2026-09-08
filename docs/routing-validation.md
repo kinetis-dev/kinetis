@@ -229,8 +229,20 @@ the final path.
 
 ## Parameter binding
 
-A controller method's parameters are resolved from six possible sources,
-checked in this order:
+A controller method's parameters are resolved from six possible sources.
+`Dispatcher` checks them in a fixed order, and the first that claims a
+parameter wins:
+
+1. A `ServerRequestInterface`-typed parameter.
+2. An `UploadedFileInterface`-typed parameter.
+3. `#[Body]`.
+4. `#[Query]`.
+5. A name matching a `{placeholder}` in the route's path template.
+6. Any other class-typed parameter, resolved from the request container.
+
+The two type-matched sources come first, so neither an attribute nor a
+placeholder name can shadow them; the container comes last, so it can
+never shadow `#[Body]`, `#[Query]`, or a path placeholder.
 
 ### `#[Body]`
 
@@ -285,7 +297,7 @@ public function show(int $id)
 ### `ServerRequestInterface`
 
 A parameter typed `ServerRequestInterface` receives the raw PSR-7 request
-directly — no attribute needed, checked ahead of the others. Bypasses
+directly — no attribute needed, checked first. Bypasses
 `#[Body]`'s decoding assumptions entirely, for anything that needs the
 request itself: a raw body stream, headers, a different content type.
 
@@ -299,8 +311,8 @@ public function receive(ServerRequestInterface $request): array
 ### `UploadedFileInterface`
 
 A parameter typed `UploadedFileInterface` — no attribute needed, checked
-alongside `ServerRequestInterface` — is resolved directly from the
-request's uploaded-files bag by parameter name. See
+immediately after `ServerRequestInterface` — is resolved directly from
+the request's uploaded-files bag by parameter name. See
 [Multipart/form-data & file uploads](#multipart-form-data-file-uploads)
 below.
 

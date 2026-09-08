@@ -3,16 +3,21 @@
 This project's CI runs entirely on GitHub Actions — no separate CI
 service to configure. A reference map of what runs on every push/PR
 and what it checks, for the CI configuration itself, not the
-framework's own code. Six workflow files run on every push/PR,
-`.github/workflows/`: `ci.yml`, `semgrep.yml`, `integration.yml`,
-`infection.yml`, `sonarqube.yml`, `monorepo-validate.yml` (see
-{doc}`appendix-contributing` for what it enforces), plus
-`.github/dependabot.yml`. Two more workflows exist but are out of this
-page's scope, since neither runs on an ordinary push/PR:
-`deploy-docs.yml` (publishes `docs/` to `kinetis.dev` on a push to
-`main`) and `release.yml` (gates on the pushed commit's own results,
-then publishes each package's own release repo — see
-{doc}`appendix-contributing`).
+framework's own code. Six workflow files under `.github/workflows/`
+answer for a push to `main` or a pull request. Three run on every one of
+them: `ci.yml`, `semgrep.yml` and `monorepo-validate.yml` (see
+{doc}`appendix-contributing` for what it enforces). Three are
+path-filtered on `packages/**` plus their own workflow file —
+`integration.yml`, `infection.yml`, and `sonarqube.yml`, which also
+watches `sonar-project.properties` — so a docs- or tooling-only change
+gets no result from them at all, which is what
+{doc}`appendix-contributing`'s release-gate section turns into a rule
+about when a round can publish. `.github/dependabot.yml` sits alongside
+them. Two more workflows exist but are out of this page's scope, since
+neither runs on an ordinary push/PR: `deploy-docs.yml` (publishes
+`docs/` to `kinetis.dev` on a push to `main`) and `release.yml` (gates
+on the pushed commit's own results, then publishes each package's own
+release repo — see {doc}`appendix-contributing`).
 
 ## `ci.yml` — static checks and unit tests, per package
 
@@ -52,36 +57,61 @@ the build), so a broken docs page can't merge silently.
 whole repository once (not per package — Semgrep doesn't need to know
 about Composer package boundaries). Same SARIF upload as Psalm's.
 
-Two findings are suppressed in `.semgrepignore`, with the reasoning
+Four paths are suppressed in `.semgrepignore`, with the reasoning
 recorded there:
 
 - `docs/_templates/page.html` — mirrors the Furo Sphinx theme's own
   footer template verbatim; the flagged template variables are
   Sphinx-internal, build-time navigation values, never live request
   input, since this renders to static HTML.
-- `packages/auth-jwt/tests/JwtAuthMiddlewareTest.php` — a synthetic RSA
-  key pair generated solely to test RS256 JWT verification, not a real
-  credential.
+- `packages/auth-jwt/tests/Fixtures/RsaKeyPair.php` and
+  `UndersizedRsaKeyPair.php` — synthetic RSA key pairs generated solely
+  to test RS256 verification and the undersized-key refusal, not real
+  credentials.
+- `packages/revolt-http-client/tests/Fixtures/reflect-server.php` — a
+  test-only `php -S` server whose whole purpose is echoing the request
+  back as JSON, so the echoed-request rule's XSS concern has no HTML
+  context to apply to.
 
 `--error` gates the build on a real finding, failing the workflow rather
 than only reporting it.
 
 ## `integration.yml` — real backends, not fakes
 
-Several classes across this project are tested only against real
-service containers, not mocks — a mocked "was this method called with
-X" test can't prove backend-specific correctness (a reliable queue's
-ack/release mechanics, `FOR UPDATE SKIP LOCKED`, priority-queue
-fallthrough). Each is a standalone PHP script (`tests-integration/run.php`,
-or a descriptively-named file at the relevant package root), not a
-disguised PHPUnit test.
+A fake settles what pure PHP decides — an argument rejected, an envelope
+encoded, a settlement fenced against a scripted link — and every class
+below carries a `ci.yml` suite for exactly that. It settles nothing
+about the backend: whether `FOR UPDATE SKIP LOCKED` holds under
+contention, whether a killed worker's lease comes back, whether a
+`MOVED` redirect lands where the slot map says. That half runs here,
+against the real thing.
+
+They arrive in two shapes. A standalone PHP script under
+`tests-integration/` is the linear form — push, pop, settle, assert —
+and carries the queue, mailer, OpenSearch, LocalStack and migration
+checks. An env-gated PHPUnit suite under `tests/Integration/` is the
+other, for cases that want fixtures and per-test setup: `persistence`'s
+drivers and TLS, `redis`/`cache-redis`'s cluster routing, `session`'s
+store rules, `query-builder`'s cursor pagination. It skips itself when
+the backend variables are unset, which is what keeps an ordinary
+`ci.yml` run database-free, and the same files run again under coverage
+in `sonarqube.yml`. `query-builder` uses both forms; the conformance
+suites are the second. The entries below name what each job covers
+rather than which form it took.
 
 - **`query-builder`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `Query::get()`/`first()`/`count()`/`insertGetId()`/`update()`/
   `delete()`/`join()`/`paginate()`/`cursorPaginate()`, and the null
   predicate forms (`IS NULL`/`IS NOT NULL`).
-- **`queue`** (Redis 7, MySQL 8.4, MariaDB 11.4) — `RedisQueue`/
-  `SqlQueue`: push/pop/ack/release/fail, attempts, priority queues.
+- **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
+  attempts, priority queues, plus four dedicated scripts beside the main
+  one — ten concurrent processes racing for one delayed job, two
+  byte-identical payloads staying two jobs, a killed worker's lease
+  reclaimed and redelivered, and delayed promotion staying inside its
+  batch bound.
+- **`queue-sql`** (MySQL 8.4, MariaDB 11.4) — `SqlQueue`: the same
+  push/pop/ack/release/fail surface over `FOR UPDATE SKIP LOCKED`,
+  reservation tokens, and priority ordering.
 - **`queue-rabbitmq`** (RabbitMQ) — `RabbitMqQueue`: push/pop/ack/
   release/fail, `maxAttempts` round-tripping through message headers,
   priority cycling across two real queues, real delays through the delay
@@ -176,12 +206,12 @@ disguised PHPUnit test.
   container ponged it, and the `cron` container's own row (created and
   ponged with no HTTP request involved at all) polled the same way.
 
-`query-builder`, `queue`, `persistence-and-cache-redis`, and `migrations`
-each run twice — once against MySQL, once against MariaDB — via a matrix
-over the database image, not separate jobs or duplicated scripts. Only
-the service
-container's image and health-check command (`mysqladmin` vs.
-`mariadb-admin`) differ between the two matrix entries.
+`query-builder`, `queue-sql`, `persistence-and-cache-redis`, and
+`migrations` each run twice — once against MySQL, once against
+MariaDB — via a matrix over the database image, not separate jobs or
+duplicated scripts. Only the service container's image and health-check
+command (`mysqladmin` vs. `mariadb-admin`) differ between the two matrix
+entries.
 
 Every job above except `pingpong`, `runtime-conformance`, and
 `roadrunner-conformance` (each exercises a real multi-container stack,
@@ -260,12 +290,9 @@ above the number here by design:
 | `storage-s3` | 15% |
 | `telemetry` | 70% |
 
-`queue-sqs` and `storage-s3` sit lowest because their real
-backend-specific logic (`SqsQueue`, the AWS S3 adapter path) is
-real-backend-verified only, with no PHPUnit coverage (see
-{doc}`appendix-packages`). Infection scores only the config-parsing
-factory classes those two packages do unit-test, so the number reflects
-established scope rather than a gap to close.
+`queue-sqs` and `storage-s3` carry the lowest floors. Neither
+`infection.json5` excludes anything, so both mutate all of `src` and
+each floor is what that whole set measured.
 
 ## `sonarqube.yml` — SonarQube Cloud
 
@@ -277,14 +304,26 @@ core's `src/` plus every satellite package's own `src/`).
 Runs PHPUnit with PCOV coverage for core and every satellite package
 with a PHPUnit suite, feeding the resulting Clover reports into the
 scan via `sonar.php.coverage.reportPaths` — on PHP 8.4 only, not
-matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`. `RedisQueue`,
-`SqlQueue`, `SqsQueue` (and its `SqsQueueException`), and `RabbitMqQueue`
-are excluded from the coverage calculation via `sonar.coverage.exclusions`,
-matching their real-backend-only testing in `integration.yml`. Two pairs
-of files with known, structural duplication — genuinely independent
-satellite packages sharing the same third-party integration, and two
-async DB drivers whose pooling logic isn't trait-compatible without
-widening production connection-handling signatures — are excluded from
+matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`. This job brings
+up MySQL, Postgres, a single Redis and a Redis Cluster of its own, for
+one reason: `kinetis/persistence`'s and `kinetis/cache-redis`'s
+env-gated `tests/Integration` suites have to run *under PCOV here* for
+the driver and cluster code they exercise to count as measured coverage.
+Without them those tests skip and that code reads as uncovered.
+
+`sonar.coverage.exclusions` names the classes whose behavior a real
+backend decides: `RedisQueue`, `SqlQueue`, `SqsQueue` and its
+`SqsQueueException`, `RabbitMqQueue`, `RedisSessionStore`, plus the thin
+wiring around them — `kinetis/queue`'s and `kinetis/persistence`'s
+`PackageBootstrap`, `queue:work`, and `kinetis/migrations`' console
+commands. Each still carries its own PHPUnit suite for the part pure PHP
+can decide; what the exclusion keeps out of the metric is the rest,
+which `integration.yml` proves against a live container and no
+line-coverage number here can speak for.
+
+One pair of files with known, structural duplication — the mysqli and
+pgsql drivers, whose pooling logic isn't trait-compatible without
+widening production connection-handling signatures — is excluded from
 duplication detection via `sonar.cpd.exclusions`, with the reasoning
 recorded inline in `sonar-project.properties` itself.
 
@@ -293,10 +332,15 @@ SonarCloud dashboard; analysis method is "With GitHub Actions."
 
 ## `dependabot.yml`
 
-One `composer` ecosystem entry per package directory, plus one
-`github-actions` entry for the workflow files themselves. A dependency
-bump opens a real pull request, which re-runs every workflow above
-against it before a human ever looks at it.
+One weekly `composer` entry per package directory, one for `tools/`, and
+one `github-actions` entry for the workflow files themselves. A
+dependency bump opens a real pull request, which re-runs every workflow
+above against it before a human ever looks at it.
+
+`validate-manifest.php`'s `workflow-coverage` check reads `ci.yml`,
+`infection.yml` and the SonarQube pair, not this file, so a new package
+without an entry here is watched by nothing and fails no check. Adding
+the entry belongs in the same change as the package.
 
 ## See also
 

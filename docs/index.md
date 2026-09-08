@@ -14,7 +14,7 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 
 - Typed requests and responses.
 - OpenAPI generated from your code rather than maintained beside it.
-- Genuinely concurrent non-blocking I/O.
+- Request-level concurrency over non-blocking I/O.
 - Native Model Context Protocol (MCP) server, one install away.
 
 ## What you get

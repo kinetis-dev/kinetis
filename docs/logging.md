@@ -89,19 +89,10 @@ what actually happened.
 The JSON-RPC transport's counterpart to `ExceptionHandlerMiddleware`: an
 unexpected `Throwable` reaching `McpServer::handle()`'s outer catch
 becomes a `-32603 Internal error` response, logged the same way (see
-{doc}`mcp`). `McpServer` is constructed directly by you — over stdio via
-`bin/kinetis mcp:serve`, or passed to `Kernel`'s `$mcp` parameter — rather
-than resolved through the container, so pass your logger explicitly:
-
-```{code-block} php
-use Kinetis\Mcp\McpDispatcher;
-use Kinetis\Mcp\McpServer;
-
-$mcp = new McpServer($registry, new McpDispatcher($app), logger: $app->get(Psr\Log\LoggerInterface::class));
-```
-
-`bin/kinetis mcp:serve` already does this for you, pulling whatever's
-registered on its own `AppScope`.
+{doc}`mcp`). `kinetis/mcp`'s own package bootstrap binds `McpServer` and
+resolves `LoggerInterface` from the container to build it, so the `/mcp`
+route and `bin/kinetis mcp:serve` share one server carrying whatever
+logger you registered. Installing the package is the whole setup.
 
 ### `RequestScope` disposal failures
 

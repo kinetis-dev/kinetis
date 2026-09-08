@@ -100,9 +100,9 @@ Every line this transport writes — a progress notification or a final
 response — is written in full before moving on: stdout can be a pipe
 whose reader falls behind, and PHP's own `fwrite()` is allowed to accept
 fewer bytes than given in that case, so a single, unchecked call could
-silently truncate a large tool result. A write that genuinely stalls
-partway through (rather than merely arriving in smaller chunks) throws
-rather than leaving a corrupt, half-written line on the stream.
+silently truncate a large tool result. A write that stalls partway
+through (rather than merely arriving in smaller chunks) throws rather
+than leaving a corrupt, half-written line on the stream.
 
 ### Streamable HTTP
 
@@ -369,9 +369,9 @@ embedder bypassing both transports — has no way to write that same
 `{}`-vs-`[]` distinction in a bare array literal, since `[]` is the only
 spelling for both. `Kinetis\Mcp\JsonObject` is the explicit escape
 hatch: wrap a value in `new JsonObject([...])` to say, unambiguously,
-"treat this as an object" — including a genuinely empty one,
-`new JsonObject([])`, which `McpServer::handle()` and
-`JsonRpcCodec::validateMessage()` both accept exactly like a real `{}`.
+"treat this as an object" — including an empty one, `new JsonObject([])`,
+which `McpServer::handle()` and `JsonRpcCodec::validateMessage()` both
+accept exactly like a real `{}`.
 It also `json_encode()`s faithfully (as `{}` when empty, or every given
 property otherwise) — safe to pass through the standard encode/decode
 pair even though it's meant for the direct-array boundary, not the wire.
@@ -424,6 +424,8 @@ natural-language description of what this server's tools are for, shown
 to an agent alongside its capabilities:
 
 ```{code-block} php
+use Kinetis\Mcp\McpServer;
+
 $server = new McpServer($registry, $dispatcher, instructions: 'This server manages orders and inventory.');
 ```
 
@@ -436,6 +438,8 @@ transport, including stdio, with no special-casing needed there since
 stdio is already one-message-per-line:
 
 ```{code-block} php
+// A method on one of your own tool classes, not a file of its own —
+// Kinetis\Mcp\Attributes\McpTool and Kinetis\Mcp\ProgressReporter.
 #[McpTool(name: 'slow_count', description: 'Reports progress three times')]
 public function slowCount(ProgressReporter $progress): array
 {
@@ -461,21 +465,20 @@ request rather than a notification — that also carries
 progress events arrive incrementally, as the tool calls `report()`, not
 buffered until the end. Every other request still gets a single
 buffered JSON response; this is additive, not a change to the default
-shape. Streaming is request-only, deliberately: a `tools/call`
-**notification** (`id` entirely absent) never opens the SSE stream, even
-with an otherwise well-formed `progressToken` — it gets the same
-`202 Accepted`, no-body response every notification gets, and the tool
-still genuinely runs (JSON-RPC requires a server to process a
-notification, only never reply to one) — its progress events simply have
-nowhere to go, the same no-op `report()` already is for any caller that
-never opted in.
+shape. Streaming is request-only: a `tools/call` **notification** (`id`
+entirely absent) never opens the SSE stream, even with an otherwise
+well-formed `progressToken` — it gets the same `202 Accepted`, no-body
+response every notification gets, and the tool still runs (JSON-RPC
+requires a server to process a notification, only never reply to one) —
+its progress events have nowhere to go, the same no-op `report()`
+already is for any caller that never opted in.
 
 ```{note}
-This is deliberately built with no Fiber/generator machinery at all —
-`report()` just invokes a closure synchronously, inline, on the same call
-stack as the tool method itself. Nothing here needs to suspend or resume
-execution; it only needs a way to write output at a specific point during
-an already-synchronous call.
+Built with no Fiber/generator machinery at all — `report()` invokes a
+closure synchronously, inline, on the same call stack as the tool method
+itself. Nothing here needs to suspend or resume execution; it only needs
+a way to write output at a specific point during an already-synchronous
+call.
 ```
 
 ## Error handling
@@ -536,25 +539,25 @@ process over what was only ever an observability failure.
 `bin/kinetis mcp:serve`'s stdio loop creates a `RequestScope` per
 message: it writes the JSON-RPC response that message already produced,
 then disposes that scope in a `finally` around the whole attempt. That
-ordering is deliberately different from a naive `finally`-wraps-
-everything shape: the disposal step itself is guaranteed never to throw
-(any failure disposing is caught, logged separately through `AppScope`'s
-own logger — the message's own scope is already disposed by then — and
-discarded), which is exactly what makes it safe to run from inside a
-`finally` at all; see {doc}`container`'s own general explanation of why an
-ordinary `finally`-based dispose is unsafe everywhere else. Over HTTP the
+ordering differs from a naive `finally`-wraps-everything shape: the
+disposal step itself is guaranteed never to throw (any failure disposing
+is caught, logged separately through `AppScope`'s own logger — the
+message's own scope is already disposed by then — and discarded), which
+is exactly what makes it safe to run from inside a `finally` at all; see
+{doc}`container`'s own general explanation of why an ordinary
+`finally`-based dispose is unsafe everywhere else. Over HTTP the
 scope is the request's own and `Kernel` owns disposing it, on the same
 terms: the streamed response releases it once the emitter returns or
 fails, containing and logging a disposal failure rather than raising it.
 
 Two outcomes follow, on either transport: a disposal failure can never
 suppress a response that was successfully written, and never surfaces as
-a second JSON-RPC message; and if the write itself genuinely fails — a
-closed or broken stdio stream, or (over the streamed HTTP transport
-specifically) an output-buffer handler installed further up the call
-stack throwing when the final flush invokes it — that failure still
-propagates as the real primary failure. This is not a path a
-tool's own result can trigger: every JSON-RPC response `handle()` builds
+a second JSON-RPC message; and if the write itself fails — a closed or
+broken stdio stream, or (over the streamed HTTP transport specifically)
+an output-buffer handler installed further up the call stack throwing
+when the final flush invokes it — that failure still propagates as the
+real primary failure. This is not a path a tool's own result can
+trigger: every JSON-RPC response `handle()` builds
 is already `json_encode()`d, and any failure doing so, internally, is
 already caught and converted to the ordinary `isError: true` result
 before it ever reaches this write step — so the write here is always

@@ -120,41 +120,44 @@ final class AppScope implements ContainerInterface
     }
 
     /**
-     * Locks the binding set. Also registers four default bindings if the
-     * consumer hasn't already registered their own:
+     * Locks the binding set, after registering each default below that
+     * the consumer has not already bound. A consumer's own registration
+     * always wins.
      *
-     * - `LoggerInterface` → `NullLogger`. ExceptionHandlerMiddleware,
-     *   TransactionGuard, and McpServer all resolve LoggerInterface
-     *   through the container.
+     * - `AppEnvironment` → `AppEnvironment::detect()`.
+     * - `TelemetryInterface` → `Telemetry::global()`.
+     * - `LoggerInterface` → `NullLogger` in production, `ErrorLogLogger`
+     *   outside it. ExceptionHandlerMiddleware, TransactionGuard, and
+     *   McpServer all resolve LoggerInterface through the container.
      * - `Config` → `Config::fromEnvironment()` (see Kinetis\Config) —
      *   populated from `.env` already if Kinetis\Config\EnvFile::safeLoad()
-     *   ran first, as Kinetis\Runtime\HttpStartup and bin/kinetis both do.
+     *   ran first. Kinetis\Runtime\HttpStartup and bin/kinetis both bind
+     *   their own instance before the bootstrap chain, so this default
+     *   covers a scope booted without one.
+     * - `FormLimits` → `FormLimits::fromConfig()`, the ceilings every
+     *   request body meets.
+     * - `TrustedProxies` → `TrustedProxies::fromConfig()`, the edge whose
+     *   forwarding headers may decide scheme and client address.
      * - `Psr\SimpleCache\CacheInterface` → `Kinetis\SimpleCache\RedisSimpleCache::fromConfig()`
-     *   when Redis is actually configured (`REDIS_URL`/`REDIS_HOST`/
-     *   `REDIS_CLUSTER`), else
-     *   `NullSimpleCache` — Redis is optional, not every consumer needs it,
-     *   so nothing here ever attempts a connection unless one was
-     *   explicitly configured. Resolved *after* `Config` is registered
-     *   above, via `get()`, not a second `Config::fromEnvironment()` call —
-     *   whichever `Config` instance ends up bound (the consumer's own, or
-     *   the default just registered) is the one this reads. The concrete
-     *   class lives in the separate `kinetis/cache-redis` package, not
-     *   core — referenced here only as a class-name string,
-     *   `class_exists()`-gated the same way `RuntimeDetector` gates
-     *   `BrefLambdaAdapter`, so core itself has no amphp/redis dependency.
-     *   Redis being *configured* (any of the three env vars above) with
-     *   that class not installed binds
-     *   `Kinetis\SimpleCache\UnavailableSimpleCache`, whose every
-     *   operation throws `SimpleCacheUnavailableException` naming
-     *   `kinetis/cache-redis` — never a silent `NullSimpleCache`
-     *   fallback, but not a boot-time failure either: a leftover
-     *   `REDIS_*` in a `.env` nothing reads anymore must not crash an
-     *   application that never touches the cache. See that class for
-     *   why the failure lands at usage rather than configuration
-     *   time.
+     *   when Redis is configured (`REDIS_URL`/`REDIS_HOST`/
+     *   `REDIS_CLUSTER`), else `NullSimpleCache`; nothing here attempts a
+     *   connection unless one of those is set. The concrete class lives
+     *   in the separate `kinetis/cache-redis` package, named here only as
+     *   a class-name string and `class_exists()`-gated the same way
+     *   `RuntimeDetector` gates `BrefLambdaAdapter`, so core itself has
+     *   no amphp/redis dependency. Redis configured with that package
+     *   absent binds `Kinetis\SimpleCache\UnavailableSimpleCache`, whose
+     *   every operation throws naming `kinetis/cache-redis` — see that
+     *   class for why the failure lands at usage rather than boot.
      * - `Kinetis\Events\ListenerInvokerInterface` →
      *   `SynchronousListenerInvoker` — a `ShouldQueue` listener with no
      *   real queue package installed still runs, just inline.
+     * - `self` → this scope, so `AppScope::class` resolves to it rather
+     *   than autowiring a disconnected one.
+     *
+     * The three `Config`-derived defaults read the bound `Config` through
+     * `get()`, not a second `Config::fromEnvironment()` call, so whichever
+     * instance ended up bound is the one they are built from.
      */
     public function boot(): void
     {
@@ -216,13 +219,11 @@ final class AppScope implements ContainerInterface
             $this->instance(ListenerInvokerInterface::class, new SynchronousListenerInvoker());
         }
 
-        // Closes a real trap: without
-        // this, resolving AppScope::class through itself doesn't fail
-        // loudly — it silently autowires a brand-new, disconnected, unbooted
-        // AppScope instead (class_exists('Kinetis\Container\AppScope') is
-        // true, so Autowire::instantiate() happily constructs one), and
-        // caches that wrong instance forever. RequestScope already
-        // self-registers for the identical reason; AppScope never did.
+        // Without this binding, class_exists() answers true for
+        // AppScope::class, so resolve() autowires a disconnected,
+        // unbooted AppScope rather than raising — and, since it never
+        // remembers an unregistered id, another one on every later
+        // resolve. RequestScope self-registers for the identical reason.
         if (!$this->has(self::class)) {
             $this->instance(self::class, $this);
         }

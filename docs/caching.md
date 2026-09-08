@@ -25,14 +25,14 @@ included — is `Production`. Local development sets `APP_ENV=development`
 explicitly — see `.env.example` at the project root, or {doc}`config` for
 loading it from a `.env` file automatically.
 
-`Kinetis\Runtime\HttpStartup` reads this once per worker process — it is
-the whole of an application's `public/index.php` — and `bin/kinetis`
-reads it again for the CLI. Development discovers from source on every
-boot; production takes the artifact path described below.
+`Kinetis\Runtime\HttpStartup` reads this once per boot — it is the whole
+of an application's `public/index.php` — and `bin/kinetis` reads it again
+for the CLI. Development discovers from source on every boot; production
+takes the artifact path described below.
 
 ## What gets cached
 
-Nine things get precomputed:
+These get precomputed:
 
 - The route table.
 - Command definitions.
@@ -45,9 +45,10 @@ Nine things get precomputed:
   already priority-sorted.
 - HTTP parameter-binding plans (how each request's data maps onto your
   controller method's parameters).
-- DTO validation plans, and the installed packages' bootstrap-class list
-  (declared via `extra.kinetis` — see {doc}`cli`), so production never
-  re-reads `vendor/composer/installed.json` per request.
+- DTO validation plans.
+- The installed packages' bootstrap-class list (declared via
+  `extra.kinetis` — see {doc}`cli`), so production never re-reads
+  `vendor/composer/installed.json` per request.
 - Every installed package's own `CacheableDiscoveryInterface` data —
   declared via `extra.kinetis`'s `discovery` key, also see {doc}`cli`.
 

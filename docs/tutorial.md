@@ -91,6 +91,23 @@ nothing was registered to match. If a route below 404s, check this
 first, and look for that warning in your error log.
 ```
 
+Last, a `.env` at the project root, read at startup before anything else
+decides how to behave:
+
+```{code-block} text
+:caption: .env
+
+APP_ENV=development
+
+# Serve /openapi.json and /openapi here. Unset, they are served nowhere.
+OPENAPI_ENVIRONMENTS=development
+```
+
+`APP_ENV=development` is what keeps routes, commands and listeners
+discovered from source on every boot. {doc}`caching` covers what every
+other environment does instead, and {doc}`config` covers `.env` loading
+in full.
+
 ## A minimal controller
 
 ```{code-block} php
@@ -116,8 +133,8 @@ final readonly class PingController
 
 Nothing registers it — any class anywhere under one of your own PSR-4
 roots is discovered automatically, with no required directory or
-namespace convention. Wire up the entry point every runtime adapter
-converges on:
+namespace convention. The entry point is the Composer autoloader plus
+one call:
 
 ```{code-block} php
 :caption: public/index.php
@@ -126,64 +143,40 @@ converges on:
 
 declare(strict_types=1);
 
-use Kinetis\Container\AppScope;
-use Kinetis\Http\Kernel;
-use Kinetis\Http\Routing\RouteDiscovery;
-use Kinetis\Http\TrustedProxies;
-use Kinetis\Runtime\ProjectRoot;
-use Kinetis\Runtime\RuntimeDetector;
+use Kinetis\Runtime\HttpStartup;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-$projectRoot = ProjectRoot::detect(__DIR__);
-
-$app = new AppScope();
-$app->boot();
-
-$router = RouteDiscovery::discover($projectRoot);
-
-// The one policy an adapter needs before the Kernel exists: whose
-// forwarded headers may decide this request's scheme and client address.
-// AppScope::boot() registered it from Config. The body ceilings are not
-// passed here — the adapter hands the body on raw, and the Kernel's own
-// RequestBodyMiddleware bounds and parses it.
-$adapter = RuntimeDetector::detect($app->get(TrustedProxies::class));
-$kernel = new Kernel($app, $router, isPersistent: $adapter->isPersistent());
-
-$adapter->run($kernel->handle(...));
+HttpStartup::run(__DIR__);
 ```
 
-```{tip}
-This tutorial assembles `public/index.php` by hand, a piece at a time,
-and keeps it in its plain, always-live-discovery form throughout — routes
-and commands are (re-)discovered on every request, which is the simplest
-thing to reason about while a project is this small. An application
-writes none of that: `Kinetis\Runtime\HttpStartup::run(__DIR__)` is the
-whole file, and it is what `kinetis/skeleton` and `kinetis/pingpong`
-ship. {doc}`caching` covers pre-compiling all of this for production once
-you actually need it.
-```
+`Kinetis\Runtime\HttpStartup` is the startup program itself, owned by the
+framework: it loads `.env`, builds `Config`, discovers routes, global and
+grouped middleware, event listeners and every installed package's own
+registrations, runs the package-then-application bootstrap chain, boots
+the container, and hands the `Kernel` to whichever runtime adapter this
+process is running under. Nothing later in this tutorial changes this
+file — `kinetis/skeleton` and `kinetis/pingpong` ship exactly it.
+{doc}`appendix` documents the order it runs in.
 
 ## Running it
 
-Three files get `docker compose` running PHP-FPM behind nginx, without
-needing PHP or Composer installed on the host:
+Three files get `docker compose` running PHP-FPM behind nginx:
 
 ```{code-block} dockerfile
 :caption: docker/Dockerfile
 
 FROM php:8.4-fpm-alpine
 
-RUN apk add --no-cache unzip curl-dev $PHPIZE_DEPS \
-    && docker-php-ext-install curl \
-    && apk del $PHPIZE_DEPS
+# unzip is what Composer extracts downloaded packages with.
+RUN apk add --no-cache unzip
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 
 # Kinetis reads and bounds the request body itself; PHP must not parse
-# it first. Required, not tuning — see {doc}`runtime-adapters`.
+# it first. Required, not tuning.
 RUN printf 'enable_post_data_reading=0\n' > /usr/local/etc/php/conf.d/zz-kinetis.ini
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -192,6 +185,10 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["php-fpm", "-F"]
 ```
+
+That `enable_post_data_reading=0` line is required, not tuning:
+{doc}`runtime-adapters` covers what it does and why the SAPI adapters
+refuse to run without it.
 
 ```{code-block} bash
 :caption: docker/entrypoint.sh
@@ -245,6 +242,7 @@ services:
     volumes:
       - .:/app
       - vendor:/app/vendor
+    env_file: .env
 
   nginx:
     image: nginx:alpine
@@ -265,14 +263,14 @@ The `vendor` volume keeps installed dependencies out of your own project
 directory, so the container's `composer install` never writes into it
 directly. `app` runs PHP-FPM; `nginx` proxies HTTP requests to it over
 FastCGI. This split matters beyond just "how do I serve HTTP": PHP-FPM
-reboots the whole `public/index.php` script — including route/command
-discovery — on every single request, so an edit to a controller takes
-effect on your very next request, no restart needed. A persistent-worker
-runtime like FrankenPHP or RoadRunner can't offer that (once a class is
-loaded in a worker process, PHP has no way to redeclare it with new
-content), which is why local development here runs on PHP-FPM rather
-than a worker mode — see {doc}`runtime-adapters` for when to reach for
-one instead.
+reboots the whole `public/index.php` script on every single request, and
+under `APP_ENV=development` that reboot re-runs discovery from source, so
+an edit to a controller takes effect on your very next request, no
+restart needed. A persistent-worker runtime like FrankenPHP or RoadRunner
+can't offer that (once a class is loaded in a worker process, PHP has no
+way to redeclare it with new content), which is why local development
+here runs on PHP-FPM rather than a worker mode — see
+{doc}`runtime-adapters` for when to reach for one instead.
 
 ```{code-block} bash
 docker compose up --build
@@ -289,8 +287,10 @@ That route already documents itself. Open
 `http://localhost:8080/openapi` for a Swagger UI, and
 `http://localhost:8080/openapi.json` for the OpenAPI 3.1 document behind
 it — both generated from the attributes you just wrote, with nothing to
-annotate or keep in step. Every route you add below appears there as you
-go. {doc}`routing-validation` covers what the generator reads.
+annotate or keep in step. Both answer here because `.env` named this
+environment in `OPENAPI_ENVIRONMENTS`; unset, neither is served anywhere.
+Every route you add below appears there as you go.
+{doc}`routing-validation` covers what the generator reads.
 
 ## Storing pings: MySQL, migrations, and the query builder
 
@@ -298,11 +298,11 @@ go. {doc}`routing-validation` covers what the generator reads.
 composer require kinetis/migrations kinetis/query-builder
 ```
 
-Add a `.env` file at the project root — read by both the app and the
+The connection settings go into `.env`, read by both the app and the
 tools you're about to add:
 
 ```{code-block} text
-:caption: .env
+:caption: .env (additions)
 
 DB_CONNECTION=mysql
 DB_HOST=mysql
@@ -392,32 +392,22 @@ final readonly class PingRepository
 container locks its bindings — and `kinetis/persistence` does that
 itself: its package bootstrap (see {doc}`cli`) reads the `DB_*` keys you
 just put in `.env` and binds the connection under `MysqlLink`, with no
-wiring of your own. What `public/index.php` does need is to load `.env`,
-build a `Config`, and run the bootstrap chain — every installed
-package's bootstrap, then your own optional `bootstrap.php` — before it
-boots the container. Replace everything up to (and including)
-`$app->boot();` with:
+wiring of your own. `public/index.php` does not change: running every
+installed package's bootstrap before the container boots is already part
+of what `HttpStartup::run()` does.
 
-```{code-block} php
-:caption: public/index.php
+The image needs one more extension: under PHP-FPM, `DB_DRIVER=auto`
+resolves to the PDO MySQL driver, which the official PHP images don't
+build in.
 
-use Kinetis\Config\Config;
-use Kinetis\Config\EnvFile;
+```{code-block} dockerfile
+:caption: docker/Dockerfile — replacing the existing `apk add` line
 
-require dirname(__DIR__) . '/vendor/autoload.php';
-
-$projectRoot = ProjectRoot::detect(__DIR__);
-EnvFile::safeLoad($projectRoot);
-
-$app = new AppScope();
-$config = Config::fromEnvironment();
-$app->instance(Config::class, $config);
-RoutesFile::loadBootstrap($projectRoot)($app, $config);
-$app->boot();
+# unzip is what Composer extracts downloaded packages with; pdo_mysql is
+# the driver DB_DRIVER=auto picks under PHP-FPM.
+RUN apk add --no-cache unzip \
+    && docker-php-ext-install pdo_mysql
 ```
-
-The rest of the file — building the `Router`, detecting the runtime
-adapter, constructing the `Kernel` — stays exactly as it was.
 
 Now update the controller to actually create and reply to a ping:
 
@@ -490,10 +480,13 @@ services:
       MYSQL_PASSWORD: pingpong
       MYSQL_ROOT_PASSWORD: root
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      # -h 127.0.0.1 (TCP), not -h localhost (socket): the image's init
+      # phase runs a temporary skip-networking server whose socket answers
+      # a ping before the real server listens on TCP.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   migrate:
     build:
@@ -836,53 +829,6 @@ final readonly class ActionEventListener
 anywhere under your own PSR-4 root carrying a `#[Listener]` method is
 found automatically.
 
-This is the one place the *hand-built* `public/index.php` this tutorial
-has been growing needs a real addition to support events. It is not a
-step every Kinetis application needs: the framework-managed entry points
-— `Kinetis\Runtime\HttpStartup`, which is all a normal
-`public/index.php` calls, and `bin/kinetis` — already discover
-`EventListenerRegistry` themselves (live via
-`EventListenerDiscovery::discover()`, or reconstructed from a compiled
-cache via `fromArray()`) and hand the result to
-`Kinetis\Cache\BootSequence::run()`, the one piece of shared assembly
-both delegate to for actually *publishing* it — binding it into the
-container, before the bootstrap chain runs, with the right precedence —
-with nothing for you to write. This tutorial keeps its own
-`public/index.php` in a smaller, hand-assembled form on purpose (see the
-tip above), so it never picked either of those two steps up along the
-way — this is the point where that gap actually matters, and where it
-gets closed by hand instead.
-
-`EventDispatcher` resolves `EventListenerRegistry` through the
-container, which means it has to be registered with `$app->instance()`
-*before* `boot()` locks bindings, the same requirement `Config` and
-anything from `bootstrap.php` already have — and *before*
-`RoutesFile::loadBootstrap()` specifically, so `bootstrap.php` (yours, or
-a package's) can resolve and augment — or outright replace — whatever's
-already bound under that id, rather than have it silently reasserted
-afterward (see {doc}`appendix` for the full reasoning, under
-`BootSequence`). Skip this and nothing breaks loudly: `EventDispatcher`'s
-container resolution silently falls back to an empty
-`EventListenerRegistry` instead, so every `dispatch()` call still
-"succeeds" — it just never reaches any listener, with no error to tell
-you why.
-
-```{code-block} php
-:caption: public/index.php
-
-use Kinetis\Events\EventListenerDiscovery;
-use Kinetis\Events\EventListenerRegistry;
-
-// ...
-
-$app = new AppScope();
-$config = Config::fromEnvironment();
-$app->instance(Config::class, $config);
-$app->instance(EventListenerRegistry::class, EventListenerDiscovery::discover($projectRoot));
-RoutesFile::loadBootstrap($projectRoot)($app, $config);
-$app->boot();
-```
-
 Now dispatch an `ActionEvent` at each real stage a ping passes through.
 `PingRepository::create()` gets one for the write:
 
@@ -1224,7 +1170,7 @@ The pattern names the channel **without** its `private-` prefix — see
 {doc}`broadcasting` for the full authorization rules. `POST
 /broadcasting/auth` itself needs no route or controller of your own:
 installing `kinetis/broadcasting` already registers it, discovered the
-same way `RouteDiscovery` finds `PingController`.
+same way `PingController` is.
 
 `ActionEventListener` broadcasts a second, private notification whenever
 a ping is actually ponged:
@@ -1363,9 +1309,12 @@ public function countByScenario(): ScenarioCounts
 ```
 
 The total and each scenario's count are four independent queries — none
-needs another's result — so they run through `concurrently()` instead of
-one after another, completing in roughly the time the slowest single
-query takes rather than their sum.
+needs another's result — so they go through `concurrently()` rather than
+one after another. What that buys depends on the driver underneath: a
+persistent worker takes the native MySQL driver, where each query
+suspends only its own Fiber and the four overlap; PHP-FPM, which this
+tutorial runs on, takes the blocking PDO driver, where they still run in
+sequence. See {doc}`concurrency` and {doc}`persistence`.
 
 `countByScenario()` builds `ScenarioCounts` with a plain `new`, not
 `Hydrator::hydrate()`. `Hydrator` casts and validates data crossing an
@@ -1501,7 +1450,7 @@ The tool still needs a transport to reach a client over. This
 application already serves HTTP, and `kinetis/mcp` contributes `POST
 /mcp` as an ordinary discovered route, so the Streamable HTTP transport
 is already there — no extra process, no extra container, and nothing to
-pass to `Kernel`.
+register.
 
 What the endpoint needs is a caller it can identify. `/mcp` runs the
 `mcp` middleware group, whose last member answers `401` for any request
@@ -1637,11 +1586,14 @@ developed dashboard in place of the plain log page above. To start a new
 project from it instead of building one up by hand:
 
 ```{code-block} bash
-composer create-project kinetis/pingpong my-app
+composer create-project --no-install kinetis/pingpong my-app
 cd my-app
 cp .env.example .env
 docker compose up --build
 ```
+
+`--no-install` leaves dependency resolution to the containers, which is
+where `docker compose up` runs it.
 
 Everything from this tutorial — `bootstrap.php`, the migration, the
 repository, the job, the scheduled command, the events, the broadcaster

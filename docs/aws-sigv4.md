@@ -42,11 +42,11 @@ port, and an optional path prefix, and nothing else. The host is a
 registered name or a dotted-quad IPv4 address, `http` included so a
 LocalStack or other AWS-compatible local endpoint works; an IPv6 origin
 is out of scope. Userinfo, a query string, a fragment, a percent sign or
-backslash in the authority, a control character, a malformed percent
-escape, a `.` or `..` path segment, a non-numeric or out-of-range port,
-and an invalid host are each rejected. Parsing happens once, at
-construction, so a misconfigured endpoint fails immediately rather than
-on the first request that needs it.
+backslash in the authority, whitespace or a control character anywhere,
+a malformed percent escape, a `.` or `..` path segment, a non-numeric or
+out-of-range port, and an invalid host are each rejected. Parsing
+happens once, at construction, so a misconfigured endpoint fails
+immediately rather than on the first request that needs it.
 
 Scheme and host are compared case-insensitively, and an absent port
 means 80 for `http` and 443 for `https` — so `https://api.example.com`
@@ -161,9 +161,8 @@ payloads.
 One `sendRequest()` is one network attempt, and a 3xx response is
 returned as the response — nothing is re-signed and no second request is
 made, so a `Location` cannot carry an `Authorization` or
-`X-Amz-Security-Token` header off the configured origin. Follow one
-deliberately, if you want to, by checking the status and sending a new
-request of your own.
+`X-Amz-Security-Token` header off the configured origin. Follow one by
+checking the status and sending a new request of your own.
 
 That holds because the transport is `Kinetis\AwsSigV4\SignedTransport`,
 built by this package and wrapped in Symfony's PSR-18 adapter. It
@@ -373,7 +372,7 @@ $signedClient = new SigV4SigningClient(
     ]),
 );
 
-$transport = (new TransportFactory())->setHttpClient($signedClient)->create();
+$transport = new TransportFactory()->setHttpClient($signedClient)->create();
 $client = new Client($transport, new EndpointFactory());
 ```
 

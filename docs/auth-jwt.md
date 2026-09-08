@@ -59,7 +59,12 @@ final readonly class OrderController
 }
 ```
 
-`expectedIssuer`/`acceptedAudiences` are what stop a token from a *different* service — one that happens to share this app's signing key — from authenticating here. `JwtIssuer` has to stamp matching values for a token to pass this check at all; see "Issuing tokens" below. Leave both `null` (the default) only for a genuinely single-service deployment where no other JWT-issuing service ever shares this key.
+`expectedIssuer`/`acceptedAudiences` are what stop a token from a
+*different* service — one that happens to share this app's signing
+key — from authenticating here. `JwtIssuer` has to stamp matching values
+for a token to pass this check at all; see "Issuing tokens" below. Leave
+both `null` (the default) only for a single-service deployment where no
+other JWT-issuing service ever shares this key.
 
 ## Configuring keys
 
@@ -340,19 +345,27 @@ exactly that:
 ```{code-block} php
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\RefreshTokenStore;
+use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Post;
+use Kinetis\Http\Responses\ErrorResponse;
+use Psr\Http\Message\ResponseInterface;
 
 final readonly class LoginController
 {
     public function __construct(
         private JwtIssuer $issuer,
         private RefreshTokenStore $refreshTokens,
+        private Credentials $credentials,
     ) {}
 
     #[Post('/login')]
-    public function attempt(#[Body] LoginRequest $data): array
+    public function attempt(#[Body] LoginRequest $data): ResponseInterface|array
     {
-        // verify $data->email/$data->password against your own storage
+        $user = $this->credentials->verify($data->email, $data->password);
+
+        if ($user === null) {
+            return ErrorResponse::create(401, 'Invalid credentials.');
+        }
 
         return [
             'accessToken' => $this->issuer->issue($user->id()),
@@ -362,14 +375,22 @@ final readonly class LoginController
 }
 ```
 
+`Credentials` and `LoginRequest` there are the application's own, and so
+is `RefreshRequest` below — this package defines none of them. Verifying
+an email and password is your boundary; see {doc}`auth`'s "Passwords"
+section for the `Credentials` interface, and {doc}`routing-validation`
+for what a `#[Body]` DTO carries.
+
 A refresh endpoint redeems the refresh token and issues both a fresh
 access token and a fresh refresh token together:
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\RefreshTokenStore;
+use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Http\Responses\ErrorResponse;
+use Psr\Http\Message\ResponseInterface;
 
 final readonly class RefreshController
 {

@@ -157,6 +157,7 @@ Hand the tracing transport to {doc}`revolt-http-client`'s `Http`:
 use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
 use Kinetis\RevoltHttpClient\Http;
 use Kinetis\Telemetry\HttpClient\TracingHttpClient;
+use OpenTelemetry\API\Trace\TracerProviderInterface;
 
 $app->instance(Http::class, new Http(new TracingHttpClient(
     AmpHttpClientFactory::create(),
@@ -192,6 +193,7 @@ Wraps any PSR-16 `CacheInterface`, {doc}`persistence`'s
 ```{code-block} php
 use Kinetis\SimpleCache\RedisSimpleCache;
 use Kinetis\Telemetry\SimpleCache\TracingSimpleCache;
+use OpenTelemetry\API\Trace\TracerProviderInterface;
 use Psr\SimpleCache\CacheInterface;
 
 // fromConfig() returns null when neither REDIS_URL nor REDIS_HOST is
@@ -227,6 +229,7 @@ use — replaces it cleanly:
 use Kinetis\Session\SessionStoreInterface;
 use Kinetis\Session\Store\FileSessionStore;
 use Kinetis\Telemetry\Session\TracingSessionStore;
+use OpenTelemetry\API\Trace\TracerProviderInterface;
 
 // The same store SESSION_DRIVER=file would have bound, wrapped —
 // swap the inner store to match whichever driver is actually configured.
@@ -254,6 +257,7 @@ client right before it reaches OpenSearch's `TransportFactory`:
 ```{code-block} php
 use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
 use Kinetis\Telemetry\Search\TracingOpenSearchTransport;
+use OpenTelemetry\API\Trace\TracerProviderInterface;
 use Psr\Http\Client\ClientInterface;
 
 $client = OpenSearchClientFactory::fromConfig(
@@ -392,12 +396,9 @@ report becomes a span with zero configuration beyond the same
 - **Queue push and worker jobs** — the producer and consumer spans
   described above, carrying the trace context that joins them.
 
-The hook set is deliberately broad while under evaluation, and will be
-thinned by measurement — see the interface's own docblock. Measured
-cost with no backend installed: a hook pair costs about 90ns, and a
-fully hooked dispatch adds one to two microseconds. The interface is not a consumer
-extension point — an application *reads* this data from its tracing
-backend rather than implementing the interface.
+The interface is not a consumer extension point — an application
+*reads* this data from its tracing backend rather than implementing it;
+`TelemetryInterface`'s own docblock states why.
 
 ### A failing backend never changes what the application does
 

@@ -2,7 +2,7 @@
 
 Kinetis's middleware is plain [PSR-15](https://www.php-fig.org/psr/psr-15/)
 — `Psr\Http\Server\MiddlewareInterface` and `RequestHandlerInterface` —
-not an Kinetis-specific contract. Any existing PSR-15 middleware package
+not a Kinetis-specific contract. Any existing PSR-15 middleware package
 works against Kinetis unmodified, and middleware you write yourself isn't
 learning a framework-specific shape.
 
@@ -48,8 +48,10 @@ $app->boot();
 
 Registered on `AppScope` (locked after `boot()`, the same discipline as
 `bind()`/`instance()` — see {doc}`container`), in registration order,
-outermost first. This wraps `Kernel::handle()`'s *entire* body — the
-`RequestScope`'s own creation, routing itself, and a `404`/`405` from a
+outermost first — inside the three Kinetis always wires in ahead of
+them, [listed below](#built-in-exceptionhandlermiddleware). This wraps
+`Kernel::handle()`'s *entire* body — the `RequestScope`'s own creation,
+routing itself, and a `404`/`405` from a
 failed route match — not just a successfully dispatched request. That's
 why logging or CORS belongs here: you want it to see every request, not
 only the ones that happened to match something.

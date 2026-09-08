@@ -1,34 +1,41 @@
 # Container
 
-Kinetis's dependency injection container is split into two classes with
-deliberately different lifetimes: `AppScope`, which lives for as long as
-the worker process does, and `RequestScope`, which lives for exactly one
-request. Understanding *why* it's split this way — and what guarantee that
-split is actually enforcing — matters more than memorizing the API surface,
-so this page leads with the reasoning.
+Kinetis splits dependency injection across two containers with different
+lifetimes. `AppScope` lives for as long as the execution context that
+booted it, and holds what every request shares. `RequestScope` lives for
+one request, and holds what must not outlive it. PHP does not separate
+one request's memory from the next inside a persistent worker; this split
+is what does.
 
 ## `AppScope` — the persistent container
 
 ```{code-block} php
+use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
+use Kinetis\Logging\ErrorLogLogger;
+use Psr\Log\LoggerInterface;
 
 $app = new AppScope();
 
-$app->bind(Logger::class, fn () => new FileLogger('/var/log/app.log'));
-$app->instance(Config::class, Config::fromEnv());
+$app->bind(LoggerInterface::class, fn (): LoggerInterface => new ErrorLogLogger());
+$app->instance(Config::class, Config::fromEnvironment());
 
 $app->boot();
 ```
 
-Everything registered on `AppScope` is built once and lives for the
-worker's entire lifetime — this is exactly where a classic singleton's
-state should live, just reached through the container instead of a static
-accessor (more on that [below](#the-singleton-rewrite)).
+Everything registered on `AppScope` is built once and lives for as long
+as the execution context that booted it — a worker thread under
+FrankenPHP, a worker process under RoadRunner, a single request under
+PHP-FPM, since `bootstrap.php` runs once per context (see
+{doc}`runtime-adapters`). A classic singleton's state belongs here,
+reached through the container instead of a static accessor (more on that
+[below](#the-singleton-rewrite)).
 
 `bind()` registers a factory; `instance()` registers an already-built
-object directly. Both accept a `$shared` flag (default `true` for `bind()`)
+object directly. `bind()` takes a `$shared` flag, `true` by default,
 controlling whether resolving the same id twice returns the same instance
-or builds a fresh one each time.
+or builds a fresh one each time. An `instance()` registration is one
+object and is always returned as-is.
 
 **Registration is only allowed before `boot()`.** Once booted, calling
 `bind()`/`instance()` again throws — this isn't a style preference, it's
@@ -42,10 +49,18 @@ constructor — but returns a fresh instance every call, never cached. This
 is the same "never promoted" guarantee `RequestScope` makes, applied to
 `AppScope`'s own public API: a stray `get()` on a class holding
 per-request state can't quietly become one shared object every request
-the worker ever serves. A service that should be one shared instance is
+that context ever serves. A service that should be one shared instance is
 registered with `bind()`/`instance()` before `boot()`.
 
-`boot()` itself registers seven bindings for you, each only if you
+That fallback reaches only as far as reflection can: the id must name a
+declared, instantiable class — never an interface, an abstract class or
+an enum — and every one of its constructor parameters must itself
+resolve. Outside that boundary `get()` raises rather than handing back a
+half-built object;
+[Absent dependencies, and broken ones](#absent-dependencies-and-broken-ones)
+below is the full rule.
+
+`boot()` itself registers nine bindings for you, each only if you
 haven't already registered your own: `Kinetis\Runtime\AppEnvironment` →
 the detected environment (`APP_ENV`, defaulting to production);
 `Kinetis\Instrumentation\TelemetryInterface` → the process-wide
@@ -54,6 +69,9 @@ the detected environment (`APP_ENV`, defaulting to production);
 logger in development, `Psr\Log\NullLogger` in production (see
 {doc}`logging`); `Kinetis\Config\Config` →
 `Config::fromEnvironment()` (see {doc}`config`);
+`Kinetis\Http\Form\FormLimits` and `Kinetis\Http\TrustedProxies` → both
+built from that `Config`, standing in for an entry point that registered
+neither of its own (see {doc}`appendix`);
 `Psr\SimpleCache\CacheInterface` → a Redis-backed cache when one's
 configured, else a null one that always misses (see {doc}`persistence`);
 `Kinetis\Events\ListenerInvokerInterface` → a synchronous invoker (see
@@ -396,10 +414,10 @@ blanket exemption.
 
 | | `AppScope` | `RequestScope` |
 |---|---|---|
-| Lifetime | Worker process | One request |
+| Lifetime | One execution context: a FrankenPHP worker thread, a RoadRunner worker process, one PHP-FPM request | One request |
 | Registration | Only before `boot()` | Any time before `dispose()` |
-| Falls back to autowiring? | No | Yes, for anything not explicitly on `AppScope` |
-| Autowired instances promoted upward? | — | Never |
+| Falls back to autowiring? | Yes, for an instantiable class whose constructor resolves | Same, for anything not explicitly on `AppScope` |
+| Autowired instances cached? | Never | For this request only, never promoted |
 | Analogous to | A correctly-scoped singleton | A fresh object graph per request |
 
 ## See also

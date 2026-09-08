@@ -12,9 +12,11 @@ use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * The classic "boot and die" driver: one request, from superglobals, per
- * process. Not Kinetis's optimization target, but the Kernel doesn't care —
- * this adapter exists so the same application code runs unmodified under
- * PHP-FPM/CGI while a persistent runtime isn't available or isn't wanted.
+ * script execution — FPM reuses the worker process, but re-enters the
+ * script for every request it serves. Not Kinetis's optimization target,
+ * but the Kernel doesn't care — this adapter exists so the same
+ * application code runs unmodified under PHP-FPM/CGI while a persistent
+ * runtime isn't available or isn't wanted.
  */
 final class FpmAdapter implements RuntimeAdapterInterface
 {

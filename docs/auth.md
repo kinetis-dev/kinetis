@@ -58,6 +58,23 @@ The one thing your app implements — resolving a raw token to a user, or
 ```{code-block} php
 use Kinetis\Auth\UserProviderInterface;
 use Kinetis\Http\CurrentUserInterface;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\QueryBuilder\Query;
+
+// Your own row DTO, hydrated from whichever columns you select. What
+// makes it usable here is the one method CurrentUserInterface asks for.
+final readonly class UserRow implements CurrentUserInterface
+{
+    public function __construct(
+        public int $id,
+        public string $email,
+    ) {}
+
+    public function id(): int
+    {
+        return $this->id;
+    }
+}
 
 final readonly class DatabaseUserProvider implements UserProviderInterface
 {
@@ -67,14 +84,15 @@ final readonly class DatabaseUserProvider implements UserProviderInterface
 
     public function findByToken(string $token): ?CurrentUserInterface
     {
-        $hash = hash('sha256', $token);
-
         $row = new Query($this->db)
             ->table('users')
-            ->where('token_hash', '=', $hash)
+            ->where('token_hash', '=', hash('sha256', $token))
             ->first(UserRow::class);
 
-        return $row;
+        // Given a class, first() hydrates a UserRow or answers null.
+        // Its declared return also covers the plain-array form it uses
+        // when given none, so narrow before returning.
+        return $row instanceof UserRow ? $row : null;
     }
 }
 ```
@@ -126,7 +144,29 @@ $token = TokenGenerator::generate(); // 64 hex characters, 32 bytes of entropy
 A thin wrapper over `random_bytes()`, hex-encoded so the result is safe to
 place directly in an `Authorization` header with no escaping. Generation
 only — issuing a token to a user (verifying a password, calling this,
-storing the hash) is your own login endpoint's job.
+storing the hash) is your own login endpoint's job. `kinetis/auth` stores
+nothing: a token it never saw a hash of is a token
+`UserProviderInterface` can never resolve.
+
+Give the storing half an interface of your own, the counterpart to
+`findByToken()`:
+
+```{code-block} php
+use Kinetis\Http\CurrentUserInterface;
+
+interface IssuedTokens
+{
+    public function store(
+        CurrentUserInterface $user,
+        #[\SensitiveParameter] string $token,
+    ): void;
+}
+```
+
+An implementation writes `hash('sha256', $token)` against that user — the
+same `token_hash` column `DatabaseUserProvider` reads back, and the same
+digest it computes from the presented token. Storing the digest rather
+than the token means a leaked table hands over nothing usable.
 
 ## Passwords
 
@@ -197,14 +237,28 @@ burst of attempts spend every worker's CPU on hashing.
 failures, backed by `Psr\SimpleCache\CacheInterface`:
 
 ```{code-block} php
-use Kinetis\Security\AttemptThrottle;
+use Kinetis\Auth\TokenGenerator;
+use Kinetis\Http\Attributes\Body;
+use Kinetis\Http\Attributes\Post;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Security\AttemptThrottle;
+use Psr\Http\Message\ResponseInterface;
+
+// The request body — your own DTO, like any other #[Body] parameter.
+final readonly class LoginRequest
+{
+    public function __construct(
+        public string $email,
+        #[\SensitiveParameter] public string $password,
+    ) {}
+}
 
 final readonly class LoginController
 {
     public function __construct(
         private AttemptThrottle $throttle,
         private Credentials $credentials,
+        private IssuedTokens $tokens,
     ) {}
 
     #[Post('/login')]
@@ -225,10 +279,18 @@ final readonly class LoginController
 
         $this->throttle->clear($data->email);
 
-        return ['token' => TokenGenerator::generate()];
+        $token = TokenGenerator::generate();
+        $this->tokens->store($user, $token);
+
+        return ['token' => $token];
     }
 }
 ```
+
+`LoginRequest`, `Credentials` and `IssuedTokens` above are your
+application's own — `kinetis/auth` defines none of the three. The DTO
+takes whatever constraint attributes any other request body takes; see
+{doc}`routing-validation`.
 
 The default is 5 failures within a rolling 15-minute window, adjustable
 through the constructor:

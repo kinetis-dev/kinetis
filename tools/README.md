@@ -121,6 +121,11 @@ Step by step, from the manifest edit to the commit:
    ```sh
    docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2 validate --strict
    ```
+   Composer shells out to git to resolve a `path` repository's version.
+   Where the container's user doesn't own the checkout, git refuses and
+   steps 4 and 5 fail on "detected dubious ownership" — add
+   `-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory
+   -e GIT_CONFIG_VALUE_0='*'`, which is what `ci.yml` passes.
 6. Run the package's own PHPStan/PHPUnit to confirm nothing broke.
 7. Commit the manifest edit + the regenerated `composer.json` + the
    updated `composer.lock` together, as one diff.
@@ -128,14 +133,16 @@ Step by step, from the manifest edit to the commit:
 ## Checking your work before pushing
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+  -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
 ```
 
 Runs every check locally — the exact same thing CI runs. `git`
 needs installing inside the container every time; the base
 `php:8.4-cli-alpine` image doesn't ship it (CI does the same install
-step).
+step). The `GIT_CONFIG_*` triple is what keeps git from refusing a
+checkout whose owner differs from the container's user.
 
 Add `--base=<ref>` to compare against something other than the previous
 commit. A feature branch wants its merge base with `main`, so the whole
@@ -143,7 +150,8 @@ branch is judged as one change:
 
 ```sh
 BASE=$(git merge-base HEAD refs/remotes/origin/main)
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+  -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
@@ -151,6 +159,18 @@ A `--base` git can't read fails the run. The version and content checks
 skip on the repository's first commit, which has nothing behind it;
 anything else that leaves history unreadable, a shallow checkout
 included, fails.
+
+From a linked worktree, `.git` is a file naming an absolute gitdir under
+the main checkout, which one mount of the worktree does not carry — the
+history reads then fail with `Could not read HEAD`. Mount that directory
+at its own path as well:
+
+```sh
+COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
+docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+  -v "$PWD":/app -v "$COMMON":"$COMMON" -w /app php:8.4-cli-alpine sh -c \
+  "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
+```
 
 ## Force-bumping a version with no other change
 
@@ -201,10 +221,15 @@ local remote and a real split to exercise that — which
 package alongside it, and it is the publication's splitter:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/tools composer:2 install
+docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+  -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
 docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
   "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```
 
 Without them the publication tests fail rather than skip: what they
 prove is what git does with the commands the publication builds.
+
+From a linked worktree this fails with `not a git repository`, for the
+same reason the validator does above — add the same
+`-v "$COMMON":"$COMMON"` mount.

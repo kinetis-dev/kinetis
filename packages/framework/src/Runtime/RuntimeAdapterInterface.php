@@ -41,10 +41,12 @@ interface RuntimeAdapterInterface
     public function run(callable $handler): void;
 
     /**
-     * Whether this runtime keeps AppScope warm across requests. Callers use
-     * this to decide whether the extra cost of strict state-reset
-     * verification is worth paying (persistent) or can be skipped because
-     * the process is about to die anyway (boot-and-die).
+     * Whether this runtime keeps AppScope warm across requests.
+     * {@see HttpStartup} reads it once and hands it to
+     * {@see \Kinetis\Http\Kernel}, the only consumer: it gates the
+     * `gc_collect_cycles()` that follows every request-scope disposal,
+     * including the deferred disposal a streamed response carries on its
+     * {@see \Kinetis\Http\StreamScopeLease}.
      */
     public function isPersistent(): bool;
 }

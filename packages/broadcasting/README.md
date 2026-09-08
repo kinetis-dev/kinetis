@@ -50,6 +50,10 @@ use Kinetis\Http\CurrentUserInterface;
 
 final class OrderChannels
 {
+    // OrderRepository is your own; this package resolves the class
+    // through the container like any other service.
+    public function __construct(private OrderRepository $orders) {}
+
     #[BroadcastChannel('orders.{orderId}')]
     public function authorize(CurrentUserInterface $user, string $orderId): bool
     {
@@ -113,9 +117,12 @@ BROADCAST_ALLOWED_ORIGINS=https://app.example
 | `BROADCAST_PORT` | `443` | The broker's port. |
 | `BROADCAST_TLS` | `true` | Whether to connect over TLS. |
 | `BROADCAST_ALLOWED_ORIGINS` | *(empty)* | Extra exact `Origin` values this route's own guard admits on `POST /broadcasting/auth`. The request's own origin, and a request sending no `Origin` at all, pass without it. A cross-origin browser request must also be allowed by the app's global `CorsMiddleware`. |
+| `BROADCAST_CHANNEL_DISCOVERY_PATHS` | *(unset)* | Comma-separated sub-paths (relative to each PSR-4 base directory) restricting the `#[BroadcastChannel]` scan, for a large application that wants a bounded scan. |
 
-Scoped, apart from `BROADCAST_ALLOWED_ORIGINS` — `BROADCAST_KEY` +
-`notifications` → `BROADCAST_NOTIFICATIONS_KEY`. Full reference:
+The six Pusher connection keys are scoped — `BROADCAST_KEY` +
+`notifications` → `BROADCAST_NOTIFICATIONS_KEY`; `BROADCAST_DRIVER`,
+`BROADCAST_ALLOWED_ORIGINS` and `BROADCAST_CHANNEL_DISCOVERY_PATHS` are
+read unscoped. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 ## Installation

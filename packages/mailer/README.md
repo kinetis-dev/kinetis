@@ -33,7 +33,7 @@ use Symfony\Component\Mime\Email;
 
 $mailer = MailerFactory::fromConfig($config);
 
-$email = (new Email())
+$email = new Email()
     ->from('noreply@example.com')
     ->to('user@example.com')
     ->subject('Welcome!')

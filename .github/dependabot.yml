@@ -12,6 +12,11 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
+    directory: "/packages/redis"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
     directory: "/packages/cache-redis"
     schedule:
       interval: "weekly"
@@ -53,6 +58,11 @@ updates:
 
   - package-ecosystem: "composer"
     directory: "/packages/mcp"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
+    directory: "/packages/mcp-docs"
     schedule:
       interval: "weekly"
 
@@ -133,6 +143,11 @@ updates:
 
   - package-ecosystem: "composer"
     directory: "/packages/skeleton"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
+    directory: "/tools"
     schedule:
       interval: "weekly"
 

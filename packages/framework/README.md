@@ -25,9 +25,8 @@ monorepo into its own repository.
 
 Kinetis targets the same class of application a modern API is expected to
 be: typed request and response contracts, OpenAPI described automatically
-rather than hand-maintained, genuinely non-blocking under real concurrent
-load, and native support for AI agents as first-class API clients, not an
-afterthought bolted on later.
+rather than hand-maintained, non-blocking under concurrent load, and
+native support for AI agents as first-class API clients.
 
 Attribute-driven routing and validation replace config files to keep in
 sync with the code:
@@ -46,12 +45,11 @@ final readonly class UserController
 }
 ```
 
-Request-scope isolation is a hard, enforced guarantee instead of a
-convention. And speed comes from two different places, not one: real
-Fiber-based concurrency over a Revolt event loop instead of blocking calls
-wrapped in the appearance of async, and ahead-of-time compilation
-(`kinetis build`) so a request in production pays reflection's cost once,
-not on every single one it serves.
+Request-scope isolation is an enforced guarantee rather than a
+convention. Speed comes from two places: Fiber-based concurrency over a
+Revolt event loop, and ahead-of-time compilation (`kinetis build`) so a
+request in production pays reflection's cost once rather than on every
+request it serves.
 
 Kinetis is designed around [FrankenPHP](https://frankenphp.dev)'s worker
 mode — a PHP process that boots once and serves thousands of requests — as
@@ -72,8 +70,9 @@ framework itself.
   validated before your controller ever runs, with a zero-config Swagger
   UI at `/openapi`.
 - **Fiber-based concurrency** (`Kinetis\Async\concurrently()`) over Revolt,
-  plus Revolt-native MySQL, Postgres, and Redis clients — no blocking
-  drivers, no hand-rolled wire protocols.
+  plus Revolt-native MySQL and Postgres drivers, and a Redis transport
+  ([`kinetis/redis`](https://github.com/kinetis-dev/redis)) that never
+  replays a command it could not confirm.
 - **A native MCP server** ([`kinetis/mcp`](https://github.com/kinetis-dev/mcp)) — stdio and Streamable HTTP
   transports, so an AI agent can call your application's own tools and
   resources the same way it calls anything else. Installing the package
@@ -122,6 +121,10 @@ consumed — see
 | `MIDDLEWARE_DISCOVERY_PATHS` | — | The same, for global middleware and middleware groups. |
 | `LISTENER_DISCOVERY_PATHS` | — | The same, for event listeners. |
 
+Two more keys follow the `*_DISCOVERY_PATHS` convention without core
+reading either: `MCP_DISCOVERY_PATHS` (`kinetis/mcp`) and
+`BROADCAST_CHANNEL_DISCOVERY_PATHS` (`kinetis/broadcasting`).
+
 Each package documents its own keys (`DB_*`, `REDIS_*`, `QUEUE_*`, ...)
 in its own README; the full reference across every package is at
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
@@ -135,6 +138,7 @@ documentation from its own README:
 | Package | What it adds |
 |---|---|
 | [`kinetis/persistence`](https://github.com/kinetis-dev/persistence) | Request-scoped SQL transaction safety net (`TransactionGuard`) and connection-pool factory for MySQL/Postgres |
+| [`kinetis/redis`](https://github.com/kinetis-dev/redis) | A Revolt-native Redis transport — non-replaying, one deadline per operation, Cluster slot routing; no dependency on `kinetis/framework` |
 | [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) | Redis-backed PSR-16 `CacheInterface` — single-node, Cluster, and TLS |
 | [`kinetis/auth`](https://github.com/kinetis-dev/auth) | Opaque Bearer-token authentication middleware |
 | [`kinetis/auth-jwt`](https://github.com/kinetis-dev/auth-jwt) | Stateless JWT authentication (HS256/RS256), with optional per-token revocation |
@@ -156,6 +160,7 @@ documentation from its own README:
 | [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
 | [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone, no Kinetis required |
 | [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | The native Model Context Protocol server — stdio and Streamable HTTP |
+| [`kinetis/mcp-docs`](https://github.com/kinetis-dev/mcp-docs) | A standalone MCP server serving the Kinetis documentation pages as resources — depends on no Kinetis package |
 | [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda (Bref) runtime adapter — polls the Lambda Runtime API and converts API Gateway v2 payloads to and from PSR-7 |
 | [`kinetis/roadrunner-adapter`](https://github.com/kinetis-dev/roadrunner-adapter) | RoadRunner runtime adapter — a persistent worker over RoadRunner's own Goridge/`PSR7Worker` protocol |
 
@@ -167,9 +172,8 @@ or [Core Concepts](https://kinetis.dev/docs/core-concepts.html).
 
 ## Development
 
-Kinetis is built and tested exclusively through Docker — running
-`php`/`composer` directly on the host is deliberately avoided throughout
-this codebase's own development:
+Kinetis is built and tested through Docker; `php` and `composer` are
+never run on the host:
 
 ```sh
 # tests

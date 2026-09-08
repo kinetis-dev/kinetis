@@ -94,6 +94,13 @@ in the same monorepo.
 If `composer install`/`update` fails with a network error talking to
 `repo.packagist.org` or `api.github.com`, re-run the same command — it's
 safe to retry.
+
+If it fails on "detected dubious ownership" instead, the container is
+running as a different user than the host checkout it bind-mounts, and
+git — which Composer invokes to resolve a `path` repository's version —
+refuses that by default. Add the same triple `ci.yml` passes every
+Composer step: `-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory
+-e GIT_CONFIG_VALUE_0='*'`.
 ```
 
 ## Running the tests
@@ -108,27 +115,48 @@ docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php ve
 # Static analysis (PHPStan, level 8 everywhere)
 docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
-# Data-flow / taint analysis (Psalm)
+# Type analysis (Psalm)
+docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/psalm --no-progress
+
+# Data-flow / taint analysis (Psalm again — --taint-analysis reports
+# taint issues only and suppresses every ordinary issue type, so the
+# plain run above is what catches those)
 docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress
 ```
 
-`RedisQueue`, `SqlQueue`, `SqsQueue`, and `RabbitMqQueue` (in
-`kinetis/queue`, `kinetis/queue-sqs`, and `kinetis/queue-rabbitmq`) have
-no PHPUnit tests — they're tested only against real backend containers,
-as standalone PHP scripts under each package's `tests-integration/`. See
-{doc}`appendix-ci` for the full list and what each one checks. You don't
-need to run these locally for an ordinary change; CI runs them against
-real service containers on every push.
+`RedisQueue`, `SqlQueue`, `SqsQueue` and `RabbitMqQueue` — one per
+backend package (`kinetis/queue-redis`, `kinetis/queue-sql`,
+`kinetis/queue-sqs`, `kinetis/queue-rabbitmq`; `kinetis/queue` itself
+holds no backend) — carry ordinary PHPUnit coverage for what pure PHP
+can decide: argument validation, envelope encoding and its round trip,
+settlement fencing against a scripted link. `kinetis/session`'s
+`RedisSessionStore` and `kinetis/persistence`'s native driver clients are
+the same. What a fake cannot decide is whether the backend behaves —
+`FOR UPDATE SKIP LOCKED` under contention, a lease a killed worker
+leaves behind, a `MOVED` redirect — so that half runs against real
+containers in `integration.yml` and is excluded from the coverage metric
+in `sonar-project.properties`, which is what keeps a real gap from
+hiding behind a number those tests would otherwise inflate. See
+{doc}`appendix-ci` for what each job checks. You don't need to run the
+real-backend half locally for an ordinary change; CI does it on every
+push that touches a package.
 
 ````{tip}
-`tools/` — the release tooling itself — has its own PHPUnit suite too.
-Run it the same way, with one addition: its suite shells out to `git`,
-which the base `php:8.4-cli-alpine` image doesn't ship:
+`tools/` — the release tooling itself — has its own `composer.json` and
+PHPUnit suite. Install its dependencies, then run it with one addition:
+the suite drives real git, including `git subtree split`, which is a
+separate Alpine package, and neither ships in the base
+`php:8.4-cli-alpine` image:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine \
-  sh -c "apk add --no-cache git >/dev/null 2>&1 && php vendor/bin/phpunit"
+docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+  -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
+docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
+  "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```
+
+Without `git-subtree` the publication tests fail rather than skip: what
+they prove is what git does with the commands the publication builds.
 ````
 
 ## Making a change
@@ -299,10 +327,12 @@ constraint is a design conversation, not a flag: raise it on the PR.
 
 ## Branching, PRs, and CI
 
-Every PR (and every push to `main`) runs the same set of GitHub Actions
-workflows — see {doc}`appendix-ci` for the full reference of what each
-one checks. The ones most relevant while you're actively working on a
-change:
+Every PR (and every push to `main`) runs `ci.yml`, `semgrep.yml` and
+`monorepo-validate.yml`; `integration.yml`, `infection.yml` and
+`sonarqube.yml` are path-filtered on `packages/**`, so a docs- or
+tooling-only change never triggers them. See {doc}`appendix-ci` for the
+full reference of what each one checks. The ones most relevant while
+you're actively working on a change:
 
 - **`ci.yml`** — `composer validate --strict`, install, `composer
   audit`, PHPUnit, PHPStan, and Psalm, one job per package (matrixed
@@ -336,9 +366,9 @@ change:
 - **`integration.yml`**, **`infection.yml`**, **`sonarqube.yml`**,
   **`semgrep.yml`** — real-backend verification, mutation testing,
   SonarQube Cloud static analysis, and pattern-based security scanning.
-  These run automatically on every PR; there's no equivalent one-line
-  local invocation for most of them (they need live service containers)
-  — trust CI for these rather than trying to reproduce them locally.
+  There's no equivalent one-line local invocation for most of them (they
+  need live service containers) — trust CI for these rather than trying
+  to reproduce them locally.
   `integration.yml` is matrixed across PHP 8.4 and 8.5 too, the same as
   `ci.yml`; `infection.yml`/`sonarqube.yml` run on 8.4 only. See
   {doc}`appendix-ci` for the exact breakdown per workflow.

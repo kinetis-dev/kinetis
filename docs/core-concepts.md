@@ -1,34 +1,30 @@
 # Core Concepts
 
-## The world before persistent workers
+## Boot-and-die and persistent workers
 
-Classic PHP deployment — Apache with mod_php, then PHP-FPM — runs one
-request per process invocation. The process (or, for FPM, the worker that
-handles your request) starts from a known-clean state, executes your
-script, and either dies or gets recycled. Nothing you allocate outlives the
-response. A global variable set during request A is simply gone by the
-time request B starts, because the interpreter itself starts over.
+A boot-and-die runtime — PHP-FPM here — runs one request per script
+execution, not one per process. An FPM worker process serves many
+requests in sequence, but PHP discards the request's userland state at
+request shutdown and re-enters `public/index.php` from a clean slate for
+the next one, so a static property set during one request is gone before
+the next starts. The cost is that bootstrap runs again on every request:
+the autoloader's class map is rebuilt in memory, every registration
+re-runs, and the container is constructed from scratch. OPcache keeps
+those files' compiled bytecode between requests; what executing them
+builds does not survive.
 
-This has a real cost: every request re-parses your autoloader's class map,
-re-runs every bit of bootstrap logic, re-builds your DI container from
-scratch. For most applications this cost is small enough to ignore. For
-high-throughput services, it adds up.
+A persistent worker — FrankenPHP's worker mode, RoadRunner — runs
+`public/index.php` once and feeds that one execution request after
+request. Bootstrap runs once per worker and everything it built stays in
+memory. That makes one class of bug possible that boot-and-die cannot
+express: **state leaking from one request into the next.**
 
-**Persistent workers — FrankenPHP's worker mode, Swoole, RoadRunner — trade
-that cost away by keeping one PHP process alive across many requests.**
-Bootstrap happens once. The interpreter stays warm. And a whole category of
-bugs impossible under boot-and-die — where the process died before they
-could matter — becomes possible: **state leaking from one request into
-the next.**
+## A warm worker still waits
 
-## Staying warm isn't the same as staying busy
-
-A persistent worker removes the cost of re-parsing your autoloader and
-rebuilding your container on every request, but that alone doesn't change
-what happens while a request is waiting on something slow. A synchronous
-database query or HTTP call occupies the worker for exactly as long as
-the response takes to arrive — warm process or not — and nothing else
-that worker could be doing gets a turn in the meantime.
+A warm worker removes bootstrap cost, not waiting. A synchronous
+database query or HTTP call occupies the worker for as long as the
+response takes to arrive, and nothing else that worker could be doing
+gets a turn in the meantime.
 
 `Kinetis\Async` is the other half of the picture: PHP Fibers, scheduled
 by a Revolt event loop, let a request that's waiting on one slow
@@ -37,6 +33,53 @@ else instead of sitting idle. `concurrently()` uses this to run several
 independent operations — a database query, an HTTP call, a cache read —
 side by side, completing in roughly the time of the slowest one rather
 than their sum. See {doc}`concurrency` for the full picture.
+
+## `HttpStartup` owns the boot
+
+An application's `public/index.php` is the Composer autoloader plus one
+call:
+
+```{code-block} php
+:caption: public/index.php
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+Kinetis\Runtime\HttpStartup::run(__DIR__);
+```
+
+`Kinetis\Runtime\HttpStartup` is the startup program itself, owned by the
+framework rather than copied into each project. Everything it does runs
+once per execution of that entry script — once per FrankenPHP worker
+thread, for that thread's whole life, and once per request under PHP-FPM,
+which re-enters the script every time. Nothing in it is request-specific;
+the `Kernel` it builds is what handles requests. In order, it:
+
+1. Loads `.env`, then detects `APP_ENV`. That order matters: `APP_ENV`
+   may be defined for the first time in `.env` rather than already set
+   in the process environment.
+2. Resolves routes, middleware and event listeners. Development
+   discovers them live from source on every boot; production reads the
+   `.kinetis-cache/compiled.php` artifact, falling back to one fresh
+   compile when there is none this build can use — see {doc}`caching`.
+3. Binds `FormLimits` and `TrustedProxies`, then runs the package and
+   application bootstrap chain and calls `AppScope::boot()`. Both
+   bindings land before the chain, so `bootstrap.php` can replace either
+   one; the last write before `boot()` locks the container wins.
+4. Detects the runtime adapter, handing it the proxy policy read back
+   out of the booted container rather than the one built in step 3 — so
+   a `bootstrap.php` that narrowed it decides this request's scheme and
+   client address.
+5. Constructs the `Kernel` with the adapter's own `isPersistent()`, and
+   hands `Kernel::handle()` to the adapter's request loop.
+
+The request body takes no part in this. An adapter hands the body on as
+raw PSR-7 bytes, and `RequestBodyMiddleware` bounds and parses it inside
+the Kernel under whatever `FormLimits` the container holds — see
+{doc}`middleware`.
+
+A deployment that wants one specific adapter instead of detection calls
+`HttpStartup::assemble()` with its own factory and serves from the
+result; see {doc}`runtime-adapters`.
 
 ## The `Kernel` — runtime-agnostic by design
 
@@ -66,91 +109,91 @@ execution environment bridges in through a small
 neither knows nor cares which one is driving it.
 
 This matters for more than just testability. It means the same `Kernel`,
-constructed identically, behaves identically whether it's handling request
-#1 of a brand-new PHP-FPM process or request #40,000 of a FrankenPHP worker
-that's been running for three days. Nothing in `Kernel` itself is aware of
-which situation it's in — except one flag, `$isPersistent`, which exists
-for exactly one purpose: deciding whether to force a `gc_collect_cycles()`
-call at the end of the request (see [below](#the-request-lifecycle)).
+constructed identically, behaves identically whether it's handling the
+one request a PHP-FPM script execution serves or request #40,000 of a
+FrankenPHP worker that's been running for three days. Nothing in `Kernel`
+itself is aware of which situation it's in — except one flag,
+`$isPersistent`, which exists for exactly one purpose: deciding whether to
+force a `gc_collect_cycles()` call at the end of the request (see
+[below](#the-request-lifecycle)).
 
 ## The request lifecycle
 
 Every call to `Kernel::handle()` follows the same shape:
 
-1. A fresh `RequestScope` is created from the persistent `AppScope`
-   container (see {doc}`container`).
-2. When `kinetis/persistence` is installed, a `TransactionGuard` is
+1. Any streamed response left unsettled by the previous request on this
+   Kernel is released, before anything of this request runs.
+2. The global PSR-15 middleware pipeline runs, resolved from `AppScope`.
+   It wraps everything below, so a global middleware that answers
+   outright — a CORS preflight, an over-limit body, a rate limit — never
+   reaches step 3 and no `RequestScope` is created for it. See
+   {doc}`middleware`.
+3. The pipeline's innermost handler creates a fresh `RequestScope` from
+   the persistent `AppScope` container (see {doc}`container`).
+4. When `kinetis/persistence` is installed, a `TransactionGuard` is
    resolved from that scope and `rollbackDangling()` is registered as a
    dispose hook — for every request, whether or not it ever opens a
-   database transaction (a genuine no-op when it doesn't). If a request
-   opens a transaction and something goes wrong before it's explicitly
-   committed or rolled back, this is the safety net that closes it
-   anyway. `kinetis/framework` alone has no database concept at all, so
-   this step is skipped entirely without the package installed. See
+   database transaction (a no-op when it doesn't). If a request opens a
+   transaction and something goes wrong before it's explicitly committed
+   or rolled back, this is the safety net that closes it anyway.
+   `kinetis/framework` alone has no database concept, so this step is
+   skipped entirely without the package installed. See
    {doc}`persistence`.
-3. The router matches the request; a `Dispatcher` resolves the matched
-   controller's parameters and invokes it.
-4. The `RequestScope` is disposed — whether the request succeeded, threw,
-   or hit a 404/405. A response that streams its own body defers this
-   until the stream ends, since the emitter resolves from that same
-   scope; see {doc}`container`.
-5. If `$isPersistent` is true, `gc_collect_cycles()` runs.
+5. The router matches the request; the matched route's own
+   `#[Middleware]` pipeline runs, resolved from that `RequestScope`; a
+   `Dispatcher` resolves the controller's parameters and invokes it.
+6. The `RequestScope` is disposed — whether the request succeeded,
+   threw, or hit a 404/405.
+7. If `$isPersistent` is true, `gc_collect_cycles()` runs.
 
-That last step deserves its own explanation, because it's easy to dismiss
-as a micro-optimization when it's actually closing a real gap. PHP's
-garbage collector already reclaims most memory automatically through
-reference counting — but **circular references** (two objects each holding
-a reference to the other, including a `Fiber` caught in one) need PHP's
-cycle collector to run before they're freed, and that collector runs on its
-own heuristic schedule, not deterministically per-request. In a
-boot-and-die process, this doesn't matter: the OS reclaims everything the
-moment the process exits anyway. In a worker that's going to keep running
-for the next few million requests, letting circular references pile up
-between the collector's own heuristic runs is a genuine, slow memory leak.
-Forcing collection at the natural boundary of "this request is done" closes
-it — and skipping that same call in a boot-and-die process is equally
-deliberate: forcing a collection cycle a moment before the process dies
-anyway would be pure waste.
+A response that streams its own body is the one exception to steps 6 and
+7. Its body is written after `handle()` has returned, by an adapter,
+against code that resolves from that same scope — so disposal is deferred
+onto a lease the response carries, and runs on whichever settlement
+reaches that lease first: the emitter finishing, the response being
+abandoned by an adapter that cannot stream it, the wrapper being replaced
+by something else on the way out of the global pipeline, or the next
+request finding it still pending. See {doc}`container`.
 
-## Why "just don't leak state" isn't good enough
+PHP's garbage collector reclaims most memory through reference counting,
+but **circular references** — two objects each holding a reference to the
+other, a `Fiber` caught in one included — need the cycle collector to run
+before they are freed, and that collector runs on its own heuristic
+schedule rather than per request. Under boot-and-die that does not
+matter: PHP releases the request's memory at request shutdown,
+uncollected cycles included, whether or not the process itself exits. In
+a worker whose one script execution spans days, cycles accumulating between
+the collector's own runs are a slow memory leak, so collection is forced
+at the request boundary. Skipping the same call under boot-and-die avoids
+paying for a collection pass over memory that is about to be released
+wholesale.
 
-The obvious response to "persistent workers can leak state between
-requests" is "then don't write code that leaks state." In practice, that's
-not a sufficient answer, for a very specific reason: **the classic
-singleton pattern — a `private static ?self $instance` property — is
-exactly the shape of code that leaks state**, and it's a pattern that
-exists throughout the PHP ecosystem precisely because, under PHP-FPM, it
-was always safe. A static property in a process that dies after one
-request is indistinguishable from a request-scoped variable. The same
-static property in a worker that lives for days is a value every
-subsequent request can read and, worse, mutate.
+## Why state isolation is enforced rather than advised
 
-This is the actual reason Kinetis's container is split into two tiers
-instead of one, and the actual reason a PHPStan rule banning `static`
-properties ships as part of the framework itself rather than as
-project-specific advice in a README. Both are covered in full in
-{doc}`container` — including the specific, concrete rewrite of "singleton
-via static property" into "singleton via the container," since that's the
-pattern most likely to need to change when porting code that grew up under
-PHP-FPM.
+The classic singleton — a `private static ?self $instance` property — is
+the shape of code that leaks state, and it is safe under boot-and-die: a
+static property PHP discards at the end of the request is
+indistinguishable from a request-scoped variable. The same property in a
+worker whose script execution spans days is a value every subsequent
+request can read and mutate.
 
-## What's *not* a new problem
+That is why the container is split into two tiers, and why a PHPStan rule
+banning `static` properties ships as part of the framework rather than as
+advice in a README. {doc}`container` covers both, including the rewrite
+of "singleton via static property" into "singleton via the container."
 
-It's worth being precise about what persistent workers actually change,
-because not everything does. Superglobal state (`$_GET`, `$_POST`,
-`$_SERVER`) is a good example: it's tempting to assume a persistent worker
-needs some kind of manual superglobal-reset step between requests, but it
-needs no code at all: FrankenPHP already repopulates every superglobal
-correctly on each call into the worker, and `Kinetis\Runtime\
-SuperglobalsBridge` relies on exactly that. RoadRunner sidesteps the
-question a different way — `RoadRunnerAdapter` builds the PSR-7 request
-directly from RoadRunner's own protocol and never touches a superglobal
-at all, so there's nothing there to reset either.
+## What persistent workers do not change
 
-The genuinely new risk is narrower and more specific than "any global
-state": it's specifically the state *your own application code* introduces
-outside the container's request-scoping mechanism — which is precisely what
-the `NoStaticPropertiesRule` in {doc}`container` exists to catch.
+Superglobal state (`$_GET`, `$_POST`, `$_SERVER`) needs no reset step
+between requests. FrankenPHP repopulates every superglobal on each call
+into the worker, and `Kinetis\Runtime\SuperglobalsBridge` reads them on
+that basis. RoadRunner has none to reset: `RoadRunnerAdapter` builds the
+PSR-7 request from RoadRunner's own protocol and never touches one.
+
+What is left is narrower than "any global state": state your own
+application code introduces outside the container's request-scoping
+mechanism, which is what the `NoStaticPropertiesRule` in {doc}`container`
+catches.
 
 ## See also
 
@@ -165,5 +208,5 @@ the `NoStaticPropertiesRule` in {doc}`container` exists to catch.
 - {doc}`runtime-adapters` — exactly how `Kernel` gets driven by
   FrankenPHP, PHP-FPM, RoadRunner, and AWS Lambda, and what each one is
   actually responsible for.
-- {doc}`caching` — what changes about this lifecycle in production, and
-  why the answer turned out to be more specific than "cache everything."
+- {doc}`caching` — what the production AOT artifact holds, and what it
+  changes about this lifecycle.
