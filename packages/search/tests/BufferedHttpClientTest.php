@@ -7,6 +7,7 @@ namespace Kinetis\Search\Tests;
 use Kinetis\Config\Config;
 use Kinetis\Search\BufferedHttpClient;
 use Kinetis\Search\Exception\SearchNetworkException;
+use Kinetis\Search\Exception\SearchResponseTooLargeException;
 use Kinetis\Search\SearchTransport;
 use Nyholm\Psr7\Request;
 use PHPUnit\Framework\TestCase;
@@ -165,10 +166,12 @@ final class BufferedHttpClientTest extends TestCase
             self::fail('the request should not have completed');
         } catch (SearchNetworkException $e) {
             self::assertSame($request, $e->getRequest());
-            self::assertStringContainsString(
-                'SEARCH_ENGINE_MAX_RESPONSE_BYTES',
-                $e->getPrevious()?->getMessage() ?? '',
-            );
+            // The abort itself, two levels down: the guard's own
+            // exception, under the transport exception Symfony reports
+            // an aborted transfer as.
+            $abort = $e->getPrevious()?->getPrevious();
+            self::assertInstanceOf(SearchResponseTooLargeException::class, $abort);
+            self::assertStringContainsString('SEARCH_ENGINE_MAX_RESPONSE_BYTES', $abort->getMessage());
         }
     }
 

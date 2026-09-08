@@ -203,7 +203,7 @@ nothing to write skips the call.
 
 ## Failures
 
-Three exceptions belong to `kinetis/search`.
+Four exceptions belong to `kinetis/search`.
 
 `Kinetis\Search\Exception\SearchConfigurationException` is raised while
 the client is built — from a package bootstrap, or from your own
@@ -219,6 +219,13 @@ connection, the deadline, or the response bound ended it. The status,
 headers and body are read before the transport hands the response back,
 so a failure part-way through a body arrives here rather than out of a
 PSR-7 stream later on.
+
+`Kinetis\Search\Exception\SearchResponseTooLargeException` is the abort
+the response bound raises when a body passes `..._MAX_RESPONSE_BYTES`,
+naming the key that ended the transfer. It is a cause rather than
+something to catch: the HTTP client treats the throw as an aborted
+transfer, so what the call meets is the `SearchNetworkException` above,
+with this one further down the chain.
 
 `Kinetis\Search\Exception\SearchRequestException` is what
 `SearchClient` reports for an error status the cluster answered with — a

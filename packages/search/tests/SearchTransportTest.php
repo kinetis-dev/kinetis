@@ -9,6 +9,7 @@ use Kinetis\Config\Config;
 use Kinetis\Config\Exception\MissingConfigException;
 use Kinetis\Search\BufferedHttpClient;
 use Kinetis\Search\Exception\SearchConfigurationException;
+use Kinetis\Search\Exception\SearchResponseTooLargeException;
 use Kinetis\Search\SearchTransport;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -237,7 +238,7 @@ final class SearchTransportTest extends TestCase
 
         $guard(8_388_608, -1, []);
 
-        $this->expectException(RuntimeException::class);
+        $this->expectException(SearchResponseTooLargeException::class);
         $this->expectExceptionMessage('SEARCH_ENGINE_MAX_RESPONSE_BYTES');
         $guard(8_388_609, -1, []);
     }
@@ -255,7 +256,7 @@ final class SearchTransportTest extends TestCase
 
         $guard(64, 64, []);
 
-        $this->expectException(RuntimeException::class);
+        $this->expectException(SearchResponseTooLargeException::class);
         $this->expectExceptionMessage('SEARCH_LOGS_ENGINE_MAX_RESPONSE_BYTES');
         $guard(65, 64, []);
     }

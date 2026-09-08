@@ -8,8 +8,8 @@ use Closure;
 use Kinetis\Config\Config;
 use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
 use Kinetis\Search\Exception\SearchConfigurationException;
+use Kinetis\Search\Exception\SearchResponseTooLargeException;
 use Psr\Http\Client\ClientInterface;
-use RuntimeException;
 
 /**
  * The one origin an engine client talks to, and the PSR-18 client it
@@ -161,7 +161,9 @@ final readonly class SearchTransport
      *
      * The throw never surfaces as itself. Symfony wraps it in a transport
      * exception, which {@see BufferedHttpClient} turns into a
-     * SearchNetworkException carrying the request.
+     * SearchNetworkException carrying the request; the
+     * {@see SearchResponseTooLargeException} stays underneath, naming the
+     * key that ended the transfer.
      */
     private static function responseBound(Config $config, string $prefix, string $connection): Closure
     {
@@ -174,7 +176,7 @@ final readonly class SearchTransport
 
         return static function (int $downloaded) use ($limit, $limitKey): void {
             if ($downloaded > $limit) {
-                throw new RuntimeException("The search response passed {$limitKey}.");
+                throw new SearchResponseTooLargeException($limitKey);
             }
         };
     }

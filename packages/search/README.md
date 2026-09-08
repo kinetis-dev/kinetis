@@ -37,7 +37,11 @@ have in common. Install one of those; this package comes with it.
 - **`SearchClient`.** Five calls both engines answer the same way, for an
   application that would rather not name one. Each engine package binds
   an implementation beside its own real, unwrapped client, which is still
-  there for everything else.
+  there for everything else. Those implementations extend
+  `AbstractSearchClient`, which holds the half of a call that is the same
+  on either engine — the parameters, and the rule that a `404` answering
+  `get()` or `delete()` is an absence — so an adapter is its engine's
+  dispatch and failure mapping and nothing more.
 
 ```php
 use Kinetis\Search\BulkOperation;
@@ -100,6 +104,9 @@ value. `SearchNetworkException` (PSR-18's `NetworkExceptionInterface`,
 carrying the request) for a request that never produced a complete
 response. `SearchRequestException` for an error status a `SearchClient`
 call met, carrying the status and the engine's own exception underneath.
+`SearchResponseTooLargeException` for a body past
+`SEARCH_..._MAX_RESPONSE_BYTES`, which reaches a caller under a
+`SearchNetworkException` rather than on its own.
 
 ## Installation
 
