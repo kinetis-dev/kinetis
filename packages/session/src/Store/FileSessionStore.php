@@ -42,6 +42,9 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
 
     private const int FILE_MODE = 0600;
 
+    /** The one failure a caller sees for a write that did not complete, wherever it stopped. */
+    private const string WRITE_FAILED = 'A session file could not be written.';
+
     /**
      * A freshly created directory always gets DIRECTORY_MODE (mkdir()'s
      * mode argument has no group/world bits for umask to strip in the
@@ -137,7 +140,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         if (@\file_put_contents($tmpPath, $payload) !== \strlen($payload)) {
             @\unlink($tmpPath);
 
-            throw new SessionException('A session file could not be written.');
+            throw new SessionException(self::WRITE_FAILED);
         }
 
         // A chmod() that reports success is not proof enough on its own:
@@ -163,7 +166,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         if (!@\rename($tmpPath, $path)) {
             @\unlink($tmpPath);
 
-            throw new SessionException('A session file could not be written.');
+            throw new SessionException(self::WRITE_FAILED);
         }
     }
 
@@ -206,7 +209,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
             }
 
             if (!@\rewind($handle) || !self::writeAll($handle, $payload) || !@\ftruncate($handle, \strlen($payload))) {
-                throw new SessionException('A session file could not be written.');
+                throw new SessionException(self::WRITE_FAILED);
             }
         } finally {
             \fclose($handle);
