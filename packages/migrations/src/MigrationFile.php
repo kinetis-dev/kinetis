@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations;
 
+use Kinetis\Migrations\Exception\MigrationIntegrityException;
+
 /**
  * One discovered migration file. $name is the filename without its `.php`
  * extension (e.g. "20260810143000_create_orders_table") — the timestamp
@@ -28,6 +30,27 @@ final readonly class MigrationFile
     {
         /** @var Migration */
         return require $this->path;
+    }
+
+    /**
+     * SHA-256 of the file, recorded in the ledger when the migration is
+     * applied and compared against it by every later command — the SQL a
+     * database ran is the SQL in this file, or the command stops.
+     *
+     * @throws MigrationIntegrityException
+     */
+    public function checksum(): string
+    {
+        // Suppressed: hash_file() reports an unreadable file with a
+        // native warning naming its path, which is the one thing this
+        // failure keeps out of an operator's logs.
+        $checksum = @hash_file('sha256', $this->path);
+
+        if ($checksum === false) {
+            throw MigrationIntegrityException::forMissingSource($this->name);
+        }
+
+        return $checksum;
     }
 
     /**

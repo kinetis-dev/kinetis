@@ -95,7 +95,7 @@ final class Router
      * candidate this same call has staged so far, since two methods on
      * one controller can conflict with each other too) — nothing is
      * committed to `$routes`/`$routesByConflictKey` until the whole
-     * controller succeeds. A later method's bad path/prefix/constraint,
+     * controller succeeds. A later method's bad path or prefix,
      * or any conflict, therefore leaves *zero* of this controller's
      * routes installed, not just the ones reflected before the failure
      * — the same all-or-nothing discipline `EventListenerRegistry::
@@ -245,20 +245,16 @@ final class Router
 
                 // Dispatcher::derivePlan() is otherwise only ever called
                 // lazily, on this route's first real dispatch — so a
-                // route whose own parameter bindings can never succeed (a
-                // required standalone-null-typed #[Query]/path parameter,
-                // see UnresolvableParameterException::forImpossibleQueryOrPathNull())
+                // route whose own parameter bindings can never succeed
+                // (see Kinetis\Http\Exception\UnresolvableParameterException)
                 // needs its own guarantee here too, at the one boundary
                 // every route passes through regardless of deployment
-                // shape, rather than only failing the moment a real
-                // client actually dispatches to it. Called here — its own
-                // result discarded, this is validation only — live
-                // discovery reaches it directly; Kinetis\Cache\Compiler's
-                // own AOT build reaches it too, since that's how it
-                // discovers routes to compile in the first place, so a
-                // route failing this check can never make it into a
-                // compiled artifact either — closing the loop for
-                // Router::fromArray()'s own load path without fromArray()
+                // shape. Called for validation only, its result
+                // discarded: live discovery reaches it directly, and
+                // Kinetis\Cache\Compiler's AOT build reaches it too,
+                // since that is how it discovers routes to compile — so
+                // a route failing this check can never make it into a
+                // compiled artifact either, without Router::fromArray()
                 // needing a live ReflectionMethod to re-check with.
                 Dispatcher::derivePlan($method, $route);
 

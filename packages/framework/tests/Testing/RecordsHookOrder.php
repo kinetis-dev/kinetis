@@ -7,7 +7,7 @@ namespace Kinetis\Tests\Testing;
 use PHPUnit\Framework\Attributes\Before;
 
 /**
- * Stands in for kinetis/persistence's DatabaseTransactions, which reads
+ * Stands in for kinetis/persistence's DatabaseTruncation, which reads
  * $this->app from its own #[Before] hook and so depends on the base
  * class's hook having already run.
  */

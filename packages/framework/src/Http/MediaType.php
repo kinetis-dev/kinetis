@@ -6,8 +6,8 @@ namespace Kinetis\Http;
 
 /**
  * Classifies a Content-Type header value by the media type it names —
- * the one place every request-body path in this framework, core and
- * satellite adapters alike, decides whether a body is form-encoded.
+ * the one place every request-body path in this framework decides
+ * whether a body is form-encoded or JSON.
  *
  * The comparison is exact on the type/subtype and
  * ASCII-case-insensitive, which is what RFC 9110 §8.3.1 requires:
@@ -30,6 +30,8 @@ final class MediaType
     public const string FORM_URLENCODED = 'application/x-www-form-urlencoded';
 
     public const string MULTIPART_FORM_DATA = 'multipart/form-data';
+
+    public const string JSON = 'application/json';
 
     /**
      * The bare media type a Content-Type header value names, ready to
@@ -57,6 +59,37 @@ final class MediaType
     public static function isMultipartFormData(string $contentType): bool
     {
         return self::of($contentType) === self::MULTIPART_FORM_DATA;
+    }
+
+    /**
+     * The media types whose body is a JSON document: `application/json`
+     * itself, and any `application/` subtype carrying RFC 6839's `+json`
+     * structured suffix (`application/vnd.api+json`,
+     * `application/hal+json`). The suffix needs a subtype in front of it,
+     * so `application/+json` names nothing here; `text/json` is a
+     * different top-level type and is not JSON to this framework.
+     *
+     * {@see \Kinetis\Http\Dispatcher} reads a `#[Body]` DTO's raw bytes
+     * as JSON only when this answers true, so a media type nothing here
+     * recognizes is refused rather than guessed at.
+     */
+    public static function isJson(string $contentType): bool
+    {
+        $mediaType = self::of($contentType);
+
+        if ($mediaType === self::JSON) {
+            return true;
+        }
+
+        $prefix = 'application/';
+
+        if (!str_starts_with($mediaType, $prefix)) {
+            return false;
+        }
+
+        $subtype = substr($mediaType, strlen($prefix));
+
+        return strlen($subtype) > strlen('+json') && str_ends_with($subtype, '+json');
     }
 
     /**

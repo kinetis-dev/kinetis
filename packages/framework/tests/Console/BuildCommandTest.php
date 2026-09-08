@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Console;
 
 use Kinetis\Cache\CacheStore;
-use Kinetis\Cache\Exception\CacheWriteException;
+use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Console\BuildCommand;
-use Kinetis\Console\CommandArguments;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Tests\Cache\Fixtures\StrictPlugin\CountingCacheableDiscovery;
+use Kinetis\Tests\Cache\Fixtures\StrictPlugin\SelfRejectingCacheableDiscovery;
+use Kinetis\Validation\Hydrator;
 use PHPUnit\Framework\TestCase;
 
 final class BuildCommandTest extends TestCase
@@ -30,105 +33,223 @@ final class BuildCommandTest extends TestCase
         return new CacheStore($this->projectRoot . '/.kinetis-cache');
     }
 
-    public function test_writes_a_loadable_cache_and_returns_success(): void
+    public function test_writes_a_loadable_artifact_and_returns_success(): void
     {
-        $command = new BuildCommand(projectRootOverride: $this->projectRoot);
-
-        $exitCode = $command->run(CommandArguments::parse([]));
+        $exitCode = new BuildCommand(projectRootOverride: $this->projectRoot)->run();
 
         self::assertSame(0, $exitCode);
-        self::assertFileExists($this->projectRoot . '/.kinetis-cache/current');
 
-        $store = $this->cacheStore();
-        self::assertTrue($store->exists());
-        self::assertNotNull($store->loadHttp());
-        self::assertNotNull($store->loadCommands());
-        self::assertNotNull($store->loadEvents());
-        self::assertNotNull($store->loadPlugins());
+        $loaded = $this->cacheStore()->load();
+        self::assertNotNull($loaded);
     }
 
     /**
-     * A plain rebuild compiles and stages a whole new generation before
-     * publishing it, so the generation a first successful build already
-     * produced is never removed just because a second build ran — see
-     * CacheStore::writeAll()'s own docblock on retention.
+     * The artifact is an output of this command, never an input to it: a
+     * second build compiles from source again and replaces the file in
+     * place, rather than reading back what the first one left.
      */
-    public function test_a_second_successful_build_publishes_a_new_generation_without_deleting_the_first(): void
+    public function test_a_second_build_replaces_the_artifact_in_place(): void
     {
         $command = new BuildCommand(projectRootOverride: $this->projectRoot);
-        $command->run(CommandArguments::parse([]));
+        $command->run();
 
-        $firstGenerationDirectory = $this->cacheStore()->activeGenerationDirectory();
-        self::assertNotNull($firstGenerationDirectory);
+        self::assertSame(0, $command->run());
 
-        $exitCode = $command->run(CommandArguments::parse([]));
-
-        self::assertSame(0, $exitCode);
-        self::assertDirectoryExists($firstGenerationDirectory, 'a plain rebuild must not delete a previously-published generation');
-
-        $secondGenerationDirectory = $this->cacheStore()->activeGenerationDirectory();
-        self::assertNotNull($secondGenerationDirectory);
-        self::assertNotSame($firstGenerationDirectory, $secondGenerationDirectory, 'the second build must have published a genuinely new generation, not reused the first');
+        // One file, still the artifact itself: no second copy beside it,
+        // and no staged temporary file left over.
+        self::assertSame([$this->cacheStore()->path()], glob($this->projectRoot . '/.kinetis-cache/*') ?: []);
+        self::assertNotNull($this->cacheStore()->load());
     }
 
     /**
-     * A rebuild that fails partway through compiling or writing must
-     * leave whatever was already active exactly as it was, not an
-     * already-deleted cache directory. A real DTO whose constructor
-     * default is a live object
-     * (PHP 8.1's "new in initializers") is the genuine, real-world way a
-     * compile pass produces something CacheStore::writeAll() cannot
-     * var_export() back — the same mechanism CacheStoreTest's own
-     * identical case exercises directly against CacheStore, exercised
-     * here through the actual BuildCommand a deploy pipeline runs.
+     * The default a plan may carry, through the command a deploy
+     * pipeline actually runs: an enum case compiles into the hydration
+     * plan, is written as a `var_export()` literal, and comes back out
+     * of the published file as the same case — which is what makes the
+     * hydration below produce it without the DTO's own default ever
+     * being evaluated again.
      */
-    public function test_a_failed_rebuild_leaves_the_previously_active_generation_loadable_and_unchanged(): void
+    public function test_a_build_carries_an_enum_case_default_through_the_published_artifact(): void
+    {
+        $namespace = $this->writeEnumDefaultFixture();
+
+        self::assertSame(0, new BuildCommand(projectRootOverride: $this->projectRoot)->run());
+
+        $plan = $this->cacheStore()->load()?->http->hydrationPlans["{$namespace}\\SearchRequest"];
+
+        self::assertNotNull($plan);
+
+        $dto = Hydrator::hydrate("{$namespace}\\SearchRequest", ['term' => 'kinetis'], $plan);
+
+        self::assertSame(constant("{$namespace}\\SortDirection::Descending"), $dto->direction);
+    }
+
+    /**
+     * A rebuild that fails leaves whatever was already published exactly
+     * as it was. A real DTO whose constructor default is a live object
+     * (PHP 8.1's "new in initializers") is the genuine way a compile
+     * pass reaches a value no plan may carry, refused by
+     * Kinetis\Reflection\ParameterDefault as the plan is derived —
+     * reached here through the actual BuildCommand a deploy pipeline
+     * runs, so the build a developer runs and the first request a
+     * worker serves fail on the same declaration.
+     */
+    public function test_a_failed_rebuild_leaves_the_published_artifact_loadable_and_unchanged(): void
     {
         $command = new BuildCommand(projectRootOverride: $this->projectRoot);
-        $command->run(CommandArguments::parse([]));
+        $command->run();
 
-        $before = $this->cacheStore()->loadHttp();
+        $before = $this->cacheStore()->load();
         self::assertNotNull($before);
 
         $this->writePoisonedFixture();
 
         try {
-            $command->run(CommandArguments::parse([]));
+            $command->run();
             self::fail('Expected the rebuild to fail against the poisoned fixture.');
-        } catch (CacheWriteException) {
+        } catch (UnsupportedDefaultValueException) {
             // Expected — see writePoisonedFixture()'s own docblock.
         }
 
-        // A fresh CacheStore, not one that could have pinned to
-        // something stale from before the failed attempt.
-        $after = (new CacheStore($this->projectRoot . '/.kinetis-cache'))->loadHttp();
+        $after = (new CacheStore($this->projectRoot . '/.kinetis-cache'))->load();
         self::assertEquals($before, $after);
+        self::assertSame([], glob($this->projectRoot . '/.kinetis-cache/*.tmp') ?: []);
     }
 
-    public function test_destroy_removes_the_cache_directory_without_rebuilding_it(): void
+    /**
+     * A build reconstructs the whole artifact through the same contracts
+     * a boot enforces before publishing any of it, so an installed
+     * package whose compiled data its own fromArray() rejects fails the
+     * command — the exception leaves run() before its success line, and
+     * the artifact a previous build published stays exactly as it was
+     * rather than being replaced by one every worker rejects and
+     * recompiles.
+     */
+    public function test_a_plugin_rejecting_its_own_compiled_data_fails_the_build_and_publishes_nothing(): void
     {
         $command = new BuildCommand(projectRootOverride: $this->projectRoot);
-        $command->run(CommandArguments::parse([]));
-        self::assertTrue($this->cacheStore()->exists());
+        $command->run();
 
-        $exitCode = $command->run(CommandArguments::parse(['--destroy']));
+        $before = (string) file_get_contents($this->cacheStore()->path());
 
-        self::assertSame(0, $exitCode);
-        self::assertDirectoryDoesNotExist($this->projectRoot . '/.kinetis-cache');
+        $this->installDiscoveryPackage(SelfRejectingCacheableDiscovery::class);
+
+        try {
+            $command->run();
+            self::fail('Expected the build to fail against a plugin that rejects its own compiled data.');
+        } catch (InvalidCacheArtifactException $rejection) {
+            self::assertStringContainsString(SelfRejectingCacheableDiscovery::REJECTION, $rejection->getMessage());
+        }
+
+        self::assertSame($before, (string) file_get_contents($this->cacheStore()->path()));
+        self::assertNotNull($this->cacheStore()->load());
+
+        // The artifact itself, and nothing beside it: no second copy, no
+        // staged temporary file from the failed run.
+        self::assertSame([$this->cacheStore()->path()], glob($this->projectRoot . '/.kinetis-cache/*') ?: []);
     }
 
-    public function test_destroy_removes_every_retained_generation_too(): void
+    /**
+     * fromArray() is construction rather than a pure validator, so the
+     * build runs it once per section: what it validates and what it
+     * publishes come from one compile, and a plugin whose reconstruction
+     * costs real work or has side effects pays for it once.
+     */
+    public function test_a_build_reconstructs_a_discovered_plugin_exactly_once(): void
     {
-        $command = new BuildCommand(projectRootOverride: $this->projectRoot);
-        $command->run(CommandArguments::parse([]));
-        $firstGenerationDirectory = $this->cacheStore()->activeGenerationDirectory();
-        self::assertNotNull($firstGenerationDirectory);
-        $command->run(CommandArguments::parse([]));
+        CountingCacheableDiscovery::$constructions = 0;
 
-        $command->run(CommandArguments::parse(['--destroy']));
+        $this->installDiscoveryPackage(CountingCacheableDiscovery::class);
 
-        self::assertDirectoryDoesNotExist($firstGenerationDirectory);
-        self::assertDirectoryDoesNotExist($this->projectRoot . '/.kinetis-cache');
+        self::assertSame(0, new BuildCommand(projectRootOverride: $this->projectRoot)->run());
+        self::assertSame(1, CountingCacheableDiscovery::$constructions);
+    }
+
+    /**
+     * Installs a package declaring $discoveryClass as its extra.kinetis
+     * discovery class, through a real vendor/composer/installed.json — so
+     * PackageDiscovery finds it, the compile calls its compile(), and the
+     * build reconstructs the result exactly as a production build does.
+     *
+     * @param class-string $discoveryClass
+     */
+    private function installDiscoveryPackage(string $discoveryClass): void
+    {
+        mkdir($this->projectRoot . '/vendor/composer', 0775, true);
+
+        file_put_contents($this->projectRoot . '/vendor/composer/installed.json', json_encode([
+            'packages' => [
+                [
+                    'name' => 'acme/discovery-fixture',
+                    'install-path' => '../acme/discovery-fixture',
+                    'extra' => ['kinetis' => ['discovery' => $discoveryClass]],
+                ],
+            ],
+        ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * The enum-case sibling of writePoisonedFixture(): the same real
+     * discovery path, declaring the one object default a plan carries.
+     *
+     * @return string the namespace its classes live in
+     */
+    private function writeEnumDefaultFixture(): string
+    {
+        $namespace = self::scannableProject($this->projectRoot, 'BuildCommandEnumFixture');
+
+        file_put_contents($this->projectRoot . '/src/SortDirection.php', <<<PHP
+            <?php
+
+            declare(strict_types=1);
+
+            namespace {$namespace};
+
+            enum SortDirection: string
+            {
+                case Ascending = 'asc';
+
+                case Descending = 'desc';
+            }
+            PHP);
+
+        file_put_contents($this->projectRoot . '/src/SearchRequest.php', <<<PHP
+            <?php
+
+            declare(strict_types=1);
+
+            namespace {$namespace};
+
+            final readonly class SearchRequest
+            {
+                public function __construct(
+                    public string \$term,
+                    public SortDirection \$direction = SortDirection::Descending,
+                ) {}
+            }
+            PHP);
+
+        file_put_contents($this->projectRoot . '/src/SearchController.php', <<<PHP
+            <?php
+
+            declare(strict_types=1);
+
+            namespace {$namespace};
+
+            use Kinetis\\Http\\Attributes\\Body;
+            use Kinetis\\Http\\Attributes\\Post;
+
+            final readonly class SearchController
+            {
+                #[Post('/search')]
+                public function search(#[Body] SearchRequest \$request): array
+                {
+                    return ['direction' => \$request->direction->value];
+                }
+            }
+            PHP);
+
+        return $namespace;
     }
 
     /**
@@ -137,39 +258,13 @@ final class BuildCommandTest extends TestCase
      * compileProject() reflects it via the real ReflectionParameter::
      * getDefaultValue() path (which genuinely returns the instantiated
      * object for a "new in initializers" default, not a compile-time
-     * placeholder), producing a HydrationPlan CacheStore::writeAll()
-     * cannot var_export() back. This is the real mechanism, not a
-     * synthetic stand-in — the same one CacheStoreTest's own
-     * poisonedCompiledCache() constructs directly, reached here through
-     * genuine discovery instead.
+     * placeholder), so the derivation refuses it. This is the real
+     * mechanism, not a synthetic stand-in, reached through genuine
+     * discovery.
      */
     private function writePoisonedFixture(): void
     {
-        $namespace = 'Kinetis\\Tests\\Console\\BuildCommandPoisonedFixture';
-
-        mkdir($this->projectRoot . '/src', 0775, true);
-
-        file_put_contents($this->projectRoot . '/composer.json', json_encode([
-            'autoload' => ['psr-4' => ["{$namespace}\\" => 'src/']],
-        ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
-
-        // NamespaceScanner derives class *names* straight from
-        // composer.json's own psr-4 map, independent of the real
-        // Composer autoloader — but actually reflecting one of those
-        // names (AttributeScope::isRegistrable(), which this discovery
-        // pass calls on every candidate it finds) still needs PHP's own
-        // autoloading to resolve it, and this ad-hoc fixture root was
-        // never composer install'd, so nothing already knows about it.
-        // Registering it directly on the real, already-active
-        // ClassLoader is what a real project's own generated
-        // vendor/autoload.php already does implicitly, since that's
-        // generated from the identical composer.json — this line is the
-        // test-only stand-in for that step.
-        foreach (spl_autoload_functions() as $autoloader) {
-            if (is_array($autoloader) && $autoloader[0] instanceof \Composer\Autoload\ClassLoader) {
-                $autoloader[0]->addPsr4("{$namespace}\\", $this->projectRoot . '/src');
-            }
-        }
+        $namespace = self::scannableProject($this->projectRoot, 'BuildCommandPoisonedFixture');
 
         file_put_contents($this->projectRoot . '/src/PoisonedDto.php', <<<PHP
             <?php
@@ -205,6 +300,42 @@ final class BuildCommandTest extends TestCase
                 }
             }
             PHP);
+    }
+
+    /**
+     * A real, scannable PSR-4 project root: composer.json's own psr-4
+     * map, plus the src/ directory the files below go into.
+     *
+     * NamespaceScanner derives class *names* straight from that map,
+     * independent of the real Composer autoloader — but actually
+     * reflecting one of those names (AttributeScope::isRegistrable(),
+     * which this discovery pass calls on every candidate it finds) still
+     * needs PHP's own autoloading to resolve it, and an ad-hoc fixture
+     * root was never composer install'd, so nothing already knows about
+     * it. Registering it on the real, already-active ClassLoader is what
+     * a real project's generated vendor/autoload.php does implicitly,
+     * being generated from the identical composer.json — the loop below
+     * is the test-only stand-in for that step.
+     *
+     * @return string the fully-qualified namespace the fixture files declare
+     */
+    private static function scannableProject(string $projectRoot, string $name): string
+    {
+        $namespace = 'Kinetis\\Tests\\Console\\' . $name;
+
+        mkdir($projectRoot . '/src', 0775, true);
+
+        file_put_contents($projectRoot . '/composer.json', json_encode([
+            'autoload' => ['psr-4' => ["{$namespace}\\" => 'src/']],
+        ], JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
+
+        foreach (spl_autoload_functions() as $autoloader) {
+            if (is_array($autoloader) && $autoloader[0] instanceof \Composer\Autoload\ClassLoader) {
+                $autoloader[0]->addPsr4("{$namespace}\\", $projectRoot . '/src');
+            }
+        }
+
+        return $namespace;
     }
 
     private function removeDirectory(string $directory): void

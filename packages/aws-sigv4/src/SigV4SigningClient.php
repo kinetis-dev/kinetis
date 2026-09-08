@@ -5,19 +5,16 @@ declare(strict_types=1);
 namespace Kinetis\AwsSigV4;
 
 use AsyncAws\Core\Configuration;
-use AsyncAws\Core\Credentials\CacheProvider;
-use AsyncAws\Core\Credentials\ChainProvider;
 use AsyncAws\Core\Credentials\CredentialProvider;
-use AsyncAws\Core\Request as AwsRequest;
-use AsyncAws\Core\RequestContext;
-use AsyncAws\Core\Signer\SignerV4;
-use AsyncAws\Core\Stream\StringStream;
+use DateTimeImmutable;
+use DateTimeZone;
 use Kinetis\AwsSigV4\Exception\NetworkFailureException;
 use Kinetis\AwsSigV4\Exception\SigningException;
 use Kinetis\AwsSigV4\Exception\TransportFailureException;
 use Kinetis\AwsSigV4\Exception\UnsignableRequestException;
 use Kinetis\AwsSigV4\Exception\UntrustedOriginException;
 use Nyholm\Psr7\Factory\Psr17Factory;
+use Nyholm\Psr7\Request;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Client\NetworkExceptionInterface;
 use Psr\Http\Message\RequestInterface;
@@ -29,15 +26,9 @@ use Throwable;
 
 /**
  * A PSR-18 client that signs every outgoing request with AWS Signature
- * Version 4 and sends it to one configured origin. The signing math is
- * `AsyncAws\Core\Signer\SignerV4`, the signer every AsyncAws service
- * client already uses; this class converts a PSR-7 request into
- * AsyncAws's own `Request` shape, resolves credentials, signs, and
- * copies the resulting headers (`Authorization`, `X-Amz-Date`, `Host`,
- * and `X-Amz-Security-Token` when a session token is present) back onto
- * a PSR-7 request. Every other header — value count and order for a
- * repeated header included — is left as it was; see
- * applySignedHeaders().
+ * Version 4 and sends it to one configured origin. {@see Signature}
+ * owns the algorithm; this class owns the target, the credentials, the
+ * body, and the failure boundary.
  *
  * $service is the AWS signing service name ("es" for Amazon OpenSearch
  * Service, "execute-api" for API Gateway). It has no default: it varies
@@ -50,25 +41,25 @@ use Throwable;
  * from this client may reach, and the only path prefix it may reach it
  * under — see {@see TrustedOrigin} for the grammar it must satisfy and
  * how origins are compared. A relative request is resolved against it;
- * an absolute request must already name it. Every target that does not —
- * a different host, a different port, an `http` target under an `https`
- * origin, a `//host/path` network-path reference, userinfo, a control
- * character or backslash, a malformed percent escape, a path outside the
- * base path — is rejected with `UntrustedOriginException` before the
- * credential provider is called, before the body is read, and before
- * the transport is touched.
+ * an absolute request must already name it. Every target that does not
+ * — a different host, a different port, an `http` target under an
+ * `https` origin, a `//host/path` network-path reference, userinfo, a
+ * control character or backslash, a malformed percent escape, a path
+ * outside the base path — is rejected with `UntrustedOriginException`
+ * before the credential provider is called, before the body is read,
+ * and before the transport is touched.
  *
  * ## What is signed is what is sent
  *
  * The target is put into its wire form by {@see WireTarget} before the
- * origin check and before signing, and the URI that reaches the
- * transport is built by this package from the origin's own canonical
- * authority. An HTTP client that resolves `/a/../b` or decodes `/%7Efoo`
- * after signing would otherwise send a target the signature was never
- * computed over, and dot segments — spelled `..` or `%2E%2E` — would
- * reach past the configured base path with a signature that says
- * nothing about where they landed. Origin and base path are both
- * checked against that final form.
+ * origin check and before signing, and the request that goes out is
+ * built here from the origin's own canonical authority rather than
+ * carried over from the caller's. An HTTP client that resolves `/a/../b`
+ * or decodes `/%7Efoo` after signing would otherwise send a target the
+ * signature was never computed over, and dot segments — spelled `..` or
+ * `%2E%2E` — would reach past the configured base path with a signature
+ * that says nothing about where they landed. Origin and base path are
+ * both checked against that final form.
  *
  * ## Redirects are terminal, and one send is one request
  *
@@ -103,31 +94,27 @@ use Throwable;
  *
  * ## What is synchronous
  *
- * A request through the transport, and the credential chain's own
- * ECS/EKS/IMDS lookups, suspend the calling Fiber rather than blocking
- * it: {@see SignedTransport} is AMPHP-backed. Everything else is
- * synchronous PHP work on the calling thread: the shared credentials and
- * config files, an SSO cache file, and a web identity token file are
- * read with blocking filesystem calls, and capturing and hashing the
- * request body is CPU work.
+ * A request through the transport, and every credential lookup that
+ * reaches the network — STS assume-role, web identity, ECS, EKS pod
+ * identity, IMDS — suspend the calling Fiber rather than blocking it:
+ * all of them run on {@see SignedTransport}, which is AMPHP-backed.
+ * Everything else is synchronous PHP work on the calling thread: the
+ * shared credentials and config files, an SSO cache file, and a web
+ * identity token file are read with blocking filesystem calls on first
+ * resolution and on each refresh, and capturing and hashing the request
+ * body is CPU work.
+ *
+ * ## The body is consumed
  *
  * SigV4 signs over the body's exact bytes, so `sendRequest()` reads the
- * whole body into memory as a plain string more than once —
- * withReplayableBody() reads it to build the SpooledStream replacement,
- * and toAwsRequest() reads that replacement again to compute the
- * signature. Peak memory for a signed request is a multiple of the
- * body's size; `SpooledStream`'s `php://temp` backing keeps the
- * long-lived copy off the heap past 2MB but does nothing about the
- * transient ones. There is no size ceiling on what this class will
- * sign; a ceiling on what may be uploaded to S3 belongs to
- * `kinetis/storage-s3`, where such an upload is built.
- *
- * A non-seekable body (`StreamInterface::isSeekable() === false`) is
- * read from wherever its cursor sits, since rewinding one is impossible
- * — supply such a body positioned at its start. A seekable body's
- * original position is restored once signing finishes, success or
- * failure: the stream the caller built the request with is the one this
- * class reads.
+ * caller's stream once, from wherever its cursor sits through EOF, and
+ * sends a fresh stream built from those bytes. The caller's own stream
+ * is left at EOF: signing consumes it. A body positioned mid-stream is
+ * signed and sent from that position, and a body that has already been
+ * read signs and sends as empty. Peak memory for a signed request is a
+ * multiple of the body's size, and there is no size ceiling on what
+ * this class will sign; a ceiling on what may be uploaded to S3 belongs
+ * to `kinetis/storage-s3`, where such an upload is built.
  */
 final class SigV4SigningClient implements ClientInterface
 {
@@ -146,11 +133,13 @@ final class SigV4SigningClient implements ClientInterface
 
     private readonly TrustedOrigin $origin;
 
-    private readonly SignerV4 $signer;
+    private readonly Signature $signature;
 
     private readonly Configuration $configuration;
 
     private readonly CredentialProvider $credentialProvider;
+
+    private readonly Psr17Factory $streams;
 
     private readonly ClientInterface $client;
 
@@ -168,14 +157,19 @@ final class SigV4SigningClient implements ClientInterface
      * one delegate call per request with `max_redirects => 0` and no
      * interceptor above it, so nothing that retries or follows a
      * `Location` fits underneath a signature. Null builds the default,
-     * used for both the signed request and the default credential chain.
+     * used for both the signed request and the default credential
+     * chain.
+     *
+     * $credentialProvider replaces {@see CredentialChain} entirely, and
+     * a provider passed here stays the caller's: this class holds
+     * nothing it returns.
      */
     public function __construct(
         #[SensitiveParameter] string $origin,
         string $region,
         string $service,
         #[SensitiveParameter] ?CredentialProvider $credentialProvider = null,
-        private readonly ?\DateTimeImmutable $now = null,
+        private readonly ?DateTimeImmutable $now = null,
         #[SensitiveParameter] ?SignedTransport $transport = null,
     ) {
         if (preg_match(self::NAME_PATTERN, $region) !== 1) {
@@ -187,15 +181,14 @@ final class SigV4SigningClient implements ClientInterface
         }
 
         $this->origin = TrustedOrigin::parse($origin);
-        $this->signer = new SignerV4($service, $region);
+        $this->signature = new Signature($region, $service);
         $this->configuration = Configuration::create([]);
 
         $transport ??= SignedTransport::create();
-        $psr17 = new Psr17Factory();
+        $this->streams = new Psr17Factory();
 
-        $this->client = new Psr18Client($transport, $psr17, $psr17);
-        $this->credentialProvider = $credentialProvider
-            ?? new CacheProvider(ChainProvider::createDefaultChain($transport));
+        $this->client = new Psr18Client($transport, $this->streams, $this->streams);
+        $this->credentialProvider = $credentialProvider ?? new CredentialChain($transport);
     }
 
     /**
@@ -212,10 +205,10 @@ final class SigV4SigningClient implements ClientInterface
     #[\Override]
     public function sendRequest(#[SensitiveParameter] RequestInterface $request): ResponseInterface
     {
-        $onOrigin = self::pointedAt($request, $this->trustedTarget($request));
+        $target = $this->trustedTarget($request);
 
         try {
-            $prepared = $this->withReplayableBody($onOrigin);
+            $payload = $request->getBody()->getContents();
         } catch (Throwable) {
             throw UnsignableRequestException::bodyCaptureFailed($request);
         }
@@ -231,15 +224,23 @@ final class SigV4SigningClient implements ClientInterface
         }
 
         try {
-            $foldedHeaders = self::foldHeaders($prepared);
-            $awsRequest = $this->toAwsRequest($prepared, $foldedHeaders);
-            // RequestContext's own 'region' option is read only by
-            // AbstractApi::getSigner()'s signer selection, which this
-            // class bypasses by constructing SignerV4 with $region
-            // already fixed in; SignerV4::sign() reads getCurrentDate().
-            $this->signer->sign($awsRequest, $credentials, new RequestContext(['currentDate' => $this->now]));
-
-            $signed = $this->applySignedHeaders($prepared, $foldedHeaders, $awsRequest);
+            // The outgoing request is this package's own: PSR-7 requires
+            // no agreement between a URI's components and the string a
+            // request renders them as, and the transport sends the
+            // string, so a caller's withUri() is not what the origin
+            // check is worth trusting to.
+            $signed = $this->signature->sign(
+                new Request(
+                    $request->getMethod(),
+                    $target,
+                    $request->getHeaders(),
+                    $this->streams->createStream($payload),
+                    $request->getProtocolVersion(),
+                ),
+                $credentials,
+                $payload,
+                $this->now ?? new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            );
         } catch (Throwable) {
             throw UnsignableRequestException::signingFailed($request);
         }
@@ -264,33 +265,6 @@ final class SigV4SigningClient implements ClientInterface
     private static function hasMalformedEscape(#[SensitiveParameter] string $component): bool
     {
         return preg_match('/%(?![0-9A-Fa-f]{2})/', $component) === 1;
-    }
-
-    /**
-     * Points $request at the trusted target, or throws.
-     *
-     * PSR-7 requires no agreement between a URI's components and the
-     * string a request renders them as, and the transport sends the
-     * string — so a request that will not take the target whole would be
-     * signed for one target and sent to another. Both ways that can
-     * happen, a `withUri()` that throws and one that answers with
-     * something else, end here rather than in a signature.
-     */
-    private static function pointedAt(
-        #[SensitiveParameter] RequestInterface $request,
-        #[SensitiveParameter] UriInterface $target,
-    ): RequestInterface {
-        try {
-            $onOrigin = $request->withUri($target);
-        } catch (Throwable) {
-            throw UntrustedOriginException::forRequest($request);
-        }
-
-        if ((string) $onOrigin->getUri() !== (string) $target) {
-            throw UntrustedOriginException::forRequest($request);
-        }
-
-        return $onOrigin;
     }
 
     /**
@@ -350,116 +324,5 @@ final class SigV4SigningClient implements ClientInterface
         }
 
         return $this->origin->targetFor($path, WireTarget::normalizeEncoding($uri->getQuery()));
-    }
-
-    /**
-     * Replaces the request's body with a fresh SpooledStream built from
-     * its full contents, so neither the signing step nor the transport's
-     * own later read has to seek the original stream. PSR-7 permits a
-     * non-seekable stream, and `rewind()` must throw when seeking fails,
-     * which is why one is captured this way rather than rewound.
-     *
-     * A seekable stream is rewound first, so the full body is captured
-     * rather than whatever remains from wherever the cursor was left,
-     * and its original position is saved beforehand and restored in a
-     * finally block: the caller holds a reference to that same stream
-     * object, so reading it is a visible mutation of theirs. A
-     * non-seekable stream is read from its current position.
-     */
-    private function withReplayableBody(#[SensitiveParameter] RequestInterface $request): RequestInterface
-    {
-        $body = $request->getBody();
-
-        if (!$body->isSeekable()) {
-            return $request->withBody(new SpooledStream($body->getContents()));
-        }
-
-        $originalPosition = $body->tell();
-
-        try {
-            $body->rewind();
-
-            return $request->withBody(new SpooledStream($body->getContents()));
-        } finally {
-            $body->seek($originalPosition);
-        }
-    }
-
-    /**
-     * A PSR-7 header may carry more than one value; AsyncAws's `Request`
-     * holds one string per name, so every value list is comma-joined
-     * into the single string it expects. This folded map is canonical
-     * input for SignerV4 only. Writing it back would merge a caller's
-     * two-valued header into one — see applySignedHeaders().
-     *
-     * @return array<string, string>
-     */
-    private static function foldHeaders(#[SensitiveParameter] RequestInterface $request): array
-    {
-        $headers = [];
-
-        foreach ($request->getHeaders() as $name => $values) {
-            $headers[$name] = implode(', ', $values);
-        }
-
-        return $headers;
-    }
-
-    /**
-     * @param array<string, string> $foldedHeaders
-     */
-    private function toAwsRequest(
-        #[SensitiveParameter] RequestInterface $request,
-        #[SensitiveParameter] array $foldedHeaders,
-    ): AwsRequest {
-        // $request's body is a SpooledStream by this point (see
-        // withReplayableBody()), so the read below can be followed by a
-        // rewind() that cannot throw, leaving the body at 0 for the
-        // transport's own later read.
-        $body = $request->getBody()->getContents();
-        $request->getBody()->rewind();
-
-        $awsRequest = new AwsRequest($request->getMethod(), '', [], $foldedHeaders, StringStream::create($body));
-        $awsRequest->setEndpoint((string) $request->getUri());
-
-        return $awsRequest;
-    }
-
-    /**
-     * Applies only the headers `SignerV4::sign()` added or changed,
-     * found by comparing what comes back against $foldedHeaders (the map
-     * handed to it as input) rather than by copying every header back. A
-     * header the signer never touched keeps the caller's own value list
-     * — count, order, and bytes; a header whose folded value differs
-     * after signing is written with withHeader() as a single value,
-     * which is the shape AsyncAws's Request stores every header in.
-     *
-     * Not name-hardcoded to Authorization/X-Amz-Date/Host/
-     * X-Amz-Security-Token: SignerV4::sign() also sets
-     * X-Amz-Content-Sha256 for a streaming body, and a fixed list stops
-     * matching the signer the moment it signs with something else.
-     *
-     * This class calls Signer::sign(), never Signer::presign(), and the
-     * only place SignerV4 removes a header — convertHeaderToQuery(),
-     * moving x-amz-* headers into the query string — is on the presign()
-     * path, so nothing here reconciles a header present in
-     * $foldedHeaders and absent from $signed->getHeaders().
-     *
-     * @param array<string, string> $foldedHeaders
-     */
-    private function applySignedHeaders(
-        #[SensitiveParameter] RequestInterface $request,
-        #[SensitiveParameter] array $foldedHeaders,
-        #[SensitiveParameter] AwsRequest $signed,
-    ): RequestInterface {
-        foreach ($signed->getHeaders() as $name => $value) {
-            if (($foldedHeaders[$name] ?? null) === $value) {
-                continue;
-            }
-
-            $request = $request->withHeader($name, $value);
-        }
-
-        return $request;
     }
 }

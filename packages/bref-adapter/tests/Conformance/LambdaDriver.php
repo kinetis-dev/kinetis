@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\BrefAdapter\Tests\Conformance;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
+use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\Middleware\RequestBodyMiddleware;
+use Kinetis\Http\MiddlewarePipeline;
 use Kinetis\Testing\Runtime\AdapterRejection;
 use Kinetis\Testing\Runtime\ObservedRequest;
 use Kinetis\Testing\Runtime\Outcome;
@@ -13,6 +16,8 @@ use Kinetis\Testing\Runtime\ResponseSpec;
 use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
 use Kinetis\Testing\Runtime\WireRequest;
 use Kinetis\Testing\Runtime\WireResponse;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Throwable;
 
 /**
@@ -40,13 +45,20 @@ final class LambdaDriver implements RuntimeAdapterDriver
     private const string SCHEME = 'https';
 
     /**
-     * The default policy, stated rather than defaulted: an adapter is
-     * constructed with the byte ceiling its application configured, and
-     * a driver stands in for that application.
+     * The one middleware a real application reaches through the Kernel's
+     * global pipeline, wired directly because there is no Kernel here.
+     * The adapter delivers a raw body; this is what bounds and parses it,
+     * under the default ceiling a driver stands in for its application to
+     * configure.
+     *
+     * @param callable(ServerRequestInterface): ResponseInterface $handler
      */
-    private static function limits(): FormLimits
+    private static function throughBodyMiddleware(callable $handler): MiddlewarePipeline
     {
-        return new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES);
+        return new MiddlewarePipeline(
+            [new RequestBodyMiddleware(new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES))],
+            new CallableRequestHandler($handler(...)),
+        );
     }
 
     #[\Override]
@@ -58,7 +70,7 @@ final class LambdaDriver implements RuntimeAdapterDriver
         });
 
         try {
-            $payload = BrefLambdaAdapter::handleEvent(self::eventFor($request), $handler, self::limits());
+            $payload = BrefLambdaAdapter::handleEvent(self::eventFor($request), self::throughBodyMiddleware($handler)->handle(...));
             // The real loop JSON-encodes the payload before posting it;
             // "this response survives JSON encoding" is the guarantee the
             // binary-body path exists for, so prove it here too.
@@ -106,19 +118,6 @@ final class LambdaDriver implements RuntimeAdapterDriver
     }
 
     #[\Override]
-    public function unparseableFormRequest(): WireRequest
-    {
-        // A boundary this adapter's own parser can find nowhere in the
-        // body: the parts never begin, so there is no form to build.
-        return new WireRequest(
-            'POST',
-            '/',
-            headers: [['Content-Type', 'multipart/form-data; boundary=----XYZ']],
-            body: 'this is not a multipart body at all',
-        );
-    }
-
-    #[\Override]
     public function expectedScheme(): string
     {
         return self::SCHEME;
@@ -146,6 +145,15 @@ final class LambdaDriver implements RuntimeAdapterDriver
         // and the value is still validated rather than believed, which
         // LambdaRequestIdentity does.
         return true;
+    }
+
+    #[\Override]
+    public function supportsPlaintextRequests(): bool
+    {
+        // An HTTP API and a Function URL terminate TLS themselves and
+        // expose no plaintext listener, so an event naming `http` is one
+        // the platform cannot have delivered — see LambdaRequestIdentity.
+        return false;
     }
 
     /**

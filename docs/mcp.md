@@ -10,10 +10,12 @@ composer require kinetis/mcp
 ```
 
 That one install registers everything below — the `kinetis mcp:serve`
-command, the `/mcp` HTTP endpoint, and Kinetis's own documentation as
-readable resources — through the package's `extra.kinetis` declaration,
-with nothing to wire by hand. Without the package, none of it exists:
-core has no MCP surface of its own.
+command and the `/mcp` HTTP endpoint — through the package's
+`extra.kinetis` declaration, with nothing to wire by hand. Without the
+package, none of it exists: core has no MCP surface of its own.
+
+For Kinetis's *own* documentation as MCP resources, in any project and
+without this package, see {doc}`mcp-docs`.
 
 ## Tools and resources
 
@@ -72,6 +74,10 @@ more on that distinction [below](#error-handling).
 The tool's JSON Schema input is built automatically from the method's
 parameters, so `#[Email]`/`#[MinLength]`/etc. describe an MCP tool's
 arguments exactly as precisely as they describe an HTTP request body.
+`#[Regex]` and `#[NotBlank]` are the exceptions in both: no JSON Schema
+keyword carries a PHP PCRE, and none carries `#[NotBlank]`'s trim-aware
+blank-string semantics, so those two check an argument at runtime only.
+See {doc}`routing-validation`'s "Validation constraints".
 
 ## Transports
 
@@ -192,28 +198,17 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
    A tool that constructor-injects `CurrentUserInterface` (or resolves
    it from its injected `RequestScope`) sees exactly the identity the
    middleware resolved for this message — the same mechanism an HTTP
-   controller already uses. This holds for an ordinary call and a
-   progress-streamed one alike: a streamed `tools/call` runs on a
-   *second* scope, created after the request's own is disposed (see
-   below), and this identity is carried across to it.
+   controller already uses.
 
-   **The portable identity handoff carries both `CurrentUserInterface`
-   and a concrete class, when one was published too.**
-   `JwtAuthMiddleware` publishes the same authenticated instance under
-   both `CurrentUserInterface` *and* its own concrete `JwtUser` class —
-   documented on that class specifically because a tool needing a claim
-   only `JwtUser` itself exposes (`jti`, for revocation, most commonly)
-   has to inject the concrete class directly rather than the interface.
-   Both ids resolve to the exact same object, on an ordinary call and a
-   streamed one alike; a custom middleware publishing an authenticated
-   user under its own concrete class the identical way gets the same
-   treatment automatically — the mechanism only ever asks "what else, if
-   anything, already resolves to this exact instance," so it works for
-   any concrete class, not one hardcoded to a particular auth package
-   (this package has no dependency on `kinetis/auth-jwt`/`kinetis/auth`
-   at all). A middleware that publishes only `CurrentUserInterface` (the
-   plain `BearerAuthMiddleware` case) carries only that — there is no
-   second id to preserve.
+   **A progress-streamed call is no different.** The tool runs on the
+   request's own scope in both shapes: `Kernel` keeps that scope alive
+   for a response that streams its own body and disposes it once the
+   stream is settled (see {doc}`container`), and the SSE emitter
+   dispatches on it. So everything the middleware published is simply
+   still there, under every id it used — the interface, a concrete class
+   alongside it the way `JwtAuthMiddleware` publishes `JwtUser`, and
+   anything else request-scoped a middleware registers for a tool to
+   inject.
 
 3. **The identity guard, last.** `McpIdentityGuardMiddleware` is a
    permanent group member at priority `0`, so it sees the scope
@@ -250,9 +245,9 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
    ```{note}
    **Upgrading a deployment that pre-warms its cache.** A middleware
    group's membership is compiled data (see {doc}`caching`), and a
-   published generation is only ever superseded by a cache *format*
-   change, which a group gaining a member is not. A generation compiled
-   by a `kinetis/mcp` without the guard therefore stays valid and keeps
+   published artifact is only ever superseded by a cache *format* change,
+   which a group gaining a member is not. An artifact compiled by a
+   `kinetis/mcp` without the guard therefore stays valid and keeps
    serving `/mcp` without it, so run `bin/kinetis build` in the deploy
    that upgrades the package. Development's live discovery, and a
    production deployment that compiles lazily against an empty
@@ -261,11 +256,10 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
 
 Global middleware wraps `/mcp` too, like every route — the group exists
 for what should apply to this endpoint only. That includes
-`MaxBodySizeMiddleware` (see {doc}`middleware`): `McpController` reads
-the request body via `getContents()`, not a plain string cast, so an
-oversized JSON-RPC body — with or without an honest `Content-Length`
-header — gets the same `413` any other route gets, before `McpServer`
-ever sees a decoded message.
+`RequestBodyMiddleware` (see {doc}`middleware`), which stages and
+bounds the body before any route runs, so an oversized JSON-RPC body —
+with or without an honest `Content-Length` header — gets the same `413`
+any other route gets, before `McpServer` ever sees a decoded message.
 
 ## The protocol
 
@@ -539,24 +533,27 @@ process over what was only ever an observability failure.
 
 ### A disposal failure never suppresses an already-computed response
 
-Both transports that create a per-message `RequestScope` — `bin/kinetis
-mcp:serve`'s stdio loop, and the streamed HTTP response a `_meta.progressToken`
-request gets — attempt to write the JSON-RPC response the message already
-produced, then dispose that scope in a `finally` around the whole attempt.
-That ordering is deliberately different from a naive `finally`-wraps-
+`bin/kinetis mcp:serve`'s stdio loop creates a `RequestScope` per
+message: it writes the JSON-RPC response that message already produced,
+then disposes that scope in a `finally` around the whole attempt. That
+ordering is deliberately different from a naive `finally`-wraps-
 everything shape: the disposal step itself is guaranteed never to throw
 (any failure disposing is caught, logged separately through `AppScope`'s
 own logger — the message's own scope is already disposed by then — and
 discarded), which is exactly what makes it safe to run from inside a
 `finally` at all; see {doc}`container`'s own general explanation of why an
-ordinary `finally`-based dispose is unsafe everywhere else. Two outcomes
-follow from this: a disposal failure can never suppress a response that
-was successfully written, and never surfaces as a second JSON-RPC
-message; and if the write itself genuinely fails — a closed or broken
-stdio stream, or (over the streamed HTTP transport specifically) an
-output-buffer handler installed further up the call stack throwing when
-the final flush invokes it — that failure still propagates as the real
-primary failure exactly as it always would have. This is not a path a
+ordinary `finally`-based dispose is unsafe everywhere else. Over HTTP the
+scope is the request's own and `Kernel` owns disposing it, on the same
+terms: the streamed response releases it once the emitter returns or
+fails, containing and logging a disposal failure rather than raising it.
+
+Two outcomes follow, on either transport: a disposal failure can never
+suppress a response that was successfully written, and never surfaces as
+a second JSON-RPC message; and if the write itself genuinely fails — a
+closed or broken stdio stream, or (over the streamed HTTP transport
+specifically) an output-buffer handler installed further up the call
+stack throwing when the final flush invokes it — that failure still
+propagates as the real primary failure. This is not a path a
 tool's own result can trigger: every JSON-RPC response `handle()` builds
 is already `json_encode()`d, and any failure doing so, internally, is
 already caught and converted to the ordinary `isError: true` result
@@ -572,46 +569,6 @@ either way: nothing about disposal timing changes when
 `notifications/progress` events are written, only when the scope backing
 the call is torn down afterward.
 
-## Exposing Kinetis's own docs as a resource
-
-`Kinetis\Mcp\KinetisDocsResource` registers every page of this documentation
-site as an MCP resource — `kinetis://docs/tutorial`,
-`kinetis://docs/routing-validation`, and so on — so an agent working in
-*your* codebase can read Kinetis's own docs the same way it reads your
-app's resources, instead of relying on stale training data about the
-framework:
-
-Included automatically on both transports — the class lives under this
-package's own scan root, so discovery finds it exactly the way it finds
-your application's resources. Registering it explicitly
-(`$registry->register(KinetisDocsResource::class)`) is only needed for a
-hand-wired `McpRegistry` that never goes through discovery.
-
-Each resource returns the actual `docs/*.md` source as `text/markdown` —
-read from the monorepo when developing Kinetis itself, and fetched from
-the published documentation otherwise — so there's nothing to keep in
-sync as pages change.
-
-### A standalone docs server for Claude Code
-
-No Kinetis project needed for this — one command installs
-`kinetis/framework` into its own directory and registers Kinetis's docs
-as an MCP server in Claude Code directly:
-
-```{code-block} bash
-curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setup-docs-mcp.sh | bash
-```
-
-Requires a running Docker daemon and the `claude` CLI already on your
-machine — nothing else, no PHP or Composer of your own, and no `sudo`:
-everything it does runs as your own user, writing only to
-`~/.kinetis-mcp` and your own Claude Code configuration. Start a new
-Claude Code session afterward to use it.
-
-The registered server checks for a newer `kinetis/framework` release on
-its own, at most once a day, so it stays current without needing to be
-set up again.
-
 ## See also
 
 - {doc}`routing-validation` — `Hydrator`/`JsonSchema`, the validation
@@ -619,3 +576,6 @@ set up again.
 - {doc}`logging` — registering the logger `McpServer` uses.
 - {doc}`caching` — how tool/resource discovery is part of the AOT cache
   in production, avoiding live reflection entirely.
+- {doc}`mcp-docs` — the standalone server for Kinetis's own
+  documentation, which needs neither this package nor a Kinetis
+  project.

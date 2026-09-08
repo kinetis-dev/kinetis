@@ -137,7 +137,7 @@ final class ThrowingTelemetry implements TelemetryInterface
     }
 
     #[\Override]
-    public function taskStarted(int $index): mixed
+    public function taskStarted(int $index, mixed $batchToken): mixed
     {
         $this->fail();
     }

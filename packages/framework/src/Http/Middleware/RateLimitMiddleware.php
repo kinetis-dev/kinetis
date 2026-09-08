@@ -8,7 +8,6 @@ use Kinetis\Http\Middleware\Exception\InvalidRateLimitConfigException;
 use Kinetis\Http\Middleware\Exception\RateLimitUnavailableException;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\SimpleCache\AtomicCounterInterface;
-use Kinetis\SimpleCache\Counter;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -23,22 +22,29 @@ use Psr\SimpleCache\CacheInterface;
  * Kinetis\SimpleCache\AtomicCounterInterface. A cache lacking it can only
  * count by reading the value and writing it back, which is not safe
  * across processes: every request in flight reads the same number before
- * any of them writes, so each one believes it is the first. Measured
- * against a real Redis, that fallback let a limit of 5 admit all 40
- * requests that arrived together — a rate limiter that stops applying
- * under the exact concurrent load it exists to resist is not a rounding
- * error, so this is rejected at construction rather than left to a flag
- * (`Counter::isAtomic()`) the application has to remember to check.
- * NullSimpleCache is checked first, for its own clearer message: a
- * counter that never stores anything enforces no limit at all while
- * still emitting healthy-looking X-RateLimit-* headers.
+ * any of them writes, so each one believes it is the first. That is
+ * rejected at construction rather than left to a flag the application has
+ * to remember to check. NullSimpleCache is checked first, for its own
+ * clearer message: a counter that never stores anything enforces no limit
+ * at all while still emitting healthy-looking X-RateLimit-* headers.
  *
- * Keyed by client IP by default, sha256-hashed (PSR-16 forbids `{}()/\@:`
- * in a key, and IPv6 addresses are full of colons). Holds no per-request
- * state as instance properties — the per-request bookkeeping this class
- * needs (see "Composing two policies" below) lives entirely on the PSR-7
- * request object, never on `$this` — so it's safe as either global
- * (AppScope-resolved singleton) or route middleware.
+ * **`$policyId` is the policy's identity.** It names which policy owns
+ * the counter, and nothing else does: two instances constructed with the
+ * same ID count one subject against one shared budget and dedupe as one
+ * check, and two policies that must not share a budget are given
+ * different IDs. Configuration is not identity, so raising a limit or
+ * adding a trusted proxy leaves every counter a running deployment
+ * already holds where it is. The ID is trusted application configuration
+ * — non-empty is the only requirement — and is sha256-hashed once at
+ * construction into this policy's cache-key prefix, since PSR-16 forbids
+ * `{}()/\@:` in a key.
+ *
+ * Keyed by client IP by default, hashed the same way (an IPv6 address is
+ * full of colons). Holds no per-request state as instance properties —
+ * the per-request bookkeeping this class needs (see "Composing two
+ * policies" below) lives entirely on the PSR-7 request object, never on
+ * `$this` — so it is safe as either global (AppScope-resolved singleton)
+ * or route middleware.
  *
  * `$trustedProxies` is empty by default, so `identifierFor()` always uses
  * the raw `REMOTE_ADDR` — never client-settable `X-Forwarded-For` — unless
@@ -48,65 +54,48 @@ use Psr\SimpleCache\CacheInterface;
  * answer: the same object, and the same chain-walking rules, the runtime
  * adapters apply to the same headers before the Kernel runs.
  *
- * Per-route limits: since `#[Middleware(...)]` only ever carries a
- * class-string with no arguments, a different limit for a different route
- * means a thin subclass overriding the constructor defaults (this class is
- * deliberately not `final`, unlike almost everything else here) or a
- * distinct `AppScope::bind()` closure.
- *
- * **Every counter is scoped to the policy that owns it, not just the
- * subject being counted.** The policy identity folds in `static::class`,
- * `$maxAttempts`, `$windowSeconds`, `$trustedProxies`, and `$namespace` —
- * two policies that would otherwise collide on subject+window alone (a
- * 60/minute global limiter and a 5/minute route limiter checked in the
- * same minute, say) get genuinely independent counters instead of
- * silently sharing one. `$trustedProxies` is included because it changes
- * which identifier `identifierFor()` even resolves to, exactly the same
- * as `$maxAttempts`/`$windowSeconds` do — canonicalized to a sorted,
- * duplicate-free set first, since two CIDR lists with the same members in
- * a different order or with a repeated entry authorize identically and
- * must be treated as the identical policy. `$namespace` is the explicit
- * escape hatch for the one case configuration alone can't infer: two
- * policies with the *identical* class and limits guarding different
- * things (a login endpoint and a 2FA endpoint, both
- * `RateLimitMiddleware($cache, 5, 60)`) — pass a distinct string to each
- * so they don't share a bucket. See {doc}`middleware`'s "Composing more
- * than one policy" section for the deployment consequence of any of this
- * changing on an already-running system.
+ * Since `#[Middleware(...)]` only ever carries a class-string with no
+ * arguments, a policy reached that way is a thin subclass passing its own
+ * ID and limits to this constructor (this class is deliberately not
+ * `final`, unlike almost everything else here). A global policy is that
+ * same subclass, or an `AppScope::bind()` closure for this class.
  *
  * **Composing two policies.** A global limiter (outermost) and a route
  * limiter (innermost) each increment their own counter and each decide
  * independently — but two things need explicit handling once both are in
  * the same request's pipeline:
  *
- * - *The same policy registered twice* (typically by mistake — once
- *   globally, once again on the matched route) must still count as one
- *   check, not two, against one incoming request. `process()` records its
- *   decision — the resulting attempt count and the window it was counted
- *   against — as a PSR-7 request attribute, keyed by the policy's own
- *   identity plus the request's own subject, deliberately *not* the
- *   window: a second instance of the identical policy checking the
- *   identical subject reads that recorded decision back and reuses it
- *   wholesale — including the original window, for a truthful
- *   `Retry-After` — instead of incrementing the counter again or
- *   resolving its own, possibly later, window. A slow intervening
- *   middleware crossing a real window boundary between the two
- *   occurrences must not be read as two independent checks just because
- *   each would otherwise resolve a different window on its own.
- * - *Two genuinely different policies* must never let one's headers
+ * - *The same policy twice in one pipeline* — typically registered once
+ *   globally and again, redundantly, on the matched route — must still
+ *   count as one check against one incoming request. `process()` records
+ *   its decision — the resulting attempt count and the window it was
+ *   counted against — as a PSR-7 request attribute, keyed by policy ID
+ *   plus the request's own subject and deliberately *not* the window: the
+ *   second occurrence reads that decision back and reuses it wholesale,
+ *   including the original window for a truthful `Retry-After`, instead
+ *   of incrementing the counter again or resolving its own, possibly
+ *   later, window. A slow intervening middleware crossing a real window
+ *   boundary between the two occurrences must not be read as two
+ *   independent checks.
+ * - *Two different policies* must never let one's headers
  *   clobber the other's. `X-RateLimit-Limit`/`X-RateLimit-Remaining` are
  *   only ever set on a response that doesn't already carry them — so the
  *   innermost policy to actually run (closest to the controller, whether
  *   it succeeded or rejected with 429) is the one whose real numbers
  *   reach the client, and an outer policy that is itself within budget
- *   never overwrites them with its own, unrelated ones. This is a
- *   deliberate, documented rule, not an accident of registration order.
+ *   never overwrites them with its own, unrelated ones.
  */
 class RateLimitMiddleware implements MiddlewareInterface
 {
     private const string EXECUTED_ATTRIBUTE = 'kinetis.rate-limit.executed';
 
-    private readonly Counter $counter;
+    private readonly AtomicCounterInterface $counter;
+
+    /**
+     * This policy's identity, reduced once to a fixed-width, PSR-16-safe
+     * prefix for every cache key and dedup key it owns.
+     */
+    private readonly string $policyPrefix;
 
     /**
      * This policy's own edge, as the one object that answers "who is
@@ -127,15 +116,15 @@ class RateLimitMiddleware implements MiddlewareInterface
      * of reading the real system clock. `null` (the default, and the
      * only thing any real caller ever passes) uses `time(...)` itself.
      *
+     * @param string $policyId Names the policy that owns the counter — see this class's own docblock.
      * @param list<string> $trustedProxies CIDR ranges (e.g. '10.0.0.0/8') — see identifierFor().
-     * @param ?string $namespace Disambiguates an otherwise identical class+config policy from another one guarding something different — see this class's own docblock.
      */
     public function __construct(
         CacheInterface $cache,
+        string $policyId,
         private readonly int $maxAttempts = 60,
         private readonly int $windowSeconds = 60,
-        private readonly array $trustedProxies = [],
-        private readonly ?string $namespace = null,
+        array $trustedProxies = [],
         private readonly ?\Closure $clock = null,
     ) {
         if ($cache instanceof NullSimpleCache) {
@@ -146,7 +135,13 @@ class RateLimitMiddleware implements MiddlewareInterface
             throw RateLimitUnavailableException::notAtomic();
         }
 
-        $this->counter = new Counter($cache);
+        $this->counter = $cache;
+
+        if (trim($policyId) === '') {
+            throw InvalidRateLimitConfigException::blankPolicyId();
+        }
+
+        $this->policyPrefix = hash('sha256', $policyId);
 
         if ($maxAttempts < 1) {
             throw InvalidRateLimitConfigException::nonPositiveMaxAttempts($maxAttempts);
@@ -188,14 +183,11 @@ class RateLimitMiddleware implements MiddlewareInterface
         $executed = $request->getAttribute(self::EXECUTED_ATTRIBUTE, []);
 
         if (array_key_exists($subject, $executed)) {
-            // The identical policy (same class, configuration, and
-            // namespace) checking the identical subject already ran
-            // earlier in this same request's pipeline — most commonly
-            // registered both globally and, redundantly, on the matched
-            // route. Reuse its whole recorded decision, original window
-            // included, instead of incrementing the counter again or
-            // resolving a fresh window of our own — see this class's own
-            // "Composing two policies" docblock section.
+            // This policy already checked this subject earlier in the
+            // same request's pipeline. Reuse its whole recorded decision,
+            // original window included, instead of incrementing the
+            // counter again or resolving a fresh window of our own — see
+            // this class's own "Composing two policies" docblock section.
             ['attempts' => $attempts, 'window' => $window] = $executed[$subject];
         } else {
             $window = intdiv($this->now(), $this->windowSeconds);
@@ -233,60 +225,20 @@ class RateLimitMiddleware implements MiddlewareInterface
     }
 
     /**
-     * The policy's own identity plus the request's own subject — folded
-     * together, deliberately without a window component, so the same
-     * policy checking the same subject dedupes correctly across a
-     * request's pipeline regardless of which window each occurrence
-     * would independently resolve. Used as the per-request dedup
-     * attribute's own map key.
+     * This policy plus the request's own subject, without a window
+     * component, so the same policy checking the same subject
+     * dedupes correctly across a request's pipeline regardless of which
+     * window each occurrence would independently resolve. Used as the
+     * per-request dedup attribute's own map key.
      */
     private function dedupeKey(ServerRequestInterface $request): string
     {
-        return $this->policyIdentity() . '.' . hash('sha256', $this->identifierFor($request));
+        return $this->policyPrefix . '.' . hash('sha256', $this->identifierFor($request));
     }
 
     private function cacheKey(string $subject, int $window): string
     {
         return "ratelimit.{$subject}.{$window}";
-    }
-
-    /**
-     * A stable, unambiguous identity for this exact policy — every field
-     * that changes what actually gets checked, not just the subject
-     * being counted: `static::class`, `$maxAttempts`, `$windowSeconds`,
-     * `$trustedProxies` (canonicalized to a sorted, duplicate-free set —
-     * trust is a set-membership check, so an equivalent list in a
-     * different order or with a repeated entry authorizes identically
-     * and must map to the identical identity), and `$namespace`.
-     * `$trustedProxies` changes which identifier `identifierFor()` even
-     * resolves to, so it's policy behavior exactly the same as
-     * `$maxAttempts`/`$windowSeconds` are.
-     *
-     * Each field is hashed on its own before being joined, then the
-     * joined, fixed-width result is hashed once more — not the fields
-     * concatenated directly. A plain delimited join of caller-controlled
-     * values (a namespace, a CIDR list) has no safe delimiter: an IPv6
-     * CIDR range already contains colons, so two genuinely different
-     * configurations could concatenate to the identical string and
-     * collide. Hashing every field first fixes each one to the same
-     * width regardless of its own content, so no field's content can
-     * ever be mistaken for a delimiter or shift into a neighboring
-     * field.
-     */
-    private function policyIdentity(): string
-    {
-        $canonicalProxies = array_unique($this->trustedProxies);
-        sort($canonicalProxies);
-
-        $fields = implode('|', [
-            hash('sha256', static::class),
-            hash('sha256', (string) $this->maxAttempts),
-            hash('sha256', (string) $this->windowSeconds),
-            hash('sha256', implode(',', $canonicalProxies)),
-            hash('sha256', $this->namespace ?? ''),
-        ]);
-
-        return hash('sha256', $fields);
     }
 
     /**

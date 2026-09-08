@@ -30,9 +30,14 @@ use Throwable;
  * between here and it, that casts the body reads an oversized request as
  * an absent optional body and carries on. There is no cast-safe wrapper;
  * the ceiling has to be settled before the handler is called, which is
- * what this does. Afterwards `read()`, `getContents()` and a string cast
- * all return the identical accepted bytes, because there is nothing left
- * to enforce.
+ * what this does. Afterwards there is nothing left to enforce and the
+ * stream is seekable: a string cast rewinds first and answers with the
+ * whole accepted body, while `read()` and `getContents()` answer from
+ * wherever the cursor stands.
+ *
+ * The staging stream is `php://memory`: accepting a request depends on
+ * no temporary file storage, and the byte ceiling below is what bounds
+ * what that stream holds.
  *
  * A body past the ceiling is a {@see BodyTooLargeException} — the
  * client's, answered with a `413`. A temporary stream that will not open,
@@ -59,13 +64,13 @@ final class StagedRequestBody
      * @param ?Closure(): (resource|false) $openStream a seam for tests,
      *     which need a temporary stream that short-writes, refuses to
      *     write, or fails to close on demand — none of which
-     *     `php://temp` can be made to do
+     *     `php://memory` can be made to do
      */
     public static function stage(StreamInterface $body, FormLimits $limits, ?int $declaredBytes, ?Closure $openStream = null): StreamInterface
     {
         $limits->assertBodyWithinLimit(0, $declaredBytes);
 
-        $stream = ($openStream ?? static fn (): mixed => fopen('php://temp', 'r+'))();
+        $stream = ($openStream ?? static fn (): mixed => fopen('php://memory', 'r+'))();
 
         if (!is_resource($stream)) {
             throw FormStagingException::couldNotOpenTempStream();

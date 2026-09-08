@@ -6,7 +6,6 @@ namespace Kinetis\BrefAdapter\Tests;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
-use Kinetis\Http\Form\FormLimits;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\Stream;
 use PHPUnit\Framework\TestCase;
@@ -28,11 +27,6 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class BrefLambdaAdapterEndToEndTest extends TestCase
 {
-    private static function limits(): FormLimits
-    {
-        return new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES);
-    }
-
     private const HOST = '127.0.0.1:8096';
 
     /** @var resource */
@@ -89,7 +83,7 @@ final class BrefLambdaAdapterEndToEndTest extends TestCase
         /** @var ServerRequestInterface|null $capturedRequest */
         $capturedRequest = null;
 
-        $adapter = new BrefLambdaAdapter(self::HOST, self::limits());
+        $adapter = new BrefLambdaAdapter(self::HOST);
 
         try {
             $adapter->run(static function (ServerRequestInterface $request) use (&$capturedRequest): ResponseInterface {

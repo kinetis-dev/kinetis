@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Mcp\Tests;
 
 use Kinetis\Cache\CacheableDiscoveryInterface;
-use Kinetis\Cache\CacheFormat;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Cache\CacheStore;
@@ -26,8 +25,6 @@ use Kinetis\Mcp\Tests\Fixtures\NullableFieldsToolController;
 use Kinetis\Mcp\Tests\Fixtures\IntraClassDuplicateResourceController;
 use Kinetis\Mcp\Tests\Fixtures\IntraClassDuplicateToolController;
 use Kinetis\Mcp\Tests\Fixtures\MixedNewAndConflictingToolController;
-use Kinetis\Mcp\Tests\Fixtures\MultipleUnsupportedParametersToolController;
-use Kinetis\Mcp\Tests\Fixtures\UnsupportedCallableParameterToolController;
 use Kinetis\Mcp\Tests\Fixtures\UnsupportedParameterToolController;
 use Kinetis\Mcp\Tests\Fixtures\ZeroParameterToolController;
 use Kinetis\Validation\Exception\JsonSchemaException;
@@ -116,8 +113,8 @@ final class McpRegistryTest extends TestCase
      * CacheStore, then require() back — returning the McpRegistry
      * section exactly as it comes off disk. Every cache round-trip test
      * here goes through this rather than calling toArray()/fromArray()
-     * back to back, since writeAll() is what would reject a live object
-     * with CacheWriteException in the first place.
+     * back to back, since write() is what would reject a live object
+     * with UnexportableArtifactException in the first place.
      *
      * @return array<string, mixed>
      */
@@ -127,35 +124,33 @@ final class McpRegistryTest extends TestCase
         $store = new CacheStore($directory);
         $compiled = new CompiledCache(
             http: new HttpCache(
-                formatVersion: CacheFormat::VERSION,
                 routes: [],
                 httpBindingPlans: [],
                 hydrationPlans: [],
                 globalMiddleware: [],
                 openApiMiddleware: [],
-                compiledAt: '2026-01-01T00:00:00+00:00',
             ),
-            commands: new CommandCache(formatVersion: CacheFormat::VERSION, commands: [], compiledAt: '2026-01-01T00:00:00+00:00'),
-            events: new EventCache(formatVersion: CacheFormat::VERSION, listeners: [], compiledAt: '2026-01-01T00:00:00+00:00'),
-            plugins: new PluginCache(
-                formatVersion: CacheFormat::VERSION,
-                data: [McpRegistry::class => $live->toArray()],
-                compiledAt: '2026-01-01T00:00:00+00:00',
-            ),
+            commands: new CommandCache([]),
+            events: new EventCache([]),
+            plugins: new PluginCache([McpRegistry::class => $live->toArray()]),
         );
 
         try {
-            $store->writeAll($compiled);
-            $pluginCache = $store->loadPlugins();
+            $store->write($compiled);
+            $reloaded = $store->load();
 
-            self::assertNotNull($pluginCache);
+            self::assertNotNull($reloaded);
 
             /** @var array<string, mixed> $data */
-            $data = $pluginCache->data[McpRegistry::class];
+            $data = $reloaded->plugins->data[McpRegistry::class];
 
             return $data;
         } finally {
-            CacheStore::destroy($directory);
+            foreach (glob($directory . '/*') ?: [] as $entry) {
+                is_dir($entry) ? @rmdir($entry) : @unlink($entry);
+            }
+
+            @rmdir($directory);
         }
     }
 
@@ -263,12 +258,11 @@ final class McpRegistryTest extends TestCase
     }
 
     /**
-     * Schema values the stored JSON has to escape — a `#[Regex]`
-     * pattern of quotes and backslashes, `#[In]` choices carrying a
-     * quote, a backslash, a line break and non-ASCII characters — come
-     * back through the real cache round trip byte for byte, and a
-     * float-valued `#[GreaterThan]` bound comes back a float rather
-     * than an int.
+     * Schema values the stored JSON has to escape — `#[In]` choices
+     * carrying a quote, a backslash, a line break and non-ASCII
+     * characters — come back through the real cache round trip byte for
+     * byte, and a float-valued `#[GreaterThan]` bound comes back a float
+     * rather than an int.
      */
     public function test_schema_values_that_json_must_escape_survive_a_real_cache_round_trip(): void
     {
@@ -282,13 +276,28 @@ final class McpRegistryTest extends TestCase
             ->findTool('json_hostile_schema_values');
 
         self::assertNotNull($reloadedTool);
-        self::assertSame('/^"\d+\\\\"$/', $reloadedTool->inputSchema['properties']['pattern']['pattern']);
         self::assertSame(
             ['quote"', 'back\\slash', "line\nbreak", 'héllo ☃'],
             $reloadedTool->inputSchema['properties']['choice']['enum'],
         );
         self::assertSame(1.0, $reloadedTool->inputSchema['properties']['amount']['exclusiveMinimum']);
         self::assertEquals($tool->inputSchema, $reloadedTool->inputSchema);
+    }
+
+    public function test_a_regex_constrained_input_keeps_a_plain_string_schema_with_no_pattern_keyword(): void
+    {
+        $live = new McpRegistry();
+        $live->register(JsonHostileSchemaValuesToolController::class);
+
+        $tool = $live->findTool('json_hostile_schema_values');
+        self::assertNotNull($tool);
+        self::assertSame(['type' => 'string'], $tool->inputSchema['properties']['pattern']);
+
+        $reloadedTool = McpRegistry::fromArray(self::publishAndReloadArtifact($live))
+            ->findTool('json_hostile_schema_values');
+
+        self::assertNotNull($reloadedTool);
+        self::assertSame(['type' => 'string'], $reloadedTool->inputSchema['properties']['pattern']);
     }
 
     public function test_implements_the_frameworks_cacheable_discovery_interface(): void
@@ -298,11 +307,11 @@ final class McpRegistryTest extends TestCase
 
     public function test_compile_delegates_to_discovery_and_reduces_it_to_plain_data(): void
     {
-        $data = McpRegistry::compile(dirname(__DIR__));
+        $data = McpRegistry::compile(__DIR__ . '/Fixtures/Project');
 
         $reloaded = McpRegistry::fromArray($data);
 
-        self::assertNotNull($reloaded->findResource('kinetis://docs/index'));
+        self::assertNotNull($reloaded->findTool('discovered_ping'));
     }
 
     /**
@@ -813,10 +822,9 @@ final class McpRegistryTest extends TestCase
         self::assertNotContains('optionalItems', $tool->inputSchema['properties']['data']['required']);
     }
 
-    // KINETIS-76 follow-up: the complete, audited builtin-type policy —
-    // see JsonSchema::forType()'s own docblock — proven end-to-end
-    // through a real tool's own generated inputSchema, not just via
-    // JsonSchema::forType() unit calls.
+    // The supported builtin set — see Hydrator::SUPPORTED_BUILTIN_TYPES —
+    // proven through a real tool's own generated inputSchema, not just
+    // via JsonSchema::forType() unit calls.
 
     public function test_tools_list_schema_covers_every_supported_builtin_category(): void
     {
@@ -830,11 +838,8 @@ final class McpRegistryTest extends TestCase
         self::assertSame(['type' => 'array'], $properties['tags']);
         self::assertSame(['type' => 'array'], $properties['items'], 'iterable gets the identical array schema as plain array');
         self::assertEquals((object) [], $properties['note'], 'mixed is the empty schema object, not the empty schema array');
-        self::assertSame(['type' => 'null'], $properties['marker']);
-        self::assertSame(['type' => 'boolean', 'const' => true], $properties['confirmed']);
-        self::assertSame(['type' => 'boolean', 'const' => false], $properties['declined']);
 
-        // tags/items have no default — required; every other field does.
+        // tags/items have no default — required; note has one.
         self::assertSame(['tags', 'items'], $tool->inputSchema['required']);
     }
 
@@ -842,10 +847,10 @@ final class McpRegistryTest extends TestCase
      * McpRegistry::register() is a real guaranteed-to-run-before-traffic
      * boundary for MCP specifically because a tool can never be called
      * until it exists in the registry, and register() never partially
-     * commits a class whose schema generation failed — so an `object`-
-     * typed tool argument is rejected the moment the class is registered
-     * (at discovery/boot time), never silently reachable by a real
-     * tools/call request.
+     * commits a class whose schema generation failed — so a tool
+     * argument typed outside Hydrator::SUPPORTED_BUILTIN_TYPES is
+     * rejected the moment the class is registered (at discovery/boot
+     * time), never silently reachable by a real tools/call request.
      */
     public function test_register_rejects_a_tool_with_an_unsupported_builtin_parameter_type(): void
     {
@@ -869,51 +874,5 @@ final class McpRegistryTest extends TestCase
         }
 
         self::assertNull($registry->findTool('unsupported_parameter'));
-    }
-
-    /**
-     * `callable`'s own equivalent of the two `object` tests above — the
-     * second rejected builtin category gets the identical registration-
-     * time guarantee, not just direct Hydrator/JsonSchema unit coverage.
-     */
-    public function test_register_rejects_a_tool_with_an_unsupported_callable_parameter_type(): void
-    {
-        $registry = new McpRegistry();
-
-        $this->expectException(JsonSchemaException::class);
-        $this->expectExceptionMessage('callable');
-
-        $registry->register(UnsupportedCallableParameterToolController::class);
-    }
-
-    public function test_a_callable_parameter_class_that_failed_registration_never_becomes_callable(): void
-    {
-        $registry = new McpRegistry();
-
-        try {
-            $registry->register(UnsupportedCallableParameterToolController::class);
-            self::fail('Expected a JsonSchemaException.');
-        } catch (JsonSchemaException) {
-            // expected
-        }
-
-        self::assertNull($registry->findTool('unsupported_callable_parameter'));
-    }
-
-    /**
-     * A tool with two unsupported parameters at once (object, then
-     * callable in declaration order) is rejected deterministically on
-     * the first one JsonSchema::forParameters() reaches, not registered
-     * with only the reachable half validated — register() never commits
-     * a partially-checked tool either way.
-     */
-    public function test_register_rejects_a_tool_with_multiple_unsupported_parameters_reporting_the_first(): void
-    {
-        $registry = new McpRegistry();
-
-        $this->expectException(JsonSchemaException::class);
-        $this->expectExceptionMessage('object');
-
-        $registry->register(MultipleUnsupportedParametersToolController::class);
     }
 }

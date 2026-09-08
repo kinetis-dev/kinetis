@@ -56,28 +56,27 @@ $store = new CacheStore($projectRoot . '/.kinetis-cache');
 
 // The entire job of this binary: in production, use the cache — auto-
 // generating it on the first invocation that finds none, the same
-// lazy-compile path public/index.php takes for HTTP; in development,
-// always discover commands live from source. Every command this finds —
-// including the built-in `build`/`mcp:serve` (Kinetis\Console\
-// BuildCommand/McpServeCommand, discovered the same way as anything
-// else) — goes through this exact same lookup, with no verb hardcoded
-// here at all.
+// lazy-compile path Kinetis\Runtime\HttpStartup takes for HTTP; in
+// development, always discover commands live from source. Every command
+// this finds — including the built-in `build`/`mcp:serve`
+// (Kinetis\Console\BuildCommand/McpServeCommand, discovered the same way
+// as anything else) — goes through this exact same lookup, with no verb
+// hardcoded here at all.
 if ($env->isProduction()) {
     // BootSequence::resolveCli() is the entire "use the cache, or
-    // compile fresh" decision: commands.php, events.php, and
-    // plugins.php must all be present, the right format, and actually
-    // reconstruct into live objects — CommandRegistry/
-    // EventListenerRegistry/every plugin instance included, not just
-    // the raw DTOs — or the whole generation is treated as absent and
-    // $compile runs exactly once. See its own docblock. The OpenAPI
-    // document is never part of this — it's generated/cached
+    // compile fresh" decision: .kinetis-cache/compiled.php has to be
+    // present, the right format, and actually reconstruct into live
+    // objects — CommandRegistry/EventListenerRegistry/every plugin
+    // instance included, not just the raw DTOs — or it counts as absent
+    // and $compile runs exactly once. See its own docblock. The OpenAPI
+    // document is never part of this — it's generated and cached
     // separately, see docs/caching.md.
     $resolved = BootSequence::resolveCli($store, static fn (): CompiledCache => (new Compiler())->compileProject($projectRoot));
 
     $registry = $resolved['registry'];
     $listenerRegistry = $resolved['listenerRegistry'];
     $pluginInstances = $resolved['pluginInstances'];
-    $packageBootstraps = $resolved['commandCache']->packageBootstraps;
+    $packageBootstraps = $resolved['packageBootstraps'];
 } else {
     $registry = CommandDiscovery::discover($projectRoot);
     $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
@@ -127,11 +126,10 @@ $app->instance(Config::class, $config);
 
 // PluginDiscovery::bindInstances() and the discovered EventListenerRegistry
 // both have to be bound before the bootstrap chain runs — see BootSequence's
-// own docblock, the one place this ordering lives now, shared by
-// public/index.php, TestApplication, and the reference copies in
-// kinetis/skeleton/kinetis/pingpong. $runBootstrap: false for a
-// #[Command(bootstrap: false)] command, which deliberately skips the
-// whole package-then-application bootstrap chain — every installed
+// own docblock, the one place this ordering lives, shared with
+// Kinetis\Runtime\HttpStartup and TestApplication. $runBootstrap: false
+// for a #[Command(bootstrap: false)] command, which skips the whole
+// package-then-application bootstrap chain — every installed
 // package's own PackageBootstrapInterface::register() as well as the
 // project's bootstrap.php, not just the latter — since it only operates
 // on the project's static shape and must not require the configuration

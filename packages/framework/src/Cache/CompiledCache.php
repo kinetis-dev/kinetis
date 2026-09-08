@@ -4,27 +4,76 @@ declare(strict_types=1);
 
 namespace Kinetis\Cache;
 
+use Kinetis\Cache\Exception\ArtifactValidation;
+use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
+
 /**
- * A thin in-memory grouping of the four sections one Compiler::compile()
- * run produces — never itself persisted as a single file.
- * CacheStore::writeAll() writes it as four separate files
- * (http.php/commands.php/events.php/plugins.php) inside one new
- * generation directory, then atomically publishes that whole generation
- * at once — see CacheStore's own docblock. CacheStore's
- * loadHttp()/loadCommands()/loadEvents()/loadPlugins() still read each
- * section back independently and lazily, so a given entry point only
- * ever loads the sections it actually needs, never all four — an HTTP
- * boot reads http/events/plugins, the CLI reads commands/events/
- * plugins. Publishing them together as one generation is what makes
- * that lazy, per-section reading safe, not something that requires
- * reading them all at once.
+ * Everything one `Compiler::compile()` run produces, and the shape
+ * {@see CacheStore} persists as a single artifact: the HTTP section, the
+ * command section, the event-listener section and the plugin section,
+ * beside the two values that belong to the artifact itself rather than
+ * to any one section — the `formatVersion` that decides whether a build
+ * can read the file at all, and the `extra.kinetis` bootstrap-class list
+ * every entry point runs ahead of the project's own `bootstrap.php`, so
+ * production never re-reads `vendor/composer/installed.json`.
+ *
+ * A boot loads the whole thing. HTTP uses `http`, `events` and `plugins`;
+ * the CLI uses `commands`, `events` and `plugins` — one `require` either
+ * way, with no section left to fetch later and therefore no way for two
+ * sections of one boot to come from different compiles.
  */
 final readonly class CompiledCache
 {
+    private const array TOP_LEVEL_KEYS = [
+        'formatVersion', 'packageBootstraps', 'http', 'commands', 'events', 'plugins',
+    ];
+
     public function __construct(
         public HttpCache $http,
         public CommandCache $commands,
         public EventCache $events,
         public PluginCache $plugins,
+        /** @var list<class-string> */
+        public array $packageBootstraps = [],
     ) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return [
+            'formatVersion' => CacheFormat::VERSION,
+            'packageBootstraps' => $this->packageBootstraps,
+            'http' => $this->http->toArray(),
+            'commands' => $this->commands->toArray(),
+            'events' => $this->events->toArray(),
+            'plugins' => $this->plugins->toArray(),
+        ];
+    }
+
+    /**
+     * $data has already been confirmed to carry this build's own
+     * `formatVersion` — {@see CacheStore::load()} checks that before
+     * anything here runs, since a version it cannot read is a recompile
+     * rather than a malformed artifact.
+     *
+     * @param array<array-key, mixed> $data
+     * @throws CacheArtifactExceptionInterface
+     */
+    public static function fromArray(array $data): self
+    {
+        ArtifactValidation::exactKeys($data, 'CompiledCache', self::TOP_LEVEL_KEYS);
+
+        $packageBootstraps = ArtifactValidation::listOfStrings($data, 'CompiledCache', 'packageBootstraps');
+
+        /** @var list<class-string> $packageBootstraps */
+        return new self(
+            http: HttpCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'http')),
+            commands: CommandCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'commands')),
+            events: EventCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'events')),
+            plugins: PluginCache::fromArray(ArtifactValidation::stringKeyedArray($data, 'CompiledCache', 'plugins')),
+            packageBootstraps: $packageBootstraps,
+        );
+    }
 }

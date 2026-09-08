@@ -289,21 +289,6 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
     }
 
     #[\Override]
-    public function unparseableFormRequest(): WireRequest
-    {
-        // http.raw_body: true (required — see RoadRunnerAdapter's class
-        // docblock) means RoadRunner's own parsing never sees this body
-        // at all; the failure is this adapter's own parser finding the
-        // declared boundary nowhere in it.
-        return new WireRequest(
-            'POST',
-            '/',
-            headers: [['Content-Type', 'multipart/form-data; boundary=----XYZ']],
-            body: 'not a real multipart body at all',
-        );
-    }
-
-    #[\Override]
     public function expectedScheme(): string
     {
         // A plain listener; the conformance server terminates no TLS.
@@ -327,8 +312,7 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
     public function preservesCookieOrder(): bool
     {
         // RoadRunner represents cookies as a Go map[string]string on the
-        // way to PHP, and Go randomizes map iteration order by design —
-        // observed at roughly 1 request in 10 across repeated real runs.
+        // way to PHP, and Go randomizes map iteration order by design.
         // The values themselves are never lost, which is what the shared
         // case asserts either way.
         return false;
@@ -340,6 +324,13 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
         // The worker fixture is started with a loopback-only
         // TRUSTED_PROXIES, which is exactly the peer this driver connects
         // from — see start().
+        return true;
+    }
+
+    #[\Override]
+    public function supportsPlaintextRequests(): bool
+    {
+        // RoadRunner's own HTTP listener, terminating no TLS.
         return true;
     }
 

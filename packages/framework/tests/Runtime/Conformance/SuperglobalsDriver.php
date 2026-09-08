@@ -230,22 +230,6 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     }
 
     #[\Override]
-    public function unparseableFormRequest(): WireRequest
-    {
-        // A multipart content type with no boundary parameter names no
-        // delimiter at all, so there is nothing to split the body on —
-        // the same trigger every other driver uses, because with
-        // enable_post_data_reading off this environment runs the same
-        // Kinetis\Http\Form parser they do rather than PHP's.
-        return new WireRequest(
-            'POST',
-            '/',
-            headers: [['Content-Type', 'multipart/form-data']],
-            body: 'not a multipart body at all',
-        );
-    }
-
-    #[\Override]
     public function expectedScheme(): string
     {
         return 'http';
@@ -267,6 +251,13 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     public function trustsTheConnectingClient(): bool
     {
         return $this->trustedProxies !== '';
+    }
+
+    #[\Override]
+    public function supportsPlaintextRequests(): bool
+    {
+        // A plain listener, so a request can arrive over one.
+        return true;
     }
 
     /**

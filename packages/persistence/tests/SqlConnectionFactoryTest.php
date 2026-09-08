@@ -50,6 +50,34 @@ final class SqlConnectionFactoryTest extends TestCase
         }
     }
 
+    public function test_auto_driver_selects_pdo_under_aws_lambda(): void
+    {
+        // AWS_LAMBDA_RUNTIME_API is not one of the two signals 'auto'
+        // reads, so a Lambda invocation gets the PDO client for its
+        // dialect (see docs/persistence.md, "Driver selection").
+        $originalLambda = getenv('AWS_LAMBDA_RUNTIME_API');
+        $originalRoadRunner = getenv('RR_MODE');
+        putenv('AWS_LAMBDA_RUNTIME_API=127.0.0.1:9001');
+        putenv('RR_MODE');
+
+        try {
+            $mysql = new Config([
+                'DB_CONNECTION' => 'mysql',
+                'DB_PASSWORD' => 'secret',
+            ]);
+            $postgres = new Config([
+                'DB_CONNECTION' => 'pgsql',
+                'DB_PASSWORD' => 'secret',
+            ]);
+
+            self::assertInstanceOf(PdoMysqlClient::class, SqlConnectionFactory::fromConfig($mysql));
+            self::assertInstanceOf(PdoPgsqlClient::class, SqlConnectionFactory::fromConfig($postgres));
+        } finally {
+            putenv($originalLambda === false ? 'AWS_LAMBDA_RUNTIME_API' : "AWS_LAMBDA_RUNTIME_API={$originalLambda}");
+            putenv($originalRoadRunner === false ? 'RR_MODE' : "RR_MODE={$originalRoadRunner}");
+        }
+    }
+
     public function test_native_driver_builds_the_mysqli_async_client(): void
     {
         $config = new Config([
@@ -134,8 +162,51 @@ final class SqlConnectionFactoryTest extends TestCase
         ]);
 
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('DB_DRIVER must be "auto", "native", or "pdo", got "odbc".');
+        $this->expectExceptionMessage('The database driver must be "auto", "native", or "pdo", got "odbc"');
         SqlConnectionFactory::fromConfig($config);
+    }
+
+    /**
+     * The $driver argument is for a caller that knows which driver its
+     * own work needs, whatever the deployment's DB_DRIVER says.
+     */
+    public function test_an_explicit_driver_argument_overrides_the_db_driver_key(): void
+    {
+        $mysql = new Config(['DB_CONNECTION' => 'mysql', 'DB_DRIVER' => 'native', 'DB_PASSWORD' => 's']);
+        $postgres = new Config(['DB_CONNECTION' => 'pgsql', 'DB_DRIVER' => 'native', 'DB_PASSWORD' => 's']);
+
+        self::assertInstanceOf(PdoMysqlClient::class, SqlConnectionFactory::fromConfig($mysql, driver: 'pdo'));
+        self::assertInstanceOf(PdoPgsqlClient::class, SqlConnectionFactory::fromConfig($postgres, driver: 'pdo'));
+
+        // And without it, the key still decides.
+        self::assertInstanceOf(MysqliAsyncClient::class, SqlConnectionFactory::fromConfig($mysql));
+    }
+
+    /**
+     * singleSession() is that override plus a session policy: PDO on
+     * either dialect, and closed rather than reconnected if it loses the
+     * session — which is what kinetis/migrations' session-scoped
+     * advisory lock needs. What the policy does is
+     * {@see PdoTransactionOwnershipTest}, and against real servers
+     * {@see Integration\PdoSessionLifecycleTest}.
+     */
+    public function test_single_session_builds_a_pdo_client_whatever_db_driver_says(): void
+    {
+        $mysql = new Config(['DB_CONNECTION' => 'mysql', 'DB_DRIVER' => 'native', 'DB_PASSWORD' => 's']);
+        $postgres = new Config(['DB_CONNECTION' => 'pgsql', 'DB_DRIVER' => 'native', 'DB_PASSWORD' => 's']);
+
+        self::assertInstanceOf(PdoMysqlClient::class, SqlConnectionFactory::singleSession($mysql));
+        self::assertInstanceOf(PdoPgsqlClient::class, SqlConnectionFactory::singleSession($postgres));
+    }
+
+    public function test_an_unknown_driver_argument_is_rejected_like_the_key(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('The database driver must be "auto", "native", or "pdo", got "odbc"');
+        SqlConnectionFactory::fromConfig(
+            new Config(['DB_CONNECTION' => 'mysql', 'DB_PASSWORD' => 's']),
+            driver: 'odbc',
+        );
     }
 
     public function test_an_option_the_selected_driver_cannot_honor_fails_loudly(): void
@@ -501,7 +572,6 @@ final class SqlConnectionFactoryTest extends TestCase
         $options = self::property($direct, 'options');
         self::assertInstanceOf(ConnectionOptions::class, $options);
         self::assertSame('/certs/ca.pem', $options->sslCa);
-        self::assertSame('', $options->extraConnectionString);
     }
 
     public function test_mysql_drivers_construct_with_a_verifying_tls_profile(): void

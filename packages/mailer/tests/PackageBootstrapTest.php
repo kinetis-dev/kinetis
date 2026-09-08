@@ -8,7 +8,9 @@ use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Mailer\PackageBootstrap;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Mailer\Mailer;
 use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mailer\Transport\NullTransport;
 
 final class PackageBootstrapTest extends TestCase
 {
@@ -29,14 +31,37 @@ final class PackageBootstrapTest extends TestCase
         self::assertInstanceOf(MailerInterface::class, $app->get(MailerInterface::class));
     }
 
-    public function test_an_invalid_dsn_fails_at_first_use_not_at_boot(): void
+    public function test_a_malformed_dsn_fails_at_registration(): void
     {
         $app = new AppScope();
-        new PackageBootstrap()->register($app, new Config(['MAILER_DSN' => 'not-a-dsn']));
-        $app->boot();
 
         $this->expectException(\Throwable::class);
 
-        $app->get(MailerInterface::class);
+        new PackageBootstrap()->register($app, new Config(['MAILER_DSN' => 'not-a-dsn']));
+    }
+
+    public function test_an_unusable_timeout_fails_at_registration(): void
+    {
+        $app = new AppScope();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('MAILER_TIMEOUT must be a positive number of seconds.');
+
+        new PackageBootstrap()->register(
+            $app,
+            new Config(['MAILER_DSN' => 'null://null', 'MAILER_TIMEOUT' => '0']),
+        );
+    }
+
+    public function test_an_application_registration_replaces_this_one(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config(['MAILER_DSN' => 'null://null']));
+
+        $own = new Mailer(new NullTransport());
+        $app->instance(MailerInterface::class, $own);
+        $app->boot();
+
+        self::assertSame($own, $app->get(MailerInterface::class));
     }
 }

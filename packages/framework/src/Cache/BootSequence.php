@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Cache;
 
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
+use Kinetis\Cache\Exception\CacheWriteException;
 use Kinetis\Config\Config;
 use Kinetis\Console\CommandRegistry;
 use Kinetis\Container\AppScope;
@@ -13,31 +14,28 @@ use Kinetis\Http\Routing\Router;
 
 /**
  * The one piece of assembly every framework-managed entry point
- * (`public/index.php`, `bin/kinetis`, {@see \Kinetis\Testing\TestApplication},
- * and the identical reference copies in `kinetis/skeleton`/`kinetis/pingpong`)
- * delegates to, rather than each repeating it inline — extracted
- * specifically so none of them can independently drift from the others
- * on this exact ordering again: `PluginDiscovery::bindInstances()` and
- * the discovered `EventListenerRegistry` must both be bound *before* the
+ * ({@see \Kinetis\Runtime\HttpStartup}, `bin/kinetis`,
+ * {@see \Kinetis\Testing\TestApplication}) delegates to, rather than each
+ * repeating it inline: `PluginDiscovery::bindInstances()` and the
+ * discovered `EventListenerRegistry` must both be bound *before* the
  * package/application bootstrap chain runs, or `bootstrap.php`'s own
  * last-write-wins override (resolving and augmenting a discovered
  * instance, or replacing it outright) has nothing yet bound to act on
  * and is silently reasserted over afterward instead.
  *
- * Deliberately stops short of calling `$app->boot()` itself:
- * `TestApplication` needs one more step — its own `$beforeBoot` callback
- * — to run after the bootstrap chain and before the container locks, and
- * folding `boot()` in here would leave no seam for that. Every caller
- * calls `boot()` right after its own final pre-boot seam — immediately
- * for `public/index.php`/`bin/kinetis`, or after `$beforeBoot` for
- * `TestApplication` — this only owns the part that was actually getting
- * the order wrong.
+ * Stops short of calling `$app->boot()` itself: `TestApplication` needs
+ * one more step — its own `$beforeBoot` callback — to run after the
+ * bootstrap chain and before the container locks, and folding `boot()`
+ * in here would leave no seam for that. Every caller calls `boot()`
+ * right after its own final pre-boot seam — immediately for
+ * `HttpStartup`/`bin/kinetis`, or after `$beforeBoot` for
+ * `TestApplication`.
  *
  * $listenerRegistry and $pluginInstances are already-decided values —
- * live-discovered, or reconstructed exactly once from a compiled cache
- * or a fresh compile by `resolveHttp()`/`resolveCli()` below — since
- * which of those an entry point uses depends on `AppEnvironment`/cache-
- * presence logic specific to that entry point, not something this
+ * live-discovered, or reconstructed exactly once from the compiled
+ * artifact or a fresh compile by `resolveHttp()`/`resolveCli()` below —
+ * since which of those an entry point uses depends on `AppEnvironment`/
+ * cache-presence logic specific to that entry point, not something this
  * shared step needs to know about. Both shapes are bound identically
  * either way. `null` for `$pluginInstances` means "discover and
  * reconstruct live, right here" — the one case with no earlier
@@ -56,6 +54,13 @@ use Kinetis\Http\Routing\Router;
  * gates the bootstrap chain on top of them. Every other caller leaves
  * this at its default, `true`, running package bootstraps first and the
  * application's own `bootstrap.php` last.
+ *
+ * Reconstruction is this class's other half — where every section's own
+ * `fromArray()` contract is applied together: `resolveHttp()`/
+ * `resolveCli()` turn a published artifact, or a fresh compile, into
+ * the live objects one entry point needs, and `assertReconstructable()`
+ * turns a whole artifact into every object it can produce, the gate
+ * `kinetis build` publishes through.
  */
 final class BootSequence
 {
@@ -84,32 +89,30 @@ final class BootSequence
     }
 
     /**
-     * The whole "use the cache, or compile fresh" decision for an HTTP
-     * boot, in one place. `loadHttpFromCache()` first; on a miss, calls
-     * `$compile` exactly once and reconstructs every runtime object from
-     * that same in-memory `CompiledCache` — `CacheStore::writeAll()`
-     * only runs *after* every one of those reconstructions has already
-     * succeeded, never before. A generation that fails to reconstruct
-     * is therefore never published at all: nothing is written to disk
-     * for a later process to find, misclassify as corrupt, and recompile
-     * into the identical failure again. Reconstructing straight from
-     * `$compiled` also means never reading back through `$store`, which
-     * stays pinned to whatever generation (or absence of one) its own
-     * first `load*()` call already resolved, possibly not even the one
-     * `writeAll()` is about to publish if another process's compile
-     * lands first. A failure while reconstructing from this fresh
-     * compile is never caught here — it propagates, the same as any
-     * other genuine bug — since there is no cache artifact left to blame
-     * it on; `$compile` itself failing propagates for the identical
-     * reason.
+     * The whole "use the published artifact, or compile fresh" decision
+     * for an HTTP boot, in one place.
+     *
+     * The artifact is read and reconstructed first. A missing,
+     * format-incompatible, corrupt or unreconstructable one is not an
+     * error: `$compile` runs exactly once, its result is reconstructed,
+     * and only then is the same artifact `kinetis build` would have
+     * produced published. Reconstructing before publishing is what stops
+     * a compile that cannot be turned into live objects from being
+     * written for the next process to find, misclassify as corrupt and
+     * recompile into the identical failure.
+     *
+     * A failure while reconstructing from that fresh compile propagates,
+     * as does `$compile` itself failing: there is no artifact left to
+     * blame either on. A failure to *publish* does not — see
+     * {@see publish()}.
      *
      * `$compile` is injectable specifically so this whole decision is
-     * testable without a real project root or filesystem-discovery
-     * pass: a test can count invocations, or make it throw, and observe
-     * the result directly.
+     * testable without a real project root or filesystem-discovery pass:
+     * a test can count invocations, or make it throw, and observe the
+     * result directly.
      *
      * @param callable(): CompiledCache $compile
-     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}
+     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     public static function resolveHttp(CacheStore $store, callable $compile): array
     {
@@ -120,29 +123,22 @@ final class BootSequence
         }
 
         $compiled = $compile();
-        $router = Router::fromArray($compiled->http->routes);
-        $listenerRegistry = EventListenerRegistry::fromArray($compiled->events->listeners);
-        $pluginInstances = PluginDiscovery::reconstruct($compiled->plugins->data);
+        $bundle = self::httpBundle($compiled);
 
-        $store->writeAll($compiled);
+        self::publish($store, $compiled);
 
-        return [
-            'httpCache' => $compiled->http,
-            'router' => $router,
-            'listenerRegistry' => $listenerRegistry,
-            'pluginInstances' => $pluginInstances,
-        ];
+        return $bundle;
     }
 
     /**
-     * The CLI's own equivalent of `resolveHttp()` — commands.php/
-     * `CommandRegistry` in place of http.php/`Router`, otherwise
-     * identical, including the same single-compile, reconstruct-before-
-     * publish, no-reread-through-a-stale-pin, no-catch-around-a-fresh-
-     * compile contract.
+     * The CLI's own equivalent of `resolveHttp()` — a `CommandRegistry`
+     * out of the `commands` section in place of a `Router` out of
+     * `http`, otherwise identical, including the same single compile,
+     * the same reconstruct-before-publish order and the same treatment
+     * of a publish that fails.
      *
      * @param callable(): CompiledCache $compile
-     * @return array{commandCache: CommandCache, registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}
+     * @return array{registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
      */
     public static function resolveCli(CacheStore $store, callable $compile): array
     {
@@ -153,120 +149,164 @@ final class BootSequence
         }
 
         $compiled = $compile();
-        $registry = CommandRegistry::fromArray($compiled->commands->commands);
-        $listenerRegistry = EventListenerRegistry::fromArray($compiled->events->listeners);
-        $pluginInstances = PluginDiscovery::reconstruct($compiled->plugins->data);
+        $bundle = self::cliBundle($compiled);
 
-        $store->writeAll($compiled);
+        self::publish($store, $compiled);
 
-        return [
-            'commandCache' => $compiled->commands,
-            'registry' => $registry,
-            'listenerRegistry' => $listenerRegistry,
-            'pluginInstances' => $pluginInstances,
-        ];
+        return $bundle;
     }
 
     /**
-     * The entire "is there a usable cache generation for this HTTP
-     * boot" decision, in one place: http.php, events.php, and
-     * plugins.php from the same pinned generation
-     * ({@see CacheStore}'s own docblock), each reconstructed into the
-     * live runtime objects a boot actually needs — `Router` and
-     * `EventListenerRegistry` included, not just the raw DTOs — or null
-     * the instant any one of the three is absent, a stale format, or
-     * fails to reconstruct for any reason, structural or otherwise,
-     * including a route/command entry's own malformed shape or a
-     * plugin's own rejection of its cached data. Never a hybrid of some
-     * cached, some live-empty sections, and never a bundle accepted
-     * here that then fails immediately outside this method once the
-     * caller starts using it — every reconstruction this bundle
-     * promises to have already done (`Router::fromArray()`,
-     * `EventListenerRegistry::fromArray()`, `PluginDiscovery::
-     * reconstruct()`) happens inside the same guarded call, not
-     * deferred to the caller.
+     * The entire "is there a usable artifact for this HTTP boot"
+     * decision: the published file read whole and reconstructed into the
+     * live objects a boot needs — `Router` and `EventListenerRegistry`
+     * included, not just the raw sections — or null the instant it is
+     * absent, a stale format, or fails to reconstruct for any reason,
+     * structural or otherwise, including a route entry's own malformed
+     * shape or a plugin's rejection of its cached data. Never a hybrid
+     * of cached and live-empty sections, and never a bundle accepted
+     * here that then fails outside this method once the caller starts
+     * using it.
      *
-     * The `catch` below is scoped narrowly two ways: by what code sits
-     * inside the `try` (every `CacheStore::load*()` call and every
-     * reconstruction that follows — working purely from data this same
-     * call just read off disk — nothing else, no live discovery, no
-     * `bootstrap.php` registration), and by exception type
+     * The `catch` is scoped narrowly two ways: by what sits inside the
+     * `try` (the read and the reconstructions that follow, working
+     * purely from data this call just took off disk — no live discovery,
+     * no `bootstrap.php` registration), and by exception type
      * (`CacheArtifactExceptionInterface` only). A plugin's own
-     * `fromArray()` throwing anything else — a genuine defect, not a
-     * data-shape rejection — propagates uncaught rather than being
-     * silently relabelled "corrupt cache" and retried as a fresh
-     * compile; see `CacheableDiscoveryInterface::fromArray()`'s own
-     * contract.
+     * `fromArray()` throwing anything else — a defect, not a data-shape
+     * rejection — propagates rather than being relabelled "corrupt
+     * cache" and retried as a fresh compile; see
+     * `CacheableDiscoveryInterface::fromArray()`'s own contract.
      *
-     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}|null
+     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}|null
      */
     public static function loadHttpFromCache(CacheStore $store): ?array
     {
         try {
-            $http = $store->loadHttp();
+            $compiled = $store->load();
 
-            if ($http === null) {
-                return null;
-            }
-
-            $events = $store->loadEvents();
-            $plugins = $store->loadPlugins();
-
-            if ($events === null || $plugins === null) {
-                return null;
-            }
-
-            $router = Router::fromArray($http->routes);
-            $listenerRegistry = EventListenerRegistry::fromArray($events->listeners);
-            $pluginInstances = PluginDiscovery::reconstruct($plugins->data);
+            return $compiled === null ? null : self::httpBundle($compiled);
         } catch (CacheArtifactExceptionInterface) {
             return null;
         }
-
-        return [
-            'httpCache' => $http,
-            'router' => $router,
-            'listenerRegistry' => $listenerRegistry,
-            'pluginInstances' => $pluginInstances,
-        ];
     }
 
     /**
-     * The CLI's own equivalent of `loadHttpFromCache()` — commands.php/
-     * `CommandRegistry` in place of http.php/`Router`, otherwise
-     * identical, including the same "never reads http.php" laziness and
-     * the same narrow classification.
+     * The CLI's own equivalent of `loadHttpFromCache()` — a
+     * `CommandRegistry` out of the `commands` section in place of a
+     * `Router` out of `http`, otherwise identical, including the same
+     * narrow classification.
      *
-     * @return array{commandCache: CommandCache, registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>}|null
+     * @return array{registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}|null
      */
     public static function loadCliFromCache(CacheStore $store): ?array
     {
         try {
-            $commands = $store->loadCommands();
+            $compiled = $store->load();
 
-            if ($commands === null) {
-                return null;
-            }
-
-            $events = $store->loadEvents();
-            $plugins = $store->loadPlugins();
-
-            if ($events === null || $plugins === null) {
-                return null;
-            }
-
-            $registry = CommandRegistry::fromArray($commands->commands);
-            $listenerRegistry = EventListenerRegistry::fromArray($events->listeners);
-            $pluginInstances = PluginDiscovery::reconstruct($plugins->data);
+            return $compiled === null ? null : self::cliBundle($compiled);
         } catch (CacheArtifactExceptionInterface) {
             return null;
         }
+    }
 
+    /**
+     * Reconstructs everything one artifact can produce, once each: both
+     * entry points' registries — `Router` and `CommandRegistry` — and
+     * the sections they share. Exactly the contracts a boot enforces,
+     * applied to a whole artifact in one pass, which is what
+     * `kinetis build` publishes through: a section whose `compile()`
+     * output its own `fromArray()` rejects fails the build that produced
+     * it rather than every worker that later reads it.
+     *
+     * Once each because `fromArray()` is construction, not a pure
+     * validator — a second call can cost real work, have side effects,
+     * or fail where the first succeeded. The objects go nowhere: a build
+     * has no boot to hand them to, and what it publishes is the compiled
+     * data itself.
+     *
+     * The package-bootstrap list is carried rather than reconstructed.
+     * It is class names `RoutesFile::loadBootstrap()` resolves at boot,
+     * skipping with a warning any whose package has since been removed,
+     * so there is no construction step here for a build to run early.
+     *
+     * @throws CacheArtifactExceptionInterface
+     */
+    public static function assertReconstructable(CompiledCache $compiled): void
+    {
+        self::sharedBundle($compiled);
+        Router::fromArray($compiled->http->routes);
+        CommandRegistry::fromArray($compiled->commands->commands);
+    }
+
+    /**
+     * @return array{httpCache: HttpCache, router: Router, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
+     */
+    private static function httpBundle(CompiledCache $compiled): array
+    {
         return [
-            'commandCache' => $commands,
-            'registry' => $registry,
-            'listenerRegistry' => $listenerRegistry,
-            'pluginInstances' => $pluginInstances,
+            'httpCache' => $compiled->http,
+            'router' => Router::fromArray($compiled->http->routes),
+            ...self::sharedBundle($compiled),
         ];
+    }
+
+    /**
+     * @return array{registry: CommandRegistry, listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
+     */
+    private static function cliBundle(CompiledCache $compiled): array
+    {
+        return [
+            'registry' => CommandRegistry::fromArray($compiled->commands->commands),
+            ...self::sharedBundle($compiled),
+        ];
+    }
+
+    /**
+     * The sections every entry point reconstructs identically, in one
+     * place, so an HTTP boot, a CLI boot and a build cannot drift on
+     * them. What stays outside is what an entry point pays for only
+     * because it is that entry point: the `Router` an HTTP boot needs
+     * and the `CommandRegistry` it never touches, and the reverse for
+     * the CLI.
+     *
+     * @return array{listenerRegistry: EventListenerRegistry, pluginInstances: array<class-string, object>, packageBootstraps: list<class-string>}
+     */
+    private static function sharedBundle(CompiledCache $compiled): array
+    {
+        return [
+            'listenerRegistry' => EventListenerRegistry::fromArray($compiled->events->listeners),
+            'pluginInstances' => PluginDiscovery::reconstruct($compiled->plugins->data),
+            'packageBootstraps' => $compiled->packageBootstraps,
+        ];
+    }
+
+    /**
+     * Publishes the fallback compile, and keeps serving if it cannot.
+     *
+     * A machine that will not take the file — a read-only mount, a full
+     * disk, a directory this process cannot create — has not made the
+     * compiled value in memory any less correct, and this process
+     * already holds it. So the request is served from that value and the
+     * failure is reported once, on the boot that hit it, rather than
+     * turned into an outage. Every later boot on that machine pays the
+     * compile again and reports again, which is what makes a permanently
+     * unwritable cache directory visible instead of silent.
+     *
+     * Only a persistence failure is contained. An
+     * `UnexportableArtifactException` is a defect in what was compiled —
+     * a live object in a plan — and it propagates, since the value this
+     * boot would otherwise carry on with is the wrong one.
+     */
+    private static function publish(CacheStore $store, CompiledCache $compiled): void
+    {
+        try {
+            $store->write($compiled);
+        } catch (CacheWriteException $e) {
+            error_log(
+                'Kinetis compiled its AOT cache in memory but could not publish ' . $store->path()
+                . ', so this boot paid for the compile and the next one will too: ' . $e->getMessage(),
+            );
+        }
     }
 }

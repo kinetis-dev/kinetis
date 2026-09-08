@@ -9,9 +9,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Session\SessionStoreInterface;
-use Kinetis\Session\Store\CacheSessionStore;
 use Kinetis\Session\Tests\Fixtures\CsrfWithoutSessionFixtureController;
-use Kinetis\Session\Tests\Fixtures\InMemorySessionCache;
 use Kinetis\Session\Tests\Fixtures\InvocationRecorder;
 use Kinetis\Session\Tests\Fixtures\RecordingSessionStore;
 use Kinetis\Session\Tests\Fixtures\SessionFixtureController;
@@ -47,7 +45,7 @@ final class SessionKernelTest extends TestCase
         $app->instance(Config::class, new Config([
             'SESSION_SECURE' => 'false',
         ]));
-        $this->store = new CacheSessionStore(new InMemorySessionCache());
+        $this->store = new RecordingSessionStore();
         $app->instance(SessionStoreInterface::class, $this->store);
 
         $router = new Router();
@@ -403,7 +401,7 @@ final class SessionKernelTest extends TestCase
     public function test_csrf_accepts_a_valid_token_and_ages_pending_flash_data_even_though_the_handler_never_touches_the_session(): void
     {
         $knownId = \str_repeat('5', 32);
-        $this->store->write($knownId, ['_csrf' => 'the-real-token', '_flash.old' => ['status' => 'saved']], 7200);
+        $this->store->create($knownId, ['_csrf' => 'the-real-token', '_flash.old' => ['status' => 'saved']], 7200);
         $cookie = "kinetis_session={$knownId}";
 
         $this->client->post('/guarded', [], ['Cookie' => $cookie, 'X-CSRF-Token' => 'the-real-token'])
@@ -442,6 +440,37 @@ final class SessionKernelTest extends TestCase
         // Data followed the rotation; the fixated pre-rotation id is dead.
         $this->client->get('/recall', [], ['Cookie' => $newCookie])->assertJsonPath('remembered', 'kept');
         $this->client->get('/recall', [], ['Cookie' => $oldCookie])->assertJsonPath('remembered', null);
+    }
+
+    /**
+     * The whole fixation scenario over real requests: a form fetched
+     * before the privilege change, the rotation, then that same form
+     * submitted under the rotated cookie. The token it carries is the
+     * one an attacker who planted the pre-rotation session already
+     * knows, so it has to be refused; only a token fetched after the
+     * rotation gets through.
+     */
+    public function test_a_token_fetched_before_regenerate_no_longer_passes_the_csrf_guard_after_it(): void
+    {
+        $seeded = $this->client->get('/token');
+        $oldCookie = self::cookieFrom($seeded->getHeaderLine('Set-Cookie'));
+        $oldToken = $seeded->json()['token'];
+        self::assertIsString($oldToken);
+
+        $rotated = $this->client->get('/rotate', [], ['Cookie' => $oldCookie]);
+        $newCookie = self::cookieFrom($rotated->getHeaderLine('Set-Cookie'));
+
+        $this->client->post('/guarded', [], ['Cookie' => $newCookie, 'X-CSRF-Token' => $oldToken])
+            ->assertStatus(403);
+
+        $refreshed = $this->client->get('/token', [], ['Cookie' => $newCookie]);
+        $newToken = $refreshed->json()['token'];
+        self::assertIsString($newToken);
+        self::assertNotSame($oldToken, $newToken);
+
+        $this->client->post('/guarded', [], ['Cookie' => $newCookie, 'X-CSRF-Token' => $newToken])
+            ->assertOk()
+            ->assertJsonPath('changed', true);
     }
 
     public function test_destroy_expires_the_cookie(): void
@@ -506,7 +535,7 @@ final class SessionKernelTest extends TestCase
         // APP_ENV given here is registered directly, the same as
         // TestApplication does for its own overrides.
         $app->instance(AppEnvironment::class, AppEnvironment::detect($config['APP_ENV'] ?? null));
-        $app->instance(SessionStoreInterface::class, new CacheSessionStore(new InMemorySessionCache()));
+        $app->instance(SessionStoreInterface::class, new RecordingSessionStore());
 
         $router = new Router();
         $router->register(SessionFixtureController::class);
@@ -547,7 +576,7 @@ final class SessionKernelTest extends TestCase
         $app = new AppScope();
         $app->instance(Config::class, new Config($config));
         $app->instance(AppEnvironment::class, AppEnvironment::detect($config['APP_ENV'] ?? null));
-        $app->instance(SessionStoreInterface::class, new CacheSessionStore(new InMemorySessionCache()));
+        $app->instance(SessionStoreInterface::class, new RecordingSessionStore());
         $recorder = new InvocationRecorder();
         $app->instance(InvocationRecorder::class, $recorder);
 
@@ -649,14 +678,11 @@ final class SessionKernelTest extends TestCase
     }
 
     /**
-     * SessionMiddleware now parses and validates SESSION_LIFETIME in its
-     * own constructor — before the request reaches the inner handler at
-     * all — so an invalid value must mean the controller genuinely never
-     * runs, not just that the response eventually comes back 500. A
-     * shared InvocationRecorder is what makes that observable: a
-     * middleware construction failure never reaches the controller, so
-     * the count staying zero is what proves it, independent of the
-     * response status.
+     * SessionMiddleware checks SESSION_LIFETIME in its constructor,
+     * before the request reaches the inner handler, so an invalid value
+     * means the controller never runs at all rather than the response
+     * merely coming back 500. The shared InvocationRecorder is what
+     * makes that observable.
      */
     public function test_the_inner_handler_never_runs_with_an_invalid_session_lifetime(): void
     {
@@ -677,39 +703,6 @@ final class SessionKernelTest extends TestCase
         $client->get('/side-effect-probe')->assertOk();
 
         self::assertSame(1, $recorder->calls);
-    }
-
-    /**
-     * KINETIS-68 FEEDBACK: a SESSION_LIFETIME too large for every
-     * backend this package ships to store (unlike the data-provider
-     * cases above, this value is a syntactically ordinary PHP int —
-     * Config::int() accepts it without complaint, so this is genuinely
-     * exercising SessionExpiry's own MAX_EXPIRES_AT check, not Config's
-     * separate int-range check) must fail at middleware construction,
-     * before the handler ever runs — a request must never perform real
-     * application side effects only to have commit() throw afterward
-     * for a value that was already known bad.
-     *
-     * KINETIS-69: this value is chosen relative to SessionExpiry's own
-     * MAX_EXPIRES_AT rather than hardcoded independently of it — a fixed
-     * literal here silently stopped testing anything real once
-     * MAX_EXPIRES_AT's own value changed (this exact test passed for the
-     * wrong reason, with the handler genuinely running, until this fix
-     * was caught by re-running the full suite after that change). Even
-     * at today's real time(), 260 billion seconds is comfortably past
-     * MAX_EXPIRES_AT (roughly 8,000 years from now) regardless of when
-     * this test actually runs, so no time()-tolerant window is needed
-     * here the way SessionExpiryTest's own boundary tests need one.
-     */
-    public function test_the_inner_handler_never_runs_with_a_session_lifetime_beyond_the_portable_maximum(): void
-    {
-        [$client, $recorder] = $this->clientWithRecorder(['SESSION_LIFETIME' => '260000000000', 'APP_ENV' => 'development']);
-
-        $response = $client->get('/side-effect-probe');
-
-        $response->assertStatus(500);
-        self::assertStringContainsString('SESSION_LIFETIME', (string) $response->getBody());
-        self::assertSame(0, $recorder->calls, 'the handler must never run for a SESSION_LIFETIME beyond the portable maximum.');
     }
 
     public function test_an_unrecognised_same_site_value_is_refused(): void

@@ -43,6 +43,7 @@ final class ManifestFixture
             'preferStable' => true,
             'phpVersion' => '^8.4',
             'requireDev' => ['phpunit/phpunit' => '^12.5'],
+            'phpstanRules' => [],
         ];
     }
 }

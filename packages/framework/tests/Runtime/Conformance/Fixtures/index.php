@@ -5,7 +5,7 @@ declare(strict_types=1);
 // The front controller the conformance suite runs the superglobals
 // adapters through — under `php -S` (spawned by SuperglobalsDriver), a
 // real FrankenPHP worker, or PHP-FPM behind nginx (the integration job).
-// RuntimeDetector picks the adapter the way public/index.php does, so
+// RuntimeDetector picks the adapter the way HttpStartup does, so
 // each environment runs its real adapter's run() loop: FrankenPhpAdapter
 // inside frankenphp_handle_request(), FpmAdapter elsewhere. Named
 // index.php because FrankenPHP's php-server routes a worker through the
@@ -21,15 +21,18 @@ declare(strict_types=1);
 // driver passed in through the environment (the same shape as
 // kinetis/bref-adapter's fake Runtime API fixture).
 //
-// A parse failure inside the adapter never reaches this
-// handler at all — that is the point of the conformance case that
-// exercises it — so a missing observed-request file is a meaningful
-// outcome the driver reports as "the handler never ran", not an error.
+// A body RequestBodyMiddleware refuses never reaches the handler at all;
+// that is the point of the conformance case that exercises it, so a
+// missing observed-request file is a meaningful outcome the driver
+// reports as "the handler never ran", not an error.
 
 require __DIR__ . '/../../../../vendor/autoload.php';
 
 use Kinetis\Config\Config;
+use Kinetis\Http\CallableRequestHandler;
 use Kinetis\Http\Form\FormLimits;
+use Kinetis\Http\Middleware\RequestBodyMiddleware;
+use Kinetis\Http\MiddlewarePipeline;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\RuntimeDetector;
 use Kinetis\Testing\Runtime\ObservedRequest;
@@ -43,8 +46,14 @@ use Psr\Http\Message\ServerRequestInterface;
 // for whose forwarded headers are believed.
 $config = Config::fromEnvironment();
 
-RuntimeDetector::detect(FormLimits::fromConfig($config), TrustedProxies::fromConfig($config))
-    ->run(static function (ServerRequestInterface $request): ResponseInterface {
+// The adapter delivers a raw request; RequestBodyMiddleware is what
+// bounds and parses its body. A real application reaches it through the
+// Kernel's global pipeline — there is no Kernel here, so the one
+// middleware the body contract lives in is wired directly, which is what
+// keeps this fixture's answers the ones a real deployment gives.
+$pipeline = new MiddlewarePipeline(
+    [new RequestBodyMiddleware(FormLimits::fromConfig($config))],
+    new CallableRequestHandler(static function (ServerRequestInterface $request): ResponseInterface {
         // Readiness, through the whole path — RuntimeDetector, the adapter's
         // run() loop, the bridge, this handler — rather than a TCP accept,
         // which a proxy answers before the SAPI behind it is up. The driver
@@ -73,4 +82,7 @@ RuntimeDetector::detect(FormLimits::fromConfig($config), TrustedProxies::fromCon
         );
 
         return ResponseSpec::fromArray($spec)->toResponse();
-    });
+    }),
+);
+
+RuntimeDetector::detect(TrustedProxies::fromConfig($config))->run($pipeline->handle(...));

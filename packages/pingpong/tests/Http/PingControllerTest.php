@@ -13,7 +13,7 @@ use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\SqlLink;
-use Kinetis\Persistence\Testing\DatabaseTransactions;
+use Kinetis\Persistence\Testing\DatabaseTruncation;
 use Kinetis\Testing\ApplicationTestCase;
 use PHPUnit\Framework\Attributes\BeforeClass;
 use Throwable;
@@ -21,7 +21,8 @@ use Throwable;
 /**
  * The database-backed half of {@doc}`testing`, against this application's
  * own MySQL: every test writes real rows through the real controller, and
- * none of them survives into the next.
+ * `ping_messages` is emptied before each one, so none of them survives
+ * into the next.
  *
  * Runs inside the compose stack (`docker compose exec app`), where
  * `ping_messages` already exists because the `migrate` service created it.
@@ -33,7 +34,7 @@ final class PingControllerTest extends ApplicationTestCase
 {
     private ?SqlLink $link = null;
 
-    use DatabaseTransactions;
+    use DatabaseTruncation;
 
     protected function projectRoot(): string
     {
@@ -43,6 +44,12 @@ final class PingControllerTest extends ApplicationTestCase
     protected function databaseLink(): SqlLink
     {
         return $this->link ??= $this->app->get(MysqlLink::class);
+    }
+
+    /** @return list<string> */
+    protected function tablesToTruncate(): array
+    {
+        return ['ping_messages'];
     }
 
     /**
@@ -145,19 +152,19 @@ final class PingControllerTest extends ApplicationTestCase
      */
     public function test_the_previous_tests_row_did_not_survive(): void
     {
-        $before = $this->pingCount();
+        self::assertSame(0, $this->pingCount());
 
         $this->client->post('/pong/direct')->assertOk();
 
-        self::assertSame($before + 1, $this->pingCount());
+        self::assertSame(1, $this->pingCount());
     }
 
     public function test_a_queued_ping_is_stored_pending(): void
     {
         $this->client->post('/pong/queued')->assertOk();
 
-        // The queue worker is a separate process and never sees this
-        // transaction, so the row stays pending for the whole test.
+        // RecordingQueue holds the job rather than running it, so the
+        // row stays pending for the whole test.
         $row = $this->databaseLink()
             ->query("SELECT status FROM ping_messages WHERE scenario = 'queued' ORDER BY id DESC LIMIT 1")
             ->fetchRow();

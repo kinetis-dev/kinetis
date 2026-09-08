@@ -7,11 +7,10 @@ namespace Kinetis\Cache\Exception;
 use RuntimeException;
 
 /**
- * A compiled cache artifact's own data (`http.php`, `commands.php`,
- * `events.php`, `plugins.php`) does not represent a valid instance of
- * the type being reconstructed from it — a missing or wrong-typed
- * top-level field, or a malformed entry within one (a route missing
- * its `httpMethod`, say). Always means the artifact is stale or
+ * A section of the compiled artifact does not represent a valid
+ * instance of the type being reconstructed from it — a missing or
+ * wrong-typed top-level field, or a malformed entry within one (a route
+ * missing its `httpMethod`, say). Always means the artifact is stale or
  * corrupt, never a defect in the code reconstructing it.
  */
 final class InvalidCacheArtifactException extends RuntimeException implements CacheArtifactExceptionInterface

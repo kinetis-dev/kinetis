@@ -19,64 +19,54 @@ use InvalidArgumentException;
 
 /**
  * A thin, parameterized SQL query builder — not an ORM. No relationships,
- * no migrations, no change-tracking, no save()-on-a-model. Works with
- * either MySQL or Postgres through the shared
- * Kinetis\Persistence\Contract\SqlLink interface, exactly like
- * Kinetis\Persistence\TransactionGuard already does — one
- * class, not one package per backend (see detectDialect()): the two
- * backends only genuinely differ on identifier quoting and how a
- * generated primary key is retrieved after an INSERT, both isolated in
- * Dialect, not spread through this class.
+ * no migrations, no change-tracking, no save()-on-a-model. One class
+ * serves both backends through the shared
+ * Kinetis\Persistence\Contract\SqlLink family, exactly as
+ * Kinetis\Persistence\TransactionGuard does: MySQL and Postgres differ
+ * only on identifier quoting and on how a generated primary key comes
+ * back after an INSERT, both isolated in Dialect.
  *
- * $link accepts a plain driver client *or* an in-flight
- * SqlTransaction — both implement SqlLink — so a Query composes
- * directly inside TransactionGuard::transaction()'s callback with no new
- * transaction concept of its own:
- *
- *   $transactions->transaction($pool, function ($tx) {
- *       new Query($tx)->table('orders')->insert([...]);
- *   });
+ * $link accepts a plain driver client *or* an in-flight SqlTransaction —
+ * both implement SqlLink — so a Query composes directly inside
+ * TransactionGuard::transaction()'s callback with no transaction concept
+ * of its own.
  *
  * Every compile*() method below builds its SQL string and bound-parameter
- * list together, in a single pass — never the SQL first and the bindings
- * as an afterthought. That's deliberate: once structured where() calls can
- * mix with whereRaw() fragments, tracking which bound value lands in which
- * "?" is the one place a subtle, silent bug could creep in (right value,
- * wrong slot). Building both in lockstep is what makes that impossible by
- * construction rather than by careful bookkeeping.
+ * list together, in a single pass. That is what keeps each "?" and its
+ * own value in the same position once structured where() calls mix with
+ * whereRaw() fragments — by construction, not by bookkeeping.
  *
- * One instance is one query — table()/select()/where()/... all mutate and
- * accumulate on $this, nothing resets between calls. Reusing one instance
- * across logically separate queries silently merges their where()s/
- * orders/etc. into one query instead of running two — a real mistake, not
- * a hypothetical one: this exact bug showed up in this package's own
- * MySQL/Postgres verification script on the first draft (reusing one
- * Query for insert-then-select-then-count accumulated every where() ever
- * called into one WHERE clause, breaking count() silently). Always
- * `new Query($link)` for each distinct query.
+ * One instance is one query: table()/select()/where()/... accumulate on
+ * $this and nothing resets between calls, so reusing one instance across
+ * logically separate queries merges them into a single query. Always
+ * `new Query($link)` for each distinct query. first(), paginate() and
+ * cursorPaginate() are the exception — each applies the limit, offset,
+ * order, cursor filter and projection it needs to a shallow clone, so
+ * the caller's own builder is unchanged when they return.
  */
 final class Query
 {
     /**
      * where()'s $operator, orderBy()'s $direction, join()'s $type, and
      * where()/whereIn()/whereRaw()'s $boolean are interpolated into SQL
-     * verbatim, unlike every other user-reachable slot in this class —
-     * left unchecked, that is a real SQL injection point, since a
-     * sortable/filterable API (`?sort=name&dir=asc&op=gte`) is exactly the
-     * shape that passes these through from a request, and a generic
-     * "match any/all of these filters" builder is exactly the shape that
-     * passes $boolean through the same way. Allow-listing them here is a
-     * construction-time boundary, the same shape as
-     * CorsMiddleware/AsGlobalMiddleware's own constructor guards — every
-     * other value/identifier in this class was already safe by
-     * construction (bound as "?" or identifier-quoted); this closes the
-     * places that weren't.
+     * verbatim, unlike every other user-reachable slot in this class. A
+     * sortable/filterable API (`?sort=name&dir=asc&op=gte`) is exactly
+     * the shape that passes a request value into one of them, so each is
+     * allow-listed at the call that sets it. Every other value or
+     * identifier here is already safe by construction — bound as "?" or
+     * identifier-quoted.
      */
     private const array ALLOWED_WHERE_OPERATORS = ['=', '!=', '<>', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE'];
 
     private const array ALLOWED_ORDER_DIRECTIONS = ['ASC', 'DESC'];
 
-    private const array ALLOWED_JOIN_TYPES = ['INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS'];
+    /**
+     * INNER, LEFT and RIGHT compile to the same portable syntax on both
+     * backends. FULL and CROSS do not — MySQL has no FULL JOIN at all,
+     * and CROSS takes no ON clause, which is the only join shape join()
+     * builds.
+     */
+    private const array ALLOWED_JOIN_TYPES = ['INNER', 'LEFT', 'RIGHT'];
 
     private const array ALLOWED_WHERE_BOOLEANS = ['AND', 'OR'];
 
@@ -92,26 +82,35 @@ final class Query
 
     /**
      * An already-quoted `expr AS alias` fragment appended to the compiled
-     * SELECT list, set only for the duration of one
-     * {@see toSelectSqlWithCursorAlias()} call and cleared in its own
-     * finally — never state a later call on this instance can observe.
-     * Separate from $selectRawExpressions above because that one is
-     * subject to compileSelectColumns()'s "drop the default wildcard once
-     * something explicit was asked for" rule, which is right for a
-     * caller's own selectRaw() and wrong here: appending a cursor alias
-     * must never silently take `*` away from a projection the caller
-     * never touched.
+     * SELECT list, set only on cursorPaginate()'s own clone. Separate
+     * from $selectRawExpressions above because that one is subject to
+     * compileSelectColumns()'s "drop the default wildcard once something
+     * explicit was asked for" rule, which is right for a caller's own
+     * selectRaw() and wrong here: appending a cursor alias must never
+     * silently take `*` away from a projection the caller never touched.
      */
     private ?string $cursorAliasExpression = null;
 
     /**
      * @var list<
      *     array{type: 'basic', column: string, operator: string, value: mixed, boolean: 'AND'|'OR'}
+     *     |array{type: 'null', column: string, operator: 'IS NULL'|'IS NOT NULL', boolean: 'AND'|'OR'}
      *     |array{type: 'raw', sql: string, params: list<mixed>, boolean: 'AND'|'OR'}
      *     |array{type: 'in', column: string, values: list<mixed>, boolean: 'AND'|'OR'}
      * >
      */
     private array $wheres = [];
+
+    /**
+     * cursorPaginate()'s own filter, kept apart from $wheres so
+     * compileWheres() can emit it as `(existing predicate) AND column > ?`
+     * — appended to the flat list instead, an OR in the caller's own
+     * predicate would bind tighter than the cursor and leave it applying
+     * to the last OR arm alone.
+     *
+     * @var array{column: string, value: string}|null
+     */
+    private ?array $cursorPredicate = null;
 
     /** @var list<array{type: string, table: string, first: string, operator: string, second: string}> */
     private array $joins = [];
@@ -130,22 +129,15 @@ final class Query
      */
     private bool $hasRawFragment = false;
 
-    public function __construct(
-        private readonly MysqlLink|PostgresLink $link,
-        ?Dialect $dialect = null,
-    ) {
-        $this->dialect = $dialect ?? self::detectDialect($link);
-    }
-
     /**
-     * No exception path for "neither" — $link's own parameter type is
-     * already the closed union MysqlLink|PostgresLink, so PHP's own
-     * argument-type enforcement is what rejects anything else, at the
-     * call site, before this method ever runs.
+     * The link's own type is the only dialect authority. MysqlLink|
+     * PostgresLink is a closed union, so PHP's argument-type enforcement
+     * rejects anything else at the call site and there is no "neither"
+     * branch to write here.
      */
-    private static function detectDialect(MysqlLink|PostgresLink $link): Dialect
+    public function __construct(private readonly MysqlLink|PostgresLink $link)
     {
-        return $link instanceof MysqlLink ? new MySqlDialect() : new PostgresDialect();
+        $this->dialect = $link instanceof MysqlLink ? new MySqlDialect() : new PostgresDialect();
     }
 
     /**
@@ -154,11 +146,6 @@ final class Query
      * therefore always takes query(), and one whose parameters are all
      * safe to write into the SQL text may — see inlineLiterals(), which
      * decides on the driver rather than on this class.
-     *
-     * A fresh Query is built and executed once, so it never reuses a
-     * prepared statement itself. Whether one is reused at all is the
-     * driver's business: the PDO drivers memoize per connection and get
-     * that reuse across Query instances, the native drivers do not.
      *
      * @param list<mixed> $params
      */
@@ -174,35 +161,24 @@ final class Query
     }
 
     /**
-     * Every "?" this class emits itself (where()/whereIn()/insert()/
-     * update()) has exactly one corresponding entry pushed onto its
-     * bindings at the same time, in the same left-to-right order — see
-     * this class's own docblock. That invariant is what makes a plain,
-     * positional "replace each ? with its value" substitution safe:
-     * there's no other source of a literal "?" character to collide with,
-     * *unless* whereRaw()/selectRaw()/orderByRaw() contributed raw SQL
-     * text of their own — caller-supplied text this class can't parse,
-     * which might contain a "?" that was never meant as a placeholder
-     * (inside a quoted string, say). $hasRawFragment rules that out
-     * entirely rather than trying to tell a real placeholder from a decoy
-     * one; a raw-fragment query always falls back to execute().
+     * Every "?" this class emits itself has exactly one binding pushed at
+     * the same time, in the same left-to-right order, which is what makes
+     * a positional "replace each ? with its value" substitution safe.
+     * Raw SQL text breaks that: whereRaw()/selectRaw()/orderByRaw() carry
+     * caller-supplied text this class cannot parse, which may contain a
+     * "?" that was never a placeholder, so $hasRawFragment sends the whole
+     * query to execute() rather than telling a real placeholder from a
+     * decoy one.
      *
-     * Returns null (falling back to execute()) when inlining doesn't
-     * apply — a raw fragment was used, or any single value in $params
-     * isn't safely inlinable as a literal (Dialect::literalFor() already
-     * covers per-value type/charset safety; the internal-error case above
-     * covers this method's own placeholder-count invariant).
+     * Returns null — bind instead — for a raw fragment, or for any value
+     * Dialect::literalFor() will not write as a literal.
      *
      * @param list<mixed> $params
      */
     private function inlineLiterals(string $sql, array $params): ?string
     {
-        // Whether writing a value into the SQL beats binding it is a
-        // property of the driver. The native drivers reach the server
-        // once for an unparameterized query and twice for a prepared
-        // one; the PDO drivers memoize the prepared statement and keep
-        // the binary protocol, where the same substitution costs about
-        // half again as much per query. They say so themselves.
+        // Whether writing a value into the SQL beats binding it is the
+        // driver's own answer, and this marker is where it states it.
         if ($this->link instanceof PrefersPreparedStatements) {
             return null;
         }
@@ -268,12 +244,25 @@ final class Query
     }
 
     /**
+     * A null $value follows SQL's own null semantics instead of binding:
+     * `=` compiles to IS NULL, `!=` and `<>` to IS NOT NULL, neither
+     * with a placeholder. Every other operator against null is rejected
+     * — `column > NULL` is never true for any row, so it can only be a
+     * mistake.
+     *
      * @param 'AND'|'OR' $boolean
      */
     public function where(string $column, string $operator, mixed $value, string $boolean = 'AND'): static
     {
         $normalizedOperator = self::assertAllowedOperator($operator);
         $normalizedBoolean = self::assertAllowedBoolean($boolean);
+
+        if ($value === null) {
+            $this->wheres[] = ['type' => 'null', 'column' => $column, 'operator' => self::nullOperatorFor($normalizedOperator), 'boolean' => $normalizedBoolean];
+
+            return $this;
+        }
+
         $this->wheres[] = ['type' => 'basic', 'column' => $column, 'operator' => $normalizedOperator, 'value' => $value, 'boolean' => $normalizedBoolean];
 
         return $this;
@@ -291,12 +280,26 @@ final class Query
      * these users" when the user list came back empty) is a common real
      * case, not an edge case to leave broken.
      *
+     * A null member is rejected instead: SQL never matches a row against
+     * NULL, so one that slipped into the list changes what the query
+     * means without changing how it reads. Use where($column, '=', null)
+     * for IS NULL.
+     *
      * @param list<mixed> $values
      * @param 'AND'|'OR' $boolean
      */
     public function whereIn(string $column, array $values, string $boolean = 'AND'): static
     {
         $normalizedBoolean = self::assertAllowedBoolean($boolean);
+
+        if (in_array(null, $values, true)) {
+            throw new InvalidArgumentException(
+                "whereIn() cannot take null in the value list for \"{$column}\": SQL never matches a row "
+                . "against NULL, so the null narrows the set silently. Use where('{$column}', '=', null) "
+                . 'for IS NULL.',
+            );
+        }
+
         $this->wheres[] = ['type' => 'in', 'column' => $column, 'values' => $values, 'boolean' => $normalizedBoolean];
 
         return $this;
@@ -309,12 +312,25 @@ final class Query
      * appear here; "raw" means raw SQL syntax, never raw unparameterized
      * user input.
      *
+     * $sql must carry an actual fragment. An empty or whitespace-only one
+     * is a predicate the caller believes they added and the compiler
+     * emits nothing for, which would let update()/delete() past their
+     * own predicate requirement and affect every row.
+     *
      * @param list<mixed> $params
      * @param 'AND'|'OR' $boolean
      */
     public function whereRaw(string $sql, array $params = [], string $boolean = 'AND'): static
     {
         $normalizedBoolean = self::assertAllowedBoolean($boolean);
+
+        if (trim($sql) === '') {
+            throw new InvalidArgumentException(
+                'whereRaw() needs a SQL fragment: an empty one compiles to no predicate at all, which '
+                . 'would widen an update() or delete() to every row in the table.',
+            );
+        }
+
         $this->wheres[] = ['type' => 'raw', 'sql' => $sql, 'params' => $params, 'boolean' => $normalizedBoolean];
         $this->hasRawFragment = true;
 
@@ -398,7 +414,10 @@ final class Query
      */
     public function first(?string $dtoClass = null): object|array|null
     {
-        return $this->limit(1)->get($dtoClass)[0] ?? null;
+        $one = clone $this;
+        $one->limitValue = 1;
+
+        return $one->get($dtoClass)[0] ?? null;
     }
 
     public function count(): int
@@ -414,11 +433,14 @@ final class Query
 
     /**
      * Offset-based pagination: page()/perPage(), with a total count and
-     * page count. count() already ignores order/limit/offset while still
-     * respecting where()/join() (see toSelectSql()'s $countOnly branch),
-     * so it and the page's own limit()->offset()->get() are two
-     * executions of the same logical query, not the "reuse across
-     * unrelated queries" mistake this class's own docblock warns against.
+     * page count. The page's own limit and offset are applied to a
+     * clone, and count() reads the same predicates and joins without
+     * them, so the two executions describe one logical query and the
+     * caller's builder is untouched by either.
+     *
+     * An order is required: without one the server may return rows in
+     * any order it likes, and page 2 can then repeat or skip rows from
+     * page 1.
      *
      * @template T of object
      * @param class-string<T>|null $dtoClass
@@ -433,31 +455,18 @@ final class Query
             throw InvalidPaginationException::nonPositivePage($page);
         }
 
-        // (page - 1) * perPage never fails at the multiplication itself —
-        // PHP silently promotes an overflowing product to float — so the
-        // failure this guards against is offset(int)'s own strict type,
-        // which would otherwise throw a raw TypeError only after count()
-        // has already queried the database. Checked here, before either
-        // runs, against the same arithmetic offset() will receive.
-        $offset = ($page - 1) * $perPage;
-
-        // PHPStan's own arithmetic modeling doesn't represent integer
-        // overflow at all — it infers $offset stays int purely from
-        // $page/$perPage's own static int types, with no way to know PHP
-        // itself would silently widen an overflowing product to float.
-        // This is exactly the real case the comment above exists to
-        // guard against, so the check stays even though PHPStan can't
-        // see why it's ever reachable.
-        // @phpstan-ignore-next-line function.alreadyNarrowedType
-        if (!is_int($offset)) {
-            throw InvalidPaginationException::offsetOverflow($page, $perPage);
+        if ($this->orders === []) {
+            throw QueryBuilderException::paginationNeedsAnOrder();
         }
 
         $total = $this->count();
-        $data = $this->limit($perPage)->offset($offset)->get($dtoClass);
+
+        $window = clone $this;
+        $window->limitValue = $perPage;
+        $window->offsetValue = ($page - 1) * $perPage;
 
         return new Paginator(
-            data: $data,
+            data: $window->get($dtoClass),
             currentPage: $page,
             perPage: $perPage,
             total: $total,
@@ -471,74 +480,44 @@ final class Query
      * Cursor-based pagination: no COUNT(*), no page number — advances by
      * the last row's own $cursorColumn value instead of an offset, so
      * rows inserted/deleted between calls can't shift results the way
-     * offset pagination's page N can. Owns the whole query state that
-     * would otherwise conflict with that cursor: always orders by
-     * $cursorColumn itself, so an orderBy()/orderByRaw() call already
-     * made on this Query — on $cursorColumn or any other column — throws
-     * InvalidPaginationException rather than silently compiling a
-     * WHERE $cursorColumn > ? comparison that no longer describes the
-     * order results actually come back in. Always computes its own
-     * limit from perPage, so a pre-existing limit() throws the same way.
-     * A pre-existing offset() greater than zero throws too: cursor
-     * pagination has no offset concept of its own, and the value would
-     * be reapplied inside every cursor window on every call rather than
-     * applied once before the sequence starts, silently skipping rows
-     * as soon as a caller advances past the first page — offset(0) is
-     * the one value with no such risk and is accepted. Pagination by a
-     * different or composite ordering, or by an initial skip, needs its
-     * own cursor design, which this method does not provide; call it on
-     * a Query with no orderBy()/orderByRaw()/limit() calls and no
-     * offset() beyond zero of your own.
+     * offset pagination's page N can.
+     *
+     * The order, limit, cursor filter and projection this method needs
+     * are applied to a clone, so the caller's builder comes back
+     * unchanged. A pre-existing orderBy()/orderByRaw(), limit(), or
+     * offset() above zero is refused: each states an intent this method's
+     * own ordering and windowing would contradict, leaving
+     * WHERE $cursorColumn > ? describing something other than the rows
+     * delivered. A different or composite ordering needs its own cursor
+     * design, which this method does not provide.
+     *
+     * The cursor filter combines with the where() calls already on the
+     * query as `(existing predicate) AND $cursorColumn > ?`, so an OR
+     * anywhere in that predicate cannot bind tighter than the cursor.
      *
      * $cursorColumn must be unique and strictly monotonic (a primary key
      * or an auto-incrementing/serial column, not e.g. created_at, which
-     * two rows can share) — a page boundary landing inside a run of equal
-     * values silently skips whatever's left of that run, since
-     * `WHERE cursorColumn > ?` only ever excludes rows up to and
-     * including the exact value already seen, not "rows already seen."
+     * two rows can share): `> ?` excludes rows up to and including the
+     * value already seen, not "rows already seen", so a page boundary
+     * inside a run of equal values skips the rest of that run.
      *
-     * Fetches rows as plain arrays first, regardless of $dtoClass, so the
-     * next cursor is read off the real column name — a hydrated DTO's own
-     * property name isn't guaranteed to match it. $dtoClass, when given,
-     * only affects what ends up in the returned data.
+     * Rows are fetched as plain arrays regardless of $dtoClass, so the
+     * next cursor is read off the real column name and out of the same
+     * result as the delivered rows — never a second query, which a write
+     * landing between the two could leave naming a row the caller never
+     * received.
      *
-     * The cursor value always comes out of the same result as the
-     * delivered rows — never a second query. Two reads of a live table
-     * are not one snapshot: a row inserted or deleted between them moves
-     * the boundary, and a cursor naming a row the caller was never handed
-     * silently skips whatever sits between the two. One query cannot
-     * disagree with itself.
-     *
-     * That makes the cursor column's own *row key* the whole problem, and
-     * $cursorAlias is how a caller settles it. Both MySQL and Postgres
-     * report an unaliased qualified column (`orders.id`) under its bare
-     * name (`id`), which a join can trivially collide with — and a PHP
-     * associative row has no way to hold two values under one key, so the
-     * colliding pair silently becomes one. There is no alias spelling
-     * this class could pick that is *guaranteed* absent from an arbitrary
-     * `*` or explicit select(), so it does not guess one: pass
-     * $cursorAlias and the column is additionally selected under exactly
-     * that name, read back from it, and stripped from every returned row
-     * (never reaching $dtoClass hydration) before this returns. A
-     * qualified $cursorColumn without one is refused rather than guessed
-     * at.
-     *
-     * Choosing a name nothing else in the projection uses is the
-     * caller's, exactly as it is for any `AS` they write themselves —
-     * {@see assertAliasIsFreeInProjection()} rejects the half of that
-     * mistake which is visible from the builder (a column the caller
-     * listed by name), and its own docblock covers why a wildcard's
-     * contents cannot be checked the same way.
-     *
-     * An unqualified $cursorColumn needs no alias, since its own name is
-     * already the row key: it is added to the projection only when a
-     * caller's own select() chose specific columns that don't include it
-     * — never when select() wasn't called at all (the default `*` already
-     * covers it) or when the caller already selected it themselves — and
-     * stripped back out only when this method is the one that added it.
-     * Passing $cursorAlias for one is still allowed, and is the way to
-     * disambiguate a projection that already has a *different* column of
-     * that name.
+     * Both engines report an unaliased qualified column (`orders.id`)
+     * under its bare name (`id`), which a join can collide with, and a
+     * PHP row cannot hold two values under one key. A qualified
+     * $cursorColumn therefore requires $cursorAlias: the column is
+     * additionally selected under that name, read back from it, and
+     * stripped from every returned row before hydration.
+     * {@see assertAliasIsFreeInProjection()} rejects an alias a listed
+     * column already answers to; a wildcard's contents stay the caller's
+     * own precondition. An unqualified $cursorColumn is already its own
+     * row key: it needs no alias, and is added to the projection only
+     * when a select() chose columns that omit it.
      *
      * @param class-string|null $dtoClass
      */
@@ -549,25 +528,29 @@ final class Query
         ?string $dtoClass = null,
         ?string $cursorAlias = null,
     ): CursorPaginator {
-        $cursorColumnIsQualified = str_contains($cursorColumn, '.');
-        $this->assertCursorPaginateArguments($perPage, $cursorColumn, $cursorAlias, $cursorColumnIsQualified);
-
-        if ($cursor !== null) {
-            $this->where($cursorColumn, '>', $cursor);
-        }
+        $this->assertCursorPaginateArguments($perPage, $cursorColumn, $cursorAlias);
 
         // Only ever true for an *unqualified* column, whose own name is
         // the row key: a qualified one always arrives here aliased.
         $projectionIncludesCursorColumn = $cursorAlias === null
             && ($this->selectColumns === ['*'] || in_array($cursorColumn, $this->selectColumns, true));
 
-        if ($cursorAlias === null && !$projectionIncludesCursorColumn) {
-            $this->selectColumns[] = $cursorColumn;
+        $page = clone $this;
+
+        if ($cursor !== null) {
+            $page->cursorPredicate = ['column' => $cursorColumn, 'value' => $cursor];
+        }
+
+        if ($cursorAlias !== null) {
+            $page->cursorAliasExpression = $this->dialect->quoteIdentifier($cursorColumn)
+                . ' AS ' . $this->dialect->quoteIdentifier($cursorAlias);
+        } elseif (!$projectionIncludesCursorColumn) {
+            $page->selectColumns[] = $cursorColumn;
         }
 
         $cursorRowKey = $cursorAlias ?? $cursorColumn;
-        $compiled = $this->orderBy($cursorColumn)->limit($perPage + 1)->toSelectSqlWithCursorAlias($cursorColumn, $cursorAlias);
-        $result = $this->run($compiled->sql, $compiled->params);
+        $compiled = $page->orderBy($cursorColumn)->limit($perPage + 1)->toSelectSql();
+        $result = $page->run($compiled->sql, $compiled->params);
 
         /** @var list<array<string, mixed>> $rows */
         $rows = [];
@@ -603,89 +586,38 @@ final class Query
     }
 
     /**
-     * cursorPaginate()'s own argument-validation prefix, extracted for
-     * cognitive complexity — seven independent, unrelated failure modes
-     * (an out-of-range perPage, a perPage whose look-ahead cannot fit a
-     * native int, a pre-existing orderBy()/orderByRaw() this method's
-     * own cursor order would conflict with, a pre-existing offset()
-     * greater than zero the cursor's own windowing would silently
-     * reapply on every call, a pre-existing limit() this method's own
-     * perPage-derived limit would conflict with, a qualified cursor
-     * column with no alias to disambiguate it, an alias that collides
-     * with a column the caller already selected), each a guard clause
-     * with nothing left to share with the other six. Runs entirely
-     * before cursorPaginate() itself makes its first mutation to $this
-     * (where()/selectColumns/orderBy()/limit()), so a rejection here
-     * always leaves the query exactly as the caller built it — never a
-     * partially-applied cursor filter, projection change, order, or
-     * window.
+     * cursorPaginate()'s argument and conflict checks, extracted for
+     * cognitive complexity.
      */
     private function assertCursorPaginateArguments(
         int $perPage,
         string $cursorColumn,
         ?string $cursorAlias,
-        bool $cursorColumnIsQualified,
     ): void {
         if ($perPage < 1) {
             throw InvalidPaginationException::nonPositivePerPage('cursorPaginate()', $perPage);
         }
 
-        // perPage + 1 never fails at the addition itself — PHP silently
-        // promotes an overflowing sum to float — so the failure this
-        // guards against is limit(int)'s own strict type, which would
-        // otherwise throw a raw TypeError only after where()/
-        // selectColumns have already been mutated below. Checked here,
-        // against the same arithmetic the look-ahead fetch will receive.
-        // PHPStan infers $perPage + 1 stays int purely from $perPage's own
-        // static range type, with no model of real integer overflow — see
-        // the identical reasoning on paginate()'s own overflow check above.
-        // @phpstan-ignore-next-line function.alreadyNarrowedType
-        if (!is_int($perPage + 1)) {
-            throw InvalidPaginationException::lookaheadOverflow($perPage);
-        }
-
-        // cursorPaginate() always orders by $cursorColumn itself, and
-        // owns the whole ordering: a caller who already called
-        // orderBy()/orderByRaw() on this Query — regardless of which
-        // column, including $cursorColumn itself — has already committed
-        // to an order this method's own WHERE cursorColumn > ? cursor
-        // cannot honor without silently skipping or repeating rows.
-        // Rejected unconditionally rather than inspected for whether the
-        // particular order happens to be harmless: there is no reliable
-        // way to tell "redundant" apart from "conflicting" from a plain
-        // SQL fragment string, and a caller who genuinely wants a
-        // different or composite ordering needs a cursor design this API
-        // does not provide, not a silently-overridden one.
+        // Rejected whichever column it names, including $cursorColumn
+        // itself: a compiled order fragment gives no reliable way to
+        // tell a redundant order from a conflicting one.
         if ($this->orders !== []) {
-            throw InvalidPaginationException::preExistingOrderConflictsWithCursor();
+            throw InvalidPaginationException::cursorClauseConflict('orderBy()/orderByRaw()');
         }
 
-        // Unlike a pre-existing order, a pre-existing offset does have a
-        // provably harmless value: offset(0) compiles to the same "skip
-        // nothing" SQL as no offset() call at all, so it can never
-        // interact with the cursor's own WHERE filter. Anything greater
-        // is reapplied inside every cursor window rather than applied
-        // once before the whole sequence starts, silently skipping rows
-        // the moment a caller advances past the first page — this Query
-        // has no way to know it has already been "used" for a prior page,
-        // so there is nothing here that could make a positive offset safe
-        // on a later call.
-        if ($this->offsetValue !== null && $this->offsetValue !== 0) {
-            throw InvalidPaginationException::preExistingOffsetConflictsWithCursor($this->offsetValue);
-        }
-
-        // cursorPaginate() computes its own limit from perPage — a
-        // pre-existing limit(), including limit(0), represents the
-        // caller wanting some specific window this method's own
-        // perPage + 1 look-ahead would either silently overwrite or
-        // conflict with. Unlike offset(0), limit(0) is not a no-op (it
-        // compiles to "return zero rows"), so there is no analogous safe
-        // value to carve out here.
         if ($this->limitValue !== null) {
-            throw InvalidPaginationException::preExistingLimitConflictsWithCursor($this->limitValue);
+            throw InvalidPaginationException::cursorClauseConflict("limit({$this->limitValue})");
         }
 
-        if ($cursorColumnIsQualified && $cursorAlias === null) {
+        // offset(0) compiles to the same "skip nothing" SQL as no
+        // offset() call at all. Anything greater is reapplied inside
+        // every cursor window instead of once before the sequence
+        // starts, skipping rows as soon as the caller advances a page.
+        if ($this->offsetValue !== null && $this->offsetValue !== 0) {
+            throw InvalidPaginationException::cursorClauseConflict("offset({$this->offsetValue})");
+        }
+
+        if (str_contains($cursorColumn, '.') && $cursorAlias === null) {
             throw InvalidPaginationException::missingCursorAlias($cursorColumn);
         }
 
@@ -705,12 +637,10 @@ final class Query
 
         $lastRow = $rows[array_key_last($rows)];
 
-        // Not a collision check: a colliding alias *takes* the key
-        // rather than vacating it, so nothing here could see one. It
-        // catches the different failure of a cursor column that never
-        // reached the result at all, which would otherwise report a
-        // silently null cursor. assertAliasIsFreeInProjection() is what
-        // rules out the collisions that are visible at all.
+        // Catches a cursor column that never reached the result at all,
+        // which would otherwise report a silently null cursor. Not a
+        // collision check: a colliding alias takes the key rather than
+        // vacating it, so nothing here could see one.
         if (!array_key_exists($cursorRowKey, $lastRow)) {
             throw QueryBuilderException::cursorColumnMissingFromRow($cursorRowKey);
         }
@@ -720,28 +650,17 @@ final class Query
 
     /**
      * Rejects a $cursorAlias that a column the caller listed themselves
-     * already answers to, before any SQL runs.
+     * already answers to, before any SQL runs. The appended cursor takes
+     * that column's key in the row, and the cleanup that removes the
+     * alias removes the caller's field with it — silently, since the key
+     * is present either way.
      *
-     * A collision is genuinely destructive rather than merely confusing:
-     * a PHP row is an associative array, so the appended cursor column
-     * takes the key its namesake would have occupied, and the cleanup
-     * that removes the alias afterwards removes the caller's own field
-     * with it. Nothing downstream can notice — the appended value is
-     * *present* under that key, so a presence check passes, and the row
-     * simply comes back one field short.
-     *
-     * What this can see is the explicit projection: `select('row_cursor')`
-     * names its own bare key, and `select('t.row_cursor')` resolves to
-     * the same one, since both engines report a qualified column under
-     * its last segment. What it cannot see is a wildcard's contents or an
-     * alias buried in a selectRaw() expression — neither is knowable
-     * without asking the server for column metadata, which SqlResult does
-     * not carry. Those stay the caller's own precondition, documented as
-     * such rather than promised as a check: a count of distinct keys
-     * against the server's column count would catch them, but it also
-     * fires on the ordinary duplicate `id` of any `SELECT *` across a
-     * join — a false rejection of the single most common reason to reach
-     * for a cursor alias at all.
+     * This sees the explicit projection only: `select('t.row_cursor')`
+     * claims the same bare key as `select('row_cursor')`, since both
+     * engines report a qualified column under its last segment. A
+     * wildcard's contents and an alias buried in a selectRaw() stay the
+     * caller's own precondition — knowing either needs column metadata
+     * SqlResult does not carry.
      *
      * @param list<string> $selectColumns
      */
@@ -757,34 +676,6 @@ final class Query
             if ($bareName === $cursorAlias) {
                 throw InvalidPaginationException::cursorAliasCollision($cursorAlias, $column);
             }
-        }
-    }
-
-    /**
-     * {@see toSelectSql()}, with $cursorColumn additionally selected
-     * under $cursorAlias when one was given — the projection the caller
-     * asked for, plus exactly one column this class reads its own cursor
-     * back from.
-     *
-     * Everything else about the query is left alone: an alias an
-     * orderBy() depends on stays in the projection that created it, and
-     * a caller's own offset() stays exactly as they set it. Appending is
-     * the only change, which is what lets the delivered rows and the
-     * cursor come out of one result rather than two.
-     */
-    private function toSelectSqlWithCursorAlias(string $cursorColumn, ?string $cursorAlias): CompiledQuery
-    {
-        if ($cursorAlias === null) {
-            return $this->toSelectSql();
-        }
-
-        $this->cursorAliasExpression = $this->dialect->quoteIdentifier($cursorColumn)
-            . ' AS ' . $this->dialect->quoteIdentifier($cursorAlias);
-
-        try {
-            return $this->toSelectSql();
-        } finally {
-            $this->cursorAliasExpression = null;
         }
     }
 
@@ -891,6 +782,8 @@ final class Query
      */
     public function toUpdateSql(array $data): CompiledQuery
     {
+        $this->assertMutationIsNarrowed('update()');
+
         if ($data === []) {
             throw new InvalidArgumentException(
                 'update() needs at least one column — an empty array compiles to invalid SQL '
@@ -915,10 +808,55 @@ final class Query
 
     public function toDeleteSql(): CompiledQuery
     {
+        $this->assertMutationIsNarrowed('delete()');
+
         $sql = 'DELETE FROM ' . $this->dialect->quoteIdentifier($this->table);
         $where = $this->compileWheres();
 
         return new CompiledQuery($sql . $where->sql, $where->params);
+    }
+
+    /**
+     * UPDATE and DELETE compile the table and the WHERE clause, nothing
+     * else. A query with no predicate at all matches every row, and any
+     * other accumulated state would be dropped from the statement —
+     * turning a mutation the caller narrowed with select(), join(),
+     * orderBy(), limit() or offset() into one that matches every row the
+     * WHERE clause alone allows. Both are refused instead. A deliberate
+     * whole-table statement, like a joined, ordered or limited mutation,
+     * runs as raw SQL through the link itself.
+     */
+    private function assertMutationIsNarrowed(string $method): void
+    {
+        if ($this->wheres === []) {
+            throw QueryBuilderException::mutationNeedsAPredicate($method);
+        }
+
+        $unsupported = [];
+
+        if ($this->selectColumns !== ['*'] || $this->selectRawExpressions !== []) {
+            $unsupported[] = 'select()/selectRaw()';
+        }
+
+        if ($this->joins !== []) {
+            $unsupported[] = 'join()/leftJoin()';
+        }
+
+        if ($this->orders !== []) {
+            $unsupported[] = 'orderBy()/orderByRaw()';
+        }
+
+        if ($this->limitValue !== null) {
+            $unsupported[] = 'limit()';
+        }
+
+        if ($this->offsetValue !== null) {
+            $unsupported[] = 'offset()';
+        }
+
+        if ($unsupported !== []) {
+            throw QueryBuilderException::unsupportedMutationClauses($method, $unsupported);
+        }
     }
 
     private static function assertAllowedOperator(string $operator): string
@@ -932,6 +870,22 @@ final class Query
         }
 
         return $normalized;
+    }
+
+    /**
+     * @return 'IS NULL'|'IS NOT NULL'
+     */
+    private static function nullOperatorFor(string $operator): string
+    {
+        return match ($operator) {
+            '=' => 'IS NULL',
+            '!=', '<>' => 'IS NOT NULL',
+            default => throw new InvalidArgumentException(
+                "Operator \"{$operator}\" cannot be used with a null value. SQL compares null through "
+                . 'IS NULL (=) and IS NOT NULL (!=, <>) only; every other comparison against null is '
+                . 'never true for any row.',
+            ),
+        };
     }
 
     private static function assertAllowedDirection(string $direction): string
@@ -979,15 +933,11 @@ final class Query
 
     /**
      * The default "*" is dropped once anything explicit — select() or
-     * selectRaw() — has actually been specified; only the untouched
-     * default ever produces a bare "*". More precisely: the ternary
-     * below drops the default "*" once a real selectRaw() expression
-     * exists and select() was never explicitly called — a caller
-     * reaching only for selectRaw('COUNT(*) AS total') wants exactly
-     * that, not also every column via the untouched default. Once
-     * select() has been called, $selectColumns is no longer literally
-     * ['*'], so the ternary's condition is false and whatever was
-     * explicitly selected is combined with the raw expressions normally.
+     * selectRaw() — has been specified: a caller reaching only for
+     * selectRaw('COUNT(*) AS total') wants exactly that, not also every
+     * column. Once select() has been called $selectColumns is no longer
+     * literally ['*'], so the explicit columns and the raw expressions
+     * combine normally.
      */
     private function compileSelectColumns(): string
     {
@@ -998,10 +948,10 @@ final class Query
 
         $expressions = [...$quoted, ...$this->selectRawExpressions];
 
-        // Appended after that ternary, deliberately: a cursor alias is
-        // this class's own addition, not something the caller asked to
-        // see, so it must never be what turns an untouched `*` into an
-        // explicit projection.
+        // Appended after that rule: a cursor alias is this class's own
+        // addition, not something the caller asked to see, so it must
+        // never be what turns an untouched `*` into an explicit
+        // projection.
         if ($this->cursorAliasExpression !== null) {
             $expressions[] = $this->cursorAliasExpression;
         }
@@ -1014,7 +964,7 @@ final class Query
      * unquoted on their "*" segment — quoteIdentifier() would otherwise
      * quote it as a literal column named "*" (`` `orders`.`*` `` on
      * MySQL), which the server rejects outright rather than expanding to
-     * every column, since that's genuinely a different thing to ask for.
+     * every column, since that is a different thing to ask for.
      */
     private function compileSelectColumn(string $column): string
     {
@@ -1031,10 +981,6 @@ final class Query
 
     private function compileWheres(): CompiledQuery
     {
-        if ($this->wheres === []) {
-            return new CompiledQuery('', []);
-        }
-
         $sqlParts = [];
         $bindings = [];
 
@@ -1044,6 +990,14 @@ final class Query
             if ($where['type'] === 'raw') {
                 $sqlParts[] = $prefix . $where['sql'];
                 array_push($bindings, ...$where['params']);
+
+                continue;
+            }
+
+            if ($where['type'] === 'null') {
+                // No placeholder: SQL has no value to compare a null
+                // against, only IS NULL / IS NOT NULL to test for one.
+                $sqlParts[] = $prefix . $this->dialect->quoteIdentifier($where['column']) . " {$where['operator']}";
 
                 continue;
             }
@@ -1070,6 +1024,21 @@ final class Query
             $bindings[] = $where['value'];
         }
 
-        return new CompiledQuery(' WHERE ' . implode('', $sqlParts), $bindings);
+        $predicate = implode('', $sqlParts);
+
+        if ($this->cursorPredicate !== null) {
+            // Parenthesized: an OR anywhere in the caller's own
+            // predicate binds tighter than this AND, which would leave
+            // the cursor filtering the last OR arm alone.
+            $cursor = $this->dialect->quoteIdentifier($this->cursorPredicate['column']) . ' > ?';
+            $predicate = $predicate === '' ? $cursor : "({$predicate}) AND {$cursor}";
+            $bindings[] = $this->cursorPredicate['value'];
+        }
+
+        if ($predicate === '') {
+            return new CompiledQuery('', []);
+        }
+
+        return new CompiledQuery(' WHERE ' . $predicate, $bindings);
     }
 }

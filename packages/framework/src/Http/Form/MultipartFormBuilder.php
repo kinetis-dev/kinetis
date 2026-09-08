@@ -13,17 +13,16 @@ use Psr\Http\Message\UploadedFileInterface;
  * into the two structures PSR-7 hands a handler: `getParsedBody()` and
  * `getUploadedFiles()`.
  *
- * The part of this that is easy to get wrong, and that every adapter
- * parsing a body itself would otherwise get wrong separately, is that a
- * part name is not a key. `user[address][city]` nests, `tags[]` appends,
- * and a repeated `avatar` replaces — under a SAPI, because PHP's own
- * parser says so. Assigning `$fields[$name]` instead flattens all three
- * into something a handler reads differently depending on which runtime
- * it happens to be on. Both structures here are therefore built by
- * `parse_str()`, PHP's own implementation of those rules, reached
- * through {@see FormPairs}: fields directly, files by parsing a tree of
- * positions and swapping each one for its {@see UploadedFile}, so one
- * rule shapes both.
+ * The part of this that is easy to get wrong is that a part name is not
+ * a key. `user[address][city]` nests, `tags[]` appends, and a repeated
+ * `avatar` replaces — under a SAPI, because PHP's own parser says so.
+ * Assigning `$fields[$name]` instead flattens all three into something a
+ * handler reads differently from the way the same names read in an
+ * `application/x-www-form-urlencoded` body. Both structures here are
+ * therefore built by `parse_str()`, PHP's own implementation of those
+ * rules, reached through {@see FormPairs}: fields directly, files by
+ * parsing a tree of positions and swapping each one for its
+ * {@see UploadedFile}, so one rule shapes both.
  *
  * Part and header-line counts are {@see MultipartEnvelope}'s, taken from
  * the raw body before anything reaches this class. The rest of the
@@ -58,10 +57,9 @@ final class MultipartFormBuilder
      * sends a part with `filename=""` and no bytes. PHP represents that
      * in `$_FILES` as a present entry with `error` `UPLOAD_ERR_NO_FILE`,
      * an empty name and type, and size 0, so upload validation written
-     * against PHP sees "no file was chosen" and rejects it. Reporting the same part as a
-     * successful zero-byte upload instead would make that validation
-     * accept, under an adapter with its own parser, exactly what it
-     * rejects under FrankenPHP or PHP-FPM.
+     * against PHP sees "no file was chosen" and rejects it. Reporting
+     * the same part as a successful zero-byte upload instead would make
+     * that validation accept a part PHP's own parsing rejects.
      *
      * `getStream()` on such an entry throws, as PSR-7 requires for any
      * non-`UPLOAD_ERR_OK` file, so nothing downstream can read bytes

@@ -46,6 +46,8 @@ final readonly class RawRequestController
             'parsedBody' => $request->getParsedBody(),
             'queryString' => $request->getUri()->getQuery(),
             'queryParams' => $request->getQueryParams(),
+            'cookieHeader' => $request->getHeaderLine('Cookie'),
+            'cookieParams' => $request->getCookieParams(),
         ];
     }
 }

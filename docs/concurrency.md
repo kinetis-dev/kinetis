@@ -84,11 +84,15 @@ use function Kinetis\Async\concurrently;
 ```
 
 ```{warning}
-This is why Kinetis's database clients (see {doc}`persistence`) aren't
-built on `PDO`, `ext-mysqli`, or `ext-pgsql`. A blocking call has no point
-where it can hand control back to other work, so wrapping one in a Fiber
-doesn't make it non-blocking — it blocks the *entire worker process* just
-as hard, only less visibly, defeating `concurrently()`'s whole purpose.
+Wrapping a blocking call in a Fiber does not make it non-blocking: a
+blocking call has no point where it can hand control back to other work,
+so it blocks the whole worker just as hard, only less visibly. Kinetis's
+database clients (see {doc}`persistence`) are built on `ext-mysqli` and
+`ext-pgsql`, and under a persistent worker they issue statements through
+those extensions' asynchronous entry points, so a query waits on the
+event loop and suspends only its own Fiber. Under PHP-FPM, where a
+worker process handles one request at a time, the fallback is a blocking
+`PDO` connection.
 ```
 
 ## `concurrently()` — running tasks side by side
@@ -128,15 +132,22 @@ together, in roughly the time the slowest one alone takes.
 
 Each task runs in its own `Fiber`, drawn from a pool of *resident
 workers* (`Kinetis\Async\FiberPool`) that park between tasks instead of
-terminating. That reuse isn't a micro-optimization: constructing a
-`Fiber` allocates a whole C stack and destroying it frees one, and under
-FrankenPHP's threaded worker mode those `mmap`/`munmap` cycles serialize
-every worker thread in the process against the kernel's address-space
-lock — on an 8-vCPU host, resident reuse measures roughly *3× the
-throughput* of per-task construction on a 20-query fan-out route. The
-pool is per PHP thread, holds only idle Fibers (a task suspended on I/O
-keeps its Fiber to itself until it finishes), and none of it is visible
-in the API: you write plain closures, exactly as above.
+terminating. Constructing a `Fiber` allocates a whole C stack and
+destroying it frees one, so reusing a parked resident keeps a fan-out
+from paying that construction and destruction cost per task. The pool is
+per PHP thread and holds only idle Fibers — a task suspended on I/O keeps
+its Fiber to itself until it finishes — up to a bounded number of them: a
+wider burst still runs, on fresh Fibers that aren't retained afterwards. None of it is visible in the API: you write plain closures,
+exactly as above.
+
+A resident Fiber outlives the task that parked it, so the next task to
+run on it may belong to a later batch — and, in a persistent worker, to a
+later request. Anything that attaches Fiber-local or Fiber-keyed state
+must detach or release it before the task returns, on both the success
+and the failure path, or a later task inherits it. Fiber identity is the
+carrier that executes a task, not an identifier for that task, its batch,
+or its request; do not key anything on it that has to outlive the task.
+Span scopes follow this rule — see {ref}`telemetry-fiber-scopes`.
 
 While tasks are in flight, the caller waits on a Revolt suspension that
 the last task to finish resumes — the event loop drives every suspended
@@ -177,14 +188,17 @@ being called from a task, is correct and safe.
 ## Composing across clients
 
 Kinetis's database drivers (see {doc}`persistence`) and the Redis client
-(`amphp/redis`, chosen because it's Revolt-native) all wait by suspending
-the calling Fiber on the same underlying Revolt loop — the native
-Postgres driver through a real socket watcher, the native MySQL driver
-through its poll bridge, Redis through `Amp\Future` internally. Different
-API shapes, one loop: a `concurrently()` call can freely mix tasks built
-on any of them and still run every one genuinely in parallel — a MySQL
-query, a Postgres query, and a Redis command issued together complete in
-roughly the time the slowest one alone takes, not the sum of all three.
+(`Kinetis\Redis\Client`, over the non-replaying transport `kinetis/redis`
+owns — see {doc}`redis`) all wait by suspending the calling Fiber on the
+same underlying Revolt loop — the native Postgres driver through a real
+socket watcher, the native MySQL driver through its poll bridge, Redis
+through `Amp\Future` internally. `Amp\Redis\RedisClient` is an optional
+typed command facade over that same transport, reached through
+`Client::link()`, and suspends the same way. Different API shapes, one
+loop: a `concurrently()` call can freely mix tasks built on any of them
+and still run every one genuinely in parallel — a MySQL query, a
+Postgres query, and a Redis command issued together complete in roughly
+the time the slowest one alone takes, not the sum of all three.
 
 ## See also
 

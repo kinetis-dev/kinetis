@@ -18,13 +18,11 @@ use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
  */
 final readonly class PluginCache
 {
-    private const array TOP_LEVEL_KEYS = ['formatVersion', 'data', 'compiledAt'];
+    private const array TOP_LEVEL_KEYS = ['data'];
 
     public function __construct(
-        public int $formatVersion,
         /** @var array<class-string, array<array-key, mixed>> */
         public array $data,
-        public string $compiledAt,
     ) {}
 
     /**
@@ -33,9 +31,7 @@ final readonly class PluginCache
     public function toArray(): array
     {
         return [
-            'formatVersion' => $this->formatVersion,
             'data' => $this->data,
-            'compiledAt' => $this->compiledAt,
         ];
     }
 
@@ -52,15 +48,9 @@ final readonly class PluginCache
     {
         ArtifactValidation::exactKeys($data, 'PluginCache', self::TOP_LEVEL_KEYS);
 
-        $formatVersion = ArtifactValidation::int($data, 'PluginCache', 'formatVersion');
         $entries = ArtifactValidation::array($data, 'PluginCache', 'data');
-        $compiledAt = ArtifactValidation::string($data, 'PluginCache', 'compiledAt');
 
         /** @var array<class-string, array<array-key, mixed>> $entries */
-        return new self(
-            formatVersion: $formatVersion,
-            data: $entries,
-            compiledAt: $compiledAt,
-        );
+        return new self(data: $entries);
     }
 }

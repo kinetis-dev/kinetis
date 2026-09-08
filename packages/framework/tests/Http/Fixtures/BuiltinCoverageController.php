@@ -17,9 +17,7 @@ final readonly class BuiltinCoverageController
             'tags' => $data->tags,
             'items' => $data->items,
             'note' => $data->note,
-            'marker' => $data->marker,
-            'confirmed' => $data->confirmed,
-            'declined' => $data->declined,
+            'flag' => $data->flag,
         ];
     }
 }

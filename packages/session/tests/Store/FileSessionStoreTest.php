@@ -9,7 +9,6 @@ use Kinetis\Session\Store\FileSessionStore;
 use Kinetis\Session\Tests\Fixtures\FailingChmodStreamWrapper;
 use Kinetis\Session\Tests\Fixtures\FailingWriteStreamWrapper;
 use Kinetis\Session\Tests\Fixtures\RecordingStreamWrapper;
-use Kinetis\Session\Support\SessionExpiry;
 use PHPUnit\Framework\TestCase;
 
 final class FileSessionStoreTest extends TestCase
@@ -43,15 +42,14 @@ final class FileSessionStoreTest extends TestCase
     public function test_round_trip(): void
     {
         $id = self::id();
-        $this->store->write($id, ['user' => 42, 'nested' => ['a' => true]], 60);
+        $this->store->create($id, ['user' => 42, 'nested' => ['a' => true]], 60);
 
         self::assertSame(['user' => 42, 'nested' => ['a' => true]], $this->store->read($id));
     }
 
     /**
-     * KINETIS-66: a freshly created session directory's real, resulting
-     * mode — not merely "construction didn't throw" — must actually be
-     * private.
+     * A freshly created session directory's real, resulting mode — not
+     * merely "construction didn't throw" — must be private.
      */
     public function test_a_freshly_created_directory_gets_the_private_mode(): void
     {
@@ -74,7 +72,7 @@ final class FileSessionStoreTest extends TestCase
 
         $store = new FileSessionStore($directory);
         $id = self::id();
-        $store->write($id, ['x' => 1], 60);
+        $store->create($id, ['x' => 1], 60);
 
         self::assertSame(['x' => 1], $store->read($id));
 
@@ -83,11 +81,11 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-66: an externally-provisioned, group- or world-accessible
-     * directory is refused outright, not silently narrowed — this store
-     * does not own a directory it did not create, and correcting its
-     * permissions on its behalf could mask a real deployment mistake or
-     * step on something else relying on that directory's current mode.
+     * An externally-provisioned, group- or world-accessible directory is
+     * refused outright, not silently narrowed: this store does not own a
+     * directory it did not create, and correcting its permissions could
+     * mask a deployment mistake or disturb something else relying on
+     * that mode.
      */
     public function test_a_pre_existing_group_or_world_accessible_directory_is_refused(): void
     {
@@ -106,13 +104,13 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-66: a written session file's real, resulting mode — not
-     * merely "write() didn't throw" — must actually be private.
+     * A written session file's real, resulting mode — not merely
+     * "create() didn't throw" — must be private.
      */
     public function test_a_written_session_file_gets_the_private_mode(): void
     {
         $id = self::id();
-        $this->store->write($id, ['x' => 1], 60);
+        $this->store->create($id, ['x' => 1], 60);
 
         $mode = \fileperms($this->directory . '/sess_' . $id);
 
@@ -135,13 +133,10 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-68: a session whose expiresAt is exactly the current
-     * second — not one second short of it — must already be treated as
-     * expired, matching SqlSessionStore's own `expires_at > now` /
-     * `expires_at <= now` boundary exactly. Seeded directly with
-     * expiresAt === time() (writeExpiredFile() itself always seeds one
-     * second in the past, which is a stronger, less precise case than
-     * this exact-boundary one).
+     * A session whose expiresAt is exactly the current second is
+     * already expired, matching SqlSessionStore's `expires_at > now` /
+     * `expires_at <= now` boundary. Seeded directly, since
+     * writeExpiredFile() always seeds one second further back.
      */
     public function test_a_session_expiring_exactly_now_reads_null_and_is_removed(): void
     {
@@ -155,42 +150,12 @@ final class FileSessionStoreTest extends TestCase
         self::assertSame([], \glob($this->directory . '/sess_*') ?: []);
     }
 
-    /**
-     * KINETIS-68 FEEDBACK 2: the other side of the same boundary — a
-     * session with a healthy future expiry must still read as live.
-     * Deliberately a safe margin, not the razor's-edge +1 second this
-     * test originally used: read() has no injectable clock (its
-     * signature is fixed by SessionStoreInterface), so seeding
-     * expiresAt from one time() call here and letting read() make its
-     * own separate one is a real race a slow or preempted process could
-     * lose — exactly what the prior feedback round flagged. The exact
-     * one-second boundary is proven deterministically instead by
-     * SessionExpiryTest's own isExpired() tests, which take both sides
-     * of the comparison as fixed arguments and never touch the real
-     * clock at all.
-     */
-    public function test_a_session_expiring_well_into_the_future_still_reads_live(): void
-    {
-        $id = self::id();
-        \file_put_contents(
-            $this->directory . '/sess_' . $id,
-            \json_encode(['expiresAt' => \time() + 3600, 'data' => ['x' => 1]], JSON_THROW_ON_ERROR),
-        );
-
-        self::assertSame(['x' => 1], $this->store->read($id));
-    }
-
-    /**
-     * KINETIS-68: a non-positive lifetime must be rejected before any
-     * file is ever touched, on both the "invalid" and "already covered
-     * by the exception message" fronts — proven for both 0 and a
-     * negative value, the two distinct rejected shapes.
-     */
-    public function test_write_rejects_a_non_positive_lifetime(): void
+    /** A non-positive lifetime is rejected before any file is touched. */
+    public function test_create_rejects_a_non_positive_lifetime(): void
     {
         foreach ([0, -1] as $lifetime) {
             try {
-                $this->store->write(self::id(), ['x' => 1], $lifetime);
+                $this->store->create(self::id(), ['x' => 1], $lifetime);
                 self::fail("Expected SessionException for lifetime {$lifetime}.");
             } catch (SessionException $e) {
                 self::assertStringContainsString('Session lifetime must be a positive number of seconds', $e->getMessage());
@@ -201,90 +166,10 @@ final class FileSessionStoreTest extends TestCase
         $this->assertNoStrayTempFiles();
     }
 
-    /**
-     * KINETIS-68: time() + PHP_INT_MAX overflows to a float — write()
-     * must reject this before ever encoding/writing anything, rather
-     * than publishing a file its own reader would immediately reject as
-     * malformed.
-     */
-    public function test_write_rejects_an_overflowing_lifetime(): void
-    {
-        $id = self::id();
-
-        $this->expectException(SessionException::class);
-        $this->expectExceptionMessage('produces an expiry beyond');
-
-        try {
-            $this->store->write($id, ['x' => 1], \PHP_INT_MAX);
-        } finally {
-            self::assertSame([], \glob($this->directory . '/sess_*') ?: []);
-            $this->assertNoStrayTempFiles();
-        }
-    }
-
-    /**
-     * KINETIS-68 FEEDBACK: a lifetime that is a perfectly ordinary,
-     * representable PHP int — no overflow involved — but still pushes
-     * expiresAt past MAX_EXPIRES_AT must be rejected the same way,
-     * before anything is written. Distinct from the overflow case above:
-     * this proves the portable-maximum check itself, not just the
-     * int-overflow guard.
-     *
-     * KINETIS-68 FEEDBACK 2: a safe 100-second margin past the maximum,
-     * not the razor's-edge +1 this test originally used. write() has no
-     * injectable clock (SessionStoreInterface fixes its signature), so
-     * this test's own time() call and the one inside timestampFor() are
-     * two genuinely separate clock reads a slow or preempted process
-     * could let tick over between — a margin this wide survives any
-     * realistic delay, while the exact one-second boundary is proven
-     * deterministically by SessionExpiryTest's own timestampFor() tests,
-     * which pin both sides to one hardcoded $now and never touch the
-     * real clock at all.
-     */
-    public function test_write_rejects_a_lifetime_beyond_the_portable_maximum(): void
-    {
-        $id = self::id();
-        $lifetime = SessionExpiry::MAX_EXPIRES_AT - \time() + 100;
-
-        $this->expectException(SessionException::class);
-        $this->expectExceptionMessage('produces an expiry beyond');
-
-        try {
-            $this->store->write($id, ['x' => 1], $lifetime);
-        } finally {
-            self::assertSame([], \glob($this->directory . '/sess_*') ?: []);
-            $this->assertNoStrayTempFiles();
-        }
-    }
-
-    /**
-     * The other side of the same store-level boundary: a lifetime
-     * comfortably under the portable maximum must still succeed.
-     *
-     * KINETIS-68 FEEDBACK 2: comfortably under, not landing exactly at
-     * it — the exact boundary is a single arithmetic comparison
-     * (SessionExpiry::isRepresentable()), already proven deterministically
-     * by SessionExpiryTest against fixed, hand-picked values with zero
-     * real-clock involvement. This test's own job is different: proving
-     * a lifetime this large genuinely round-trips through the real
-     * store's write()/read() path, which a two-separate-time()-calls
-     * margin this wide can do safely without risking the flake an exact
-     * boundary would.
-     */
-    public function test_write_accepts_a_lifetime_comfortably_under_the_portable_maximum(): void
-    {
-        $id = self::id();
-        $lifetime = SessionExpiry::MAX_EXPIRES_AT - \time() - 100;
-
-        $this->store->write($id, ['x' => 1], $lifetime);
-
-        self::assertSame(['x' => 1], $this->store->read($id));
-    }
-
     public function test_destroy_removes_the_file(): void
     {
         $id = self::id();
-        $this->store->write($id, ['x' => 1], 60);
+        $this->store->create($id, ['x' => 1], 60);
         $this->store->destroy($id);
 
         self::assertNull($this->store->read($id));
@@ -316,10 +201,10 @@ final class FileSessionStoreTest extends TestCase
         // Written through the real, unwrapped store first — the wrapper's
         // own stream_write() always simulates a mid-write failure after
         // its first chunk (a separate fixture behavior this test has no
-        // interest in), so going through it here would fail at write()
+        // interest in), so going through it here would fail at create()
         // rather than at the destroy() this test actually exercises.
         $id = self::id();
-        $this->store->write($id, ['x' => 1], 60);
+        $this->store->create($id, ['x' => 1], 60);
 
         FailingWriteStreamWrapper::$backingDirectory = $this->directory;
         \stream_wrapper_register(FailingWriteStreamWrapper::SCHEME, FailingWriteStreamWrapper::class);
@@ -329,7 +214,7 @@ final class FileSessionStoreTest extends TestCase
             FailingWriteStreamWrapper::$failUnlink = true;
 
             $this->expectException(SessionException::class);
-            $this->expectExceptionMessage("Session file for \"{$id}\" could not be deleted.");
+            $this->expectExceptionMessage('A session file could not be deleted.');
 
             $wrappedStore->destroy($id);
         } finally {
@@ -342,7 +227,7 @@ final class FileSessionStoreTest extends TestCase
     {
         $live = self::id();
         $dead = self::id();
-        $this->store->write($live, ['keep' => true], 60);
+        $this->store->create($live, ['keep' => true], 60);
         $this->writeExpiredFile($dead, ['gone' => true]);
 
         self::assertSame(1, $this->store->gc());
@@ -351,11 +236,9 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * write() itself now rejects a non-positive $lifetimeSeconds
-     * (KINETIS-68), so an already-expired file for a test to observe is
-     * seeded directly, in the exact real envelope shape write() itself
-     * produces — the same technique the corrupt-file test already uses
-     * for writing a raw file outside write()'s own contract.
+     * create() rejects a non-positive $lifetimeSeconds, so an
+     * already-expired file is seeded directly, in the envelope shape
+     * create() produces.
      *
      * @param array<string, mixed> $data
      */
@@ -368,13 +251,13 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * The temp file write() creates between file_put_contents() and
+     * The temp file create() creates between file_put_contents() and
      * rename() must never be named so that gc()'s own glob("sess_*")
      * could match it — a naive "$path.<random>.tmp" naming (starting
      * with "sess_") would let a concurrent gc() sweep collect and unlink
      * a write still in progress, making the rename() below it fail and
      * silently losing the update. RecordingStreamWrapper observes the
-     * exact path write() passes to file_put_contents() — the real
+     * exact path create() passes to file_put_contents() — the real
      * naming logic, not a hardcoded guess — so this is a direct,
      * deterministic proof, not a timing-dependent live race (which
      * would need to land inside a window narrow enough that it can't be
@@ -388,9 +271,9 @@ final class FileSessionStoreTest extends TestCase
 
         try {
             $store = new FileSessionStore(RecordingStreamWrapper::SCHEME . '://');
-            $store->write(self::id(), ['x' => 1], 60);
+            $store->create(self::id(), ['x' => 1], 60);
 
-            // write() itself makes two writes: the temp file, then the
+            // create() itself makes two writes: the temp file, then the
             // final rename target is untouched by stream_open() (rename()
             // is a separate wrapper method) — so exactly one write is
             // recorded, and it must be the temp file.
@@ -408,30 +291,14 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * file_put_contents() can genuinely create a file and write some
-     * bytes to it before failing (its own documentation describes
-     * exactly this — running out of disk space mid-write). The previous
-     * code only ever unlinked the temp file in the rename()-failure
-     * branch, leaving a partial temp file behind whenever
-     * file_put_contents() itself was the one that failed.
-     * FailingWriteStreamWrapper reproduces that exact scenario
-     * deterministically — a genuinely partial file lands on the real
-     * backing directory before file_put_contents() reports failure.
-     *
-     * KINETIS-66: this is also the one short-write shape actually
-     * reachable from PHP userland. write() now compares
-     * file_put_contents()'s return value against the exact expected byte
-     * count rather than only "not false" — checked directly against
-     * php-src (ext/standard/file.c): for a string payload,
-     * file_put_contents() itself already converts *any* short/partial
-     * write to false before returning, so a genuine positive-but-short
-     * byte count cannot be produced here for this call to diverge on.
-     * The exact-count comparison is kept as the objectively correct
-     * check regardless — it does not depend on that implementation
-     * detail remaining true — and this test confirms it still rejects
-     * the one real short-write scenario identically to the old check.
+     * file_put_contents() can create a file and write some bytes to it
+     * before failing — running out of disk space mid-write is its own
+     * documented example. A partial temp file must never be left behind.
+     * FailingWriteStreamWrapper reproduces that deterministically: a
+     * partial file lands on the real backing directory before
+     * file_put_contents() reports failure.
      */
-    public function test_write_cleans_up_a_partially_written_temp_file_when_file_put_contents_fails(): void
+    public function test_create_cleans_up_a_partially_written_temp_file_when_file_put_contents_fails(): void
     {
         FailingWriteStreamWrapper::$backingDirectory = $this->directory;
         \stream_wrapper_register(FailingWriteStreamWrapper::SCHEME, FailingWriteStreamWrapper::class);
@@ -440,7 +307,7 @@ final class FileSessionStoreTest extends TestCase
             $store = new FileSessionStore(FailingWriteStreamWrapper::SCHEME . '://');
 
             try {
-                $store->write(self::id(), ['x' => 1], 60);
+                $store->create(self::id(), ['x' => 1], 60);
                 self::fail('Expected SessionException.');
             } catch (SessionException) {
                 // Expected — file_put_contents() was made to fail.
@@ -451,14 +318,66 @@ final class FileSessionStoreTest extends TestCase
                 static fn (string $file): bool => \str_ends_with($file, '.tmp'),
             ));
 
-            self::assertSame([], $stray, 'A partially-written temp file was left behind after a failed write().');
+            self::assertSame([], $stray, 'A partially-written temp file was left behind after a failed create().');
         } finally {
             \stream_wrapper_unregister(FailingWriteStreamWrapper::SCHEME);
         }
     }
 
-    /** KINETIS-66: a chmod() call that itself reports failure must fail the write, with cleanup. */
-    public function test_write_throws_and_cleans_up_when_chmod_itself_fails(): void
+    /**
+     * A shorter replacement, so the truncate that follows the write has
+     * to remove the old tail — a leftover would make the envelope
+     * undecodable.
+     */
+    public function test_update_replaces_a_live_record(): void
+    {
+        $id = self::id();
+        $this->store->create($id, ['step' => 1, 'padding' => \str_repeat('x', 4096)], 60);
+
+        self::assertTrue($this->store->update($id, ['step' => 2], 60));
+        self::assertSame(['step' => 2], $this->store->read($id));
+    }
+
+    /**
+     * The terminal rule, and the reason update() opens the file rather
+     * than publishing a new one by rename: a record another request
+     * removed must stay removed.
+     */
+    public function test_update_refuses_a_destroyed_record_and_creates_no_file(): void
+    {
+        $id = self::id();
+        $this->store->create($id, ['user' => 42], 60);
+        $this->store->destroy($id);
+
+        self::assertFalse($this->store->update($id, ['user' => 42], 60));
+        self::assertFileDoesNotExist($this->directory . '/sess_' . $id);
+    }
+
+    public function test_update_refuses_an_expired_record(): void
+    {
+        $id = self::id();
+        $this->writeExpiredFile($id, ['user' => 42]);
+
+        self::assertFalse($this->store->update($id, ['user' => 43], 60));
+    }
+
+    /**
+     * An update writes in place, so a read overlapping it can land on a
+     * partial envelope. That reads as an absent session rather than as
+     * half-applied data — the fail-closed trade update() makes for the
+     * terminal rule.
+     */
+    public function test_a_partially_written_record_reads_as_absent(): void
+    {
+        $id = self::id();
+        $this->store->create($id, ['user' => 42], 60);
+        \file_put_contents($this->directory . '/sess_' . $id, '{"expiresAt":');
+
+        self::assertNull($this->store->read($id));
+    }
+
+    /** A chmod() call that reports failure must fail the write, with cleanup. */
+    public function test_create_throws_and_cleans_up_when_chmod_itself_fails(): void
     {
         FailingChmodStreamWrapper::$backingDirectory = $this->directory;
         \stream_wrapper_register(FailingChmodStreamWrapper::SCHEME, FailingChmodStreamWrapper::class);
@@ -471,7 +390,7 @@ final class FileSessionStoreTest extends TestCase
             $this->expectExceptionMessage('could not be secured with private permissions');
 
             try {
-                $store->write(self::id(), ['x' => 1], 60);
+                $store->create(self::id(), ['x' => 1], 60);
             } finally {
                 $this->assertNoStrayTempFiles();
             }
@@ -482,12 +401,11 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-66: a chmod() call that reports success without the file's
-     * real, resulting mode actually being private — the core "stat, not
-     * just the return value" requirement — must fail the write, with
-     * cleanup, rather than publish a session file wider than intended.
+     * A chmod() call that reports success without the file's real,
+     * resulting mode being private must fail the write, with cleanup,
+     * rather than publish a session file wider than intended.
      */
-    public function test_write_throws_and_cleans_up_when_the_resulting_mode_does_not_match(): void
+    public function test_create_throws_and_cleans_up_when_the_resulting_mode_does_not_match(): void
     {
         FailingChmodStreamWrapper::$backingDirectory = $this->directory;
         \stream_wrapper_register(FailingChmodStreamWrapper::SCHEME, FailingChmodStreamWrapper::class);
@@ -500,7 +418,7 @@ final class FileSessionStoreTest extends TestCase
             $this->expectExceptionMessage('could not be secured with private permissions');
 
             try {
-                $store->write(self::id(), ['x' => 1], 60);
+                $store->create(self::id(), ['x' => 1], 60);
             } finally {
                 $this->assertNoStrayTempFiles();
             }
@@ -510,8 +428,8 @@ final class FileSessionStoreTest extends TestCase
         }
     }
 
-    /** KINETIS-66: a stat() failure after a "successful" chmod() is treated the same as a real mismatch. */
-    public function test_write_throws_and_cleans_up_when_stat_fails_after_chmod(): void
+    /** A stat() failure after a "successful" chmod() counts the same as a mismatch. */
+    public function test_create_throws_and_cleans_up_when_stat_fails_after_chmod(): void
     {
         FailingChmodStreamWrapper::$backingDirectory = $this->directory;
         \stream_wrapper_register(FailingChmodStreamWrapper::SCHEME, FailingChmodStreamWrapper::class);
@@ -524,7 +442,7 @@ final class FileSessionStoreTest extends TestCase
             $this->expectExceptionMessage('could not be secured with private permissions');
 
             try {
-                $store->write(self::id(), ['x' => 1], 60);
+                $store->create(self::id(), ['x' => 1], 60);
             } finally {
                 $this->assertNoStrayTempFiles();
             }
@@ -535,16 +453,15 @@ final class FileSessionStoreTest extends TestCase
     }
 
     /**
-     * KINETIS-66's own explicit requirement: a failed replacement must
-     * never lose the previous, still-live session — the failing write()
-     * throws before ever calling rename(), so the original file it would
-     * have replaced is provably untouched, read back here through the
-     * real, unwrapped store to prove it.
+     * A failed replacement must never lose the previous, still-live
+     * session: the failing create() throws before rename(), so the
+     * original file is untouched, read back here through the real,
+     * unwrapped store.
      */
     public function test_a_failed_write_due_to_a_bad_chmod_leaves_the_previous_live_session_intact(): void
     {
         $id = self::id();
-        $this->store->write($id, ['original' => true], 60);
+        $this->store->create($id, ['original' => true], 60);
 
         FailingChmodStreamWrapper::$backingDirectory = $this->directory;
         \stream_wrapper_register(FailingChmodStreamWrapper::SCHEME, FailingChmodStreamWrapper::class);
@@ -554,7 +471,7 @@ final class FileSessionStoreTest extends TestCase
             FailingChmodStreamWrapper::$failChmodCall = true;
 
             try {
-                $wrappedStore->write($id, ['replacement' => true], 60);
+                $wrappedStore->create($id, ['replacement' => true], 60);
                 self::fail('Expected SessionException.');
             } catch (SessionException) {
                 // Expected.
@@ -574,7 +491,7 @@ final class FileSessionStoreTest extends TestCase
             static fn (string $file): bool => \str_ends_with($file, '.tmp'),
         ));
 
-        self::assertSame([], $stray, 'A temp file was left behind after a failed write().');
+        self::assertSame([], $stray, 'A temp file was left behind after a failed create().');
     }
 
     public function test_a_malformed_id_never_becomes_a_path(): void
@@ -618,7 +535,7 @@ final class FileSessionStoreTest extends TestCase
         // write just hasn't happened yet", which would make the reader
         // have to ignore exactly the symptom (a truncated-to-empty file)
         // this test exists to catch.
-        $this->store->write($id, ['value' => \str_repeat('A', 200_000)], 3600);
+        $this->store->create($id, ['value' => \str_repeat('A', 200_000)], 3600);
 
         $writerScript = $this->directory . '/writer.php';
         \file_put_contents($writerScript, <<<PHP
@@ -626,7 +543,7 @@ final class FileSessionStoreTest extends TestCase
             require '{$bootstrap}';
             \$store = new Kinetis\Session\Store\FileSessionStore('{$this->directory}');
             for (\$i = 0; \$i < 400; \$i++) {
-                \$store->write('{$id}', ['value' => str_repeat(\$i % 2 === 0 ? 'A' : 'B', 200_000)], 3600);
+                \$store->create('{$id}', ['value' => str_repeat(\$i % 2 === 0 ? 'A' : 'B', 200_000)], 3600);
             }
             PHP);
 

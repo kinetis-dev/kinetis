@@ -49,9 +49,8 @@ $info = buildClient([
 ])->info();
 check('a correctly authenticated request succeeds', isset($info['cluster_name']));
 
-// Leaving SEARCH_OPENSEARCH_VERIFY_PEER at its true default should reject
-// the self-signed cert outright — proving the secure-by-default posture is
-// real, not just documented.
+// Leaving SEARCH_OPENSEARCH_VERIFY_PEER at its true default rejects the
+// self-signed cert outright.
 try {
     buildClient([
         'SEARCH_OPENSEARCH_HOST' => $host,

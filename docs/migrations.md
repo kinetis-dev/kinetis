@@ -66,7 +66,7 @@ vendor/bin/kinetis migrate:make "create orders table"
 
 ```{code-block} sh
 vendor/bin/kinetis migrate           # runs every pending migration, in filename order
-vendor/bin/kinetis migrate:rollback  # rolls back the single most recently applied migration
+vendor/bin/kinetis migrate:rollback  # rolls back the migration applied most recently
 vendor/bin/kinetis migrate:status    # lists every migration with its applied/pending state
 ```
 
@@ -112,6 +112,31 @@ undoes one. Both are ordinary events — write a `#[Listener]` for
 whichever one you need (a deploy notification, for one). See
 {doc}`events` for the full catalog.
 
+## What the ledger records, and what it checks
+
+`kinetis_migrations` holds one row per applied migration: the `migration`
+name, the `checksum` (SHA-256) of the file that ran, and the
+`application_order` this database applied it in.
+
+`migrate`, `migrate:rollback` and `migrate:status` all verify that ledger
+against the `migrations/` directory before doing anything else. Every
+applied migration must still have a file, and that file must still hash
+to the checksum recorded when it ran. The first one that fails either
+check throws `Exception\MigrationIntegrityException`, naming the
+migration and the reason, before any `up()`, `down()` or ledger write —
+so a database whose applied SQL is no longer the SQL on disk gets no
+further migrations run against it. Restore the migration file that was
+deployed and the commands run again; nothing here rewrites the ledger to
+match a file that changed, because only the file that ran describes what
+the database actually holds.
+
+`migrate:rollback` undoes the migration with the highest
+`application_order` — the one this database applied most recently, which
+is not always the one whose name sorts last. A migration merged from
+another branch and applied after a later-timestamped one is the first to
+come back off, and a migration rolled back and applied again is the
+newest one from then on.
+
 ## Transactions are not automatic
 
 A migration's `up()`/`down()` runs exactly as written — the runner never
@@ -155,7 +180,15 @@ what's pending.
 The lock is scoped to your database session, not a row in a table, so it
 releases on its own the moment the connection holding it closes —
 gracefully or not — with nothing to clean up by hand if a process is
-killed mid-migration. Waiting longer than 10 seconds throws
+killed mid-migration. Session scope is also why the `migrate*` commands
+connect over PDO whatever `DB_DRIVER` says: one session, held for the
+whole run, where the pooling drivers could acquire and release the lock
+on two different ones. That client is single-session — if the session
+goes, which a migration abandoning a transaction is enough to do, it
+closes instead of opening a replacement, and the run stops there with
+`Kinetis\Persistence\Exception\ConnectionException` rather than
+carrying on unlocked. These commands are serial, so blocking on a query
+costs them nothing. Waiting longer than 10 seconds throws
 `Exception\MigrationLockTimeoutException`, most often meaning another
 `migrate`/`migrate:rollback` is already running elsewhere; retry once it
 finishes.
@@ -164,7 +197,7 @@ finishes.
 
 - {doc}`query-builder` — a fluent builder for querying the tables these
   migrations create, on the same MySQL/Postgres connections.
-- {doc}`persistence` — the connection pool shape the `migrate*`
-  commands build internally.
+- {doc}`persistence` — the drivers and connection options the `migrate*`
+  commands build on.
 - {doc}`config` — the `.env`/environment convention `migrate` reads its
   connection details from.

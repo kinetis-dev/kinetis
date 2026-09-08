@@ -28,8 +28,9 @@ use Symfony\Component\HttpClient\RetryableHttpClient;
  * Both halves of that are properties of {@see SignedTransport}, which
  * this package constructs and a caller cannot replace: the tests below
  * cover the behavior at the PSR-18 boundary, the AMPHP client the
- * default transport is built over, and the shape that keeps a retrying
- * or redirect-following client from getting underneath a signature.
+ * default transport is built over, the shape that keeps a retrying or
+ * redirect-following client from getting underneath a signature, and
+ * the default options it carries.
  */
 final class RedirectTest extends TestCase
 {
@@ -186,21 +187,23 @@ final class RedirectTest extends TestCase
     }
 
     /**
-     * The default options the transport is built with are the caller's
-     * own, with the redirect ceiling written over whatever they say
-     * about it — the same ceiling request() then fixes per request, so
-     * the delegate is redirect-free before a request reaches it and
+     * The transport's own default options bound every request it
+     * forwards, 30 seconds idle and 30 seconds end to end, and a
+     * caller's own move either one without moving the other. The
+     * redirect ceiling goes the other way — written over whatever they
+     * say about it, the same ceiling request() then fixes per request,
+     * so the delegate is redirect-free before a request reaches it and
      * again as one does.
      */
-    public function test_the_delegate_takes_the_callers_options_under_a_fixed_redirect_ceiling(): void
+    public function test_the_delegate_bounds_a_request_under_a_fixed_redirect_ceiling(): void
     {
-        $options = self::defaultOptionsOf(SignedTransport::create([
-            'timeout' => 2.5,
-            'max_redirects' => 20,
-        ]));
+        $stock = self::defaultOptionsOf(SignedTransport::create());
+        $idle = self::defaultOptionsOf(SignedTransport::create(['timeout' => 2.5, 'max_redirects' => 20]));
+        $total = self::defaultOptionsOf(SignedTransport::create(['max_duration' => 2.5]));
 
-        self::assertSame(0, $options['max_redirects'] ?? null);
-        self::assertSame(2.5, $options['timeout'] ?? null);
+        self::assertSame([30.0, 30.0, 0], [$stock['timeout'], $stock['max_duration'], $stock['max_redirects']]);
+        self::assertSame([2.5, 30.0, 0], [$idle['timeout'], $idle['max_duration'], $idle['max_redirects']]);
+        self::assertSame([30.0, 2.5, 0], [$total['timeout'], $total['max_duration'], $total['max_redirects']]);
     }
 
     /**

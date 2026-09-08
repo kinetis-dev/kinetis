@@ -8,8 +8,11 @@ use RuntimeException;
 
 /**
  * The client sent something that does not decode as the form it
- * declared itself to be. Answered on every adapter with a `400` and the
- * fixed {@see \Kinetis\Runtime\RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE}.
+ * declared itself to be. Answered by
+ * {@see \Kinetis\Http\Middleware\RequestBodyMiddleware} with a `400` and
+ * the fixed
+ * {@see \Kinetis\Runtime\RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE},
+ * so the answer is the same whichever runtime delivered the bytes.
  *
  * **Every message here is a fixed sentence chosen from the list below,
  * and nothing else ever reaches one.** A parser's own message is the
@@ -24,13 +27,12 @@ use RuntimeException;
  *
  * What is lost is which byte offset upset which parser, which no client
  * is owed and no operator can act on; what is kept is the category, which
- * is what an operator actually triages on. The adapters log
+ * is what an operator actually triages on. The middleware logs
  * {@see $category} and nothing more.
  *
- * The one vocabulary every adapter's parse failure is expressed in,
- * whether the parsing was this framework's own or a satellite's — so
- * "unparseable" means the same thing, and reaches a client the same way,
- * under every runtime. Distinct on both sides:
+ * The one vocabulary a parse failure is expressed in, so "unparseable"
+ * means the same thing, and reaches a client the same way, under every
+ * runtime. Distinct on both sides:
  * {@see FormLimitExceededException} is input this framework understood
  * and refused (`413`), and {@see FormStagingException} is this worker
  * failing rather than the client.
@@ -102,9 +104,9 @@ final class UnparseableFormBodyException extends RuntimeException
      * wire: a `Content-Transfer-Encoding` other than `7bit` or `binary`,
      * an RFC 2047 encoded word, an RFC 5987 extended parameter, a quoted
      * parameter carrying an escape. Every one of them is a re-encoding
-     * some parser in this framework's supported set performs and another
-     * does not, so the part means two different things depending on the
-     * runtime it lands on — refused on all of them instead. See
+     * some multipart parser performs and another does not, so the part
+     * means two different things depending on who reads it — refused
+     * rather than resolved in favor of one reading. See
      * {@see \Kinetis\Http\Form\MultipartEnvelope} for the contract this
      * belongs to.
      */
@@ -130,8 +132,7 @@ final class UnparseableFormBodyException extends RuntimeException
      * and not to one matching CRLF delimiters — a boundary after a bare
      * LF, or one followed by a stray CR. It decides where a part ends,
      * so the two readings are two different forms, and the body is
-     * refused rather than resolved in favor of whichever parser this
-     * runtime happens to use.
+     * refused rather than resolved in favor of either.
      */
     public static function ambiguousDelimiter(): self
     {

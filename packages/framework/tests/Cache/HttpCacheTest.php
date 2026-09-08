@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Cache;
 
-use Kinetis\Cache\CacheFormat;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\HttpCache;
 use PHPUnit\Framework\TestCase;
@@ -14,7 +13,6 @@ final class HttpCacheTest extends TestCase
     public function test_to_array_from_array_round_trip_preserves_every_field_including_mixed_default_value_types(): void
     {
         $cache = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::index' => [
@@ -41,7 +39,6 @@ final class HttpCacheTest extends TestCase
             ],
             globalMiddleware: ['App\\RequestIdMiddleware'],
             openApiMiddleware: ['App\\OpenApiAuthMiddleware'],
-            compiledAt: '2026-01-01T00:00:00+00:00',
             middlewareGroups: ['admin' => ['App\\AuthMiddleware', 'App\\RequireAdminMiddleware']],
         );
 
@@ -62,13 +59,11 @@ final class HttpCacheTest extends TestCase
     public function test_var_export_round_trip_via_a_real_generated_file_preserves_shape(): void
     {
         $cache = new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [],
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
         );
 
         $tmpFile = tempnam(sys_get_temp_dir(), 'kinetis_http_cache_test_') . '.php';
@@ -89,7 +84,6 @@ final class HttpCacheTest extends TestCase
     private function validData(): array
     {
         return (new HttpCache(
-            formatVersion: CacheFormat::VERSION,
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::m' => [
@@ -111,7 +105,6 @@ final class HttpCacheTest extends TestCase
             ],
             globalMiddleware: [],
             openApiMiddleware: [],
-            compiledAt: '2026-01-01T00:00:00+00:00',
         ))->toArray();
     }
 

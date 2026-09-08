@@ -36,6 +36,8 @@ degrade quietly.
 
 `DB_*` are the exact keys `kinetis/persistence` already reads — nothing
 new to set up beyond a working database connection.
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` is the one key this package
+introduces itself; it defaults to 300 and is described below.
 
 ## The queue needs a table
 
@@ -51,23 +53,21 @@ vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.pg
 Copy whichever matches your database into your own `migrations/`
 directory with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
 
-The table includes a nullable `metadata` column — the instrumentation
-propagation channel (see {doc}`telemetry`). A table created from an
-earlier stub needs it added:
-
-```{code-block} sql
-ALTER TABLE kinetis_queue_jobs ADD COLUMN metadata TEXT NULL;
-```
+Beyond the job's own data the table carries three columns this backend
+runs on: `metadata`, the instrumentation propagation channel (see
+{doc}`telemetry`); `reserved_at`, the reservation timestamp; and
+`reserved_token`, the random token identifying which reservation wrote
+it. In the MySQL stub `queue` and `reserved_token` are `ascii_bin`, since
+MySQL's default collation compares case-insensitively and both columns
+are matched for exact equality; Postgres compares that way already.
 
 ## A crashed worker's job: the visibility timeout
 
-By default, a job that's been popped but whose worker crashes before
-`ack()`/`release()` runs stays reserved **forever** — no other worker can
-ever pick it up again, since nothing ever clears its `reserved_at`.
-
-`SqlQueue`'s second constructor argument, `$visibilityTimeoutSeconds`,
-closes it — the standard "visibility timeout" pattern SQS's own
-`VisibilityTimeout` already uses:
+A job that's been popped but whose worker crashes before
+`ack()`/`release()` runs is reclaimed once its reservation outruns the
+visibility timeout — the standard pattern SQS's own `VisibilityTimeout`
+already uses. `SqlQueue`'s second constructor argument,
+`$visibilityTimeoutSeconds`, sets it, and defaults to 300:
 
 ```{code-block} php
 use Kinetis\QueueSql\SqlQueue;
@@ -77,10 +77,17 @@ $queue = new SqlQueue($db, visibilityTimeoutSeconds: 300);
 
 A row reserved longer than this becomes poppable again by any worker —
 `attempts` is incremented at that point (crediting the crashed attempt,
-the same as an explicit `release()` call would), so `maxAttempts` still
-eventually gives up on a job whose worker keeps crashing rather than
-retrying it forever. `null` (the default) preserves the original
-forever-stranded behavior exactly, unchanged.
+the same as an explicit `release()` call would). A reservation is never
+renewed: a job still running when its window expires can execute
+alongside its replacement, so set the timeout above the slowest job you
+expect and keep handlers idempotent. `maxAttempts` bounds a handler that
+throws — `QueueWorker` consults the cap only after one does — so it
+cannot bound a succession of processes that each die during execution.
+
+`reserved_at` is written and compared against the worker process's own
+`time()`, not the database's clock. Clock skew between workers therefore
+shifts when a reservation looks expired, in either direction, by however
+far the two clocks disagree.
 
 A value below `1` — `0` or negative — is rejected at construction: it
 would make `pop()`'s own query treat a row reserved an instant ago (or
@@ -88,10 +95,10 @@ one whose reservation timestamp is in the future relative to now) as
 already stale, letting a second worker reclaim an actively-held
 reservation immediately instead of after it genuinely goes stale.
 
-`kinetis queue:work` reads this from the optional
+`kinetis queue:work` reads this from the
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` environment variable (via
 `Config::scopedKey()`, so it respects `QUEUE_CONNECTION_NAME` the same as
-every other queue setting) — absent means `null`, the same as constructing
+every other queue setting); absent, it is 300, the same as constructing
 `SqlQueue` directly with no second argument:
 
 ```{code-block} text
@@ -103,6 +110,27 @@ Pick a value comfortably longer than your slowest real job takes to run —
 too short reclaims a job that's still being legitimately processed,
 producing exactly the duplicate-processing risk a visibility timeout is
 meant to bound, not eliminate outright.
+
+## A settlement is fenced to its reservation
+
+Every reservation and every reclaim writes a fresh random
+`reserved_token` while holding the row lock, and `ack()`, `release()` and
+`fail()` match on the row id *and* that token. A settlement from a
+delivery the timeout has already handed on matches no row, so it writes
+nothing and raises `Kinetis\Queue\Exception\StaleJobHandleException` —
+see {doc}`queue`'s "When a settlement is lost" for what `queue:work` does
+with that. A `release()` in particular can neither unreserve the row the
+new worker is running nor credit an attempt against it.
+
+That bounds what a late settlement does; it does not keep the job from
+running twice. Keep the timeout comfortably longer than your slowest job,
+as above.
+
+The same fence covers the malformed-row cleanup: a row reserved and then
+found to be undecodable is deleted by that same predicate, so a reclaim
+landing in between leaves the row to whichever worker now holds it and
+`pop()` raises the stale exception rather than destroying a live
+delivery.
 
 ## Clearing a queue
 
@@ -116,14 +144,6 @@ which treats a reservation older than `QUEUE_VISIBILITY_TIMEOUT_SECONDS`
 as available again. A row that has outrun the timeout is left alone here
 — see {doc}`queue`'s "Clearing is a separate capability" for why a clear
 draws the line differently from a reclaim.
-
-`ack()`, `release()` and `fail()` address a row by id alone, without
-checking whose reservation it currently holds, so a settlement arriving
-after the timeout has already let another worker reclaim the row lands
-on that worker's delivery instead. The row carries no token identifying
-which reservation wrote it, so this backend can raise no
-`Kinetis\Queue\Exception\StaleJobHandleException` — keep the timeout
-comfortably longer than your slowest job, as above.
 
 ## Delayed jobs
 

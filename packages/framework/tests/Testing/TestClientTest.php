@@ -14,7 +14,6 @@ use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\ServerRequest;
 use Nyholm\Psr7\Stream;
-use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\TestCase;
 
 final class TestClientTest extends TestCase
@@ -117,6 +116,24 @@ final class TestClientTest extends TestCase
         );
     }
 
+    /**
+     * The shape check is {@see \Kinetis\Http\MediaType::isJson()}, the
+     * classifier Dispatcher reads a typed body through, so a `+json`
+     * suffix under a top-level type other than `application` names no
+     * JSON media type here either.
+     */
+    public function test_request_rejects_an_array_body_under_a_plus_json_suffix_outside_application(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('is not JSON-shaped');
+
+        $this->client()->post(
+            '/raw-request',
+            body: ['anything' => true],
+            headers: ['Content-Type' => 'text/x+json'],
+        );
+    }
+
     public function test_post_form_sends_a_genuinely_form_encoded_body_and_populates_parsed_body(): void
     {
         $response = $this->client()->postForm('/raw-request', ['name' => 'Alon', 'role' => 'admin']);
@@ -187,17 +204,22 @@ final class TestClientTest extends TestCase
 
     /**
      * The direct escape hatch — this class never guesses a multipart
-     * boundary from a plain array; the caller builds the real PSR-7
-     * request (uploaded file included) and hands it straight to send(),
-     * dispatched through the exact same Kernel every other method uses.
+     * boundary from a plain array; the caller writes the wire body it
+     * wants and hands it straight to send(), where the Kernel's own
+     * RequestBodyMiddleware reads the fields and the upload out of those
+     * bytes exactly as it does for a request off a socket.
      */
     public function test_send_dispatches_a_hand_built_multipart_request_directly(): void
     {
-        $avatar = new UploadedFile(Stream::create('fake image bytes'), 17, \UPLOAD_ERR_OK, 'avatar.png', 'image/png');
-        $request = new ServerRequest('POST', '/avatars')
-            ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary')
-            ->withParsedBody(['name' => 'Alon'])
-            ->withUploadedFiles(['avatar' => $avatar]);
+        $body = "------WebKitFormBoundary\r\n"
+            . "Content-Disposition: form-data; name=\"name\"\r\n\r\nAlon\r\n"
+            . "------WebKitFormBoundary\r\n"
+            . "Content-Disposition: form-data; name=\"avatar\"; filename=\"avatar.png\"\r\n"
+            . "Content-Type: image/png\r\n\r\nfake image bytes\r\n"
+            . "------WebKitFormBoundary--\r\n";
+
+        $request = new ServerRequest('POST', '/avatars', body: Stream::create($body))
+            ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary');
 
         $response = $this->client()->send($request);
 
@@ -455,5 +477,64 @@ final class TestClientTest extends TestCase
 
         self::assertSame('existing=1&page=2', $decoded['queryString']);
         self::assertSame(['existing' => '1', 'page' => '2'], $decoded['queryParams']);
+    }
+
+    /**
+     * Cookies must arrive in both places a request carries them — the
+     * `Cookie` header verbatim, and `getCookieParams()` parsed out of
+     * that same header — which is what every runtime adapter delivers.
+     * A consumer reading only cookieParams (kinetis/session's
+     * SessionMiddleware) is otherwise unreachable from a test.
+     */
+    public function test_cookies_reach_both_the_cookie_header_and_cookie_params(): void
+    {
+        $decoded = $this->client()->post('/raw-request', body: ['anything' => true], headers: [
+            'Cookie' => 'kinetis_session=abc123; theme=dark',
+        ])->json();
+
+        self::assertSame('kinetis_session=abc123; theme=dark', $decoded['cookieHeader']);
+        self::assertSame(['kinetis_session' => 'abc123', 'theme' => 'dark'], $decoded['cookieParams']);
+    }
+
+    public function test_no_cookies_means_no_cookie_header_and_empty_cookie_params(): void
+    {
+        $decoded = $this->client()->post('/raw-request', body: ['anything' => true])->json();
+
+        self::assertSame('', $decoded['cookieHeader']);
+        self::assertSame([], $decoded['cookieParams']);
+    }
+
+    /**
+     * HTTP header names carry no case meaning (RFC 7230), so the Cookie
+     * header is read under whatever spelling the caller used — the rule
+     * Content-Type already follows here.
+     */
+    public function test_a_cookie_header_is_read_under_any_letter_case(): void
+    {
+        foreach (['cookie', 'COOKIE', 'CoOkIe'] as $spelling) {
+            $decoded = $this->client()
+                ->post('/raw-request', body: ['anything' => true], headers: [$spelling => 'kinetis_session=abc123'])
+                ->json();
+
+            self::assertSame(['kinetis_session' => 'abc123'], $decoded['cookieParams'], $spelling);
+        }
+    }
+
+    /**
+     * send() completes nothing: a hand-built request is dispatched
+     * exactly as its builder made it, so a Cookie header set without
+     * matching cookieParams stays that way. Building a whole request is
+     * the caller's job on this path, as it is a runtime adapter's on
+     * every other one.
+     */
+    public function test_send_leaves_a_hand_built_request_exactly_as_given(): void
+    {
+        $request = new ServerRequest('POST', '/raw-request', ['Content-Type' => 'application/json'], '{}')
+            ->withHeader('Cookie', 'kinetis_session=abc123');
+
+        $decoded = $this->client()->send($request)->json();
+
+        self::assertSame('kinetis_session=abc123', $decoded['cookieHeader']);
+        self::assertSame([], $decoded['cookieParams']);
     }
 }

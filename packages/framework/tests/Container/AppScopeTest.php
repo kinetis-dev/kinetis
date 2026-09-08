@@ -17,6 +17,7 @@ use Kinetis\Logging\ErrorLogLogger;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Container\Fixtures\CircularA;
 use Kinetis\Tests\Container\Fixtures\Counter;
+use Kinetis\Tests\Container\Fixtures\OptionalInterface;
 use Kinetis\Tests\Container\Fixtures\ServiceA;
 use Kinetis\Tests\Container\Fixtures\ServiceB;
 use Kinetis\Tests\Container\Fixtures\Unresolvable;
@@ -36,6 +37,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Psr\SimpleCache\CacheInterface;
+use RuntimeException;
 
 final class AppScopeTest extends TestCase
 {
@@ -147,9 +149,8 @@ final class AppScopeTest extends TestCase
         $app->get(Unresolvable::class);
     }
 
-    // --- AppScope resolves itself. A class/interface-typed parameter's
-    // own default value is honored the same way a builtin-typed one's
-    // already is. ---
+    // --- AppScope resolves itself. An optional class- or
+    // interface-typed parameter: absence versus a broken dependency. ---
 
     public function test_app_scope_resolves_to_the_exact_same_instance_after_boot(): void
     {
@@ -168,13 +169,36 @@ final class AppScopeTest extends TestCase
         self::assertNull($service->thing);
     }
 
-    public function test_a_concrete_class_typed_parameter_that_fails_to_autowire_falls_back_to_its_default(): void
+    /**
+     * A bound factory that throws is the dependency's own failure, not
+     * its absence, so the parameter's default never stands in for it.
+     */
+    public function test_a_bound_factory_that_throws_propagates_through_an_optional_parameter(): void
+    {
+        $app = new AppScope();
+        $app->bind(
+            OptionalInterface::class,
+            static fn (): OptionalInterface => throw new RuntimeException('backend offline'),
+        );
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('backend offline');
+
+        $app->get(WithOptionalInterfaceDependency::class);
+    }
+
+    public function test_a_concrete_class_typed_parameter_that_fails_to_autowire_propagates(): void
     {
         $app = new AppScope();
 
-        $service = $app->get(WithOptionalUnresolvableDependency::class);
+        try {
+            $app->get(WithOptionalUnresolvableDependency::class);
 
-        self::assertNull($service->addr);
+            self::fail('Expected resolution to fail.');
+        } catch (ContainerException $e) {
+            self::assertStringContainsString(Unresolvable::class, $e->getMessage());
+            self::assertStringContainsString('$name', $e->getMessage());
+        }
     }
 
     public function test_a_required_unresolvable_class_typed_parameter_still_throws(): void
@@ -327,11 +351,10 @@ final class AppScopeTest extends TestCase
     }
 
     /**
-     * The two policies a runtime adapter needs before the Kernel or its
-     * container exist. Registered here so an entry point that built
-     * neither still hands the adapter what the application configured,
-     * and so the Kernel's own MaxBodySizeMiddleware enforces that same
-     * object.
+     * The body ceilings RequestBodyMiddleware enforces and the proxy
+     * policy an adapter needs before the Kernel exists. Registered here
+     * so an entry point that built neither still runs under what the
+     * application configured.
      */
     public function test_boot_registers_the_runtime_policies_the_config_describes(): void
     {
@@ -385,7 +408,7 @@ final class AppScopeTest extends TestCase
 
     public function test_boot_succeeds_when_redis_is_configured_but_the_driver_package_is_not_installed(): void
     {
-        // RedisSimpleCache/ClusteredRedisSimpleCache live in the separate
+        // RedisSimpleCache lives in the separate
         // kinetis/cache-redis package, never installed for core's own test
         // suite — this is the real, always-true "not installed" branch,
         // not a simulated one. Booting survives it: an application that

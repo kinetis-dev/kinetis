@@ -21,12 +21,37 @@ final readonly class ServiceInjectedController
     }
 
     /**
+     * Absent, with a declared default to stand in.
+     *
      * @return array<string, mixed>
      */
-    #[Get('/scoped-optional')]
-    public function optional(?ScopedValue $value = null): array
+    #[Get('/absent-optional')]
+    public function absentOptional(?AbsentService $service = null): array
     {
-        return ['label' => $value?->label ?? 'absent'];
+        return ['label' => $service?->label() ?? 'absent'];
+    }
+
+    /**
+     * Absent, with a nullable type and no default written out.
+     *
+     * @return array<string, mixed>
+     */
+    #[Get('/absent-nullable')]
+    public function absentNullable(?AbsentService $service): array
+    {
+        return ['label' => $service?->label() ?? 'absent'];
+    }
+
+    /**
+     * Absent, with nothing to stand in for it: the parameter is what
+     * the error names.
+     *
+     * @return array<string, mixed>
+     */
+    #[Get('/absent-required')]
+    public function absentRequired(AbsentService $service): array
+    {
+        return ['label' => $service->label()];
     }
 
     /**

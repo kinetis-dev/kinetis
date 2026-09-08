@@ -6,12 +6,13 @@ namespace Kinetis\AuthJwt\Tests;
 
 use Firebase\JWT\JWK;
 use Firebase\JWT\JWT;
-use Kinetis\AuthJwt\Exception\JwkSetException;
+use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 use Kinetis\AuthJwt\JwkSet;
 use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\JwtKeyValidator;
-use Kinetis\AuthJwt\ParsedJwkSet;
+use Kinetis\AuthJwt\JwtSigningKey;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\SecondRsaKeyPair;
@@ -59,7 +60,7 @@ final class JwkSetTest extends TestCase
 
     /**
      * The three kids a `kid => PEM` map could not have published
-     * together — see ParsedJwkSet.
+     * together — see JwkSetParser.
      */
     public function test_publishes_a_decimal_kid_alongside_its_lookalikes(): void
     {
@@ -74,7 +75,7 @@ final class JwkSetTest extends TestCase
 
     public function test_an_invalid_pem_throws_a_named_exception(): void
     {
-        $this->expectException(JwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
 
         JwkSet::fromRsaPublicKeys([new PublishedRsaKey('key-2026', 'not a real pem key')]);
     }
@@ -102,7 +103,7 @@ final class JwkSetTest extends TestCase
     public function test_the_produced_jwk_set_composes_with_a_real_jwt_auth_middleware(): void
     {
         $set = JwkSet::fromRsaPublicKeys([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]);
-        $keys = JWK::parseKeySet($set);
+        $keys = JwtVerificationKeys::jwks((string) json_encode($set, JSON_THROW_ON_ERROR));
 
         $app = new AppScope();
         $app->boot();
@@ -135,7 +136,7 @@ final class JwkSetTest extends TestCase
     #[DataProvider('unusableKids')]
     public function test_a_key_cannot_be_published_under_a_kid_no_verifier_would_select(string $kid): void
     {
-        $this->expectException(JwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage('non-blank, valid UTF-8');
 
         new PublishedRsaKey($kid, RsaKeyPair::PUBLIC_KEY);
@@ -151,8 +152,8 @@ final class JwkSetTest extends TestCase
 
         try {
             new PublishedRsaKey($kid, RsaKeyPair::PUBLIC_KEY);
-            self::fail('Expected a JwkSetException.');
-        } catch (JwkSetException $exception) {
+            self::fail('Expected a JwtConfigurationException.');
+        } catch (JwtConfigurationException $exception) {
             self::assertStringContainsString('not valid UTF-8', $exception->getMessage());
             self::assertStringNotContainsString("\xFF", $exception->getMessage());
             self::assertSame(1, preg_match('//u', $exception->getMessage()));
@@ -167,15 +168,13 @@ final class JwkSetTest extends TestCase
     {
         $kid = 'clé-2026';
         $set = JwkSet::fromRsaPublicKeys([new PublishedRsaKey($kid, RsaKeyPair::PUBLIC_KEY)]);
-        $parsed = ParsedJwkSet::fromJson((string) json_encode($set, JSON_THROW_ON_ERROR));
-
-        self::assertSame([$kid], $parsed->kids());
+        $keys = JwtVerificationKeys::jwks((string) json_encode($set, JSON_THROW_ON_ERROR));
 
         $app = new AppScope();
         $app->boot();
         $scope = $app->createRequestScope();
-        $token = new JwtIssuer(RsaKeyPair::PRIVATE_KEY, algorithm: 'RS256', kid: $kid)->issue('user-42');
-        $response = new JwtAuthMiddleware($parsed, $scope)->process(
+        $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: $kid))->issue('user-42');
+        $response = new JwtAuthMiddleware($keys, $scope)->process(
             new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer {$token}"]),
             new CallableRequestHandler(static fn () => new Response(200)),
         );
@@ -195,23 +194,23 @@ final class JwkSetTest extends TestCase
 
     public function test_construction_throws_for_an_empty_key_set(): void
     {
-        $this->expectException(JwkSetException::class);
-        $this->expectExceptionMessage('at least one PublishedRsaKey');
+        $this->expectException(JwtConfigurationException::class);
+        $this->expectExceptionMessage('non-empty list of PublishedRsaKey');
 
         JwkSet::fromRsaPublicKeys([]);
     }
 
     public function test_construction_throws_for_a_key_list_with_gaps(): void
     {
-        $this->expectException(JwkSetException::class);
-        $this->expectExceptionMessage('must be a list');
+        $this->expectException(JwtConfigurationException::class);
+        $this->expectExceptionMessage('non-empty list of PublishedRsaKey');
 
         JwkSet::fromRsaPublicKeys([3 => new PublishedRsaKey('key-2026', RsaKeyPair::PUBLIC_KEY)]);
     }
 
     public function test_construction_throws_for_an_entry_that_is_not_a_published_key(): void
     {
-        $this->expectException(JwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
         $this->expectExceptionMessage('accepts only PublishedRsaKey values');
 
         JwkSet::fromRsaPublicKeys([RsaKeyPair::PUBLIC_KEY]);
@@ -219,16 +218,16 @@ final class JwkSetTest extends TestCase
 
     public function test_construction_throws_for_a_kid_keyed_map(): void
     {
-        $this->expectException(JwkSetException::class);
-        $this->expectExceptionMessage('must be a list');
+        $this->expectException(JwtConfigurationException::class);
+        $this->expectExceptionMessage('non-empty list of PublishedRsaKey');
 
         JwkSet::fromRsaPublicKeys(['key-2026' => RsaKeyPair::PUBLIC_KEY]);
     }
 
     public function test_construction_throws_when_two_keys_claim_one_kid(): void
     {
-        $this->expectException(JwkSetException::class);
-        $this->expectExceptionMessage('more than one key under the kid "shared"');
+        $this->expectException(JwtConfigurationException::class);
+        $this->expectExceptionMessage('more than one key is published under the kid "shared"');
 
         JwkSet::fromRsaPublicKeys([
             new PublishedRsaKey('shared', RsaKeyPair::PUBLIC_KEY),
@@ -238,14 +237,14 @@ final class JwkSetTest extends TestCase
 
     public function test_construction_throws_for_an_unsupported_algorithm(): void
     {
-        $this->expectException(JwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
 
         JwkSet::fromRsaPublicKeys([new PublishedRsaKey('key-2026', RsaKeyPair::PUBLIC_KEY)], algorithm: 'HS256');
     }
 
     public function test_construction_throws_for_a_nonsense_algorithm(): void
     {
-        $this->expectException(JwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
 
         JwkSet::fromRsaPublicKeys(
             [new PublishedRsaKey('key-2026', RsaKeyPair::PUBLIC_KEY)],
@@ -255,7 +254,7 @@ final class JwkSetTest extends TestCase
 
     public function test_construction_throws_for_an_undersized_rsa_key(): void
     {
-        $this->expectException(JwkSetException::class);
+        $this->expectException(JwtConfigurationException::class);
 
         JwkSet::fromRsaPublicKeys([new PublishedRsaKey('key-2026', UndersizedRsaKeyPair::PUBLIC_KEY)]);
     }

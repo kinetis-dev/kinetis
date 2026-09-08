@@ -21,6 +21,9 @@ use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Logging\SafeLogger;
 use Kinetis\OpenApi\OpenApiAccess;
+use Kinetis\OpenApi\OpenApiDocumentProvider;
+use Kinetis\Runtime\AppEnvironment;
+use Kinetis\Runtime\StreamableResponseInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -34,12 +37,16 @@ use Throwable;
  * variable, or a runtime-specific function.
  *
  * Owns the per-request lifecycle: a fresh RequestScope is created before
- * routing/dispatch and disposed in a `finally` block. `/openapi.json` and
- * `/openapi` are ordinary routes on a discovered controller
- * ({@see \Kinetis\Http\OpenApi\DocumentationController}), not something
- * this class intercepts — all it still owns is the access policy, which
- * folds $exposeOpenApi over OPENAPI_ENVIRONMENTS and is handed to that
- * controller through the request scope.
+ * routing/dispatch and disposed once the response is settled — before
+ * `handle()` returns for an ordinary buffered response, and for a
+ * StreamableResponseInterface on whichever settlement reaches its lease
+ * first, see `deferDisposal()` and `settlePendingStream()`.
+ * `/openapi.json` and `/openapi` are ordinary routes on a discovered
+ * controller ({@see \Kinetis\Http\OpenApi\DocumentationController}), not
+ * something this class intercepts — what it still owns is the access
+ * policy, which folds $exposeOpenApi over OPENAPI_ENVIRONMENTS, and the
+ * {@see \Kinetis\OpenApi\OpenApiDocumentProvider} bound to this Kernel's
+ * own Router. Both reach that controller through the request scope.
  * Every request also runs {@see TransactionGuardHook::registerIfAvailable()}
  * against its RequestScope — the shared hook that registers
  * `Kinetis\Persistence\TransactionGuard::rollbackDangling()` as a dispose
@@ -47,10 +54,12 @@ use Throwable;
  * nothing when it is not.
  *
  * `$isPersistent` — set from the driving RuntimeAdapterInterface — gates
- * a `gc_collect_cycles()` call at the end of `handle()`, forcing cleanup
- * of circular references (including Fibers) between requests in a
- * persistent worker; skipped for a boot-and-die process about to have
- * the OS reclaim everything anyway.
+ * the `gc_collect_cycles()` call that follows every request-scope
+ * disposal, forcing cleanup of circular references (including Fibers)
+ * between requests in a persistent worker; skipped for a boot-and-die
+ * process about to have the OS reclaim everything anyway. A streamed
+ * response's disposal happens after `handle()` has returned, so the flag
+ * travels with its {@see StreamScopeLease}.
  *
  * Every request runs through a global PSR-15 middleware pipeline, in the
  * order {@see GlobalMiddlewareOrder::resolve()} computes from `$app`'s
@@ -67,15 +76,27 @@ use Throwable;
  * `$httpCache` is the optional, production-only AOT cache (see
  * `Kinetis\Cache`) — null by default, meaning every request behaves
  * exactly as it always has, with live reflection throughout.
+ *
+ * `$pendingStream` is the one piece of mutable state on this class: the
+ * lease for the streamed response this Kernel handed back most recently,
+ * held only until that stream is settled — emitted, abandoned, displaced
+ * from the response leaving the global pipeline, or found still pending
+ * by the next request. A Kernel belongs to one worker thread —
+ * `bootstrap.php` runs per thread — so this is per-thread state, not
+ * shared.
  */
 final class Kernel
 {
     private readonly OpenApiAccess $openApiAccess;
 
+    private readonly OpenApiDocumentProvider $openApiDocuments;
+
     /** @var array<string, list<class-string>> */
     private readonly array $groups;
 
     private readonly RequestHandlerInterface $globalPipeline;
+
+    private ?StreamScopeLease $pendingStream = null;
 
     public function __construct(
         private readonly AppScope $app,
@@ -100,6 +121,20 @@ final class Kernel
                 // was never booted — so both paths stay closed.
                 : OpenApiAccess::disabled(),
         };
+
+        // Built here, from this Kernel's own Router, so the document can
+        // only ever describe the route table this process dispatches
+        // against — a deployment brings a new Kernel and with it a new
+        // provider, which is the whole invalidation story. A scope that
+        // was never booted has no AppEnvironment to consult, the same
+        // case that leaves both paths closed above; Production is the
+        // side AppEnvironment itself lands an unrecognized name on.
+        $this->openApiDocuments = new OpenApiDocumentProvider(
+            $this->router,
+            $app->has(AppEnvironment::class) && ($environment = $app->get(AppEnvironment::class)) instanceof AppEnvironment
+                ? $environment
+                : AppEnvironment::Production,
+        );
 
         // The built-in `openapi` group: what discovery found, plus this
         // application's own AppScope::openApiMiddleware() registrations,
@@ -130,7 +165,47 @@ final class Kernel
 
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        return $this->globalPipeline->handle($request);
+        $this->releaseUnsettledStream();
+
+        try {
+            $response = $this->globalPipeline->handle($request);
+        } catch (Throwable $e) {
+            $this->settlePendingStream(null);
+
+            throw $e;
+        }
+
+        $this->settlePendingStream($response);
+
+        return $response;
+    }
+
+    /**
+     * Releases the lease this request opened, unless $final is still the
+     * wrapper carrying it.
+     *
+     * Global middleware takes delivery of whatever `dispatchCore()`
+     * produced and is under no obligation to hand it back: it can answer
+     * with a buffered response, with a stream of its own, or with an
+     * exception — $final is null for the last of those. In every one of
+     * them the wrapper has left the response chain and nothing
+     * downstream will ever emit or abandon it, so its scope is released
+     * here, while the request that opened it is still on the stack. A
+     * `with*` clone is the one response that is not a replacement: it
+     * carries the same lease, so settling it stays the adapter's to do.
+     * A response built *around* the wrapper carries no lease and is
+     * settled here like any other.
+     */
+    private function settlePendingStream(?ResponseInterface $final): void
+    {
+        $lease = $this->pendingStream;
+
+        if ($lease === null || ($final instanceof StreamedResponse && $final->carries($lease))) {
+            return;
+        }
+
+        $this->pendingStream = null;
+        $lease->release();
     }
 
     /**
@@ -202,12 +277,14 @@ final class Kernel
 
         // Kinetis\Http\OpenApi\DocumentationController is discovered and
         // dispatched like any other controller, so what it needs has to
-        // be resolvable — and neither of these can come from AppScope:
-        // the Router is built after boot() has locked it, and the access
-        // policy folds in $exposeOpenApi, which Kernel owns. Registering
-        // them here keeps every entry point unchanged.
+        // be resolvable — and none of these can come from AppScope: the
+        // Router is built after boot() has locked it, the access policy
+        // folds in $exposeOpenApi, which Kernel owns, and the document
+        // provider is tied to that same Router. Registering them here
+        // keeps every entry point unchanged.
         $scope->instance(Router::class, $this->router);
         $scope->instance(OpenApiAccess::class, $this->openApiAccess);
+        $scope->instance(OpenApiDocumentProvider::class, $this->openApiDocuments);
 
         TransactionGuardHook::registerIfAvailable($scope);
 
@@ -222,6 +299,12 @@ final class Kernel
             throw $e;
         }
 
+        // A streamed response's body has not been written yet, and the
+        // code that writes it runs on this scope.
+        if ($response instanceof StreamableResponseInterface) {
+            return $this->deferDisposal($scope, $request, $response);
+        }
+
         // The handler succeeded, but $response has not left this process
         // yet — disposeScope() may still legitimately turn this into the
         // generic 500 every other uncaught exception produces, see its
@@ -229,6 +312,80 @@ final class Kernel
         $this->disposeScope($scope, $request, null);
 
         return $response;
+    }
+
+    /**
+     * Keeps $scope alive past dispatch, and returns a StreamedResponse
+     * that releases it when its body is emitted or the response is
+     * settled without one.
+     *
+     * A streamed body is written after `handle()` has returned, by an
+     * adapter, against code that resolves from this request's own
+     * container — so disposing before returning would tear the scope out
+     * from under the emitter. Ownership of the release sits in one
+     * {@see StreamScopeLease}, which the wrapper holds and every `with*`
+     * clone of it carries, so a header or status edit after dispatch
+     * hands on a response that still owns the scope — and one this class
+     * still recognizes as its own when the pipeline returns.
+     *
+     * Status, headers, protocol version and reason phrase all come from
+     * $response, which the wrapper composes unchanged.
+     */
+    private function deferDisposal(
+        RequestScope $scope,
+        ServerRequestInterface $request,
+        ResponseInterface&StreamableResponseInterface $response,
+    ): ResponseInterface {
+        $lease = new StreamScopeLease(
+            $this->app,
+            $scope,
+            $request->getMethod(),
+            $request->getUri()->getPath(),
+            $this->isPersistent,
+        );
+
+        $this->pendingStream = $lease;
+
+        return new StreamedResponse($response, $response->getEmitter(), $lease);
+    }
+
+    /**
+     * The defensive path, for a streamed response an owner neither
+     * emitted nor abandoned.
+     *
+     * The wrapper is returned to the caller, so anything up the stack can
+     * hold the last reference to it past the request: a direct caller
+     * that reads its status and drops it, an exception trace pinning it
+     * as a frame argument, an adapter that refuses a stream it cannot
+     * emit without abandoning it first. Every one of those leaves a live
+     * RequestScope from a finished request, which is exactly what must
+     * not reach the next one in a persistent worker. Kernel is the only
+     * owner that knows the next request has started, so it releases at
+     * the top of `handle()` — ahead of the global pipeline, which can
+     * answer a request outright (a CORS preflight, a rejected body, a
+     * rate limit) without ever reaching `dispatchCore()`. The warning
+     * names the request whose scope was carried this far.
+     */
+    private function releaseUnsettledStream(): void
+    {
+        $lease = $this->pendingStream;
+        $this->pendingStream = null;
+
+        if ($lease === null || $lease->isReleased()) {
+            return;
+        }
+
+        SafeLogger::logFrom(
+            fn (): LoggerInterface => $this->app->get(LoggerInterface::class),
+            LogLevel::WARNING,
+            'Streamed response for {method} {path} was neither emitted nor abandoned; releasing its request scope.',
+            [
+                'method' => $lease->method,
+                'path' => $lease->path,
+            ],
+        );
+
+        $lease->release();
     }
 
     private function matchAndDispatch(RequestScope $scope, ServerRequestInterface $request): ResponseInterface
@@ -279,6 +436,8 @@ final class Kernel
     /**
      * Disposes $scope without letting a cleanup failure silently replace
      * or suppress the real outcome dispatchCore() already has in hand.
+     * A successful streamed response never reaches here — its scope
+     * outlives dispatch, see deferDisposal().
      *
      * $primaryFailure is the route/controller Throwable already
      * propagating, or null on the success path. PHP's own `finally`

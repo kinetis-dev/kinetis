@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\QueueRedis\Tests;
 
 use Amp\Redis\RedisClient;
+use Kinetis\Queue\Exception\InvalidQueueArgumentException;
 use Kinetis\Queue\ClearableQueueInterface;
-use Kinetis\Queue\Exception\InvalidDelaySecondsException;
-use Kinetis\Queue\Exception\InvalidMaxAttemptsException;
-use Kinetis\Queue\Exception\InvalidQueueNameException;
+use InvalidArgumentException;
+use Kinetis\Queue\Exception\MalformedJobSettledException;
 use Kinetis\Queue\Exception\MalformedQueuedJobDataException;
 use Kinetis\Queue\Exception\StaleJobHandleException;
 use Kinetis\Queue\JobSerializer;
@@ -19,38 +19,28 @@ use Kinetis\QueueRedis\Tests\Fixtures\Priority;
 use Kinetis\QueueRedis\Tests\Fixtures\RichPayloadJob;
 use Kinetis\QueueRedis\Tests\Fixtures\ScriptedRedisLink;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 use ReflectionMethod;
 use function Amp\Redis\createRedisClient;
 
 /**
- * Queue-name validation, plus the pure envelope encode()/decodeQueuedJob()
- * round trip — RedisQueue's own genuinely backend-specific correctness
- * (the reliable pending->processing move, priority cycling, a real
- * BRPOPLPUSH round trip) is still deliberately never unit-tested against
- * a fake, matching this package's established "swap the storage, not the
- * whole system, and don't fake what a real backend has to prove"
- * discipline — real-backend verification lives in tests-integration/
- * instead. Both kinds of check here are pure PHP: the queue-name checks
- * throw before the Redis client is ever touched, and encode()/
- * decodeQueuedJob() (both private, invoked via reflection — pure JSON
- * work with zero I/O either way) never touch a connection at all, so a
- * real server has nothing to prove that a fast unit test can't already
- * prove faster — the same reasoning kinetis/cache-redis's own
- * RedisSimpleCacheTest already applies to its key-validation checks.
+ * Two kinds of check, both pure PHP.
  *
- * createRedisClient() never connects eagerly (confirmed by
- * RedisSimpleCache's own docblock and tests) — the underlying socket
- * only opens on the first command actually executed — so a RedisClient
- * pointed at localhost with nothing listening is safe to construct and
- * pass to RedisQueue here with no real server required.
+ * Argument validation and the envelope encode()/decodeQueuedJob() round
+ * trip need no server at all: the queue-name and push-argument rules
+ * throw before the Redis client is touched, and the codec is JSON work
+ * with no I/O. createRedisClient() never connects eagerly, so a client
+ * pointed at a dead port is safe to construct for those.
  *
- * ack()/fail()/clear() are the exception to "never unit-tested against a
- * fake", and the reason is what they test: not that Redis removes an
- * entry — only a real server proves that — but which command this class
- * issues, against which keys, and what it makes of the reply. That is
- * pure request-building and branching over one integer, and
- * Amp\Redis\Connection\RedisLink is the seam that supplies both (see
- * {@see ScriptedRedisLink}).
+ * The rest script the wire. What they prove is not that Redis moves an
+ * entry — only a real server does that, in tests-integration/ — but
+ * which commands this class issues, against which keys, in which order,
+ * and what it makes of each reply: the lease it installs on a
+ * reservation, the sweep pop() performs before reserving, the
+ * conditional replacement that makes one reclaimer the winner, and the
+ * exact-member removal that fences a settlement.
+ * Amp\Redis\Connection\RedisLink is the seam that supplies both halves
+ * (see {@see ScriptedRedisLink}).
  */
 final class RedisQueueTest extends TestCase
 {
@@ -128,7 +118,7 @@ final class RedisQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->size('');
     }
 
@@ -136,7 +126,7 @@ final class RedisQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->size('has spaces');
     }
 
@@ -144,7 +134,7 @@ final class RedisQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->clear('');
     }
 
@@ -152,7 +142,7 @@ final class RedisQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidDelaySecondsException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->push(new RichPayloadJob(4.0, [], Priority::High), delaySeconds: -1);
     }
 
@@ -160,7 +150,7 @@ final class RedisQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidMaxAttemptsException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->push(new RichPayloadJob(4.0, [], Priority::High), maxAttempts: -1);
     }
 
@@ -168,7 +158,7 @@ final class RedisQueueTest extends TestCase
      * decodeQueuedJob()'s own $decoded['attempts']/['maxAttempts'] read is
      * where a corrupted JSON payload's malformed value is actually caught
      * — proven directly with a hand-built payload, not merely at
-     * QueueContract::coerceStoredInteger()'s own unit level, so the wiring
+     * QueueContract::storedInt()'s own unit level, so the wiring
      * between the two is exercised too.
      */
     public function test_decode_queued_job_rejects_a_non_numeric_stored_attempts_value(): void
@@ -196,14 +186,10 @@ final class RedisQueueTest extends TestCase
     }
 
     /**
-     * The reviewer's own reported overflow gap, at the real decode level:
-     * a stored completed-attempts count of exactly PHP_INT_MAX is
-     * syntactically a perfectly valid integer — coerceStoredInteger()
-     * alone would accept it — but decodeQueuedJob()'s own `+ 1` would
-     * silently overflow it to a float, which would then fail QueuedJob's
-     * strictly-typed constructor with a confusing TypeError. This proves
-     * the real, wired decode path rejects it cleanly instead, via
-     * QueueContract::coerceStoredCompletedAttempts().
+     * A stored completed-attempts count of exactly PHP_INT_MAX is a
+     * valid integer, but decodeQueuedJob()'s `+ 1` would overflow it to
+     * a float and fail QueuedJob's typed constructor with a TypeError.
+     * The decode path rejects it as corrupted storage instead.
      */
     public function test_decode_queued_job_rejects_a_stored_attempts_value_of_php_int_max(): void
     {
@@ -213,7 +199,7 @@ final class RedisQueueTest extends TestCase
         $decodeQueuedJob = new ReflectionMethod(RedisQueue::class, 'decodeQueuedJob');
 
         $this->expectException(MalformedQueuedJobDataException::class);
-        $this->expectExceptionMessage('PHP_INT_MAX');
+        $this->expectExceptionMessage('"attempts"');
         $decodeQueuedJob->invoke($queue, 'default', $payload);
     }
 
@@ -256,8 +242,8 @@ final class RedisQueueTest extends TestCase
      * real, distinct malformed shape from "not an array at all" above —
      * is_array() alone would have accepted it. Confirming it throws
      * MalformedQueuedJobDataException here, from decodeQueuedJob()
-     * itself (the exact function probeNonBlocking()/probeBlocking()
-     * wrap in QueueContract::settleIfMalformed()), is what proves this
+     * itself (the function reserveImmediately()/reserveBlocking() wrap
+     * in QueueContract::settleIfMalformed()), is what proves this
      * reaches the settle-and-remove path rather than QueueWorker's
      * ordinary job-execution failure handling (which would otherwise
      * release/retry a message that can never succeed, up to
@@ -385,7 +371,7 @@ final class RedisQueueTest extends TestCase
     /**
      * push() writes `pushedAt` as time(): a JSON number json_decode()
      * hands back as a native, positive integer. The numeric strings here
-     * are exactly what QueueContract::coerceStoredInteger() accepts for
+     * are exactly what QueueContract::storedInt() accepts for
      * the backends that keep the same bookkeeping in text columns and
      * headers — this envelope never stores one, so the decoder turns
      * them away alongside a float, a bool, a null, an array, and any
@@ -414,7 +400,7 @@ final class RedisQueueTest extends TestCase
     /**
      * encode() always writes the `metadata` key — an empty map when a job
      * carries none — so a missing key is a truncated envelope.
-     * QueueContract::coerceStoredMetadata() reads an absent value as that
+     * QueueContract::storedMetadata() reads an absent value as that
      * same empty map, on behalf of the backends that write the field only
      * when a caller supplied metadata, so without a presence check of its
      * own the decoder would accept the truncated envelope as a job.
@@ -435,8 +421,8 @@ final class RedisQueueTest extends TestCase
     /**
      * The real mechanism every push()/pop() ultimately relies on: a
      * JobSerializer::serialize()-normalized payload — a float, a nested
-     * list of maps, a BackedEnum tag — survives encode() (real
-     * json_encode with JSON_PRESERVE_ZERO_FRACTION) followed by
+     * list of maps, an enum case's backing value — survives encode()
+     * (real json_encode with JSON_PRESERVE_ZERO_FRACTION) followed by
      * decodeQueuedJob() (real json_decode) with every value's exact type
      * intact, the float included. Both are private, invoked via
      * reflection — PHPUnit's `?ReflectionMethod::invoke()`-based calls
@@ -467,46 +453,316 @@ final class RedisQueueTest extends TestCase
     }
 
     /**
-     * The delivery a settlement names, with $handle the exact envelope
-     * string ack()/fail() hand to LREM.
+     * The complete envelope of self::envelope(), as the JSON string a
+     * handle and a leased member actually are.
+     *
+     * @param array<string, mixed> $overrides
      */
-    private static function delivery(string $payload = '{"job":"payload"}'): QueuedJob
+    private static function envelopeString(array $overrides = []): string
     {
-        return new QueuedJob(RichPayloadJob::class, [], handle: $payload, queue: 'default');
+        return json_encode(self::envelope($overrides), JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    /** The delivery a settlement names, $handle being its leased member. */
+    private static function delivery(string $payload = '{"job":"payload"}', int $attempts = 1): QueuedJob
+    {
+        return new QueuedJob(RichPayloadJob::class, [], handle: $payload, queue: 'default', attempts: $attempts);
     }
 
     /**
      * @param array<string, int|string|list<mixed>|null> $replies
+     * @param array<string, list<int|string|list<mixed>|null>> $sequences
+     *     replies consumed one per call, for the several scripts one
+     *     pop() puts on the wire under the same `evalsha` name
      * @return array{RedisQueue, ScriptedRedisLink}
      */
-    private static function scriptedQueue(array $replies): array
+    private static function scriptedQueue(array $replies, array $sequences = []): array
     {
-        $link = new ScriptedRedisLink($replies);
+        $link = new ScriptedRedisLink($replies, [], $sequences);
 
         return [new RedisQueue(new RedisClient($link)), $link];
     }
 
-    public function test_ack_removes_the_reserved_delivery_from_the_processing_list(): void
+    /**
+     * The keys one recorded EVALSHA declares. RedisClient::eval() puts a
+     * script on the wire as `evalsha sha1 numkeys key... arg...`, so the
+     * keys are what identifies which of pop()'s scripts a call was.
+     *
+     * @param array{string, list<int|float|string>} $command
+     * @return list<int|float|string>
+     */
+    private static function scriptKeys(array $command): array
     {
-        [$queue, $link] = self::scriptedQueue(['lrem' => 1]);
+        [, $parameters] = $command;
+
+        return \array_slice($parameters, 2, (int) $parameters[1]);
+    }
+
+    /**
+     * @param array{string, list<int|float|string>} $command
+     * @return list<int|float|string>
+     */
+    private static function scriptArgs(array $command): array
+    {
+        [, $parameters] = $command;
+
+        return \array_slice($parameters, 2 + (int) $parameters[1]);
+    }
+
+    public function test_a_non_positive_visibility_timeout_is_rejected(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('visibilityTimeoutSeconds of at least 1, got 0');
+
+        new RedisQueue(createRedisClient('redis://localhost:1'), 0);
+    }
+
+    /**
+     * A reservation is a lease with an end: the reserve script addresses
+     * the pending and leased keys and carries the visibility window Redis
+     * adds to its own clock.
+     */
+    public function test_reserving_leases_the_pending_tail_for_the_configured_window(): void
+    {
+        [$queue, $link] = self::scriptedQueue(
+            ['evalsha' => null],
+            ['evalsha' => [null, [], self::envelopeString()]],
+        );
+
+        $job = $queue->pop(timeoutSeconds: 1);
+
+        self::assertSame(1, $job?->attempts);
+        self::assertSame(
+            ['kinetis_queue:default:pending', 'kinetis_queue:default:leased'],
+            self::scriptKeys($link->commands[2]),
+        );
+        self::assertSame(['300'], self::scriptArgs($link->commands[2]));
+    }
+
+    /**
+     * The one ordering the reserve script cannot get wrong: the lease is
+     * written before the sole pending copy is removed, so a wrong-typed
+     * or otherwise failing leased key aborts the script with the job
+     * still on pending.
+     */
+    public function test_the_reserve_script_leases_before_it_removes_the_pending_copy(): void
+    {
+        $script = (new ReflectionClass(RedisQueue::class))->getConstant('RESERVE_SCRIPT');
+
+        self::assertIsString($script);
+        self::assertLessThan(strpos($script, "'ZADD'"), strpos($script, "'LINDEX'"));
+        self::assertLessThan(strpos($script, "'LREM'"), strpos($script, "'ZADD'"));
+    }
+
+    /**
+     * Recovery has no reaper behind it: the sweep an ordinary pop()
+     * already performs is what promotes due delayed jobs and reclaims
+     * expired leases, in that order, before it reserves.
+     */
+    public function test_pop_promotes_delayed_jobs_and_reclaims_expired_leases_before_reserving(): void
+    {
+        [$queue, $link] = self::scriptedQueue(
+            ['evalsha' => null],
+            ['evalsha' => [null, [], self::envelopeString()]],
+        );
+
+        $queue->pop(timeoutSeconds: 1);
+
+        self::assertSame(
+            [
+                ['kinetis_queue:default:delayed', 'kinetis_queue:default:pending'],
+                ['kinetis_queue:default:leased'],
+                ['kinetis_queue:default:pending', 'kinetis_queue:default:leased'],
+            ],
+            array_map(self::scriptKeys(...), $link->commands),
+        );
+    }
+
+    /**
+     * Priority is list position: every script issued before the job is
+     * found addresses the higher-priority queue, and the job comes back
+     * from the lower one only once that queue has nothing.
+     */
+    public function test_pop_sweeps_named_queues_in_priority_order(): void
+    {
+        [$queue, $link] = self::scriptedQueue(
+            ['evalsha' => null],
+            ['evalsha' => [null, [], null, null, [], self::envelopeString()]],
+        );
+
+        $job = $queue->pop(timeoutSeconds: 1, queues: ['high', 'default']);
+
+        self::assertSame('default', $job?->queue);
+
+        foreach (\array_slice($link->commands, 0, 3) as $command) {
+            foreach (self::scriptKeys($command) as $key) {
+                self::assertStringContainsString(':high:', (string) $key);
+            }
+        }
+    }
+
+    /**
+     * Nothing anywhere means one paced wait, bounded by what is left of
+     * the caller's deadline, and then a return — not a spin, and not a
+     * second sweep the caller has stopped waiting for.
+     */
+    public function test_pop_paces_its_sweeps_and_reserves_nothing_past_the_deadline(): void
+    {
+        [$queue, $link] = self::scriptedQueue(['evalsha' => null]);
+
+        $start = microtime(true);
+        self::assertNull($queue->pop(timeoutSeconds: 1));
+        $elapsed = microtime(true) - $start;
+
+        self::assertGreaterThanOrEqual(0.9, $elapsed);
+        self::assertLessThan(2.0, $elapsed);
+        self::assertCount(3, $link->commands, 'one sweep, then the wait consumed the deadline');
+    }
+
+    /**
+     * The central crash path: a lease whose worker died is reclaimed by
+     * the next pop(), and the envelope written back onto pending carries
+     * the attempt that delivery consumed.
+     */
+    public function test_an_expired_lease_is_requeued_with_its_attempt_advanced(): void
+    {
+        $abandoned = self::envelopeString(['attempts' => 0]);
+        $reclaimed = self::envelopeString(['attempts' => 1]);
+
+        [$queue, $link] = self::scriptedQueue(
+            ['evalsha' => null],
+            ['evalsha' => [null, [$abandoned], 1, $reclaimed]],
+        );
+
+        $job = $queue->pop(timeoutSeconds: 1);
+
+        self::assertSame(2, $job?->attempts);
+
+        $requeue = $link->commands[2];
+        self::assertSame(
+            ['kinetis_queue:default:leased', 'kinetis_queue:default:pending'],
+            self::scriptKeys($requeue),
+        );
+        self::assertSame([$abandoned, $reclaimed], self::scriptArgs($requeue));
+    }
+
+    /**
+     * The replacement is conditional on the old member still being
+     * leased, so a second sweeper — or a settlement that got there first
+     * — makes this one the loser: it writes nothing further and simply
+     * carries on to reserve.
+     */
+    public function test_a_reclaim_that_loses_the_race_writes_nothing_further(): void
+    {
+        [$queue, $link] = self::scriptedQueue(
+            ['evalsha' => null],
+            ['evalsha' => [null, [self::envelopeString()], 0, null]],
+        );
+
+        self::assertNull($queue->pop(timeoutSeconds: 1));
+
+        self::assertSame(
+            [
+                ['kinetis_queue:default:delayed', 'kinetis_queue:default:pending'],
+                ['kinetis_queue:default:leased'],
+                ['kinetis_queue:default:leased', 'kinetis_queue:default:pending'],
+                ['kinetis_queue:default:pending', 'kinetis_queue:default:leased'],
+            ],
+            array_map(self::scriptKeys(...), \array_slice($link->commands, 0, 4)),
+        );
+    }
+
+    /**
+     * Abandoned corruption settles through the malformed boundary rather
+     * than being requeued: it is removed from the leased set, so the next
+     * sweep does not find it again.
+     */
+    public function test_malformed_abandoned_lease_data_is_removed_rather_than_requeued(): void
+    {
+        [$queue, $link] = self::scriptedQueue(
+            ['evalsha' => null, 'zrem' => 1],
+            ['evalsha' => [null, ['{not valid json']]],
+        );
+
+        try {
+            $queue->pop(timeoutSeconds: 1);
+            self::fail('Expected the abandoned malformed member to be settled.');
+        } catch (MalformedJobSettledException $e) {
+            self::assertSame('default', $e->queue);
+        }
+
+        self::assertSame(
+            ['zrem', ['kinetis_queue:default:leased', '{not valid json']],
+            $link->commands[2],
+        );
+    }
+
+    /**
+     * release() replaces this delivery's exact leased member with the
+     * envelope carrying the attempt it consumed, keeping the job's own
+     * identity and enqueue time.
+     */
+    public function test_release_replaces_only_the_exact_leased_member(): void
+    {
+        $held = self::envelopeString(['attempts' => 0]);
+
+        [$queue, $link] = self::scriptedQueue(['evalsha' => 1]);
+
+        $queue->release(self::delivery($held));
+
+        self::assertSame(
+            ['kinetis_queue:default:leased', 'kinetis_queue:default:pending'],
+            self::scriptKeys($link->commands[0]),
+        );
+
+        [$old, $new] = self::scriptArgs($link->commands[0]);
+        self::assertSame($held, $old);
+
+        $replacement = json_decode((string) $new, true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(1, $replacement['attempts']);
+        self::assertSame(self::VALID_ID, $replacement['id']);
+        self::assertSame(1_700_000_000, $replacement['pushedAt']);
+    }
+
+    /**
+     * A zero means the member was no longer leased: the delivery is over,
+     * and reporting success would tell a worker a retry was enqueued when
+     * nothing was written.
+     */
+    public function test_release_rejects_a_handle_whose_delivery_is_already_over(): void
+    {
+        [$queue] = self::scriptedQueue(['evalsha' => 0]);
+
+        try {
+            $queue->release(self::delivery(self::envelopeString()));
+            self::fail('Expected the stale delivery to be rejected.');
+        } catch (StaleJobHandleException $e) {
+            self::assertSame(JobSettlement::Release, $e->operation);
+            self::assertStringContainsString('default', $e->getMessage());
+        }
+    }
+
+    public function test_ack_removes_the_exact_leased_member(): void
+    {
+        [$queue, $link] = self::scriptedQueue(['zrem' => 1]);
 
         $queue->ack(self::delivery());
 
         self::assertSame(
-            [['lrem', ['kinetis_queue:default:processing', 1, '{"job":"payload"}']]],
+            [['zrem', ['kinetis_queue:default:leased', '{"job":"payload"}']]],
             $link->commands,
         );
     }
 
     /**
-     * LREM removing nothing means the processing list holds no entry for
-     * this handle: the delivery was settled through another call, or
-     * reclaimed. Reporting success would tell a worker its job is durably
-     * done when nothing was written.
+     * ZREM removing nothing means the leased set holds no member for this
+     * handle: the delivery was settled through another call, or reclaimed
+     * once its lease expired. Reporting success would tell a worker its
+     * job is durably done when nothing was written.
      */
     public function test_ack_rejects_a_handle_whose_delivery_is_already_over(): void
     {
-        [$queue] = self::scriptedQueue(['lrem' => 0]);
+        [$queue] = self::scriptedQueue(['zrem' => 0]);
 
         try {
             $queue->ack(self::delivery());
@@ -517,14 +773,14 @@ final class RedisQueueTest extends TestCase
         }
     }
 
-    public function test_fail_removes_the_reserved_delivery_from_the_processing_list(): void
+    public function test_fail_removes_the_exact_leased_member(): void
     {
-        [$queue, $link] = self::scriptedQueue(['lrem' => 1]);
+        [$queue, $link] = self::scriptedQueue(['zrem' => 1]);
 
         $queue->fail(self::delivery());
 
         self::assertSame(
-            [['lrem', ['kinetis_queue:default:processing', 1, '{"job":"payload"}']]],
+            [['zrem', ['kinetis_queue:default:leased', '{"job":"payload"}']]],
             $link->commands,
         );
     }
@@ -535,7 +791,7 @@ final class RedisQueueTest extends TestCase
      */
     public function test_fail_rejects_a_handle_whose_delivery_is_already_over(): void
     {
-        [$queue] = self::scriptedQueue(['lrem' => 0]);
+        [$queue] = self::scriptedQueue(['zrem' => 0]);
 
         try {
             $queue->fail(self::delivery());
@@ -546,11 +802,28 @@ final class RedisQueueTest extends TestCase
     }
 
     /**
+     * Work a worker could pick up, counted in one script: pending,
+     * delayed, and leases past their expiry. The leased key is addressed
+     * for the expired count alone — the script's own bound is the server
+     * clock, which only a real Redis supplies.
+     */
+    public function test_size_counts_pending_delayed_and_expired_leases_in_one_script(): void
+    {
+        [$queue, $link] = self::scriptedQueue(['evalsha' => 9]);
+
+        self::assertSame(9, $queue->size('high'));
+
+        self::assertCount(1, $link->commands, 'one round trip, one server clock');
+        self::assertSame(
+            ['kinetis_queue:high:pending', 'kinetis_queue:high:delayed', 'kinetis_queue:high:leased'],
+            self::scriptKeys($link->commands[0]),
+        );
+    }
+
+    /**
      * One EVAL, not an LLEN/ZCARD pair followed by a DEL: a job pushed
      * between a separate count and delete would be removed without being
-     * counted. Amp\Redis\RedisClient::eval() puts the script on the wire
-     * as EVALSHA, so the recorded command carries the script's hash, the
-     * key count, and then the keys themselves.
+     * counted.
      */
     public function test_clear_counts_and_deletes_in_one_script_over_the_pending_and_delayed_keys(): void
     {
@@ -559,30 +832,26 @@ final class RedisQueueTest extends TestCase
         self::assertSame(7, $queue->clear('high'));
 
         self::assertCount(1, $link->commands, 'counting and deleting are one round trip');
-        [$command, $parameters] = $link->commands[0];
-
-        self::assertSame('evalsha', $command);
-        self::assertSame(2, $parameters[1], 'the script declares exactly two keys');
         self::assertSame(
             ['kinetis_queue:high:pending', 'kinetis_queue:high:delayed'],
-            \array_slice($parameters, 2),
+            self::scriptKeys($link->commands[0]),
         );
     }
 
     /**
-     * The processing list holds deliveries workers own, and clearing must
-     * never reach it — asserted over every parameter that went to the
-     * wire rather than over the two keys the test above names, so a third
-     * key added later fails here too.
+     * A live lease is a job a worker is running and still has to settle,
+     * so clear() must never reach the leased key — asserted over every
+     * parameter that went to the wire, so a third key added later fails
+     * here too.
      */
-    public function test_clear_never_addresses_the_processing_list(): void
+    public function test_clear_leaves_live_leases_intact(): void
     {
         [$queue, $link] = self::scriptedQueue(['evalsha' => 0]);
 
         $queue->clear('high');
 
         foreach ($link->commands[0][1] as $parameter) {
-            self::assertStringNotContainsString('processing', (string) $parameter);
+            self::assertStringNotContainsString('leased', (string) $parameter);
         }
     }
 
@@ -598,7 +867,7 @@ final class RedisQueueTest extends TestCase
         try {
             $queue->clear('has spaces');
             self::fail('Expected the malformed queue name to be rejected.');
-        } catch (InvalidQueueNameException) {
+        } catch (InvalidQueueArgumentException) {
             self::assertSame([], $link->commands);
         }
     }
@@ -613,7 +882,7 @@ final class RedisQueueTest extends TestCase
         // backend that stopped declaring ClearableQueueInterface fails
         // here as a TypeError instead of passing quietly. The queue-name
         // check still throws before Redis is touched.
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         self::clearThrough($queue, '');
     }
 

@@ -6,14 +6,12 @@ namespace Kinetis\Session\Tests\Fixtures;
 
 /**
  * A stream wrapper simulating file_put_contents() returning false *after*
- * genuinely persisting some bytes to disk — the "the disk fills up
- * mid-write" scenario file_put_contents()'s own documentation describes,
- * which is otherwise impractical to reproduce portably (root inside the
- * test container bypasses every permission-based trick, and there's no
- * portable way to induce a real ENOSPC on demand). Every path under this
- * wrapper's scheme is translated onto a real backing directory, so both
- * the constructor's is_dir() check and the resulting partial file are
- * genuinely inspectable with plain filesystem functions afterward.
+ * persisting some bytes to disk — the "disk fills up mid-write" scenario
+ * its own documentation describes, which is otherwise impractical to
+ * reproduce portably. Every path under this wrapper's scheme is
+ * translated onto a real backing directory, so the constructor's
+ * is_dir() check and the resulting partial file are both inspectable
+ * with plain filesystem functions afterward.
  *
  * @internal test fixture only
  */
@@ -91,7 +89,7 @@ final class FailingWriteStreamWrapper
     /**
      * chmod() (STREAM_META_ACCESS) delegated onto the real backing path —
      * the same translation every other method already applies, needed so
-     * FileSessionStore::write()'s own chmod(0600)/fileperms() checks see
+     * FileSessionStore::create()'s own chmod(0600)/fileperms() checks see
      * genuine results rather than failing because this wrapper never
      * implemented stream_metadata() at all.
      */

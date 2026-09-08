@@ -14,7 +14,8 @@ DB_PORT=3306
 DEBUG=false
 ```
 
-Both `public/index.php` and `bin/kinetis` call
+Both `Kinetis\Runtime\HttpStartup` — the whole of an application's
+`public/index.php` — and `bin/kinetis` call
 `Kinetis\Config\EnvFile::safeLoad($projectRoot)` unconditionally, before
 `Kinetis\Runtime\AppEnvironment::detect()` — `APP_ENV` itself might be
 defined for the first time in `.env`, not already set in the real process
@@ -111,16 +112,15 @@ than letting an unrecognized value like `"purple"` silently become
 whether a given key means a TCP port, a positive duration, or a ratio
 between 0 and 1. That domain knowledge belongs to whichever factory or
 middleware actually reads the key: `SqlConnectionFactory` rejects a
-`DB_PORT` outside 1–65535, `MaxBodySizeMiddleware` rejects a
+`DB_PORT` outside 1–65535, `FormLimits` rejects a
 non-positive `MAX_BODY_SIZE`, `TracerFactory` rejects an
 `OTEL_TRACES_SAMPLER_ARG` outside 0–1, and so on — each with a clear
 `InvalidArgumentException` naming the key, rather than clamping silently
 into range.
 
 `intOrNull()` exists for the config that means something different when
-it's genuinely absent than when it's zero — `DB_CONNECT_TIMEOUT` and
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` both mean "no timeout at all" only
-when unset, not `0` standing in for it.
+it's genuinely absent than when it's zero — `DB_CONNECT_TIMEOUT` means
+"no timeout at all" only when unset, not `0` standing in for it.
 
 `required()` is for config with no sane default — a missing database
 password should fail fast and clearly, not silently proceed as an empty
@@ -184,8 +184,8 @@ service you never explicitly registered on `RequestScope` itself.
 
 ## Registering services before boot: `bootstrap.php`
 
-`public/index.php` and `bin/kinetis` each construct a plain `AppScope`
-and call `boot()` on it — with no bindings of your own registered yet.
+HTTP startup and `bin/kinetis` each construct a plain `AppScope` and
+call `boot()` on it — with no bindings of your own registered yet.
 Two things run before that lock: any installed package's own bootstrap
 class (declared via `extra.kinetis` — see {doc}`cli` — the way
 `kinetis/persistence` and `kinetis/queue` bind a configured connection
@@ -259,9 +259,9 @@ yours to invent and aren't listed here.
 | `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | `Referrer-Policy` value, or `off` to omit it. |
 | `SECURITY_CSP` | — | `Content-Security-Policy` value. Unset means the header is not sent. |
 | `SECURITY_PERMISSIONS_POLICY` | — | `Permissions-Policy` value. Unset means the header is not sent. |
-| `SECURITY_HSTS_MAX_AGE` | `0` | HSTS max-age in seconds. `0` means the header is not sent (an RFC 6797-meaningful value, not an error); a negative value throws. |
-| `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` when HSTS is sent. |
-| `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` when HSTS is sent. |
+| `SECURITY_HSTS_MAX_AGE` | — | HSTS max-age in seconds. Unset means the header is not sent; an explicit `0` sends `max-age=0`, RFC 6797's withdrawal of a cached policy; a negative value throws. |
+| `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` to a positive max-age. |
+| `SECURITY_HSTS_PRELOAD` | `false` | Appends `preload` to a positive max-age. |
 | `SECURITY_COOP` | — | `Cross-Origin-Opener-Policy` value. Unset means the header is not sent. |
 | `SECURITY_CORP` | — | `Cross-Origin-Resource-Policy` value. Unset means the header is not sent. |
 | `SECURITY_COEP` | — | `Cross-Origin-Embedder-Policy` value. Unset means the header is not sent. |
@@ -315,12 +315,13 @@ simply off and `CacheInterface` binds to `NullSimpleCache`.
 | `REDIS_PORT` | `6379` | Port; must be a valid TCP port (1–65535). |
 | `REDIS_PASSWORD` | — | Password. |
 | `REDIS_DATABASE` | `0` | Database index (single-node only; Cluster has no `SELECT`); must not be negative. |
-| `REDIS_TIMEOUT` | `5` | Connect timeout, seconds; must be positive. |
+| `REDIS_TIMEOUT` | `5` | Operation budget, seconds — connect, reply, and cluster redirects together; must be positive. |
 | `REDIS_TLS` | `false` | Connect over TLS. |
 | `REDIS_TLS_VERIFY_PEER` | `true` | Verify the server certificate. |
 | `REDIS_TLS_CA_FILE` | — | CA certificate for verification. |
 | `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. |
 | `REDIS_CLUSTER_SEEDS` | — | Comma-separated seed nodes for Cluster bootstrap — `host:port`, or `[ipv6-address]:port` for an IPv6 node. |
+| `REDIS_CACHE_NAMESPACE` | `default` | Key namespace the cache owns; letters, digits, underscores and dashes. |
 
 ### Queue (`kinetis/queue` + backend packages)
 
@@ -340,11 +341,13 @@ separate capability". And it is what makes a listener marked
 |---|---|---|
 | `QUEUE_CONNECTION` | *(required)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
-| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. |
+| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only — retries are immediate, with no backoff (see {doc}`queue`). |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a finite, positive number — `0` (or negative) is rejected, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
-| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | — | `kinetis/queue-sql` only: reclaim a crashed worker's reserved job after this long; unset means never. |
+| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | `300` | `kinetis/queue-redis` and `kinetis/queue-sql`: reclaim a crashed worker's reserved job after this long. Must be a positive integer; set it above the slowest job you expect. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
-| `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). |
+| `QUEUE_SQS_ENDPOINT` | — | SQS-compatible endpoint (LocalStack). One origin — scheme, host, optional port — and nothing else; unset leaves AsyncAws its regional table and refuses an ambient `AWS_ENDPOINT_URL`. |
+| `QUEUE_SQS_PLAINTEXT` | `false` | Allows an `http://` value for `QUEUE_SQS_ENDPOINT`. |
+| `QUEUE_SQS_TIMEOUT` | `30` | Seconds bounding each SQS request and each credential lookup; must be positive, and set above the longest long poll the application issues (at most a five-second slice). |
 | `QUEUE_SQS_QUEUE_PREFIX` | — | Queue-name prefix for shared AWS accounts. |
 | `QUEUE_RABBITMQ_URL` | *(required for rabbitmq)* | `amqp://` URI. |
 | `QUEUE_RABBITMQ_QUEUE_PREFIX` | — | Queue-name prefix. |
@@ -370,8 +373,9 @@ keys as persistence.
 | `FILESYSTEM_S3_BUCKET` | *(required for s3)* | Bucket name. |
 | `FILESYSTEM_S3_REGION` | *(required for s3)* | AWS region. |
 | `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
-| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO). |
-| `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing, needed by most non-AWS S3 services. |
+| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO) — one origin, addressed path-style. |
+| `FILESYSTEM_S3_PLAINTEXT` | `false` | Allow an `http://` endpoint. |
+| `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds per S3 request — connect, idle and transfer. |
 
 `FILESYSTEM_DRIVER` has no default at the container level: `kinetis/storage` binds `FilesystemOperator` only when the key is set, and installing the package alone registers nothing. `FilesystemFactory::fromConfig()`, called directly, falls back to `local`.
 
@@ -380,12 +384,16 @@ keys as persistence.
 | Key | Default | Purpose |
 |---|---|---|
 | `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
+| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it. |
 
 ### Search (`kinetis/search-opensearch`) — all scoped
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SEARCH_OPENSEARCH_HOST` | *(required)* | Base URI of the node. |
+| `SEARCH_OPENSEARCH_HOST` | *(required)* | One `http(s)://host[:port]` origin. No userinfo, path, query or fragment. |
+| `SEARCH_OPENSEARCH_PLAINTEXT` | `false` | Accept an `http` origin. |
+| `SEARCH_OPENSEARCH_TIMEOUT` | `30` | Seconds per request — idle and total. Must be positive. |
+| `SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES` | `8388608` | Largest response body accepted. Must be positive. |
 | `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
 | `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
 | `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate. |
@@ -394,7 +402,7 @@ keys as persistence.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SESSION_DRIVER` | — | `file`, `cache`, or `sql`. Unset leaves the package inert — no store is bound. |
+| `SESSION_DRIVER` | — | `file`, `redis`, or `sql`. Unset leaves the package inert — no store is bound. |
 | `SESSION_LIFETIME` | `7200` | Seconds a session stays readable from its last write; must be positive. Every write refreshes the browser cookie's `Max-Age` alongside the backend's own storage TTL, so the two never drift apart. |
 | `SESSION_COOKIE` | `kinetis_session` | Cookie name. A `__Host-`/`__Secure-` prefix requires `SESSION_SECURE`. |
 | `SESSION_SAMESITE` | `Lax` | Cookie `SameSite` attribute: `Strict`, `Lax`, or `None`. `None` requires `SESSION_SECURE`. |
@@ -432,6 +440,7 @@ this package.
 | `BROADCAST_HOST` | `api.pusherapp.com` | Server host the backend publishes to. |
 | `BROADCAST_PORT` | `443` | Server port; must be a valid TCP port (1–65535). |
 | `BROADCAST_TLS` | `true` | Connect over TLS. |
+| `BROADCAST_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact `Origin` values this route's own guard admits on `POST /broadcasting/auth`, on top of the request's own origin, which always passes. Requests without an `Origin` header (server-side clients) pass too; any other origin is `403`. Not a CORS policy: a cross-origin browser request must also be allowed by the global `CorsMiddleware`. Not connection-scoped — the endpoint is one route. See {doc}`broadcasting`'s "Securing the endpoint". |
 
 A browser client only ever needs the app key, plus wherever the
 WebSocket server is reachable from outside the network your backend

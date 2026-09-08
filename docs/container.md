@@ -83,17 +83,35 @@ $scope->dispose();
 ```
 
 `Kernel::handle()` creates exactly one `RequestScope` per incoming request
-and always disposes it before the request finishes, so a thrown exception
-partway through dispatch still can't leak that scope into the next
-request. You will almost never call `createRequestScope()`/`dispose()`
+and disposes it before returning, so a thrown exception partway through
+dispatch still can't leak that scope into the next request.
+
+A response that streams its own body is the one exception, because the
+code writing those bytes runs after `handle()` has returned and resolves
+from that same scope. `Kernel` hands back a `StreamedResponse` wrapper
+and releases the scope the moment the emitter finishes. An owner that
+will never write that body settles it the other way instead, through
+`Kinetis\Runtime\StreamableResponseInterface::abandon()` — an adapter
+that cannot stream calls it before answering with a refusal of its own.
+`Kernel` releases the scope the same way, before `handle()` answers,
+whenever the response leaving its global pipeline is not the wrapper it
+handed that pipeline: a middleware's own reply, buffered or streamed, or
+a failure on its way out. A `with*` clone is still that wrapper, and is
+left to the adapter. Either settlement happens on the request that
+created the scope. What reaches none of them — an exception trace
+holding the wrapper as a frame argument, say — the next request releases
+first thing, before any of its own global middleware runs. Either way a
+finished request's scope is unreachable from the one after it.
+
+You will almost never call `createRequestScope()`/`dispose()`
 yourself — this is `Kernel`'s job — but understanding what happens inside
 it is what the rest of this page is actually about.
 
 ### Resolution order
 
 When `RequestScope::get($id)` is asked for something it doesn't have a
-local binding for, it doesn't just fall back to constructing anything that
-happens to exist:
+local binding for, it resolves in a fixed order rather than constructing
+anything that happens to exist:
 
 1. **Delegate to `AppScope`, but only if `AppScope` has an *explicit*
    registration for `$id`.** `AppScope::has()` deliberately does not fall
@@ -104,32 +122,6 @@ happens to exist:
    this request* — in `RequestScope`'s own binding table, which is wiped
    entirely on `dispose()` — and it is **never promoted to `AppScope`.**
 
-Autowiring a constructor parameter typed as a class or interface tries to
-resolve it through the container first, but — the same as a plain
-builtin-typed parameter always could — falls back to the parameter's own
-default value (or `null`, if it's nullable with no explicit default) when
-that resolution fails, rather than propagating the failure unconditionally:
-
-```{code-block} php
-final class ReportGenerator
-{
-    public function __construct(
-        // Nothing registers a Watermarker anywhere — resolution fails,
-        // and this constructor gets null instead of a thrown exception.
-        private ?Watermarker $watermarker = null,
-    ) {}
-}
-```
-
-This is what makes "inject this if it's available, otherwise use a sane
-default" — the standard PHP idiom for an optional collaborator — actually
-usable for a dependency, not just for a scalar constructor argument.
-Resolution genuinely is attempted first, though: an unregistered-but-
-real, instantiable class still autowires normally through this same
-mechanism, exactly as point 2 above describes; only an *actual* failure
-(nothing to resolve, or a nested dependency that itself can't be built)
-triggers the fallback.
-
 That second point is the actual guarantee this whole design exists to
 provide: **a stray, unregistered `$container->get(SomeClass::class)` call
 can never accidentally turn into a persistent, cross-request singleton.**
@@ -138,6 +130,51 @@ need, without first explicitly registering it — would be a silent trap:
 the first request to touch that class would decide, by accident, whether
 its state is request-scoped or worker-lifetime-scoped for every request
 after it.
+
+### Absent dependencies, and broken ones
+
+A class- or interface-typed constructor parameter with a default value,
+or a nullable type, says one thing: **the dependency may be absent.** It
+never says a broken one is acceptable.
+
+Absence is decided from the id alone, before anything is resolved: a
+dependency is absent when nothing registered the id and the id is an
+interface, an enum, or a name that declares nothing at all. Everything
+else is resolved, and every failure that resolution meets reaches the
+caller: a binding factory that throws, a nested dependency that cannot
+be built, a cycle
+(`Kinetis\Container\Exception\CircularDependencyException`), a
+request-scoped id asked for from `AppScope`
+(`DisconnectedRequestScopeException`). A declared class that cannot be
+constructed — abstract, or a non-public constructor — is a wiring error,
+not an absent dependency.
+
+An absent dependency takes the parameter's own default value, or `null`
+when the type is nullable with no default written out. With neither, the
+container reports the absence itself, naming the id nobody bound.
+
+```{code-block} php
+final class ReportGenerator
+{
+    public function __construct(
+        // Nothing binds this interface, so the dependency is absent and
+        // this stays null.
+        private ?WatermarkerInterface $watermarker = null,
+    ) {}
+}
+```
+
+That is what makes "inject this if it's available, otherwise use a sane
+default" — the standard PHP idiom for an optional collaborator — usable
+for a dependency rather than only for a scalar argument, without the
+default doubling as a place for real failures to disappear into. An
+ordinary class is never absent: it autowires normally, exactly as point
+2 above describes, and a failure to construct it propagates.
+
+`Kinetis\Http\Dispatcher` applies this same rule to a controller
+method's class-typed parameter, so a dependency behaves identically
+whether it arrives through a constructor or a method signature — see
+{doc}`routing-validation`.
 
 ### Resolving `RequestScope` itself, from the wrong scope
 
@@ -193,15 +230,15 @@ behind an unrelated "cleanup failed" error the moment disposal itself had
 a problem — worse than the failure it was supposed to be reporting on.
 
 Every place in Kinetis that disposes a `RequestScope` — `Kernel`,
-`kinetis/queue`'s `QueueWorker`/`SyncQueue`, the MCP transports, and
-`bin/kinetis` — disposes it *outside* any `finally` that could still
+`kinetis/queue`'s `QueueWorker`/`SyncQueue`, `kinetis/mcp`'s
+`StdioTransport`, and `bin/kinetis` — disposes it *outside* any `finally` that could still
 discard an already-decided outcome, and defines an explicit precedence
 instead: whatever the unit of work already produced (a response, a job's
 durable transition, a command's exit code) is preserved exactly, and a
 disposal failure on top of it is logged separately rather than allowed to
 overwrite it. Each owner's exact rule is documented on its own page —
 {doc}`routing-validation` for HTTP, {doc}`queue` for the worker/sync
-queue, {doc}`mcp` for the stdio and streamed HTTP transports, and
+queue, {doc}`mcp` for the stdio transport, and
 {doc}`cli` for `bin/kinetis` — since what "the real outcome" means differs
 per owner (a response that hasn't left the process yet is not the same
 situation as a queue job whose `ack()` already ran).

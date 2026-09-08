@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Persistence\Driver;
 
+use Closure;
 use Kinetis\Persistence\ConnectionOptions;
 use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Persistence\Contract\PostgresTransaction;
@@ -18,15 +19,17 @@ use PDOStatement;
  * contract as the async driver — the boot-and-die fallback, same
  * rationale as {@see PdoMysqlClient}.
  *
- * PDO's pgsql DSN is handed to libpq as a connection string, so the
- * canonical options (and the free-form extra string) translate directly
- * to libpq keys.
+ * PDO's pgsql DSN is handed to libpq as a connection string — every ";"
+ * translated to a space first — so the canonical options translate
+ * directly to libpq keys, quoted the way libpq expects
+ * ({@see LibpqValue}).
  *
- * The single lazily-opened connection lives for the client's lifetime
- * and is never reopened — matching the boot-and-die FPM model this
- * driver targets, where the process (and client) die with the request.
- * A long-lived process needing reconnection should run the {@see PgsqlAsyncClient}
- * driver instead, whose pool discards and replaces dead connections.
+ * The connection is opened lazily and there is only ever one of it:
+ * this client does not pool, so overlapping work is what the
+ * {@see PgsqlAsyncClient} driver is for. A session that can carry no
+ * more work is handed back to the server
+ * ({@see PdoExecutionTrait::discardSession()}) and replaced on the next
+ * call, unless $singleSession pins the client to the first one.
  */
 final class PdoPgsqlClient implements PostgresLink, PrefersPreparedStatements
 {
@@ -41,16 +44,53 @@ final class PdoPgsqlClient implements PostgresLink, PrefersPreparedStatements
         private readonly string $database,
         private readonly int $port = 5432,
         ?ConnectionOptions $options = null,
+        bool $singleSession = false,
     ) {
+        $this->singleSession = $singleSession;
+
         $this->options = $options ?? new ConnectionOptions();
         // Collation and protocol compression are MySQL concepts.
         $this->options->rejectUnsupported('PDO pgsql', ['collation', 'compression']);
+
+        foreach ($this->dsnValues($host, $database) as $name => $value) {
+            self::assertDsnValue($name, $value);
+        }
     }
 
     #[\Override]
     public function beginTransaction(): PostgresTransaction
     {
-        return new PdoPgsqlTransaction($this->beginPdoTransaction(), $this->buildResult(...));
+        /** @var PdoPgsqlTransaction */
+        return $this->startPdoTransaction(
+            fn (PDO $pdo, PdoStatementCache $statements, Closure $endOwnership): PdoTransaction
+                => new PdoPgsqlTransaction($pdo, $statements, $this->buildResult(...), $endOwnership),
+        );
+    }
+
+    /**
+     * Every value this client puts in its DSN, by the name an error
+     * message should call it.
+     *
+     * @return array<string, string>
+     */
+    private function dsnValues(string $host, string $database): array
+    {
+        $values = ['host' => $host, 'database' => $database];
+
+        foreach ([
+            'charset' => $this->options->charset,
+            'sslMode' => $this->options->sslMode,
+            'sslCa' => $this->options->sslCa,
+            'sslCert' => $this->options->sslCert,
+            'sslKey' => $this->options->sslKey,
+            'applicationName' => $this->options->applicationName,
+        ] as $name => $value) {
+            if ($value !== null) {
+                $values[$name] = $value;
+            }
+        }
+
+        return $values;
     }
 
     /** @internal Also used by {@see PdoPgsqlTransaction} via closure. */
@@ -69,39 +109,34 @@ final class PdoPgsqlClient implements PostgresLink, PrefersPreparedStatements
 
     /**
      * Called only from {@see PdoExecutionTrait} (via its own
-     * `abstract private function connection(): PDO;`), never directly
-     * from this class's own body — static analysis that doesn't resolve
-     * trait method calls across the trait boundary will see this as
-     * unused; it isn't.
+     * `abstract private function openConnection(): PDO;`), never
+     * directly from this class's own body — static analysis that doesn't
+     * resolve trait method calls across the trait boundary will see this
+     * as unused; it isn't.
      */
     #[\Override]
-    private function connection(): PDO
+    private function openConnection(): PDO
     {
-        if ($this->closed) {
-            throw new ConnectionException('The client has been closed');
-        }
-
-        if ($this->pdo !== null) {
-            return $this->pdo;
-        }
-
-        $dsn = "pgsql:host={$this->host};port={$this->port};dbname={$this->database}";
+        $quote = LibpqValue::quote(...);
+        $dsn = 'pgsql:host=' . $quote($this->host)
+            . ';port=' . $this->port
+            . ';dbname=' . $quote($this->database);
 
         if ($this->options->charset !== null) {
-            $dsn .= ";client_encoding={$this->options->charset}";
+            $dsn .= ';client_encoding=' . $quote($this->options->charset);
         }
 
         if ($this->options->sslMode !== null) {
-            $dsn .= ";sslmode={$this->options->sslMode}";
+            $dsn .= ';sslmode=' . $quote($this->options->sslMode);
         }
 
         if ($this->options->sslCa !== null) {
-            $dsn .= ";sslrootcert={$this->options->sslCa}";
+            $dsn .= ';sslrootcert=' . $quote($this->options->sslCa);
         }
 
         if ($this->options->sslCert !== null) {
-            $dsn .= ";sslcert={$this->options->sslCert}";
-            $dsn .= ";sslkey={$this->options->sslKey}";
+            $dsn .= ';sslcert=' . $quote($this->options->sslCert);
+            $dsn .= ';sslkey=' . $quote((string) $this->options->sslKey);
         }
 
         if ($this->options->connectTimeout !== null) {
@@ -109,17 +144,11 @@ final class PdoPgsqlClient implements PostgresLink, PrefersPreparedStatements
         }
 
         if ($this->options->applicationName !== null) {
-            $dsn .= ";application_name={$this->options->applicationName}";
-        }
-
-        if ($this->options->extraConnectionString !== '') {
-            // Space-separated libpq pairs become semicolon-separated DSN
-            // pairs; libpq validates them and fails the connect loudly.
-            $dsn .= ';' . \str_replace(' ', ';', $this->options->extraConnectionString);
+            $dsn .= ';application_name=' . $quote($this->options->applicationName);
         }
 
         try {
-            return $this->pdo = new PDO($dsn, $this->user, $this->password, [
+            return new PDO($dsn, $this->user, $this->password, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_STRINGIFY_FETCHES => false,
             ]);

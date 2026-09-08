@@ -16,17 +16,12 @@ use Kinetis\Session\Support\SessionExpiry;
  * expired file is deleted when next read, and gc() sweeps the rest —
  * schedule the `session:gc` command for that, nothing runs it
  * implicitly. A session is live only while `expiresAt` is strictly in
- * the future — read() and gc() (via isCollectable()) both check this
- * through {@see SessionExpiry::isExpired()}, the one shared predicate,
- * rather than either comparing `expiresAt` against `time()` inline —
- * the same `expires_at > now`/`expires_at <= now` boundary
- * {@see SqlSessionStore} already enforces at the database level, so
- * both stores agree on the exact second a session actually expires.
- * `expiresAt` itself, and every `$lifetimeSeconds` a caller can pass,
- * is computed and validated via {@see SessionExpiry::timestampFor()} —
- * never `time() + $lifetimeSeconds` directly — so an invalid or
- * unrepresentable lifetime fails loudly, here, rather than silently
- * corrupting the stored envelope.
+ * the future, the same `expires_at > now`/`expires_at <= now` boundary
+ * {@see SqlSessionStore} enforces at the database level, so both stores
+ * agree on the exact second a session expires. `expiresAt` comes from
+ * {@see SessionExpiry::timestampFor()} — never `time() +
+ * $lifetimeSeconds` directly — so an invalid lifetime fails here rather
+ * than corrupting the stored envelope.
  *
  * Multi-process safe only in the last-write-wins sense the store
  * contract already declares; not intended for production fleets, where
@@ -54,7 +49,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
      * is never trusted just because it exists — its actual permissions
      * are validated here, every construction, so a group- or
      * world-accessible directory can never silently widen the window
-     * write() relies on staying private between creating a temp file and
+     * create() relies on staying private between writing a temp file and
      * chmod()ing it. Refused, not corrected: this store does not own the
      * directory's permissions and must not silently broaden or take
      * ownership of a path it did not create.
@@ -101,7 +96,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
             return null;
         }
 
-        if (SessionExpiry::isExpired($envelope['expiresAt'], \time())) {
+        if ($envelope['expiresAt'] <= \time()) {
             @\unlink($path);
 
             return null;
@@ -115,34 +110,22 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
      * @param array<string, mixed> $data
      */
     #[\Override]
-    public function write(string $id, array $data, int $lifetimeSeconds): void
+    public function create(string $id, array $data, int $lifetimeSeconds): void
     {
-        $payload = \json_encode(
-            ['expiresAt' => SessionExpiry::timestampFor($lifetimeSeconds), 'data' => $data],
-            JSON_THROW_ON_ERROR,
-        );
-
+        $payload = self::envelope($data, $lifetimeSeconds);
         $path = $this->pathFor($id);
         // Same directory as $path, not sys_get_temp_dir(): rename() is
         // only atomic within one filesystem, and writing straight to
-        // $path (even under LOCK_EX, which only ever protected against
-        // another *writer*) lets a concurrent, lock-free read() observe
-        // a truncated/partial file mid-write — a torn read, not covered
-        // by "last-write-wins". Write-then-rename is what this
-        // project's own AOT CacheStore already does for the same
-        // reason; a session file additionally gets 0600, matching this
-        // store's own 0700 directory, since it's not meant to be
-        // group/world-readable the way the AOT cache is.
+        // $path lets a concurrent, lock-free read() observe a
+        // truncated file. Write-then-rename is what this project's own
+        // AOT CacheStore already does for the same reason; a session
+        // file additionally gets 0600, matching this store's own 0700
+        // directory, since it's not meant to be group/world-readable
+        // the way the AOT cache is.
         //
-        // Named ".sess-tmp-*", deliberately never matching gc()'s own
-        // "sess_*" glob pattern — the earlier "$path.<random>.tmp" naming
-        // still started with "sess_", so a gc() sweep landing between
-        // this file_put_contents() and the rename() below could collect
-        // and unlink the in-progress temp file out from under this write
-        // (a partial envelope is always collectable; a complete one that
-        // just hasn't been renamed yet still looks collectable too, since
-        // gc() has no way to tell "in progress" from "abandoned"), making
-        // the rename() below fail and silently losing the write.
+        // Named ".sess-tmp-*", outside gc()'s own "sess_*" glob
+        // pattern, so a sweep landing between the write and the rename
+        // cannot collect the file this call is about to publish.
         $tmpPath = $this->directory . '/.sess-tmp-' . \bin2hex(\random_bytes(8)) . '.tmp';
 
         // Compared against the exact expected byte count, not merely
@@ -154,7 +137,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         if (@\file_put_contents($tmpPath, $payload) !== \strlen($payload)) {
             @\unlink($tmpPath);
 
-            throw new SessionException("Session file for \"{$id}\" could not be written.");
+            throw new SessionException('A session file could not be written.');
         }
 
         // A chmod() that reports success is not proof enough on its own:
@@ -166,7 +149,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         if (!@\chmod($tmpPath, self::FILE_MODE)) {
             @\unlink($tmpPath);
 
-            throw new SessionException("Session file for \"{$id}\" could not be secured with private permissions.");
+            throw new SessionException('A session file could not be secured with private permissions.');
         }
 
         $actualFileMode = @\fileperms($tmpPath);
@@ -174,14 +157,62 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         if ($actualFileMode === false || ($actualFileMode & 0777) !== self::FILE_MODE) {
             @\unlink($tmpPath);
 
-            throw new SessionException("Session file for \"{$id}\" could not be secured with private permissions.");
+            throw new SessionException('A session file could not be secured with private permissions.');
         }
 
         if (!@\rename($tmpPath, $path)) {
             @\unlink($tmpPath);
 
-            throw new SessionException("Session file for \"{$id}\" could not be written.");
+            throw new SessionException('A session file could not be written.');
         }
+    }
+
+    /**
+     * Writes through a handle on the existing file, opened "r+" so this
+     * never creates one: a record unlinked before the call cannot be
+     * opened, and one unlinked after it takes this handle's bytes with
+     * it, so an update can never restore an id another request retired.
+     *
+     * The replacement is written in full before the file is truncated to
+     * its length, so no step empties a live record. A read overlapping
+     * that write still sees a mixed envelope, which decodes as absent —
+     * this development store's limit, and it fails closed.
+     *
+     * @param array<string, mixed> $data
+     */
+    #[\Override]
+    public function update(string $id, array $data, int $lifetimeSeconds): bool
+    {
+        $payload = self::envelope($data, $lifetimeSeconds);
+        $path = $this->pathFor($id);
+        $handle = @\fopen($path, 'r+');
+
+        if ($handle === false) {
+            // Gone is the ordinary case — destroyed, rotated, or swept.
+            // A file still sitting there means an I/O or permission
+            // failure instead, which must not read as a stale write.
+            if (\file_exists($path)) {
+                throw new SessionException('A session file could not be opened for update.');
+            }
+
+            return false;
+        }
+
+        try {
+            $stored = \stream_get_contents($handle);
+
+            if ($stored === false || (self::expiryOf($stored) ?? 0) <= \time()) {
+                return false;
+            }
+
+            if (!@\rewind($handle) || !self::writeAll($handle, $payload) || !@\ftruncate($handle, \strlen($payload))) {
+                throw new SessionException('A session file could not be written.');
+            }
+        } finally {
+            \fclose($handle);
+        }
+
+        return true;
     }
 
     #[\Override]
@@ -203,7 +234,7 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         // from being silently treated the same as a race that already
         // resolved correctly.
         if (\file_exists($path)) {
-            throw new SessionException("Session file for \"{$id}\" could not be deleted.");
+            throw new SessionException('A session file could not be deleted.');
         }
     }
 
@@ -225,11 +256,51 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
     private static function isCollectable(string $path): bool
     {
         $raw = @\file_get_contents($path);
-        $envelope = $raw === false ? null : \json_decode($raw, true);
 
-        return !\is_array($envelope)
-            || !\is_int($envelope['expiresAt'] ?? null)
-            || SessionExpiry::isExpired($envelope['expiresAt'], \time());
+        return $raw === false || (self::expiryOf($raw) ?? 0) <= \time();
+    }
+
+    /**
+     * Every byte, or false: fwrite() may accept fewer bytes than given,
+     * and a zero-length write means no further progress is being made.
+     *
+     * @param resource $handle
+     */
+    private static function writeAll($handle, string $payload): bool
+    {
+        $length = \strlen($payload);
+        $written = 0;
+
+        while ($written < $length) {
+            $chunk = @\fwrite($handle, \substr($payload, $written));
+
+            if ($chunk === false || $chunk === 0) {
+                return false;
+            }
+
+            $written += $chunk;
+        }
+
+        return true;
+    }
+
+    /** The envelope's expiry, or null when $raw is not one at all. */
+    private static function expiryOf(string $raw): ?int
+    {
+        $envelope = \json_decode($raw, true);
+
+        return \is_array($envelope) && \is_int($envelope['expiresAt'] ?? null) ? $envelope['expiresAt'] : null;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function envelope(array $data, int $lifetimeSeconds): string
+    {
+        return \json_encode(
+            ['expiresAt' => SessionExpiry::timestampFor($lifetimeSeconds), 'data' => $data],
+            JSON_THROW_ON_ERROR,
+        );
     }
 
     private function pathFor(string $id): string

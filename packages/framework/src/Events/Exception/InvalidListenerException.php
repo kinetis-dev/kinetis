@@ -19,7 +19,7 @@ use RuntimeException;
  *
  * Implements CacheArtifactExceptionInterface for the fromArray() case
  * specifically — this is what lets BootSequence's cache-bundle loaders
- * classify it as "the generation is corrupt, compile fresh instead"
+ * classify it as "the artifact is corrupt, compile fresh instead"
  * rather than an uncaught hard failure at boot, without also catching
  * an unrelated Throwable a fresh, live discovery pass might raise. The
  * register()-time throw (the malformed-method case above) implements

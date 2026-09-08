@@ -41,24 +41,13 @@ interface RuntimeAdapterDriver
     public function supportsStreaming(): bool;
 
     /**
-     * A form-encoded request this environment cannot parse — the
-     * concrete trigger differs per environment (a multipart body with no
-     * usable boundary for a parser of the adapter's own, a body a SAPI's
-     * own parser rejects), but the required outcome doesn't: a clean
-     * 400, never an uncaught failure. Over-limit input is the other
-     * half of that policy and needs no declaration: the ceilings are
-     * `Kinetis\Http\Form\FormLimits`' own, identical everywhere, so the
-     * suite builds those requests itself.
-     */
-    public function unparseableFormRequest(): WireRequest;
-
-    /**
      * The URI scheme this environment serves over when the request
      * carries no forwarded scheme of its own — `http` for a SAPI or a
      * worker behind a plain listener, `https` for an API Gateway
-     * integration that has no plaintext mode at all. A forwarded scheme,
-     * where one is sent, overrides this on every adapter alike, which is
-     * asserted separately.
+     * integration that has no plaintext mode at all. What a forwarded
+     * scheme does to it is asserted separately, against
+     * {@see trustsTheConnectingClient()} and
+     * {@see supportsPlaintextRequests()}.
      */
     public function expectedScheme(): string;
 
@@ -94,4 +83,22 @@ interface RuntimeAdapterDriver
      * suite exists to catch.
      */
     public function trustsTheConnectingClient(): bool;
+
+    /**
+     * Whether a plaintext request can reach this environment at all. A
+     * SAPI or a worker behind a plain listener serves one; an API
+     * Gateway integration cannot, because it terminates TLS itself and
+     * has no plaintext listener for such a request to have arrived on.
+     *
+     * Both answers are asserted, on the one input that separates them —
+     * an `X-Forwarded-Proto` naming `http`. An environment that can
+     * serve plaintext settles that header under the trust rule
+     * {@see trustsTheConnectingClient()} states. One that cannot has
+     * neither to honor nor to ignore it: the header describes a request
+     * that cannot have reached it, and the request is refused before the
+     * handler. Declared here rather than read off `expectedScheme()`,
+     * which says what the environment serves and not what it can
+     * receive.
+     */
+    public function supportsPlaintextRequests(): bool;
 }

@@ -15,7 +15,7 @@ use Psr\Http\Server\RequestHandlerInterface;
  * Response security headers, registered unconditionally as the
  * outermost global middleware by Kernel — the same "costs nothing when
  * nothing's wrong, closes a real gap when something does" reasoning
- * MaxBodySizeMiddleware already uses.
+ * RequestBodyMiddleware already uses.
  *
  * Outside ExceptionHandlerMiddleware rather than inside it, which is
  * the one deliberate exception to that class otherwise being outermost:
@@ -119,18 +119,27 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
      */
     private static function hsts(Config $config): string
     {
-        $maxAge = $config->int('SECURITY_HSTS_MAX_AGE', 0);
+        $maxAge = $config->intOrNull('SECURITY_HSTS_MAX_AGE');
 
-        // 0 is a real, RFC 6797-meaningful value — "disable HSTS for this
-        // origin" — not something to reject; a *negative* max-age has no
-        // such meaning and is a real misconfiguration, not silently
-        // folded into the same "disabled" bucket as zero.
+        // Absent — unset, or blank, which Config reads as unset — is the
+        // only thing that omits the header.
+        if ($maxAge === null) {
+            return '';
+        }
+
+        // A negative max-age has no RFC 6797 meaning and is a
+        // misconfiguration, not a way to switch HSTS off.
         if ($maxAge < 0) {
             throw new InvalidArgumentException("SECURITY_HSTS_MAX_AGE must not be negative, got {$maxAge}.");
         }
 
+        // An explicit 0 is RFC 6797's policy withdrawal — it tells a
+        // browser to drop the policy it has cached for this host, which
+        // it can only do if the header reaches it. A withdrawal carries
+        // no directives: includeSubDomains and preload qualify a policy
+        // being set.
         if ($maxAge === 0) {
-            return '';
+            return 'max-age=0';
         }
 
         $value = 'max-age=' . $maxAge;

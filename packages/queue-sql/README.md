@@ -52,17 +52,20 @@ directory with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
 `SqlQueue` declares `Kinetis\Queue\ClearableQueueInterface`. Clearing
 deletes every row on the queue whose `reserved_at` is null, and reports
 how many the `DELETE` removed. That is narrower than what `size()`
-counts: under `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, an expired reservation
-counts as waiting and `pop()` may reclaim it, but `clear()` still leaves
-it alone — the worker holding it may simply be slow, and still has a
-settlement to make.
+counts: an expired reservation — one older than
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` — counts as waiting and `pop()` may
+reclaim it, but `clear()` still leaves it alone — the worker holding it
+may simply be slow, and still has a settlement to make.
 
-A settlement addresses a row by id, and the row carries no token saying
-which reservation wrote it, so this backend raises no
-`Kinetis\Queue\Exception\StaleJobHandleException`: a settlement
-arriving after another worker reclaimed the row lands on that worker's
-delivery. Keep the visibility timeout comfortably longer than your
-slowest job.
+Every reservation and every timeout reclaim writes a fresh random
+`reserved_token`, and `ack()`/`release()`/`fail()` match on the row id
+*and* that token. A settlement arriving after another worker reclaimed
+the row therefore writes nothing and raises
+`Kinetis\Queue\Exception\StaleJobHandleException`, which `queue:work`
+reports as a lost delivery instead of settling somebody else's. Still
+keep the visibility timeout comfortably longer than your slowest job:
+fencing keeps a late settlement from doing damage, it does not stop the
+job from running twice.
 
 ## Configuration
 
@@ -80,7 +83,7 @@ key this package introduces itself:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | *(unset — never reclaimed)* | Seconds before a crashed worker's reserved job becomes poppable again. |
+| `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | `300` | Seconds before a crashed worker's reserved job becomes poppable again. Must be a positive integer. |
 
 Both are scoped by `QUEUE_CONNECTION_NAME` the same way every other
 backend's keys are. [`kinetis/queue`](https://github.com/kinetis-dev/queue)'s own keys (`QUEUE_CONNECTION`,

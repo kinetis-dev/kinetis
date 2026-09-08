@@ -34,6 +34,7 @@ lookup; the signed claims are the entire authentication decision.
 
 ```php
 use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\Config\Config;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\Get;
@@ -44,7 +45,10 @@ final class AppJwtAuthMiddleware extends JwtAuthMiddleware
 {
     public function __construct(RequestScope $scope, Config $config)
     {
-        parent::__construct($config->required('JWT_SECRET'), $scope);
+        parent::__construct(
+            JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
+            $scope,
+        );
     }
 }
 
@@ -63,11 +67,17 @@ final readonly class OrderController
 }
 ```
 
+Keys are configured through one immutable value on each side:
+`JwtVerificationKeys::hmacSecret()`/`rsaPublicKey()`/`jwks()` for the
+middleware, `JwtSigningKey::hmacSecret()`/`rsaPrivateKey()` for
+`JwtIssuer`. Each names its own algorithm and key id, and validates the
+material where it is written rather than on the first request.
+
 Rotating signing keys: `JwkSet` publishes `PublishedRsaKey` values as an
 RFC 7517 JWK Set for a `.well-known/jwks.json` route, and
-`ParsedJwkSet::fromJson()` parses raw JWKS JSON back into the key set
-`JwtAuthMiddleware` verifies against — kids carried and matched as the
-exact strings the document published, every key validated before the set
+`JwtVerificationKeys::jwks()` reads that document back into the keys a
+token's own `kid` selects among — kids carried and matched as the exact
+strings the document published, every key validated before the value
 exists.
 
 Need opaque Bearer-token validation against your own storage instead?

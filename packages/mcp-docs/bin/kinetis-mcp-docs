@@ -1,0 +1,34 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Kinetis\McpDocs\McpDocsServer;
+use Kinetis\McpDocs\StdioLoop;
+
+// Composer's generated vendor/bin/kinetis-mcp-docs proxy sets this
+// global before including this script, and that proxy is the entry
+// point in any project that installed the package. The bare path below
+// resolves only inside this repository, where the server is developed.
+$autoloadPath = $GLOBALS['_composer_autoload_path'] ?? dirname(__DIR__) . '/vendor/autoload.php';
+unset($GLOBALS['_composer_autoload_path']);
+
+if (!is_file($autoloadPath)) {
+    fwrite(STDERR, "Cannot locate the Composer autoloader. Run vendor/bin/kinetis-mcp-docs instead — "
+        . "this script is not meant to be invoked directly.\n");
+
+    exit(1);
+}
+
+require $autoloadPath;
+
+// Nothing but JSON-RPC frames may reach stdout, so the diagnostic
+// stream is stderr and a failure that ends the loop is reported there
+// too.
+try {
+    new StdioLoop()->run(new McpDocsServer(diagnostics: STDERR), STDIN, STDOUT);
+} catch (Throwable $e) {
+    fwrite(STDERR, McpDocsServer::SERVER_NAME . ': ' . $e->getMessage() . "\n");
+
+    exit(1);
+}

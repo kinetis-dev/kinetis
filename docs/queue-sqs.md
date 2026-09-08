@@ -25,32 +25,83 @@ Every SQS call this backend makes, including a worker waiting for the
 next job, suspends rather than blocking the process. A worker given
 several queue names does not watch them simultaneously: it sweeps them
 in priority order, giving each an immediate non-blocking check first,
-and only then long-polls one queue at a time for a bounded slice — at
-most five seconds per queue, and never past the deadline it was given.
+and only then long-polls the highest-priority one for a bounded slice —
+at most five seconds, and no longer than what is left of the deadline it
+was given — before sweeping again. Once that slice comes back empty and
+the deadline has passed, `pop()` returns rather than sweeping once more.
 So a job on a lower-priority queue is never missed while a higher one is
-quiet, and a job arriving on a higher-priority queue mid-slice is picked
-up on the next sweep rather than instantly. {doc}`queue` has the full
-`pop()` contract.
+quiet, and a job arriving mid-slice is picked up on the next sweep rather
+than instantly. {doc}`queue` has the full `pop()` contract, including why
+the deadline bounds when the backend stops looking rather than when
+`pop()` returns.
 
 ## Configuring
 
 `QUEUE_SQS_REGION` is required — there's no sane default to guess.
-Credentials come from the AWS SDK's usual sources
-(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, or an IAM role) — nothing
-Kinetis-specific to set up.
+Credentials need nothing Kinetis-specific set up at all — see Credentials
+below.
 
-Two optional settings:
+Four optional settings:
 
 ```{code-block} text
-QUEUE_SQS_ENDPOINT=http://localhost:4566
 QUEUE_SQS_QUEUE_PREFIX=myapp-
+QUEUE_SQS_ENDPOINT=http://localstack:4566
+QUEUE_SQS_PLAINTEXT=true
+QUEUE_SQS_TIMEOUT=30
 ```
 
-`QUEUE_SQS_ENDPOINT` points at a local SQS-compatible service (LocalStack,
-for example) instead of real AWS — handy for development and testing.
 `QUEUE_SQS_QUEUE_PREFIX` is prepended to every queue name — useful when
 staging and production share one AWS account and need to stay on separate
 queues without both trying to use a plain name like `default`.
+
+`QUEUE_SQS_ENDPOINT` points at an SQS-compatible service (LocalStack, for
+example) instead of real AWS. It is one origin — a scheme, a host and an
+optional port, with no userinfo, path, query or fragment — and anything
+else is refused when the client is built. Leave the key unset and the
+destination is AsyncAws's regional endpoint table; an `AWS_ENDPOINT_URL`
+sitting in the environment for some other tool is refused rather than
+quietly redirecting this application's signed requests, so name the
+endpoint here when you want one.
+
+`QUEUE_SQS_PLAINTEXT=true` is what allows an `http://` endpoint.
+`http://localstack:4566` between containers on one Compose network is
+ordinary; a public plain-HTTP endpoint carrying credentials and job
+payloads is not, and nothing in the hostname tells those apart, so the
+decision is yours to record.
+
+`QUEUE_SQS_TIMEOUT` (seconds, default `30`) bounds each SQS request on
+its own — idle and total transfer alike — and covers credential lookups
+too, since they travel on the same transport. It is not one deadline
+across a `pop()` that issues several requests.
+
+Any positive value is accepted. Set it above the longest long poll the
+application issues, since SQS holds such a request open on purpose and a
+shorter budget would abort an idle poll as a failure. That slice is at
+most five seconds, and shorter whenever a `pop()` deadline caps it, so
+the default of `30` leaves room for a full one. A request is one wire
+attempt — no retry, and no redirect followed.
+
+## Credentials
+
+Credentials resolve through AsyncAws's standard chain, in its standard
+order: environment variables (including the STS assume-role that
+`AWS_ROLE_ARN` selects), web identity, the shared credentials and config
+files, ECS or EKS pod identity, then IMDS. There is nothing to
+configure.
+
+Every provider in that chain that calls AWS uses the same Revolt
+transport as the client itself, so an assume-role or an IMDS lookup
+suspends the calling Fiber like any other call. The shared credentials
+file, the shared config file and any web-identity or pod-identity token
+file are read with native blocking calls, on first resolution and again
+on each refresh.
+
+Resolved credentials are held until they expire, and only while they are
+unexpired: an expired answer is passed over for the next provider in the
+same lookup, and a round that resolved nothing is not remembered. A role,
+a container credential endpoint or a token file that appears after a
+worker has started is therefore picked up on the next queue operation
+rather than shadowed by an earlier miss.
 
 ## Create your queues ahead of time
 

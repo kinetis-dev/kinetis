@@ -24,7 +24,6 @@ for ($i = 1; $i <= 150; $i++) {
     $router->register("Kinetis\\Bench\\Fixtures\\Controller{$n}");
 }
 
-$compiled = (new Compiler())->compile($router);
-(new CacheStore($cacheDir))->writeAll($compiled);
+(new CacheStore($cacheDir))->write((new Compiler())->compile($router));
 
 echo "Cache built at {$cacheDir}\n";

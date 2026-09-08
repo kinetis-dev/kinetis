@@ -12,8 +12,6 @@ use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Tests\Http\Fixtures\AtomicRegistrationFailureController;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
-use Kinetis\Tests\Http\Fixtures\ConstrainedDuplicateRouteController;
-use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
 use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerA;
 use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerB;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
@@ -92,25 +90,6 @@ final class RouterTest extends TestCase
 
         $this->expectException(MethodNotAllowedException::class);
         $router->match('DELETE', '/users');
-    }
-
-    public function test_a_constrained_placeholder_route_matches_a_conforming_segment(): void
-    {
-        $router = new Router();
-        $router->register(ConstrainedParametersController::class);
-
-        $match = $router->match('GET', '/products/42');
-
-        self::assertSame(['id' => '42'], $match->pathParams);
-    }
-
-    public function test_a_constrained_placeholder_route_404s_on_a_non_conforming_segment(): void
-    {
-        $router = new Router();
-        $router->register(ConstrainedParametersController::class);
-
-        $this->expectException(RouteNotFoundException::class);
-        $router->match('GET', '/products/not-a-number');
     }
 
     public function test_method_not_allowed_exposes_the_real_allowed_methods_list(): void
@@ -205,19 +184,6 @@ final class RouterTest extends TestCase
         $this->expectException(DuplicateRouteException::class);
 
         $router->register(DuplicateRouteControllerB::class);
-    }
-
-    public function test_a_constrained_variant_of_the_same_path_is_a_different_match_set_and_stays_registrable(): void
-    {
-        $router = new Router();
-        $router->register(ConstrainedDuplicateRouteController::class);
-        $router->register(DuplicateRouteControllerA::class);
-
-        // First-match-wins ordering between the two genuinely different
-        // match sets: the constrained route takes numeric segments, the
-        // unconstrained one everything else.
-        self::assertSame('showNumeric', $router->match('GET', '/dup/42')->route->controllerMethod);
-        self::assertSame('show', $router->match('GET', '/dup/abc')->route->controllerMethod);
     }
 
     public function test_a_controller_with_an_early_valid_and_later_invalid_route_registers_none_of_its_routes(): void

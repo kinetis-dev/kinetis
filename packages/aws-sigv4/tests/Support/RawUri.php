@@ -15,13 +15,6 @@ use Psr\Http\Message\UriInterface;
  * those never reaches the origin check through it. This one carries them
  * through, which is what lets a test exercise the check itself rather
  * than the PSR-7 implementation in front of it.
- *
- * $rendered decouples the string form from the components. PSR-7
- * requires no agreement between the two, and the signer reads the string
- * form, so a URI whose components pass the origin check while its string
- * form does not parse is a shape this package has to survive. Any
- * withX() call drops it: a string form pinned to one set of components
- * says nothing about another.
  */
 final class RawUri implements UriInterface
 {
@@ -33,16 +26,11 @@ final class RawUri implements UriInterface
         private readonly string $path = '',
         private readonly string $query = '',
         private readonly string $fragment = '',
-        private readonly ?string $rendered = null,
     ) {}
 
     #[\Override]
     public function __toString(): string
     {
-        if ($this->rendered !== null) {
-            return $this->rendered;
-        }
-
         $authority = $this->getAuthority();
 
         return ($this->scheme === '' ? '' : $this->scheme . ':')

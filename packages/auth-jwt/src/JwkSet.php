@@ -4,26 +4,22 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt;
 
-use Kinetis\AuthJwt\Exception\JwkSetException;
+use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 
 /**
  * Builds an RFC 7517 JWK Set from one or more PublishedRsaKey values —
- * the publishing half of JwtAuthMiddleware's multi-key rotation
- * support, whose consuming half is ParsedJwkSet. RSA only: an HS256 key
- * is symmetric and is never published, and this doesn't cover other
- * asymmetric key types.
+ * the publishing half of JwtVerificationKeys::jwks(), whose consuming
+ * half is JwkSetParser. RSA only: an HS256 key is symmetric and is never
+ * published, and this does not cover other asymmetric key types.
  *
- * Every input is validated before any output is produced, so a
- * published document can never advertise a key or algorithm this
- * package's own verifier refuses. Failures throw JwkSetException, which
- * states each rule; each kid arrives already held to the shared rule by
- * PublishedRsaKey.
+ * Every input is validated before any output is produced, so a published
+ * document can never advertise a key or algorithm this package's own
+ * verifier refuses.
  *
- * Returns a plain array, not a JSON string — a route method returning
- * it is JSON-encoded automatically the same way any other Kinetis
- * route return value is. Not registered anywhere automatically; a
- * consumer's own controller calls this the same way any other
- * issuance-adjacent endpoint in this package is application-owned.
+ * Returns a plain array, not a JSON string — a route method returning it
+ * is JSON-encoded automatically the same way any other Kinetis route
+ * return value is. Nothing registers such a route; a consumer's own
+ * controller calls this.
  */
 final class JwkSet
 {
@@ -34,15 +30,13 @@ final class JwkSet
     public static function fromRsaPublicKeys(array $keys, string $algorithm = 'RS256'): array
     {
         if (!JwtKeyValidator::isRsaAlgorithm($algorithm)) {
-            throw JwkSetException::unsupportedAlgorithm($algorithm);
+            throw JwtConfigurationException::unsupportedAlgorithm($algorithm, 'RS256, RS384, RS512');
         }
 
-        if ($keys === []) {
-            throw JwkSetException::emptyKeyList();
-        }
-
-        if (!array_is_list($keys)) {
-            throw JwkSetException::keysNotAList();
+        if ($keys === [] || !array_is_list($keys)) {
+            throw JwtConfigurationException::invalidJwkSet(
+                'publishing takes a non-empty list of PublishedRsaKey values',
+            );
         }
 
         $jwks = [];
@@ -52,11 +46,17 @@ final class JwkSet
 
         foreach ($keys as $key) {
             if (!$key instanceof PublishedRsaKey) {
-                throw JwkSetException::notAPublishedKey();
+                throw JwtConfigurationException::invalidJwkSet(
+                    'publishing accepts only PublishedRsaKey values — a kid belongs in one of those, not '
+                    . 'in a PHP array key',
+                );
             }
 
             if (in_array($key->kid, $claimedKids, true)) {
-                throw JwkSetException::duplicateKid($key->kid);
+                throw JwtConfigurationException::invalidJwkSet(
+                    "more than one key is published under the kid \"{$key->kid}\" — a token naming it "
+                    . 'would select no one key',
+                );
             }
 
             $claimedKids[] = $key->kid;
@@ -72,19 +72,22 @@ final class JwkSet
     private static function jwkFor(PublishedRsaKey $key, string $algorithm): array
     {
         $parsed = openssl_pkey_get_public($key->publicKey);
+        $details = $parsed === false ? false : openssl_pkey_get_details($parsed);
 
-        if ($parsed === false) {
-            throw JwkSetException::invalidPublicKey($key->kid);
-        }
-
-        $details = openssl_pkey_get_details($parsed);
-
-        if ($details === false || $details['type'] !== OPENSSL_KEYTYPE_RSA) {
-            throw JwkSetException::notAnRsaKey($key->kid);
-        }
-
-        if ($details['bits'] < JwtKeyValidator::RSA_MINIMUM_BITS) {
-            throw JwkSetException::undersizedRsaKey($key->kid);
+        // The same rule JwtKeyValidator::assertRsaPublicKey() enforces,
+        // applied here because publishing needs the parsed modulus and
+        // exponent anyway, and names the offending kid: on this side a
+        // kid is the application's own configuration, and naming it is
+        // what makes the failure actionable.
+        if (
+            $details === false
+            || $details['type'] !== OPENSSL_KEYTYPE_RSA
+            || $details['bits'] < JwtKeyValidator::RSA_MINIMUM_BITS
+        ) {
+            throw JwtConfigurationException::invalidJwkSet(
+                "the key published under \"{$key->kid}\" must be a PEM-format RSA public key of at least "
+                . JwtKeyValidator::RSA_MINIMUM_BITS . ' bits',
+            );
         }
 
         return [

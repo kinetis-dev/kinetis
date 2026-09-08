@@ -23,10 +23,17 @@ API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
 The same `League\Flysystem\FilesystemOperator` interface [`kinetis/storage`](https://github.com/kinetis-dev/storage)
-gives local disk, backed by `AsyncAws\S3\S3Client` and
-`League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter` instead — genuinely
-non-blocking, via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP
-transport injected into `S3Client`, not the SDK's default blocking one.
+gives local disk, backed by `League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter`
+over an AsyncAws S3 client instead. Every call travels on
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP
+transport, injected in place of the SDK's default blocking one, so it
+suspends the calling Fiber.
+
+Objects are private and writes and copies carry no ACL, so a bucket with
+Object Ownership set to bucket owner enforced works unchanged; grant
+public read through a bucket policy. The failures S3 reports under HTTP 200 — a
+broken copy, a batch delete that refused keys — are read rather than
+taken as success.
 
 ```php
 use Kinetis\Storage\FilesystemFactory;
@@ -51,16 +58,20 @@ FILESYSTEM_S3_REGION=us-east-1
 | `FILESYSTEM_S3_BUCKET` | *(required)* | Bucket name. |
 | `FILESYSTEM_S3_REGION` | *(required)* | AWS region. |
 | `FILESYSTEM_S3_PREFIX` | — | Key prefix. |
-| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint instead of real AWS (e.g. MinIO). |
-| `FILESYSTEM_S3_PATH_STYLE` | `false` | Path-style addressing — `true` for MinIO and most other non-AWS S3-compatible services. |
+| `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint instead of AWS (e.g. MinIO) — one origin, addressed path-style. |
+| `FILESYSTEM_S3_PLAINTEXT` | `false` | Allow an `http://` endpoint. |
+| `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds per S3 request — connect, idle and transfer alike, not one deadline per operation. |
 
 Every key is scoped — `FILESYSTEM_S3_BUCKET` + `backups` →
 `FILESYSTEM_BACKUPS_S3_BUCKET`. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
-Credentials are never read from Kinetis config — `AsyncAws\Core\Configuration`
-resolves them on its own, from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
-or an IAM role, the standard AWS SDK convention.
+Credentials are never read from Kinetis config — AsyncAws's standard
+provider chain resolves them on its own, the usual AWS SDK convention.
+Every provider in that chain that calls AWS uses the same Revolt
+transport as the client, while the shared credentials and config files
+and any token file are read with native blocking calls. Full detail:
+[kinetis.dev/docs/storage-s3.html](https://kinetis.dev/docs/storage-s3.html).
 
 ## Installation
 

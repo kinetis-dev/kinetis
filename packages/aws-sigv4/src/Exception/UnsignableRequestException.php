@@ -13,8 +13,8 @@ use SensitiveParameter;
  * provider failure, body capture failure, signing failure — so a caller
  * can tell the four apart without any of them carrying a value.
  *
- * See {@see ClientFailureException} for the message, cause, and
- * serialization rules every failure in this namespace shares.
+ * See {@see ClientFailureException} for the message and cause rules
+ * every failure in this namespace shares.
  */
 final class UnsignableRequestException extends RequestFailureException
 {

@@ -43,7 +43,6 @@ final class AppScope implements ContainerInterface
     // is deliberate here: referencing either name never triggers
     // autoloading on its own, only class_exists()/instantiation does.
     private const REDIS_SIMPLE_CACHE_CLASS = 'Kinetis\SimpleCache\RedisSimpleCache';
-    private const REDIS_CLUSTER_CACHE_CLASS = 'Kinetis\SimpleCache\ClusteredRedisSimpleCache';
 
     /** @var array<string, Binding> */
     private array $bindings = [];
@@ -129,22 +128,22 @@ final class AppScope implements ContainerInterface
      *   through the container.
      * - `Config` → `Config::fromEnvironment()` (see Kinetis\Config) —
      *   populated from `.env` already if Kinetis\Config\EnvFile::safeLoad()
-     *   ran first, as public/index.php and bin/kinetis both do.
-     * - `Psr\SimpleCache\CacheInterface` → `Kinetis\SimpleCache\ClusteredRedisSimpleCache::fromConfig()`
-     *   when `REDIS_CLUSTER=true`, else `Kinetis\SimpleCache\RedisSimpleCache::fromConfig()`
-     *   when Redis is actually configured (`REDIS_URL`/`REDIS_HOST`), else
+     *   ran first, as Kinetis\Runtime\HttpStartup and bin/kinetis both do.
+     * - `Psr\SimpleCache\CacheInterface` → `Kinetis\SimpleCache\RedisSimpleCache::fromConfig()`
+     *   when Redis is actually configured (`REDIS_URL`/`REDIS_HOST`/
+     *   `REDIS_CLUSTER`), else
      *   `NullSimpleCache` — Redis is optional, not every consumer needs it,
      *   so nothing here ever attempts a connection unless one was
      *   explicitly configured. Resolved *after* `Config` is registered
      *   above, via `get()`, not a second `Config::fromEnvironment()` call —
      *   whichever `Config` instance ends up bound (the consumer's own, or
-     *   the default just registered) is the one this reads. Both concrete
-     *   classes live in the separate `kinetis/cache-redis` package, not
-     *   core — referenced here only as class-name strings,
+     *   the default just registered) is the one this reads. The concrete
+     *   class lives in the separate `kinetis/cache-redis` package, not
+     *   core — referenced here only as a class-name string,
      *   `class_exists()`-gated the same way `RuntimeDetector` gates
      *   `BrefLambdaAdapter`, so core itself has no amphp/redis dependency.
      *   Redis being *configured* (any of the three env vars above) with
-     *   neither class installed binds
+     *   that class not installed binds
      *   `Kinetis\SimpleCache\UnavailableSimpleCache`, whose every
      *   operation throws `SimpleCacheUnavailableException` naming
      *   `kinetis/cache-redis` — never a silent `NullSimpleCache`
@@ -189,12 +188,12 @@ final class AppScope implements ContainerInterface
             $this->instance(Config::class, Config::fromEnvironment());
         }
 
-        // The byte ceiling every request body meets, built once from the
-        // same Config a runtime adapter's own copy came from. Registered
-        // rather than autowired: it holds a validated int, which nothing
-        // can reflect its way to. An entry point that already built one
-        // for RuntimeDetector registers that same instance itself, and
-        // this leaves it alone — see docs/runtime-adapters.md.
+        // The ceilings every request body meets, built once from this
+        // scope's own Config and read by RequestBodyMiddleware inside the
+        // Kernel. Registered rather than autowired: it holds a validated
+        // int, which nothing can reflect its way to. An entry point that
+        // built one itself registers that same instance, and this leaves
+        // it alone — see docs/runtime-adapters.md.
         if (!$this->has(FormLimits::class)) {
             /** @var Config $config */
             $config = $this->get(Config::class);
@@ -233,9 +232,11 @@ final class AppScope implements ContainerInterface
 
     /**
      * Redis is optional — `kinetis/cache-redis` provides the concrete
-     * `RedisSimpleCache`/`ClusteredRedisSimpleCache` classes, referenced
-     * here only as class-name strings so core has no amphp/redis
-     * dependency of its own. Only the *default* connection's keys are
+     * `RedisSimpleCache` class, referenced here only as a class-name
+     * string so core has no amphp/redis dependency of its own. It serves
+     * a single node and a Redis Cluster alike; `REDIS_CLUSTER` is a
+     * switch inside its own `fromConfig()`. Only the *default*
+     * connection's keys are
      * checked (`REDIS_HOST`/`REDIS_URL`/`REDIS_CLUSTER`, unscoped) — a
      * named connection is never auto-registered here, unaffected either
      * way, matching the "Named connections" convention documented in
@@ -255,7 +256,7 @@ final class AppScope implements ContainerInterface
             return new NullSimpleCache();
         }
 
-        if (!class_exists(self::REDIS_CLUSTER_CACHE_CLASS) && !class_exists(self::REDIS_SIMPLE_CACHE_CLASS)) {
+        if (!class_exists(self::REDIS_SIMPLE_CACHE_CLASS)) {
             // Every operation on this binding throws, so the failure
             // reaches whoever uses the cache while an application that
             // never touches it runs unaffected by a stale REDIS_* key.
@@ -264,13 +265,10 @@ final class AppScope implements ContainerInterface
             return new UnavailableSimpleCache();
         }
 
-        $clusterClass = self::REDIS_CLUSTER_CACHE_CLASS;
-        $simpleClass = self::REDIS_SIMPLE_CACHE_CLASS;
+        $cacheClass = self::REDIS_SIMPLE_CACHE_CLASS;
 
         /** @var ?CacheInterface $cache */
-        $cache = class_exists($clusterClass) ? $clusterClass::fromConfig($config) : null;
-        /** @var ?CacheInterface $cache */
-        $cache ??= class_exists($simpleClass) ? $simpleClass::fromConfig($config) : null;
+        $cache = $cacheClass::fromConfig($config);
 
         return $cache ?? new NullSimpleCache();
     }

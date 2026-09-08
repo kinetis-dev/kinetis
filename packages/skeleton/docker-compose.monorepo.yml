@@ -1,0 +1,17 @@
+# Contributor-only, for running this project from inside the kinetis
+# monorepo:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.monorepo.yml up --build
+#
+# Here composer.json still carries the `path` repository the monorepo
+# develops against (the released package has none), and a path
+# repository resolves relative to the composer.json's own directory. The
+# project is /app in every mode, so `../framework` is /framework — and
+# mounting the one declared sibling there is the entire difference
+# between the two modes. Every container path stays exactly what the
+# released package uses, so the Dockerfile, nginx.conf and the base
+# compose file need no monorepo variant of their own.
+services:
+  app:
+    volumes:
+      - ../framework:/framework

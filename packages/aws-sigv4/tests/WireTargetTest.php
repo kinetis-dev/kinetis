@@ -64,6 +64,7 @@ final class WireTargetTest extends TestCase
         yield 'encoded dot-dot segment' => ['target' => '/example/%2E%2E'];
         yield 'lowercase encoded dot-dot segment' => ['target' => '/example/%2e%2e'];
         yield 'empty path' => ['target' => ''];
+        yield 'repeated slashes' => ['target' => self::ORIGIN . '//'];
         yield 'absolute target with a dot-dot segment' => ['target' => self::ORIGIN . '/example/..'];
     }
 
@@ -137,6 +138,14 @@ final class WireTargetTest extends TestCase
         yield 'an absolute target is normalized like a relative one' => [
             'target' => self::ORIGIN . '/a/%2E%2E/b',
             'url' => 'https://example.amazonaws.com/b',
+        ];
+        yield 'repeated slashes collapse' => [
+            'target' => self::ORIGIN . '//example//',
+            'url' => 'https://example.amazonaws.com/example/',
+        ];
+        yield 'repeated slashes around a dot segment' => [
+            'target' => '/a//.//b',
+            'url' => 'https://example.amazonaws.com/a/b',
         ];
     }
 
@@ -240,10 +249,10 @@ final class WireTargetTest extends TestCase
             'target' => 'https://api.example.com:443/users',
             'url' => 'https://api.example.com/users',
         ];
-        yield 'expanded IPv6 loopback' => [
-            'origin' => 'http://[::1]:8080',
-            'target' => 'http://[0:0:0:0:0:0:0:1]:8080/users',
-            'url' => 'http://[::1]:8080/users',
+        yield 'non-default port' => [
+            'origin' => 'http://localhost:4566',
+            'target' => 'http://localhost:4566/users',
+            'url' => 'http://localhost:4566/users',
         ];
     }
 

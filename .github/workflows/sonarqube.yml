@@ -143,10 +143,13 @@ jobs:
           # docker sends the whole context to the daemon, and a single
           # unreadable file anywhere under it fails the build.
           mkdir -p /tmp/coverage-image
+
+          # bash is for mcp-docs' suite, which drives setup.sh; see
+          # ci.yml's own bash leg.
           cat > /tmp/coverage-image/Dockerfile <<'DOCKERFILE'
           FROM php:8.4-cli-alpine
-          RUN apk add --no-cache gcc g++ make autoconf pkgconf re2c postgresql-dev curl \
-           && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql \
+          RUN apk add --no-cache bash gcc g++ make autoconf pkgconf re2c postgresql-dev linux-headers curl \
+           && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql sockets \
            && curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar \
            && chmod +x /usr/local/bin/pie.phar \
            && php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
@@ -169,14 +172,16 @@ jobs:
           : > /tmp/cov-failed
           run_pkg() {
             pkg=$1
-            # cache-redis joins the Redis network started above instead of
-            # the host one, so cluster redirects resolve; every other
-            # package reaches the database services over --network host.
+            # redis and cache-redis join the Redis network started above
+            # instead of the host one, so cluster redirects resolve; every
+            # other package reaches the database services over
+            # --network host.
             NETWORK="host"
             # Passed only where it is wanted: an empty value is a value,
             # and a package that reads REDIS_HOST would treat it as a
             # configured cache.
             REDIS_ENV=""
+            if [ "$pkg" = "redis" ]; then NETWORK="kinetis-redis"; fi
             if [ "$pkg" = "cache-redis" ]; then NETWORK="kinetis-redis"; REDIS_ENV="-e REDIS_HOST=kinetis-redis"; fi
             # roadrunner-adapter's ext-sockets requirement compiles under
             # Alpine fine but isn't worth it here — see ci.yml's matrix
@@ -190,7 +195,7 @@ jobs:
             } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
             echo "$pkg done"
           }
-          for pkg in framework persistence cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp migrations pingpong query-builder queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
+          for pkg in framework persistence redis cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp mcp-docs migrations pingpong query-builder queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search-opensearch session skeleton storage storage-s3 telemetry; do
             run_pkg "$pkg" &
             while [ "$(jobs -rp | wc -l)" -ge 4 ]; do sleep 1; done
           done

@@ -127,7 +127,6 @@ converges on:
 declare(strict_types=1);
 
 use Kinetis\Container\AppScope;
-use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\TrustedProxies;
@@ -143,22 +142,26 @@ $app->boot();
 
 $router = RouteDiscovery::discover($projectRoot);
 
-// The two policies an adapter needs before the Kernel exists: how many
-// bytes a request body may carry, and whose forwarded headers may decide
-// its scheme. AppScope::boot() registered both from Config; the adapter
-// is handed the same instances the Kernel will enforce.
-$adapter = RuntimeDetector::detect($app->get(FormLimits::class), $app->get(TrustedProxies::class));
+// The one policy an adapter needs before the Kernel exists: whose
+// forwarded headers may decide this request's scheme and client address.
+// AppScope::boot() registered it from Config. The body ceilings are not
+// passed here — the adapter hands the body on raw, and the Kernel's own
+// RequestBodyMiddleware bounds and parses it.
+$adapter = RuntimeDetector::detect($app->get(TrustedProxies::class));
 $kernel = new Kernel($app, $router, isPersistent: $adapter->isPersistent());
 
 $adapter->run($kernel->handle(...));
 ```
 
 ```{tip}
-This tutorial keeps `public/index.php` in its plain, always-live-discovery
-form throughout — routes and commands are (re-)discovered on every
-request, which is the simplest thing to reason about while a project is
-this small. {doc}`caching` covers pre-compiling all of this for
-production once you actually need it.
+This tutorial assembles `public/index.php` by hand, a piece at a time,
+and keeps it in its plain, always-live-discovery form throughout — routes
+and commands are (re-)discovered on every request, which is the simplest
+thing to reason about while a project is this small. An application
+writes none of that: `Kinetis\Runtime\HttpStartup::run(__DIR__)` is the
+whole file, and it is what `kinetis/skeleton` and `kinetis/pingpong`
+ship. {doc}`caching` covers pre-compiling all of this for production once
+you actually need it.
 ```
 
 ## Running it
@@ -213,6 +216,10 @@ server {
 
     root /app/public;
     index index.php;
+
+    # nginx reads the body before PHP does, so this must be at least
+    # Kinetis's MAX_BODY_SIZE; raise both together.
+    client_max_body_size 2m;
 
     location / {
         try_files $uri /index.php$is_args$args;
@@ -831,14 +838,14 @@ found automatically.
 
 This is the one place the *hand-built* `public/index.php` this tutorial
 has been growing needs a real addition to support events. It is not a
-step every Kinetis application needs: the real, framework-managed entry
-points — `public/index.php`'s own full reference copy, `bin/kinetis`,
-and `kinetis/pingpong`'s own `public/index.php` (see the closing section
-of this tutorial) — already discover `EventListenerRegistry` themselves
-(live via `EventListenerDiscovery::discover()`, or reconstructed from a
-compiled cache via `fromArray()`) and hand the result to
-`Kinetis\Cache\BootSequence::run()`, the one piece of shared assembly all
-of them delegate to for actually *publishing* it — binding it into the
+step every Kinetis application needs: the framework-managed entry points
+— `Kinetis\Runtime\HttpStartup`, which is all a normal
+`public/index.php` calls, and `bin/kinetis` — already discover
+`EventListenerRegistry` themselves (live via
+`EventListenerDiscovery::discover()`, or reconstructed from a compiled
+cache via `fromArray()`) and hand the result to
+`Kinetis\Cache\BootSequence::run()`, the one piece of shared assembly
+both delegate to for actually *publishing* it — binding it into the
 container, before the bootstrap chain runs, with the right precedence —
 with nothing for you to write. This tutorial keeps its own
 `public/index.php` in a smaller, hand-assembled form on purpose (see the

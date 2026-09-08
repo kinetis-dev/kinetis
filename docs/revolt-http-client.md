@@ -83,14 +83,24 @@ $api->withTimeout(30)->get('/reports/large'); // just this call
 | `withMaxResponseBytes(int)` | the ceiling a response body may reach |
 | `asForm()` | sends array bodies as `application/x-www-form-urlencoded` |
 
-Every one of them validates what it is given, and so does every verb
-method, before any transport object exists. Input this client will not
-send is refused with `HttpRequestException` and reaches no network at
-all — there is no partially-configured client and no half-sent request.
+## What this client validates, and what it leaves to the transport
+
+This client owns the rules its own guarantees rest on, and checks them
+before a transport object exists: the URL and origin a credential is
+confined to, the headers it owns, the bounds an operation runs under,
+and the set of per-call options. Input it refuses is refused with
+`HttpRequestException` and reaches no network at all.
+
+Everything else — the request method, and the value types inside `json`,
+`body`, and `query` — is Symfony's HTTP client's to validate, where that
+grammar is already defined. When it refuses to construct a request, the
+failure you get is this package's own `InvalidRequest`, carrying neither
+the value it refused nor the vendor's message. That failure is never
+retried: the same request would be refused again.
 
 ## Base URLs and how paths join
 
-A base URL is an absolute `http`/`https` URI with no userinfo, no query
+A base URL is an absolute `http`/`https` URL with no userinfo, no query
 string, and no fragment. Its path is a **prefix that a relative target
 extends**, never one a rooted target replaces:
 
@@ -113,26 +123,16 @@ appears only after decoding hides the segments behind it, which is what
 makes `%2e%2e%2fadmin` one segment here and two wherever it is resolved.
 The URL that goes on the wire is the URL you wrote.
 
-Three more shapes are refused for the same reason, in a base URL and a
-request URL alike:
-
-- a **backslash** anywhere in it, which is not a URL character and which
-  the readers that accept it read as `/`;
-- a **host in anything but its canonical spelling**. Three forms are
-  canonical and nothing else is: a DNS name, a dotted-quad IPv4 address,
-  and a bracketed IPv6 literal that parses as one. `[:::]` and `[.]` are
-  brackets around something that is not an address; `2130706433` and
-  `127.1` are read as `127.0.0.1` by a resolver and as neither by a
-  reader;
-- a **port outside 1–65535**.
-
-Each of them is a URL that reads as one origin and resolves as another.
+Two more shapes are refused in a base URL and a request URL alike: a
+**backslash** anywhere in it, which is not a URL character and which the
+readers that accept it read as `/`; and any **byte outside printable
+ASCII**, which has to be percent-encoded before it can be sent.
 
 ## Credentials belong to one origin
 
-A client carrying an `Authorization`, `Cookie`, or `Proxy-Authorization`
-header — set by `withToken()`, `withBasicAuth()`, or `withHeaders()`,
-for the client or for one call — requires `withBaseUrl()`:
+A client carrying an `Authorization` or `Cookie` header — set by
+`withToken()`, `withBasicAuth()`, or `withHeaders()`, for the client or
+for one call — requires `withBaseUrl()`:
 
 ```{code-block} php
 // Refused: nothing says which origin may see this token.
@@ -154,62 +154,44 @@ credential that origin should see. That is the whole mechanism: there is
 no list of sensitive headers to strip on the way out, because nothing
 this client sends ever leaves the origin it was configured for.
 
+**The validated URL alone names where a request goes.** `Host` is
+refused wherever you write it, in any casing. A `Host` of your own would
+send this client's credentials to one URL while naming a different
+server to a shared proxy in front of it, and there is no second
+authority here for a proxy to be told about.
+
 `Proxy-Authorization` is the credential this cannot cover, since it is
 addressed to a proxy and not to the origin the base URL names. It is
 refused rather than pinned to something it is not sent to.
 
-A transport you inject can carry credentials of its own, in its default
-options. Those are invisible here and therefore unpinned; see [what an
-injected transport must be](#what-an-injected-transport-must-be).
+A transport you inject can carry credentials or a base URI of its own,
+in its default options. Those are invisible here and therefore unpinned;
+see [what an injected transport must be](#what-an-injected-transport-must-be).
 
 ## Headers
 
-Header input takes exactly two forms — the associative one and the raw
-`"Name: value"` line one — and **one array uses one of them
-throughout**:
+Header input has one shape: a string name, and a value that is a string
+or a non-empty list of strings.
 
 ```{code-block} php
 $http->withHeaders([
     'X-Tenant' => 'acme',                // one value
     'X-Feature' => ['beta', 'preview'],  // several values for one name
 ]);
-
-$http->withHeaders([
-    'X-Request-Id: 0f9b',                // the raw "Name: value" line form
-    'X-Tenant: acme',
-]);
 ```
 
-An array holding both notations is refused rather than read as one: two
-ways of writing the same thing in the same array is a sign the two
-halves came from different places, and merging them is a guess. Mix
-freely *between* calls instead — each `withHeaders()` takes whichever
-form suits it.
-
-A name is an RFC 9110 token; a value is a string, or a non-empty list of
-strings. Anything else is refused rather than converted — a number, a
-boolean, `null`, a `Stringable`, a resource, an iterator. What a cast
-would produce is not what you wrote, and a header is not the place to
-find that out.
-
-A value carrying CR, LF, NUL, or another control character is refused
-outright: that is response splitting, not a header.
-
-Two names are this client's own and are refused wherever you write them:
-
-- **`Accept-Encoding`**, because the response-byte ceiling depends on
-  the identity encoding this client asks for — see [How much of a
-  response is read](#how-much-of-a-response-is-read).
-- **`Proxy-Authorization`**, because a proxy credential is addressed to
-  a proxy rather than to the request's own origin, so a base URL cannot
-  confine it the way it confines the others. A proxy that needs
-  credentials belongs on a transport of your own.
+A name is an RFC 9110 token. Anything else as a value is refused rather
+than converted — a number, a boolean, `null`, a `Stringable`, a
+resource, an iterator. What a cast would produce is not what you wrote,
+and a header is not the place to find that out. A value carrying CR, LF,
+NUL, or another control character is refused outright: that is response
+splitting, not a header.
 
 **Within one array a name appears once.** Two spellings of one field
-name in the same array — `'Authorization'` and `'authorization'` —
-carry no order that HTTP itself would honour, so the array is refused
-rather than one spelling being picked for you. Repetition is expressed
-by the list form.
+name in the same array — `'Authorization'` and `'authorization'` — carry
+no order that HTTP itself would honour, so the array is refused rather
+than one spelling being picked for you. Repetition is expressed by the
+list form.
 
 Precedence lives *between* arrays: a later `withHeaders()` overrides an
 earlier one for the same name, case-insensitively, and a per-call header
@@ -224,25 +206,26 @@ $api = $http->withHeaders(['Authorization' => 'Bearer old-token']);
 $api->send('GET', '/orders', ['headers' => ['authorization' => 'Bearer new-token']]);
 ```
 
+Three names are this client's own and are refused wherever you write
+them: `Host` and `Proxy-Authorization`, for the reasons above, and
+`Accept-Encoding`, because the response-byte ceiling depends on the
+identity encoding this client asks for — see [How much of a response is
+read](#how-much-of-a-response-is-read).
+
 ## Query parameters and bodies
 
-Query parameter values are strings, numbers, booleans, or nested arrays
-of those. `null` is refused, because URL encoding drops it and the
-parameter you wrote would silently not be sent; so is a non-finite
-float, and so is any object.
+Query parameters are passed as an array, written into an absolute URL,
+or both. A URL's own query string is passed through byte for byte when
+no array accompanies it, which is what a signed URL needs; an array
+alongside it is merged and re-encoded by the transport, so pick one for
+a URL whose exact bytes matter.
 
-Query parameters are passed as an array, or written into an absolute
-URL, but not both at once — the two have no defined order, so a request
-carrying both is refused rather than merged into a guess. An absolute
-URL's own query string is passed through byte for byte, which is what a
-signed URL needs.
-
-A body array is encoded here, not by the transport, so a value that
-cannot be encoded fails as this package's own exception rather than a
-vendor one carrying the value that failed. `post()`/`put()`/`patch()`/
+Bodies are the transport's to encode. `post()`/`put()`/`patch()`/
 `delete()` send JSON; `asForm()` switches them to
 `application/x-www-form-urlencoded`. Either way the `Content-Type` is a
-default a header of your own overrides.
+default a header of your own overrides. A value that cannot be encoded
+is refused as this package's own `InvalidRequest`, without the value or
+the vendor message in it.
 
 ## The `send()` escape hatch, and its limits
 
@@ -258,27 +241,18 @@ $http->send('POST', 'https://api.example.com/documents', [
 
 Its `$options` is an exact map of what this client can check:
 `headers`, `query`, `json`, `body`, and `timeout`. Anything else is
-refused, in one of two ways:
-
-- An option this client owns — `base_uri`, `max_redirects`,
-  `max_retries`, `retry_failed`, `retry_strategy`, `max_duration`,
-  `auth_basic`, `auth_bearer`, `on_progress`, `buffer` — names the
-  builder that sets it. A per-call retry, redirect, or size setting
-  cannot sit alongside, and disagree with, the client's own policy,
-  because it is never accepted in the first place.
-- Any other option is refused as unsupported. An option this boundary
-  cannot check is an option none of the guarantees on this page would
-  still hold for.
+refused, and the transport's own retry, redirect, duration, credential
+and buffering options are among them: each belongs to a `with*` method
+here, so a per-call setting can never sit alongside, and disagree with,
+the client's own policy.
 
 `body` is the one place you can hand over something this package cannot
 inspect: a **stream** resource or a `Closure`. Those are sent as they
-are — and that is the limit of what `send()` can promise. A resource
-that is not a stream has no bytes to send and is refused as plainly as a
-value of the wrong type. It cannot validate bytes it never sees either,
-and it cannot make a stream replayable: a stream is consumed as it is
-read, so a client with retries configured refuses one outright rather
-than sending a second request with a body that is already gone. Send it
-from a client without retries.
+are — and that is the limit of what `send()` can promise. It cannot make
+a stream replayable: a stream is consumed as it is read, so a client
+with retries configured refuses one outright rather than sending a
+second request with a body that is already gone. Send it from a client
+without retries.
 
 ## Timeouts and retries
 
@@ -292,28 +266,31 @@ It is measured on a **monotonic** clock, so a clock correction during a
 long request cannot shorten or extend it, and it is enforced by this
 client rather than only handed to the transport. Every attempt is given
 what is left of the budget as `timeout` and `max_duration`, and a
-transport is free to ignore both — so the deadline is asked again after
-the request is issued, after every read that answers, and from inside
-the transfer through the same progress hook the ceiling uses. A
-transport that blocks past the budget and then answers gets a `Timeout`,
-not a late success. What cannot be done from here is interrupting it
-mid-block; nothing in PHP does that.
+transport is free to ignore both — so the deadline is asked again before
+and after every read that answers, and from inside the transfer through
+the same progress hook the ceiling uses. A transport that blocks past
+the budget and then answers gets a `Timeout`, not a late success. What
+cannot be done from here is interrupting it mid-block; nothing in PHP
+does that.
 
 `withRetries()` is the only retry layer there is. It sends the request
-again, up to `$times` more times (at most 10), with exponential backoff
+again, up to `$times` more times (at most 10), with backoff doubling
 from 100 ms, for:
 
-- a transport failure — DNS, a refused connection, a dropped socket, or
-  a transport that refused to build the request at all;
-- a status the server itself marks as worth repeating: 423, 425, 429,
-  500, 502, 503, 504, 507, 509.
+- a transport failure — DNS, a refused connection, a dropped socket;
+- a status the server itself marks as worth repeating: 429, 500, 502,
+  503, 504.
 
 Every other status is an answer, returned as it is — repeating the
 request cannot change a 404. Running out of retries is not itself a
 failure either: the last answer the server gave is the answer you get. A
 transport failure that outlives them has no answer to give back, so it
-throws. A response past the byte ceiling is never retried: the same
-request would fetch the same oversized body again.
+throws. A request this client or the transport refused, a timeout, and a
+response past the byte ceiling are never retried.
+
+Backoff waits inside the one deadline. When the next one would not fit,
+the last response received is returned rather than waited past the
+budget; with no response in hand, the transport failure propagates.
 
 ```{code-block} php
 $resilient = $http->withBaseUrl('https://api.example.com')->withRetries(3)->withTimeout(10);
@@ -380,9 +357,13 @@ ceiling never does is fetch a body nobody asked for: a `HEAD` request,
 or a status that arrives before any body does, costs nothing.
 
 The ceiling owns the transport's progress hook, which is why
-`on_progress` is refused as a per-call option: a hook of your own would
-replace the one enforcing this. The same hook enforces the deadline, so
-a transfer still arriving after the budget is spent is stopped there.
+`on_progress` is not a per-call option: a hook of your own would replace
+the one enforcing this. The same hook enforces the deadline, so a
+transfer still arriving after the budget is spent is stopped there. A
+transport is free to wrap what that hook raises; which failure you get
+is decided from the budget's own state rather than from the exception's
+type, so a wrapped abort is still reported as the ceiling or the
+deadline it was.
 
 ## Redirects are not followed
 
@@ -483,7 +464,7 @@ neither path cancels a response that is already complete.
 ## Failures
 
 One exception type covers everything this client throws, across
-validation, encoding, transport, timeout, status, and decoding:
+validation, transport, timeout, status, and decoding:
 
 ```{code-block} php
 use Kinetis\RevoltHttpClient\Exception\HttpFailure;
@@ -492,16 +473,18 @@ use Kinetis\RevoltHttpClient\Exception\HttpRequestException;
 try {
     $order = $http->withTimeout(5)->get('https://api.example.com/orders/42')->throw()->json();
 } catch (HttpRequestException $e) {
-    // $e->category is an HttpFailure: InvalidConfiguration, InvalidRequest,
-    // Conversion, Transport, Timeout, ResponseTooLarge, ErrorStatus, or
-    // Discarded.
+    // $e->category is an HttpFailure: InvalidRequest, Conversion, Transport,
+    // Timeout, ResponseTooLarge, ErrorStatus, or Discarded.
     // $e->status is the HTTP status, or 0 when nothing answered at all.
     $recoverable = $e->category === HttpFailure::Timeout;
 }
 ```
 
 Branch on `category`, which is chosen at the point of failure from that
-fixed list. `getMessage()` is prose.
+fixed list. `getMessage()` is prose. `InvalidRequest` covers everything
+this client or the transport refused to send — a misconfigured client, a
+per-call option, a body value — and always means the same thing: nothing
+reached the network, and a repeat would be refused the same way.
 
 ```{warning}
 An exception from this package carries the request method, the origin
@@ -513,11 +496,13 @@ HTTP or DNS client routinely names the full URI it failed on, userinfo
 and all, and an exception message is the one thing a logging pipeline
 records by default.
 
-That holds for the whole object, not just its message: `(string) $e`,
-`getTraceAsString()`, `serialize($e)`, and `json_encode($e)` all stay
-within it. Parameters that forward your input are marked
-`#[\SensitiveParameter]`, so a stack trace shows a redaction marker
-where an argument would have been.
+`getMessage()`, `(string) $e`, and `getTraceAsString()` all stay within
+that: parameters that forward your input are marked
+`#[\SensitiveParameter]`, so a rendered trace shows a redaction marker
+where an argument would have been. What PHP puts there is a
+`SensitiveParameterValue` object that still holds the value, so
+`getTrace()` and `serialize($e)` — anything reading trace *arguments*
+rather than rendering them — are not safe to forward.
 
 The upstream's own error payload is where an API explains itself, and it
 is read from the response — the one place where taking it is a
@@ -566,13 +551,11 @@ self::assertSame(42, $http->get('https://api.example.com/orders/42')->jsonPath('
 The guarantees on this page are this client's, and three of them need
 the transport's cooperation:
 
-- **It must not retry.** A `RetryableHttpClient` is refused where you
-  inject it: a second retry layer under this one multiplies the attempts
-  and spends the total timeout outside it. Configure retries with
-  `withRetries()` on the client that owns them. A retry layer *inside* a
-  transport is invisible to that check, which is why `Http` builds its
-  own transport with `AmpHttpClientFactory::createWithoutRetries()`; a
-  transport you build yourself is yours to keep to one wire attempt.
+- **It must make one wire attempt per request.** A retry layer under
+  this one multiplies the attempts and spends the total timeout outside
+  it, where nothing counts it. The default transport
+  `AmpHttpClientFactory::create()` builds makes one attempt; a transport
+  you supply is yours to keep to one.
 - **It must not carry credentials or a base URI of its own.** Default
   options set on the transport are invisible here, so the origin pinning
   above cannot pin them. A transport that carries them answers for where
@@ -584,17 +567,13 @@ the transport's cooperation:
   timeouts, retries, and ceiling on this page still apply to it; the
   concurrency does not.
 
-A decorator this client cannot see through — one wrapping a retrying
-client, or implementing retries itself — is yours to keep honest.
-
 ## The transport on its own
 
 `AmpHttpClientFactory::create()` returns the underlying
 `Symfony\Contracts\HttpClient\HttpClientInterface` — a thin factory
 around `Symfony\Component\HttpClient\AmpHttpClient`, backed by the
-current, Revolt-based `amphp/http-client` generation rather than
-Symfony's default `curl` transport. Use it where a library wants to be
-handed a client of its own:
+current, Revolt-based `amphp/http-client` generation. Use it where a
+library wants to be handed a client of its own:
 
 ```{code-block} php
 use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
@@ -603,31 +582,31 @@ $client = AmpHttpClientFactory::create();
 $response = $client->request('GET', 'https://example.com/');
 ```
 
-`create()` mirrors Symfony's own constructor, which means it also
-inherits Symfony's own default: the Amp delegate is wrapped in an
-interceptor that repeats a failed request twice more. That is a retry
-layer, and it is one `Http` will not sit on top of, so `Http` builds its
-transport with `createWithoutRetries()` instead — the same client with
-the pooled delegate handed back untouched, one wire attempt per request.
-Use that one wherever a second retry layer would be a problem.
+One request through it is one wire attempt: the Amp delegate is the
+connection pool itself, with no interceptor above it to repeat a failed
+request. That is what leaves the retry decision with whoever can count
+it — `withRetries()` for `Http`, which is built on this same transport,
+or an SDK's own retry policy for a client handed one. Pass a
+`$clientConfigurator` to build the delegate yourself, and the
+interceptors it installs are yours.
 
 ```{warning}
 This is a plain Symfony client, not the boundary `Http` puts in front of
-one — a deliberate escape hatch for standalone use, kept because a
-library that wants a client of its own wants a real one. Nothing on this
-page applies to it. Symfony's full option grammar, its streaming API,
-its own exception types, its redirect following (which does not know
-what a credential is for), its Amp-level request retries, and its own
-size and lifecycle behavior are what you get, and whatever you hand it
-is what it does: no preflight validation, no origin pinning, no owned
-retry layer, no total deadline, no response-byte ceiling.
+one. It is the escape hatch for standalone use, where a library that
+wants a client of its own wants a real one. Nothing else on this page
+applies to it. Symfony's full option grammar, its streaming
+API, its own exception types, its redirect following (which does not
+know what a credential is for), and its own size and lifecycle behavior
+are what you get, and whatever you hand it is what it does: no preflight
+validation, no origin pinning, no owned retry layer, no total deadline,
+no response-byte ceiling.
 ```
 
 ## Using it outside Kinetis entirely
 
 This package depends on nothing beyond `symfony/http-client` (and its
-`symfony/http-client-contracts`) and `amphp/http-client` — no
-`kinetis/framework`, no Kinetis-specific class
+`symfony/http-client-contracts`), `amphp/http-client`, and
+`revolt/event-loop` — no `kinetis/framework`, no Kinetis-specific class
 anywhere in it. `AmpHttpClientFactory::create()` returns a plain
 `Symfony\Contracts\HttpClient\HttpClientInterface`, which is exactly what
 gets accepted by:

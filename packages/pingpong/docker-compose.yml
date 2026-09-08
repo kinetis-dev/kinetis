@@ -3,10 +3,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    working_dir: /repo/packages/pingpong
     volumes:
-      - ../..:/repo
-      - vendor:/repo/packages/pingpong/vendor
+      - .:/app
+      - vendor:/app/vendor
     env_file: .env
     ports:
       - "8080:8080"
@@ -17,7 +16,7 @@ services:
         condition: service_started
     # Only migrate runs `composer install`; others wait on it first.
     entrypoint: []
-    command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/repo/packages/pingpong/public", "--worker", "/repo/packages/pingpong/public/index.php"]
+    command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public", "--worker", "/app/public/index.php"]
 
   mysql:
     image: mysql:8.4
@@ -53,10 +52,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    working_dir: /repo/packages/pingpong
     volumes:
-      - ../..:/repo
-      - vendor:/repo/packages/pingpong/vendor
+      - .:/app
+      - vendor:/app/vendor
     env_file: .env
     depends_on:
       mysql:
@@ -69,10 +67,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    working_dir: /repo/packages/pingpong
     volumes:
-      - ../..:/repo
-      - vendor:/repo/packages/pingpong/vendor
+      - .:/app
+      - vendor:/app/vendor
     env_file: .env
     depends_on:
       redis:
@@ -88,10 +85,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    working_dir: /repo/packages/pingpong
     volumes:
-      - ../..:/repo
-      - vendor:/repo/packages/pingpong/vendor
+      - .:/app
+      - vendor:/app/vendor
     env_file: .env
     depends_on:
       migrate:

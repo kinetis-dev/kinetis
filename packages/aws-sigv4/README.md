@@ -23,10 +23,9 @@ API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
 A PSR-18 HTTP client that signs every outgoing request with AWS
-Signature Version 4 (SigV4) and sends it to one configured origin — the
-signing math is `AsyncAws\Core\Signer\SignerV4`, the same class every
-AsyncAws service client uses internally, reused directly rather than
-reimplemented. Usable outside Kinetis entirely, the same relationship
+Signature Version 4 (SigV4) and sends it to one configured origin,
+checked against AWS's own published SigV4 test vectors. Usable outside
+Kinetis entirely, the same relationship
 [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) already has with the wider PHP ecosystem.
 
 ```php
@@ -50,7 +49,10 @@ and before the network is touched. The target is put into the exact form
 it will be sent in before both the check and the signature, so the
 signature covers the bytes that go out. A 3xx response is returned as it
 is: nothing is re-signed and no `Location` is followed, for the signed
-request or for the credential lookups.
+request or for the credential lookups. Signing reads the request body
+once, from where it stands, and consumes it. A request is bounded at 30
+seconds idle and 30 seconds end to end, each settable on its own through
+`SignedTransport::create()`.
 
 `$service` is the AWS signing service name (`"es"` for Amazon OpenSearch
 Service, `"execute-api"` for API Gateway, and so on) — required, with no
@@ -59,10 +61,15 @@ verification rather than an obvious error.
 
 ## Credentials
 
-Resolved through AsyncAws's own default provider chain
-(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, a shared credentials file,
-or an IAM role) unless a `CredentialProvider` is passed as the fourth
-constructor argument.
+Resolved through AsyncAws's five providers in their standard order
+(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, STS assume-role, web
+identity, a shared credentials file, ECS or EKS pod identity, IMDS)
+unless a `CredentialProvider` is passed as the fourth constructor
+argument. Every provider in it that calls AWS uses the same
+`SignedTransport` the signed request travels on; the shared credentials
+and config files and any token file are read with native blocking
+calls. The first unexpired credentials are held until they expire, and
+a lookup that resolves nothing holds nothing.
 
 ## Installation
 
@@ -71,8 +78,8 @@ composer require kinetis/aws-sigv4
 ```
 
 Requires PHP 8.4+ and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation,
-including the origin grammar, failure behavior, and what is buffered or
-blocking:
+including the origin grammar, deadlines, failure behavior, and what is
+buffered or blocking:
 [kinetis.dev/docs/aws-sigv4.html](https://kinetis.dev/docs/aws-sigv4.html).
 
 ## License

@@ -201,19 +201,6 @@ Setting `QUEUE_CONNECTION=rabbitmq` without having run
 `composer require kinetis/queue-rabbitmq` produces a clear error telling
 you which package to install, rather than a confusing crash.
 
-```{note}
-On PHP 8.5, `thesis/amqp`'s own transitive dependency on `thesis/endian`
-(pinned to its `0.1.x` line — a constraint set by `thesis/amqp` itself,
-not by this package) emits repeated `chr(): Providing a value not
-in-between 0 and 255 is deprecated` notices from its byte-packing code.
-Confirmed harmless — the deprecated `chr()` behavior still masks the
-value to a single byte exactly as before, just with a notice — and not
-fixable from this package: no stable `thesis/amqp` release yet requires
-a `thesis/endian` version that corrects it, and this project does not
-pull in an unreleased dev branch to chase a deprecation notice. Track
-`thesis/amqp`'s own releases; this note goes away once one does.
-```
-
 ## See also
 
 - {doc}`queue` — writing jobs, pushing and popping, and everything about

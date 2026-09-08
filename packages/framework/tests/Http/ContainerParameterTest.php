@@ -6,10 +6,11 @@ namespace Kinetis\Tests\Http;
 
 use Kinetis\Container\AppScope;
 use Kinetis\Container\Exception\CircularDependencyException;
-use Kinetis\Container\Exception\ContainerException;
+use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Exception\UnresolvableParameterException;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Tests\Http\Fixtures\AbsentService;
 use Kinetis\Tests\Http\Fixtures\BrokenService;
 use Kinetis\Tests\Http\Fixtures\ScopedValue;
 use Kinetis\Tests\Http\Fixtures\ServiceInjectedController;
@@ -41,32 +42,45 @@ final class ContainerParameterTest extends TestCase
     }
 
     /**
-     * Nothing registered it and it cannot be autowired, so the failure
-     * surfaces rather than the controller receiving something
-     * disconnected.
+     * Nothing can supply the interface and the parameter offers nothing
+     * to stand in for it, so the failure surfaces rather than the
+     * controller receiving something disconnected.
      */
-    public function test_fails_loudly_when_nothing_registered_the_value(): void
+    public function test_fails_loudly_when_nothing_can_supply_the_parameter(): void
     {
         $app = new AppScope();
         $app->boot();
 
         $this->expectException(UnresolvableParameterException::class);
-        $this->expectExceptionMessageMatches('/Cannot resolve controller parameter .*ScopedValue/');
+        $this->expectExceptionMessageMatches('/Cannot resolve controller parameter .*AbsentService/');
 
         new Dispatcher($app->createRequestScope())->dispatch(
-            self::router()->match('GET', '/scoped'),
-            new ServerRequest('GET', '/scoped'),
+            self::router()->match('GET', '/absent-required'),
+            new ServerRequest('GET', '/absent-required'),
         );
     }
 
-    public function test_a_default_makes_the_parameter_optional(): void
+    public function test_a_default_makes_an_absent_parameter_optional(): void
     {
         $app = new AppScope();
         $app->boot();
 
         $response = new Dispatcher($app->createRequestScope())->dispatch(
-            self::router()->match('GET', '/scoped-optional'),
-            new ServerRequest('GET', '/scoped-optional'),
+            self::router()->match('GET', '/absent-optional'),
+            new ServerRequest('GET', '/absent-optional'),
+        );
+
+        self::assertSame('{"label":"absent"}', (string) $response->getBody());
+    }
+
+    public function test_a_nullable_type_alone_makes_an_absent_parameter_optional(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $response = new Dispatcher($app->createRequestScope())->dispatch(
+            self::router()->match('GET', '/absent-nullable'),
+            new ServerRequest('GET', '/absent-nullable'),
         );
 
         self::assertSame('{"label":"absent"}', (string) $response->getBody());
@@ -105,27 +119,26 @@ final class ContainerParameterTest extends TestCase
     }
 
     /**
-     * Without a default, the error names the parameter and its type
-     * rather than whatever constructor autowiring gave up on — the
-     * original is kept as `previous`.
+     * For an absent dependency the error names the parameter and its
+     * type, and keeps the container's own account as `previous`.
      */
-    public function test_the_error_points_at_the_parameter_not_at_autowiring(): void
+    public function test_the_absence_error_points_at_the_parameter(): void
     {
         $app = new AppScope();
         $app->boot();
 
         try {
             new Dispatcher($app->createRequestScope())->dispatch(
-                self::router()->match('GET', '/scoped'),
-                new ServerRequest('GET', '/scoped'),
+                self::router()->match('GET', '/absent-required'),
+                new ServerRequest('GET', '/absent-required'),
             );
 
             self::fail('Expected the dispatch to fail.');
         } catch (UnresolvableParameterException $e) {
-            self::assertStringContainsString('$value', $e->getMessage());
-            self::assertStringContainsString(ScopedValue::class, $e->getMessage());
+            self::assertStringContainsString('$service', $e->getMessage());
+            self::assertStringContainsString(AbsentService::class, $e->getMessage());
             self::assertStringContainsString('middleware is attached to this route', $e->getMessage());
-            self::assertInstanceOf(ContainerException::class, $e->getPrevious());
+            self::assertInstanceOf(NotFoundException::class, $e->getPrevious());
         }
     }
 
@@ -139,6 +152,7 @@ final class ContainerParameterTest extends TestCase
         $request = new ServerRequest(
             'POST',
             '/scoped/7?sort=name',
+            headers: ['Content-Type' => 'application/json'],
             body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']),
         );
 

@@ -41,26 +41,26 @@ use Psr\SimpleCache\CacheInterface;
  * per request through the route's own RequestScope, never as an
  * AppScope-resolved singleton.
  *
- * Deliberately not final, same reason as the parent class: two routes
- * needing two different limits at the same time still needs a thin
- * subclass overriding the constructor defaults.
+ * Deliberately not final, same reason as the parent class: a policy
+ * reached through #[Middleware(...)] is a thin subclass supplying its own
+ * policy ID and limits.
  */
 class AuthenticatedRateLimitMiddleware extends RateLimitMiddleware
 {
     /**
+     * @param string $policyId see the parent class — forwarded unchanged.
      * @param list<string> $trustedProxies see the parent class — forwarded unchanged.
-     * @param ?string $namespace see the parent class — forwarded unchanged.
      */
     public function __construct(
         CacheInterface $cache,
+        string $policyId,
         private readonly RequestScope $scope,
         int $maxAttempts = 60,
         int $windowSeconds = 60,
         array $trustedProxies = [],
-        ?string $namespace = null,
         ?\Closure $clock = null,
     ) {
-        parent::__construct($cache, $maxAttempts, $windowSeconds, $trustedProxies, $namespace, $clock);
+        parent::__construct($cache, $policyId, $maxAttempts, $windowSeconds, $trustedProxies, $clock);
     }
 
     #[\Override]

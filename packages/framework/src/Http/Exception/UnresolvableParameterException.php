@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Exception;
 
+use Kinetis\Validation\Hydrator;
 use RuntimeException;
 use Throwable;
 
@@ -29,52 +30,42 @@ final class UnresolvableParameterException extends RuntimeException
     }
 
     /**
-     * A class-typed parameter the request container had nothing for.
-     * Points at the likely cause — the middleware that registers the
-     * value is not on this route — rather than at whatever constructor
-     * the container's autowiring gave up on, which is what the
-     * underlying exception (kept as `previous`) already says.
+     * A class-typed parameter nothing can supply, on a signature that
+     * offers no default and no nullable type to stand in for it. Points
+     * at the likely cause — the middleware that registers the value is
+     * not on this route — rather than at the container's own vocabulary,
+     * which the underlying exception (kept as `previous`) already
+     * carries.
      */
     public static function forContainerParameter(string $name, string $class, Throwable $previous): self
     {
         return new self(
             "Cannot resolve controller parameter \"\${$name}\" ({$class}) from the request container: "
-            . 'nothing registered it, and it could not be constructed. If a middleware is meant to '
-            . 'register it, check that middleware is attached to this route; give the parameter a '
-            . 'default value if its absence is acceptable.',
+            . 'nothing registered it, and it is not something the container can build on its own. '
+            . 'If a middleware is meant to register it, check that middleware is attached to this '
+            . 'route; give the parameter a default value, or a nullable type, if its absence is '
+            . 'acceptable.',
             previous: $previous,
         );
     }
 
     /**
-     * A `#[Query]`/path parameter typed the standalone `null` type —
-     * genuinely unsatisfiable by any request, ever: a query string or
-     * path segment is always a non-empty string when present (never
-     * PHP's real `null`, which only a JSON body can carry). For a
-     * `#[Query]` parameter this only throws when it's also defaultless —
-     * a defaulted one has a real working path, an absent query key,
-     * which resolves to the default without ever reaching the type
-     * check. A path parameter has no such path regardless of any
-     * declared default: a matched route's own placeholder capture always
-     * supplies a real string, so the "value missing, use the default"
-     * branch is unreachable there — this always throws for a path
-     * source. Thrown from `Dispatcher::derivePlan()`, called eagerly from
-     * `Kinetis\Http\Routing\Router::register()` itself — the one
-     * boundary every route passes through regardless of deployment
-     * shape, so a route that can never succeed is rejected before it can
-     * ever register, be advertised by OpenApiGenerator, or accept
-     * traffic; never deferred to this route's first real dispatch.
+     * A `#[Query]`/path parameter declaring a builtin type outside
+     * `Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES`. A query
+     * string or path segment carries text only, so `null`, `true`,
+     * `false`, `object` and `callable` have no value a request could
+     * ever send. Thrown from `Dispatcher::derivePlan()`, called eagerly
+     * from `Kinetis\Http\Routing\Router::register()` — the one boundary
+     * every route passes through regardless of deployment shape, so such
+     * a route is rejected before it can register, be advertised by
+     * OpenApiGenerator, or accept traffic.
      */
-    public static function forImpossibleQueryOrPathNull(string $name, string $source): self
+    public static function forUnsupportedBuiltinType(string $name, string $source, string $type): self
     {
-        $remedy = $source === 'path'
-            ? 'a path placeholder always supplies a real, non-empty string once the route matches at all, so no default could ever be reached here. Change its type, or move it to #[Body], where a real JSON null is representable.'
-            : 'omitting it fails as "is required." since it has no default, and providing any value fails the null type check. Give it a default value (so omitting it is the only way to reach it), change its type, or move it to #[Body], where a real JSON null is representable.';
-
         return new self(
-            "Controller parameter \"\${$name}\" is a standalone `null`-typed {$source} parameter — "
-            . "this can never be satisfied: a {$source} value is always a non-empty string when present "
-            . "(never PHP's real null), and {$remedy}"
+            "Controller parameter \"\${$name}\" is a {$source} parameter typed \"{$type}\" — no {$source} "
+            . 'value can satisfy that type. Kinetis binds ' . implode(', ', Hydrator::SUPPORTED_BUILTIN_TYPES)
+            . ' from a query or path value; move the parameter to #[Body] if it needs another type.'
         );
     }
 

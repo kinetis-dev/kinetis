@@ -22,17 +22,22 @@ use Kinetis\Persistence\Driver\PgsqlAsyncClient;
  * Driver selection (`DB_DRIVER`, connection-scoped like every other
  * DB_* key):
  *
- * - `auto` (the default): a persistent runtime (FrankenPHP worker mode,
- *   or RoadRunner) gets the native async driver; a boot-and-die runtime
- *   (PHP-FPM) gets PDO. This split is measured, not aesthetic: under
- *   boot-and-die, per-request handshakes and per-query client CPU
- *   dominate, and an async client's overlap buys nothing a blocking
- *   driver doesn't already deliver — while a persistent worker amortizes
- *   connections across requests and genuinely benefits from native async
- *   fan-out.
+ * - `auto` (the default): the native async driver when
+ *   `frankenphp_handle_request()` exists (FrankenPHP worker mode) or
+ *   `RR_MODE=http` (RoadRunner), PDO everywhere else — PHP-FPM and AWS
+ *   Lambda included (see docs/persistence.md for what Lambda needs
+ *   before `native` is the right choice there). Native is the measured
+ *   default for the supported persistent-worker targets, FrankenPHP and
+ *   RoadRunner; PDO is the baseline everywhere else because it is the
+ *   commonly installed and default-enabled driver. Lambda stays an
+ *   explicit opt-in: the deployment has to ship the native extension and
+ *   budget a pool per execution environment, and there is no Lambda
+ *   measurement here to justify choosing native for it automatically.
  * - `native`: mysqli's MYSQLI_ASYNC ({@see MysqliAsyncClient}) or
  *   ext-pgsql's pg_send_query ({@see PgsqlAsyncClient}). C-speed wire
- *   protocol, Fiber-suspending, `concurrently()`-compatible.
+ *   protocol, Fiber-suspending, `concurrently()`-compatible. The
+ *   Postgres client also needs ext-sockets and says so at construction
+ *   if it is missing.
  * - `pdo`: one blocking PDO connection ({@see PdoMysqlClient}/
  *   {@see PdoPgsqlClient}).
  *
@@ -47,6 +52,10 @@ use Kinetis\Persistence\Driver\PgsqlAsyncClient;
  * $connection selects a named connection via Config::scopedKey() —
  * 'default' reads the plain DB_* keys; any other name reads DB_{NAME}_*.
  *
+ * $driver overrides `DB_DRIVER` for one call. {@see singleSession()}
+ * is the stricter form of the same thing, for a caller whose work lives
+ * in the database session itself.
+ *
  * $poolOptions['maxConnections'] caps the async drivers' fan-out width
  * (the PDO drivers are a single connection, trivially within any cap).
  * $poolOptions['warmConnections'] (or the `DB_WARM_CONNECTIONS` key)
@@ -58,9 +67,45 @@ final class SqlConnectionFactory
 {
     /**
      * @param array<string, mixed> $poolOptions
+     * @param 'auto'|'native'|'pdo'|null $driver Overrides the DB_DRIVER
+     *     key when given.
      */
-    public static function fromConfig(Config $config, string $connection = 'default', array $poolOptions = []): MysqlLink|PostgresLink
+    public static function fromConfig(
+        Config $config,
+        string $connection = 'default',
+        array $poolOptions = [],
+        ?string $driver = null,
+    ): MysqlLink|PostgresLink {
+        return self::build($config, $connection, $poolOptions, $driver, singleSession: false);
+    }
+
+    /**
+     * A client pinned to the first session it opens: PDO whatever
+     * DB_DRIVER says, and closed for good if that session is ever
+     * discarded, rather than reconnecting.
+     *
+     * That is what work living in the session itself needs.
+     * `kinetis/migrations` holds a session-scoped advisory lock for a
+     * whole run, so a replacement session would be an unlocked one the
+     * run kept going on. Everything else wants {@see fromConfig()},
+     * where reconnecting is what keeps a long-lived process working.
+     */
+    public static function singleSession(Config $config, string $connection = 'default'): MysqlLink|PostgresLink
     {
+        return self::build($config, $connection, [], 'pdo', singleSession: true);
+    }
+
+    /**
+     * @param array<string, mixed> $poolOptions
+     * @param 'auto'|'native'|'pdo'|null $driver
+     */
+    private static function build(
+        Config $config,
+        string $connection,
+        array $poolOptions,
+        ?string $driver,
+        bool $singleSession,
+    ): MysqlLink|PostgresLink {
         $host = $config->string(Config::scopedKey('DB_HOST', $connection), '127.0.0.1');
         $database = $config->string(Config::scopedKey('DB_NAME', $connection), 'app');
         $user = $config->string(Config::scopedKey('DB_USER', $connection), 'app');
@@ -73,15 +118,16 @@ final class SqlConnectionFactory
             throw new InvalidArgumentException("{$dialectKey} must be \"mysql\" or \"pgsql\".");
         }
 
-        $driver = $config->string(Config::scopedKey('DB_DRIVER', $connection), 'auto');
+        $driver ??= $config->string(Config::scopedKey('DB_DRIVER', $connection), 'auto');
 
         if ($driver === 'auto') {
-            $driver = self::runningUnderPersistentWorker() ? 'native' : 'pdo';
+            $driver = self::shouldUseNativeDriverByDefault() ? 'native' : 'pdo';
         }
 
         if ($driver !== 'native' && $driver !== 'pdo') {
             throw new InvalidArgumentException(
-                Config::scopedKey('DB_DRIVER', $connection) . " must be \"auto\", \"native\", or \"pdo\", got \"{$driver}\".",
+                'The database driver must be "auto", "native", or "pdo", got "' . $driver . '" — from the '
+                . '$driver argument or ' . Config::scopedKey('DB_DRIVER', $connection) . '.',
             );
         }
 
@@ -111,9 +157,9 @@ final class SqlConnectionFactory
 
         $client = match (true) {
             $dialect === 'mysql' && $driver === 'native' => new MysqliAsyncClient($host, $user, $password, $database, $port, $options),
-            $dialect === 'mysql' => new PdoMysqlClient($host, $user, $password, $database, $port, $options),
+            $dialect === 'mysql' => new PdoMysqlClient($host, $user, $password, $database, $port, $options, $singleSession),
             $driver === 'native' => new PgsqlAsyncClient($host, $user, $password, $database, $port, $options),
-            default => new PdoPgsqlClient($host, $user, $password, $database, $port, $options),
+            default => new PdoPgsqlClient($host, $user, $password, $database, $port, $options, $singleSession),
         };
 
         // Warming connects right here, so a wrong DB config fails at
@@ -136,7 +182,7 @@ final class SqlConnectionFactory
      * type given, not an incidental TypeError several calls deeper once
      * it reaches a real int-typed constructor parameter (ConnectionOptions'
      * own $maxConnections, most notably). Returns null when the key is
-     * genuinely absent, so the caller's own Config-key fallback applies.
+     * absent, so the caller's own Config-key fallback applies.
      *
      * @param array<string, mixed> $poolOptions
      */
@@ -158,16 +204,21 @@ final class SqlConnectionFactory
     }
 
     /**
-     * The same two signals `Kinetis\Runtime\RuntimeDetector::detect()`
-     * uses to pick `FrankenPhpAdapter`/`RoadRunnerAdapter`, checked
-     * directly rather than routed through the full detector: this only
-     * needs a yes/no answer, not a constructed adapter, and going
-     * through `detect()` would risk instantiating `BrefLambdaAdapter`
-     * (throwing if `kinetis/bref-adapter` isn't installed) purely
-     * because `AWS_LAMBDA_RUNTIME_API` happened to be set for an
-     * unrelated reason.
+     * The whole of `DB_DRIVER=auto`: `native` when
+     * `frankenphp_handle_request()` exists or `RR_MODE=http` is set,
+     * `pdo` for every other runtime. Those two signals are the entire
+     * rule — no other environment selects `native` by default, however
+     * long its PHP process lives. AWS Lambda gets `pdo` here; a
+     * deployment wanting otherwise sets `DB_DRIVER=native` explicitly.
+     *
+     * Both signals are read here rather than through
+     * `Kinetis\Runtime\RuntimeDetector::detect()`, which answers the
+     * separate question of which adapter drives the request loop: going
+     * through it would risk instantiating `BrefLambdaAdapter` (throwing
+     * if `kinetis/bref-adapter` isn't installed) purely because
+     * `AWS_LAMBDA_RUNTIME_API` happened to be set.
      */
-    private static function runningUnderPersistentWorker(): bool
+    private static function shouldUseNativeDriverByDefault(): bool
     {
         return \function_exists('frankenphp_handle_request') || \getenv('RR_MODE') === 'http';
     }

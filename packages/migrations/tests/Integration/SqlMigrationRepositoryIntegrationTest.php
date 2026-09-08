@@ -7,21 +7,26 @@ namespace Kinetis\Migrations\Tests\Integration;
 use Kinetis\Migrations\SqlMigrationRepository;
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
+use Kinetis\Persistence\Exception\QueryException;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The repository against a real MySQL. MigrationRunner's own ordering
- * logic is unit-tested against InMemoryMigrationRepository; what only a
- * real server can show is that this class's bookkeeping SQL does what
- * the runner assumes — that the table creates idempotently, and that
- * lastApplied() answers by migration name rather than by insertion
- * order or applied_at.
+ * The repository against a real MySQL. MigrationRunner's own ordering and
+ * integrity logic is unit-tested against InMemoryMigrationRepository;
+ * what only a real server can show is that this class's bookkeeping SQL
+ * does what the runner assumes — that the table creates idempotently,
+ * that application_order really is assigned from the table's own current
+ * maximum, and that a name recorded twice is refused by the primary key
+ * rather than written.
  *
  * Environment-gated on MYSQL_HOST, like every other real-backend test in
  * this repository.
  */
 final class SqlMigrationRepositoryIntegrationTest extends TestCase
 {
+    private const CHECKSUM_USERS = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+    private const CHECKSUM_ORDERS = '0f9e8d7c6b5a49382716f5e4d3c2b1a00f9e8d7c6b5a49382716f5e4d3c2b1a0';
+
     private ?SqlLink $link = null;
 
     private static function client(): SqlLink
@@ -61,6 +66,22 @@ final class SqlMigrationRepositoryIntegrationTest extends TestCase
     }
 
     /**
+     * @return list<int>
+     */
+    private function applicationOrders(): array
+    {
+        \assert($this->link !== null);
+
+        $orders = [];
+
+        foreach ($this->link->execute('SELECT application_order FROM kinetis_migrations ORDER BY application_order ASC') as $row) {
+            $orders[] = (int) $row['application_order'];
+        }
+
+        return $orders;
+    }
+
+    /**
      * Every command calls this before anything else, so it has to be
      * safe on an already-migrated database, not only a fresh one.
      */
@@ -73,54 +94,90 @@ final class SqlMigrationRepositoryIntegrationTest extends TestCase
         self::assertSame([], $repository->applied());
     }
 
-    public function test_applied_migrations_round_trip_in_name_order(): void
+    /**
+     * Recorded out of name order deliberately: the runner needs them back
+     * in the order this database applied them, each with the checksum
+     * stored for it, which is what its integrity check compares against.
+     */
+    public function test_applied_migrations_round_trip_in_application_order_with_their_checksums(): void
     {
         $repository = $this->repository();
         $repository->ensureTableExists();
 
-        // Deliberately inserted out of order: the runner needs them back
-        // sorted, not in the order they happened to be recorded.
-        $repository->markApplied('20260102_create_orders');
-        $repository->markApplied('20260101_create_users');
+        $repository->markApplied('20260102_create_orders', self::CHECKSUM_ORDERS);
+        $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
 
-        self::assertSame(['20260101_create_users', '20260102_create_orders'], $repository->applied());
+        self::assertSame(
+            [
+                '20260102_create_orders' => self::CHECKSUM_ORDERS,
+                '20260101_create_users' => self::CHECKSUM_USERS,
+            ],
+            $repository->applied(),
+        );
     }
 
     /**
-     * lastApplied() orders by the migration name rather than applied_at
-     * on purpose: applied_at has no sub-second precision, so two
-     * migrations recorded in the same second cannot be told apart by it,
-     * while the timestamped name always can. Recording them in reverse
-     * is what makes the two orderings disagree.
+     * The order column comes from the table's own COALESCE(MAX(...), 0) +
+     * 1 in the insert itself: 1 on an empty table, and one past the
+     * highest row still in the table after that — not a counter that
+     * remembers positions no row holds any more. Rolling back the
+     * highest row therefore frees its number for the next record, and a
+     * migration recorded again while a higher row remains lands past
+     * that row, newest in application order.
      */
-    public function test_last_applied_answers_by_name_not_by_when_it_was_recorded(): void
+    public function test_application_order_counts_up_from_the_current_maximum(): void
     {
         $repository = $this->repository();
         $repository->ensureTableExists();
-        $repository->markApplied('20260102_create_orders');
-        $repository->markApplied('20260101_create_users');
 
-        self::assertSame('20260102_create_orders', $repository->lastApplied());
+        $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
+        $repository->markApplied('20260102_create_orders', self::CHECKSUM_ORDERS);
+        self::assertSame([1, 2], $this->applicationOrders());
+
+        $repository->markRolledBack('20260102_create_orders');
+        $repository->markApplied('20260102_create_orders', self::CHECKSUM_ORDERS);
+        self::assertSame([1, 2], $this->applicationOrders());
+
+        $repository->markRolledBack('20260101_create_users');
+        $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
+
+        self::assertSame([2, 3], $this->applicationOrders());
+        self::assertSame(
+            ['20260102_create_orders', '20260101_create_users'],
+            array_keys($repository->applied()),
+        );
     }
 
-    public function test_last_applied_is_null_on_a_fresh_database(): void
+    /**
+     * One row per migration name, enforced by the primary key: a second
+     * record for the same name is a failed insert, never a duplicate the
+     * runner would then see twice.
+     */
+    public function test_recording_the_same_migration_twice_is_refused(): void
     {
         $repository = $this->repository();
         $repository->ensureTableExists();
+        $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
 
-        self::assertNull($repository->lastApplied());
+        try {
+            $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
+            self::fail('Expected the primary key to refuse a second row for the same migration.');
+        } catch (QueryException) {
+            // Expected.
+        }
+
+        self::assertSame([1], $this->applicationOrders());
     }
 
     public function test_rolling_back_removes_only_that_migration(): void
     {
         $repository = $this->repository();
         $repository->ensureTableExists();
-        $repository->markApplied('20260101_create_users');
-        $repository->markApplied('20260102_create_orders');
+        $repository->markApplied('20260101_create_users', self::CHECKSUM_USERS);
+        $repository->markApplied('20260102_create_orders', self::CHECKSUM_ORDERS);
 
         $repository->markRolledBack('20260102_create_orders');
 
-        self::assertSame(['20260101_create_users'], $repository->applied());
-        self::assertSame('20260101_create_users', $repository->lastApplied());
+        self::assertSame(['20260101_create_users' => self::CHECKSUM_USERS], $repository->applied());
     }
 }

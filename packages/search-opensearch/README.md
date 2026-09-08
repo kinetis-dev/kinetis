@@ -24,10 +24,17 @@ API-first applications, developed in the
 
 Builds a real `OpenSearch\Client` (from `opensearch-project/opensearch-php`)
 through OpenSearch's own `TransportFactory`/`HttpTransport` construction
-path, with [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP transport
-injected as its PSR-18 client instead of the default blocking one. The
-returned object is the real, un-wrapped client — nothing Kinetis-specific
-sits on top of it.
+path, over a package-owned PSR-18 adapter on
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)'s Revolt-native HTTP transport instead of the
+default blocking one. The returned object is the real, un-wrapped
+client — nothing Kinetis-specific sits on top of it.
+
+Each call is one wire attempt against one origin, bounded by one deadline
+and one response size, following no redirect. The status, headers and body
+are complete before the adapter returns, so a transport failure mid-body
+is an `OpenSearchNetworkException` rather than something the official
+client meets while reading a stream. Every status OpenSearch answers with
+stays the official client's to map.
 
 ```php
 use Kinetis\SearchOpenSearch\OpenSearchClientFactory;
@@ -44,20 +51,25 @@ Installing this package auto-registers, via `extra.kinetis`:
 
 - **A container binding** for `OpenSearch\Client`, built by
   `OpenSearchClientFactory::fromConfig()` when `SEARCH_OPENSEARCH_HOST`
-  is set. Unset means the package binds nothing. The binding is lazy, so
-  an application that never searches never builds a transport.
+  is set. Unset means the package binds nothing. The client is built
+  during registration and opens no connection, so unusable configuration
+  fails at boot rather than on the first search; an application's own
+  `bootstrap.php` runs afterwards and can replace the binding.
 
 Nothing else. Named connections stay explicit application wiring.
 
 ## Configuration
 
 ```
-SEARCH_OPENSEARCH_HOST=http://localhost:9200
+SEARCH_OPENSEARCH_HOST=https://localhost:9200
 ```
 
 | Key | Default | Purpose |
 |---|---|---|
-| `SEARCH_OPENSEARCH_HOST` | *(required)* | Base URI of the node. |
+| `SEARCH_OPENSEARCH_HOST` | *(required)* | One `http(s)://host[:port]` origin. |
+| `SEARCH_OPENSEARCH_PLAINTEXT` | `false` | Accept an `http` origin. |
+| `SEARCH_OPENSEARCH_TIMEOUT` | `30` | Seconds per request — idle and total. Must be positive. |
+| `SEARCH_OPENSEARCH_MAX_RESPONSE_BYTES` | `8388608` | Largest response body accepted. Must be positive. |
 | `SEARCH_OPENSEARCH_USERNAME` | — | Basic-auth user. |
 | `SEARCH_OPENSEARCH_PASSWORD` | — | Basic-auth password. |
 | `SEARCH_OPENSEARCH_VERIFY_PEER` | `true` | Verify the server certificate — `false` accepts a self-signed one on a security-enabled cluster. |
@@ -66,12 +78,21 @@ Every key is scoped — `SEARCH_OPENSEARCH_HOST` + `logs` →
 `SEARCH_LOGS_OPENSEARCH_HOST`. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
-`SEARCH_OPENSEARCH_HOST` is a single base URI, not a list — this
-construction path has no multi-node selector/failover; put a load
-balancer in front of a multi-node cluster instead.
+`SEARCH_OPENSEARCH_HOST` is one origin and one node. Userinfo, a path, a
+query and a fragment are all refused: the official client's endpoints are
+root-relative, so a base path would be dropped rather than honoured, and
+credentials belong in the username and password keys. There is no
+multi-node selector or failover — put a load balancer in front of a
+multi-node cluster and point this at it.
+
+An unusable host, an `http` origin without the opt-in, and a
+non-positive timeout or response bound each raise an
+`OpenSearchConfigurationException` naming the key. A request that never
+produces a complete response raises an `OpenSearchNetworkException`
+carrying it. Those two are the package's whole failure surface.
 
 `fromConfig()`'s optional `$transportDecorator` parameter wraps the
-fully-configured PSR-18 client right before `TransportFactory` gets
+fully-configured PSR-18 adapter right before `TransportFactory` gets
 it — the seam [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry)'s `TracingOpenSearchTransport` plugs
 into, without duplicating this method's own config-reading logic.
 

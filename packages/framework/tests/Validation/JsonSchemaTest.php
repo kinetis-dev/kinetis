@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Validation;
 
 use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Http\Fixtures\Address;
+use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
@@ -21,7 +22,9 @@ use Kinetis\Validation\Constraints\NotBlank;
 use Kinetis\Validation\Constraints\Regex;
 use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
+use Kinetis\Validation\Exception\JsonSchemaException;
 use Kinetis\Validation\JsonSchema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionFunction;
 
@@ -116,9 +119,9 @@ final class JsonSchemaTest extends TestCase
         self::assertNotContains('optionalItems', $schema['required']);
     }
 
-    // KINETIS-76: every builtin type reaching forType() must get a
-    // truthful JSON Schema — never the bare `object` fallback a plain
-    // array/mixed/unrepresentable type used to collapse into.
+    // forType() describes exactly Hydrator::SUPPORTED_BUILTIN_TYPES and
+    // refuses every other builtin, rather than collapsing it into a bare
+    // `object` schema no request value could satisfy.
 
     public function test_a_plain_array_type_is_a_real_array_schema(): void
     {
@@ -137,13 +140,6 @@ final class JsonSchemaTest extends TestCase
         self::assertSame([], JsonSchema::forType($params[0]->getType()));
     }
 
-    // KINETIS-76 follow-up: the complete, audited policy for every one of
-    // the twelve builtin type names PHP can attach to a parameter — see
-    // JsonSchema::forType()'s own docblock for the full reasoning behind
-    // each. `iterable` is genuinely supported (mapped to a real array
-    // schema below), so `object`/`callable` — the two that remain
-    // rejected — are this file's throwing examples.
-
     public function test_iterable_gets_the_identical_array_schema_as_plain_array(): void
     {
         $fn = static function (iterable $a, ?iterable $b) {};
@@ -153,50 +149,27 @@ final class JsonSchemaTest extends TestCase
         self::assertSame(['type' => ['array', 'null']], JsonSchema::forType($params[1]->getType()));
     }
 
-    public function test_a_standalone_null_type_is_a_real_null_schema(): void
+    #[DataProvider('unsupportedBuiltinTypeProvider')]
+    public function test_an_unsupported_builtin_type_throws_rather_than_being_described(callable $declaration, string $type): void
     {
-        $fn = static function (null $a) {};
-        $params = (new ReflectionFunction($fn))->getParameters();
+        $params = (new ReflectionFunction($declaration(...)))->getParameters();
 
-        self::assertSame(['type' => 'null'], JsonSchema::forType($params[0]->getType()));
-    }
-
-    public function test_standalone_true_and_false_types_are_const_boolean_schemas(): void
-    {
-        $fn = static function (true $a, false $b) {};
-        $params = (new ReflectionFunction($fn))->getParameters();
-
-        self::assertSame(['type' => 'boolean', 'const' => true], JsonSchema::forType($params[0]->getType()));
-        self::assertSame(['type' => 'boolean', 'const' => false], JsonSchema::forType($params[1]->getType()));
-    }
-
-    public function test_an_unsupported_builtin_type_throws_rather_than_being_labeled_object(): void
-    {
-        $fn = static function (object $a) {};
-        $params = (new ReflectionFunction($fn))->getParameters();
-
-        $this->expectException(\Kinetis\Validation\Exception\JsonSchemaException::class);
-        $this->expectExceptionMessage('object');
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage($type);
 
         JsonSchema::forType($params[0]->getType());
     }
 
     /**
-     * `callable` is rejected for a security reason, not just a
-     * representational one — a JSON string handed to a callable-typed
-     * parameter is exactly the shape of an arbitrary-function-name-
-     * injection risk if it's ever invoked downstream, so this framework
-     * never describes it as if it were safe to accept.
+     * @return iterable<string, array{callable, string}>
      */
-    public function test_callable_is_rejected_as_a_security_boundary_not_just_unrepresentable(): void
+    public static function unsupportedBuiltinTypeProvider(): iterable
     {
-        $fn = static function (callable $a) {};
-        $params = (new ReflectionFunction($fn))->getParameters();
-
-        $this->expectException(\Kinetis\Validation\Exception\JsonSchemaException::class);
-        $this->expectExceptionMessage('callable');
-
-        JsonSchema::forType($params[0]->getType());
+        yield 'null' => [static function (null $a) {}, 'null'];
+        yield 'true' => [static function (true $a) {}, 'true'];
+        yield 'false' => [static function (false $a) {}, 'false'];
+        yield 'object' => [static function (object $a) {}, 'object'];
+        yield 'callable' => [static function (callable $a) {}, 'callable'];
     }
 
     public function test_a_nullable_list_of_parameter_using_a_ref_still_widens_the_arrays_own_type_not_the_items(): void
@@ -222,7 +195,6 @@ final class JsonSchemaTest extends TestCase
         self::assertSame(['maxLength' => 20], JsonSchema::forConstraint(new MaxLength(20)));
         self::assertSame(['exclusiveMinimum' => 0], JsonSchema::forConstraint(new GreaterThan(0)));
         self::assertSame(['exclusiveMaximum' => 120], JsonSchema::forConstraint(new LessThan(120)));
-        self::assertSame(['pattern' => '/^[A-Z]+$/'], JsonSchema::forConstraint(new Regex('/^[A-Z]+$/')));
         self::assertSame(['enum' => ['admin', 'member']], JsonSchema::forConstraint(new In(['admin', 'member'])));
         self::assertSame(['format' => 'uri'], JsonSchema::forConstraint(new Url()));
         self::assertSame(['format' => 'uuid'], JsonSchema::forConstraint(new Uuid()));
@@ -231,6 +203,22 @@ final class JsonSchemaTest extends TestCase
     public function test_not_blank_has_no_distinct_json_schema_keyword(): void
     {
         self::assertSame([], JsonSchema::forConstraint(new NotBlank()));
+    }
+
+    public function test_regex_contributes_no_json_schema_keyword(): void
+    {
+        self::assertSame([], JsonSchema::forConstraint(new Regex('/^[A-Z]+$/')));
+    }
+
+    public function test_a_regex_leaves_the_rest_of_a_parameters_schema_intact(): void
+    {
+        $fn = static function (#[Regex('/^[A-Z]+$/')] #[MinLength(3)] string $code) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'string', 'minLength' => 3],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 
     public function test_a_parameter_list_with_no_parameters_encodes_properties_as_a_json_object_not_an_array(): void
@@ -302,5 +290,29 @@ final class JsonSchemaTest extends TestCase
             ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/' . OrderItem::class]],
             $schema['properties']['items'],
         );
+    }
+
+    /**
+     * A class-typed parameter whose class cannot be instantiated has no
+     * truthful object schema: Hydrator accepts only an already-constructed
+     * instance there, so an expanded {type: object} would describe input it
+     * rejects.
+     */
+    public function test_a_class_typed_parameter_that_cannot_be_instantiated_is_rejected(): void
+    {
+        $fn = static function (\Countable $a) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('Countable');
+
+        JsonSchema::forParameters($params);
+    }
+
+    public function test_an_uploaded_file_field_is_still_described_as_a_binary_string(): void
+    {
+        $schema = JsonSchema::forClass(AvatarUploadRequest::class);
+
+        self::assertSame(['type' => 'string', 'format' => 'binary'], $schema['properties']['avatar']);
     }
 }

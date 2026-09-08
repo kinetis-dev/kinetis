@@ -11,6 +11,7 @@ use Kinetis\Broadcasting\Exception\BroadcastingException;
 use Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException;
 use Kinetis\Broadcasting\PusherProtocol;
 use Kinetis\Container\RequestScope;
+use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Http\CurrentUserInterface;
 use Kinetis\Http\Responses\ErrorResponse;
@@ -25,16 +26,29 @@ use Psr\Http\Message\ServerRequestInterface;
  * (`extra.kinetis.scan` names this class's own `Http` segment), never
  * hand-registered.
  *
- * Depends on the concrete {@see PusherBroadcaster}, not the generic
- * {@see BroadcasterInterface} — signing an authorization response is
- * inherently protocol-specific (HMAC-SHA256 over a Pusher-shaped string,
- * see that class), not something a driver-agnostic contract could
- * express. Resolved through the request's own {@see RequestScope}
- * (constructor-injected directly, the same self-injection
- * `BearerAuthMiddleware`/`EventDispatcher` already rely on), so a
- * `CurrentUserInterface` an upstream auth middleware registered on this
- * request is visible here.
+ * Takes the bound {@see BroadcasterInterface} —
+ * {@see \Kinetis\Broadcasting\PackageBootstrap} binds that one id for
+ * whichever driver `BROADCAST_DRIVER` names, so the route resolves under
+ * every driver, `"null"` included. Signing an authorization response is
+ * Pusher-protocol-specific (HMAC-SHA256 over a Pusher-shaped string, see
+ * {@see PusherBroadcaster}), so `auth()` requires the bound broadcaster
+ * to be that driver and throws
+ * {@see BroadcastingException::authNotSupported()} for any other.
+ *
+ * The controller is resolved through the request's own
+ * {@see RequestScope} (constructor-injected directly, the same
+ * self-injection `BearerAuthMiddleware`/`EventDispatcher` already rely
+ * on), so a `CurrentUserInterface` an upstream auth middleware
+ * registered on this request is visible here.
+ *
+ * That middleware joins the `broadcasting` group with
+ * `#[AsMiddlewareGroup('broadcasting')]`, keeping authentication on this
+ * one route. {@see BroadcastOriginMiddleware} is the group's permanent
+ * member, so the reference resolves wherever this package is installed —
+ * including for an application whose authorizers are all anonymous,
+ * which needs no member of its own.
  */
+#[Middleware('@broadcasting')]
 final readonly class BroadcastAuthController
 {
     private const string NOT_AUTHORIZED = 'Not authorized.';
@@ -55,7 +69,15 @@ final readonly class BroadcastAuthController
             throw BroadcastingException::authNotSupported($this->broadcaster::class);
         }
 
-        $data = $this->formData($request);
+        // RequestBodyMiddleware is the one place a body becomes fields:
+        // it bounds the bytes and, for the form media types alone,
+        // publishes them as getParsedBody(). Anything it did not parse —
+        // no body at all, form-looking bytes under an unrelated content
+        // type — reaches here with nothing to read and meets the
+        // required-fields 422 below.
+        $parsed = $request->getParsedBody();
+        $data = is_array($parsed) ? $parsed : [];
+
         $socketId = $data['socket_id'] ?? null;
         $channelName = $data['channel_name'] ?? null;
 
@@ -122,33 +144,5 @@ final readonly class BroadcastAuthController
         }
 
         return ['auth' => $this->broadcaster->authorizeChannel($socketId, $channelName)];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function formData(ServerRequestInterface $request): array
-    {
-        $parsed = $request->getParsedBody();
-
-        if (is_array($parsed) && $parsed !== []) {
-            return $parsed;
-        }
-
-        // The body reaching here is already bounded and complete:
-        // MaxBodySizeMiddleware settles the byte ceiling and stages the
-        // whole body before any handler runs, so an oversized request
-        // is a 413 that never arrives at this controller.
-        parse_str($request->getBody()->getContents(), $fallback);
-
-        $result = [];
-
-        foreach ($fallback as $key => $value) {
-            if (is_string($key)) {
-                $result[$key] = $value;
-            }
-        }
-
-        return $result;
     }
 }

@@ -30,9 +30,14 @@ use Kinetis\BrefAdapter\Exception\BrefAdapterException;
  * - **Port**: `x-forwarded-port`, or the port in the `host` header, and
  *   they must match when both are present. Absent means the scheme's
  *   default, which is what every other runtime reports too.
- * - **Scheme**: `x-forwarded-proto`, `https` when absent. An HTTP API
- *   and a Function URL have no plaintext mode, so `https` is the fact,
- *   not a guess.
+ * - **Scheme**: `https`, always. An API Gateway HTTP API and a Lambda
+ *   Function URL are TLS-only — there is no plaintext listener for a
+ *   request to have arrived over — so the scheme is a property of the
+ *   platform rather than of the event. `x-forwarded-proto` is checked
+ *   against that fact instead of deciding it: absent or `https` is the
+ *   event API Gateway builds, and any other value, `http` included,
+ *   describes an invocation that cannot have happened and is refused
+ *   with everything else that contradicts itself.
  * - **Protocol version**: `requestContext.http.protocol`, the version
  *   the client negotiated with API Gateway.
  * - **Request target**: `rawPath` and `rawQueryString`, byte for byte.
@@ -52,6 +57,12 @@ use Kinetis\BrefAdapter\Exception\BrefAdapterException;
  */
 final readonly class LambdaRequestIdentity
 {
+    /** The scheme every supported invocation source serves over. */
+    private const string SCHEME = 'https';
+
+    /** Its default port, and so the one an authority never spells out. */
+    private const int DEFAULT_PORT = 443;
+
     private function __construct(
         public string $method,
         public string $scheme,
@@ -79,7 +90,7 @@ final readonly class LambdaRequestIdentity
             throw BrefAdapterException::malformedInvocationEvent('requestContext.domainName is not a host name.');
         }
 
-        $scheme = self::scheme($headers);
+        self::assertScheme($headers);
         $port = self::port($headers, $domain);
         $path = self::requireTarget($event['rawPath'] ?? null, 'rawPath');
 
@@ -106,11 +117,11 @@ final readonly class LambdaRequestIdentity
         // and anything else built from this identity agree — PSR-7's own
         // URI does the same thing to it, and only one of the three doing
         // it is how they end up disagreeing.
-        if ($port === self::defaultPort($scheme)) {
+        if ($port === self::DEFAULT_PORT) {
             $port = null;
         }
 
-        return new self($method, $scheme, $domain, $port, $path, $rawQueryString, self::protocolVersion($http));
+        return new self($method, self::SCHEME, $domain, $port, $path, $rawQueryString, self::protocolVersion($http));
     }
 
     /**
@@ -133,23 +144,26 @@ final readonly class LambdaRequestIdentity
         return $this->rawQueryString === '' ? $this->path : "{$this->path}?{$this->rawQueryString}";
     }
 
-    private static function defaultPort(string $scheme): int
-    {
-        return $scheme === 'https' ? 443 : 80;
-    }
-
     /**
+     * The scheme is {@see SCHEME} whatever the event says, so this only
+     * has to establish that the event agrees. An HTTP API and a Function
+     * URL both terminate TLS themselves and have no plaintext mode to
+     * fall back to, which makes `http` here not a downgrade to weigh
+     * against a trust policy but a claim about how the request reached
+     * the gateway that the gateway cannot have made. Refused rather than
+     * honored — an application whose absolute URLs, `Secure` cookies and
+     * redirect targets turn plaintext on one invocation is the cost of
+     * believing it — and refused rather than ignored, because an event
+     * that describes an impossible invocation is one this adapter has
+     * misread or something has rewritten.
+     *
      * @param array<string, string> $headers
      */
-    private static function scheme(array $headers): string
+    private static function assertScheme(array $headers): void
     {
-        $forwarded = strtolower(trim($headers['x-forwarded-proto'] ?? 'https'));
-
-        if ($forwarded !== 'http' && $forwarded !== 'https') {
-            throw BrefAdapterException::malformedInvocationEvent('the x-forwarded-proto header names neither http nor https.');
+        if (strtolower(trim($headers['x-forwarded-proto'] ?? self::SCHEME)) !== self::SCHEME) {
+            throw BrefAdapterException::malformedInvocationEvent('the x-forwarded-proto header names a scheme other than https, which no supported invocation source serves over.');
         }
-
-        return $forwarded;
     }
 
     /**

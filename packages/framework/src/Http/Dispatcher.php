@@ -11,8 +11,11 @@ use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Exception\UnresolvableParameterException;
+use Kinetis\Http\Exception\UnsupportedBodyMediaTypeException;
 use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Instrumentation\Telemetry;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Reflection\ParameterDefault;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Validation\Constraint;
@@ -21,8 +24,7 @@ use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Response;
-use Kinetis\Container\Exception\CircularDependencyException;
-use Kinetis\Container\RequestScope;
+use Kinetis\Container\Autowire;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 use Throwable;
@@ -35,19 +37,25 @@ use ReflectionParameter;
 use ReflectionType;
 
 /**
- * Resolves a matched route's controller through the container, binds each
- * method parameter from the request (#[Body] DTO, #[Query] scalar, a
- * same-named path parameter, a ServerRequestInterface-typed parameter that
- * receives the raw request directly, or an UploadedFileInterface-typed
- * parameter pulled from the request's uploaded-files bag by name), invokes
- * it, and encodes the return value as a JSON PSR-7 response. A #[Body] DTO
- * is decoded as JSON by default, or read from getParsedBody() for
- * multipart/form-data and application/x-www-form-urlencoded, as
- * {@see MediaType} classifies them — an UploadedFileInterface-typed
+ * Binds each of a matched route's method parameters from the request
+ * (#[Body] DTO, #[Query] scalar, a same-named path parameter, a
+ * ServerRequestInterface-typed parameter that receives the raw request
+ * directly, or an UploadedFileInterface-typed parameter pulled from the
+ * request's uploaded-files bag by name), resolves the controller through
+ * the container, invokes it, and encodes the return value as a JSON
+ * PSR-7 response. Binding comes first so that a request rejected as a
+ * 400, 415 or 422 never constructs the controller, and no constructor or
+ * registered factory runs on its behalf. A #[Body] DTO is read from
+ * getParsedBody() for multipart/form-data and
+ * application/x-www-form-urlencoded, and decoded as JSON for
+ * application/json and any application/*+json subtype, as
+ * {@see MediaType} classifies them; a nonblank body under any other
+ * media type — or under none at all — is a 415 raised before hydration.
+ * A parameter typed ServerRequestInterface is untouched by that rule and
+ * still receives any raw or binary body. An UploadedFileInterface-typed
  * constructor parameter on that same DTO needs no special handling in
  * Hydrator itself, since the files bag is merged into the data array
- * before hydration. A failed #[Body] validation short-circuits into a
- * 422 response instead of ever reaching the controller.
+ * before hydration.
  *
  * $bindingPlans/$hydrationPlans are optional, compiled-ahead-of-time
  * replacements for what derivePlan()/Hydrator::compilePlan() would otherwise
@@ -60,6 +68,11 @@ use ReflectionType;
  * resolveScalarFromPlan(), after the declared-type-mismatch check and
  * cast — the same two-stage shape Hydrator uses for a #[Body] DTO
  * field, applied uniformly to every parameter source.
+ *
+ * A parameter's own default value is captured under the rule
+ * Kinetis\Reflection\ParameterDefault owns, shared with Hydrator's
+ * hydration plan: an object default other than an enum case is rejected
+ * there, while the plan is derived.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
  * @phpstan-type HttpBindingPlan array{
@@ -90,18 +103,27 @@ final class Dispatcher
     public function dispatch(RouteMatch $match, ServerRequestInterface $request): ResponseInterface
     {
         $route = $match->route;
-        $controller = $this->container->get($route->controllerClass);
         $key = "{$route->controllerClass}::{$route->controllerMethod}";
+        // The uncached plan reflects the controller *class string*, so no
+        // instance is needed to derive it. That keeps container
+        // resolution of the controller — and with it its constructor or
+        // registered factory — behind the argument-binding step below, so
+        // a request rejected as a 400/415/422 never constructs the
+        // controller.
         $plan = $this->bindingPlans[$key]
-            ?? self::derivePlan(new ReflectionMethod($controller, $route->controllerMethod), $route);
+            ?? self::derivePlan(new ReflectionMethod($route->controllerClass, $route->controllerMethod), $route);
 
         try {
             $arguments = $this->resolveFromPlan($plan, $match, $request);
         } catch (MalformedRequestBodyException $e) {
             return ErrorResponse::create(400, $e->getMessage());
+        } catch (UnsupportedBodyMediaTypeException $e) {
+            return ErrorResponse::create(415, $e->getMessage());
         } catch (ValidationException $e) {
             return $this->json(['errors' => $e->errors], 422);
         }
+
+        $controller = $this->container->get($route->controllerClass);
 
         // Router only ever registers public methods (getMethods(IS_PUBLIC)),
         // so a named-argument dynamic call is always legal here — and,
@@ -192,17 +214,18 @@ final class Dispatcher
      * identical for every call this route will ever receive. Used both by
      * the live per-request fallback above (when no compiled plan exists)
      * and by Kinetis\Cache\Compiler ahead of time — one derivation algorithm,
-     * not two that could drift apart. Also where a required standalone-
-     * `null`-typed #[Query]/path parameter — impossible for any request to
-     * ever satisfy — is rejected; see
-     * UnresolvableParameterException::forImpossibleQueryOrPathNull().
+     * not two that could drift apart. Also where a #[Query]/path parameter
+     * no request value could satisfy is rejected.
      *
      * @return list<HttpBindingPlan>
+     * @throws UnresolvableParameterException
+     * @throws UnsupportedDefaultValueException
      */
     public static function derivePlan(ReflectionMethod $method, Route $route): array
     {
         $plan = [];
         $pathParameterNames = $route->pathParameterNames();
+        $owner = $method->getDeclaringClass()->getName() . '::' . $method->getName() . '()';
 
         foreach ($method->getParameters() as $parameter) {
             $name = $parameter->getName();
@@ -210,25 +233,14 @@ final class Dispatcher
             [$source, $dtoClass] = self::resolveSource($parameter, $name, $type, $pathParameterNames);
             $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
 
-            // A standalone-`null`-typed #[Query]/path parameter can never
-            // be satisfied by any request: query/path values are always
-            // raw, non-empty strings when present, never PHP's real null.
-            // A `#[Query]` field is rejected only when defaultless — a
-            // defaulted one has a genuine working path, an *absent* query
-            // key. A path parameter has no such path regardless of
-            // whether it declares a default: a matched route's own
-            // placeholder capture always supplies a real string, so
-            // resolveScalarFromPlan()'s "value missing, use the default"
-            // branch is unreachable dead code for a path source — the
-            // rejection therefore applies unconditionally there. Either
-            // way, every possible request to the affected route fails —
-            // rejected here, at plan derivation, rather than silently
-            // shipping a route that can never dispatch successfully.
-            $nullQueryOrPathIsImpossible = $scalarType === 'null'
-                && (($source === 'query' && !$parameter->isDefaultValueAvailable()) || $source === 'path');
+            // Only a query or path parameter reads request input here. A
+            // 'default'-source parameter is filled from its own default
+            // value and never touches the request, so any legal type
+            // stays legal for it.
+            $readsRequestInput = $source === 'query' || $source === 'path';
 
-            if ($nullQueryOrPathIsImpossible) {
-                throw UnresolvableParameterException::forImpossibleQueryOrPathNull($name, $source);
+            if ($readsRequestInput && $scalarType !== null && !in_array($scalarType, Hydrator::SUPPORTED_BUILTIN_TYPES, true)) {
+                throw UnresolvableParameterException::forUnsupportedBuiltinType($name, $source, $scalarType);
             }
 
             // An array/iterable-typed path parameter is equally
@@ -253,7 +265,7 @@ final class Dispatcher
                 // any of those branches below is reached.
                 'scalarType' => $scalarType,
                 'hasDefault' => $parameter->isDefaultValueAvailable(),
-                'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
+                'defaultValue' => ParameterDefault::capture($parameter, $owner),
                 // An untyped parameter accepts anything, null included.
                 'allowsNull' => $type === null || $type->allowsNull(),
                 // Only meaningful for 'query'/'path' — a #[Body] DTO's own
@@ -315,6 +327,7 @@ final class Dispatcher
      * @return array<string, mixed>
      * @throws ValidationException
      * @throws MalformedRequestBodyException
+     * @throws UnsupportedBodyMediaTypeException
      */
     private function resolveFromPlan(array $plan, RouteMatch $match, ServerRequestInterface $request): array
     {
@@ -357,35 +370,55 @@ final class Dispatcher
      * @param HttpBindingPlan $param
      * @throws ValidationException
      * @throws MalformedRequestBodyException
+     * @throws UnsupportedBodyMediaTypeException
      */
     private function resolveBodyFromPlan(array $param, ServerRequestInterface $request): object
     {
         $contentType = $request->getHeaderLine('Content-Type');
 
         $formEncoded = MediaType::isFormEncoded($contentType);
-        $decoded = $formEncoded
-            ? $this->parsedBodyAsArray($request)
-            : $this->decodeJsonBody($request->getBody()->getContents());
+
+        if ($formEncoded) {
+            $decoded = $this->parsedBodyAsArray($request);
+        } else {
+            // Cast rather than getContents(): RequestBodyMiddleware has
+            // staged a seekable, replayable body, and the cast is the
+            // representation that rewinds first — so a middleware that
+            // already inspected the body hands this the whole document
+            // rather than the remainder past its cursor. Read once, so
+            // the media-type check and the decoder see the same bytes.
+            $body = (string) $request->getBody();
+
+            // Blank under decodeJsonBody()'s own trim semantics keeps
+            // its meaning of "no fields", whatever the header says — a
+            // route with an all-optional DTO and a bodiless request has
+            // nothing for a media type to describe. Anything else must
+            // say it is JSON to be read as JSON.
+            if (trim($body) !== '' && !MediaType::isJson($contentType)) {
+                throw UnsupportedBodyMediaTypeException::forTypedBody();
+            }
+
+            $decoded = $this->decodeJsonBody($body);
+        }
 
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];
 
-        // A DTO constructor parameter typed UploadedFileInterface needs no
-        // special-casing inside Hydrator: castScalar() already passes any
-        // non-scalar-typed value through unchanged, so merging the files
-        // bag in here is sufficient — Hydrator never needs to know files
-        // exist at all. Left-wins union: a same-named regular field, if
-        // one somehow exists, isn't silently overwritten by a file.
+        // A DTO constructor parameter typed UploadedFileInterface is an
+        // ordinary non-instantiable class-typed field to Hydrator: it
+        // accepts an existing instance of the declared interface and
+        // nothing else, so merging the files bag in here is what makes
+        // the field resolvable — Hydrator never needs to know files exist
+        // at all. Left-wins union: a same-named regular field, if one
+        // somehow exists, isn't silently overwritten by a file.
         $data = $decoded + $this->uploadedFilesByFieldName($request);
 
         $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
 
         try {
             // normalizeFormLiterals is scoped to genuinely form-encoded
-            // requests specifically — a JSON request for the identical
-            // DTO class must keep rejecting a real "true"/"false" JSON
-            // string the same way it always has; see Hydrator::hydrate()'s
-            // own docblock for the full reasoning.
+            // requests: a JSON request for the identical DTO class keeps
+            // rejecting the JSON string "true".
             return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null, normalizeFormLiterals: $formEncoded);
         } finally {
             Telemetry::global()->hydrationEnded($hydrationToken);
@@ -396,9 +429,12 @@ final class Dispatcher
      * An empty body is treated as "no fields" — the same outcome a plain
      * `{}` body already produces — rather than an error, since a route
      * with an all-optional #[Body] DTO commonly expects exactly that. A
-     * non-empty body that fails to parse, or parses to something other
-     * than a JSON object/array (null, a bare string, a bare number, a
-     * bare bool), throws instead of silently becoming "no fields" too.
+     * non-empty body must decode to a JSON *object*: a #[Body] parameter
+     * is a DTO and a DTO's fields are named, so a top-level JSON array
+     * is as malformed as null, a bare string, a bare number or a bare
+     * bool, and all of them throw. This decoder is the only place that
+     * distinction exists — `Hydrator` sees a field map, in which `[]`
+     * and `{}` are the same value.
      *
      * Decoded with `associative: false`, not `true`, and run through
      * `JsonTree::convert()` — this is what lets `Hydrator::typeMismatchMessage()`'s
@@ -427,15 +463,11 @@ final class Dispatcher
 
         $converted = JsonTree::convert($decoded);
 
-        if ($converted instanceof JsonObject) {
-            return $converted->toArray();
-        }
-
-        if (!is_array($converted)) {
+        if (!$converted instanceof JsonObject) {
             throw MalformedRequestBodyException::notAnObject();
         }
 
-        return $converted;
+        return $converted->toArray();
     }
 
     /**
@@ -497,18 +529,15 @@ final class Dispatcher
     /**
      * A class-typed parameter, resolved from the request container.
      *
-     * A default value makes the parameter optional, but only against
-     * genuine absence: nothing registered the id and nothing could be
-     * built for it. A service that *was* registered and then failed to
-     * construct, or a dependency cycle, is a defect rather than an
-     * absent value, so its own exception propagates — otherwise a
-     * misconfigured mailer or a circular graph would quietly arrive as
-     * null and be read as "not provided".
+     * A default value, or a nullable type, stands in for an absent
+     * dependency and never for a broken one — the same rule constructor
+     * autowiring applies, so moving a dependency between a constructor
+     * and a method signature never changes what happens when it breaks.
      *
-     * Without a default, absence is reported against the parameter
-     * rather than against whatever the container failed to autowire:
-     * the useful fact is which route is missing which middleware, not
-     * that some constructor deep inside wanted a string.
+     * Absence with nothing to stand in for it is reported against the
+     * parameter rather than against whatever the container failed to
+     * autowire: the useful fact is which route is missing which
+     * middleware, not that some constructor deep inside wanted a string.
      *
      * @param HttpBindingPlan $param
      */
@@ -520,31 +549,23 @@ final class Dispatcher
             throw UnresolvableParameterException::forParameter($param['name']);
         }
 
+        if (Autowire::isAvailable($this->container, $class)) {
+            return $this->container->get($class);
+        }
+
+        if ($param['hasDefault']) {
+            return $param['defaultValue'];
+        }
+
+        if ($param['allowsNull']) {
+            return null;
+        }
+
         try {
             return $this->container->get($class);
         } catch (ContainerExceptionInterface $e) {
-            if ($this->isRegistered($class) || $e instanceof CircularDependencyException) {
-                throw $e;
-            }
-
-            if ($param['hasDefault']) {
-                return $param['defaultValue'];
-            }
-
             throw UnresolvableParameterException::forContainerParameter($param['name'], $class, $e);
         }
-    }
-
-    /**
-     * Explicit registrations only. RequestScope answers this precisely;
-     * any other PSR-11 container is asked the closest question it can
-     * answer, which for AppScope is exactly this one.
-     */
-    private function isRegistered(string $class): bool
-    {
-        return $this->container instanceof RequestScope
-            ? $this->container->isRegistered($class)
-            : $this->container->has($class);
     }
 
     /**
@@ -644,12 +665,11 @@ final class Dispatcher
      *
      * The check itself is genuinely the same method regardless of source
      * — but a #[Query]/path *value* is not: it only ever arrives as a raw
-     * string (or, for a #[Query] array-style parameter, a PHP array —
-     * unaffected by the normalization below), never a real JSON-decoded
-     * bool the way a request body's own `true`/`false` literal is. This
-     * source-specific normalization step exists so the shared check still
-     * receives a genuinely equivalent value, not a string standing in for
-     * one; see normalizeQueryOrPathLiteral()'s own docblock.
+     * string (or, for a #[Query] array-style parameter, a PHP array),
+     * never a real JSON-decoded bool the way a request body's own
+     * `true`/`false` literal is, so
+     * Hydrator::normalizeTextualBoolean() runs first; see its own
+     * docblock.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException
@@ -673,7 +693,7 @@ final class Dispatcher
         }
 
         $scalarType = $param['scalarType'];
-        $raw = self::normalizeQueryOrPathLiteral($scalarType, $raw);
+        $raw = Hydrator::normalizeTextualBoolean($scalarType, $raw);
 
         if ($scalarType !== null) {
             $message = Hydrator::typeMismatchMessage($scalarType, $raw);
@@ -683,13 +703,7 @@ final class Dispatcher
             }
         }
 
-        $value = match ($scalarType) {
-            'int' => (int) $raw,
-            'float' => (float) $raw,
-            'bool' => (bool) $raw,
-            'string' => (string) $raw,
-            default => $raw,
-        };
+        $value = Hydrator::castScalar($raw, $scalarType);
 
         $errors = [];
 
@@ -709,37 +723,6 @@ final class Dispatcher
         }
 
         return $value;
-    }
-
-    /**
-     * A #[Query]/path value is a raw string when present, never PHP's
-     * real `true`/`false` the way an already-decoded JSON body's own
-     * boolean literal is — but OpenAPI's own query-serialization
-     * convention for a boolean-shaped value documents exactly the
-     * literal spellings "true"/"false" (the same spelling a JSON
-     * boolean prints as), which is what a client generated from this
-     * route's own schema actually sends. Translating those two spellings
-     * into the real PHP `true`/`false` here — the one place a #[Query]/
-     * path *source* genuinely differs from a JSON body — is what lets
-     * Hydrator::typeMismatchMessage()'s shared check (built against
-     * genuinely JSON-decoded values) treat them correctly, for both
-     * `bool` and the narrower standalone `true`/`false` types. `bool`'s
-     * own pre-existing `"1"`/`"0"` spellings are untouched — they already
-     * pass typeMismatchMessage()'s check as raw strings, unaffected by
-     * this. Anything else — including the list a #[Query] array-style
-     * parameter (`?tags=a&tags=b`) produces — passes through unchanged.
-     */
-    private static function normalizeQueryOrPathLiteral(?string $scalarType, mixed $raw): mixed
-    {
-        if (!in_array($scalarType, ['bool', 'true', 'false'], true) || !is_string($raw)) {
-            return $raw;
-        }
-
-        return match ($raw) {
-            'true' => true,
-            'false' => false,
-            default => $raw,
-        };
     }
 
     private function json(mixed $data, int $status): ResponseInterface

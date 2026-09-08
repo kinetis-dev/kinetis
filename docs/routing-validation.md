@@ -48,18 +48,15 @@ the route is registered — not on every request.
 Matching follows a stable, content-only specificity order — never
 registration or discovery-scan order, so live discovery and a compiled
 cache always agree on which route wins for the same set of routes. Each
-real `/`-delimited path segment ranks into one of four tiers, most to
+real `/`-delimited path segment ranks into one of three tiers, most to
 least specific: fully static (`self`, `report-2026.pdf`); a placeholder
 mixed with literal text in the same segment (`report-{id}.pdf`); a
-constrained placeholder occupying the whole segment (`{id:\d+}`); an
-unconstrained one (`{id}`). The tier always wins first — a mixed segment
-beats *any* pure placeholder, constrained or not — with a constrained
-placeholder only outranking an unconstrained one when they'd otherwise
-tie in the same tier. Once every shared segment ties, the route with more
-segments is treated as the deeper, more specific match. `/users/{id:\d+}`
-alongside `/users/{id}`, `/users/self` alongside `/users/{id}`, or
+placeholder occupying the whole segment (`{id}`). The tier always wins
+first — a mixed segment beats a pure placeholder. Once every shared
+segment ties, the route with more segments is treated as the deeper,
+more specific match. `/users/self` alongside `/users/{id}`, or
 `/files/report-{id}.pdf` alongside `/files/report-2026.pdf`, can
-therefore all be registered, in either order, and the more specific one
+therefore both be registered, in either order, and the more specific one
 always wins for a path it also matches. A second route claiming
 *exactly* the same requests (the same method and path shape — placeholder
 names don't count, so `/users/{id}` and `/users/{userId}` collide) is
@@ -82,95 +79,39 @@ such scan shares the one project-wide global-middleware list. A second
 registration under a genuinely different context is rejected instead of
 silently kept under the first one.
 
-### Constraining a placeholder's shape
+### What a placeholder matches
 
-A plain `{id}` matches any run of characters up to the next `/`. Add an
-optional `:pattern` suffix — a raw regex fragment, no delimiters, no
-anchors — to constrain it further:
+A path template describes URL structure and nothing else. `{id}` occupies
+one whole segment and matches any run of characters up to the next `/`;
+there is no inline syntax for narrowing that. What a captured value may
+actually hold is described where the value is consumed — by the
+controller parameter's own type and its validation attributes:
 
 ```{code-block} php
-#[Get('/orders/{id:\d+}')]
-public function show(int $id): array { /* ... */ }
+#[Get('/orders/{id}')]
+public function show(#[GreaterThan(0)] int $id): array { /* ... */ }
 
-#[Get('/files/{hash:[0-9a-f]{40}}')]
-public function download(string $hash): array { /* ... */ }
+#[Get('/files/{hash}')]
+public function download(#[Regex('#^[0-9a-f]{40}$#')] string $hash): array { /* ... */ }
 ```
 
-A path segment that doesn't match the constraint never matches the route
-at all — `GET /orders/abc` against the first example above 404s the same
-way a completely unregistered path would, rather than reaching the
-controller with a value that would go on to fail a `#[Query]`/`#[Body]`
-constraint check instead. `{id:\d+}` and a `#[GreaterThan(0)]` on the
-same `int $id` parameter are complementary, not redundant: the route
-constraint decides whether this path matches *this route at all* (versus
-falling through to a 404, or to a different route registered for the
-same literal segment shape); a parameter constraint decides whether an
-already-matched value is *valid* (versus a 422). A fixed-length
-constraint like the SHA-1 example above needs its own `{n}`/`{n,m}`
-repetition quantifier, which is handled correctly even though it
-contains braces of its own — nothing about the placeholder syntax gets
-confused by a `{...}` inside the constraint.
+`GET /orders/abc` therefore reaches the route and fails binding with a
+`422` naming `id`, rather than falling through to a 404. That single
+place is also what the generated OpenAPI document reads: the path key is
+the plain template, and the parameter's declared type and constraints
+become its `schema`, minus any constraint with no JSON Schema keyword to
+map onto (see [Validation constraints](#validation-constraints)).
 
-A pattern is regex text Kinetis inserts rather than rewrites, and the
-brace scanner that finds where the placeholder ends reads enough PCRE to
-know where a `}` is *not* that end. All of these parse and match
-correctly:
-
-| constraint | matches |
-|---|---|
-| `{value:\}}` | a literal `}` — an escaped brace |
-| `{value:[{]}` | a literal `{` — a brace as an ordinary character-class member |
-| `{value:[[:alpha:]{]}` | a letter or a literal `{` — a POSIX sub-form inside a class |
-| `{value:a\Q{\E}` | a literal `a{` — a `\Q...\E` quoted span |
-| `{value:\Q~\E}` | a literal `~` — the delimiter itself, inside a quoted span |
-| `{value:(?#})a}` | `a` — a `}` inside a `(?#...)` comment group |
-| `{value:[#~!%@|+\-=]+}` | any of those characters, delimiter included |
-
-The delimiter is `~`, and a literal occurrence of it in a pattern is
-escaped rather than dodged by picking a different one. Inside a `\Q...\E`
-span that escape needs a rewrite rather than a plain backslash — a
-backslash is literal text there, so `\~` would match two characters
-instead of one — so the span is closed and reopened around it. That
-happens automatically; the pattern you write is the pattern that runs.
-
-```{warning}
-The scanner is a bounded reader of those constructs, not a full PCRE
-parser, and the supported constraint grammar is exactly what it can read
-faithfully. Two things fall outside it, and both are rejected at
-registration with an error naming them rather than mis-scanned:
-
-**Extended mode** — the `x` flag, via `(?x)`, `(?x:...)`, or `x` among a
-set that enables it like `(?imx:...)`. In extended mode an unescaped `#`
-starts a comment running to the end of the line, so a `}` after one would
-stop closing the placeholder; unlike every construct in the table above,
-whether the mode is on at a given point is flag *scope* rather than
-something with a fixed opener and closer. A route constraint is a single
-fragment, with no real need for the whitespace and comments extended mode
-exists to allow. Only flags a run actually *enables* count — everything
-after a `-` is being switched off, so `(?-x:...)` and `(?im-sx:...)`
-register and match normally.
-
-**Control verbs** — anything spelled `(*...)`, such as `(*MARK:name)` or
-`(*atomic:...)`. Their shape varies by verb: some end at their first `)`
-while others hold a whole nested sub-pattern, so a `}` inside one can't
-be told apart from the brace closing the placeholder. Use `(?>...)` for
-atomic grouping; the backtracking verbs have no meaning in a
-single-fragment constraint.
-
-Both exclusions are about a construct being *active*, not about the
-characters that spell it. The constructs in the table above compose with
-them exactly as you'd expect: `{value:[(*]}` is a character class
-matching `(` or `*`, `{value:\Q(?x)\E}` matches that literal text, and
-`{value:(?#(*)a}` is a comment followed by `a` — none of them turns
-anything on, and all three register and match.
-```
-
-This is purely a routing-time detail: `/orders/{id}` and `/orders/{id:\d+}`
-are indistinguishable to a client, to `#[Query]`/`#[Body]` binding, and
-in the generated OpenAPI document — the constraint moves into the path
-parameter's own `schema.pattern` there, and the path key itself always
-reads as plain `{id}`, since OpenAPI's own path-templating syntax has no
-concept of an inline regex.
+A `{...}` expression that isn't a plain placeholder name — `{id:\d+}`,
+`{not a name}`, or an unclosed `{id` — is a mistake in the template, not
+literal text, and is rejected at registration with an
+`InvalidRoutePathException` naming the expression. Placeholder names
+follow PHP's identifier grammar restricted to ASCII, and the same name
+may appear only once in one template. Two placeholders may not sit
+directly against each other either — `{first}{second}` gives nothing to
+split a segment on, so it is rejected the same way; separate them with
+literal text (`{first}-{second}`) or capture the segment as one
+placeholder.
 
 ## Sharing routes across controllers
 
@@ -311,7 +252,7 @@ falls back to the parameter's default; without one, a nullable parameter
 receives `null`, and a non-nullable one is a `422` (`is required.`),
 joining the route's other binding errors in the same response. A value
 whose shape doesn't match the declared type (an array where a scalar is
-expected, a non-numeric string for `int`/`float`) is also a `422`,
+expected, a non-numeric or fractional string for `int`) is also a `422`,
 not a silently wrong cast — see [Scalar type checking](#scalar-type-checking)
 below.
 
@@ -408,10 +349,10 @@ Anything the container can supply works the same way — a repository, a
 a dependency only one route needs is only built for that route, instead
 of on every request to the class.
 
-If the container cannot supply it, the failure surfaces: a route that
+If nothing can supply the parameter, the failure surfaces: a route that
 forgot the middleware meant to register the value fails loudly rather
-than handing the controller something disconnected. Give the parameter a
-default to say that absence is acceptable instead:
+than handing the controller something disconnected. A default value, or
+a nullable type, says that absence is acceptable instead:
 
 ```{code-block} php
 #[Get('/reports/maybe')]
@@ -421,17 +362,10 @@ public function maybe(?CurrentUserInterface $user = null): array
 }
 ```
 
-A default has to be written out even when the type is nullable — unlike
-`#[Query]` and path parameters, where a nullable type alone is enough.
-Absence means something different here: for those, a missing value is
-ordinary input variation, while a value the container cannot supply is
-usually a route missing its middleware. Writing the default is how you
-say which of the two you meant.
-
-The default covers genuine absence only. A service that *was* registered
-and then failed to construct, or a dependency cycle, is a defect rather
-than an absent value, so it is reported rather than quietly arriving as
-`null`.
+That covers absence only — an id the container could never supply.
+Everything else is a defect and is reported rather than quietly arriving
+as `null`; {doc}`container` states the rule constructor autowiring and
+`Dispatcher` share.
 
 ```{note}
 This applies to HTTP controllers. An MCP tool's arguments arrive as one
@@ -442,7 +376,10 @@ those arguments — see {doc}`mcp`.
 A parameter matching none of the six — untyped, or scalar-typed with no
 attribute and no matching placeholder — falls back to its default value
 if it has one, and otherwise fails with an error naming every source it
-could have come from, rather than passing `null` silently.
+could have come from, rather than passing `null` silently. Not every
+default can be captured for reuse — see "Default values a plan captures"
+below for the rule, which applies to a controller parameter and a DTO
+field alike.
 
 (multipart-form-data-file-uploads)=
 ## Multipart/form-data & file uploads
@@ -452,21 +389,34 @@ from the request's `Content-Type`:
 
 | Content-Type | Read from |
 |---|---|
-| `application/json` (or anything else) | `json_decode()` on the raw body |
+| `application/json`, or an `application/*+json` subtype | `json_decode()` on the raw body |
 | `multipart/form-data` | `getParsedBody()` |
 | `application/x-www-form-urlencoded` | `getParsedBody()` |
+
+A nonblank body under any other media type — or under no `Content-Type`
+at all — is refused with a `415` before the DTO is hydrated and before
+the controller is constructed, so a handler never receives bytes read
+under a header that did not describe them, and neither its constructor
+nor a factory registered for it runs. The error names the supported media
+types and never echoes the one received. A blank or whitespace-only body
+still hydrates an all-optional DTO from its own defaults whatever the
+header says: there are no bytes for a media type to describe. A route
+that has to accept arbitrary or binary bytes takes a
+`ServerRequestInterface` parameter instead of `#[Body]`, and receives
+them untouched.
 
 A `Content-Type` is matched on its type and subtype alone — everything
 before the first `;`, so a `charset` or a multipart `boundary` parameter
 changes nothing — and compared ASCII-case-insensitively, as RFC 9110
 §8.3.1 requires: `Application/X-WWW-Form-Urlencoded; charset=UTF-8`
 lands on the same row as `application/x-www-form-urlencoded`. The match
-is exact, so a longer media type that merely begins with one of them —
-`application/x-www-form-urlencodedevil` — is a different media type and
-takes the first row. `Kinetis\Http\MediaType` is that classification,
-and every adapter parsing a form body itself reads a request's
-`Content-Type` through it, so an application gets the same answer under
-every runtime (see {doc}`runtime-adapters`).
+is exact on the subtype apart from RFC 6839's `+json` suffix, so a
+longer media type that merely begins with a listed one —
+`application/x-www-form-urlencodedevil` — names none of these rows and
+is refused. `Kinetis\Http\MediaType` is that classification,
+and the one place a `Content-Type` is read — by `Dispatcher` here, and by
+the Kernel's own `RequestBodyMiddleware` before it — so an application
+gets the same answer under every runtime (see {doc}`runtime-adapters`).
 
 Field names nest the way PHP's own parser nests them, under every
 runtime: `user[address][city]` builds nested arrays,
@@ -474,11 +424,12 @@ runtime: `user[address][city]` builds nested arrays,
 file names build the same tree in `getUploadedFiles()`. How large and
 how complicated a form may get is bounded by `Kinetis\Http\Form\FormLimits`
 — input variables, file parts, nesting depth, multipart part and header
-counts, and total bytes — identically on all four adapters; a form past
-any of those is refused with a `413` before the handler runs, never
-handed on with the over-limit fields quietly missing. See "Form bodies:
-one contract under every runtime" in {doc}`runtime-adapters` for the
-numbers and the reasoning.
+counts, and total bytes — identically under all four adapters, because
+one middleware inside the Kernel applies them; a form past any of those
+is refused with a `413` before the handler runs, never handed on with the
+over-limit fields quietly missing. See "Request bodies: one contract
+under every runtime" in {doc}`runtime-adapters` for the numbers and the
+reasoning.
 
 A `#[Body]` DTO can mix ordinary fields with an `UploadedFileInterface`-typed
 constructor parameter — no special handling needed in the DTO itself:
@@ -527,15 +478,14 @@ public function receiveFile(UploadedFileInterface $file): array
 
 ```{note}
 This works the same way regardless of which `RuntimeAdapterInterface` is
-driving the request, and for every method a form can arrive on. All four
-adapters fill the uploaded-files bag through the same
-`Kinetis\Http\Form` entry point, over raw bytes the runtime never
-parsed — `php://input` under the SAPI adapters, which require
-`enable_post_data_reading=0`, the event body under
-`kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
+driving the request, and for every method a form can arrive on. An
+adapter delivers raw bytes the runtime never parsed — `php://input`
+under the SAPI adapters, which require `enable_post_data_reading=0`, the
+event body under `kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
 `http.raw_body: true`-preserved body under `kinetis/roadrunner-adapter`'s
-`RoadRunnerAdapter`. The one difference underneath is which multipart
-parser expands the body; see {doc}`runtime-adapters`.
+`RoadRunnerAdapter` — and the Kernel's own `RequestBodyMiddleware` fills
+the uploaded-files bag from them through `Kinetis\Http\Form`. There is
+one parse, under every runtime; see {doc}`runtime-adapters`.
 ```
 
 ## Returning a status other than the route's default
@@ -615,10 +565,14 @@ final readonly class PagesController
         return HtmlResponse::create('<h1>Welcome</h1>');
     }
 
-    #[Get('/avatars/{id}')]
-    public function avatar(int $id): ResponseInterface
+    #[Get('/reports/{id}.csv')]
+    public function report(int $id): ResponseInterface
     {
-        return FileResponse::fromPath("/storage/avatars/{$id}.png");
+        return FileResponse::fromContents(
+            "id,total\n{$id},42\n",
+            'text/csv',
+            downloadFilename: "report-{$id}.csv",
+        );
     }
 
     #[Get('/old-url')]
@@ -639,12 +593,10 @@ final readonly class PagesController
   `Content-Type: text/html`.
 - `PlainTextResponse::create(string $text, int $status = 200)` sets
   `Content-Type: text/plain`.
-- `FileResponse::fromPath(string $path, int $status = 200, ?string $contentType = null, ?string $downloadFilename = null)`
-  reads a file from disk and detects its content type automatically when
-  `$contentType` is omitted. `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
-  does the same for data you already have in memory — a generated image
-  or PDF, for instance. Either one adds a `Content-Disposition: attachment`
-  header when `$downloadFilename` is given — see below.
+- `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
+  builds a response around bytes you already hold — a generated CSV,
+  image or PDF — and adds a `Content-Disposition: attachment` header when
+  `$downloadFilename` is given, see below.
 - `RedirectResponse::to(string $url, int $status = 302)` sets a `Location`
   header.
 - `ErrorResponse::create(int $status, string $message, array $headers = [])` builds
@@ -652,6 +604,22 @@ final readonly class PagesController
   404/405/500 responses already use — a real 405 (a path matches, but not
   this method) carries a real RFC 9110 `Allow` header listing every
   method the path *does* support, via this same `$headers` parameter.
+
+No response builder takes a filesystem path. Reading one synchronously
+holds the worker thread for the length of the I/O, and core carries no
+asynchronous filesystem client.
+
+- Files the deployment owns — CSS, images, downloads shipped with the
+  release — are served by the web server in front of the application
+  (Caddy's `file_server`, nginx's `root`), which answers them without
+  entering a worker at all.
+- Files the application owns are read through
+  [kinetis/storage](storage.md), whose local adapter suspends the Fiber
+  rather than blocking, and the bytes it returns are passed to
+  `fromContents()`.
+- A body too large to hold in memory is written incrementally by a route
+  returning a `Kinetis\Http\StreamedResponse`, whose emitter writes and
+  flushes each chunk itself.
 
 ### Download filenames are treated as untrusted
 
@@ -714,6 +682,15 @@ final readonly class CreateProductRequest
 | `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* |
 | `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* |
 
+`#[Regex]` and `#[NotBlank]` are runtime-only: neither has an equivalent
+JSON Schema keyword. `pattern` holds an undelimited ECMA-262 expression, a
+different dialect from the delimited PHP PCRE `#[Regex]` takes, and no
+keyword carries `#[NotBlank]`'s trim-aware blank-string semantics —
+`minLength: 1` rejects the empty string, not `"   "`. For those two a
+generated OpenAPI or MCP schema is broader than the check the request
+actually gets. Every other constraint in the table maps onto a keyword; see
+[Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
+
 `#[MinLength]`/`#[MaxLength]` and `#[GreaterThan]`/`#[LessThan]` compose on
 the same field for a length or numeric range — `Hydrator` runs every
 `Constraint`-implementing attribute on a parameter, not just the first
@@ -743,11 +720,12 @@ A failed validation short-circuits straight to a `422` — the controller
 method is never invoked at all.
 
 An empty body is treated as no data at all, so a DTO with only optional
-fields hydrates from its own defaults. A body that isn't valid JSON, or
-that decodes to something other than a JSON object (`null`, a bare
-string, a number, a boolean), is a `400` instead, before any field-level
-validation runs — see "Scalar type checking" below for how a genuine JSON
-*array* body is handled once it reaches field-level validation:
+fields hydrates from its own defaults — the same outcome a `{}` body
+produces. A non-empty body must be a JSON object: one that isn't valid
+JSON, or that decodes to anything else (a top-level JSON array, `null`,
+a bare string, a number, a boolean), is a `400` instead, before any
+field-level validation runs. That check belongs to the decoder, which is
+where the object/array distinction still exists:
 
 ```{code-block} json
 {
@@ -763,17 +741,29 @@ first — casting only ever happens once that check passes. This is the
 one check shared by every source of typed input: a `#[Body]` DTO field,
 a `#[Query]`/path parameter, and — since `Kinetis\Mcp\McpDispatcher`
 delegates to the identical `Hydrator::typeMismatchMessage()` method — an
-MCP tool's own top-level argument. Every builtin type PHP can attach to
-a constructor or method parameter gets one of the two policies below,
-never left to fall through silently:
+MCP tool's own top-level argument.
 
-**Supported — checked, cast, and accepted:**
+A request value binds to one of seven builtin types:
+`string`, `int`, `float`, `bool`, `array`, `iterable`, `mixed`. Every
+other builtin — `null`, `true`, `false`, `object`, `callable` — is a
+definition error, not a runtime one: see "Builtin types outside the
+supported set" below.
 
 - A `string`-typed field/parameter must actually be a string. An array,
   object, number, or boolean is rejected.
-- An `int`/`float`-typed field/parameter accepts a real number or a
-  numeric string (`"42"` for an `int` field is fine) — but rejects a
-  non-numeric string, an array, or a boolean.
+- An `int`-typed field/parameter accepts three things, all inside PHP's
+  native integer range: a JSON integer (`42`), a float with no fractional
+  part (`42.0`), and a string spelled as a plain base-10 integer (`"42"`,
+  `"+42"`, `"-42"`). A string is read as written, never through a float,
+  so a decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
+  whitespace-padded one, and a value a `double` cannot tell apart from an
+  integer (`"1.0000000000000001"`) are all rejected. So is a fractional,
+  non-finite, or out-of-range number: the result is a `422` ("must be an
+  integer within the platform integer range."), never a truncated cast —
+  `4.5` does not become `4`. An array or a boolean is rejected too.
+- A `float`-typed field/parameter accepts a real number or a numeric
+  string, and rejects any value that isn't finite (`"1e999"` overflows to
+  `INF`) as well as a non-numeric string, an array, or a boolean.
 - A `bool`-typed field/parameter accepts exactly `true`, `false`, `1`,
   `0`, `"1"`, or `"0"` for a `#[Body]`/MCP value — see "Query and path
   values are raw strings" below for the different, source-specific
@@ -799,51 +789,48 @@ never left to fall through silently:
   a bare `[]` — PHP has no native empty-object type, so a naive empty
   PHP array would otherwise serialize as the invalid JSON array `[]`
   where JSON Schema requires an object.
-- A standalone `null`-typed field/parameter (PHP's own literal-null
-  type) accepts only a literal JSON `null` — any other value is
-  rejected. See "Query and path values are raw strings" below for why
-  this type can never be satisfied by a `#[Query]`/path source at all.
-- Standalone `true`/`false`-typed fields (PHP 8.2's literal-boolean
-  types) each accept exactly that one boolean value — narrower than
-  `bool`, which accepts either.
-
-**Rejected — no value is ever accepted, once one is actually supplied:**
-
-- `object`-typed fields/parameters are always rejected. A JSON object on
-  the wire is always either hydrated into a nested DTO (a class-typed
-  field) or, for a `mixed`/array-element field, unwrapped back into a
-  plain PHP array/scalar tree before it ever reaches application code —
-  never handed through as a raw PHP `object`, so there is no request
-  value that could ever truthfully construct a bare `object`-typed
-  parameter.
-- `callable`-typed fields/parameters are always rejected, for a
-  security reason as much as a representational one: a JSON string
-  handed to a `callable`-typed constructor parameter is exactly the
-  shape of an arbitrary-function-name-injection risk if that value is
-  ever invoked downstream, so it's refused outright rather than treated
-  as though it were safe.
-
-Both are also refused earlier, at OpenAPI-document/MCP-tool-schema
-generation time, since neither has a truthful JSON Schema representation
-this framework produces — but that generation step is optional
-(`/openapi.json`, `tools/list`) and never a prerequisite for a route or
-tool to register and dispatch real requests. The type-mismatch check
-above is what closes the gap for every deployment shape: it runs on
-every real request/tool call regardless of whether schema generation
-ever executes.
 
 A mismatch is a `422` with a message under that field's key, in the same
 `errors` structure a failed constraint produces — not a value silently
 coerced into something that happens to look plausible (an array becoming
 the literal string `"Array"`, a non-numeric string becoming `0`), and
-never a raw `TypeError` escaping the constructor for a genuinely
-unsupported type. Every field's own errors are collected together before
-throwing once, so two independently-invalid fields in the same request —
-including two rejected-category fields at once — both surface in the
+never a raw `TypeError` escaping the constructor. Every field's own
+errors are collected together before throwing once, so two
+independently-invalid fields in the same request both surface in the
 same response, not just whichever one happened to be checked first. An
 MCP tool's own validation failure surfaces the same `{field: [messages]}`
 shape inside a `tools/call` result's `isError: true` content, rather than
 a JSON-RPC-level error — see {doc}`mcp`.
+
+### Builtin types outside the supported set
+
+`null`, `true`, `false`, `object` and `callable` are rejected as
+declarations, before any request reaches them. A JSON body decodes into
+arrays and scalars, never a real PHP object; a query string and a path
+segment carry text only; and a `callable`-typed parameter fed an
+attacker-controlled string is an arbitrary-function-name-injection risk
+if it is ever invoked downstream. None of them has a request value worth
+supporting, so none of them is accepted anywhere a request value is
+bound.
+
+The rejection fires wherever the binding is described:
+
+- A `#[Body]` DTO field is rejected with
+  `Exception\UnsupportedDtoDefinitionException` when its hydration plan
+  is compiled — at build time for an AOT-compiled plan, on the first
+  hydration for a live one.
+- A `#[Query]` or path parameter is rejected with
+  `Kinetis\Http\Exception\UnresolvableParameterException` when the route's
+  binding plan is derived, which `Router::register()` does eagerly — so
+  the route never registers, is never advertised at `/openapi.json`, and
+  never accepts traffic.
+- An OpenAPI or MCP schema is refused with
+  `Exception\JsonSchemaException`, since there is no shape a client could
+  be told to send.
+
+A controller parameter that reads no request value at all — one filled
+from the request container or from its own default — is unaffected;
+its type is that parameter's own business.
 
 ### Query and path values are raw strings
 
@@ -852,34 +839,18 @@ source — but the *value* it checks is not. A `#[Body]`/MCP value is
 already a real, JSON-decoded PHP value (a genuine `bool`, `array`, ...);
 a `#[Query]`/path value only ever arrives as a raw string (or, for a
 `#[Query]` array-style parameter — `?tags=a&tags=b` — a list of them).
-Two consequences follow directly from this:
+Several consequences follow directly from this:
 
-- **`bool`/`true`/`false` accept the OpenAPI-documented `"true"`/`"false"`
-  spelling too, not just `"1"`/`"0"`.** `Dispatcher` translates those two
-  literal string spellings into real PHP `true`/`false` before the shared
-  check runs — the one place a `#[Query]`/path *source* genuinely differs
-  from a JSON body, so the same check still receives a genuinely
-  equivalent value. `bool`'s own pre-existing `"1"`/`"0"` spellings are
-  unaffected.
-- **A standalone `null`-typed `#[Query]`/path parameter is rejected at
-  registration, not at request time.** There is no established, safe
-  string convention for "this means explicit null" the way `"true"`/
-  `"false"` is an established convention for booleans, so this
-  declaration is unconditionally impossible to satisfy: a `#[Query]`
-  parameter with no default fails "is required." when omitted and
-  "must be null, ... given." for any value actually sent; a path
-  parameter fails the same way *regardless* of any declared default,
-  since a matched route's own placeholder capture always supplies a
-  real, non-empty string — there is no "value missing" case a default
-  could ever be reached from. Both are rejected at `Router::register()`
-  itself — the one boundary every route passes through regardless of
-  deployment shape, so a route that could never succeed is rejected
-  before it can ever register, be advertised at `/openapi.json`, or
-  accept traffic, rather than only failing the first time a real client
-  actually dispatches to it — a `#[Query]` field genuinely optional at
-  this type needs a default (so omitting it is the only way to reach
-  it); a path parameter needs a different type, or to move to
-  `#[Body]`, where a real JSON `null` is representable.
+- **`bool` accepts the OpenAPI-documented `"true"`/`"false"` spelling
+  too, not just `"1"`/`"0"`.** `Hydrator::normalizeTextualBoolean()`
+  translates those two literal string spellings into real PHP
+  `true`/`false` before the shared check runs — the one place a
+  `#[Query]`/path *source* differs from a JSON body, so the same check
+  still receives an equivalent value. `bool`'s own `"1"`/`"0"`
+  spellings are unaffected.
+- **A `#[Query]`/path parameter typed outside the supported set is
+  rejected at registration**, not at request time — see "Builtin types
+  outside the supported set" above.
 - **An `array`/`iterable`-typed path parameter is rejected at
   registration too, unconditionally.** A `#[Query]` array works via the
   repeated-key form below, but a route placeholder is always exactly
@@ -925,22 +896,12 @@ schema under all three, since `Dispatcher` hydrates the same DTO class
 regardless of which the client sent; the wire representation is what
 differs, laid out below.
 
-- `bool`/standalone `true`/`false` accept both the pre-existing
-  `"1"`/`"0"` spelling *and* the `"true"`/`"false"` spelling for a
-  form-encoded value — the identical normalization `#[Query]`/path
-  already has, applied here only when `Dispatcher` knows the whole
-  request body is form-encoded, so a real JSON request for the same
-  field still correctly rejects the JSON *string* `"true"` (as opposed
-  to the JSON boolean literal `true`) exactly as it always has.
-- Standalone `null` can never be satisfied by a form-encoded value at
-  all, for the identical reason a `#[Query]`/path value can't (there is
-  no established string convention for "this means explicit null") —
-  but since the *same* DTO class can also be reached via a genuine JSON
-  body on the same route, this is a per-request outcome, not a
-  registration-time impossibility the way a `#[Query]`/path parameter's
-  own type is: a route accepting a `#[Body]` DTO with a standalone-null
-  field still registers and works correctly over JSON, and only fails a
-  request that happens to arrive form-encoded instead.
+- `bool` accepts both the `"1"`/`"0"` spelling *and* the
+  `"true"`/`"false"` spelling for a form-encoded value — the identical
+  normalization `#[Query]`/path already has, applied here only when
+  `Dispatcher` knows the whole request body is form-encoded, so a real
+  JSON request for the same field still rejects the JSON *string*
+  `"true"` (as opposed to the JSON boolean literal `true`).
 - `array`/`iterable` get the identical map-shaped-value rejection
   documented above (a form-encoded field parsed into a genuinely
   associative PHP array is rejected the same way a JSON object is), but
@@ -1066,27 +1027,33 @@ than only reporting the outer field name:
 }
 ```
 
-This is a data-driven distinction, not a type-driven one: nesting only
-happens when the incoming value for that field is actually an array. A
-class-typed field holding anything else — most notably an
-`UploadedFileInterface` merged in for a [multipart](#multipart-form-data-file-uploads)
-field — passes through completely unchanged, exactly like it always has.
+A class-typed field accepts exactly two shapes and nothing else: an
+object-shaped value, hydrated into the declared class; or a value that is
+already an instance of that class, taken as given — most notably an
+`UploadedFileInterface` merged in for a
+[multipart](#multipart-form-data-file-uploads) field. A scalar, a `null`
+for a non-nullable field, or an object of some other class is a `422`
+under that field's key, never a raw `TypeError` from the constructor.
 
-```{note}
-A self-referencing (or mutually referencing) DTO stops nesting the moment a
-class repeats in the chain, rather than recursing forever — not just a
-safety net, but a requirement of {doc}`caching`'s AOT compilation, which
-bakes a DTO's hydration plan into a cache file via `var_export()` and has
-no way to represent a genuinely circular array as re-parseable PHP. A
-self-referencing field simply receives its raw array unhydrated one level
-deep in that case.
-```
+Object-shaped means a JSON object (`{...}`, including `{}`) or — for a
+direct `Hydrator::hydrate()` call or a form-encoded body, neither of which
+carries a JSON object/array distinction — a map-shaped PHP array. A JSON
+array is not an object: `[]` and `[...]` are both a `422` ("must be a JSON
+object, not a JSON array.") even for a class whose every field has a
+default and would otherwise have accepted no fields at all.
+
+A field typed as a class that cannot be instantiated — an interface, an
+abstract class, an enum — accepts only an existing instance: nothing on
+the wire can construct one, so an array or a scalar for it is a `422`
+("must be a `Psr\Http\Message\UploadedFileInterface` instance."). That
+is exactly how a `#[Body]` DTO's own file field works, since `Dispatcher`
+merges the uploaded file in as an object.
 
 ### Collections of nested DTOs
 
 A constructor parameter typed `array` and carrying
 `#[ListOf(SomeClass::class)]` is hydrated as a list of nested DTOs — each
-array-shaped element is hydrated the same way a single nested DTO field is:
+object-shaped element is hydrated the same way a single nested DTO field is:
 
 ```{code-block} php
 use Kinetis\Validation\Constraints\GreaterThan;
@@ -1134,16 +1101,100 @@ response:
 }
 ```
 
-A list element that isn't itself an array — most notably an
-already-constructed instance — passes through completely unchanged, the
-same tolerance a single nested DTO field gives a non-array value.
+Every element gets the same two-shape contract a single nested DTO field
+has: object-shaped and hydrated into the item class, or already an
+instance of it. A scalar, a `null`, a nested JSON array, or an object of
+another class is a `422` under that element's own `field.index` key —
+`items.1: must be an object, value given.` — alongside every other error
+in the response.
 
-```{note}
-The same self-reference guard described above covers a `#[ListOf]` pointing
-back at its own class: nesting stops the moment the class repeats in the
-chain, and that list's elements receive their raw array unhydrated one
-level deep.
+`#[ListOf]` itself is only valid on a parameter typed `array`, and its
+item class must be a class that can be instantiated.
+
+### DTO definitions Kinetis rejects
+
+A hydration plan is compiled from a DTO's constructor by reflection —
+ahead of time by `kinetis build`, or on that class's first hydration
+otherwise. It supports a finite set of parameter shapes: one of the seven supported
+builtin types, a single named class (hydrated when it can be
+instantiated, instance-only when it can't), an `array` carrying
+`#[ListOf]`, and nullable variants of each.
+
+Anything else is rejected while the plan is compiled, with an
+`UnsupportedDtoDefinitionException` naming the class and the parameter —
+so the definition fails at build time, or on that route's first request
+in development, rather than as a `TypeError` on a live one:
+
+- A **union** or **intersection** parameter type (`int|string`,
+  `Countable&ArrayAccess`). Kinetis hydrates neither; declare a single
+  named type.
+- A **recursive or mutually recursive** class reference — a `Comment`
+  with a `Comment $parent` field, or two DTOs naming each other. A plan
+  embeds each nested class's own plan inline, so a cycle has no finite
+  plan, and nothing {doc}`caching`'s AOT compilation could bake into a
+  cache file through `var_export()`. Take the nested payload as a plain
+  `array` field, or model the deeper level as its own request.
+- A class type reflection cannot resolve to a real class: `self`,
+  `parent`, `static`.
+- A builtin type outside the supported set — see "Builtin types outside
+  the supported set" above.
+- `#[ListOf]` on a parameter that isn't typed `array`, or naming a class
+  that cannot be instantiated.
+- A `#[Body]` DTO class that cannot itself be instantiated.
+
+The generated OpenAPI document and MCP tool input schemas hold the same
+line: a class-typed field whose class cannot be instantiated has no
+truthful object schema, so schema generation refuses it rather than
+emitting a bare `{"type": "object"}` no request could satisfy.
+`UploadedFileInterface` is the one such type both sides accept — it is
+described as `{"type": "string", "format": "binary"}` and supplied by
+`Dispatcher` from the request's uploaded-files bag.
+
+### Default values a plan captures
+
+A plan — the hydration plan behind a `#[Body]` DTO, the binding plan
+behind a controller method — is derived once and reused: memoized for a
+persistent worker's whole lifetime, and written into
+`.kinetis-cache/compiled.php` by `kinetis build` (see {doc}`caching`).
+The default value it captures is handed to every request that leaves
+that parameter unfilled, so a default has to be a value PHP would have
+rebuilt identically on every evaluation: a scalar, `null`, an array of
+those, or an enum case. An enum case qualifies because a case is a
+process-wide singleton — there is no second instance for a plan to hand
+out in place of the one the declaration names.
+
+Any other object default is rejected where the plan is derived, with an
+`UnsupportedDefaultValueException` naming the DTO class or
+`Controller::method()` and the parameter: on that DTO's first hydration
+or that route's registration in development, at build time for an AOT
+build.
+
+```php
+enum SortDirection: string
+{
+    case Ascending = 'asc';
+    case Descending = 'desc';
+}
+
+final readonly class SearchRequest
+{
+    public function __construct(
+        public string $term,
+        // Captured: every request that omits `direction` gets this case.
+        public SortDirection $direction = SortDirection::Ascending,
+        // A per-request value: `new DateTimeImmutable()` written here
+        // is rejected, since a plan holds one moment — the first
+        // request's, or the build's — for every request after it.
+        public ?DateTimeImmutable $since = null,
+    ) {}
+}
 ```
+
+Where a request-time object is what the parameter wants, declare it
+nullable with a `null` default, as `$since` does above, and build the
+real value in the constructor body or in the controller. That code runs
+per request, which is the whole point of a `new` in a default and the
+one thing a captured default cannot do.
 
 ## Zero-config OpenAPI & Swagger UI
 
@@ -1165,9 +1216,9 @@ attach to them behaves like middleware anywhere else.
 
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,
-`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `pattern`,
-`enum`, `format: uri`, `format: uuid`) — except `#[NotBlank]`, which has no
-distinct JSON Schema keyword of its own. `#[Query]` parameters and path
+`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `enum`,
+`format: uri`, `format: uuid`) — except `#[NotBlank]` and `#[Regex]`, which
+have no JSON Schema keyword to map onto. `#[Query]` parameters and path
 parameters become `parameters` entries, with the identical constraint-to-
 keyword mapping applied to their own `schema` when they carry one. A
 controller method's declared return type becomes the default response's
@@ -1223,9 +1274,10 @@ route's default — nothing checks that the method actually produces the
 status it declares, the same trust already placed in the route attribute's
 own default.
 
-Both are served **ahead of** the routing pipeline — they read `Router`'s
-already-registered routes, not application state, so they need no
-`RequestScope` at all.
+Both routes resolve like any other: the `openapi` middleware group runs
+through the normal pipeline, and `Kernel` registers `OpenApiAccess` and
+`OpenApiDocumentProvider` on each request scope for the controller's
+constructor to be autowired from.
 
 ### Choosing where the documentation is reachable
 
@@ -1262,26 +1314,19 @@ according to whichever environment compiled it rather than the one it is
 running in. The routes always exist — `routes:list` shows them either
 way — and a closed one answers exactly as an unregistered path does.
 
-### Clearing the cached document
+### When the document is generated
 
 In development the document is generated per request, so an attribute
-you change is visible on the next reload. In production it is generated
-once and cached in whatever `CacheInterface` the application has bound,
-with no expiry: the route table cannot change without a deployment, and
-a document that expired on a timer would spend that window describing an
-API the deployment no longer serves.
+you change is visible on the next reload.
 
-The consequence is that a deployment which changes routes, DTOs, or
-constraints has to drop it:
-
-```{code-block} sh
-php vendor/bin/kinetis openapi:clear
-```
-
-Run it alongside `kinetis build`. It is safe when nothing is cached, and
-in development, where nothing ever is. With no cache configured — the
-default `NullSimpleCache` — nothing is stored and every request
-regenerates, which is correct but slower for a large route table.
+In production it is generated once per process and held in memory for
+that process's lifetime, by a provider the `Kernel` builds for its own
+router. The route table cannot change under a running process, and a
+deployment that changes routes, DTOs, or constraints starts new
+processes, each with its own router and its own provider. So the
+document a process serves always describes the routes that process
+dispatches: there is nothing to clear, no expiry to wait out, and no
+cached entry a previous deployment could leave behind.
 
 ### Hiding a route from the document
 
@@ -1328,6 +1373,6 @@ final readonly class InternalController
 - {doc}`caching` — how route/binding/validation metadata gets precomputed
   ahead of time in production, and exactly what that does and doesn't
   change about the behavior described on this page.
-- {doc}`runtime-adapters` — how each runtime gets a request's multipart
-  body into the uploaded-files bag `#[Body]`/`UploadedFileInterface` read
-  from here.
+- {doc}`runtime-adapters` — how a request's raw bytes reach the one
+  middleware that fills the uploaded-files bag
+  `#[Body]`/`UploadedFileInterface` read from here.

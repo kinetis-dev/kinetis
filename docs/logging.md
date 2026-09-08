@@ -65,19 +65,17 @@ cause via `getPrevious()` when there was one.
 This log call is best-effort: a registered logger that itself throws
 cannot prevent the `500` this middleware exists to guarantee. The same
 is true wherever else a framework internal logs from inside a fallback
-it must still honor regardless — `Http\OpenApi\DocumentationController`'s
-cache read/write-failure warnings, for one, see {doc}`appendix`. See
-`Kinetis\Logging\SafeLogger`.
+it must still honor regardless — `Http\Kernel`'s request-scope disposal,
+for one, see {doc}`appendix`. See `Kinetis\Logging\SafeLogger`.
 
 ### `TransactionGuard::rollbackDangling()`
 
 Registered as a `RequestScope` dispose hook on every request whenever
 `kinetis/persistence` is installed (see {doc}`persistence`), so it runs
 whether or not a request ever opened a transaction. It logs a `warning`
-only once it has actually
-rolled back an active transaction — the overwhelming majority of calls
-are a genuine no-op, and logging on every one of them regardless would
-turn a real anomaly signal into noise. If closing a transaction fails,
+only once it has actually closed an active transaction — the
+overwhelming majority of calls are a genuine no-op, and logging on every
+one of them regardless would turn a real anomaly signal into noise. If closing a transaction fails,
 that's logged as an `error` instead, one line per failure — a strictly
 more severe signal than the routine `warning`, since it means a
 transaction survived the request. See {doc}`persistence`'s "What happens

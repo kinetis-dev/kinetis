@@ -14,6 +14,15 @@ use InvalidArgumentException;
  */
 final class InvalidRateLimitConfigException extends InvalidArgumentException
 {
+    public static function blankPolicyId(): self
+    {
+        return new self(
+            'RateLimitMiddleware needs a non-empty policyId. The ID names the policy that owns the '
+            . 'counter, so a blank one would put every policy constructed without a real ID on one '
+            . 'shared budget.',
+        );
+    }
+
     public static function nonPositiveMaxAttempts(int $maxAttempts): self
     {
         return new self(

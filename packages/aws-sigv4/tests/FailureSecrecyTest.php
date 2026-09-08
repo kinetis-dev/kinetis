@@ -119,11 +119,11 @@ final class FailureSecrecyTest extends TestCase
     }
 
     /**
-     * The signing step's own conversion, which no target can reach: the
-     * URI handed to the signer is built by this package and verified
-     * against what the request renders before anything is signed, so
-     * only `SignerV4` failing on its own could raise this. The fixed
-     * message and the safe request still have to hold when it does.
+     * The signing step's own conversion, which no target reaches: the
+     * request handed to {@see Signature} is built here from a target
+     * already checked against the origin, so only the signer failing on
+     * its own could raise this. The fixed message and the caller's own
+     * request still have to hold when it does.
      */
     public function test_a_signing_failure_carries_nothing(): void
     {
@@ -244,41 +244,6 @@ final class FailureSecrecyTest extends TestCase
         } catch (SigningException $e) {
             $this->assertNoSentinelIn($e, [$origin, ...self::sentinels()]);
         }
-    }
-
-    /**
-     * What survives serialization is the message and a request stripped
-     * to its method, scheme, host, port and path — no headers, no body,
-     * no userinfo, no query string — so an exception queued or cached by
-     * a caller still names which endpoint failed and carries nothing
-     * else.
-     */
-    public function test_a_serialized_failure_round_trips_without_its_secrets(): void
-    {
-        try {
-            $this->client(FixedCredentialProvider::none(), new RecordingTransport()->asTransport())
-                ->sendRequest(self::onOriginRequest());
-
-            self::fail('Expected an UnsignableRequestException to be thrown.');
-        } catch (UnsignableRequestException $e) {
-            $restored = unserialize(serialize($e));
-
-            self::assertInstanceOf(UnsignableRequestException::class, $restored);
-            self::assertSame(UnsignableRequestException::CREDENTIALS_UNAVAILABLE, $restored->getMessage());
-            self::assertSame('POST', $restored->getRequest()->getMethod());
-            self::assertSame('https://api.example.com/users', (string) $restored->getRequest()->getUri());
-            self::assertSame([], $restored->getRequest()->getHeaders());
-            self::assertSame('', (string) $restored->getRequest()->getBody());
-        }
-    }
-
-    public function test_a_serialized_configuration_failure_round_trips(): void
-    {
-        $restored = unserialize(serialize(SigningException::originHasInvalidPort()));
-
-        self::assertInstanceOf(SigningException::class, $restored);
-        self::assertSame(SigningException::ORIGIN_INVALID_PORT, $restored->getMessage());
-        self::assertNull($restored->getPrevious());
     }
 
     /**

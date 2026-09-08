@@ -74,7 +74,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: pgsql
+          extensions: pgsql, sockets
 
       - name: Cache Composer downloads
         uses: actions/cache@v6
@@ -157,9 +157,9 @@ jobs:
         env:
           REDIS_HOST: 127.0.0.1
 
-      - name: Run RedisQueue atomic-transition check
+      - name: Run RedisQueue lease-recovery check
         working-directory: packages/queue-redis
-        run: php tests-integration/redis_atomic_transitions.php
+        run: php tests-integration/redis_lease_recovery.php
         env:
           REDIS_HOST: 127.0.0.1
 
@@ -258,7 +258,7 @@ jobs:
     # RedisSimpleCache both moved out of kinetis/framework into their own
     # satellite packages (kinetis/persistence, kinetis/cache-redis), so
     # core itself has no remaining real-backend-dependent code at all.
-    name: persistence + cache-redis (TransactionGuard on ${{ matrix.mysql.name }} + RedisSimpleCache, PHP ${{ matrix.php-version }})
+    name: persistence + cache-redis + session (TransactionGuard on ${{ matrix.mysql.name }} + RedisSimpleCache, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -304,7 +304,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: pgsql
+          extensions: pgsql, sockets
 
       - name: Cache Composer downloads
         uses: actions/cache@v6
@@ -342,7 +342,11 @@ jobs:
           docker run -d --name mysql-tls -p 3307:3306 -v /tmp/tls-certs:/certs:ro \
             -e MYSQL_DATABASE=testdb -e MYSQL_USER=testuser -e MYSQL_PASSWORD=testpass -e MYSQL_ROOT_PASSWORD=root \
             ${{ matrix.mysql.image }} --ssl-ca=/certs/ca.pem --ssl-cert=/certs/server.pem --ssl-key=/certs/server.key
-          docker run -d --name pg-tls -p 5433:5432 -v /tmp/tls-certs:/certs-src:ro \
+          # World-writable so the container's postgres user can create
+          # its socket there: the Unix-domain disposal case in
+          # PgsqlDisposalTest connects through this directory.
+          mkdir -p /tmp/pg-socket && chmod 777 /tmp/pg-socket
+          docker run -d --name pg-tls -p 5433:5432 -v /tmp/tls-certs:/certs-src:ro -v /tmp/pg-socket:/var/run/postgresql \
             -e POSTGRES_DB=testdb -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpass \
             --entrypoint bash postgres:16 -c 'cp /certs-src/server.pem /certs-src/server.key /certs-src/ca.pem /tmp/ && chown postgres /tmp/server.* /tmp/ca.pem && chmod 600 /tmp/server.key && printf "local all all trust\nhostssl all mtlsuser 0.0.0.0/0 scram-sha-256 clientcert=verify-ca\nhost all all 0.0.0.0/0 scram-sha-256\n" > /tmp/pg_hba.conf && chown postgres /tmp/pg_hba.conf && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/ca.pem -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c hba_file=/tmp/pg_hba.conf'
           for i in $(seq 1 40); do
@@ -362,7 +366,9 @@ jobs:
         # MYSQL_HOST/POSTGRES_HOST set, so plain unit runs everywhere
         # else stay database-free. Same files run under coverage in the
         # SonarQube workflow. The *_TLS_* variables point TlsTest at the
-        # certificate-configured servers started above.
+        # certificate-configured servers started above, and
+        # POSTGRES_SOCKET_DIR at the socket directory the pg-tls
+        # container shares with the runner.
         working-directory: packages/persistence
         run: vendor/bin/phpunit
         env:
@@ -372,6 +378,7 @@ jobs:
           MYSQL_TLS_PORT: 3307
           POSTGRES_TLS_HOST: 127.0.0.1
           POSTGRES_TLS_PORT: 5433
+          POSTGRES_SOCKET_DIR: /tmp/pg-socket
           TLS_CA: /tmp/tls-certs/ca.pem
           TLS_WRONG_CA: /tmp/tls-certs/wrong-ca.pem
           TLS_CLIENT_CERT: /tmp/tls-certs/client.pem
@@ -395,6 +402,21 @@ jobs:
         working-directory: packages/cache-redis
         run: vendor/bin/phpunit
         env:
+          REDIS_HOST: 127.0.0.1
+
+      - name: Install session dependencies
+        working-directory: packages/session
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Session store integration tests
+        # The terminal-write rule is a server-side decision on both
+        # backends: MySQL's changed-row count for a byte-identical
+        # UPDATE, and Redis's refusal of a SET ... XX against a missing
+        # key. Same env-gated shape as the two steps above.
+        working-directory: packages/session
+        run: vendor/bin/phpunit
+        env:
+          MYSQL_HOST: 127.0.0.1
           REDIS_HOST: 127.0.0.1
 
   mailer:
@@ -473,7 +495,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: pgsql
+          extensions: pgsql, sockets
 
       - name: Cache Composer downloads
         uses: actions/cache@v6
@@ -500,7 +522,7 @@ jobs:
           POSTGRES_HOST: 127.0.0.1
 
   redis-cluster:
-    name: cache-redis (Redis Cluster, PHP ${{ matrix.php-version }})
+    name: redis + cache-redis (Redis Cluster, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -558,14 +580,22 @@ jobs:
           key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
           restore-keys: composer-
       - name: Install dependencies
-        working-directory: packages/cache-redis
-        run: composer install --no-interaction --prefer-dist
+        run: |
+          composer install --no-interaction --prefer-dist --working-dir=packages/redis
+          composer install --no-interaction --prefer-dist --working-dir=packages/cache-redis
 
-      - name: Run integration tests twice against the same cluster
+      - name: Run routing integration tests twice against the same cluster
         # REDIS_CLUSTER_SEEDS comes from the job-level env above. The
-        # single-node tests in the same suite skip here, since REDIS_HOST
-        # is unset. The second run verifies that the first restored every
-        # slot it changed.
+        # second run verifies that the first restored every slot it
+        # changed.
+        working-directory: packages/redis
+        run: |
+          vendor/bin/phpunit
+          vendor/bin/phpunit
+
+      - name: Run cache integration tests twice against the same cluster
+        # The single-node tests in the same suite skip here, since
+        # REDIS_HOST is unset.
         working-directory: packages/cache-redis
         run: |
           vendor/bin/phpunit
@@ -638,6 +668,14 @@ jobs:
     # above: this exercises the whole compose stack (app, mysql, redis,
     # soketi, migrate, queue-worker, cron) together, not one package's
     # own composer dependencies in isolation.
+    env:
+      # A checkout of this repo resolves the kinetis/* siblings through
+      # `path` repositories, which the released package has no trace of
+      # — so the monorepo override goes on top of the package's own
+      # standalone compose file, for the reason its header gives. Every
+      # step below is then the command it would be against the released
+      # package, unchanged.
+      COMPOSE_FILE: docker-compose.yml:docker-compose.monorepo.yml
     steps:
       - uses: actions/checkout@v7
 
@@ -662,8 +700,8 @@ jobs:
 
       - name: The application's own PHPUnit suite, inside the stack
         # Runs where the database actually is — ApplicationTestCase boots
-        # the real app and DatabaseTransactions rolls each test back, so
-        # this leaves ping_messages exactly as it found it. Not part of
+        # the real app and DatabaseTruncation empties the tables each
+        # test touched, so this leaves ping_messages as it found it. Not part of
         # ci.yml's per-package matrix, which has no database.
         working-directory: packages/pingpong
         run: docker compose exec -T app php vendor/bin/phpunit
@@ -943,6 +981,7 @@ jobs:
         run: php tests-integration/opensearch.php
         env:
           SEARCH_OPENSEARCH_HOST: http://127.0.0.1:9200
+          SEARCH_OPENSEARCH_PLAINTEXT: "true"
 
       - name: Run auth/TLS integration checks
         working-directory: packages/search-opensearch

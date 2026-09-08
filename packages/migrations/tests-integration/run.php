@@ -12,6 +12,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Kinetis\Persistence\Driver\MysqliAsyncClient;
 use Kinetis\Persistence\Driver\PgsqlAsyncClient;
+use Kinetis\Migrations\Exception\MigrationIntegrityException;
 use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Migrations\SqlMigrationRepository;
 
@@ -54,14 +55,43 @@ function writeFixtureMigration(string $dir): void
         PHP);
 }
 
+function writeSecondFixtureMigration(string $dir): void
+{
+    file_put_contents($dir . '/20260102000000_create_gadgets_table.php', <<<'PHP'
+        <?php
+
+        declare(strict_types=1);
+
+        use Kinetis\Persistence\Contract\MysqlLink;
+        use Kinetis\Persistence\Contract\PostgresLink;
+        use Kinetis\Migrations\Migration;
+
+        return new class implements Migration
+        {
+            public function up(MysqlLink|PostgresLink $db): void
+            {
+                $db->execute('CREATE TABLE gadgets (id INT PRIMARY KEY)');
+            }
+
+            public function down(MysqlLink|PostgresLink $db): void
+            {
+                $db->execute('DROP TABLE gadgets');
+            }
+        };
+        PHP);
+}
+
 function run(string $backend, $link): void
 {
     echo "=== {$backend} ===\n";
 
     $link->execute('DROP TABLE IF EXISTS widgets');
+    $link->execute('DROP TABLE IF EXISTS gadgets');
     $link->execute('DROP TABLE IF EXISTS kinetis_migrations');
 
     $migrationsPath = sys_get_temp_dir() . '/kinetis-migrations-integration-' . strtolower($backend);
+    $widgetsFile = $migrationsPath . '/20260101000000_create_widgets_table.php';
+    @unlink($migrationsPath . '/20260102000000_create_gadgets_table.php');
     writeFixtureMigration($migrationsPath);
 
     $runner = new MigrationRunner($link, new SqlMigrationRepository($link), $migrationsPath);
@@ -77,8 +107,49 @@ function run(string $backend, $link): void
 
     check("{$backend}: a second migrate() is a no-op", $runner->migrate() === []);
 
+    $ledger = $link->execute('SELECT checksum, application_order FROM kinetis_migrations')->fetchRow() ?? [];
+    check("{$backend}: the ledger records the applied file's own checksum", ($ledger['checksum'] ?? null) === hash_file('sha256', $widgetsFile));
+    check("{$backend}: the first applied migration takes application_order 1", (int) ($ledger['application_order'] ?? 0) === 1);
+
+    // An applied migration edited after the fact stops every command,
+    // rather than letting a later run act on a schema nothing describes.
+    file_put_contents($widgetsFile, file_get_contents($widgetsFile) . "\n// edited after being applied\n");
+
+    foreach (['status' => $runner->status(...), 'migrate' => $runner->migrate(...), 'rollback' => $runner->rollback(...)] as $label => $operation) {
+        $refused = false;
+
+        try {
+            $operation();
+        } catch (MigrationIntegrityException) {
+            $refused = true;
+        }
+
+        check("{$backend}: {$label}() refuses a modified applied migration", $refused);
+    }
+
+    writeFixtureMigration($migrationsPath);
+    check("{$backend}: restoring the deployed file lets commands run again", $runner->status()[0]['applied'] === true);
+
+    // Merged from another branch and applied last: the order column
+    // counts up from the table's own maximum on both backends.
+    writeSecondFixtureMigration($migrationsPath);
+    check("{$backend}: the newly merged migration runs", $runner->migrate() === ['20260102000000_create_gadgets_table']);
+
+    $orders = [];
+
+    foreach ($link->execute('SELECT migration, application_order FROM kinetis_migrations ORDER BY application_order ASC') as $row) {
+        $orders[(string) $row['migration']] = (int) $row['application_order'];
+    }
+
+    check("{$backend}: application_order counts up from the current maximum", $orders === [
+        '20260101000000_create_widgets_table' => 1,
+        '20260102000000_create_gadgets_table' => 2,
+    ]);
+
+    check("{$backend}: rollback() undoes the migration applied most recently", $runner->rollback() === '20260102000000_create_gadgets_table');
+
     $rolledBack = $runner->rollback();
-    check("{$backend}: rollback() undoes the most recent migration", $rolledBack === '20260101000000_create_widgets_table');
+    check("{$backend}: rollback() then undoes the one before it", $rolledBack === '20260101000000_create_widgets_table');
 
     $statusAfterRollback = $runner->status();
     check("{$backend}: status() reports it as not applied after rollback", $statusAfterRollback[0]['applied'] === false);

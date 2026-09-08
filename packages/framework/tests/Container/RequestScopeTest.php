@@ -12,6 +12,7 @@ use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Container\Fixtures\CircularA;
 use Kinetis\Tests\Container\Fixtures\Counter;
+use Kinetis\Tests\Container\Fixtures\WithOptionalInterfaceDependency;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -97,6 +98,17 @@ final class RequestScopeTest extends TestCase
         $request = $app->createRequestScope();
 
         self::assertSame($request->get(Counter::class), $request->get(Counter::class));
+    }
+
+    /**
+     * Both scopes autowire through Kinetis\Container\Autowire, so an
+     * unbound interface is absent here exactly as it is on AppScope.
+     */
+    public function test_an_unregistered_interface_typed_parameter_falls_back_to_its_default(): void
+    {
+        $service = $this->bootedApp()->createRequestScope()->get(WithOptionalInterfaceDependency::class);
+
+        self::assertNull($service->thing);
     }
 
     public function test_dispose_clears_bindings_and_blocks_further_use(): void

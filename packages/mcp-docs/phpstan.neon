@@ -1,0 +1,8 @@
+# No NoStaticPropertiesRule service here, unlike every other package's
+# phpstan.neon: the rule class ships in kinetis/framework, and this
+# package requires no Kinetis package at all.
+parameters:
+    level: 8
+    paths:
+        - src
+        - bin/kinetis-mcp-docs

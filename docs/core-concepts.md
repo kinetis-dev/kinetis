@@ -90,8 +90,10 @@ Every call to `Kernel::handle()` follows the same shape:
    {doc}`persistence`.
 3. The router matches the request; a `Dispatcher` resolves the matched
    controller's parameters and invokes it.
-4. In a `finally` block — so it runs whether the request succeeded, threw,
-   or hit a 404/405 — the `RequestScope` is disposed.
+4. The `RequestScope` is disposed — whether the request succeeded, threw,
+   or hit a 404/405. A response that streams its own body defers this
+   until the stream ends, since the emitter resolves from that same
+   scope; see {doc}`container`.
 5. If `$isPersistent` is true, `gc_collect_cycles()` runs.
 
 That last step deserves its own explanation, because it's easy to dismiss

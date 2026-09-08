@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Kinetis\QueueSqs\Tests;
 
 use AsyncAws\Core\Credentials\NullProvider;
+use AsyncAws\Core\Exception\Http\NetworkException;
+use AsyncAws\Core\Exception\Http\ServerException;
 use AsyncAws\Sqs\SqsClient;
 use InvalidArgumentException;
 use Kinetis\Config\Config;
+use Kinetis\Queue\Exception\InvalidQueueArgumentException;
 use Kinetis\Queue\ClearableQueueInterface;
-use Kinetis\Queue\Exception\InvalidDelaySecondsException;
-use Kinetis\Queue\Exception\InvalidMaxAttemptsException;
-use Kinetis\Queue\Exception\InvalidQueueNameException;
 use Kinetis\Queue\Exception\MalformedQueuedJobDataException;
 use Kinetis\Console\CommandArguments;
 use Kinetis\Queue\Console\ClearCommand;
@@ -25,6 +25,8 @@ use Kinetis\QueueSqs\Tests\Fixtures\RecordingSqsTransport;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use Symfony\Component\HttpClient\Response\MockResponse;
+use Throwable;
 
 /**
  * Queue-name validation and this backend's declared capabilities —
@@ -64,7 +66,7 @@ final class SqsQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->size('');
     }
 
@@ -72,7 +74,7 @@ final class SqsQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->size('has spaces');
     }
 
@@ -83,7 +85,7 @@ final class SqsQueueTest extends TestCase
             queueNamePrefix: str_repeat('a', 75),
         );
 
-        $this->expectException(InvalidQueueNameException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $this->expectExceptionMessage('over the 80-character limit');
         $queue->size(str_repeat('b', 10));
     }
@@ -92,7 +94,7 @@ final class SqsQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidDelaySecondsException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->push(new class implements Job {}, delaySeconds: -1);
     }
 
@@ -100,7 +102,7 @@ final class SqsQueueTest extends TestCase
     {
         $queue = $this->neverConnectedQueue();
 
-        $this->expectException(InvalidMaxAttemptsException::class);
+        $this->expectException(InvalidQueueArgumentException::class);
         $queue->push(new class implements Job {}, maxAttempts: -1);
     }
 
@@ -136,8 +138,8 @@ final class SqsQueueTest extends TestCase
      * malformed value is actually caught — proven directly with hand-built
      * strings (no real SQS round trip needed, since this method was
      * extracted specifically to make that possible), so the wiring
-     * between it and QueueContract::coerceStoredInteger() is exercised
-     * too, not just coerceStoredInteger()'s own unit-level behavior.
+     * between it and QueueContract::storedInt() is exercised
+     * too, not just storedInt()'s own unit-level behavior.
      */
     #[DataProvider('malformedStoredIntegers')]
     public function test_build_queued_job_rejects_a_non_numeric_stored_max_attempts_value(mixed $raw): void
@@ -433,6 +435,263 @@ final class SqsQueueTest extends TestCase
             $transport->operations,
             'nothing here empties a queue, and there is no operation available that could',
         );
+    }
+
+    /**
+     * pop()'s long poll is bounded by what is left of its own deadline,
+     * not only by BLOCK_WAIT_TIME_SECONDS: an idle pop(1) that asked SQS
+     * for a five-second wait would overshoot its caller's deadline
+     * fivefold, which is what bounds a QueueWorker's shutdown latency.
+     *
+     * The recorded WaitTimeSeconds values are the whole account: 0 for
+     * the immediate priority sweep, then the bounded wait, then the
+     * sweep that finds the message.
+     */
+    public function test_the_long_poll_is_bounded_by_the_remaining_pop_deadline(): void
+    {
+        $queue = new SqsQueue(new SqsClient(
+            ['region' => 'us-east-1'],
+            new NullProvider(),
+            ($transport = new RecordingSqsTransport([
+                'GetQueueUrl' => self::queueUrlResponse(),
+                'ReceiveMessage' => [self::emptyReceiveResponse(), self::emptyReceiveResponse(), self::receivedResponse('receipt-1')],
+            ]))->client(),
+        ));
+
+        self::assertNotNull($queue->pop(timeoutSeconds: 1));
+        self::assertSame([0, 1, 0], self::waitTimes($transport));
+    }
+
+    /**
+     * The long poll can use up the whole deadline on its own —
+     * WaitTimeSeconds counts whole seconds, so the shortest wait
+     * available is already a full one. Once it comes back empty the
+     * deadline is rechecked before anything else, so an expired pop()
+     * receives nothing more: the recorded waits are the two the one
+     * priority sweep issues, then the poll, and nothing after it.
+     *
+     * The scripted long poll takes longer than the deadline it is given
+     * for exactly that reason.
+     */
+    public function test_pop_receives_nothing_once_the_long_poll_has_consumed_the_deadline(): void
+    {
+        $queue = new SqsQueue(new SqsClient(
+            ['region' => 'us-east-1'],
+            new NullProvider(),
+            ($transport = new RecordingSqsTransport(
+                [
+                    'GetQueueUrl' => self::queueUrlResponse(),
+                    'ReceiveMessage' => self::emptyReceiveResponse(),
+                ],
+                longPollMicroseconds: 1_100_000,
+            ))->client(),
+        ));
+
+        self::assertNull($queue->pop(timeoutSeconds: 1, queues: ['high', 'default']));
+        self::assertSame([0, 0, 1], self::waitTimes($transport));
+    }
+
+    /**
+     * The same wait, given a deadline far past it: BLOCK_WAIT_TIME_SECONDS
+     * is the ceiling, so a lower-priority queue is still re-checked
+     * promptly rather than once every twenty seconds.
+     */
+    public function test_the_long_poll_never_exceeds_the_backend_wait_ceiling(): void
+    {
+        $queue = new SqsQueue(new SqsClient(
+            ['region' => 'us-east-1'],
+            new NullProvider(),
+            ($transport = new RecordingSqsTransport([
+                'GetQueueUrl' => self::queueUrlResponse(),
+                'ReceiveMessage' => [self::emptyReceiveResponse(), self::emptyReceiveResponse(), self::receivedResponse('receipt-1')],
+            ]))->client(),
+        ));
+
+        self::assertNotNull($queue->pop(timeoutSeconds: 300));
+        self::assertSame([0, 5, 0], self::waitTimes($transport));
+    }
+
+    /**
+     * SendMessage, ChangeMessageVisibility and DeleteMessage each report
+     * nothing a caller reads, so the only thing that makes SQS's answer
+     * to one observable is resolving it. These drive the three settling
+     * paths against a transport that fails, and read back both the
+     * exception the public method raised and the operation that produced
+     * it — a failure the operation swallowed would leave the method
+     * returning normally with the request recorded.
+     */
+    public function test_push_surfaces_a_service_failure_from_the_send(): void
+    {
+        $transport = new RecordingSqsTransport([
+            'GetQueueUrl' => self::queueUrlResponse(),
+            'SendMessage' => self::serviceFailure(),
+        ]);
+
+        $failure = self::failureFrom(
+            fn () => self::queueOn($transport)->push(new RecordedJob()),
+        );
+
+        self::assertInstanceOf(ServerException::class, $failure);
+        self::assertSame(['GetQueueUrl', 'SendMessage'], $transport->operations);
+    }
+
+    public function test_push_surfaces_a_network_failure_from_the_send(): void
+    {
+        $transport = new RecordingSqsTransport([
+            'GetQueueUrl' => self::queueUrlResponse(),
+            'SendMessage' => self::networkFailure(),
+        ]);
+
+        $failure = self::failureFrom(
+            fn () => self::queueOn($transport)->push(new RecordedJob()),
+        );
+
+        self::assertInstanceOf(NetworkException::class, $failure);
+        self::assertSame(['GetQueueUrl', 'SendMessage'], $transport->operations);
+    }
+
+    public function test_release_surfaces_a_service_failure_from_the_visibility_change(): void
+    {
+        $transport = new RecordingSqsTransport([
+            'GetQueueUrl' => self::queueUrlResponse(),
+            'ChangeMessageVisibility' => self::serviceFailure(),
+        ]);
+
+        $failure = self::failureFrom(
+            fn () => self::queueOn($transport)->release(self::reserved()),
+        );
+
+        self::assertInstanceOf(ServerException::class, $failure);
+        self::assertSame(['GetQueueUrl', 'ChangeMessageVisibility'], $transport->operations);
+    }
+
+    /**
+     * @return list<array{string}>
+     */
+    public static function deletingSettlements(): array
+    {
+        return ['ack' => ['ack'], 'fail' => ['fail']];
+    }
+
+    /**
+     * ack() and fail() are the same DeleteMessage reached from two public
+     * methods, so both have to report what that one call answers.
+     */
+    #[DataProvider('deletingSettlements')]
+    public function test_the_shared_deletion_surfaces_a_service_failure(string $settlement): void
+    {
+        $transport = new RecordingSqsTransport([
+            'GetQueueUrl' => self::queueUrlResponse(),
+            'DeleteMessage' => self::serviceFailure(),
+        ]);
+
+        $failure = self::failureFrom(
+            fn () => self::queueOn($transport)->{$settlement}(self::reserved()),
+        );
+
+        self::assertInstanceOf(ServerException::class, $failure);
+        self::assertSame(['GetQueueUrl', 'DeleteMessage'], $transport->operations);
+    }
+
+    #[DataProvider('deletingSettlements')]
+    public function test_the_shared_deletion_surfaces_a_network_failure(string $settlement): void
+    {
+        $transport = new RecordingSqsTransport([
+            'GetQueueUrl' => self::queueUrlResponse(),
+            'DeleteMessage' => self::networkFailure(),
+        ]);
+
+        $failure = self::failureFrom(
+            fn () => self::queueOn($transport)->{$settlement}(self::reserved()),
+        );
+
+        self::assertInstanceOf(NetworkException::class, $failure);
+        self::assertSame(['GetQueueUrl', 'DeleteMessage'], $transport->operations);
+    }
+
+    private static function queueOn(RecordingSqsTransport $transport): SqsQueue
+    {
+        return new SqsQueue(new SqsClient(['region' => 'us-east-1'], new NullProvider(), $transport->client()));
+    }
+
+    /**
+     * A delivery a settlement can be driven against without a receive
+     * first, so the recorded operations are the settlement's own.
+     */
+    private static function reserved(): QueuedJob
+    {
+        return new QueuedJob(
+            RecordedJob::class,
+            [],
+            handle: 'receipt-handle',
+            queue: 'default',
+            attempts: 1,
+        );
+    }
+
+    /**
+     * Catching Throwable rather than the expected class is what makes the
+     * assertion that follows a real one: a method that raised nothing
+     * returns null here, and one that raised something else fails on the
+     * type rather than passing on a bare expectException().
+     */
+    private static function failureFrom(callable $operation): ?Throwable
+    {
+        try {
+            $operation();
+        } catch (Throwable $e) {
+            return $e;
+        }
+
+        return null;
+    }
+
+    /**
+     * SQS answering with its own error shape under a 5xx status — an
+     * internal failure, or a request it refused outright.
+     *
+     * @return callable(): MockResponse
+     */
+    private static function serviceFailure(): callable
+    {
+        return static fn (): MockResponse => new MockResponse(
+            self::json(['__type' => 'com.amazonaws.sqs#InternalError', 'message' => 'We encountered an internal error.']),
+            [
+                'http_code' => 500,
+                'response_headers' => ['content-type' => 'application/x-amz-json-1.0'],
+            ],
+        );
+    }
+
+    /**
+     * The connection failing rather than SQS answering at all.
+     *
+     * @return callable(): MockResponse
+     */
+    private static function networkFailure(): callable
+    {
+        return static fn (): MockResponse => new MockResponse('', ['error' => 'connection reset by peer']);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private static function waitTimes(RecordingSqsTransport $transport): array
+    {
+        $waits = [];
+
+        foreach ($transport->operations as $index => $operation) {
+            if ($operation === 'ReceiveMessage') {
+                $waits[] = (int) ($transport->requests[$index]['WaitTimeSeconds'] ?? -1);
+            }
+        }
+
+        return $waits;
+    }
+
+    private static function emptyReceiveResponse(): string
+    {
+        return self::json([]);
     }
 
     private static function queueUrlResponse(): string

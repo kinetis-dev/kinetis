@@ -15,12 +15,9 @@ use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
 use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
-use Kinetis\Tests\Http\Fixtures\UnsupportedBodyFieldController;
-use Kinetis\Tests\Http\Fixtures\UnsupportedCallableBodyFieldController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Reflection\Fixtures\HiddenChildOfRoutedBase;
-use Kinetis\Validation\Exception\JsonSchemaException;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/Fixtures/global_namespace_dto.php';
@@ -184,7 +181,7 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame(['asc', 'desc'], $byName['sort']['schema']['enum']);
     }
 
-    public function test_a_path_parameters_constraint_is_reflected_in_its_schema(): void
+    public function test_a_path_parameter_length_bound_reaches_its_schema_while_its_regex_does_not(): void
     {
         $router = new Router();
         $router->register(ConstrainedParametersController::class);
@@ -193,26 +190,9 @@ final class OpenApiGeneratorTest extends TestCase
         $parameters = $spec['paths']['/items/{code}']['get']['parameters'];
 
         self::assertSame('code', $parameters[0]['name']);
-        self::assertSame('#^[A-Z]{3}$#', $parameters[0]['schema']['pattern']);
-    }
-
-    public function test_a_route_placeholder_constraint_is_stripped_from_the_path_key_but_kept_in_the_schema(): void
-    {
-        // Distinct from the attribute-based constraint above: this is the
-        // {id:\d+} route-template syntax itself, which OpenAPI's own path
-        // templating has no concept of — the constraint has to move into
-        // the parameter's schema, and the path key has to go back to
-        // plain {id}.
-        $router = new Router();
-        $router->register(ConstrainedParametersController::class);
-        $spec = (new OpenApiGenerator($router))->generate();
-
-        self::assertArrayHasKey('/products/{id}', $spec['paths']);
-        self::assertArrayNotHasKey('/products/{id:\d+}', $spec['paths']);
-
-        $parameters = $spec['paths']['/products/{id}']['get']['parameters'];
-        self::assertSame('id', $parameters[0]['name']);
-        self::assertSame('\d+', $parameters[0]['schema']['pattern']);
+        self::assertSame('string', $parameters[0]['schema']['type']);
+        self::assertSame(3, $parameters[0]['schema']['minLength']);
+        self::assertArrayNotHasKey('pattern', $parameters[0]['schema']);
     }
 
     public function test_uses_the_route_configured_status_code_in_responses(): void
@@ -364,9 +344,8 @@ final class OpenApiGeneratorTest extends TestCase
     }
 
     /**
-     * KINETIS-76: a bare `array $data` property's own type is now the
-     * truthful `array`, not the `object` fallback every unmapped builtin
-     * used to collapse into.
+     * A bare `array $data` property is described as a JSON array, the
+     * shape it actually carries on the wire.
      */
     public function test_a_paginator_without_the_attribute_keeps_the_bare_array_fallback(): void
     {
@@ -465,10 +444,9 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertNotContains('optionalItems', $schema['required']);
     }
 
-    // KINETIS-76 follow-up: the complete, audited builtin-type policy —
-    // see JsonSchema::forType()'s own docblock — proven end-to-end
-    // through a real registered HTTP route's own generated OpenAPI
-    // document, not just via JsonSchema unit calls.
+    // The supported builtin set — see Hydrator::SUPPORTED_BUILTIN_TYPES —
+    // proven end to end through a real registered HTTP route's own
+    // generated OpenAPI document, not just via JsonSchema unit calls.
 
     public function test_a_body_dto_schema_covers_every_supported_builtin_category(): void
     {
@@ -484,9 +462,7 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame(['type' => 'array'], $schema['properties']['tags']);
         self::assertSame(['type' => 'array'], $schema['properties']['items'], 'iterable gets the identical array schema as plain array');
         self::assertEquals((object) [], $schema['properties']['note'], 'mixed is the empty schema object, not the empty schema array');
-        self::assertSame(['type' => 'null'], $schema['properties']['marker']);
-        self::assertSame(['type' => 'boolean', 'const' => true], $schema['properties']['confirmed']);
-        self::assertSame(['type' => 'boolean', 'const' => false], $schema['properties']['declined']);
+        self::assertSame(['type' => 'boolean'], $schema['properties']['flag']);
         self::assertSame(['tags', 'items'], $schema['required']);
     }
 
@@ -510,41 +486,6 @@ final class OpenApiGeneratorTest extends TestCase
     }
 
     /**
-     * Schema generation still refuses to describe an `object`/`callable`-
-     * typed field, unchanged from before — but this is deliberately not
-     * the guarantee that keeps a real request from reaching the
-     * constructor unchecked; that guarantee is Hydrator::typeMismatchMessage(),
-     * proven at the runtime/dispatch level in DispatcherTest, which fires
-     * on every request regardless of whether generate() is ever called.
-     */
-    public function test_generate_still_throws_for_a_route_with_an_unsupported_builtin_body_field(): void
-    {
-        $router = new Router();
-        $router->register(UnsupportedBodyFieldController::class);
-
-        $this->expectException(JsonSchemaException::class);
-        $this->expectExceptionMessage('object');
-
-        (new OpenApiGenerator($router))->generate();
-    }
-
-    /**
-     * `callable`'s own equivalent of the `object` test above — the
-     * second rejected builtin category gets the identical breadth of
-     * coverage, not just direct Hydrator/JsonSchema unit calls.
-     */
-    public function test_generate_still_throws_for_a_route_with_an_unsupported_callable_body_field(): void
-    {
-        $router = new Router();
-        $router->register(UnsupportedCallableBodyFieldController::class);
-
-        $this->expectException(JsonSchemaException::class);
-        $this->expectExceptionMessage('callable');
-
-        (new OpenApiGenerator($router))->generate();
-    }
-
-    /**
      * The requested end-to-end plain *nullable* array case — distinct
      * from #[ListOf]'s own nullable-array schema coverage
      * (test_a_nullable_list_of_body_field_widens_the_arrays_own_type_and_keeps_a_ref_array
@@ -564,8 +505,8 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame(['tags'], $schema['required']);
     }
 
-    // KINETIS-76 third follow-up: Dispatcher::resolveBodyFromPlan()
-    // branches purely on the real request's Content-Type header — any
+    // Dispatcher::resolveBodyFromPlan() branches purely on the real
+    // request's Content-Type header — any
     // #[Body] DTO genuinely accepts application/json,
     // application/x-www-form-urlencoded, and multipart/form-data alike,
     // unconditionally — so the generated document must advertise all

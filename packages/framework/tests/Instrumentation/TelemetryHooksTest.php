@@ -54,7 +54,7 @@ final class TelemetryHooksTest extends TestCase
         self::assertContains('controllerReturned', $calls);
         self::assertContains('responseEncodingStarted', $calls);
         self::assertContains('responseEncodingEnded', $calls);
-        // ExceptionHandlerMiddleware and MaxBodySizeMiddleware are always
+        // ExceptionHandlerMiddleware and RequestBodyMiddleware are always
         // in the global pipeline, so middleware hooks fire on every
         // request even with none registered explicitly.
         self::assertContains('middlewareEntered', $calls);
@@ -110,6 +110,16 @@ final class TelemetryHooksTest extends TestCase
         self::assertSame(2, \count(array_keys($calls, 'taskStarted', true)));
         self::assertSame(2, \count(array_keys($calls, 'taskEnded', true)));
         self::assertContains('taskBatchEnded', $calls);
+
+        // Each task hook is handed the batch's own token: what lets a
+        // backend parent the task explicitly from inside its Fiber.
+        $batchEnded = $this->recording->firstCall('taskBatchEnded');
+        self::assertNotNull($batchEnded);
+        $taskTokens = array_column(array_filter(
+            $this->recording->calls,
+            static fn (array $call): bool => $call[0] === 'taskStarted',
+        ), 1);
+        self::assertSame([[0, $batchEnded[1][0]], [1, $batchEnded[1][0]]], array_values($taskTokens));
     }
 
     public function test_a_failing_task_reports_its_failure_and_every_task_still_ends(): void

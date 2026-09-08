@@ -10,8 +10,13 @@ use Throwable;
 
 final class CacheException extends RuntimeException implements PsrCacheException
 {
-    public static function forOperation(string $operation, string $key, Throwable $previous): self
+    /**
+     * Names the operation and the underlying failure, never the key: a
+     * cache key can be a session identifier or a token hash, and this
+     * message reaches logs and error pages.
+     */
+    public static function forOperation(string $operation, Throwable $previous): self
     {
-        return new self("Redis \"{$operation}\" failed for key \"{$key}\": {$previous->getMessage()}", 0, $previous);
+        return new self("Redis \"{$operation}\" failed: {$previous->getMessage()}", 0, $previous);
     }
 }

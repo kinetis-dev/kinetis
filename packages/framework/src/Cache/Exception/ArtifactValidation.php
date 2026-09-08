@@ -88,6 +88,30 @@ final class ArtifactValidation
     }
 
     /**
+     * `array()` above, plus every key must be a real string — the shape
+     * each section of the compiled artifact carries, and what a
+     * section's own `fromArray()` declares it takes.
+     *
+     * @param array<array-key, mixed> $data
+     * @return array<string, mixed>
+     */
+    public static function stringKeyedArray(array $data, string $type, string $field): array
+    {
+        $value = self::array($data, $type, $field);
+        $result = [];
+
+        foreach ($value as $key => $entry) {
+            if (!is_string($key)) {
+                throw InvalidCacheArtifactException::malformedEntry($type, "a non-string key in \"{$field}\"");
+            }
+
+            $result[$key] = $entry;
+        }
+
+        return $result;
+    }
+
+    /**
      * `array()` above, plus every element must itself be an array — the
      * shape every entry list (routes, commands) in this codebase uses.
      *

@@ -29,42 +29,6 @@ final class FileResponseTest extends TestCase
         self::assertSame('attachment; filename="report.bin"', $response->getHeaderLine('Content-Disposition'));
     }
 
-    public function test_from_path_detects_the_mime_type_when_none_is_given(): void
-    {
-        $path = tempnam(sys_get_temp_dir(), 'kinetis_file_response_test_');
-        file_put_contents($path, 'plain text content');
-
-        try {
-            $response = FileResponse::fromPath($path);
-
-            self::assertSame('text/plain', $response->getHeaderLine('Content-Type'));
-            self::assertSame('plain text content', (string) $response->getBody());
-        } finally {
-            unlink($path);
-        }
-    }
-
-    public function test_from_path_accepts_an_explicit_content_type_override(): void
-    {
-        $path = tempnam(sys_get_temp_dir(), 'kinetis_file_response_test_');
-        file_put_contents($path, 'pretend-this-is-a-png');
-
-        try {
-            $response = FileResponse::fromPath($path, contentType: 'image/png');
-
-            self::assertSame('image/png', $response->getHeaderLine('Content-Type'));
-        } finally {
-            unlink($path);
-        }
-    }
-
-    public function test_from_path_throws_for_a_missing_file(): void
-    {
-        $this->expectException(FileResponseException::class);
-
-        FileResponse::fromPath('/does/not/exist.bin');
-    }
-
     /**
      * The name a user gave the file when uploading it reaches this
      * header, so it is treated as untrusted. Unescaped, the quote and

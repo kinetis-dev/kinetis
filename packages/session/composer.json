@@ -1,6 +1,6 @@
 {
     "name": "kinetis/session",
-    "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, PSR-16 cache (Redis via kinetis/cache-redis), and SQL storage behind one store interface.",
+    "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, Redis, and SQL storage behind one store interface.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -19,13 +19,14 @@
         "infection/infection": "^0.35.0",
         "kinetis/cache-redis": "dev-main",
         "kinetis/persistence": "dev-main",
+        "kinetis/redis": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^12.5.33",
         "vimeo/psalm": "^6.16.1"
     },
     "suggest": {
         "kinetis/persistence": "Enables SqlSessionStore, sessions in a kinetis_sessions table over the SQL contracts.",
-        "kinetis/cache-redis": "Redis-backed sessions with no further code: SESSION_DRIVER=cache stores through the PSR-16 binding cache-redis provides, cluster and TLS included."
+        "kinetis/cache-redis": "Enables RedisSessionStore, the SESSION_DRIVER=redis backend, cluster and TLS included."
     },
     "autoload": {
         "psr-4": {
@@ -51,6 +52,10 @@
         {
             "type": "path",
             "url": "../cache-redis"
+        },
+        {
+            "type": "path",
+            "url": "../redis"
         },
         {
             "type": "path",

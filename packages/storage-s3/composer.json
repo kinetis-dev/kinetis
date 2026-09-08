@@ -1,6 +1,6 @@
 {
     "name": "kinetis/storage-s3",
-    "description": "Fiber-native non-blocking S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3.",
+    "description": "S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3 — every S3 call travels on a Revolt-native HTTP transport.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -13,6 +13,7 @@
         "kinetis/framework": "dev-main",
         "kinetis/storage": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
+        "async-aws/core": "^1.29.2",
         "async-aws/s3": "^3.4.1",
         "league/flysystem": "^3.35.2",
         "league/flysystem-async-aws-s3": "^3.31.0"

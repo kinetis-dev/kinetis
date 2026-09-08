@@ -46,7 +46,7 @@ tutorial, then read whichever section you have reached.
 
 - [Authentication](https://kinetis.dev/docs/auth.html): kinetis/auth: opaque Bearer-token authentication middleware.
 - [JWT Authentication](https://kinetis.dev/docs/auth-jwt.html): kinetis/auth-jwt: stateless JWT authentication (HS256/RS256), with optional per-token revocation.
-- [Sessions & CSRF](https://kinetis.dev/docs/session.html): kinetis/session: cookie-backed sessions and CSRF protection — file, PSR-16 cache (Redis), and SQL storage behind one store interface.
+- [Sessions & CSRF](https://kinetis.dev/docs/session.html): kinetis/session: cookie-backed sessions and CSRF protection — file, Redis, and SQL storage behind one store interface.
 
 ## Runtime and performance
 
@@ -63,8 +63,8 @@ tutorial, then read whichever section you have reached.
 
 ## Integrations
 
-- [Storage](https://kinetis.dev/docs/storage.html): kinetis/storage: file storage on League\Flysystem — a genuinely non-blocking, Amp\File-backed local adapter.
-- [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, non-blocking via kinetis/revolt-http-client.
+- [Storage](https://kinetis.dev/docs/storage.html): kinetis/storage: file storage on League\Flysystem — an Amp\File-backed local adapter whose driver calls suspend the Fiber.
+- [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, over the Revolt-native transport in kinetis/revolt-http-client.
 - [Mailer](https://kinetis.dev/docs/mailer.html): kinetis/mailer: mail sending via Symfony\Component\Mailer, non-blocking via kinetis/revolt-http-client for API-based transports.
 - [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.
@@ -73,6 +73,7 @@ tutorial, then read whichever section you have reached.
 ## AI agents
 
 - [Model Context Protocol (MCP)](https://kinetis.dev/docs/mcp.html): kinetis/mcp: the native Model Context Protocol server — tools, resources, stdio and HTTP transports, and protocol-era handling.
+- [MCP Documentation Server](https://kinetis.dev/docs/mcp-docs.html): kinetis/mcp-docs: a standalone MCP server serving these pages as resources, depending on no Kinetis package.
 
 ## Reference
 

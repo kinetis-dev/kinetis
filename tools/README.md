@@ -1,15 +1,23 @@
 # Monorepo tooling
 
-Six entry points, plus the four modules they share. Five are driven by
-`packages.manifest.json` (repo root) — the canonical source of truth for
-every `packages/*/composer.json`; the sixth, `setup-docs-mcp.sh`, is
-unrelated and standalone.
+Six files. Five are commands driven by `packages.manifest.json` (repo
+root) — the canonical source of truth for every `packages/*/composer.json`
+— and one is the rule those commands share.
 
+- `version-policy.php` — the one version-transition rule, required by
+  the generator and the validator so the two can't disagree. Kinetis stays
+  on `1.x` through incubation: a version moves exactly one step, either
+  `1.m.p -> 1.m.(p+1)` or `1.m.p -> 1.(m+1).0`, a new package starts at
+  `1.0.0`, and a major or a skipped version is refused. Skipping is
+  refused because the release pipeline tags what the manifest says: a
+  version nothing ever set is a version nothing ever tags.
 - `generate-composer.php` — generates each package's `composer.json`
-  from the manifest. Three usages: default (writes every package),
-  `--check` (regenerates in memory, diffs, never writes — what CI
-  runs), and the version modes `--bump`/`--set-version`, which write one
-  or more packages' `version` field and nothing else.
+  from the manifest. Four usages: default (writes every package),
+  `--check` (regenerates in memory, diffs, never writes — what CI runs),
+  the version modes `--bump`/`--set-version`, which write one or more
+  packages' `version` field and nothing else, and `--release`/
+  `--release-write`, which resolve sibling requirements to published
+  version constraints instead of path repositories.
 - `validate-manifest.php` — the checks CI runs on every PR and push to
   `main`: manifest schema, cycle detection, cross-manifest version
   consistency, generated-file drift, version-bump completeness (manifest
@@ -24,68 +32,53 @@ unrelated and standalone.
   requires `sonarqube.yml`'s coverage loop and `sonar-project.properties`'
   `reportPaths` to name the same packages — a package in one but not the
   other writes a report nobody reads, and shows as 0% covered while its
-  tests pass.
+  tests pass. It also owns the two history reads the version and content
+  checks need: the comparison base, and the file-level diff against it.
 - `release-plan.php` — computes which packages this round has to look
   at, read-only and unauthenticated. A package is a candidate when its
   version changed since the comparison base, or when its split
   repository does not yet carry the current version as a finished
   release — no tag, no main branch, or a main branch pointing somewhere
-  other than the tagged commit. Every fact it needs it either
-  establishes or fails on: a ref lookup that can't reach its remote, a
-  comparison base it can't read, or a dependency graph with no total
-  order all end the run rather than producing a plan that leaves work
-  out.
+  other than the tagged commit. Each candidate is reported with two
+  problems answered: whether the siblings it requires are tagged on
+  their own split repos, and whether its version is the next one its
+  repository may publish — one step above the highest version already
+  tagged there, or `1.0.0` when it has none. Every fact it needs it
+  either establishes or fails on: a ref lookup that can't reach its
+  remote, a comparison base it can't read, or a dependency graph with no
+  total order all end the run rather than producing a plan that leaves
+  work out.
 - `release-gate.php` — decides whether the exact commit being released
-  passed CI, Monorepo Validate, Semgrep, and Integration where the
-  commit's own diff makes it applicable. Runs matched on head SHA, and a
-  green run whose meaningful jobs were all skipped counts as a failure.
-  Waiting is bounded, and every state that is not a proven success ends
-  the run.
-- `release-transaction.php` — the publication itself, in two steps.
-  `preflight` stages the round as one deterministic release commit,
-  builds each candidate's publication commit from that commit's own
-  `packages/<key>` tree on top of what its repository publishes today,
-  reads every target repository, and writes the exact ref updates to
-  make with the exact remote value each may replace; it contacts remotes
-  only to read. Staging writes every candidate's complete release-mode
-  `composer.json` and drops its tracked `composer.lock`, and the staged
-  commit records only what that changed — a package with no Kinetis
-  siblings has nothing for release mode to rewrite, so it contributes
-  its lock removal alone. A candidate the source commit carries no
-  `composer.json` for ends the round before that file is written, since
-  restoring the checkout can only take back what git tracks. `apply`
-  re-derives every object that file names against this checkout, and
-  only then takes the deploy credential and performs the updates, one
-  atomic tag-and-main push per repository. Both are idempotent: a round
-  interrupted partway is finished by the next one.
+  passed CI, Monorepo Validate and Semgrep, the three workflows every
+  push to `main` runs unconditionally. It accepts a run as evidence only
+  when it is a push to `main`, at that exact head SHA, of one of those
+  three workflow *files* — identified by the path GitHub reports, since
+  a display name is whatever the workflow's `name:` field said at the
+  time. A merged pull request's own runs sit at the same head SHA and
+  answer for none of the three. Waiting is bounded, and every state that
+  is not a proven success ends the run.
+- `release-publish.php` — the publication itself, and the only tool that
+  writes anything outside this repository. For each candidate in plan
+  order it stages that package's release-mode `composer.json` and drops
+  its tracked `composer.lock` as one commit in the runner's own
+  disposable checkout, splits `packages/<key>` out of that commit with
+  `git subtree split`, and updates the split repository's `main` and its
+  `v<version>` tag in a single atomic push. Every synthetic commit is
+  authored and dated by the monorepo commit being released, so one
+  source commit and one plan always describe the same split commits: a
+  repository already carrying both refs at this round's split commit is
+  skipped, and a round interrupted partway is finished by a rerun rather
+  than offered a second commit for a published version. `main` is
+  written under a lease naming the commit the round read for it, so a
+  branch that moved in between fails the push instead of being
+  overwritten; the tag is never forced, and a tag already naming
+  different content fails the run and is repaired by hand. Nothing is
+  published unless the commit being split is still this repository's
+  `main`, so a workflow rerun of a superseded commit cannot move a split
+  repository backwards.
 
 See "Cutting a release" in `docs/appendix-contributing.md` for how the
-three fit together.
-- `setup-docs-mcp.sh` — see "Setting up the docs MCP server" below.
-
-The shared modules, each used by more than one of the three
-manifest-driven entry points:
-
-- `version-policy.php` — the one version-transition rule. The generator
-  writes only moves it allows and the validator accepts only moves it
-  allows, so the two can't disagree.
-- `manifest-schema.php` — the strict boundary every manifest crosses
-  before anything reads it, writes a file, or contacts a remote.
-- `checked-write.php` — the checked, atomic file replacement every
-  generated file is written through. It writes into a private temporary
-  file beside the target, proves the bytes landed, gives the file the
-  mode the target should have (an existing file's own mode, `0644` for a
-  new one), and only then renames. A target that is not a regular file —
-  a symlink, a directory — is refused rather than replaced.
-- `git-history.php` — reads the comparison base and the file-level diff
-  against it, distinguishing "nothing to compare against" from "git
-  couldn't read it". Every git call runs under a deadline, after which
-  the child is killed and reaped; an answer that arrives incomplete — a
-  failed read, output past the capture cap, a child whose reap could not
-  be established — is a failure rather than a shorter success. The same
-  bounded runner takes an explicit environment, which is how the
-  publication hands a credential to exactly one child and to nothing
-  else.
+three release tools fit together.
 
 Never hand-edit a `packages/*/composer.json` directly for anything the
 manifest controls (`require`, `require-dev`, `autoload`, `bin`, ...) —
@@ -152,12 +145,10 @@ docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
-A `--base` git can't read fails the run, and so does a base that isn't a
-full commit id or a plain ref name — a value carrying option, path or
-range syntax, or no value at all, is refused before git sees it. The
-version and content checks skip only in the two states named in
-`docs/appendix-contributing.md`, and each says which; anything else that
-leaves history unreadable, a shallow checkout included, fails.
+A `--base` git can't read fails the run. The version and content checks
+skip on the repository's first commit, which has nothing behind it;
+anything else that leaves history unreadable, a shallow checkout
+included, fails.
 
 ## Force-bumping a version with no other change
 
@@ -190,96 +181,28 @@ current version again. A rejected key leaves the manifest untouched,
 including the keys named alongside it.
 
 The whole invocation is checked before any of it runs. An unknown
-option, a repeated `--bump`, two size flags, a size flag with no
-`--bump`, or `--check` alongside a mode that writes: each is refused
-rather than resolved to whichever reading the code reaches first.
+option, a repeated `--bump`, `--minor` and `--patch` together, a size
+flag with no `--bump`, or `--check` alongside a mode that writes: each is
+refused rather than resolved to whichever reading the code reaches
+first.
 
 Either form only ever writes the `version` field(s) — nothing else in
 the manifest changes, which is exactly the "version-only change" case
 the version-bump check always allows without further validation.
 
-## The cross-manifest version consistency escape hatch
-
-When two packages need different constraints for the same external
-dependency, exempt that one dependency in the package's manifest entry:
-
-```json
-"versionDriftExemptions": {
-    "league/flysystem": "why this package differs"
-}
-```
-
-`docs/appendix-contributing.md` states the rule the exemption is held to.
-A missing or blank reason, or a dependency the package does not require,
-fails the schema check.
-
-## Setting up the docs MCP server
-
-`setup-docs-mcp.sh` registers `kinetis/framework`'s built-in
-`KinetisDocsResource` as an MCP server in Claude Code, so an agent
-working in *any* project can read Kinetis's own docs directly instead
-of relying on training data. It never touches this monorepo — it
-installs `kinetis/framework` from Packagist into its own directory
-(`~/.kinetis-mcp` by default, override with
-`KINETIS_MCP_DIR`), which is exactly what makes it work: with no
-local `docs/` present, `KinetisDocsResource` falls back to fetching
-each page live from `kinetis-dev/kinetis`'s `main` branch on GitHub.
-
-```sh
-./tools/setup-docs-mcp.sh
-```
-
-No local checkout needed either — the script is fully self-contained
-(no reference to any other file in this repo, no interactive prompts),
-so it can be fetched and run directly from GitHub:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/tools/setup-docs-mcp.sh | bash
-```
-
-This downloads the script's current `main` content and pipes it
-straight into `bash` — identical to running the local copy above, just
-without cloning the repo first. It needs no `sudo`: every step runs as
-the invoking user, writing only inside `$HOME/.kinetis-mcp` (or
-`$KINETIS_MCP_DIR`) and to Claude Code's own user-level config —
-never a system directory. Docker itself still has to be reachable by
-that user account (the same "docker: running" check either form does
-first), but the script never elevates privileges to get there.
-
-Only a running Docker daemon and the `claude` CLI need to already be on
-the host — no PHP or Composer of your own, since both the install step
-and the registered server run through the `composer:2` image (which
-bundles a recent-enough PHP itself). The script installs
-`kinetis/framework` this way, then registers the server (user scope, so
-it's available in every project, not just this one — replacing any
-existing registration under the same name), then runs a real
-`initialize` handshake against it to confirm it actually responds
-before declaring success.
-
-The registered server checks for a newer `kinetis/framework` release
-itself, at most once every 24 hours, right before it starts — a spawn
-inside that window skips the check and starts immediately, so this
-costs nothing on most Claude Code session starts. A failed check (no
-network, for instance) is silently skipped rather than blocking the
-server from starting, and doesn't count as a check — the next spawn
-tries again rather than waiting out the rest of the window.
-
-Re-running the script is also safe at any time — it reuses the
-existing install directory and re-registers the server.
-
 ## Running the tools test suite
 
 The suite shells out to `git` — the version and content checks compare
-against a real commit, and several tests build a scratch repository to
-exercise that — which `php:8.4-cli-alpine` doesn't ship. Install it in
-the container first, the same step the `validate-manifest.php`
-invocation above already uses:
+against a real commit, and several tests build a scratch repository, a
+local remote and a real split to exercise that — which
+`php:8.4-cli-alpine` doesn't ship. `git subtree` is its own Alpine
+package alongside it, and it is the publication's splitter:
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app/tools composer:2 install
 docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
-  "apk add --no-cache git >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
+  "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```
 
-Without `git`, the affected tests still pass but each emits a
-`proc_open(): posix_spawn() failed` warning.
+Without them the publication tests fail rather than skip: what they
+prove is what git does with the commands the publication builds.

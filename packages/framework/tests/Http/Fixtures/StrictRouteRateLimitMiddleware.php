@@ -11,6 +11,6 @@ final class StrictRouteRateLimitMiddleware extends RateLimitMiddleware
 {
     public function __construct(CacheInterface $cache)
     {
-        parent::__construct($cache, maxAttempts: 1, windowSeconds: 60);
+        parent::__construct($cache, 'fixture-strict-route', maxAttempts: 1, windowSeconds: 60);
     }
 }

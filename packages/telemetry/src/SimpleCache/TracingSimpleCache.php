@@ -15,9 +15,8 @@ use Throwable;
 
 /**
  * A span per cache operation, wrapping any PSR-16 `CacheInterface` —
- * `kinetis/cache-redis`'s `RedisSimpleCache`/`ClusteredRedisSimpleCache`
- * included. Register it around whatever the cache package's own
- * bootstrap bound:
+ * `kinetis/cache-redis`'s `RedisSimpleCache` included. Register it
+ * around whatever the cache package's own bootstrap bound:
  *
  *     $app->instance(CacheInterface::class, new TracingSimpleCache(
  *         RedisSimpleCache::fromConfig($config),
@@ -32,9 +31,10 @@ use Throwable;
  * keys still groups together, plus the batch size for the multi-key
  * methods; see {@see Redaction} for the policy behind that.
  *
- * Spans are not activated: they read the current context (normally the
- * request span) as parent and end immediately, so concurrent cache
- * calls inside `concurrently()` never interleave anyone's scope stack.
+ * Spans are not activated: they read their own Fiber's current context
+ * (the request span, or the task span inside a `concurrently()` task)
+ * as parent and end immediately, so concurrent cache calls never
+ * interleave that Fiber's scope stack.
  */
 final class TracingSimpleCache implements CacheInterface
 {

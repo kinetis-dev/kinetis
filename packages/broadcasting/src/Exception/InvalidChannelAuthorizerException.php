@@ -11,7 +11,10 @@ use RuntimeException;
  * time — a malformed `#[BroadcastChannel]` method fails fast at
  * registration, not the first time a client happens to try authorizing
  * against it, the same discipline `EventListenerRegistry` already applies
- * to a malformed `#[Listener]` method.
+ * to a malformed `#[Listener]` method. `fromArray()` reclassifies these
+ * into `Kinetis\Cache\Exception\InvalidCacheArtifactException`, since a
+ * cache artifact carrying one is stale data rather than a live
+ * registration failure.
  */
 final class InvalidChannelAuthorizerException extends RuntimeException
 {
@@ -45,27 +48,20 @@ final class InvalidChannelAuthorizerException extends RuntimeException
         return new self("{$class}::{$method}()'s parameter \${$parameter} must be typed string.");
     }
 
-    public static function duplicatePattern(string $pattern, string $firstClass, string $firstMethod): self
-    {
-        return new self("The channel pattern \"{$pattern}\" is already registered by {$firstClass}::{$firstMethod}().");
-    }
-
     /**
-     * Covers two distinct cases `BroadcastChannelRegistry::patternRelation()`
-     * can't give a principled order for: patterns that match exactly the
-     * same channel names with identical specificity (differing only in
-     * placeholder naming), and patterns that genuinely overlap for some
-     * channel names without either one containing the other. Neither has
-     * a defensible "which one wins" answer, so registration fails rather
-     * than one silently winning by accident of discovery order.
+     * Every pair of patterns some channel name could match is rejected,
+     * an identical pair included — see
+     * {@see \Kinetis\Broadcasting\ChannelDefinition::overlaps()} for the
+     * rule. There is no precedence between two authorizers, so the only
+     * way a channel name has one answer is for exactly one pattern to
+     * claim it.
      */
-    public static function ambiguousPattern(string $pattern, string $existingPattern, string $existingClass, string $existingMethod): self
+    public static function overlappingPattern(string $pattern, string $existingPattern, string $existingClass, string $existingMethod): self
     {
         return new self(sprintf(
-            'The channel pattern "%s" cannot be distinguished from the already-registered "%s" '
-                . '(%s::%s()) — either they match the same channel names with identical specificity, or they '
-                . 'overlap without either one being more specific. Give one a more specific literal segment, or '
-                . 'remove the duplicate.',
+            'The channel pattern "%s" overlaps "%s", already registered by %s::%s() — some channel name matches '
+                . 'both, and no precedence decides between two authorizers. Give the patterns a different segment '
+                . 'count or an unequal literal segment, or handle both cases inside one authorizer.',
             $pattern,
             $existingPattern,
             $existingClass,
@@ -74,31 +70,28 @@ final class InvalidChannelAuthorizerException extends RuntimeException
     }
 
     /**
-     * `decomposeSegments()`'s own grammar restriction — see
-     * `BroadcastChannelRegistry`'s class-level docblock for why it's
-     * capped at one placeholder per segment: with more than one, a
-     * segment's own language can no longer be characterized by a plain
-     * prefix/suffix pair, and the precedence comparison this whole class
-     * depends on stops being decidable by simple string comparison.
+     * A segment is either one literal or exactly one whole `{name}`
+     * placeholder — `orders`, `{orderId}`. A brace anywhere else in a
+     * segment (`order-{id}`, `{a}-{b}`, `orders.{id`) and an empty
+     * segment are both rejected, so a placeholder always spans a whole
+     * channel-name segment and a pattern's segment count is fixed by its
+     * own literal dots.
      */
-    public static function tooManyPlaceholdersInSegment(string $pattern, string $segment): self
+    public static function malformedSegment(string $pattern, string $segment): self
     {
         return new self(
-            "The channel pattern \"{$pattern}\" has more than one placeholder in its \"{$segment}\" segment — "
-                . 'each dot-separated segment may hold at most one {name} placeholder.',
+            "The channel pattern \"{$pattern}\" has the invalid segment \"{$segment}\" — each dot-separated "
+                . 'segment must be either a non-empty literal or exactly one whole {name} placeholder.',
         );
     }
 
     /**
-     * A placeholder name must be unique across the *whole* pattern, not
-     * just within one segment — `orders.{id}.{id}` would otherwise
-     * compile to a PCRE regex with two capture groups sharing one name,
-     * which PHP's own parameter-name-uniqueness rule already makes
-     * unreachable through a live `#[BroadcastChannel]` method's
-     * signature, but a cached artifact bypasses that check entirely by
-     * design (`fromArray()` never reflects a method), so this has to be
-     * enforced here, where both the live and cached path actually
-     * compile a pattern.
+     * A placeholder name must be unique across the whole pattern —
+     * `orders.{id}.{id}` would otherwise compile to a PCRE regex with
+     * two capture groups sharing one name. PHP's own
+     * parameter-name-uniqueness rule makes that unreachable through a
+     * live method signature, but a cache artifact never reflects a
+     * method, so the check belongs where the pattern is parsed.
      */
     public static function duplicatePlaceholderName(string $pattern, string $name): self
     {

@@ -6,6 +6,18 @@ namespace Kinetis\Cache\Exception;
 
 use RuntimeException;
 
+/**
+ * The compiled artifact could not be persisted: the cache directory
+ * could not be created, the staged file could not be written whole, it
+ * did not read back as what was written, or the rename onto the live
+ * path failed.
+ *
+ * Always a property of this machine — permissions, a full disk, a
+ * read-only mount — never of what was compiled, which is
+ * {@see UnexportableArtifactException}. `kinetis build` fails on it;
+ * the runtime's compile-in-memory fallback logs it once and serves the
+ * request from the value it already holds.
+ */
 final class CacheWriteException extends RuntimeException
 {
     public static function couldNotCreateDirectory(string $directory): self
@@ -23,18 +35,11 @@ final class CacheWriteException extends RuntimeException
         return new self("Could not publish compiled cache to \"{$path}\".");
     }
 
-    public static function couldNotRemove(string $path): self
-    {
-        return new self("Could not remove \"{$path}\" while destroying the cache directory.");
-    }
-
-    public static function unexportableObject(string $file, string $keyPath, string $class): self
+    public static function couldNotVerify(string $path): self
     {
         return new self(
-            "Cannot compile \"{$file}\": an instance of {$class} at \"{$keyPath}\" has no var_export() "
-            . 'representation that can be required back. Most commonly this is a constructor default '
-            . 'value that constructs an object — replace it with a plain scalar/array default, or make '
-            . 'the parameter nullable and construct the object in the constructor body.',
+            "Staged cache file \"{$path}\" did not read back as the artifact it was written from, so it was "
+            . 'discarded rather than published.',
         );
     }
 }

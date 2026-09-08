@@ -7,10 +7,8 @@ namespace Kinetis\Broadcasting\Tests\Fixtures;
 use Kinetis\Broadcasting\Attributes\BroadcastChannel;
 
 /**
- * Same canonical shape as OrderChannelAuthorizer's `orders.{orderId}` —
- * `orders.{id}` matches exactly the same channel names with identical
- * specificity, differing only in the placeholder's own name — must be
- * rejected as ambiguous, never silently resolved by registration order.
+ * `orders.{id}` is OrderChannelAuthorizer's `orders.{orderId}` under a
+ * renamed placeholder — the same channel names, so the two conflict.
  */
 final class AmbiguousOrderIdChannelAuthorizer
 {

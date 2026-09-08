@@ -8,9 +8,9 @@ use Kinetis\Session\SessionStoreInterface;
 
 /**
  * Records every call instead of talking to a real backend — used to
- * prove exactly which id gets read/written, not just that a round trip
- * eventually works. seed() pre-populates an entry the way a real store
- * would already hold a session created by an earlier request.
+ * prove exactly which id gets read and written, not just that a round
+ * trip eventually works. seed() pre-populates an entry the way a real
+ * store would already hold a session created by an earlier request.
  */
 final class RecordingSessionStore implements SessionStoreInterface
 {
@@ -20,19 +20,23 @@ final class RecordingSessionStore implements SessionStoreInterface
     /** @var list<string> */
     public array $reads = [];
 
-    /** @var list<array{0: string, 1: array<string, mixed>}> */
+    /**
+     * Every create() and update() that actually stored data, in order.
+     *
+     * @var list<array{0: string, 1: array<string, mixed>}>
+     */
     public array $writes = [];
 
     /** @var list<string> */
     public array $destroys = [];
 
     /**
-     * Every write()/destroy() call, in the exact order they actually
-     * happened — the two per-method lists above lose that ordering once
-     * more than one method is called in the same commit(), which is
-     * exactly what a regenerate()/destroy() ordering proof needs.
+     * Every write and destroy call, in the exact order they happened
+     * and named by operation — the lists above lose that ordering once
+     * one commit() makes more than one call, which is what a
+     * regenerate() ordering proof needs.
      *
-     * @var list<array{0: 'write'|'destroy', 1: string}>
+     * @var list<array{0: 'create'|'update'|'destroy', 1: string}>
      */
     public array $operations = [];
 
@@ -41,10 +45,10 @@ final class RecordingSessionStore implements SessionStoreInterface
      *     instead of recording anything or mutating any entry — for
      *     proving that a destroy() failure inside commit() leaves
      *     whatever it was about to remove untouched.
-     * @param ?\Throwable $throwOnWrite when set, write() throws this
-     *     instead of recording anything or mutating any entry — for
-     *     proving that a write() failure inside commit() happens before
-     *     any old, still-recoverable entry is destroyed.
+     * @param ?\Throwable $throwOnWrite when set, create() and update()
+     *     throw this instead of recording anything or mutating any
+     *     entry — for proving that a write failure inside commit()
+     *     happens before any old, still-recoverable entry is destroyed.
      */
     public function __construct(
         private readonly ?\Throwable $throwOnDestroy = null,
@@ -68,16 +72,36 @@ final class RecordingSessionStore implements SessionStoreInterface
         return $this->entries[$id] ?? null;
     }
 
+    /**
+     * @param array<string, mixed> $data
+     */
     #[\Override]
-    public function write(string $id, array $data, int $lifetimeSeconds): void
+    public function create(string $id, array $data, int $lifetimeSeconds): void
     {
         if ($this->throwOnWrite !== null) {
             throw $this->throwOnWrite;
         }
 
-        $this->writes[] = [$id, $data];
-        $this->operations[] = ['write', $id];
-        $this->entries[$id] = $data;
+        $this->record('create', $id, $data);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    #[\Override]
+    public function update(string $id, array $data, int $lifetimeSeconds): bool
+    {
+        if ($this->throwOnWrite !== null) {
+            throw $this->throwOnWrite;
+        }
+
+        if (!isset($this->entries[$id])) {
+            return false;
+        }
+
+        $this->record('update', $id, $data);
+
+        return true;
     }
 
     #[\Override]
@@ -90,5 +114,16 @@ final class RecordingSessionStore implements SessionStoreInterface
         $this->destroys[] = $id;
         $this->operations[] = ['destroy', $id];
         unset($this->entries[$id]);
+    }
+
+    /**
+     * @param 'create'|'update' $operation
+     * @param array<string, mixed> $data
+     */
+    private function record(string $operation, string $id, array $data): void
+    {
+        $this->writes[] = [$id, $data];
+        $this->operations[] = [$operation, $id];
+        $this->entries[$id] = $data;
     }
 }

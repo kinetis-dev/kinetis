@@ -41,7 +41,7 @@ final class AuthenticatedRateLimitMiddlewareTest extends TestCase
 
     public function test_falls_back_to_ip_when_no_user_is_resolved(): void
     {
-        $middleware = new AuthenticatedRateLimitMiddleware(new InMemorySimpleCache(), $this->scope(), maxAttempts: 1, windowSeconds: 60);
+        $middleware = new AuthenticatedRateLimitMiddleware(new InMemorySimpleCache(), 'orders', $this->scope(), maxAttempts: 1, windowSeconds: 60);
 
         $first = $middleware->process($this->request('127.0.0.1'), $this->handler());
         $second = $middleware->process($this->request('127.0.0.1'), $this->handler());
@@ -56,7 +56,7 @@ final class AuthenticatedRateLimitMiddlewareTest extends TestCase
     {
         $scope = $this->scope();
         $scope->instance(CurrentUserInterface::class, new FakeCurrentUser('user-42'));
-        $middleware = new AuthenticatedRateLimitMiddleware(new InMemorySimpleCache(), $scope, maxAttempts: 1, windowSeconds: 60);
+        $middleware = new AuthenticatedRateLimitMiddleware(new InMemorySimpleCache(), 'orders', $scope, maxAttempts: 1, windowSeconds: 60);
 
         $first = $middleware->process($this->request('127.0.0.1'), $this->handler());
         // Same resolved user, deliberately a different IP — proving the
@@ -73,11 +73,11 @@ final class AuthenticatedRateLimitMiddlewareTest extends TestCase
 
         $scopeA = $this->scope();
         $scopeA->instance(CurrentUserInterface::class, new FakeCurrentUser('user-a'));
-        $middlewareA = new AuthenticatedRateLimitMiddleware($cache, $scopeA, maxAttempts: 1, windowSeconds: 60);
+        $middlewareA = new AuthenticatedRateLimitMiddleware($cache, 'orders', $scopeA, maxAttempts: 1, windowSeconds: 60);
 
         $scopeB = $this->scope();
         $scopeB->instance(CurrentUserInterface::class, new FakeCurrentUser('user-b'));
-        $middlewareB = new AuthenticatedRateLimitMiddleware($cache, $scopeB, maxAttempts: 1, windowSeconds: 60);
+        $middlewareB = new AuthenticatedRateLimitMiddleware($cache, 'orders', $scopeB, maxAttempts: 1, windowSeconds: 60);
 
         $responseA = $middlewareA->process($this->request('127.0.0.1'), $this->handler());
         $responseB = $middlewareB->process($this->request('127.0.0.1'), $this->handler());
@@ -88,7 +88,7 @@ final class AuthenticatedRateLimitMiddlewareTest extends TestCase
 
     public function test_the_rate_limit_headers_still_work(): void
     {
-        $middleware = new AuthenticatedRateLimitMiddleware(new InMemorySimpleCache(), $this->scope(), maxAttempts: 2, windowSeconds: 60);
+        $middleware = new AuthenticatedRateLimitMiddleware(new InMemorySimpleCache(), 'orders', $this->scope(), maxAttempts: 2, windowSeconds: 60);
 
         $response = $middleware->process($this->request(), $this->handler());
 

@@ -7,7 +7,9 @@ namespace Kinetis\Validation;
 use Kinetis\Cache\Exception\ArtifactValidation;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
-use Kinetis\Validation\Exception\UnsupportedScalarTypeException;
+use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Reflection\ParameterDefault;
+use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\ValidationException;
 use ReflectionAttribute;
 use ReflectionClass;
@@ -21,58 +23,63 @@ use ReflectionType;
  * MinLength, ...) before construction. All fields are validated up front so
  * the caller gets every error at once, not just the first one hit.
  *
- * A constructor parameter typed as another class (not a builtin scalar) is
- * treated as a nested DTO: if the corresponding data value is itself an
- * array, it's recursively hydrated the same way, with its own errors
- * surfacing under a dotted "field.nestedField" key. A scalar value (string,
- * int, float, bool) where an object is expected is a validation error, not
- * a silent pass-through — sending `{"address": "hello"}` for a nested
- * `Address` parameter now surfaces `address: must be an object, string
- * given.` instead of reaching `new Address(...)` and throwing a raw
- * `TypeError`. `null`, and anything already an object — most commonly an
- * `UploadedFileInterface` instance `Dispatcher` already merged in for a
- * multipart field — still pass through unchanged, exactly like a non-DTO
- * class-typed value always has; Hydrator never needs to know which specific
- * classes are "special", only whether it was handed an array, a scalar, or
- * something else.
+ * A DTO is described by a hydration plan compiled from its constructor.
+ * compilePlan() accepts a finite set of parameter shapes:
  *
- * A parameter typed `array` and carrying a #[ListOf(SomeClass::class)]
- * attribute is treated as a list of nested DTOs: each array-shaped element
- * is hydrated the same way a single nested DTO is, with errors surfacing
- * under a dotted "field.index.nestedField" key; a non-array *element*
- * passes through unchanged, the same tolerance a single nested DTO
- * parameter already gives a non-array value — but the field's own value
- * being a scalar instead of an array at all is a validation error for the
- * same reason a scalar is rejected for a single nested DTO above. `array`
- * alone (no #[ListOf]) passes through as a raw array.
+ * - A parameter typed with one of the builtin types in
+ *   SUPPORTED_BUILTIN_TYPES.
+ * - A parameter typed as a single instantiable class: an object-shaped
+ *   value is hydrated into that class recursively — its own errors
+ *   surfacing under a dotted "field.nestedField" key — and a value that is
+ *   already an instance of it is taken as given. Object-shaped means a
+ *   JSON object (a JsonObject marker) or a map-shaped PHP array; a JSON
+ *   array is not an object and never hydrates one, `[]` included.
+ * - A parameter typed as a single non-instantiable class (an interface, an
+ *   abstract class, an enum): only an existing instance is accepted. No
+ *   request value can construct one — the case this exists for is the
+ *   UploadedFileInterface Dispatcher merges into a multipart field.
+ * - A parameter typed `array` carrying #[ListOf(SomeClass::class)]: a JSON
+ *   array whose every element is either object-shaped (hydrated into
+ *   SomeClass) or already a SomeClass instance. Element errors surface
+ *   under a dotted "field.index" / "field.index.nestedField" key.
+ * - A nullable variant of any of the above.
  *
- * Every builtin-typed constructor parameter is type-checked *before* it's
- * cast, not after — typeMismatchMessage() carries the complete, deliberate
- * policy for every one of the twelve builtin type names PHP can actually
- * attach to a parameter (see JsonSchema::forType()'s own docblock for how
- * this list was audited): `string` rejects anything that isn't an actual
- * PHP string; `int`/`float` accept a real number or a numeric string but
- * reject a non-numeric string, array, object, or bool; `bool` accepts only
- * `true`, `false`, `1`, `0`, `"1"`, `"0"`; `array`/`iterable` both require
- * a real JSON array (the only shape JSON input can ever decode into that
- * genuinely satisfies either type); a standalone `null` type accepts only
- * a literal null; standalone `true`/`false` accept only that one literal
- * boolean; `object`/`callable` are rejected unconditionally — no JSON
- * value can construct a plain object, and a callable-typed parameter fed
- * an attacker-controlled string is a real injection risk if it's ever
- * invoked downstream. `null` itself is exempt from all of this — a missing
- * or explicitly-null *value* is a separate concern from a wrong-shaped
- * one: a missing key on a defaultless parameter is "is required.", and an
- * explicitly-null value for a parameter whose declared type doesn't allow
- * null is "must not be null." — both 422 validation errors, never a raw
- * `TypeError` escaping from the constructor. `mixed` is untouched, since
- * it accepts anything by definition. This is the one boundary shared by
- * every hydration call site — a #[Body] DTO field here, a #[Query]/path
- * parameter via Dispatcher, and an MCP tool argument via McpDispatcher all
- * delegate to this exact method, so an unsupported declaration can never
- * reach a real constructor unchecked regardless of which one dispatched
- * it, or whether OpenAPI/MCP schema generation (which independently
- * refuses to even describe `object`/`callable`) ever ran at all.
+ * Every other definition is rejected with an
+ * UnsupportedDtoDefinitionException while the plan is compiled — at build
+ * time for an AOT-compiled plan, on the first hydrate() call for a live
+ * one: a union or intersection parameter type, a recursive or mutually
+ * recursive class reference (a plan embeds each nested class inline, so
+ * recursion has no finite plan and nothing var_export() could bake into a
+ * cache file), a class type reflection cannot resolve (self/parent/static),
+ * a builtin type outside SUPPORTED_BUILTIN_TYPES, #[ListOf] on a parameter
+ * that isn't typed `array`, and #[ListOf] naming a class that cannot be
+ * instantiated.
+ *
+ * A parameter's own default value is captured under the rule
+ * Kinetis\Reflection\ParameterDefault owns, shared with Dispatcher's
+ * binding plan: an object default other than an enum case is rejected
+ * there, at the same point, with an UnsupportedDefaultValueException.
+ *
+ * Every builtin-typed parameter is type-checked before it is cast, never
+ * after. `string` requires an actual string; `int` requires a real int, a
+ * finite float with no fractional part, or a string spelled as a plain
+ * base-10 integer (`42`, `42.0`, `"42"`), all inside PHP's native integer
+ * range, and rejects a fractional, non-finite, out-of-range or
+ * differently-spelled value (`"42.0"`, `"4.2e1"`) rather than truncating or
+ * reinterpreting it; `float` accepts a real number or a numeric string and
+ * rejects anything not finite; `bool` accepts only `true`, `false`, `1`,
+ * `0`, `"1"`, `"0"`; `array`/`iterable` both require a real JSON array.
+ * `mixed` accepts anything by definition.
+ *
+ * A missing or explicitly-null value is a separate concern from a
+ * wrong-shaped one: a missing key on a defaultless parameter is "is
+ * required.", and an explicitly-null value for a parameter whose declared
+ * type doesn't allow null is "must not be null." — both 422 validation
+ * errors, never a raw TypeError escaping the constructor. typeMismatchMessage()
+ * is the one boundary shared by every hydration call site — a #[Body] DTO
+ * field here, a #[Query]/path parameter via Dispatcher, and an MCP tool
+ * argument via McpDispatcher — so a wrong-shaped value can never reach a
+ * real constructor unchecked regardless of which one dispatched it.
  *
  * Holds exactly one piece of static state: a memoization cache of
  * compilePlan() output, keyed by DTO class. This is a deliberate,
@@ -80,9 +87,11 @@ use ReflectionType;
  * enforces (see phpstan.neon): a plan is pure derived data, identical on
  * every request for the process's lifetime, so persisting it across
  * requests cannot bleed request state — it only avoids re-running the
- * same reflection for every hydrated row. $compiledPlan remains an
- * optional argument so ahead-of-time compiled plans (Kinetis\Cache) keep
- * skipping even the first live compile.
+ * same reflection for every hydrated row. ParameterDefault is what keeps
+ * "pure derived data" true of the one field that could otherwise hold a
+ * live value, a captured default. $compiledPlan remains an optional
+ * argument so ahead-of-time compiled plans (Kinetis\Cache) keep skipping
+ * even the first live compile.
  *
  * HydrationPlan can't self-reference `nestedPlan` in its own type alias —
  * PHPStan (at least this version) rejects that as a circular definition
@@ -115,6 +124,25 @@ final class Hydrator
 
     private const string NOT_A_JSON_ARRAY = 'must be a JSON array, not a JSON object.';
 
+    private const string NOT_A_JSON_OBJECT = 'must be a JSON object, not a JSON array.';
+
+    private const string NOT_FINITE = 'must be a finite number.';
+
+    private const string NOT_AN_INTEGER = 'must be an integer within the platform integer range.';
+
+    /**
+     * The builtin types a request-bound parameter may declare. A DTO
+     * field outside this set fails when its plan is compiled; a
+     * #[Query]/path parameter outside it fails when
+     * Kinetis\Http\Dispatcher derives the route's binding plan; and
+     * Kinetis\Validation\JsonSchema describes exactly this set. Every
+     * other builtin — `null`, `true`, `false`, `object`, `callable` —
+     * has no request representation worth the machinery to accept it.
+     *
+     * @var list<string>
+     */
+    public const array SUPPORTED_BUILTIN_TYPES = ['string', 'int', 'float', 'bool', 'array', 'iterable', 'mixed'];
+
     private const array HYDRATION_PLAN_KEYS = ['className', 'hasConstructor', 'parameters'];
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
@@ -131,16 +159,10 @@ final class Hydrator
     private static array $planCache = [];
 
     /**
-     * $normalizeFormLiterals — appended last, default `false`, so every
-     * existing positional call keeps its exact current behavior — when
-     * `true`, applies the identical "true"/"false" string-to-PHP-boolean
-     * translation `Dispatcher::normalizeQueryOrPathLiteral()` already
-     * applies for `#[Query]`/path values, scoped here to a `bool`/`true`/
-     * `false`-typed field whenever `Dispatcher` knows the whole request
-     * body is form-encoded (never JSON) — see resolveParameterValue()'s
-     * own docblock for why this can't be applied unconditionally, the
-     * same source-specific-value reasoning that already governs
-     * `#[Query]`/path.
+     * $normalizeFormLiterals applies normalizeTextualBoolean() to a
+     * `bool`-typed field, and is set only when `Dispatcher` knows the
+     * whole request body is form-encoded rather than JSON — see that
+     * method's own docblock for why the source has to decide it.
      *
      * @template T of object
      * @param class-string<T> $class
@@ -148,6 +170,8 @@ final class Hydrator
      * @param HydrationPlan|null $compiledPlan
      * @return T
      * @throws ValidationException
+     * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
     public static function hydrate(string $class, array $data, ?array $compiledPlan = null, bool $normalizeFormLiterals = false): object
     {
@@ -164,12 +188,12 @@ final class Hydrator
      * identical for every hydrate() call this DTO class will ever receive.
      * Used both by the live per-call fallback above (when no compiled plan
      * is supplied) and by Kinetis\Cache\Compiler ahead of time. Recurses into
-     * every class-typed constructor parameter, embedding that class's own
-     * plan inline as `nestedPlan` — so compiling just the top-level DTO a
-     * route/tool binds directly already produces a fully nested-inclusive
-     * plan, with zero further discovery needed elsewhere (see
-     * Kinetis\Cache\Compiler's own doc comment for why its discovery pass
-     * doesn't need to change to stay correct here).
+     * every instantiable class-typed constructor parameter, embedding that
+     * class's own plan inline as `nestedPlan` — so compiling just the
+     * top-level DTO a route/tool binds directly already produces a fully
+     * nested-inclusive plan, with zero further discovery needed elsewhere
+     * (see Kinetis\Cache\Compiler's own doc comment for why its discovery
+     * pass doesn't need to change to stay correct here).
      *
      * Constraint entries capture the attribute's literal constructor
      * arguments via ReflectionAttribute::getArguments() — NOT newInstance()
@@ -177,25 +201,25 @@ final class Hydrator
      * {class: MinLength::class, args: [5]}), reconstructable later via
      * `new $class(...$args)` with zero reflection.
      *
-     * $visiting tracks classes already being compiled in the current
-     * recursion chain, so a self-referencing (or mutually referencing) DTO
-     * stops nesting the moment a class repeats, instead of recursing
-     * forever. This isn't just a defensive stack-overflow guard: a plan
-     * containing a genuine PHP array cycle couldn't be compiled ahead of
-     * time at all — Kinetis\Cache\Compiler bakes plans into a cache file via
-     * var_export(), which has no way to represent a circular array as
-     * re-parseable PHP. A self-referencing field one level deep — the
-     * common real case — simply receives its raw array unhydrated rather
-     * than a nested instance; this is a real, deliberate limitation, not an
-     * oversight.
+     * $visiting carries the classes already being compiled in the current
+     * recursion chain, so a self-referencing or mutually referencing
+     * definition is rejected the moment a class repeats. See the class
+     * docblock for the complete set of definitions this refuses.
      *
      * @param class-string $class
      * @param array<class-string, true> $visiting
      * @return HydrationPlan
+     * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
     public static function compilePlan(string $class, array $visiting = []): array
     {
         $reflection = new ReflectionClass($class);
+
+        if (!$reflection->isInstantiable()) {
+            throw UnsupportedDtoDefinitionException::notInstantiable($class);
+        }
+
         $constructor = $reflection->getConstructor();
 
         if ($constructor === null) {
@@ -206,7 +230,7 @@ final class Hydrator
         $parameters = [];
 
         foreach ($constructor->getParameters() as $parameter) {
-            $parameters[] = self::compileParameter($parameter, $visiting);
+            $parameters[] = self::compileParameter($parameter, $class, $visiting);
         }
 
         return ['className' => $class, 'hasConstructor' => true, 'parameters' => $parameters];
@@ -244,10 +268,9 @@ final class Hydrator
      * One `HydrationPlan` shape, recursing into every parameter's own
      * non-null `nestedPlan`/`listItemPlan` — themselves the identical
      * shape, one level deeper, exactly as `compilePlan()` embeds them.
-     * Naturally bounded by the data itself: a genuinely self-referencing
-     * plan was never producible in the first place (see `compilePlan()`'s
-     * own `$visiting` guard, above), so there is no unbounded recursion
-     * risk here either.
+     * Naturally bounded by the data itself: `compilePlan()` rejects a
+     * recursive definition outright, so a circular plan is not
+     * producible in the first place.
      *
      * @param array<array-key, mixed> $plan
      * @throws CacheArtifactExceptionInterface
@@ -291,6 +314,7 @@ final class Hydrator
     }
 
     /**
+     * @param class-string $class
      * @param array<class-string, true> $visiting
      * @return array{
      *     name: string,
@@ -304,21 +328,28 @@ final class Hydrator
      *     allowsNull: bool,
      *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
      * }
+     * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
      */
-    private static function compileParameter(ReflectionParameter $parameter, array $visiting): array
+    private static function compileParameter(ReflectionParameter $parameter, string $class, array $visiting): array
     {
         $type = $parameter->getType();
-        [$dtoClass, $nestedPlan, $listItemClass, $listItemPlan] = self::compileNesting($type, $parameter, $visiting);
+        [$dtoClass, $nestedPlan, $listItemClass, $listItemPlan] = self::compileNesting($type, $parameter, $class, $visiting);
+        $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
+
+        if ($scalarType !== null && !in_array($scalarType, self::SUPPORTED_BUILTIN_TYPES, true)) {
+            throw UnsupportedDtoDefinitionException::unsupportedBuiltinType($class, $parameter->getName(), $scalarType);
+        }
 
         return [
             'name' => $parameter->getName(),
-            'scalarType' => $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null,
+            'scalarType' => $scalarType,
             'dtoClass' => $dtoClass,
             'nestedPlan' => $nestedPlan,
             'listItemClass' => $listItemClass,
             'listItemPlan' => $listItemPlan,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
-            'defaultValue' => $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null,
+            'defaultValue' => ParameterDefault::capture($parameter, $class),
             // An untyped parameter accepts anything, null included.
             'allowsNull' => $type === null || $type->allowsNull(),
             'constraints' => self::collectConstraints($parameter),
@@ -326,31 +357,77 @@ final class Hydrator
     }
 
     /**
+     * The class-typed half of one parameter's plan: a nested DTO class and
+     * its own inline plan, or a #[ListOf] item class and its own. A
+     * non-instantiable nested class keeps its class name with a null plan —
+     * the field then accepts an existing instance and nothing else.
+     *
+     * @param class-string $class
      * @param array<class-string, true> $visiting
      * @return array{0: ?class-string, 1: ?array<string, mixed>, 2: ?class-string, 3: ?array<string, mixed>}
+     * @throws UnsupportedDtoDefinitionException
      */
-    private static function compileNesting(?ReflectionType $type, ReflectionParameter $parameter, array $visiting): array
+    private static function compileNesting(?ReflectionType $type, ReflectionParameter $parameter, string $class, array $visiting): array
     {
-        if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-            /** @var class-string $dtoClass */
-            $dtoClass = $type->getName();
-            $nestedPlan = isset($visiting[$dtoClass]) ? null : self::compilePlan($dtoClass, $visiting);
+        $name = $parameter->getName();
 
-            return [$dtoClass, $nestedPlan, null, null];
+        if ($type !== null && !$type instanceof ReflectionNamedType) {
+            throw UnsupportedDtoDefinitionException::compositeType($class, $name);
         }
 
-        if ($type instanceof ReflectionNamedType && $type->getName() === 'array') {
-            $listOfAttributes = $parameter->getAttributes(ListOf::class);
+        $listOf = $parameter->getAttributes(ListOf::class);
 
-            if ($listOfAttributes !== []) {
-                $listItemClass = $listOfAttributes[0]->newInstance()->itemClass();
-                $listItemPlan = isset($visiting[$listItemClass]) ? null : self::compilePlan($listItemClass, $visiting);
-
-                return [null, null, $listItemClass, $listItemPlan];
+        if ($listOf !== []) {
+            if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
+                throw UnsupportedDtoDefinitionException::listOfOnNonArrayParameter($class, $name);
             }
+
+            $itemClass = $listOf[0]->newInstance()->itemClass();
+
+            if (!self::isInstantiable($itemClass)) {
+                throw UnsupportedDtoDefinitionException::listItemNotInstantiable($class, $name, $itemClass);
+            }
+
+            return [null, null, $itemClass, self::compileNestedPlan($itemClass, $class, $name, $visiting)];
         }
 
-        return [null, null, null, null];
+        if (!$type instanceof ReflectionNamedType || $type->isBuiltin()) {
+            return [null, null, null, null];
+        }
+
+        /** @var class-string $nestedClass */
+        $nestedClass = $type->getName();
+
+        if (!class_exists($nestedClass) && !interface_exists($nestedClass)) {
+            throw UnsupportedDtoDefinitionException::unresolvableClass($class, $name, $nestedClass);
+        }
+
+        return self::isInstantiable($nestedClass)
+            ? [$nestedClass, self::compileNestedPlan($nestedClass, $class, $name, $visiting), null, null]
+            : [$nestedClass, null, null, null];
+    }
+
+    /**
+     * @param class-string $nested
+     * @param class-string $class
+     * @param array<class-string, true> $visiting
+     * @return HydrationPlan
+     * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
+     */
+    private static function compileNestedPlan(string $nested, string $class, string $parameter, array $visiting): array
+    {
+        if (isset($visiting[$nested])) {
+            throw UnsupportedDtoDefinitionException::recursiveDefinition($class, $parameter, $nested);
+        }
+
+        return self::compilePlan($nested, $visiting);
+    }
+
+    private static function isInstantiable(string $class): bool
+    {
+        return (class_exists($class) || interface_exists($class))
+            && new ReflectionClass($class)->isInstantiable();
     }
 
     /**
@@ -462,25 +539,30 @@ final class Hydrator
      * constraints loop and assigning $arguments[$name] for it.
      *
      * $normalizeFormLiterals — see hydrate()'s own docblock. Applied
-     * *before* the type-mismatch check, so the check itself still
-     * receives a genuinely equivalent value, not a string standing in
-     * for one — the identical two-step shape `Dispatcher::resolveScalarFromPlan()`
-     * already uses for `#[Query]`/path. Deliberately never applied when a
-     * `dtoClass`/`listItemClass` field routes elsewhere below: standard
-     * form encoding has no nested-object wire representation at all, so
-     * this only ever matters for a genuinely flat scalar field — but the
-     * flag itself still threads through both recursive branches, since a
-     * form-encoded body reaching a nested/list DTO's own scalar fields
-     * (via PHP's bracket-style `field[sub]=value` form-field-name
-     * convention) is still exactly as non-JSON a source as the top level.
+     * before the type-mismatch check, so the check receives an equivalent
+     * value rather than a string standing in for one. It threads through
+     * both recursive branches: a form-encoded body reaching a nested or
+     * list DTO's own scalar fields (via PHP's bracket-style
+     * `field[sub]=value` convention) is exactly as non-JSON a source as
+     * the top level.
      *
      * @param HydrationPlanParameter $parameter
      * @return array{0: mixed, 1: array<string, list<string>>}
      */
     private static function resolveParameterValue(string $name, mixed $value, array $parameter, bool $normalizeFormLiterals = false): array
     {
+        if ($value === null) {
+            // hydrateFromPlan() above has already rejected null for a
+            // parameter whose declared type doesn't accept it; for one
+            // that does, null is the value, whatever its declared shape.
+            return [null, []];
+        }
+
         if ($parameter['dtoClass'] !== null) {
-            return self::resolveNestedDtoValue($name, $value, $parameter, $normalizeFormLiterals);
+            /** @var HydrationPlan|null $nestedPlan */
+            $nestedPlan = $parameter['nestedPlan'];
+
+            return self::resolveClassTypedValue($name, $value, $parameter['dtoClass'], $nestedPlan, $normalizeFormLiterals);
         }
 
         if ($parameter['listItemClass'] !== null) {
@@ -488,7 +570,7 @@ final class Hydrator
         }
 
         if ($normalizeFormLiterals) {
-            $value = self::normalizeFormLiteral($parameter['scalarType'], $value);
+            $value = self::normalizeTextualBoolean($parameter['scalarType'], $value);
         }
 
         if ($parameter['scalarType'] !== null) {
@@ -513,19 +595,23 @@ final class Hydrator
     }
 
     /**
-     * A form-encoded #[Body] value is a raw string when present, never
+     * A query string, a path segment and a form-encoded body all carry
+     * text only: a `bool` value arrives as a raw string there, never
      * PHP's real `true`/`false` the way an already-decoded JSON body's
-     * own boolean literal is — mirroring `Dispatcher::normalizeQueryOrPathLiteral()`'s
-     * own reasoning exactly, just applied to the one other genuinely
-     * non-JSON source this codebase has. `bool`'s own pre-existing
-     * `"1"`/`"0"` spellings are unaffected — they already pass
-     * typeMismatchMessage()'s check as raw strings. Anything else
-     * (including a real array a repeated/bracketed form field name
-     * produces) passes through unchanged.
+     * own boolean literal does. Translating the two canonical spellings
+     * OpenAPI documents for a boolean is what lets those sources reach
+     * typeMismatchMessage()'s shared check with an equivalent value.
+     * `bool`'s own `"1"`/`"0"` spellings already pass that check as raw
+     * strings; anything else — including a real array a repeated query
+     * key or bracketed form field name produces — passes through
+     * unchanged.
+     *
+     * Called only from those three sources, never for a JSON body: the
+     * JSON *string* `"true"` stays a string, and stays a 422.
      */
-    private static function normalizeFormLiteral(?string $scalarType, mixed $value): mixed
+    public static function normalizeTextualBoolean(?string $scalarType, mixed $value): mixed
     {
-        if (!in_array($scalarType, ['bool', 'true', 'false'], true) || !is_string($value)) {
+        if ($scalarType !== 'bool' || !is_string($value)) {
             return $value;
         }
 
@@ -537,179 +623,115 @@ final class Hydrator
     }
 
     /**
-     * The dtoClass branch of resolveParameterValue(), split out on its own
-     * once this whole method's cognitive complexity grew past the linter's
-     * threshold as list-of-DTO support was added alongside it — a pure move,
-     * no behavior change (see the class docblock for what this branch does
-     * and why a scalar value here is a validation error, not a pass-through).
+     * One class-typed value — a nested DTO field under its own field name,
+     * or one #[ListOf] element under its own "field.index" key. Two shapes
+     * are accepted and nothing else: an object-shaped value — a JsonObject
+     * marker or a map-shaped PHP array — hydrated into $class against
+     * $plan; or a value that is already a $class instance, taken as given
+     * (the UploadedFileInterface Dispatcher merges into a multipart field,
+     * or a caller hydrating from data it partly built itself). $plan is
+     * null exactly when $class cannot be instantiated, so no value could
+     * ever be hydrated into it and an instance is the only accepted shape.
      *
-     * @param HydrationPlanParameter $parameter
+     * @param class-string $class
+     * @param HydrationPlan|null $plan
      * @return array{0: mixed, 1: array<string, list<string>>}
      */
-    private static function resolveNestedDtoValue(string $name, mixed $value, array $parameter, bool $normalizeFormLiterals = false): array
+    private static function resolveClassTypedValue(string $key, mixed $value, string $class, ?array $plan, bool $normalizeFormLiterals): array
     {
-        // A nested DTO field's own real wire value — a genuine JSON
-        // object — arrives marked as a JsonObject once JsonTree::convert()
-        // is in the picture (see decodeJsonBody()'s own docblock);
-        // unwrapped here so the existing is_array() recursion below
-        // still applies unchanged, exactly as it always has for a plain
-        // associative array.
-        if ($value instanceof JsonObject) {
-            $value = $value->toArray();
-        }
-
-        if (is_array($value)) {
-            if ($parameter['nestedPlan'] === null) {
-                // Self-referencing DTO guard (see class docblock): no
-                // plan to hydrate against, so the raw array passes
-                // through unhydrated. $value's own elements may still
-                // hold a JsonObject at any depth -- the toArray() call
-                // above only ever converts the *outer* marker, since it
-                // has no plan to recurse against either -- so this still
-                // needs its own unwrap() pass before leaving Hydrator's
-                // own boundary: the class docblock's "null, or already an
-                // object... pass through unchanged" contract, and every
-                // other exit point in this class, guarantee application
-                // code never sees a JsonObject, and this guard is no
-                // exception just because there's no nestedPlan to check
-                // its own contents against.
-                return [JsonTree::unwrap($value), []];
-            }
-
-            /** @var HydrationPlan $nestedPlan */
-            $nestedPlan = $parameter['nestedPlan'];
-
-            try {
-                return [self::hydrateFromPlan($nestedPlan, $value, $normalizeFormLiterals), []];
-            } catch (ValidationException $e) {
-                $errors = [];
-
-                foreach ($e->errors as $nestedField => $messages) {
-                    $errors["{$name}.{$nestedField}"] = $messages;
-                }
-
-                return [null, $errors];
-            }
-        }
-
-        if (is_scalar($value)) {
-            return [null, [$name => ['must be an object, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
-        }
-
-        // null, or already an object (e.g. an UploadedFileInterface
-        // Dispatcher merged in directly for a multipart field) — pass
-        // through unchanged, exactly as before.
-        return [$value, []];
-    }
-
-    /**
-     * The listItemClass branch of resolveParameterValue() — same extraction
-     * reasoning as resolveNestedDtoValue() above, split out alongside it.
-     *
-     * @param HydrationPlanParameter $parameter
-     * @return array{0: mixed, 1: array<string, list<string>>}
-     */
-    private static function resolveListValue(string $name, mixed $value, array $parameter, bool $normalizeFormLiterals = false): array
-    {
-        // #[ListOf]'s own JSON Schema claims {type: 'array'} exactly like
-        // a plain array field's — a genuine JSON object (marked as
-        // JsonObject once JsonTree::convert() is in the picture) is
-        // rejected outright here, the same way listShapeMismatchMessage()
-        // rejects one for a plain array/iterable field, regardless of
-        // what its own keys happen to look like.
-        if ($value instanceof JsonObject) {
-            return [null, [$name => [self::NOT_A_JSON_ARRAY]]];
-        }
-
-        if (is_array($value)) {
-            // A map-shaped PHP array reaching here directly (never
-            // marked at all — a direct Hydrator::hydrate() call, or a
-            // form-decoded body) gets the identical rejection.
-            if (!array_is_list($value)) {
-                return [null, [$name => [self::NOT_A_JSON_ARRAY]]];
-            }
-        } elseif (is_scalar($value)) {
-            return [null, [$name => ['must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX]]];
-        } else {
-            // null, or already an array-like object — pass through unchanged.
+        if ($value instanceof $class) {
             return [$value, []];
         }
 
-        if ($parameter['listItemPlan'] === null) {
-            // Self-referencing list guard: same reasoning as
-            // resolveNestedDtoValue()'s own guard above -- $value is
-            // confirmed a real list array at this point, but any element
-            // (or anything nested inside one) may still carry a
-            // JsonObject marker, since there's no listItemPlan to
-            // recurse hydration against and therefore no other point in
-            // this branch that would ever unwrap it.
-            return [JsonTree::unwrap($value), []];
+        // Object-shaped is exactly two spellings. A genuine JSON object
+        // arrives marked as a JsonObject once JsonTree::convert() is in
+        // the picture (see Dispatcher's own decodeJsonBody() docblock);
+        // a direct hydrate() call, or a form-decoded body, spells the
+        // same thing as a map-shaped PHP array. A list-shaped array is
+        // never object-shaped — inside the marked pipeline it is a
+        // genuine JSON array, `[]` included, since convert() marks every
+        // JSON object and leaves every JSON array plain.
+        $data = match (true) {
+            $value instanceof JsonObject => $value->toArray(),
+            is_array($value) && !array_is_list($value) => $value,
+            default => null,
+        };
+
+        if ($plan === null || $data === null) {
+            return [null, [$key => [self::classTypedMismatchMessage($value, $class, $plan !== null)]]];
         }
 
-        /** @var HydrationPlan $listItemPlan */
+        try {
+            return [self::hydrateFromPlan($plan, $data, $normalizeFormLiterals), []];
+        } catch (ValidationException $e) {
+            $errors = [];
+
+            foreach ($e->errors as $nestedField => $messages) {
+                $errors["{$key}.{$nestedField}"] = $messages;
+            }
+
+            return [null, $errors];
+        }
+    }
+
+    /**
+     * A value that reaches here as an array is always list-shaped — a
+     * map-shaped one has already hydrated — so it names the real problem
+     * (a JSON array where the schema declares an object) rather than
+     * describeType()'s generic label.
+     */
+    private static function classTypedMismatchMessage(mixed $value, string $class, bool $hydratable): string
+    {
+        if (!$hydratable || is_object($value)) {
+            return 'must be a ' . $class . ' instance.';
+        }
+
+        return is_array($value)
+            ? self::NOT_A_JSON_OBJECT
+            : 'must be an object, ' . self::describeType($value) . self::GIVEN_SUFFIX;
+    }
+
+    /**
+     * The listItemClass branch of resolveParameterValue(): the field's own
+     * value must be a real JSON array (the shape its JSON Schema claims),
+     * and every element is resolved as one class-typed value under its own
+     * dotted "field.index" key.
+     *
+     * @param HydrationPlanParameter $parameter
+     * @return array{0: mixed, 1: array<string, list<string>>}
+     */
+    private static function resolveListValue(string $name, mixed $value, array $parameter, bool $normalizeFormLiterals): array
+    {
+        if (!is_array($value) || !array_is_list($value)) {
+            return [null, [$name => [self::listShapeMessage($value)]]];
+        }
+
+        /** @var class-string $listItemClass */
+        $listItemClass = $parameter['listItemClass'];
+        /** @var HydrationPlan|null $listItemPlan */
         $listItemPlan = $parameter['listItemPlan'];
         $items = [];
         $errors = [];
 
         foreach ($value as $index => $item) {
-            [$hydratedItem, $itemErrors] = self::hydrateListItem($listItemPlan, $name, $index, $item, $normalizeFormLiterals);
+            [$hydratedItem, $itemErrors] = self::resolveClassTypedValue(
+                "{$name}.{$index}",
+                $item,
+                $listItemClass,
+                $listItemPlan,
+                $normalizeFormLiterals,
+            );
 
             if ($itemErrors !== []) {
-                foreach ($itemErrors as $errorKey => $messages) {
-                    $errors[$errorKey] = $messages;
-                }
+                $errors = [...$errors, ...$itemErrors];
 
                 continue;
             }
 
-            $items[$index] = $hydratedItem;
+            $items[] = $hydratedItem;
         }
 
-        if ($errors !== []) {
-            return [null, $errors];
-        }
-
-        return [array_values($items), []];
-    }
-
-    /**
-     * One #[ListOf] element's own hydration, split out of resolveListValue()'s
-     * loop body once that whole method's cognitive complexity grew past the
-     * linter's threshold — a pure move, no behavior change: a non-array
-     * element still passes through unchanged, a hydration failure still
-     * surfaces under the identical dotted "field.index.nestedField" key, and
-     * a failed element is still simply absent from the returned items rather
-     * than added as null.
-     *
-     * @param HydrationPlan $listItemPlan
-     * @return array{0: mixed, 1: array<string, list<string>>}
-     */
-    private static function hydrateListItem(array $listItemPlan, string $name, int|string $index, mixed $item, bool $normalizeFormLiterals = false): array
-    {
-        // Each #[ListOf] element is expected to be an object (a nested
-        // DTO) on the wire — its own real value arrives marked as a
-        // JsonObject once JsonTree::convert() is in the picture, unwrapped
-        // here so the existing is_array() recursion below still applies
-        // unchanged.
-        if ($item instanceof JsonObject) {
-            $item = $item->toArray();
-        }
-
-        if (!is_array($item)) {
-            return [$item, []];
-        }
-
-        try {
-            return [self::hydrateFromPlan($listItemPlan, $item, $normalizeFormLiterals), []];
-        } catch (ValidationException $e) {
-            $errors = [];
-
-            foreach ($e->errors as $nestedField => $messages) {
-                $errors["{$name}.{$index}.{$nestedField}"] = $messages;
-            }
-
-            return [null, $errors];
-        }
+        return $errors !== [] ? [null, $errors] : [$items, []];
     }
 
     /**
@@ -731,7 +753,8 @@ final class Hydrator
 
         return match ($scalarType) {
             'string' => is_string($value) ? null : 'must be a string, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            'int', 'float' => self::numericMismatchMessage($value),
+            'int' => self::integerMismatchMessage($value),
+            'float' => self::floatMismatchMessage($value),
             'bool' => self::booleanMismatchMessage($value),
             // A plain `array` field (no #[ListOf] — that shape is handled
             // entirely separately, by resolveListValue()) needs this
@@ -741,51 +764,14 @@ final class Hydrator
             // same 422/validation-error contract every other builtin
             // type gets. `iterable` gets the identical check: JSON
             // input can only ever decode into an array, never a real
-            // Traversable, and a plain PHP array genuinely satisfies
+            // Traversable, and a plain PHP array satisfies
             // `iterable` — so the wire contract and the accepted shape
             // are the same as `array`'s.
             'array', 'iterable' => self::listShapeMismatchMessage($value),
-            // A standalone `null` type accepts nothing but JSON null
-            // itself — the `$value === null` exemption above already
-            // covers that case, so reaching this arm means a genuinely
-            // non-null value was given for a field that can never legally
-            // hold one.
-            'null' => 'must be null, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            // PHP 8.2's standalone `true`/`false` types each accept
-            // exactly one literal boolean value — narrower than `bool`,
-            // which accepts either.
-            'true' => $value === true ? null : 'must be true, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            'false' => $value === false ? null : 'must be false, ' . self::describeType($value) . self::GIVEN_SUFFIX,
-            // `object` and `callable` have no truthful representation
-            // this codebase accepts (see JsonSchema::forType()'s own
-            // docblock for the full reasoning): JSON input never decodes
-            // into a real PHP object, and a `callable`-typed parameter fed
-            // an attacker-controlled string is a real arbitrary-function-
-            // name-injection risk if it's ever invoked downstream. Both
-            // are rejected unconditionally the moment a real value is
-            // actually supplied — this is the guaranteed-to-run boundary
-            // that closes the gap regardless of whether OpenAPI/MCP schema
-            // generation (which already refuses to describe either type at
-            // all) ever runs for this route/tool.
-            'object' => 'cannot be provided through JSON input — no request value can construct a plain object.',
-            'callable' => 'cannot be provided through JSON input — callable values are not accepted.',
-            // `mixed` accepts anything by definition — nothing to check;
-            // an explicit arm rather than falling to default below, so
-            // the fail-closed guard there only ever catches a genuinely
-            // unrecognized type name.
-            'mixed' => null,
-            // Every one of the twelve builtin type names ReflectionNamedType
-            // can actually attach to a parameter has its own arm above —
-            // reaching here means $scalarType isn't one of them at all.
-            // Throwing (fail closed) rather than silently accepting is
-            // deliberate: a bare `default => null` here is exactly the
-            // fail-open pattern that let object/callable/iterable/null/
-            // true/false all reach a raw constructor unchecked before this
-            // class's own audit gave each of them a real policy — a future
-            // builtin type PHP adds, or a caller passing a scalarType this
-            // method never actually derived from reflection, must not get
-            // that same silent treatment.
-            default => throw UnsupportedScalarTypeException::forType($scalarType),
+            // `mixed` accepts anything by definition. No other builtin
+            // reaches here: SUPPORTED_BUILTIN_TYPES is enforced where
+            // each plan is built.
+            default => null,
         };
     }
 
@@ -795,62 +781,106 @@ final class Hydrator
      * (`[...]`), not any array-shaped PHP value — including a JSON
      * *object* (`{...}`), and including the empty object `{}`.
      *
-     * A JSON object never reaches the `is_array()`/`array_is_list()`
-     * checks below at all — see decodeJsonBody()'s own docblock:
+     * A JSON object never reaches the `array_is_list()` check below at
+     * all — see Dispatcher's own decodeJsonBody() docblock:
      * `Dispatcher`/`McpServer` decode with `associative: false` and run
      * the result through `JsonTree::convert()`, which wraps every JSON
      * object anywhere in the tree — including one with sequential-
      * looking numeric keys (`{"0":"a","1":"b"}`, which would otherwise
-     * decode to the identical PHP shape a real JSON array does, and which
-     * `array_is_list()` alone cannot tell apart from one), and including
-     * `{}` — in a `JsonObject` marker, checked first, below. Only a
-     * genuine JSON array (or something that was never JSON-decoded
-     * through that pipeline at all — a direct `Hydrator::hydrate()` call
-     * with a hand-built PHP array, or a form-decoded body, neither of
-     * which carries any JSON-object/array distinction to preserve in the
-     * first place) ever reaches `array_is_list()` itself, which remains
-     * the correct, precise check for *that* case: true only for
-     * sequential integer-keyed arrays, false for a genuinely map-shaped
-     * one.
+     * decode to the identical PHP shape a real JSON array does) and
+     * including `{}` — in a `JsonObject` marker, which is an object and
+     * therefore never an array here. Only a genuine JSON array (or
+     * something that was never JSON-decoded through that pipeline at all
+     * — a direct `Hydrator::hydrate()` call with a hand-built PHP array,
+     * or a form-decoded body, neither of which carries any
+     * JSON-object/array distinction to preserve in the first place) ever
+     * reaches `array_is_list()` itself, which remains the correct,
+     * precise check for *that* case.
      */
     private static function listShapeMismatchMessage(mixed $value): ?string
     {
-        // A genuine JSON object — marked as JsonObject once
-        // JsonTree::convert() is in the picture — is rejected outright,
-        // regardless of what its own keys happen to look like:
-        // {"0":"a","1":"b"} decodes to the exact same PHP shape a real
-        // JSON array does once flattened, so array_is_list() alone
-        // cannot tell them apart below; this check runs first,
-        // specifically so it doesn't have to.
-        if ($value instanceof JsonObject) {
-            return self::NOT_A_JSON_ARRAY;
-        }
-
-        if (is_array($value) && array_is_list($value)) {
-            return null;
-        }
-
-        if (is_array($value)) {
-            // A map-shaped PHP array reaching here directly (never
-            // marked at all — a direct Hydrator::hydrate() call, or a
-            // form-decoded body) is exactly what a JSON *object* decodes
-            // into via associative:true — distinguished from "not an
-            // array at all" so the message names the real problem, not
-            // describeType()'s own generic 'array' label for either shape.
-            return self::NOT_A_JSON_ARRAY;
-        }
-
-        return 'must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX;
+        return is_array($value) && array_is_list($value) ? null : self::listShapeMessage($value);
     }
 
-    private static function numericMismatchMessage(mixed $value): ?string
+    /**
+     * The one message owner for a value that had to be a JSON array and
+     * wasn't — shared by an `array`/`iterable` field and a `#[ListOf]`
+     * one, which make the identical claim in their JSON Schema. A
+     * `JsonObject` marker, and a map-shaped PHP array (exactly what a
+     * JSON object decodes into outside the marked pipeline), both name
+     * the real problem rather than describeType()'s generic label.
+     */
+    private static function listShapeMessage(mixed $value): string
     {
-        if (is_int($value) || is_float($value)) {
+        return $value instanceof JsonObject || is_array($value)
+            ? self::NOT_A_JSON_ARRAY
+            : 'must be an array, ' . self::describeType($value) . self::GIVEN_SUFFIX;
+    }
+
+    /**
+     * `int` accepts three things: a real int; a finite float with no
+     * fractional part, inside the range the `(int)` cast below can
+     * represent; and a string spelled as a plain base-10 integer whose
+     * own value is in that range (`"42"`, `"+42"`, `"-42"`).
+     *
+     * A string is read as written, never through a float: a float has 53
+     * bits of mantissa, so `"1.0000000000000001"` and `"1"` are the same
+     * float and only one of them is an integer. A decimal spelling
+     * (`"42.0"`), an exponent spelling (`"4.2e1"`) and a whitespace-padded
+     * one are all rejected for the same reason `4.5` is — the field
+     * declares an integer and gets one, never a value the `(int)` cast
+     * has to reinterpret.
+     */
+    private static function integerMismatchMessage(mixed $value): ?string
+    {
+        if (is_int($value)) {
             return null;
+        }
+
+        if (is_float($value)) {
+            // (float) PHP_INT_MAX rounds up to 2**63, one past the largest
+            // representable int, so the upper bound is exclusive;
+            // PHP_INT_MIN is exactly -2**63 as a float, so the lower one
+            // is not.
+            $exactInteger = is_finite($value)
+                && $value === floor($value)
+                && $value >= (float) PHP_INT_MIN
+                && $value < (float) PHP_INT_MAX;
+
+            return $exactInteger ? null : self::NOT_AN_INTEGER;
+        }
+
+        if (is_string($value)) {
+            // FILTER_VALIDATE_INT is the base-10 integer-spelling check
+            // and the native-range check in one, with no float step in
+            // between to round a digit away. It tolerates surrounding
+            // whitespace, which a declared integer value does not.
+            $spelledAsInteger = $value === trim($value)
+                && filter_var($value, FILTER_VALIDATE_INT) !== false;
+
+            return $spelledAsInteger ? null : self::NOT_AN_INTEGER;
+        }
+
+        return 'must be an integer, ' . self::describeType($value) . self::GIVEN_SUFFIX;
+    }
+
+    /**
+     * `float` accepts a real number or a numeric string, and rejects any
+     * value that isn't finite — `"1e999"` overflows to INF, which is not a
+     * number any consumer of this field can act on.
+     */
+    private static function floatMismatchMessage(mixed $value): ?string
+    {
+        if (is_int($value)) {
+            return null;
+        }
+
+        if (is_float($value)) {
+            return is_finite($value) ? null : self::NOT_FINITE;
         }
 
         if (is_string($value) && is_numeric($value)) {
-            return null;
+            return is_finite((float) $value) ? null : self::NOT_FINITE;
         }
 
         return 'must be a number, ' . self::describeType($value) . self::GIVEN_SUFFIX;
@@ -868,6 +898,7 @@ final class Hydrator
     private static function describeType(mixed $value): string
     {
         return match (true) {
+            $value === null => 'null',
             is_array($value) => 'array',
             is_bool($value) => 'boolean',
             is_float($value) => 'float',
@@ -877,7 +908,14 @@ final class Hydrator
         };
     }
 
-    private static function castScalar(mixed $value, ?string $scalarType): mixed
+    /**
+     * Casts a value that has already passed typeMismatchMessage() to its
+     * declared builtin type — every accepted value is exactly
+     * representable in it, so no cast here can lose information. Public
+     * specifically so Kinetis\Http\Dispatcher casts a #[Query]/path value
+     * through the identical rules rather than a second copy of them.
+     */
+    public static function castScalar(mixed $value, ?string $scalarType): mixed
     {
         if ($scalarType === null || $value === null) {
             return $value;

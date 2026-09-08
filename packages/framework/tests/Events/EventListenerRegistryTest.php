@@ -185,7 +185,7 @@ final class EventListenerRegistryTest extends TestCase
     }
 
     /**
-     * Kinetis has no deployed generation compiled by a pre-fix version to
+     * Kinetis has no deployed artifact compiled by a pre-fix version to
      * preserve — a duplicate {class, method} pair in compiled data is
      * corruption, not a legacy shape to tolerate, and is rejected
      * outright rather than silently resolved by keeping one occurrence.

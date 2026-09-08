@@ -8,19 +8,12 @@ use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Hidden;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Responses\ErrorResponse;
-use Kinetis\Http\Routing\Router;
-use Kinetis\Logging\SafeLogger;
 use Kinetis\OpenApi\OpenApiAccess;
-use Kinetis\OpenApi\OpenApiGenerator;
+use Kinetis\OpenApi\OpenApiDocumentProvider;
 use Kinetis\OpenApi\SwaggerUiPage;
-use Kinetis\Runtime\AppEnvironment;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Psr\Log\LoggerInterface;
-use Psr\Log\LogLevel;
-use Psr\SimpleCache\CacheInterface;
-use Throwable;
 
 /**
  * Serves the generated OpenAPI document and the Swagger UI page that
@@ -34,28 +27,16 @@ use Throwable;
  * here and nowhere else — GlobalMiddlewareDiscovery publishes those
  * classes as the built-in `openapi` group.
  *
- * The document is generated per request in development and cached
- * indefinitely in production, where the route table cannot change
- * without a deployment. `kinetis openapi:clear` drops the entry, and a
- * deployment that changes routes or DTOs has to run it.
+ * The document itself comes from {@see OpenApiDocumentProvider}, which
+ * Kernel builds for its own Router and registers on every request scope.
  */
 #[Hidden]
 #[Middleware('@openapi')]
 final readonly class DocumentationController
 {
-    /**
-     * The key the cached document lives under, shared with
-     * {@see \Kinetis\Console\OpenApiClearCommand}. Dots only: PSR-16
-     * reserves `{}()/\@:` in a key.
-     */
-    public const string CACHE_KEY = 'kinetis.openapi.document';
-
     public function __construct(
         private OpenApiAccess $access,
-        private Router $router,
-        private AppEnvironment $environment,
-        private CacheInterface $cache,
-        private LoggerInterface $logger,
+        private OpenApiDocumentProvider $documents,
     ) {}
 
     #[Get('/openapi.json')]
@@ -68,7 +49,7 @@ final readonly class DocumentationController
         return new Response(
             status: 200,
             headers: ['Content-Type' => 'application/json'],
-            body: json_encode($this->generate(), JSON_THROW_ON_ERROR),
+            body: json_encode($this->documents->document(), JSON_THROW_ON_ERROR),
         );
     }
 
@@ -104,75 +85,5 @@ final readonly class DocumentationController
             'No route matches path "%s".',
             $request->getUri()->getPath(),
         ));
-    }
-
-    /**
-     * The cache is an optimisation with a guaranteed fallback: this
-     * document can always be regenerated. That is why a cache failure
-     * degrades to generating rather than failing the request, unlike
-     * RateLimitMiddleware, which cannot do its job at all without one.
-     * A Redis that is briefly unreachable should not take the API's own
-     * documentation down with it — and the warning logged about it is
-     * diagnostic, not part of that guarantee: SafeLogger keeps a
-     * throwing logger from turning a recoverable cache outage into an
-     * unrecoverable one.
-     *
-     * @return array<string, mixed>|null
-     */
-    private function cached(): ?array
-    {
-        try {
-            $cached = $this->cache->get(self::CACHE_KEY);
-        } catch (Throwable $e) {
-            SafeLogger::log($this->logger, LogLevel::WARNING, 'Could not read the cached OpenAPI document; generating it instead.', ['exception' => $e]);
-
-            return null;
-        }
-
-        /** @var array<string, mixed>|null */
-        return is_array($cached) ? $cached : null;
-    }
-
-    /**
-     * @param array<string, mixed> $document
-     */
-    private function store(array $document): void
-    {
-        try {
-            // No TTL: the route table cannot change without a deployment,
-            // and a deployment runs `kinetis openapi:clear`. A time-based
-            // expiry would only mean serving a document that lies about
-            // the API for however long it is set to.
-            $this->cache->set(self::CACHE_KEY, $document);
-        } catch (Throwable $e) {
-            // SafeLogger — see cached()'s own docblock: the document was
-            // already generated and is returned regardless of whether
-            // this warning itself can be logged.
-            SafeLogger::log($this->logger, LogLevel::WARNING, 'Could not cache the OpenAPI document; it will be regenerated per request.', ['exception' => $e]);
-        }
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function generate(): array
-    {
-        // Development always reflects: a route or DTO changed a moment
-        // ago is the normal case there, and a cached document would
-        // describe the code as it was.
-        if (!$this->environment->isProduction()) {
-            return new OpenApiGenerator($this->router)->generate();
-        }
-
-        $cached = $this->cached();
-
-        if ($cached !== null) {
-            return $cached;
-        }
-
-        $document = new OpenApiGenerator($this->router)->generate();
-        $this->store($document);
-
-        return $document;
     }
 }

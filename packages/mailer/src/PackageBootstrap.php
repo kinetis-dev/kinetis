@@ -15,8 +15,11 @@ use Symfony\Component\Mailer\MailerInterface;
  * constructor-inject it with nothing else to register. Unset means
  * inert.
  *
- * The binding is a factory, resolved on first use rather than here, so
- * an application that never sends mail never builds a transport.
+ * The mailer is constructed here, not deferred to first use, so a
+ * malformed DSN, an unusable MAILER_TIMEOUT, or a missing bridge package
+ * fails at registration instead of inside whichever request or queued
+ * job happens to send the first message. The application's own
+ * `bootstrap.php` runs after this and still wins on the binding.
  */
 final readonly class PackageBootstrap implements PackageBootstrapInterface
 {
@@ -27,9 +30,6 @@ final readonly class PackageBootstrap implements PackageBootstrapInterface
             return;
         }
 
-        $app->bind(
-            MailerInterface::class,
-            static fn (): MailerInterface => MailerFactory::fromConfig($config),
-        );
+        $app->instance(MailerInterface::class, MailerFactory::fromConfig($config));
     }
 }

@@ -58,100 +58,91 @@ request span carrying the template as `http.route`.
 
 The request span is *active* while the request runs, which is what
 parents every other span below under it automatically — including
-inside `concurrently()` tasks.
+inside `concurrently()` tasks, whose own hooks carry the request's
+context across the Fiber boundary explicitly. See
+{ref}`telemetry-fiber-scopes`.
+
+(telemetry-fiber-scopes)=
+
+## Scope ownership across Fibers
+
+An active span's scope belongs to the Fiber that started it. This
+package leaves OpenTelemetry's default Fiber-bound context storage in
+place, so two `concurrently()` tasks that overlap in time each keep
+their own stack: a span one task activates is neither visible to nor
+detachable by the other, whatever order they suspend and resume in.
+
+Parentage across a Fiber boundary is therefore explicit rather than
+ambient. `concurrently()` hands each task hook the token its batch hook
+returned, and the task span parents to the batch span that token names —
+which is what keeps a task, and everything nested inside it, under the
+request span the batch itself hangs from. A task that reaches no batch
+span roots its own trace instead of joining a sibling's.
+
+The same rule applies wherever a span starts on a Fiber that carries no
+context: the request span names the extracted `traceparent` (or the
+trace root) as its parent, and a worker's job span names the job's
+propagated context, or the trace root for a job carrying none.
 
 ## SQL query spans
 
-Wrap whatever link `bootstrap.php` registers:
+Nothing to wire: `kinetis/persistence`'s drivers report every statement
+they dispatch through the framework's instrumentation hooks (the
+section below), and this package's backend turns each report into a
+client span as soon as an OTLP endpoint is configured. Every driver is
+covered — PDO and native, MySQL and Postgres.
 
-```{code-block} php
-use Kinetis\Persistence\Contract\MysqlLink;
-use Kinetis\Persistence\SqlConnectionFactory;
-use Kinetis\Telemetry\Persistence\TracingMysqlLink;
-use OpenTelemetry\API\Trace\TracerProviderInterface;
-
-return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlLink::class, new TracingMysqlLink(
-        SqlConnectionFactory::fromConfig($config),
-        $app->get(TracerProviderInterface::class),
-    ));
-};
-```
-
-`TracingPostgresLink` is the Postgres side. Both implement their dialect
-marker themselves, so {doc}`query-builder` dialect detection sees the
-decorated link exactly like the real one, and both wrap the transactions
-they begin — `COMMIT` and `ROLLBACK` get spans too, which is where fsync
-cost becomes visible.
-
-Each query span is named by the query's opening keyword (`SELECT`,
-`INSERT`) and carries `db.operation.name`, a
+A query span is named by the statement's opening keyword (`SELECT`,
+`INSERT`) and carries `db.system.name`, `db.operation.name`, and a
 `kinetis.db.query_fingerprint` that groups every execution of the same
-statement, and — for `execute()` — `kinetis.db.parameter_count`. The
-statement itself does not travel; see
-{ref}`telemetry-data-minimization` for why, and for what the rest of
-this package does with the inputs it sees.
+statement. A `server.started` event marks the moment the statement
+reached the server: everything before it is the wait for a free pooled
+connection, the number that is invisible from outside the driver.
+
+The statement itself never travels — see
+{ref}`telemetry-data-minimization` — and its bound parameter values are
+never handed to a hook at all, so nothing downstream can export them.
+
+A transaction gets a span of its own, from begin to
+`COMMIT`/`ROLLBACK`, carrying `db.transaction.outcome`: commit duration
+is where fsync cost shows up, which is invisible from the queries
+alone. Only what the server confirmed counts as an outcome — `commit`
+for an acknowledged `COMMIT`, `rollback` for an acknowledged
+`ROLLBACK`, and `unknown` for everything else: a lost or discarded
+connection, a finish nothing answered, a transaction the server ended
+on its own.
+
+Query spans are never activated. They read whichever span is active on
+their own Fiber as their parent — the request span, or the task span
+when the query runs inside a `concurrently()` task — and end
+immediately, so overlapping queries never interleave that Fiber's scope
+stack.
 
 ## Queue spans
 
-Wrap the queue the same way:
+Nothing to wire here either: the queue backends and `QueueWorker`
+report through the same hooks.
 
-```{code-block} php
-use Kinetis\Queue\QueueFactory;
-use Kinetis\Queue\QueueInterface;
-use Kinetis\Telemetry\Queue\TracingQueue;
+`push()` gets a producer span named `{queue} publish`. On the worker
+side, a consumer span named `{queue} process` opens when a job starts
+and closes when it settles, so its duration is the job's real
+processing time. It carries `messaging.destination.name`,
+`kinetis.job.class`, `kinetis.job.attempt`, and `kinetis.job.outcome` —
+`ack`, `release`, or `fail`, the same vocabulary {doc}`queue` settles a
+job by — plus the failure's type and an error status when the job's
+`handle()` threw. The consumer span is active while the job runs, so
+queries and HTTP calls inside `handle()` nest under it.
 
-$app->instance(QueueInterface::class, TracingQueue::wrap(
-    QueueFactory::fromConfig($config),
-    $app->get(TracerProviderInterface::class),
-));
-```
+Producer and consumer spans are **one trace across processes**. The
+push hook hands the backend a `traceparent` carrier, the backend stores
+it in the job's payload metadata, and the worker's consumer span
+parents to it — however many seconds and processes apart the two are.
 
-`wrap()`, not `new`: a backend declaring
-`Kinetis\Queue\ClearableQueueInterface` (see {doc}`queue`'s "Clearing is
-a separate capability") gets `ClearableTracingQueue`, which carries the
-same spans and keeps `clear()` working; every other backend gets a plain
-`TracingQueue`. Constructing `TracingQueue` directly around a clearable
-backend costs it that capability, and `kinetis queue:clear` then refuses.
-
-`wrap()`'s result is typed as whatever it was given, so wrapping the
-configuration-driven `QueueFactory::fromConfig()` yields a
-`QueueInterface` — the capability is there at run time when the backend
-has it, but nothing in the types can promise which backend that is. Pass
-a backend already typed as clearable, or call `wrapClearable()`, to get
-`ClearableQueueInterface` back:
-
-```{code-block} php
-use Kinetis\Queue\ClearableQueueInterface;
-use Kinetis\QueueRedis\RedisQueueFactory;
-
-$app->instance(ClearableQueueInterface::class, TracingQueue::wrapClearable(
-    RedisQueueFactory::fromConfig($config),
-    $app->get(TracerProviderInterface::class),
-));
-```
-
-The queue package's own `ClearableQueueInterface` binding resolves
-through `QueueInterface`, so injecting the capability reaches the
-decorator registered here rather than the undecorated backend.
-
-`push()` gets a producer span. On the worker side, a consumer span opens
-when `pop()` hands a job over and closes at `ack()`, `release()`, or
-`fail()` — its duration is the job's real processing time, and it
-carries the outcome and attempt number. The consumer span is active
-while the job runs, so queries and HTTP calls inside `handle()` nest
-under it. A settlement the backend rejects as stale (see {doc}`queue`'s
-"When a settlement is lost") still closes the span, carrying the
-attempted outcome — an unclosed span would be worse than one whose
-recorded exception is the lost delivery rather than a job failure.
-
-With the framework hooks active (the section below), producer and
-consumer spans join **one trace across processes**: the hooks store a
-`traceparent` in the job's payload metadata at `push()` and the worker's
-consumer span parents to it, however many seconds and processes apart
-the two are. This decorator honors that metadata on `pop()`; its own
-`push()` cannot inject it (a decorator has no way to reach the payload),
-so producer-side propagation is hook-only.
+A settlement the backend rejects as stale (see {doc}`queue`'s "When a
+settlement is lost") still closes the span, carrying the attempted
+outcome and the lost delivery as the recorded failure — an unclosed
+span would be worse than one whose recorded exception is the lost
+delivery rather than a job failure.
 
 One operational note: a worker killed without graceful shutdown (see
 {doc}`queue` on `ext-pcntl`) loses whatever span batch it had not yet
@@ -196,7 +187,7 @@ fixed vocabulary, `HTTP` for anything outside it.
 ## Cache spans
 
 Wraps any PSR-16 `CacheInterface`, {doc}`persistence`'s
-`RedisSimpleCache`/`ClusteredRedisSimpleCache` included:
+`RedisSimpleCache` included:
 
 ```{code-block} php
 use Kinetis\SimpleCache\RedisSimpleCache;
@@ -226,7 +217,7 @@ so the key is as sensitive as the value and neither travels.
 
 ## Session spans
 
-Wraps any `SessionStoreInterface`, {doc}`session`'s file/cache/SQL
+Wraps any `SessionStoreInterface`, {doc}`session`'s file/Redis/SQL
 stores included. `SESSION_DRIVER`'s own bindings are lazy factories
 resolved on first use, so re-binding in `bootstrap.php` — the same
 {ref}`custom-stores` pattern the session package's own docs already
@@ -245,7 +236,7 @@ $app->bind(SessionStoreInterface::class, static fn (): TracingSessionStore => ne
 ));
 ```
 
-`read`, `write`, and `destroy` each get a span. A session id is a
+`read`, `create`, `update`, and `destroy` each get a span. A session id is a
 bearer credential — whoever holds it can present the cookie and act as
 that session — so it never reaches a span verbatim: its fingerprint
 travels instead, enough to correlate every span for one session without
@@ -283,9 +274,10 @@ of such a path is index names, aliases and document ids, which say
 which records a call touched rather than what it did, so the path
 travels only as `kinetis.search.path_fingerprint`.
 
-PSR-18's `sendRequest()` always hands back a complete response, so
-unlike the outgoing-HTTP decorator above there is no deferred span
-lifecycle here — the span starts and ends around one call.
+`kinetis/search-opensearch`'s adapter reads the status, headers and body
+before it returns, so unlike the outgoing-HTTP decorator above there is
+no deferred span lifecycle here — the span starts and ends around one
+call, and a failure part-way through a response body falls inside it.
 
 (telemetry-data-minimization)=
 
@@ -303,7 +295,7 @@ credential sitting in an APM backend.
 
 | Never exported | Exported instead |
 |---|---|
-| A SQL statement, its literal values, its bound parameters | The opening keyword from a fixed vocabulary, `kinetis.db.query_fingerprint`, `kinetis.db.parameter_count` |
+| A SQL statement, its literal values, its bound parameters | The opening keyword from a fixed vocabulary, `kinetis.db.query_fingerprint` |
 | A cache key, single or batched, and every cached value | `kinetis.cache.key_fingerprint` over the operation's key list, `db.operation.batch.size` for the multi-key methods |
 | A URL's userinfo, path, query string, and fragment | `url.scheme`, `server.address`, `server.port`, `kinetis.http.url_fingerprint` |
 | An incoming request's path or query string | `http.request.method`, and `http.route` on the `route.match` span once the router resolves a template |
@@ -370,35 +362,35 @@ $app->instance(LoggerInterface::class, new TraceAwareLogger($realLogger));
 
 ## Framework hooks: spans from inside the framework
 
-The decorators above measure at boundaries the framework exposes; the
-hooks measure from *inside* them. Core (and the persistence and queue
-packages) report named moments through
+The decorators above wrap boundaries from outside; the hooks report
+from *inside* the framework itself, which is where the query, queue and
+request-pipeline spans above come from. Core, the persistence drivers
+and the queue packages report named moments through
 `Kinetis\Instrumentation\TelemetryInterface` — a no-op until this
 package's bootstrap swaps in its OTel backend, at which point every
 report becomes a span with zero configuration beyond the same
 `OTEL_EXPORTER_OTLP_ENDPOINT`:
 
-- **Boot phases** — `bootstrap.env`, `bootstrap.discovery`,
-  `bootstrap.services`, measured by the entry point with plain
-  timestamps and reported once a backend exists. Under boot-and-die
-  runtimes these appear per request; under a worker, once per boot.
+- **Boot phases** — `bootstrap.env`, `bootstrap.services`, and, on a
+  development boot, `bootstrap.discovery`: measured by
+  `Kinetis\Runtime\HttpStartup` with plain timestamps and reported once a
+  backend exists. Under boot-and-die runtimes these appear per request;
+  under a worker, once per boot.
 - **The request pipeline, opened up** — a span per middleware layer,
   `route.match` (carrying the matched template as `http.route`),
   hydration per DTO, `Controller::method`, and `response.encode`: the
   time between a request span and its query spans is attributed to
   these, not left as an unnamed gap.
-- **Queries, split at the pool boundary** — a span per query from
-  inside the drivers, carrying the keyword and statement fingerprint
-  the SQL decorator carries and no more, with a `server.started` event
-  marking the moment it actually went to the server: everything before
-  that event is time spent waiting for a free pooled connection, the
-  number that is invisible from outside.
-- **Transactions** — begin to `COMMIT`/`ROLLBACK`, with the outcome as
-  an attribute.
+- **Queries and transactions** — the SQL spans described above,
+  reported from inside the drivers.
 - **`concurrently()`** — a span for the batch and one per task, so
   overlap is visible even for tasks that aren't queries or HTTP calls.
-- **Events and listeners, MCP tool calls and resource reads, queue
-  push and worker jobs** — each a named span pair.
+  The batch hook hands its own token to each task hook, which is what
+  parents a task to its batch across the Fiber boundary.
+- **Events and listeners, MCP tool calls and resource reads** — each a
+  named span pair.
+- **Queue push and worker jobs** — the producer and consumer spans
+  described above, carrying the trace context that joins them.
 
 The hook set is deliberately broad while under evaluation, and will be
 thinned by measurement — see the interface's own docblock. Measured
@@ -406,13 +398,6 @@ cost with no backend installed: a hook pair costs about 90ns, and a
 fully hooked dispatch adds one to two microseconds. The interface is not a consumer
 extension point — an application *reads* this data from its tracing
 backend rather than implementing the interface.
-
-Note the overlap with the decorators: with hooks active, the SQL and
-queue decorators report the same operations a second time. Prefer the
-hooks (they see more); keep the decorators for selective tracing with
-no OTLP endpoint configured elsewhere, or drop them. The cache, session,
-and OpenSearch decorators have no hook equivalent — they're the only
-source of tracing for those three, not a second copy of anything.
 
 ### A failing backend never changes what the application does
 
@@ -466,8 +451,9 @@ stops there.
   and what that looks like when they do not.
 - {doc}`queue` — trace propagation across a queue, so a job's spans join
   the request that pushed it.
-- {doc}`persistence` — `RedisSimpleCache`/`ClusteredRedisSimpleCache`,
-  what `TracingSimpleCache` wraps.
+- {doc}`persistence` — the drivers whose query and transaction hooks
+  become spans here, and `RedisSimpleCache`, what `TracingSimpleCache`
+  wraps.
 - {doc}`session` — the store interface and drivers `TracingSessionStore`
   wraps, and the `bootstrap.php` rebind pattern it reuses.
 - {doc}`search-opensearch` — `OpenSearchClientFactory`'s own

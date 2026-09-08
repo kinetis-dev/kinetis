@@ -52,10 +52,10 @@ namespace Kinetis\Session;
  * during this one, readable during the next, gone after that. The
  * classic post-redirect-get companion.
  *
- * `regenerate()` gives the session a fresh id while keeping its data —
- * call it whenever privilege changes (login above all), so a session id
- * fixated before authentication never carries into an authenticated
- * session.
+ * `regenerate()` gives the session a fresh id and a fresh CSRF token
+ * while keeping its application data — call it whenever privilege
+ * changes (login above all), so neither a session id nor a CSRF token
+ * fixated before authentication carries into an authenticated session.
  *
  * regenerate() and destroy() only ever change in-memory state — neither
  * touches the store. The store is only ever written to from commit(),
@@ -173,7 +173,8 @@ final class Session
     /**
      * The CSRF token bound to this session, generated on first use.
      * {@see Middleware\CsrfMiddleware} compares submitted tokens against
-     * this value.
+     * this value. {@see regenerate()} discards it, so the first call
+     * after a privilege change returns a different token.
      */
     public function csrfToken(): string
     {
@@ -249,15 +250,28 @@ final class Session
     }
 
     /**
-     * A fresh id, same data — the session-fixation defense. The old id's
-     * stored payload is destroyed at commit() time, once the replacement
-     * has been durably written under the new id — never here, and never
-     * before that replacement write succeeds, so a captured pre-auth id
-     * only ever stops working once the fresh one is guaranteed usable.
+     * A fresh id and a fresh CSRF token, same application data — the
+     * session-fixation defense. The old id's stored payload is destroyed
+     * at commit() time, once the replacement has been durably written
+     * under the new id — never here, and never before that replacement
+     * write succeeds, so a captured pre-auth id only ever stops working
+     * once the fresh one is guaranteed usable.
+     *
+     * Dropping the CSRF token is part of the same defense, not a
+     * separate courtesy: a token an attacker read out of a session it
+     * planted before the privilege change would otherwise be copied
+     * into the authenticated session and keep authenticating writes
+     * there. Every key a caller ever set survives; only `_csrf` is
+     * discarded, and the next csrfToken() call mints a different one.
+     * Any form rendered before this call carries a token that no longer
+     * verifies, so a page shown across a privilege change has to be
+     * re-rendered with the new token — the post-redirect-get a login
+     * already performs.
      */
     public function regenerate(): void
     {
         $this->load();
+        unset($this->data['_csrf']);
         $this->id = self::generateId();
         $this->dirty = true;
     }
@@ -333,6 +347,15 @@ final class Session
      * the new id's data leaves the old, still-genuine session untouched
      * rather than already gone.
      *
+     * An id this request read out of storage and did not rotate goes
+     * back through update(), which refuses once that record is gone —
+     * an overlapping logout or rotation retired it, and a stale write
+     * must not recreate it. A refusal reports false, so no cookie claims
+     * a session that is no longer there. Every other id — brand new, or
+     * one regenerate() just minted — is a create(), which always
+     * succeeds; a rotation is therefore not coordinated with a logout
+     * running alongside it.
+     *
      * Every successful write reports true, even when the id itself is
      * unchanged — $lifetimeSeconds is counted from *this* write, and
      * SessionMiddleware's own cookie carries the browser-side half of
@@ -376,9 +399,13 @@ final class Session
             unset($data[self::FLASH_OLD]);
         }
 
-        $this->store->write($this->id, $data, $lifetimeSeconds);
+        if ($this->persistedId === $this->id) {
+            return $this->store->update($this->id, $data, $lifetimeSeconds);
+        }
 
-        if ($this->persistedId !== null && $this->persistedId !== $this->id) {
+        $this->store->create($this->id, $data, $lifetimeSeconds);
+
+        if ($this->persistedId !== null) {
             $this->store->destroy($this->persistedId);
         }
 

@@ -7,10 +7,9 @@ namespace Kinetis\Broadcasting\Tests\Fixtures;
 use Kinetis\Broadcasting\Attributes\BroadcastChannel;
 
 /**
- * The placeholder name "id" is reused across two different segments —
- * compilePattern() must reject this before assertSignature() ever runs,
- * since a real PHP method cannot declare two parameters both named
- * $id in the first place.
+ * The placeholder name "id" is reused across two segments — rejected
+ * when the pattern is parsed, before the signature is looked at, since
+ * a real PHP method cannot declare two parameters both named $id.
  */
 final class DuplicatePlaceholderNameChannelAuthorizer
 {

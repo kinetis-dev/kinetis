@@ -21,4 +21,4 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["frankenphp", "php-server", "--listen", ":8080", "--root", "/repo/packages/pingpong/public", "--worker", "/repo/packages/pingpong/public/index.php"]
+CMD ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public", "--worker", "/app/public/index.php"]

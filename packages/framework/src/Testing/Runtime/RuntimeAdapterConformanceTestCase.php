@@ -175,18 +175,40 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
 
     /**
      * The other direction of the same rule, and the one that costs
-     * something when it is wrong: an environment that trusts this client
-     * must still not be talked *out* of TLS by a forwarded header, and
-     * one that does not trust it must not be talked into it. `http`
-     * where the environment already serves `https` is the downgrade a
-     * spoofed header would aim for.
+     * something when it is wrong: `http` where the environment serves
+     * `https` is the downgrade a spoofed header aims for, and the one an
+     * application notices as plaintext absolute URLs, a `Secure` cookie
+     * it never sets, and an OAuth redirect pointing somewhere it
+     * shouldn't.
+     *
+     * Wherever a plaintext request is possible at all, the trust rule
+     * decides this the same way it decides a forwarded `https`: an edge
+     * is describing what it terminated, so the request is `http`, and a
+     * directly reachable client is describing its own request, so the
+     * header is ignored and the scheme the environment serves stands —
+     * `https` included, since ignoring a header means the request is
+     * what it would have been without it.
+     *
+     * An environment no plaintext request can reach —
+     * {@see RuntimeAdapterDriver::supportsPlaintextRequests()} says so —
+     * has neither to honor nor to ignore: the header describes a request
+     * that cannot have arrived, which is a contradiction in the input
+     * rather than a scheme to settle, and it is refused before the
+     * handler.
      */
-    final public function test_a_forwarded_scheme_naming_http_cannot_downgrade_an_https_environment(): void
+    final public function test_a_forwarded_scheme_naming_http_is_honored_only_from_a_trusted_edge_or_refused_outright(): void
     {
         $outcome = $this->dispatch(new WireRequest(headers: [
             ['Host', self::CLIENT_HOST],
             ['X-Forwarded-Proto', 'http'],
         ]));
+
+        if (!$this->driver()->supportsPlaintextRequests()) {
+            self::assertInstanceOf(AdapterRejection::class, $outcome->response, 'an environment no plaintext request can reach must refuse this input rather than serve it');
+            self::assertNull($outcome->observed, 'and it has to refuse before the handler, not after');
+
+            return;
+        }
 
         $expected = $this->driver()->trustsTheConnectingClient() ? 'http' : $this->driver()->expectedScheme();
 
@@ -352,9 +374,10 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     /**
      * A part name is not a key. `user[address][city]` nests, `tags[]`
      * appends, and a repeated plain name replaces — PHP's own rules,
-     * which an adapter parsing the body itself has to reproduce rather
-     * than assign `$fields[$name]` and flatten all three into shapes a
-     * handler reads differently depending on which runtime it is on.
+     * reached through `parse_str()` rather than by assigning
+     * `$fields[$name]`, which would flatten all three. Asserted on every
+     * adapter because what is being proved is that each one delivers the
+     * raw bytes intact, not that it applies the rules itself.
      */
     final public function test_nested_and_repeated_multipart_fields_nest_the_way_php_nests_them(): void
     {
@@ -380,7 +403,7 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     /**
      * The same rules again for files, which is where losing them costs
      * data rather than shape: two parts named `docs[]` are two uploads,
-     * and an adapter keying files by name delivers one.
+     * and keying files by name would deliver one.
      */
     final public function test_nested_and_repeated_multipart_files_nest_the_way_php_nests_them(): void
     {
@@ -521,9 +544,9 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     }
 
     /**
-     * The byte cap on a raw request body is the Kernel's
-     * (`MaxBodySizeMiddleware`), identical under every adapter — but its
-     * cheap first check reads the declared `Content-Length`, which only
+     * The byte cap on a raw request body is `RequestBodyMiddleware`'s,
+     * identical under every adapter — but its cheap first check reads
+     * the declared `Content-Length`, which only
      * works if the adapter delivers that header as the environment
      * received it. The header is declared here explicitly, so what's
      * asserted is that a *supplied* value comes through unchanged — not
@@ -854,18 +877,25 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     // --- The adapter's own failure path ----------------------------------
 
     /**
-     * Whatever this environment cannot parse, the adapter answers for it
-     * the same way: a 400 with this framework's error shape, the handler
-     * never reached, nothing escaping as a fatal or an uncaught
-     * exception. The *trigger* is the environment's own — which is
-     * exactly why the driver supplies it; the *outcome* is the contract,
-     * and {@see assertMalformedBodyResponse()} is that contract as code,
-     * so an adapter's own tests hold its environment-specific inputs to
-     * it too.
+     * A body no environment can parse, answered identically by all of
+     * them: a 400 with this framework's error shape, the handler never
+     * reached, nothing escaping as a fatal or an uncaught exception. The
+     * trigger is built here rather than declared per driver, because
+     * every runtime delivers its raw body to the same
+     * `Kinetis\Http\Form` parse — a multipart content type whose
+     * declared boundary appears nowhere in the body is unparseable in
+     * exactly the same way everywhere. {@see assertMalformedBodyResponse()}
+     * is the contract as code, so an adapter's own tests hold its
+     * environment-specific inputs to it too.
      */
-    final public function test_a_form_body_the_environment_cannot_parse_is_a_clean_400_not_an_uncaught_failure(): void
+    final public function test_a_form_body_no_environment_can_parse_is_a_clean_400_not_an_uncaught_failure(): void
     {
-        $outcome = $this->dispatch($this->driver()->unparseableFormRequest());
+        $outcome = $this->dispatch(new WireRequest(
+            'POST',
+            '/',
+            headers: [['Content-Type', 'multipart/form-data; boundary=----XYZ']],
+            body: 'not a multipart body at all',
+        ));
 
         self::assertNull($outcome->observed, 'the handler must not run for a body the adapter could not parse');
         self::assertMalformedBodyResponse($this->wire($outcome));
@@ -893,9 +923,9 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
      * configured limit — which limit bound first is the runtime's
      * business, since one configured tighter than the contract reaches
      * its own first, and both are real refusals. Public for the same
-     * reason as {@see assertMalformedBodyResponse()}: the ceilings an
-     * adapter can only meet with its own parser (a part's header count)
-     * are held to it from that adapter's own tests.
+     * reason as {@see assertMalformedBodyResponse()}: an adapter whose
+     * environment needs a hand-built request to reach a ceiling holds
+     * that request to this contract from its own tests.
      */
     final public static function assertOverLimitFormResponse(WireResponse $response): void
     {
@@ -917,8 +947,8 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
      * `multipart/form-data`, and these are the places a second reading
      * exists — where one parser decodes, splits or normalizes what
      * another passes through byte for byte. Every runtime answers them
-     * identically, because every runtime applies that contract to the
-     * raw bytes before its own parser runs. Sent as raw wire bodies
+     * identically, because every runtime hands the raw bytes to the one
+     * middleware that applies that contract. Sent as raw wire bodies
      * rather than through {@see multipartBody()}: what is being asserted
      * is exactly what a well-formed builder would never produce.
      */
@@ -940,10 +970,9 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
 
     /**
      * A delimiter line ends right after the boundary. RFC 2046 allows
-     * transport padding there, no client sends it, and the parsers this
-     * framework runs on do not accept it — so a padded line is not a
-     * delimiter on any of them, and a body that relies on one closes
-     * nowhere.
+     * transport padding there, no client sends it, and
+     * `MultipartEnvelope` does not accept it — so a padded line is not a
+     * delimiter, and a body that relies on one closes nowhere.
      */
     final public function test_a_padded_delimiter_line_does_not_delimit(): void
     {
@@ -973,8 +1002,8 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     /**
      * `Content-Transfer-Encoding: base64` is decoded by a parser that
      * implements it and handed over as its literal text by one that does
-     * not — one form field with two values depending on the runtime. RFC
-     * 7578 §4.7 does not use the header at all.
+     * not — one form field with two values depending on who reads it.
+     * RFC 7578 §4.7 does not use the header at all.
      */
     final public function test_a_part_declaring_a_decoding_transfer_encoding_is_refused(): void
     {
@@ -1015,7 +1044,7 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     /**
      * A nested envelope is a whole further form to a parser that
      * recurses into it and one part's bytes to one that does not — and
-     * nothing counted the parts inside it. RFC 7578 §4.3 settles
+     * no ceiling counted the parts inside it. RFC 7578 §4.3 settles
      * multiple files as repeated parts under one name.
      */
     final public function test_a_part_carrying_a_nested_multipart_body_is_refused(): void
@@ -1173,10 +1202,10 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
     }
 
     /**
-     * A body every parser here reads the same way under a `Content-Type`
-     * they would each read differently — so what is refused is the
-     * header, and the handler is what proves it: no runtime may reach
-     * one with a form its neighbor would have built differently.
+     * A well-formed body under a `Content-Type` two parsers would read
+     * differently — so what is refused is the header, and the handler is
+     * what proves it: no runtime may reach one with a form another
+     * reading of that header would have built differently.
      */
     private function divergentContentTypeRequest(string $contentType): WireRequest
     {

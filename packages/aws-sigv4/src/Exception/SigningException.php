@@ -20,8 +20,6 @@ use RuntimeException;
  */
 final class SigningException extends RuntimeException
 {
-    use SafeSerialization;
-
     public const string ORIGIN_NOT_ABSOLUTE
         = 'origin must be an absolute "http://" or "https://" URI.';
 
@@ -38,7 +36,7 @@ final class SigningException extends RuntimeException
         = 'origin authority must not contain a percent sign.';
 
     public const string ORIGIN_INVALID_HOST
-        = 'origin host must be a registered name, an IPv4 address, or a bracketed IPv6 address.';
+        = 'origin host must be a registered name or an IPv4 address.';
 
     public const string ORIGIN_INVALID_PORT
         = 'origin port must be a decimal number between 1 and 65535.';
@@ -102,5 +100,4 @@ final class SigningException extends RuntimeException
     {
         return new self(self::INVALID_SERVICE);
     }
-
 }

@@ -12,8 +12,9 @@ use Kinetis\Container\AppScope;
  * The runtime half of the pluggable AOT-cache mechanism — mirrors the
  * `null`-means-discover-live convention `RoutesFile::loadBootstrap()`'s
  * own `$packageBootstraps` parameter already establishes, so
- * `public/index.php`/`bin/kinetis` need only compute one nullable array
- * per environment branch and call `bind()`, identically either way.
+ * {@see \Kinetis\Runtime\HttpStartup}/`bin/kinetis` need only compute one
+ * nullable array per environment branch and call `bind()`, identically
+ * either way.
  *
  * `discover()` is the live path: every installed package's declared
  * {@see CacheableDiscoveryInterface} class, called fresh — the same

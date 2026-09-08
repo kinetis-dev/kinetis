@@ -28,18 +28,20 @@ use Psr\Http\Message\ServerRequestInterface;
  *   decodes a JSON body itself, at bind time, not via `getParsedBody()`).
  * - `postForm()`/`putForm()`/`patchForm()` — a genuine
  *   `application/x-www-form-urlencoded` body: the raw bytes are exactly
- *   `http_build_query($form)`, and `getParsedBody()` is that same string
- *   parsed back with `parse_str()` — the actual result a real request
- *   arrives with, not `$form` itself (`http_build_query()` loses
- *   information no wire-format body can carry: every scalar becomes a
- *   string, and a `null` value is omitted entirely), so
- *   `CsrfMiddleware`'s own `_token`-in-a-form-body fallback (and anything
- *   else reading `getParsedBody()`) is genuinely reachable with exactly
- *   the shape a real form post produces.
+ *   `http_build_query($form)`, and nothing else is attached. The Kernel's
+ *   own `RequestBodyMiddleware` parses those bytes on the way in, so
+ *   `getParsedBody()` carries whatever a real request carries, not
+ *   `$form` itself (`http_build_query()` loses information no wire-format
+ *   body can express: every scalar becomes a string, and a `null` value
+ *   is omitted entirely). `CsrfMiddleware`'s own `_token`-in-a-form-body
+ *   fallback, and anything else reading `getParsedBody()`, is therefore
+ *   reachable with exactly the shape a real form post produces.
  * - `raw()` — a plain string body sent exactly as given, no encoding
  *   inferred from it at all; for a webhook payload, binary content, or
- *   any shape none of the other modes cover. `getParsedBody()` stays
- *   null, matching a real non-form/non-multipart request.
+ *   any shape none of the other modes cover. Nothing here attaches a
+ *   parsed body; what the Kernel's own `RequestBodyMiddleware` makes of
+ *   the bytes follows from the `Content-Type` the caller supplied, the
+ *   same as a real request.
  * - `send()` — the direct escape hatch: dispatches a fully hand-built
  *   `ServerRequestInterface` exactly as given. This is what a multipart
  *   or uploaded-file request needs — this class deliberately never
@@ -72,6 +74,14 @@ use Psr\Http\Message\ServerRequestInterface;
  * fragment instead of before it. `getQueryParams()` is parsed back out of
  * that same, now-authoritative query string — the two always agree, the
  * same relationship a real incoming request has.
+ *
+ * A `Cookie` header stands in the same relationship to
+ * `getCookieParams()`, and every mode that builds a request fills the
+ * latter from the former, so cookies arrive in both places — the shape
+ * every runtime adapter delivers, and the only one a consumer reading
+ * cookies (kinetis/session's `SessionMiddleware`) looks at. `send()`
+ * dispatches its request exactly as handed over, this included: a
+ * hand-built request carries whatever cookies its builder gave it.
  */
 final readonly class TestClient
 {
@@ -127,13 +137,13 @@ final readonly class TestClient
      * The JSON shorthand every method above delegates to. An array
      * `$body` is always sent as JSON — `Content-Type` defaults to
      * `application/json`, and an explicit override must itself be a
-     * JSON media type (`application/json`, or a `+json` structured
-     * suffix for a real API's own vendor media type — RFC 6839;
-     * parameters like `; charset=UTF-8` are fine) — anything else
-     * throws rather than silently sending JSON bytes under a
-     * Content-Type that claims otherwise. postForm()/raw()/send() are
-     * the explicit, honest way to send a body this shorthand can't; see
-     * each one's own docblock.
+     * JSON media type as {@see MediaType::isJson()} classifies one
+     * (`application/json`, or an `application/*+json` structured suffix
+     * for a real API's own vendor media type — RFC 6839; parameters like
+     * `; charset=UTF-8` are fine) — anything else throws rather than
+     * silently sending JSON bytes under a Content-Type that claims
+     * otherwise. postForm()/raw()/send() are the explicit, honest way to
+     * send a body this shorthand can't; see each one's own docblock.
      *
      * @param array<string, mixed> $body
      * @param array<string, string> $headers
@@ -155,8 +165,9 @@ final readonly class TestClient
             ? self::withValidatedContentType(
                 $headers,
                 default: 'application/json',
-                isAllowed: self::isJsonMediaType(...),
-                describeAllowed: 'JSON-shaped (application/json, or a "+json" suffix, parameters allowed)',
+                isAllowed: MediaType::isJson(...),
+                describeAllowed: 'JSON-shaped (application/json, or an "application/*+json" suffix, '
+                    . 'parameters allowed)',
                 methodHint: 'Use postForm()/putForm()/patchForm() for a form-encoded body, raw() for a plain '
                     . 'string body, or send() for a fully hand-built PSR-7 request.',
             )
@@ -173,10 +184,10 @@ final readonly class TestClient
 
     /**
      * A genuine `application/x-www-form-urlencoded` body: the raw bytes
-     * sent are exactly `http_build_query($form)`, and `getParsedBody()`
-     * is that same string parsed back with `parse_str()` — not `$form`
-     * itself, since a wire-format body can't carry `$form`'s original
-     * PHP types; see this class's own docblock for why.
+     * sent are exactly `http_build_query($form)`, parsed on the way in by
+     * the same middleware a real request meets — so `getParsedBody()`
+     * carries what the wire carries, not `$form`'s own PHP types; see
+     * this class's own docblock for why.
      *
      * @param array<string, mixed> $form
      * @param array<string, string> $headers
@@ -208,8 +219,9 @@ final readonly class TestClient
      * A raw string body, sent exactly as given — no JSON encoding, no
      * form encoding, nothing inferred from it. For a webhook payload,
      * binary content, or any shape none of this class's other methods
-     * already cover. `getParsedBody()` is left null, matching what a
-     * real non-form/non-multipart request actually gets.
+     * already cover. Nothing here attaches a parsed body; what the
+     * Kernel's own `RequestBodyMiddleware` makes of the bytes follows
+     * from the `Content-Type` given, the same as a real request.
      *
      * @param array<string, string> $headers
      */
@@ -248,12 +260,7 @@ final readonly class TestClient
                 . 'hand-built PSR-7 request.',
         );
 
-        $encoded = \http_build_query($form);
-        \parse_str($encoded, $parsedBody);
-
-        $request = self::buildRequest($method, $uri, $headers, $encoded);
-
-        return $this->send($request->withParsedBody($parsedBody));
+        return $this->send(self::buildRequest($method, $uri, $headers, \http_build_query($form)));
     }
 
     /**
@@ -263,6 +270,10 @@ final readonly class TestClient
      * and validates the result's bare media type — never the full
      * header string, so a `; charset=...` parameter never causes a
      * legitimate override to be rejected.
+     *
+     * $isAllowed receives the bare media type, which {@see MediaType}'s
+     * own predicates re-normalize harmlessly — {@see MediaType::of()} is
+     * idempotent — so one of them can be passed straight in.
      *
      * @param array<string, string> $headers
      * @param callable(string): bool $isAllowed
@@ -344,11 +355,6 @@ final readonly class TestClient
         return [$headers, $value];
     }
 
-    private static function isJsonMediaType(string $mediaType): bool
-    {
-        return $mediaType === 'application/json' || \str_ends_with($mediaType, '+json');
-    }
-
     private static function isFormUrlencodedMediaType(string $mediaType): bool
     {
         return $mediaType === MediaType::FORM_URLENCODED;
@@ -385,6 +391,37 @@ final readonly class TestClient
         // independently of it.
         \parse_str($request->getUri()->getQuery(), $queryParams);
 
-        return $request->withQueryParams($queryParams);
+        $request = $request->withQueryParams($queryParams);
+
+        // The same holds for cookieParams and the Cookie header: every
+        // runtime adapter fills the one from the other, and a consumer
+        // reads only cookieParams. Taken off the built request rather
+        // than the caller's array, so the header is found under
+        // whatever letter-case it was spelled in, the way PSR-7 does.
+        return $request->withCookieParams(self::parseCookieHeader($request->getHeaderLine('Cookie')));
+    }
+
+    /**
+     * The `name=value` pairs of a Cookie header, in the shape the
+     * runtime conformance suite pins for every adapter: `;`-separated,
+     * surrounding whitespace insignificant, the first `=` dividing name
+     * from value. A pair carrying no `=`, or an empty name, names no
+     * cookie and is skipped; no header at all yields no cookies.
+     *
+     * @return array<string, string>
+     */
+    private static function parseCookieHeader(string $header): array
+    {
+        $cookies = [];
+
+        foreach (\explode(';', $header) as $pair) {
+            [$name, $value] = \array_pad(\explode('=', \trim($pair), 2), 2, null);
+
+            if ($name !== null && $name !== '' && $value !== null) {
+                $cookies[$name] = $value;
+            }
+        }
+
+        return $cookies;
     }
 }

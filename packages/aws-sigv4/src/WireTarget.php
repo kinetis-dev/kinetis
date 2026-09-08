@@ -34,9 +34,12 @@ use SensitiveParameter;
  *   `@` and `/` is percent-encoded. That set is what both this package's
  *   PSR-7 implementation and the transport leave untouched, which is
  *   what makes the result a fixed point of both.
- * - The path then has its `.` and `..` segments removed (RFC 3986
- *   §5.2.4), after decoding, so an encoded `%2E%2E` segment is resolved
- *   here rather than by the transport. An empty path becomes `/`.
+ * - The path then has its repeated `/` collapsed to one and its `.` and
+ *   `..` segments removed (RFC 3986 §5.2.4), after decoding, so an
+ *   encoded `%2E%2E` segment is resolved here rather than by the
+ *   transport. An empty path becomes `/`. Collapsing is what SigV4
+ *   canonicalization does to a path, so `//example//` has to leave this
+ *   process as the `/example/` a signature covers.
  *
  * Applying the rule to its own output changes nothing, which is the
  * property the signature depends on. The query string keeps its
@@ -62,9 +65,18 @@ final class WireTarget
      */
     public static function normalizePath(#[SensitiveParameter] string $path): string
     {
-        $normalized = self::removeDotSegments(self::normalizeEncoding($path));
+        $normalized = self::removeDotSegments(self::collapseSlashes(self::normalizeEncoding($path)));
 
         return $normalized === '' ? '/' : $normalized;
+    }
+
+    /**
+     * Repeated `/` down to one. An empty segment names nothing, and a
+     * signature is computed over the collapsed form.
+     */
+    public static function collapseSlashes(#[SensitiveParameter] string $path): string
+    {
+        return preg_replace('{/{2,}}', '/', $path) ?? $path;
     }
 
     /**

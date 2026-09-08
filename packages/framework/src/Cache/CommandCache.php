@@ -17,7 +17,7 @@ use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
  */
 final readonly class CommandCache
 {
-    private const array TOP_LEVEL_KEYS = ['formatVersion', 'commands', 'packageBootstraps', 'compiledAt'];
+    private const array TOP_LEVEL_KEYS = ['commands'];
 
     private const array COMMAND_ENTRY_KEYS = [
         'name', 'description', 'controllerClass', 'controllerMethod', 'takesArguments', 'bootstrap',
@@ -26,12 +26,8 @@ final readonly class CommandCache
     private const string ARTIFACT_COMPONENT = 'CommandCache command';
 
     public function __construct(
-        public int $formatVersion,
         /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> */
         public array $commands,
-        public string $compiledAt,
-        /** @var list<class-string> */
-        public array $packageBootstraps = [],
     ) {}
 
     /**
@@ -40,10 +36,7 @@ final readonly class CommandCache
     public function toArray(): array
     {
         return [
-            'formatVersion' => $this->formatVersion,
             'commands' => $this->commands,
-            'packageBootstraps' => $this->packageBootstraps,
-            'compiledAt' => $this->compiledAt,
         ];
     }
 
@@ -55,21 +48,12 @@ final readonly class CommandCache
     {
         ArtifactValidation::exactKeys($data, 'CommandCache', self::TOP_LEVEL_KEYS);
 
-        $formatVersion = ArtifactValidation::int($data, 'CommandCache', 'formatVersion');
         $commands = ArtifactValidation::listOfArrays($data, 'CommandCache', 'commands');
-        $packageBootstraps = ArtifactValidation::listOfStrings($data, 'CommandCache', 'packageBootstraps');
-        $compiledAt = ArtifactValidation::string($data, 'CommandCache', 'compiledAt');
 
         /** @var list<array{name:string,description:string,controllerClass:string,controllerMethod:string,takesArguments:bool,bootstrap:bool}> $commands */
         $commands = array_map(self::validateCommandEntry(...), $commands);
-        /** @var list<class-string> $packageBootstraps */
 
-        return new self(
-            formatVersion: $formatVersion,
-            commands: $commands,
-            compiledAt: $compiledAt,
-            packageBootstraps: $packageBootstraps,
-        );
+        return new self(commands: $commands);
     }
 
     /**

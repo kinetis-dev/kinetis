@@ -32,8 +32,8 @@ final class RoutesFileTest extends TestCase
 
     /**
      * A stale production cache can name a bootstrap whose package was
-     * removed without rebuilding — commands.php survives a composer
-     * remove. Skipped with a warning, like the live discovery path
+     * removed without rebuilding — the compiled artifact survives a
+     * composer remove. Skipped with a warning, like the live discovery path
      * skips a declared-but-missing class, rather than a fatal that
      * takes the application down until someone rebuilds.
      */

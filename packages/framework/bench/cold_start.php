@@ -20,14 +20,11 @@ require dirname(__DIR__) . '/vendor/autoload.php';
  * public/index.php boot sequence reruns from scratch on every single
  * request, not just Kernel::handle().
  *
- * The cached scenario only ever loads http.php — never mcp.php or
- * openapi.php — matching exactly what a real request to this route would
- * do via CacheStore::loadHttp() and Kernel's lazy $cacheStore. This is the
- * whole point of splitting the artifact: a monolithic file (routes + MCP
- * + the full OpenAPI document) would mean reconstructing data this route
- * never needs, which at this small scale can make the cached path lose
- * to live reflection. Splitting avoids that by construction, not just by
- * tuning.
+ * The cached scenario reads the compiled artifact the same way a real
+ * production boot does — one CacheStore::load() — and reconstructs only
+ * the HTTP section from it, since that is all this route needs. The
+ * OpenAPI document is never part of the artifact at all; it is generated
+ * and cached separately, so it costs this path nothing.
  */
 const ITERATIONS = 2_000;
 const WARMUP = 100;
@@ -67,7 +64,7 @@ function runCached(int $iterations, string $cacheDir): array
 
         $app = new AppScope();
         $app->boot();
-        $httpCache = (new CacheStore($cacheDir))->loadHttp();
+        $httpCache = (new CacheStore($cacheDir))->load()->http;
         $router = Router::fromArray($httpCache->routes);
         $kernel = new Kernel($app, $router, httpCache: $httpCache);
         $kernel->handle(new ServerRequest('POST', '/users', body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com'])));
@@ -104,10 +101,11 @@ report('LIVE (cold-start simulated)', runLive(ITERATIONS));
 $cacheDir = sys_get_temp_dir() . '/kinetis_bench_cache_' . bin2hex(random_bytes(4));
 $router = new Router();
 $router->register(UserController::class);
-$compiled = (new Compiler())->compile($router);
-(new CacheStore($cacheDir))->writeAll($compiled);
+$store = new CacheStore($cacheDir);
+$store->write((new Compiler())->compile($router));
 
 runCached(WARMUP, $cacheDir);
 report('CACHED (cold-start simulated)', runCached(ITERATIONS, $cacheDir));
 
-CacheStore::destroy($cacheDir);
+unlink($store->path());
+rmdir($cacheDir);

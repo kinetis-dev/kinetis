@@ -10,6 +10,7 @@ use Kinetis\AuthJwt\Tests\Fixtures\FailingSimpleCache;
 use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
 use Kinetis\AuthJwt\Tests\Fixtures\NonAtomicSimpleCache;
 use Kinetis\SimpleCache\NullSimpleCache;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class RefreshTokenStoreTest extends TestCase
@@ -45,26 +46,13 @@ final class RefreshTokenStoreTest extends TestCase
         }
     }
 
-    public function test_revoke_all_for_user_throws_when_the_cache_write_fails(): void
-    {
-        $store = new RefreshTokenStore(new FailingSimpleCache());
-        $secretUserId = 'super-secret-user-id-must-never-leak-into-a-message';
-
-        try {
-            $store->revokeAllForUser($secretUserId, 60);
-            self::fail('Expected a RefreshTokenUnavailableException.');
-        } catch (RefreshTokenUnavailableException $e) {
-            self::assertStringNotContainsString($secretUserId, $e->getMessage());
-        }
-    }
-
     public function test_issue_rejects_a_zero_ttl(): void
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
         $this->expectException(RefreshTokenUnavailableException::class);
 
-        $store->issue(42, ttlSeconds: 0);
+        $store->issue('42', ttlSeconds: 0);
     }
 
     public function test_issue_rejects_a_negative_ttl(): void
@@ -73,25 +61,7 @@ final class RefreshTokenStoreTest extends TestCase
 
         $this->expectException(RefreshTokenUnavailableException::class);
 
-        $store->issue(42, ttlSeconds: -60);
-    }
-
-    public function test_revoke_all_for_user_rejects_a_zero_ttl(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $this->expectException(RefreshTokenUnavailableException::class);
-
-        $store->revokeAllForUser(42, 0);
-    }
-
-    public function test_revoke_all_for_user_rejects_a_negative_ttl(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $this->expectException(RefreshTokenUnavailableException::class);
-
-        $store->revokeAllForUser(42, -60);
+        $store->issue('42', ttlSeconds: -60);
     }
 
     public function test_a_freshly_issued_token_redeems_to_its_own_subject_and_claims(): void
@@ -101,7 +71,9 @@ final class RefreshTokenStoreTest extends TestCase
         $token = $store->issue(42, ['role' => 'admin']);
         $result = $store->redeem($token);
 
-        self::assertSame(['subject' => 42, 'claims' => ['role' => 'admin']], $result);
+        // An integer application id is canonicalized once, at issue()
+        // — the same conversion JwtIssuer::issue() makes for `sub`.
+        self::assertSame(['subject' => '42', 'claims' => ['role' => 'admin']], $result);
     }
 
     public function test_redeeming_an_unknown_token_returns_null(): void
@@ -115,7 +87,7 @@ final class RefreshTokenStoreTest extends TestCase
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
-        $token = $store->issue(42);
+        $token = $store->issue('42');
         $store->redeem($token);
 
         self::assertNull($store->redeem($token));
@@ -125,7 +97,7 @@ final class RefreshTokenStoreTest extends TestCase
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
-        $token = $store->issue(42);
+        $token = $store->issue('42');
         $store->revoke($token);
 
         self::assertNull($store->redeem($token));
@@ -135,101 +107,65 @@ final class RefreshTokenStoreTest extends TestCase
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
-        $tokenA = $store->issue(1);
-        $tokenB = $store->issue(2);
+        $tokenA = $store->issue('1');
+        $tokenB = $store->issue('2');
 
-        self::assertSame(['subject' => 1, 'claims' => []], $store->redeem($tokenA));
-        self::assertSame(['subject' => 2, 'claims' => []], $store->redeem($tokenB));
-    }
-
-    public function test_revoke_all_for_user_invalidates_a_token_issued_before_the_call(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $token = $store->issue(42);
-        $store->revokeAllForUser(42, 60);
-
-        self::assertNull($store->redeem($token));
-    }
-
-    public function test_revoke_all_for_user_does_not_affect_a_token_issued_after_the_call(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $store->revokeAllForUser(42, 60);
-        // A real second elapsed to guarantee this token's issuedAt is
-        // strictly after the cutoff above, not tied to it — avoids
-        // depending on two real time() calls landing in the same second.
-        sleep(1);
-        $token = $store->issue(42);
-
-        self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
-    }
-
-    public function test_revoke_all_for_user_does_not_affect_a_different_user(): void
-    {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $token = $store->issue(42);
-        $store->revokeAllForUser(99, 60);
-
-        self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
+        self::assertSame(['subject' => '1', 'claims' => []], $store->redeem($tokenA));
+        self::assertSame(['subject' => '2', 'claims' => []], $store->redeem($tokenB));
     }
 
     /**
-     * A subject reaches issue() and revokeAllForUser() as string|int and
-     * the type is part of the identity, so an integer subject and its
-     * numeric string form are two different users — revoking either
-     * leaves the other's outstanding tokens redeemable.
+     * An integer application id and the string an access token carries
+     * name one subject, so a refresh token issued from either redeems
+     * back to the canonical string form — the property that lets a
+     * refresh endpoint reissue under JwtUser::id().
      */
-    public function test_revoke_all_for_an_int_user_id_does_not_affect_its_numeric_string_form(): void
+    public function test_a_token_issued_from_an_int_id_redeems_to_its_canonical_string(): void
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
-        $token = $store->issue('42');
-        $store->revokeAllForUser(42, 60);
+        $token = $store->issue(42);
 
         self::assertSame(['subject' => '42', 'claims' => []], $store->redeem($token));
     }
 
-    public function test_revoke_all_for_a_numeric_string_user_id_does_not_affect_its_int_form(): void
+    public function test_issue_rejects_an_empty_subject(): void
     {
         $store = new RefreshTokenStore(new InMemorySimpleCache());
 
-        $token = $store->issue(42);
-        $store->revokeAllForUser('42', 60);
+        $this->expectException(RefreshTokenUnavailableException::class);
 
-        self::assertSame(['subject' => 42, 'claims' => []], $store->redeem($token));
+        $store->issue('');
     }
 
-    public function test_revoke_all_for_a_string_user_id_invalidates_that_subjects_tokens(): void
+    /**
+     * A record whose subject is not the canonical non-empty string
+     * issue() stores could only come from a tampered or foreign cache
+     * entry — it fails closed rather than being reinterpreted into an
+     * identity revocation would then miss.
+     */
+    #[DataProvider('nonCanonicalStoredSubjects')]
+    public function test_a_stored_record_with_a_non_canonical_subject_is_unredeemable(mixed $subject): void
     {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
+        $cache = new InMemorySimpleCache();
+        $store = new RefreshTokenStore($cache);
 
-        $token = $store->issue('42');
-        $store->revokeAllForUser('42', 60);
+        $token = 'planted-refresh-token';
+        $cache->set('jwt-refresh.' . hash('sha256', $token), [
+            'subject' => $subject,
+            'claims' => [],
+        ], 60);
 
         self::assertNull($store->redeem($token));
     }
 
-    /**
-     * issue() places no emptiness requirement on a subject, so an empty
-     * string is an id like any other here: it keys only its own tokens,
-     * and an integer 0 subject keys only its own.
-     */
-    public function test_an_empty_string_subject_is_its_own_identity(): void
+    public static function nonCanonicalStoredSubjects(): iterable
     {
-        $store = new RefreshTokenStore(new InMemorySimpleCache());
-
-        $unaffected = $store->issue('');
-        $store->revokeAllForUser(0, 60);
-
-        self::assertSame(['subject' => '', 'claims' => []], $store->redeem($unaffected));
-
-        $revoked = $store->issue('');
-        $store->revokeAllForUser('', 60);
-
-        self::assertNull($store->redeem($revoked));
+        yield 'an integer' => [42];
+        yield 'an empty string' => [''];
+        yield 'a float' => [42.5];
+        yield 'a boolean' => [true];
+        yield 'a list' => [['42']];
     }
 
     public function test_construction_over_a_null_cache_throws_instead_of_silently_issuing_unredeemable_tokens(): void
@@ -240,9 +176,8 @@ final class RefreshTokenStoreTest extends TestCase
         } catch (RefreshTokenUnavailableException $e) {
             self::assertSame(
                 'RefreshTokenStore requires a real cache: NullSimpleCache never stores anything, so every '
-                . 'issued refresh token would be unredeemable and revokeAllForUser() would have nothing to '
-                . 'affect. Configure Redis (REDIS_URL/REDIS_HOST) or pass another PSR-16 CacheInterface '
-                . 'implementation.',
+                . 'issued refresh token would be unredeemable. Configure Redis (REDIS_URL/REDIS_HOST) or pass '
+                . 'another PSR-16 CacheInterface implementation.',
                 $e->getMessage(),
             );
         }
@@ -257,8 +192,8 @@ final class RefreshTokenStoreTest extends TestCase
             self::assertSame(
                 'RefreshTokenStore requires a cache implementing Kinetis\SimpleCache\AtomicConsumeInterface: '
                 . 'redeeming a token by reading it and deleting it in two separate calls lets two concurrent '
-                . 'redeems of the same token both succeed, defeating single use. Kinetis\SimpleCache\RedisSimpleCache '
-                . 'and ClusteredRedisSimpleCache (kinetis/cache-redis) both implement it.',
+                . 'redeems of the same token both succeed, defeating single use. Install kinetis/cache-redis '
+                . 'for a Redis-backed cache that implements it.',
                 $e->getMessage(),
             );
         }

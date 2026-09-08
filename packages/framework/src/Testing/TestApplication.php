@@ -20,9 +20,9 @@ use Kinetis\Runtime\AppEnvironment;
  * middleware pipeline a request goes through in development, assembled
  * once and reused.
  *
- * Deliberately mirrors public/index.php's development branch rather than
- * approximating it — a test that passes against a hand-assembled Kernel
- * proves less than one that passes against the wiring production
+ * Mirrors {@see \Kinetis\Runtime\HttpStartup}'s development branch rather
+ * than approximating it — a test that passes against a hand-assembled
+ * Kernel proves less than one that passes against the wiring production
  * actually uses. Discovery runs live (never the compiled cache), so a
  * route or listener added mid-test-run is picked up without a build step.
  *
@@ -82,10 +82,9 @@ final class TestApplication
 
         // PluginDiscovery::bindInstances() and the discovered
         // EventListenerRegistry both have to be bound before the
-        // bootstrap chain runs — see BootSequence's own docblock, the
-        // one place this ordering lives now, shared by public/index.php,
-        // bin/kinetis, and the reference copies in kinetis/skeleton/
-        // kinetis/pingpong. null pluginInstances means "discover and
+        // bootstrap chain runs — see BootSequence's own docblock, the one
+        // place this ordering lives, shared with HttpStartup and
+        // bin/kinetis. null pluginInstances means "discover and
         // reconstruct live," since this never consults a compiled cache,
         // the same choice every other discovery call above already
         // makes. Package bootstraps run first inside it, then this

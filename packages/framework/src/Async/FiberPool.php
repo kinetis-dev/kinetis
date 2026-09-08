@@ -14,17 +14,9 @@ use SplQueue;
  * terminating, so the next job reuses a live Fiber rather than paying
  * for a fresh one.
  *
- * Why this exists: constructing and discarding a Fiber allocates and
- * frees a whole C stack — an mmap/mprotect/madvise/munmap cycle per
- * Fiber. Those syscalls take the *process-wide* kernel address-space
- * lock and trigger cross-CPU TLB shootdowns, so under a threaded worker
- * runtime a fan-out that builds one Fiber per task serializes every
- * worker thread in the process against the same lock — capping the
- * whole process's fan-out throughput near two threads' worth regardless
- * of thread count, with the CPU idle. Parked residents make the steady
- * state allocation-free, which is what removes the ceiling: on an
- * 8-vCPU host, resident reuse measures roughly 3× the throughput of
- * per-task construction on a 20-query fan-out route.
+ * Why this exists: constructing a Fiber allocates a whole C stack and
+ * discarding it frees one. Reusing a parked resident keeps a fan-out
+ * from paying that construction and destruction cost per task.
  *
  * The pool is deliberately per *PHP thread* (a static on a ZTS build is
  * thread-local, and each FrankenPHP worker thread runs its own event

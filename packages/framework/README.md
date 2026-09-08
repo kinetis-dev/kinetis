@@ -115,7 +115,7 @@ consumed — see
 | Key | Default | Purpose |
 |---|---|---|
 | `APP_ENV` | `production` | `development` — the exact name, ignoring case — selects live discovery; unset or any other name selects the AOT cache. |
-| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read — by the Kernel for a raw body, and by whichever runtime adapter parsed a form body before the Kernel existed. One `Kinetis\Http\Form\FormLimits` instance, built from this value once, is what both use. |
+| `MAX_BODY_SIZE` | `2097152` | Request-body cap in bytes, enforced against declared `Content-Length` and actual bytes read, by the Kernel's own `RequestBodyMiddleware` for every request body. One `Kinetis\Http\Form\FormLimits` instance, built from this value once, is what it reads. |
 | `TRUSTED_PROXIES` | — | Comma-separated addresses/CIDR ranges whose `X-Forwarded-Proto`/`X-Forwarded-For` are believed. Empty means no peer is an edge and neither header is read — the safe default for a directly reachable listener. |
 | `ROUTE_DISCOVERY_PATHS` | — | Restricts the HTTP-controller scan to comma-separated sub-paths, relative to each PSR-4 base directory. |
 | `COMMAND_DISCOVERY_PATHS` | — | The same, for CLI commands. |
@@ -147,7 +147,7 @@ documentation from its own README:
 | [`kinetis/queue-sqs`](https://github.com/kinetis-dev/queue-sqs) | An Amazon SQS backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) — non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
 | [`kinetis/queue-rabbitmq`](https://github.com/kinetis-dev/queue-rabbitmq) | A RabbitMQ backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) |
 | [`kinetis/session`](https://github.com/kinetis-dev/session) | Cookie-backed sessions and CSRF protection — file, cache, or SQL storage |
-| [`kinetis/storage`](https://github.com/kinetis-dev/storage) | File storage on `League\Flysystem` — a genuinely non-blocking, `Amp\File`-backed local adapter |
+| [`kinetis/storage`](https://github.com/kinetis-dev/storage) | File storage on `League\Flysystem` — an `Amp\File`-backed local adapter whose driver calls suspend the Fiber; the resource methods read with PHP's own stream functions and block the thread at a disk |
 | [`kinetis/storage-s3`](https://github.com/kinetis-dev/storage-s3) | S3 (and S3-compatible) storage for [`kinetis/storage`](https://github.com/kinetis-dev/storage)'s `FILESYSTEM_DRIVER=s3` — non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
 | [`kinetis/mailer`](https://github.com/kinetis-dev/mailer) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
 | [`kinetis/broadcasting`](https://github.com/kinetis-dev/broadcasting) | Real-time broadcasting over the Pusher Channels protocol — private/presence channel authorization, non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
@@ -156,7 +156,7 @@ documentation from its own README:
 | [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
 | [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone, no Kinetis required |
 | [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | The native Model Context Protocol server — stdio and Streamable HTTP |
-| [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda (Bref) runtime adapter, for multipart/form-data support Lambda specifically needs |
+| [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda (Bref) runtime adapter — polls the Lambda Runtime API and converts API Gateway v2 payloads to and from PSR-7 |
 | [`kinetis/roadrunner-adapter`](https://github.com/kinetis-dev/roadrunner-adapter) | RoadRunner runtime adapter — a persistent worker over RoadRunner's own Goridge/`PSR7Worker` protocol |
 
 ## Documentation

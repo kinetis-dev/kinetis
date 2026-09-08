@@ -18,7 +18,7 @@ namespace Kinetis\AuthJwt;
  * are not byte-for-byte equal. Every decode therefore re-encodes and
  * requires the result to match its input exactly.
  *
- * @internal Boundary helper for JwkSet, ParsedJwkSet and JoseHeader.
+ * @internal Boundary helper for JwkSet, JwkSetParser and JoseHeader.
  */
 final class Base64Url
 {

@@ -5,11 +5,10 @@ the runtime actually serving your application. Under a persistent worker
 (FrankenPHP or RoadRunner), queries suspend only their own request's
 Fiber — a request waiting on the database doesn't stop the worker's
 request from making progress on anything else it has in flight. Under
-PHP-FPM, where a worker
-serves exactly one request at a time from a fresh process, Kinetis uses a
-plain blocking PDO connection instead — measured to be the faster choice
-there by a wide margin, since nothing else could have used the wait time
-anyway and PDO's native protocol handling costs a fraction of the CPU.
+PHP-FPM, a worker process is reused across requests but handles one at a
+time, and `DB_DRIVER=auto` selects a blocking PDO connection there;
+database calls made through `concurrently()` therefore execute
+sequentially.
 
 You never pick this per call site: `SqlConnectionFactory` selects the
 driver from the runtime (see "Driver selection" below), every driver
@@ -30,9 +29,10 @@ specific minimum version matters is `kinetis/queue-sql`; see
 Core itself has no MySQL/Postgres/Redis dependency of its own —
 `Kinetis\Persistence\TransactionGuard`/`SqlConnectionFactory` live in the
 separate `kinetis/persistence` package, and
-`Kinetis\SimpleCache\RedisSimpleCache`/`ClusteredRedisSimpleCache` live in
-`kinetis/cache-redis`. `composer require` whichever you need; each is
-introduced with its own installation note below at first use.
+`Kinetis\SimpleCache\RedisSimpleCache` lives in `kinetis/cache-redis`,
+over the standalone `kinetis/redis` transport ({doc}`redis`).
+`composer require` whichever you need; each is introduced with its own
+installation note below at first use.
 ```
 
 ## Connecting
@@ -89,67 +89,6 @@ client, not a fresh one per request.
 The async drivers are themselves connection pools — lazily opened
 connections up to `maxConnections`, reused across requests under a
 persistent worker, with dead connections discarded and replaced.
-Kinetis's own `Kinetis\Persistence\Pool` is not used by this
-integration — it stays available as generic infrastructure for protocol
-clients that don't pool themselves.
-
-### `Pool`: ownership, disposal, and shutdown
-
-Every member `Pool` successfully creates is owned by the pool until it
-is permanently discarded, and at any moment is in exactly one of two
-states: idle (available to `acquire()`) or checked out (held by
-whichever single caller last acquired it). `release(object $connection)`
-only accepts the exact member it currently has checked out — a
-connection this pool never created, or one that's already idle, is
-rejected with `Exception\InvalidPoolReleaseException` rather than
-silently accepted, since either would let two callers end up holding the
-identical connection at once.
-
-```{code-block} php
-$pool = new Pool(
-    factory: static fn (): Connection => Connection::open(),
-    isHealthy: static fn (Connection $c): bool => $c->ping(),
-    maxSize: 10,
-    onDiscard: static fn (Connection $c): void => $c->close(),
-);
-
-$connection = $pool->acquire();
-// ... use $connection ...
-$pool->release($connection);
-```
-
-`onDiscard`, the last constructor parameter, covers exactly one thing:
-unhealthy eviction. It's invoked only from inside `acquire()`'s own
-idle-reuse loop, for a member that loop is already about to discard
-because `isHealthy` returned `false` or threw — never for one a caller
-still holds checked out, and never for an idle member simply sitting
-unused. A health check that throws still rethrows that same exception to
-the caller (the primary failure), even when `onDiscard` runs
-successfully; if `onDiscard` itself also throws, both failures reach the
-caller together via `Exception\PoolDisposalFailedException`
-(`healthCheckFailure()`/`disposalFailure()`), rather than the disposal
-failure silently replacing the real cause.
-
-```{warning}
-**`Pool` has no "close every idle member" method, and `onDiscard` cannot
-be used to build one.** It is private policy this class alone invokes —
-nothing lets a caller invoke it directly, enumerate what's currently
-idle, or force every idle member through it. Repeated
-`acquire()`/`release()` on its own doesn't visit them either: reuse is
-LIFO, so a caller doing that can keep cycling the same member back to
-itself forever without ever touching the rest. An idle member that's
-never unhealthy and never independently acquired again simply gets no
-`onDiscard` call at all — it's left to its own object/resource
-destructor, which runs once nothing (including `Pool`'s own idle list,
-once the pool itself goes out of scope) still holds a reference to it,
-the ordinary way PHP reclaims a resource when the pool becomes
-unreachable or the process exits. Deterministic, eager shutdown of every
-idle member is a real gap this class doesn't close yet.
-```
-
-`maxSize` must be at least `1`; anything less is rejected at
-construction with `Exception\InvalidPoolConfigurationException`, rather
-than only failing later, confusingly, as `PoolExhaustedException`.
 
 ```{note}
 A pooled connection the server closes (an idle socket past
@@ -157,10 +96,14 @@ A pooled connection the server closes (an idle socket past
 one query. Writing to a socket whose peer is already gone is buffered
 locally rather than failing, so the first query on a newly-dead
 connection dispatches successfully and only discovers the death while
-reading the result — surfacing as a `QueryException` the caller has to
-handle. Retrying it automatically is not an option: at that point the
-statement may already have executed, and replaying a non-idempotent one
-silently is worse than an error. The next query's dispatch does fail
+reading the result — surfacing as an `Exception\ConnectionException`
+where the client reports the session gone, and an
+`Exception\QueryException` where the server answered. Either way the
+caller has to handle it. Retrying it automatically is not an option: at
+that point the statement may already have executed, and replaying a
+non-idempotent one silently is worse than an error. A transaction pinned
+to that connection ends with it, discarding the connection rather than
+rolling back on a session that is gone. The next query's dispatch does fail
 immediately, and *that* is retried transparently on a fresh connection.
 Long-lived workers issuing queries after an idle stretch should expect
 this and retry at the application level, or keep connections warm.
@@ -223,9 +166,25 @@ non-default connection is always retrieved explicitly
 
 | value | what you get |
 |---|---|
-| `auto` (default) | FrankenPHP worker mode or RoadRunner → `native`; PHP-FPM → `pdo`. |
-| `native` | mysqli's `MYSQLI_ASYNC` (`Driver\MysqliAsyncClient`) or ext-pgsql's `pg_send_query` (`Driver\PgsqlAsyncClient`): the wire protocol runs at C speed inside the extension, queries overlap across connections, and each waits by suspending only its own Fiber — full `concurrently()` support. |
+| `auto` (default) | FrankenPHP worker mode or RoadRunner → `native`; every other runtime, PHP-FPM and AWS Lambda included → `pdo`. |
+| `native` | mysqli's `MYSQLI_ASYNC` (`Driver\MysqliAsyncClient`) or ext-pgsql's `pg_send_query` (`Driver\PgsqlAsyncClient`): the wire protocol runs at C speed inside the extension, queries overlap across connections, and each waits by suspending only its own Fiber — full `concurrently()` support. The Postgres client also needs `ext-sockets` and refuses to construct without it. |
 | `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
+
+`fromConfig()`'s `$driver` argument overrides the key for one call.
+`kinetis/migrations` passes `'pdo'` for the session-scoped connection
+its advisory lock needs (see {doc}`migrations`).
+
+`auto` reads two signals — `frankenphp_handle_request()` and
+`RR_MODE=http` — so AWS Lambda gets `pdo` even though its PHP process is
+reused across invocations. The standard Bref runtime carries the PDO
+drivers, while `native` on Postgres needs `ext-pgsql`, which a Lambda
+deployment provides through an extension layer it provisions itself; and
+the native pool's `DB_MAX_CONNECTIONS` is per execution environment, so
+its connection count multiplies with the function's concurrency rather
+than being bounded by a fixed worker count. Lambda is also outside the
+measurements behind the `native` default (see {doc}`benchmarks`). A
+deployment that provides the extension and budgets its pool against the
+function's concurrency limit sets `DB_DRIVER=native` explicitly.
 
 Every driver returns fully-buffered results (part of the `SqlResult`
 contract — stop iterating whenever you like, nothing is left to drain),
@@ -234,6 +193,31 @@ on Postgres (`pg_send_query_params`) and PDO, escaped client-side
 interpolation on native MySQL (whose async mode has no bind step; the
 client pins the connection charset explicitly so escaping is always
 performed against a known charset).
+
+One call carries one statement. SQL producing more than one result set
+throws `Exception\QueryException` rather than returning the first:
+draining the rest would block the event loop on the async drivers, and
+an unread result set left on a pooled connection fails whatever borrows
+it next. The connection survives either way — `mysqli` discards its own
+for the pool to replace, and the others drain what is left. PDO Postgres
+is the one case the rule cannot reach: libpq runs a semicolon-separated
+string as a single command and reports only its last result. Issue one
+`query()`/`execute()` per statement.
+
+A later result set can carry the server's own error rather than rows —
+what a stored procedure raising `SIGNAL` after a `SELECT` produces. It
+reaches the caller as `Exception\QueryException` like any other server
+error, and the span records the failure it is: nothing is built, and
+nothing reported, until every result set has been read.
+
+`COPY` is not supported on the native Postgres driver: it puts the
+connection into a streaming mode the driver has no protocol for, and the
+server holds it there waiting for data that is never coming. The
+connection is taken out of service and replaced by the pool, and the
+caller gets an `Exception\ConnectionException` — the exchange was lost,
+which is a different thing from a statement the server refused. Use a
+server-side `COPY` — one that reads or writes a file the server itself
+can reach — or ordinary statements.
 
 Every parameterized call passes one **pre-flight** first — before the
 driver opens a telemetry span, asks its pool for a connection, opens one,
@@ -271,7 +255,11 @@ Each argument is one of five kinds: `null`, `bool`, `int`, a **finite**
 `float`, or `string`. Anything else — an array, a resource, an object,
 `INF`, `NAN` — throws `Exception\QueryException` naming the position and
 the type, with the whole list read before a single value is encoded or
-bound, so a refused call leaves no position bound. The narrower set is
+bound, so a refused call leaves no position bound. Postgres adds one
+rule of its own: a string holding a NUL byte is refused, since libpq
+carries text parameters as C strings and the value would reach the
+server truncated at that byte. MySQL takes one intact, which is what a
+`VARBINARY`/`BLOB` column needs. The narrower set is
 the one all four drivers agree on, so the same call is refused the same
 way whichever driver `DB_DRIVER` picked. Format a `DateTimeInterface`,
 an enum or a JSON payload at the call site, where the shape is your
@@ -297,18 +285,13 @@ Two comment rules match real MySQL rather than a generic reading of the
 syntax. `--` only opens a comment against MySQL when the second dash is
 followed by whitespace, a control character, or the end of the string —
 `5--?` is `5 - - ?`, not a comment (Postgres has no such condition; a
-bare `--` always opens one there). And MySQL/MariaDB's *executable*
-comments (`/*! ... */`, `/*M! ... */`) are copied through verbatim, left
-for the connected server to interpret on its own — whether one is even
-live SQL depends on its version gate against that server's actual
-version (and, for `/*M!`, whether it's MariaDB at all), which Kinetis has
-no way to check client-side. A `?` inside one is rejected outright rather
-than guessed at, on `native` and `pdo` alike, inside a transaction as
-much as outside one: the two would otherwise silently require a different
-number of bound parameters for the same query depending on the connected
-server's version, since `pdo`'s native prepare defers the question to
-the real server while `native`'s own scanner never could. Move a bound
-value outside the comment instead.
+bare `--` always opens one there). MySQL/MariaDB's *executable*
+comments (`/*! ... */`, `/*M! ... */`) are scanned as ordinary comments:
+their text is copied through verbatim for the connected server to
+interpret on its own, and a `?` inside one is data rather than a bind
+slot. A query meaning one to be bound fails loudly — on the argument
+count, or on the server that executes the comment — rather than binding
+something silently. Write the bound value outside the comment.
 
 The `auto` split is measured, not aesthetic: under boot-and-die PHP-FPM,
 per-request connection handshakes and per-query client CPU dominate, and
@@ -317,6 +300,24 @@ queries leave nothing to overlap); under a persistent worker, connections
 amortize across requests and native async fan-out keeps its benefits at
 native protocol cost.
 
+A PDO client holds one connection at a time and opens it lazily. A
+session it can carry no more work on — abandoned by a transaction, ended
+by a terminal MySQL lock failure (1205/1213), or left in a result state
+that could not be cleared — goes back to the server, and the next call
+opens a fresh one. `close()` is the separate, final ending: it takes the
+client itself out of service, and every later call throws
+`Exception\ConnectionException`. The two differ wherever a process
+outlives one session, which under `auto` is every process that is not a
+persistent worker — a `queue:work` CLI worker included.
+
+`SqlConnectionFactory::singleSession()` builds the other policy: a PDO
+client pinned to the session it opens, closing rather than reconnecting
+if that session is discarded. It is for work that lives in the session
+itself — a session-scoped advisory lock, a temporary table — where a
+replacement is a different session holding none of it, and running on
+one quietly would be worse than stopping. `kinetis/migrations` builds
+its `migrate*` connection this way (see {doc}`migrations`).
+
 The PDO drivers run with *native* (non-emulated) prepares, where every
 `prepare()` is its own server round trip — so `execute()` memoizes
 prepared statements per SQL string for the connection's lifetime. A
@@ -324,9 +325,10 @@ loop issuing the same parameterized statement N times costs N+1 round
 trips instead of 2N; against a sub-millisecond database that's the
 difference between paying the network once or twice per query. The cache holds at most 256 statements (workloads that
 interpolate values into their SQL text instead of binding reset it on
-overflow rather than growing it forever) and is dropped with the
-connection on `close()`. A transaction owns its handle for its own
-lifetime and keeps a cache of its own.
+overflow rather than growing it forever) and goes with the connection it
+was built on, so a replacement connection starts an empty one. A
+transaction runs on the client's own connection, so it shares that one
+cache rather than re-preparing what it already holds.
 
 ```{warning}
 Server-side prepared statements are scoped to a **database connection**
@@ -338,13 +340,41 @@ prepares, this one included. Behind such a proxy, use session pooling
 mode, or a proxy version that tracks prepared statements itself.
 ```
 
-Two runtime notes for `native`: mysqli cannot expose its socket to the
-event loop, so while its queries are in flight the client polls with a
-short (1 ms) blocking window per loop turn — indistinguishable from a
-blocking wait when the request's only outstanding work is the database,
-and at worst a 1 ms delay per turn for anything else scheduled
-concurrently. ext-pgsql *does* expose its socket (`pg_socket()`), so the
-Postgres native driver is fully event-driven with no polling at all.
+#### What blocks and what does not on `native`
+
+**MySQL.** mysqli cannot expose its socket to the event loop, so while
+its queries are in flight the client polls with a short (1 ms) blocking
+window per loop turn — indistinguishable from a blocking wait when the
+request's only outstanding work is the database, and at worst a 1 ms
+delay per turn for anything else scheduled concurrently. Opening a
+connection blocks outright: mysqli has no async connect primitive, so a
+connection opened under load stalls the worker thread for a TCP connect,
+a TLS handshake and an auth exchange. Warm the whole pool at boot
+(`DB_WARM_CONNECTIONS`, which this driver wants anyway — see below) and
+set `DB_CONNECT_TIMEOUT`, so an unreachable server bounds the stall
+instead of leaving it to the platform.
+
+**Postgres.** ext-pgsql exposes its socket (`pg_socket()`), and the
+driver keeps every phase off the loop. Connecting runs
+`PGSQL_CONNECT_ASYNC` and drives the handshake from readiness waits,
+bounded by `DB_CONNECT_TIMEOUT`. Dispatch puts libpq into nonblocking
+mode first, so a parameter larger than its output buffer leaves bytes
+queued and the loop pushes them out, instead of one
+`pg_send_query_params()` call flushing megabytes synchronously. Queued
+output is waited on in both directions: the server sends `NOTICE` and
+`NOTIFY` traffic while a statement is still going out, so a readable
+socket is consumed before the flush continues, and a client that only
+watched for writability would fill both socket buffers and stop.
+Disposal ends the connection's transport rather than draining it, which
+is why this driver needs `ext-sockets`: closing a libpq connection the
+ordinary way reads every outstanding result first, and a statement still
+running — or a `COPY` the server is waiting on input for — would be a
+wait the whole loop pays.
+
+One thing stays synchronous: libpq resolves the host name itself, inside
+the connect call, so a slow DNS resolver stalls the worker thread for as
+long as it takes. Point `DB_HOST` at an address, or at a name the
+platform resolves from cache, on any deployment where that matters.
 
 ### Connection options
 
@@ -384,6 +414,12 @@ A "—" is not a silent ignore: setting an option the selected driver
 cannot honor throws at construction, naming both the option and the
 driver — a config that works on one runtime never silently *means
 something different* on another.
+
+The PDO drivers refuse a `;` or a NUL byte in any value they put in a
+DSN — host, database, and the Postgres options above. PDO's DSN grammar
+has no quoting for either: pdo_mysql splits its DSN on `;`, pdo_pgsql
+turns every `;` into a space for libpq, and a NUL ends the C string, so
+such a value would be read as further connection parameters.
 
 `DB_SSLMODE` takes libpq's vocabulary on every driver: `disable`,
 `require` (encrypt, don't verify the peer), `verify-ca`, and
@@ -444,8 +480,12 @@ $db = SqlConnectionFactory::fromConfig($config, poolOptions: [
 
 `maxConnections` (default 8) bounds an async driver's fan-out width —
 connections open lazily up to the cap, and callers beyond it wait for a
-free connection inside the pool. The PDO drivers are a single lazy
-connection, trivially within any cap. The connection-scoped
+free connection inside the pool. A connection being opened counts
+against the cap for the whole attempt, not only once it is finished, so
+a burst of callers arriving at an empty Postgres pool opens
+`maxConnections` connections between them rather than one each. The PDO
+drivers are a single lazy connection, trivially within any cap. The
+connection-scoped
 `DB_MAX_CONNECTIONS` key sets the same width from the environment — a
 deployment tunes pool sizing without editing bootstrap code — with an
 explicit `$poolOptions` value winning over the key when both are set.
@@ -502,18 +542,138 @@ pool instead, adding latency to that one request — a far softer failure
 mode than a rejected connection that can take the whole worker thread
 down for good.
 
-```{warning}
-**During an open transaction, run every statement through the
-transaction object — never through the client.** The two driver
-families give client-level calls opposite semantics there: a PDO
-driver is a single connection, so a client `execute()` while a
-transaction is open silently *joins* it (and rolls back with it),
-while an async driver runs the same call on a *different* pooled
-connection, entirely outside the transaction. Code that mixes the two
-behaves differently between runtimes under `DB_DRIVER=auto`. The
-transaction object pins one connection and is the only portable way to
-address it.
+## Transactions
+
+`beginTransaction()` pins one connection and returns a `SqlTransaction`
+with the same `query()`/`execute()` surface as the client. Every
+statement belonging to the transaction goes through that object: a
+client-level call while it is open is refused rather than served, on
+every driver.
+
+A PDO client holds one connection, so the transaction owns the client
+for as long as it runs — `query()`, `execute()` and a second
+`beginTransaction()` on the client throw
+`Exception\TransactionException` until it ends. An async client pools
+connections, so the refusal is scoped to the Fiber holding the
+transaction: another Fiber keeps its own connection and can open a
+transaction of its own, while the holder's client-level call would land
+on a different connection, in autocommit, outside the transaction it
+believes it is in.
+
+A transaction also belongs to the Fiber that began it. `query()`,
+`execute()`, `commit()` and `rollback()` from any other Fiber throw:
+the pinned connection carries one statement at a time, so a second
+Fiber dispatching on it would corrupt both. Give that Fiber its own
+transaction instead.
+
+`rollback()` on a transaction that has already ended is a no-op, so
+`catch (Throwable) { $tx->rollback(); throw $e; }` needs no `isActive()`
+check first. `commit()` throws there. A `COMMIT` or `ROLLBACK` the
+server refuses throws and discards the connection rather than handing it
+back: what is left on it is a transaction of unknown outcome.
+
+The span's outcome attribute says only what the server confirmed:
+`commit` for a `COMMIT` it acknowledged, `rollback` for a `ROLLBACK` it
+acknowledged, and `unknown` for everything else — a lost connection, a
+discarded connection, a finish nothing answered, a transaction the
+server ended on its own. A transaction that never sent either statement
+is `unknown` too: the work is discarded with the session, which is not
+the same as a rollback the server reported.
+
+`isActive()` stays true until the connection has been handed back and
+the span closed, which is a moment later than the last statement being
+accepted: while a `COMMIT` is on the wire the transaction refuses
+further statements but still owns its connection. That window is what
+`close()` — and so `TransactionGuard` at request disposal — has to be
+able to reach. Closing there takes the connection out from under the
+finish, the owning Fiber comes back with an
+`Exception\ConnectionException`, and the outcome is recorded once, as
+`unknown`.
+
+### What the server does underneath the object
+
+A transaction can end where the server is while the object still
+believes it is open, and the statements that follow would then run in
+autocommit. Each driver settles it from what it can see locally, without
+a probe round trip, after every statement — succeeded or failed — and
+before the next one:
+
+- **Postgres, both drivers** — libpq tracks the transaction status the
+  server sent with its last message, so an implicitly ended transaction
+  is visible directly. A failed statement aborts the whole transaction
+  there rather than ending it: the server answers a later `COMMIT` with
+  a rollback and no error, so Kinetis ends it as the rollback it is and
+  throws `Exception\TransactionException` rather than reporting a commit
+  that did not happen.
+- **PDO MySQL** — `PDO::inTransaction()` reads the same status flag,
+  which is what makes MySQL's implicit commit on DDL (see
+  {doc}`migrations`) visible.
+- **Native mysqli** — mysqli exposes no transaction-status accessor, so
+  an implicit commit cannot be seen at all: keep DDL and raw `COMMIT`,
+  `ROLLBACK` and `SAVEPOINT` statements out of a transaction on this
+  driver.
+
+Where a driver can see it, `isActive()` both reports the transaction
+gone and settles it — connection handed back, nothing left to close.
+
+Both MySQL drivers add one rule the status flag is not allowed to
+decide. A deadlock (error 1213) is always resolved by rolling the losing
+transaction back whole. A lock-wait timeout (1205) rolls back only the
+statement — unless `innodb_rollback_on_timeout` is on, where it rolls
+back the whole transaction too, and nothing in the error says which
+setting is live. Both therefore end the transaction, discard its
+connection rather than handing it to the next caller, and record the
+outcome as `unknown`. The server's own error number is the
+`Exception\QueryException`'s code, so a caller that wants to retry can
+still tell the two apart:
+
+```{code-block} php
+try {
+    $guard->transaction($db, $work);
+} catch (QueryException $e) {
+    if ($e->getCode() === 1213) {
+        // Deadlock: the server rolled it back whole; retrying is the
+        // documented response.
+    }
+}
 ```
+
+`close()` is the lifecycle escape hatch — what `TransactionGuard` runs
+at scope disposal — and is callable from any Fiber. On the owning Fiber
+it is an ordinary rollback. From another it ends the transaction and
+takes the connection out of service rather than sending a `ROLLBACK`
+down one the owner may be using: the pool replaces it, and the server
+rolls the work back with the session. A statement still in flight when
+that happens is settled where it stands, with a
+`Exception\ConnectionException` saying the connection went before the
+server acknowledged anything — the statement may well have run.
+Closing a PDO client does the same to the transaction holding it, since
+both run on the client's one connection.
+
+### A transaction nothing ends
+
+Calling `beginTransaction()` on a link makes ending the transaction the
+caller's own job, and an exception path that drops the object without
+reaching `commit()`, `rollback()` or `close()` leaves nobody holding it:
+a driver keeps a transaction's owner Fiber, never the transaction. The
+last reference going away is where such a transaction ends. Its
+connection is discarded, the Fiber's client-level ownership goes with
+it, and the span closes with the outcome `unknown`.
+
+Nothing goes on the wire there. That cleanup runs in a destructor, which
+cannot suspend and so cannot wait for an answer; a `ROLLBACK` dispatched
+with nobody to read the reply would sit on a connection about to serve
+someone else. The server rolls the work back as the session goes, which
+is not a `ROLLBACK` it acknowledged — and the span says so rather than
+claiming one.
+
+What that costs is the connection: an async client's pool opens a
+replacement, and a PDO client, holding one at a time, opens a fresh one
+on its next call. `TransactionGuard::transaction()` costs neither — it
+ends the transaction on every path out of the work, so the connection
+goes back to the pool with the outcome the server confirmed. Use the
+guard; the discard is a safety net for a connection, not a way to end a
+transaction.
 
 ## `TransactionGuard` — the request-scoped safety net
 
@@ -524,8 +684,10 @@ database at all can skip it entirely.
 Connection pooling is the drivers' own job. What no driver can know
 about is Kinetis's `RequestScope` (see {doc}`container`): if application
 code begins a transaction and something throws before it's explicitly
-committed or rolled back, nothing closes it — and it leaks into whatever
-the next thing to borrow that pooled connection does.
+committed or rolled back, nothing commits or rolls it back, and it holds
+its connection — and the locks on it — for as long as anything still
+references it. Dropped, it ends the only way a destructor can, by
+discarding that connection.
 
 `Kinetis\Persistence\TransactionGuard` is the request-scoped safety net for
 exactly this. It's autowired fresh per request, like any other class you
@@ -571,9 +733,10 @@ public function rollbackDangling(): void
 ```
 
 For the case the pattern above doesn't cover — a transaction begun
-directly via `beginTransaction()` and held open across multiple calls,
-that never reaches either `commit()` or `rollback()` before the unit of
-work ends — `Kinetis\Container\TransactionGuardHook::registerIfAvailable()`
+through the guard's own `beginTransaction()` and held open across
+multiple calls, that never reaches either `commit()` or `rollback()`
+before the unit of work ends —
+`Kinetis\Container\TransactionGuardHook::registerIfAvailable()`
 registers `rollbackDangling()` as a `RequestScope` dispose hook:
 
 ```{code-block} php
@@ -592,8 +755,9 @@ MCP support is (see {doc}`mcp`):
 - `bin/kinetis`, for every CLI command that hasn't declared
   `#[Command(bootstrap: false)]` — a bootstrap-free command has no
   database connection to guard in the first place.
-- `kinetis/mcp`'s `Transport\StdioTransport` and `Http\McpController`,
-  for every MCP message, over stdio and over HTTP alike.
+- `kinetis/mcp`'s `Transport\StdioTransport`, for every MCP message over
+  stdio — over HTTP the message runs on the request scope `Kernel`
+  already registered the hook against.
 - `kinetis/queue`'s `QueueWorker`, for every popped job's own
   `RequestScope`, and `SyncQueue`, for every `push()`'s own `RequestScope`
   — a job that begins a transaction and returns or throws without closing
@@ -605,6 +769,14 @@ logger you've registered (see {doc}`logging`) — a genuine anomaly signal,
 since it means a transaction was left open somewhere it shouldn't have
 been.
 
+What it finds is what it started: `$guard->beginTransaction($link)` and
+`transaction()`, the two calls that put a transaction on its tracked
+list. One begun straight off the link is not tracked here or anywhere
+else, and ends by being dropped — connection discarded, outcome
+`unknown`. Route a transaction you hold open across several calls
+through the guard, and disposal rolls it back on the wire and hands the
+connection back instead.
+
 Both `beginTransaction()` and `transaction()` work identically for MySQL
 and Postgres: all drivers implement the same `Contract\SqlLink`/
 `SqlTransaction` abstraction, so `TransactionGuard` never needs to know
@@ -612,27 +784,27 @@ which one it's actually talking to.
 
 ### What happens when cleanup itself fails
 
-Inspecting a transaction (`isActive()`) or closing one (`rollback()`) is
+Inspecting a transaction (`isActive()`) or closing one (`close()`) is
 itself a network call to a driver — it can fail, and this class is
 designed around that possibility rather than assuming it away.
 
 **`rollbackDangling()` is best-effort across the complete tracked set,
-not fail-fast.** One transaction's `isActive()` or `rollback()` throwing
+not fail-fast.** One transaction's `isActive()` or `close()` throwing
 never prevents the rest from being attempted — a cleanup fault on one
 connection must not leak transactions/locks on every other tracked one.
 Tracking is cleared up front, before any transaction is touched, so a
 transaction this call already attempted — successfully or not — is never
-retried by a later call; this is a single, best-effort attempt per
-transaction, not an open-ended retry loop. The success warning is only
-ever logged once `rollback()` has genuinely succeeded, never ahead of the
-call. If one or more transactions failed to close, each failure is
-logged individually (`error`, not `warning`) and, once every tracked
-transaction has been attempted, a single
-`Kinetis\Persistence\Exception\TransactionException` is thrown carrying
-the first failure as its cause — safe to let propagate, since
+retried by a later call. Each failure is logged individually (`error`,
+not `warning`), and the first of them is rethrown once every tracked
+transaction has been attempted — safe to let propagate, since
 `RequestScope::dispose()` already runs every dispose callback to
 completion regardless of one throwing (see {doc}`container`), and
 rethrows only once all of them have finished.
+
+It closes rather than rolls back because disposal runs in the request's
+own context while the Fiber that leaked the transaction may be parked:
+`close()` from a foreign Fiber ends the transaction and discards its
+connection instead of putting a concurrent `ROLLBACK` on it.
 
 **`transaction()` never lets a rollback failure erase the failure that
 triggered cleanup.** If your callback (or `commit()`) throws, and the
@@ -657,19 +829,27 @@ call could.
 
 ## Redis
 
-```{code-block} php
-use function Amp\Redis\createRedisClient;
-
-$redis = createRedisClient('redis://localhost:6379');
-
-$redis->set('session:abc123', $payload);
-$value = $redis->get('session:abc123');
+```{code-block} sh
+composer require kinetis/redis
 ```
 
-`amphp/redis`'s client already provides everything needed, including
-automatic reconnection via `ReconnectingRedisLink`. Redis has no
-comparable request-spanning transaction concept the way SQL does, so
-nothing like `TransactionGuard` applies here.
+```{code-block} php
+use Kinetis\Redis\Client;
+use Kinetis\Redis\ClientOptions;
+use Kinetis\Redis\Endpoint;
+
+$redis = Client::create(Endpoint::parse('localhost:6379'), new ClientOptions());
+
+$redis->execute('SET', 'session:abc123', $payload);
+$value = $redis->execute('GET', 'session:abc123');
+```
+
+`kinetis/redis` is the transport the cache and the queue below both use:
+one operation budget covering connect through reply, a command that is
+never re-sent after a connection failure, and Redis Cluster slot routing.
+{doc}`redis` documents it in full. Redis has no request-spanning
+transaction concept the way SQL does, so nothing like `TransactionGuard`
+applies here.
 
 ## `Psr\SimpleCache\CacheInterface` — a PSR-16 cache
 
@@ -677,8 +857,8 @@ nothing like `TransactionGuard` applies here.
 composer require kinetis/cache-redis
 ```
 
-`Kinetis\SimpleCache\RedisSimpleCache`/`ClusteredRedisSimpleCache` (below)
-live in this separate package — core ships only `NullSimpleCache` and the
+`Kinetis\SimpleCache\RedisSimpleCache` (below) lives in this separate
+package — core ships only `NullSimpleCache` and the
 `CacheInterface` binding itself, so an application with no Redis at all
 can skip this entirely; `AppScope::boot()` falls back to `NullSimpleCache`
 automatically. Configuring Redis (`REDIS_HOST`/`REDIS_URL`/
@@ -728,16 +908,24 @@ REDIS_PORT=6379
 REDIS_PASSWORD=
 REDIS_DATABASE=0
 REDIS_TIMEOUT=5
+REDIS_CACHE_NAMESPACE=default
 ```
 
-`REDIS_URL`, if set, wins outright over the discrete parts. Values are
-serialized with the same `Amp\Serialization\NativeSerializer`
-`Amp\Redis\RedisCache` itself uses internally, so any serializable PHP
-value — not just strings — can be stored, per the PSR-16 contract.
+`REDIS_URL`, if set, wins outright over the discrete parts.
+`REDIS_TIMEOUT` is the whole per-operation budget, connect and cluster
+redirects included, not a connect timeout. Values are serialized with the
+same `Amp\Serialization\NativeSerializer` `Amp\Redis\RedisCache` itself
+uses internally, so any serializable PHP value — not just strings — can
+be stored, per the PSR-16 contract.
 
-Both `fromConfig()` and `buildRedisConfig()` take an optional
-`string $connection = 'default'`, following {doc}`config`'s named-connection
-convention:
+Every key is stored as `kinetis_cache:<namespace>:<key>`, where the
+namespace is `REDIS_CACHE_NAMESPACE` (letters, digits, underscores and
+dashes; `default` unless set). That prefix is what keeps `clear()` off
+keys this cache did not write, and it carries no `{}` hash tag, so keys
+still spread across cluster slots.
+
+`fromConfig()` takes an optional `string $connection = 'default'`,
+following {doc}`config`'s named-connection convention:
 
 ```{code-block} php
 $default = RedisSimpleCache::fromConfig($config);            // REDIS_*
@@ -753,10 +941,14 @@ $app->instance(CacheInterface::class, RedisSimpleCache::fromConfig($config, 'ses
 $app->boot();
 ```
 
-`clear()` flushes the **entire currently selected Redis database** — not
-just keys this cache wrote. Correct when, as recommended above,
-`REDIS_DATABASE` points at a database dedicated to Kinetis's cache; one
-shared with unrelated data loses it too.
+`clear()` scans each current master for its own namespace prefix and
+unlinks what it finds, so keys written by anything else — including
+another namespace of this same cache — survive it. It is neither atomic
+nor a snapshot: a key written after its node's scan has passed survives,
+and a key migrating between two nodes can be missed. It also costs one
+pass over each node's whole keyspace, since `SCAN MATCH` filters
+server-side after reading. Use it to reset a cache, not inside request
+handling.
 
 ### Fetch keys in batches, not one at a time
 
@@ -778,8 +970,9 @@ foreach ([1, 2, 3] as $id) {
 ```
 
 ```{note}
-The Redis client is `amphp/redis`, a pure-PHP implementation of the
-protocol on the Revolt event loop. Its overhead is paid per event-loop
+The Redis client is `Kinetis\Redis\Client`: `kinetis/redis`'s own
+non-replaying transport, running on the Revolt event loop under
+`amphp/redis`'s protocol types. Its overhead is paid per event-loop
 wakeup rather than per command, so it amortizes across whatever else is
 in flight at the same time. Under a persistent worker that is the normal
 state: once around eight concurrent requests hold an outstanding Redis
@@ -827,6 +1020,10 @@ actually owns it; `REDIS_TLS`/`REDIS_PASSWORD` apply to every node the
 same way. Redis Cluster only supports database 0, so there's no
 `REDIS_DATABASE` option here.
 
+Discovery, `MOVED`/`ASK` handling, and the certificate requirement for
+nodes a cluster announces by IP address are all {doc}`redis`'s, and
+documented there.
+
 Each seed is either `host:port` — a hostname or an IPv4 address, neither
 of which ever contains a colon itself — or `[ipv6-address]:port` for an
 IPv6 node, bracketed the same way a URL brackets one:
@@ -845,34 +1042,6 @@ before any connection is attempted.
 code never needs to know whether it's talking to a single node or a
 cluster.
 
-```{note}
-`getMultiple()`/`deleteMultiple()`/`clear()` each dispatch several Redis
-commands concurrently internally. Don't call any of them from inside a
-task you're already running through `concurrently()` yourself — nesting
-one Fiber-driven event loop run inside another isn't supported.
-```
-
-### Redirects during live resharding
-
-A running cluster can reshard slots between nodes without downtime, and
-two replies handle it: a node that no longer owns a slot at all replies
-`MOVED`, and a node mid-migration for one specific key replies `ASK`.
-Both are followed automatically — application code never sees either
-one.
-
-`MOVED` means the whole topology is stale, not just the one key
-involved: the cache refreshes its slot-to-node map from scratch and
-retries. `ASK` means only that one key has already moved while its
-slot's stable owner hasn't changed yet — the cache retries directly
-against the node the reply names, on a connection built specifically
-for that one retry and never reused, preceded by the `ASKING` command
-the protocol requires. A single operation can hit both in sequence (the
-slot moved since the last refresh, and the individual key is *also*
-still migrating out of the new owner) and both are followed correctly.
-A redirect loop that never resolves — a misbehaving or flapping node,
-not something a healthy cluster produces — fails with a clear error
-rather than retrying forever.
-
 ## See also
 
 - {doc}`concurrency` — `concurrently()`, and how the persistence drivers'
@@ -882,6 +1051,8 @@ rather than retrying forever.
   haven't explicitly registered) actually gets resolved per request.
 - {doc}`logging` — registering the logger `rollbackDangling()` warns
   through.
+- {doc}`redis` — the transport under the cache: its non-replay and
+  deadline contract, cluster discovery, and redirect handling.
 - {doc}`config` — `$config` above, typed environment access in full, and
   the named-connection convention `SqlConnectionFactory`/`RedisSimpleCache`
   both build on.
@@ -893,5 +1064,6 @@ rather than retrying forever.
   A separate `kinetis/query-builder` package, not core.
 - {doc}`performance-tuning` — the worker-threads x connections
   budget, what to observe under load, and tuning by workload shape.
-- {doc}`telemetry` — a span per SQL query and per cache operation, via
-  `TracingMysqlLink`/`TracingPostgresLink`/`TracingSimpleCache`.
+- {doc}`telemetry` — a span per SQL query and per transaction, which
+  these drivers report through the framework's instrumentation hooks,
+  plus a span per cache operation via `TracingSimpleCache`.

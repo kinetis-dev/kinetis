@@ -131,9 +131,7 @@ final class NamespaceScanner
     /**
      * Kinetis's own package root — src/ under a "Kinetis\\" prefix,
      * regardless of whether that's this monorepo (developing Kinetis
-     * itself) or vendor/kinetis/framework (installed as a dependency). Same
-     * dirname(__DIR__, 2) trick Kinetis\Mcp\KinetisDocsResource already
-     * uses to find its own package root from src/Mcp/.
+     * itself) or vendor/kinetis/framework (installed as a dependency).
      */
     private static function defaultFrameworkRoot(): string
     {

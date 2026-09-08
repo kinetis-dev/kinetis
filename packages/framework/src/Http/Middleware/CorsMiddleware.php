@@ -20,8 +20,7 @@ use Psr\Http\Server\RequestHandlerInterface;
  * after a successful route match — a preflight to an unmatched method
  * fails with MethodNotAllowedException before that. Registering this on
  * AppScope intercepts the preflight before routing runs at all, the same
- * reasoning ExceptionHandlerMiddleware and the OpenAPI/MCP short-circuits
- * already rely on.
+ * reasoning ExceptionHandlerMiddleware already relies on.
  *
  * A request with no Origin header, or an Origin not on the allow list, is
  * passed through completely untouched — no CORS headers added, and no

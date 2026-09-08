@@ -202,9 +202,9 @@ final class Telemetry implements TelemetryInterface
     }
 
     #[\Override]
-    public function taskStarted(int $index): mixed
+    public function taskStarted(int $index, mixed $batchToken): mixed
     {
-        return $this->guarded('taskStarted', fn (): mixed => $this->backend->taskStarted($index));
+        return $this->guarded('taskStarted', fn (): mixed => $this->backend->taskStarted($index, $batchToken));
     }
 
     #[\Override]

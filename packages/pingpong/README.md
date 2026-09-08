@@ -38,19 +38,23 @@ dashboard watches all three happen live, over a WebSocket.
 ## Running it
 
 ```sh
-git clone https://github.com/kinetis-dev/kinetis.git
-cd kinetis/packages/pingpong
+docker run --rm -v "$PWD":/app -w /app composer:2 \
+    create-project --no-install kinetis/pingpong my-app
+cd my-app
 cp .env.example .env
 docker compose up --build
 ```
 
-This package lives inside the `kinetis` monorepo, not a separate
-`kinetis-pingpong` repository — `packages/pingpong/` is exactly the
-directory these commands land you in.
+Then open [http://localhost:8080](http://localhost:8080). Docker is the
+only thing you need — the containers install the dependencies and run
+the app, so no PHP or Composer has to exist on the host. (`--no-install`
+is what keeps it that way: it fetches the project without resolving
+dependencies, which `docker compose up` then does inside the containers
+it will run them in.)
 
-Then open [http://localhost:8080](http://localhost:8080). No PHP or
-Composer needed on the host — everything, including dependency
-installation, runs inside the containers.
+The project is yours from that point on. `docker-compose.yml` mounts it
+at `/app` and needs nothing outside it; MySQL, Redis and Soketi come up
+alongside it as services of the same stack.
 
 `app` runs under a genuine FrankenPHP persistent worker — Kinetis's
 *primary optimization target* (persistent connection pooling, warm
@@ -66,9 +70,7 @@ running on nginx + PHP-FPM for exactly that reason.
 
 ## Using this as a starting point
 
-Copy `packages/pingpong/` out into a new project, point its
-`composer.json` at a real [`kinetis/framework`](https://github.com/kinetis-dev/framework) install instead of the `path`
-repository this monorepo uses internally, and modify from there — every
+Start editing what you just created — every
 piece (`bootstrap.php`, the migration, the repository, the job, the
 scheduled command, the events, the broadcaster and its private-channel
 authorizer, `resources/views/dashboard.php`) is a small, plain file
@@ -82,6 +84,22 @@ stylesheet (`public/dashboard.css`), and browser script
 template data — only the Soketi connection details are actually
 dynamic, passed to `dashboard.js` through a `type="application/json"`
 data island rather than any inline script of the template's own.
+
+## Working on this package itself
+
+This package is developed in the
+[kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo
+and published from it; `kinetis-dev/pingpong` is the split mirror the
+commands above install from. Inside the monorepo, `composer.json` still
+carries the `path` repositories that resolve every `kinetis/*` sibling
+from its own checkout, so the stack needs the override that mounts them:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.monorepo.yml up --build
+```
+
+Container paths are `/app` either way — that override adds mounts and
+changes nothing else.
 
 ## Learn by building the same thing yourself
 

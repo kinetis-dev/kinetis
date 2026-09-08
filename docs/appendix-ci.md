@@ -19,18 +19,24 @@ then publishes each package's own release repo — see
 One job per package — every package in `packages.manifest.json`, plus
 `tools/` — matrixed across PHP 8.4 and 8.5 — every check below runs against both,
 not just one — each running against the exact same Docker images used
-for local development. The matrix is path-filtered, and
-`packages.manifest.json` is one of the paths that triggers it: a version
-bump changes the manifest and nothing else, since the generated
-`composer.json` carries no version field, and that commit is exactly the
-one a release gates on:
+for local development. Every push to `main` runs the whole matrix,
+whatever the push touched: a release round gates on this workflow having
+succeeded at the exact commit it publishes, and it can publish a version
+whose own push came earlier, so a commit that skipped the matrix would
+leave the gate proving nothing about the package code being tagged. Pull
+requests are path-filtered instead, `packages.manifest.json` included —
+a version bump changes the manifest and nothing else, since the
+generated `composer.json` carries no version field:
 
 - `composer validate --strict`
 - `composer install`
 - `composer audit` — checks every installed dependency against the
   FriendsOfPHP security advisory database.
 - PHPUnit — every package's own existing, fake-backed unit test suite.
-  Skipped for `kinetis/pingpong`, which has none by design.
+  `kinetis/persistence` runs its suite in a container that compiles
+  `ext-sockets` first: its native Postgres driver refuses to construct
+  without it, and the suite constructs one. Only that step needs the
+  extension — PHPStan and Psalm read the package's own stubs.
 - PHPStan, level 8.
 - Psalm, `--taint-analysis` — data-flow analysis for injection-style
   bugs (SQL injection, XSS, ...), a different lens than PHPStan's
@@ -72,7 +78,8 @@ disguised PHPUnit test.
 
 - **`query-builder`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `Query::get()`/`first()`/`count()`/`insertGetId()`/`update()`/
-  `delete()`/`join()`/`paginate()`/`cursorPaginate()`.
+  `delete()`/`join()`/`paginate()`/`cursorPaginate()`, and the null
+  predicate forms (`IS NULL`/`IS NOT NULL`).
 - **`queue`** (Redis 7, MySQL 8.4, MariaDB 11.4) — `RedisQueue`/
   `SqlQueue`: push/pop/ack/release/fail, attempts, priority queues.
 - **`queue-rabbitmq`** (RabbitMQ) — `RabbitMqQueue`: push/pop/ack/
@@ -87,29 +94,37 @@ disguised PHPUnit test.
 - **`persistence-and-cache-redis`** (MySQL 8.4, MariaDB 11.4, Postgres 16,
   Redis 7) — `kinetis/persistence`'s `TransactionGuard`: commit/
   rollback/`rollbackDangling()`; `kinetis/cache-redis`'s
-  `RedisSimpleCache`: the full PSR-16 surface, TTL expiry. Neither class
-  lives in core — see {doc}`persistence` and {doc}`appendix-packages`.
+  `RedisSimpleCache`: the full PSR-16 surface, TTL expiry, and the
+  conditional `replace()`; `kinetis/session`'s `SqlSessionStore` and
+  `RedisSessionStore`: the terminal update rule, which rests on MySQL's
+  changed-row count and Redis's `SET ... XX` refusal. None of these
+  classes lives in core — see {doc}`persistence`, {doc}`session` and
+  {doc}`appendix-packages`.
 - **`mailer`** (Mailpit) — `MailerFactory`: a real SMTP send, read back
   through the mail server's own API.
 - **`search-opensearch`** (two real OpenSearch containers, one with the
   security plugin disabled and one enabled with a self-signed
   certificate) — `OpenSearchClientFactory`: index/search/delete against
-  the first; an unauthenticated request rejected, a correctly
-  Basic-authenticated request succeeding, and the default
-  `SEARCH_OPENSEARCH_VERIFY_PEER=true` rejecting the self-signed
-  certificate, against the second.
+  the first, reached over `http` with `SEARCH_OPENSEARCH_PLAINTEXT=true`;
+  an unauthenticated request rejected, a correctly Basic-authenticated
+  request succeeding, and the default `SEARCH_OPENSEARCH_VERIFY_PEER=true`
+  rejecting the self-signed certificate, against the second.
 - **`migrations`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `MigrationRunner`/`SqlMigrationRepository`: migrate/status/rollback
   against a real fixture migration file.
 - **`localstack`** (LocalStack: SQS + S3) — `SqsQueue`: push/pop/ack/
   release/fail, `maxAttempts`, priority queues; `S3FilesystemFactory`:
-  write/read/exists/list/delete.
+  write/read/exists/list/copy/move/delete/deleteDirectory over the
+  plain-HTTP endpoint its opt-in covers.
 - **`redis-cluster`** (`grokzen/redis-cluster`, 3 masters + 3 replicas) —
-  `ClusteredRedisSimpleCache`/`ClusterTopology`: the full PSR-16 surface
-  routed across every node, `clear()` fanning out to every shard, and
-  forced migrations exercising `-ASK`, `-MOVED`, chained redirects, and
-  concurrent traffic. Each case restores the slots it changes. The job
-  runs the suite twice against one cluster to enforce that isolation.
+  `kinetis/redis`'s `ClusterClient`: keys routed to the master that owns
+  them, `nodes()` against the live topology, and forced migrations
+  exercising `-MOVED`, `-ASK`, an `ASK`-redirected script, and a
+  `MOVED`-then-`ASK` sequence inside one operation. `kinetis/cache-redis`
+  then covers the PSR-16 surface across shards and a `clear()` that scans
+  every master while leaving other keys alone. Each case restores the
+  slots it changes. The job runs the suite twice against one cluster to
+  enforce that isolation.
 - **`runtime-conformance`** (matrix: a `dunglas/frankenphp` worker behind
   Caddy; `php:8.4-fpm-alpine` behind `nginx:alpine`) — the shared runtime
   adapter conformance suite (`Kinetis\Testing\Runtime`, see
@@ -150,7 +165,11 @@ disguised PHPUnit test.
 - **`pingpong`** — not a package's own real-backend script like every
   job above; the real `docker compose up --build` stack (`app`, `mysql`,
   `redis`, `soketi`, `migrate`, `queue-worker`, `cron`) brought up from
-  cold and exercised over real HTTP/SQL: `GET /` (200), a real
+  cold and exercised over real HTTP/SQL. `COMPOSE_FILE` puts this
+  repo's `docker-compose.monorepo.yml` on top of the package's own
+  standalone compose file, so the stack runs against the sibling
+  checkouts; every step is otherwise the command it would be against the
+  released package. `GET /` (200), a real
   `POST /pong/direct` request checked against the resulting database row
   going straight to `ponged`, a real `POST /pong/queued` request checked
   as `pending` immediately and polled until the separate `queue-worker`
@@ -188,14 +207,16 @@ incrementing a constant, ...) and re-runs the covering tests per
 mutant — a mutant the suite doesn't catch ("escaped") is a gap in
 assertion rigor, not just a coverage gap.
 
-One matrix job per package that has a PHPUnit suite. `kinetis/pingpong`
-is excluded (no tests, nothing to mutate against), and `tools/` is the
-monorepo's own tooling rather than a published package. Each job runs
+One matrix job per package carrying its own `infection.json5`.
+`kinetis/pingpong` has none — it is a demo application, read as example
+code rather than called as an API — and `tools/` is the monorepo's own
+tooling rather than a published package. Each job runs
 `composer install`, then Infection with PCOV as the coverage driver,
 gated on `--min-msi`/`--min-covered-msi` — a real, non-zero threshold per
-package, set with a margin below that package's own measured score. Runs
-on PHP 8.4 only, not matrixed across 8.4/8.5 like
-`ci.yml`/`integration.yml`.
+package, set with a margin below that package's own measured score.
+`kinetis/persistence` compiles `ext-sockets` into that container first,
+for the same requirement its `ci.yml` suite carries above. Runs on PHP
+8.4 only, not matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`.
 
 On a pull request, only the code the PR actually changes is mutated
 (`--git-diff-filter` against the base branch), under the same
@@ -210,20 +231,27 @@ above the number here by design:
 | Package | min-msi / min-covered-msi |
 |---|---|
 | `auth` | 70% |
-| `auth-jwt` | 70% |
+| `auth-jwt` | 60% |
+| `authorization` | 90% |
 | `aws-sigv4` | 90% |
 | `bref-adapter` | 70% |
+| `broadcasting` | 75% |
 | `cache-redis` | 75% |
 | `core` | 75% |
 | `mailer` | 90% |
+| `mcp` | 75% |
+| `mcp-docs` | 60% |
 | `migrations` | 75% |
-| `persistence` | 85% |
+| `persistence` | 75% |
 | `query-builder` | 80% |
 | `queue` | 60% |
-| `queue-rabbitmq` | 90% |
+| `queue-rabbitmq` | 50% |
+| `queue-redis` | 55% |
+| `queue-sql` | 50% |
 | `queue-sqs` | 55% |
+| `redis` | 60% |
 | `revolt-http-client` | 75% |
-| `roadrunner-adapter` | 80% |
+| `roadrunner-adapter` | 85% |
 | `search-opensearch` | 70% |
 | `session` | 65% |
 | `skeleton` | 90% |

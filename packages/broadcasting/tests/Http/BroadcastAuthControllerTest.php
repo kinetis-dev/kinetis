@@ -11,6 +11,8 @@ use Kinetis\Broadcasting\Exception\BroadcastingException;
 use Kinetis\Broadcasting\Http\BroadcastAuthController;
 use Kinetis\Broadcasting\NullBroadcaster;
 use Kinetis\Broadcasting\Tests\Fixtures\FakeCurrentUser;
+use Kinetis\Broadcasting\Tests\Fixtures\GuestChannelAuthorizer;
+use Kinetis\Broadcasting\Tests\Fixtures\InviteContext;
 use Kinetis\Broadcasting\Tests\Fixtures\MalformedPresenceAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\NonEncodablePresenceAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\OrderChannelAuthorizer;
@@ -230,6 +232,56 @@ final class BroadcastAuthControllerTest extends TestCase
         self::assertSame(0, $tracker->calls);
     }
 
+    /**
+     * An authorizer that declares no CurrentUserInterface authorizes
+     * from whatever context it takes instead — reached on a request
+     * scope carrying no identity at all, so a `private-` prefix by
+     * itself never imposes an application login.
+     */
+    public function test_an_authorizer_without_current_user_authorizes_an_anonymous_request(): void
+    {
+        $app = $this->app(GuestChannelAuthorizer::class);
+        $scope = $app->createRequestScope();
+        $scope->instance(InviteContext::class, new InviteContext('abc'));
+
+        $result = $scope->get(BroadcastAuthController::class)->auth($this->formRequest([
+            'socket_id' => '1234.1234',
+            'channel_name' => 'private-invites.abc',
+        ]));
+
+        self::assertIsArray($result);
+        self::assertSame(
+            'testkey:' . hash_hmac('sha256', '1234.1234:private-invites.abc', self::SECRET),
+            $result['auth'],
+        );
+    }
+
+    /**
+     * The same booted AppScope and the same registry serving two
+     * requests, the way a persistent worker does: each request resolves
+     * the authorizer through its own RequestScope, so the context one
+     * request registered never decides the next one's answer.
+     */
+    public function test_each_request_authorizes_against_its_own_scopes_context(): void
+    {
+        $app = $this->app(GuestChannelAuthorizer::class);
+        $statuses = [];
+
+        foreach (['abc', 'other'] as $inviteId) {
+            $scope = $app->createRequestScope();
+            $scope->instance(InviteContext::class, new InviteContext($inviteId));
+
+            $statuses[] = $scope->get(BroadcastAuthController::class)->auth($this->formRequest([
+                'socket_id' => '1234.1234',
+                'channel_name' => 'private-invites.abc',
+            ]));
+        }
+
+        self::assertIsArray($statuses[0]);
+        self::assertInstanceOf(ResponseInterface::class, $statuses[1]);
+        self::assertSame(403, $statuses[1]->getStatusCode());
+    }
+
     public function test_a_non_pusher_driver_cannot_sign_channel_authorization(): void
     {
         $app = new AppScope();
@@ -253,6 +305,17 @@ final class BroadcastAuthControllerTest extends TestCase
 
     private function scope(CurrentUserInterface $user, string $authorizerClass): RequestScope
     {
+        $scope = $this->app($authorizerClass)->createRequestScope();
+        $scope->instance(CurrentUserInterface::class, $user);
+
+        return $scope;
+    }
+
+    /**
+     * @param class-string $authorizerClass
+     */
+    private function app(string $authorizerClass): AppScope
+    {
         $app = new AppScope();
         $registry = new BroadcastChannelRegistry();
         $registry->register($authorizerClass);
@@ -260,10 +323,7 @@ final class BroadcastAuthControllerTest extends TestCase
         $app->instance(BroadcasterInterface::class, $this->pusher());
         $app->boot();
 
-        $scope = $app->createRequestScope();
-        $scope->instance(CurrentUserInterface::class, $user);
-
-        return $scope;
+        return $app;
     }
 
     private function pusher(): PusherBroadcaster

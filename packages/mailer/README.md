@@ -48,9 +48,10 @@ Installing this package auto-registers, via `extra.kinetis`:
 
 - **A container binding** for `Symfony\Component\Mailer\MailerInterface`,
   built by `MailerFactory::fromConfig()` when `MAILER_DSN` is set. Unset
-  means the package binds nothing. The binding is lazy, so an
-  application that never sends mail never builds a transport — including
-  from a queued job, which resolves it in the worker process.
+  means the package binds nothing. The mailer is constructed while the
+  package registers, so a malformed DSN or a missing bridge package
+  fails at boot rather than on the first send; an application's own
+  `bootstrap.php` runs afterwards and still replaces the binding.
 
 Nothing else. Named connections stay explicit application wiring.
 
@@ -63,6 +64,7 @@ MAILER_DSN=smtp://user:pass@smtp.example.com:587
 | Key | Default | Purpose |
 |---|---|---|
 | `MAILER_DSN` | *(required)* | Symfony Mailer transport DSN. |
+| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it. |
 
 Scoped — `MAILER_DSN` + `alerts` → `MAILER_ALERTS_DSN`. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
@@ -73,6 +75,10 @@ package too (`symfony/sendgrid-mailer`, `symfony/mailgun-mailer`, ...):
 ```
 MAILER_DSN=sendgrid+api://KEY@default
 ```
+
+An API send is bounded by `MAILER_TIMEOUT` as both its idle and its
+total budget, and follows no redirects, so the provider endpoint the DSN
+names is the only one contacted.
 
 SMTP is not non-blocking — it opens a raw socket directly, with no
 Fiber-yield point. Send mail from a [`kinetis/queue`](https://github.com/kinetis-dev/queue) job (constructor-inject

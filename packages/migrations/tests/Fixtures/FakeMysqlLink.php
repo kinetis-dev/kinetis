@@ -48,15 +48,6 @@ final class FakeMysqlLink implements MysqlLink
     /** Returned as the acquired flag's own value — an int by default, but overridable to prove a (int) cast actually matters. */
     public mixed $acquiredValue = 1;
 
-    /**
-     * Returned as the released flag's own value — an int by default,
-     * but overridable to 0/NULL to simulate MySQL's own RELEASE_LOCK()
-     * reporting the session did not hold the lock, distinct from
-     * $releaseShouldFail (which simulates the query call itself
-     * throwing rather than returning a value at all).
-     */
-    public mixed $releasedValue = 1;
-
     public function query(string $sql): SqlResult
     {
         throw new LogicException("FakeMysqlLink does not execute queries: {$sql}");
@@ -83,7 +74,7 @@ final class FakeMysqlLink implements MysqlLink
 
             $this->lockReleased = true;
 
-            return new BufferedSqlResult([['released' => $this->releasedValue]], 1, 1);
+            return new BufferedSqlResult([], 0, null);
         }
 
         throw new LogicException("FakeMysqlLink does not execute queries: {$sql}");

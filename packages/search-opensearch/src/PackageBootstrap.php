@@ -18,8 +18,12 @@ use OpenSearch\Client;
  * no interface for it — the same shape kinetis/persistence's own
  * dialect contracts take, minus the interface.
  *
- * The binding is a factory, resolved on first use rather than here, so
- * an application that never searches never builds a transport.
+ * The client is constructed here, not deferred to first use, so a host
+ * that is not one usable origin, a plain-HTTP host without the opt-in,
+ * or an unusable timeout or response bound fails at registration instead
+ * of inside whichever request or queued job happens to search first.
+ * Construction opens no connection. The application's own
+ * `bootstrap.php` runs after this and still wins on the binding.
  */
 final readonly class PackageBootstrap implements PackageBootstrapInterface
 {
@@ -30,9 +34,6 @@ final readonly class PackageBootstrap implements PackageBootstrapInterface
             return;
         }
 
-        $app->bind(
-            Client::class,
-            static fn (): Client => OpenSearchClientFactory::fromConfig($config),
-        );
+        $app->instance(Client::class, OpenSearchClientFactory::fromConfig($config));
     }
 }

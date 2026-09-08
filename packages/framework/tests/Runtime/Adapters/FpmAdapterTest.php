@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Runtime\Adapters;
 
-use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Adapters\FpmAdapter;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
@@ -27,7 +26,7 @@ final class FpmAdapterTest extends TestCase
 
     public function test_is_not_persistent(): void
     {
-        self::assertFalse((new FpmAdapter(new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES), TrustedProxies::fromList([])))->isPersistent());
+        self::assertFalse((new FpmAdapter(TrustedProxies::fromList([])))->isPersistent());
     }
 
     /**
@@ -50,7 +49,7 @@ final class FpmAdapterTest extends TestCase
         $this->expectExceptionMessage('enable_post_data_reading must be 0');
 
         try {
-            (new FpmAdapter(new FormLimits(FormLimits::DEFAULT_MAX_BODY_BYTES), TrustedProxies::fromList([])))
+            (new FpmAdapter(TrustedProxies::fromList([])))
                 ->run(function (ServerRequestInterface $request) use (&$handlerRan) {
                     $handlerRan = true;
 

@@ -26,7 +26,6 @@ use Kinetis\Validation\Hydrator;
 final readonly class HttpCache
 {
     public function __construct(
-        public int $formatVersion,
         /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> */
         public array $routes,
         /** @var array<string, list<HttpBindingPlan>> */
@@ -37,11 +36,8 @@ final readonly class HttpCache
         public array $globalMiddleware,
         /** @var list<class-string> */
         public array $openApiMiddleware,
-        public string $compiledAt,
         /** @var array<string, list<class-string>> */
         public array $middlewareGroups = [],
-        /** @var list<class-string> */
-        public array $packageBootstraps = [],
     ) {}
 
     /**
@@ -50,22 +46,18 @@ final readonly class HttpCache
     public function toArray(): array
     {
         return [
-            'formatVersion' => $this->formatVersion,
             'routes' => $this->routes,
             'httpBindingPlans' => $this->httpBindingPlans,
             'hydrationPlans' => $this->hydrationPlans,
             'globalMiddleware' => $this->globalMiddleware,
             'openApiMiddleware' => $this->openApiMiddleware,
             'middlewareGroups' => $this->middlewareGroups,
-            'packageBootstraps' => $this->packageBootstraps,
-            'compiledAt' => $this->compiledAt,
         ];
     }
 
     private const array TOP_LEVEL_KEYS = [
-        'formatVersion', 'routes', 'httpBindingPlans', 'hydrationPlans',
+        'routes', 'httpBindingPlans', 'hydrationPlans',
         'globalMiddleware', 'openApiMiddleware', 'middlewareGroups',
-        'packageBootstraps', 'compiledAt',
     ];
 
     private const array ROUTE_ENTRY_KEYS = [
@@ -93,15 +85,12 @@ final readonly class HttpCache
     {
         ArtifactValidation::exactKeys($data, 'HttpCache', self::TOP_LEVEL_KEYS);
 
-        $formatVersion = ArtifactValidation::int($data, 'HttpCache', 'formatVersion');
         $routes = ArtifactValidation::listOfArrays($data, 'HttpCache', 'routes');
         $httpBindingPlans = ArtifactValidation::array($data, 'HttpCache', 'httpBindingPlans');
         $hydrationPlans = ArtifactValidation::array($data, 'HttpCache', 'hydrationPlans');
         $globalMiddleware = ArtifactValidation::listOfStrings($data, 'HttpCache', 'globalMiddleware');
         $openApiMiddleware = ArtifactValidation::listOfStrings($data, 'HttpCache', 'openApiMiddleware');
         $middlewareGroups = ArtifactValidation::mapOfListOfStrings($data, 'HttpCache', 'middlewareGroups');
-        $packageBootstraps = ArtifactValidation::listOfStrings($data, 'HttpCache', 'packageBootstraps');
-        $compiledAt = ArtifactValidation::string($data, 'HttpCache', 'compiledAt');
 
         Dispatcher::validateBindingPlans($httpBindingPlans);
         Hydrator::validatePlans($hydrationPlans);
@@ -113,18 +102,14 @@ final readonly class HttpCache
         /** @var list<class-string> $globalMiddleware */
         /** @var list<class-string> $openApiMiddleware */
         /** @var array<string, list<class-string>> $middlewareGroups */
-        /** @var list<class-string> $packageBootstraps */
 
         return new self(
-            formatVersion: $formatVersion,
             routes: $routes,
             httpBindingPlans: $httpBindingPlans,
             hydrationPlans: $hydrationPlans,
             globalMiddleware: $globalMiddleware,
             openApiMiddleware: $openApiMiddleware,
-            compiledAt: $compiledAt,
             middlewareGroups: $middlewareGroups,
-            packageBootstraps: $packageBootstraps,
         );
     }
 

@@ -58,23 +58,35 @@ stores the payload as JSON:
 
 - `null`, `bool`, `int`, a finite `float` (not `NAN`/`INF`), and a
   valid-UTF-8 `string`.
-- A dense, zero-based `list` or a string-keyed map, either nested to any
-  depth — a sparse or mixed-key array is rejected, since it has no
-  lossless JSON representation.
+- A dense, zero-based `list` or a string-keyed map, nested up to 32
+  levels — a sparse or mixed-key array is rejected, since it has no
+  lossless JSON representation, and so is anything nested past the
+  bound, which is what makes a self-referential array a `push()`-time
+  rejection rather than an exhausted worker.
 - A `BackedEnum` case and a `DateTimeImmutable` instance (the exact
-  class, not a subclass) — both round-trip to an equal value, not the
-  same object.
+  class, not a subclass), as a *top-level* argument. Each is written as
+  its scalar form — the enum's backing value, an RFC 3339 timestamp with
+  microseconds — and restored from the constructor parameter's declared
+  type, so both come back as an equal value rather than the same object.
+  That type is the only thing that can identify them on the way back, so
+  it has to name exactly one class and the right one: the enum's own
+  class, or `DateTimeImmutable` itself. A union, an intersection,
+  `mixed`, an untyped parameter, an interface such as `DateTimeInterface`
+  and any supertype are all rejected, as are the same values nested
+  inside an array — nothing in any of those says what a bare string or
+  int was meant to become.
 
 Anything else — a resource, a `Closure`, an arbitrary object, invalid
 UTF-8 or raw binary data — is rejected at `push()` time with
 `Kinetis\Queue\Exception\UnserializableJobException`, naming the
-constructor argument and, for a nested value, its exact location (e.g.
-`items[3].name`) — never the value itself, since it may be sensitive.
-This is deliberately a `push()`-time failure, not something discovered
-later as a worker-side crash or a silently different value once actually
-deployed: `SyncQueue` (below) enforces the identical contract, so a job
-that can't survive the round trip fails the same way in local development
-too.
+constructor argument and, for a nested value, its location — a list
+index, and a map entry's ordinal position (`items[3].{0}`) rather than
+its key, since a key is application data. The value itself never
+appears, since it may be sensitive.
+The rejection lands at `push()` time rather than as a worker-side crash
+or a silently different value after deployment, and `SyncQueue` (below)
+enforces the identical contract, so a job that can't survive the round
+trip fails the same way in local development.
 
 ## Pushing and processing
 
@@ -146,22 +158,34 @@ Every backend implements `pop($timeoutSeconds, $queues)` identically:
 - Every named queue gets an immediate, non-blocking check, in priority
   order, before a backend is ever allowed to block waiting on one — a job
   already waiting anywhere is always found before that, regardless of
-  which position it's in. Only once nothing is found anywhere does a
-  backend with a native blocking primitive (Redis, SQS) wait a short,
-  bounded slice of real time per queue, capped by both a small per-queue
-  limit and whatever's left of the overall deadline, before sweeping
-  again — a real deadline is never overshot by more than that one bounded
-  slice. A backend with none (RabbitMQ) paces retries the same way, via a
-  bounded pause between sweeps instead. `SqlQueue` gets this property for
-  free from a different shape entirely: its own single, priority-ordered
-  SQL query already checks every queue in one atomic operation, which
-  never had a per-queue loop to begin with.
+  which position it is in. Only once nothing is found anywhere does a
+  backend with a native blocking primitive (SQS) wait a short, bounded
+  slice of real time on the highest-priority queue, after which it
+  sweeps every queue again. A backend with none (Redis, RabbitMQ) paces
+  retries the same way, with a bounded pause between sweeps instead.
+  `SqlQueue` gets this property from a different shape entirely: its own
+  single, priority-ordered SQL query already checks every queue in one
+  atomic operation, so it has no per-queue loop to sequence.
+- `$timeoutSeconds` bounds how long a backend keeps looking, not when
+  `pop()` returns. Every wait is itself bounded. SQL and RabbitMQ cut
+  their pacing delay to exactly what is left of the deadline, and so does
+  Redis, whose sweep is paced by `Amp\delay()` rather than a blocking
+  Redis command. SQS waits in whole seconds — the smallest unit its
+  `WaitTimeSeconds` accepts — so its wait can outlast the deadline, and it
+  rechecks the deadline the moment that wait comes back empty rather than
+  starting another sweep.
+- What no backend can bound is an operation already in flight: a reserve,
+  a receive or a settlement runs to its own completion or its transport's
+  own timeout. So `pop()` can return after the deadline; `$timeoutSeconds`
+  is how long a backend keeps looking, not a wall-clock guarantee no
+  client is in a position to make.
 - A queue name must match `/^[A-Za-z0-9_-]{1,80}$/` — letters, digits,
   hyphens, and underscores only, up to 80 characters (the same rule
   Amazon SQS enforces on a standard queue's own name, adopted here as the
   conservative grammar every backend can portably support), and the same
   name may not appear twice in one `$queues` list — both are rejected
-  before any backend I/O, via `Kinetis\Queue\Exception\InvalidQueueNameException`.
+  before any backend I/O, via
+  `Kinetis\Queue\Exception\InvalidQueueArgumentException`.
   This check runs everywhere a queue name is ever accepted, not just
   `pop()`: `push()`, `size()`, `clear()` on the backends that offer it
   (see "Clearing is a separate capability" below), and `QueuedJob`'s own
@@ -171,18 +195,17 @@ Every backend implements `pop($timeoutSeconds, $queues)` identically:
   first. An empty `$queues` list is the one deliberate exception: it
   returns `null` immediately, since "nothing to check" is a legitimate
   case, not malformed input. A negative `$timeoutSeconds` is rejected the
-  same way, via `Kinetis\Queue\Exception\InvalidPopTimeoutException`.
+  same way, and reported through the same exception.
 
 ```{note}
-Once a backend's own probe finds a job, it's returned immediately, with
-no attempt to re-check higher-priority queues first. Every backend
-reserves a job atomically the instant its own probe succeeds (Redis's
-move to a processing list, SQS's receive-triggered invisibility,
-RabbitMQ's `basic.get`, `SqlQueue`'s own row-level lock) — there is no
-"peek without reserving" primitive to recheck from on any of them, so a
-job arriving on a higher-priority queue while a lower one's own probe was
-still blocked is picked up on the very next full sweep instead, not
-necessarily immediately.
+Once a backend finds a job, it is returned immediately, with no attempt
+to re-check higher-priority queues first. Every backend reserves a job
+atomically the instant it finds one (Redis's finite lease, SQS's
+receive-triggered invisibility, RabbitMQ's `basic.get`,
+`SqlQueue`'s own row-level lock) — none of them has a "peek without
+reserving" primitive to recheck from. A job arriving on a
+higher-priority queue while the backend is parked on its bounded wait is
+picked up on the next full sweep instead, not necessarily immediately.
 ```
 
 ## Choosing a backend
@@ -241,7 +264,7 @@ and not every backend has a primitive that can do both as one step:
 | Backend | `release()` mechanism | Duplication window |
 |---|---|---|
 | `kinetis/queue-redis` | One Lua script, gated on the source entry actually being found and removed | None — a crash anywhere during release() either leaves the job exactly where it was or completes the swap; a stale/duplicate release() call is rejected rather than enqueuing a second copy |
-| `kinetis/queue-sql` | One `UPDATE` statement (clears the reservation, increments the attempt count) | None |
+| `kinetis/queue-sql` | One `UPDATE` statement (clears the reservation, increments the attempt count), matched on this delivery's own reservation token | None |
 | `kinetis/queue-sqs` | One `ChangeMessageVisibility` call | None from `release()` itself — but SQS's own at-least-once delivery model can redeliver independently of anything this package does |
 | `kinetis/queue-rabbitmq` | Two separate AMQP operations — publish the replacement, wait for the broker to acknowledge it, then nack the original — since AMQP 0-9-1 has no cross-message transaction to make them one | Real: a crash between the two publishes a replacement *and* leaves the original to be redelivered once the connection drops, so the job can be delivered twice. A publish the broker never acknowledges settles nothing at all, so that direction loses no job — see {doc}`queue-rabbitmq` |
 
@@ -261,7 +284,7 @@ pointed at the same backend.
 
 What every backend guarantees is **reservation**, not exclusivity for
 all time. A `pop()` takes the job out of reach of every other worker in
-one atomic step — Redis moves it to a processing list, `SqlQueue` claims
+one atomic step — Redis leases it in a sorted set, `SqlQueue` claims
 the row under a row lock, SQS makes the message invisible, RabbitMQ
 holds it as an unacked delivery — so two workers popping at the same
 instant never both come back with the same job. What that reservation
@@ -288,8 +311,8 @@ than uniform:
 
 | Backend | A worker that dies mid-job |
 |---|---|
-| `kinetis/queue-redis` | The job stays in the processing list. There is no reaper, so nothing returns it to `pending` — it is stranded, not lost, and no other worker picks it up |
-| `kinetis/queue-sql` | Reclaimed once the reservation passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS`; with the timeout unset, the row stays reserved indefinitely |
+| `kinetis/queue-redis` | Reclaimed once the lease passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, by the next `pop()` any worker makes on that queue |
+| `kinetis/queue-sql` | Reclaimed once the reservation passes `QUEUE_VISIBILITY_TIMEOUT_SECONDS` |
 | `kinetis/queue-sqs` | Redelivered once the message's visibility timeout expires — SQS's own, configured on the queue |
 | `kinetis/queue-rabbitmq` | Redelivered as soon as the connection drops, since an unacked delivery is requeued by the broker |
 
@@ -394,7 +417,7 @@ excludes in-flight work — could not honestly report what it destroyed
 either. Emptying an SQS queue stays an infrastructure step;
 {doc}`queue-sqs` has the reasoning and what to run instead.
 
-Reaching the capability, in the three places it comes up:
+Reaching the capability, in the two places it comes up:
 
 - **Application code** names `ClearableQueueInterface` in its own
   constructor. With `QUEUE_CONNECTION` set, this package's bootstrap
@@ -407,11 +430,6 @@ Reaching the capability, in the three places it comes up:
   jobs keeps taking `QueueInterface` and works against every backend.
 - **A custom backend** declares `ClearableQueueInterface`, which extends
   `QueueInterface` — one `implements` clause covers both.
-- **A traced queue** is built with `TracingQueue::wrap()`, or
-  `TracingQueue::wrapClearable()` where the backend's own type already
-  says it clears (see {doc}`telemetry`), so the decorator keeps the
-  capability the backend has. Constructing `TracingQueue` directly
-  around a clearable backend hides it.
 
 ```{code-block} php
 use Kinetis\Queue\ClearableQueueInterface;
@@ -526,14 +544,14 @@ scope, before any backend I/O:
 
 - `$delaySeconds: 0` pushes immediately; a positive value delays by that
   many seconds. A negative value is rejected outright, via
-  `Kinetis\Queue\Exception\InvalidDelaySecondsException`, rather than
+  `Kinetis\Queue\Exception\InvalidQueueArgumentException`, rather than
   reaching any backend at all.
 - `$queue` is validated the same way `pop()`'s own queue names are — see
   above.
 - `$maxAttempts: null` defers to the processing worker's own default; `0`
   or a positive value is the effective cap itself. A negative value is
-  rejected, via `Kinetis\Queue\Exception\InvalidMaxAttemptsException`,
-  rather than silently reaching `QueueWorker`, where a job's very first
+  rejected through that same exception, rather than silently reaching
+  `QueueWorker`, where a job's very first
   real attempt would otherwise be misclassified as already exhausted.
 
 `SyncQueue` validates the identical way even though `$delaySeconds`/
@@ -550,21 +568,19 @@ time counter checks close off most ways a *pushed* value can be
 malformed — but a durable backend's own stored data can still be
 corrupted after the fact: a hand-edited Redis payload, a database row
 populated some other way, an AMQP header set by a non-Kinetis publisher.
-Every durable backend reserves a message from its own storage — moved to
-Redis's processing list, given a SQL `reserved_at`, made invisible by
-SQS, held as an unacked AMQP delivery — *before* it can be decoded into a
-`QueuedJob`, so a decode failure at that point (invalid JSON, a missing
-or wrong-shaped `class`/`args`/`metadata` field, an out-of-range counter)
-would otherwise leave a real reservation with nothing to release it: the
-message strands forever on a backend with no reservation-reclaim
-mechanism (Redis), or replays forever on one that has (SQL, SQS,
-RabbitMQ), since the identical malformed data crashes every retry the
-same way.
+Every durable backend reserves a message from its own storage — leased in
+Redis, given a SQL `reserved_at`, made invisible by SQS, held as an
+unacked AMQP delivery — *before* it can be decoded into a `QueuedJob`, so
+a decode failure at that point (invalid JSON, a missing or wrong-shaped
+`class`/`args`/`metadata` field, an out-of-range counter) would otherwise
+leave a real reservation with nothing to release it: the message replays
+forever once the reservation is reclaimed, since the identical malformed
+data crashes every retry the same way.
 
 Rather than let that exception escape `pop()` and crash the worker loop,
 every backend settles the malformed message permanently — using its own
-existing removal primitive (an exact-payload `LREM` off Redis's
-processing list, a SQL row `DELETE`, SQS's `DeleteMessage`, RabbitMQ's
+existing removal primitive (an exact-member `ZREM` off Redis's leased
+set, a SQL row `DELETE`, SQS's `DeleteMessage`, RabbitMQ's
 `nack(requeue: false)`) — before `pop()` throws
 `Kinetis\Queue\Exception\MalformedJobSettledException` instead of letting
 the original decode failure escape. `QueueWorker` catches this
@@ -636,6 +652,13 @@ Raise it to allow retries. There is no configuration, anywhere, that
 makes a job retry forever — `QueueWorker`'s own default is likewise `0`,
 not unlimited, so a job with no `maxAttempts` of its own is only ever
 retried if something has explicitly set a cap above `1`.
+
+Retries are immediate. Every backend makes a released job available to
+the next `pop()` straight away, and there is no retry backoff to
+configure, so `maxAttempts` bounds how many times a job is tried and
+nothing about how long those attempts are spread over: a job failing on
+a dependency that is still down spends its whole budget as fast as the
+workers watching that queue can take it.
 
 ```{code-block} json
 {
@@ -813,8 +836,8 @@ varies:
 
 | Backend | Fenced settlements |
 |---|---|
-| `kinetis/queue-redis` | `ack()`, `release()` and `fail()` — each reads back whether its own `LREM` found the reserved entry |
-| `kinetis/queue-sql` | None. A settlement addresses a row by id, and the row carries no token identifying which reservation wrote it |
+| `kinetis/queue-redis` | `ack()`, `release()` and `fail()` — each reads back whether its own `ZREM` removed the exact leased member the handle names |
+| `kinetis/queue-sql` | `ack()`, `release()` and `fail()` — each matches on the row id plus the `reserved_token` its own reservation wrote, and reads back the affected-row count |
 | `kinetis/queue-sqs` | None of ours. SQS answers an expired or already-used receipt with its own error, which propagates as itself |
 | `kinetis/queue-rabbitmq` | None of ours. A delivery tag is scoped to its channel, and reusing one is a channel-level protocol error rather than an answer this package can read |
 

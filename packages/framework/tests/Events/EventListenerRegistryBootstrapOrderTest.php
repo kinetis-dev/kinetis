@@ -23,12 +23,12 @@ use PHPUnit\Framework\TestCase;
  * PluginDiscovery::bind() already gets right — otherwise a bootstrap.php
  * override (or a $beforeBoot test double) is silently clobbered by a
  * later, unconditional rebind. `Kinetis\Cache\BootSequence` is the one
- * place this ordering now lives, shared by every framework-managed entry
- * point (public/index.php, bin/kinetis, TestApplication, and the
- * reference copies in kinetis/skeleton/kinetis/pingpong) — every test
- * here either calls it directly or goes through TestApplication, which
- * itself delegates to it, never a hand-reimplementation of the sequence
- * that could silently diverge from what those entry points actually run.
+ * place this ordering lives, shared by every framework-managed entry
+ * point (Kinetis\Runtime\HttpStartup, bin/kinetis, TestApplication) —
+ * every test here either calls it directly or goes through
+ * TestApplication, which itself delegates to it, never a
+ * hand-reimplementation of the sequence that could silently diverge from
+ * what those entry points actually run.
  *
  * Every case dispatches a real event through a real EventDispatcher and
  * reads a real Recorder, rather than settling for
@@ -140,9 +140,10 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
     }
 
     /**
-     * The HTTP production / bin/kinetis --cached shape: a compiled
+     * The production HTTP and bin/kinetis shape: a compiled
      * cache's own array data, reconstructed via fromArray() exactly the
-     * way CacheStore::loadEvents() feeds it, with the bootstrap chain
+     * way the compiled artifact's event section feeds it, with the
+     * bootstrap chain
      * enabled — proving the identical augment precedence TestApplication
      * already proved for live discovery also holds for a
      * cache-reconstructed registry.
@@ -219,7 +220,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
     }
 
     /**
-     * The CLI #[Command(bootstrap: false)] / --cached shape: the same
+     * The CLI #[Command(bootstrap: false)] shape: the same
      * guarantee as the live case above, but for a fromArray()-
      * reconstructed registry — the discovered/cached listener still
      * fires, and neither the given PackageBootstrap nor

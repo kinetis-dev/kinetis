@@ -11,7 +11,7 @@ use Throwable;
  * Logs through a consumer-supplied `LoggerInterface` without letting a
  * failure in the logger itself escape — for the handful of call sites
  * that are themselves a terminal fallback (ExceptionHandlerMiddleware's
- * catch-all, DocumentationController's cache-failure recovery): a
+ * catch-all, Kernel's and StreamScopeLease's request-scope disposal): a
  * logging call there is diagnostic, not load-bearing, and a throwing
  * logger must never turn an observability problem into the very failure
  * the surrounding code exists to recover from. Ordinary logging

@@ -11,11 +11,10 @@ use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\UploadedFileInterface;
 
 /**
- * The nesting rules an adapter parsing a multipart body itself has to
- * reproduce, checked against the shapes a SAPI produces for the same
- * part names. The runtime conformance suite proves the two agree end to
- * end; this pins each rule on its own, where a failure says which one
- * broke.
+ * The nesting rules a multipart body's part names follow, checked
+ * against the shapes a SAPI produces for the same names. The runtime
+ * conformance suite proves the two agree end to end; this pins each rule
+ * on its own, where a failure says which one broke.
  */
 final class MultipartFormBuilderTest extends TestCase
 {

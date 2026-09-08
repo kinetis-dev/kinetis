@@ -12,13 +12,10 @@
     <source>
         <include>
             <file>version-policy.php</file>
-            <file>checked-write.php</file>
-            <file>manifest-schema.php</file>
-            <file>git-history.php</file>
             <file>generate-composer.php</file>
             <file>validate-manifest.php</file>
             <file>release-plan.php</file>
-            <file>release-transaction.php</file>
+            <file>release-publish.php</file>
             <file>release-gate.php</file>
         </include>
     </source>
