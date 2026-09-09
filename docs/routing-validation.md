@@ -691,6 +691,8 @@ final readonly class CreateProductRequest
 | `#[LessThan(n)]` | `$value < n` | `int\|float $threshold` |
 | `#[Regex($pattern)]` | `preg_match($pattern, $value) === 1` | `string $pattern` |
 | `#[In($choices)]` | `in_array($value, $choices, true)` | `array $choices` |
+| `#[MinItems(n)]` | a list of at least `n` elements | `int $count` |
+| `#[MaxItems(n)]` | a list of at most `n` elements | `int $count` |
 | `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* |
 | `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* |
 
@@ -703,8 +705,9 @@ generated OpenAPI or MCP schema is broader than the check the request
 actually gets. Every other constraint in the table maps onto a keyword; see
 [Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
 
-`#[MinLength]`/`#[MaxLength]` and `#[GreaterThan]`/`#[LessThan]` compose on
-the same field for a length or numeric range — `Hydrator` runs every
+`#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]` and
+`#[MinItems]`/`#[MaxItems]` compose on the same field for a length,
+numeric or cardinality range — `Hydrator` runs every
 `Constraint`-implementing attribute on a parameter, not just the first
 one:
 
@@ -713,6 +716,14 @@ one:
 #[LessThan(100)]
 public int $percentage,
 ```
+
+`#[MinItems]`/`#[MaxItems]` bound a list-shaped `array` field: a plain
+one, or a [`#[ListOf]`](#collections-of-nested-dtos) one whose elements
+are counted once they have hydrated. A negative bound describes no list
+at all and is refused with an `InvalidArgumentException` where the
+constraint is first instantiated, during hydration or schema generation.
+The list-shape check itself stays `Hydrator`'s, so a field that isn't a
+JSON array fails there first and never reaches the bound.
 
 `Hydrator::hydrate()` checks **every** constrained field before
 constructing the DTO — a request with three invalid fields gets all three
@@ -790,7 +801,9 @@ supported set" below.
   value — of any shape, empty included — is always rejected with its own
   message ("must be a JSON array, not a JSON object."), never silently
   accepted. `#[ListOf]`'s own array (a real JSON array of nested DTOs)
-  gets the identical list-shape check.
+  gets the identical list-shape check. An `array` field that is meant to
+  take a JSON object declares it — see
+  [Object-map properties](#object-map-properties).
 - An `iterable`-typed field/parameter gets the identical check as
   `array` — decoded JSON input can only ever produce a PHP array, never
   a real `Traversable`, and a plain array genuinely satisfies PHP's
@@ -1123,6 +1136,57 @@ in the response.
 `#[ListOf]` itself is only valid on a parameter typed `array`, and its
 item class must be a class that can be instantiated.
 
+### Object-map properties
+
+A constructor parameter typed `array` and carrying `#[ObjectMap]` takes
+a JSON *object* of arbitrary keys — the shape a plain `array` field
+refuses — and receives it as a plain PHP array:
+
+```{code-block} php
+use Kinetis\Validation\ObjectMap;
+
+final readonly class UpdateProfileRequest
+{
+    public function __construct(
+        public string $username,
+        #[ObjectMap]
+        public array $preferences,
+    ) {}
+}
+```
+
+```{code-block} json
+{
+    "username": "alon",
+    "preferences": { "locale": "en", "digest": { "weekly": true } }
+}
+```
+
+`$preferences` arrives as `['locale' => 'en', 'digest' => ['weekly' =>
+true]]` — nested objects unwrapped to plain arrays all the way down, the
+same value a `mixed` field would have received. No schema is declared or
+checked for the keys or the values.
+
+A JSON array, a scalar, or a `null` for a non-nullable property is a
+`422` under that property's own key — `preferences: must be a JSON
+object, not a JSON array.` — alongside every other error in the same
+response. Inside a [nested DTO](#nested-dtos) it surfaces under the
+dotted `field.preferences` key, exactly like any other nested field.
+
+`{}` is accepted and hydrates to `[]`, which is precisely the value a
+plain `array` field rejects. That pair is decided by *provenance*, not
+by shape: a JSON object and a JSON array decode to the same PHP array,
+so only the object/array distinction the request body's own decode
+preserves can tell `{}` from `[]`. A source that never carried that
+distinction — a form-encoded body, or a direct `Hydrator::hydrate()`
+call with a hand-built PHP array — therefore cannot fill an
+`#[ObjectMap]` property at all; a JSON request body and an MCP tool call
+both can.
+
+`#[ObjectMap]` is only valid on a parameter typed `array`, and never on
+the same parameter as `#[ListOf]`: one admits a JSON object and the
+other a JSON array, so a parameter carrying both would accept nothing.
+
 ### DTO definitions Kinetis rejects
 
 A hydration plan is compiled from a DTO's constructor by reflection —
@@ -1130,7 +1194,8 @@ ahead of time by `kinetis build`, or on that class's first hydration
 otherwise. It supports a finite set of parameter shapes: one of the seven supported
 builtin types, a single named class (hydrated when it can be
 instantiated, instance-only when it can't), an `array` carrying
-`#[ListOf]`, and nullable variants of each.
+`#[ListOf]`, an `array` carrying `#[ObjectMap]`, and nullable variants
+of each.
 
 Anything else is rejected while the plan is compiled, with an
 `UnsupportedDtoDefinitionException` naming the class and the parameter —
@@ -1152,6 +1217,8 @@ in development, rather than as a `TypeError` on a live one:
   the supported set" above.
 - `#[ListOf]` on a parameter that isn't typed `array`, or naming a class
   that cannot be instantiated.
+- `#[ObjectMap]` on a parameter that isn't typed `array`, or on the same
+  parameter as `#[ListOf]`.
 - A `#[Body]` DTO class that cannot itself be instantiated.
 
 The generated OpenAPI document and MCP tool input schemas hold the same
@@ -1229,10 +1296,11 @@ attach to them behaves like middleware anywhere else.
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,
 `minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `enum`,
-`format: uri`, `format: uuid`) — except `#[NotBlank]` and `#[Regex]`, which
-have no JSON Schema keyword to map onto. `#[Query]` parameters and path
-parameters become `parameters` entries, with the identical constraint-to-
-keyword mapping applied to their own `schema` when they carry one. A
+`minItems`/`maxItems`, `format: uri`, `format: uuid`) — except
+`#[NotBlank]` and `#[Regex]`, which have no JSON Schema keyword to map
+onto. `#[Query]` parameters and path parameters become `parameters`
+entries, with the identical constraint-to-keyword mapping applied to
+their own `schema` when they carry one. A
 controller method's declared return type becomes the default response's
 schema too — `UserResponse` (or `?UserResponse`, or a union like
 `ResponseInterface|array` where `UserResponse` is one member) produces a
@@ -1242,7 +1310,11 @@ description-only.
 
 A [`#[ListOf]` field](#collections-of-nested-dtos) becomes a `{"type":
 "array", "items": ...}` schema, with `items` describing the element class
-the same way any other DTO reference does.
+the same way any other DTO reference does, and any constraint keyword the
+field carries merged in beside them. An
+[`#[ObjectMap]` field](#object-map-properties) becomes `{"type":
+"object", "additionalProperties": true}` — the schema for the arbitrary
+keys and values it actually accepts.
 
 Every DTO schema — whether reached via a `requestBody`, a response, or a
 [`#[ListOf]`](#collections-of-nested-dtos) element, at any depth — is

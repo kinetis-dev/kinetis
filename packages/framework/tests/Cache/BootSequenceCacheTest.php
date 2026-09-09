@@ -150,6 +150,81 @@ final class BootSequenceCacheTest extends TestCase
     }
 
     /**
+     * An artifact whose hydration plans were compiled before
+     * HydrationPlanParameter gained its `objectMap` field — a real
+     * `kinetis build` output from an earlier framework version, not an
+     * invented corruption. Hydrator::validatePlans() exact-keys the
+     * parameter shape, so the stale entry is rejected as a data-shape
+     * problem and the whole artifact is a clean miss, exactly like any
+     * other shape the running build does not speak. No compatibility
+     * reader fills the missing field in.
+     */
+    public function test_a_hydration_plan_from_before_the_object_map_field_is_a_miss(): void
+    {
+        $data = $this->compiledCacheWithHydrationPlan()->toArray();
+        unset($data['http']['hydrationPlans']['App\\Dto']['parameters'][0]['objectMap']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
+
+        self::assertNull(BootSequence::loadHttpFromCache(new CacheStore($this->directory)));
+    }
+
+    /**
+     * What a worker then does with that stale artifact: reject it,
+     * compile once, and publish the current shape — the live recovery
+     * contract, with no migration step in between.
+     */
+    public function test_a_stale_hydration_plan_makes_the_boot_compile_once_and_republish(): void
+    {
+        $data = $this->compiledCacheWithHydrationPlan()->toArray();
+        unset($data['http']['hydrationPlans']['App\\Dto']['parameters'][0]['objectMap']);
+        mkdir($this->directory, 0775, true);
+        $this->overwriteArtifact($data);
+
+        $fresh = $this->compiledCacheWithHydrationPlan();
+        $calls = 0;
+        BootSequence::resolveHttp(new CacheStore($this->directory), function () use (&$calls, $fresh): CompiledCache {
+            $calls++;
+
+            return $fresh;
+        });
+
+        self::assertSame(1, $calls, 'a stale artifact is compiled past exactly once, never repeatedly');
+
+        $republished = BootSequence::loadHttpFromCache(new CacheStore($this->directory));
+        self::assertNotNull($republished);
+        self::assertFalse($republished['httpCache']->hydrationPlans['App\\Dto']['parameters'][0]['objectMap']);
+    }
+
+    /**
+     * The valid artifact, carrying one hydration plan whose parameter is
+     * written in the current shape.
+     */
+    private function compiledCacheWithHydrationPlan(): CompiledCache
+    {
+        $cache = $this->validCompiledCache();
+        $http = new HttpCache(
+            routes: $cache->http->routes,
+            httpBindingPlans: [],
+            hydrationPlans: [
+                'App\\Dto' => [
+                    'className' => 'App\\Dto',
+                    'hasConstructor' => true,
+                    'parameters' => [[
+                        'name' => 'meta', 'scalarType' => 'array', 'dtoClass' => null, 'nestedPlan' => null,
+                        'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false,
+                        'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => [],
+                    ]],
+                ],
+            ],
+            globalMiddleware: [],
+            openApiMiddleware: [],
+        );
+
+        return new CompiledCache($http, $cache->commands, $cache->events, $cache->plugins, $cache->packageBootstraps);
+    }
+
+    /**
      * A structurally malformed event registry — a duplicate {class,
      * method} pair, which EventListenerRegistry::fromArray() rejects by
      * throwing InvalidListenerException (see its own docblock). An

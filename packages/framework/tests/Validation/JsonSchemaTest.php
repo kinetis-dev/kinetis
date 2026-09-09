@@ -8,8 +8,11 @@ use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
+use Kinetis\Tests\Validation\Fixtures\BoundedListsRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
+use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
 use Kinetis\Validation\Constraints\Email;
@@ -290,6 +293,55 @@ final class JsonSchemaTest extends TestCase
             ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/' . OrderItem::class]],
             $schema['properties']['items'],
         );
+    }
+
+    /**
+     * An #[ObjectMap] property is the one `array`-typed property whose
+     * schema is an object, not an array — `additionalProperties: true`
+     * being JSON Schema's own "any keys, any values", which is exactly
+     * what Hydrator admits there.
+     */
+    public function test_an_object_map_property_is_described_as_an_open_object(): void
+    {
+        $schema = JsonSchema::forClass(ObjectMapFieldRequest::class);
+
+        self::assertSame(['type' => 'object', 'additionalProperties' => true], $schema['properties']['meta']);
+        self::assertSame(['name', 'meta'], $schema['required']);
+    }
+
+    public function test_a_nullable_object_map_property_is_widened_to_include_null(): void
+    {
+        $schema = JsonSchema::forClass(NullableObjectMapRequest::class);
+
+        self::assertSame(
+            ['type' => ['object', 'null'], 'additionalProperties' => true],
+            $schema['properties']['meta'],
+        );
+    }
+
+    public function test_item_bounds_map_onto_min_items_and_max_items_on_a_plain_array_property(): void
+    {
+        $schema = JsonSchema::forClass(BoundedListsRequest::class);
+
+        self::assertSame(['type' => 'array', 'minItems' => 1, 'maxItems' => 3], $schema['properties']['tags']);
+    }
+
+    /**
+     * The #[ListOf] branch merges ordinary constraint metadata the same
+     * way the plain-array one does — a bound the request actually has to
+     * satisfy is not dropped just because the property also names an
+     * element class.
+     */
+    public function test_item_bounds_merge_into_a_list_of_property_schema(): void
+    {
+        $schema = JsonSchema::forClass(BoundedListsRequest::class, fn (string $class) => ['$ref' => "#/components/schemas/{$class}"]);
+
+        self::assertSame([
+            'type' => 'array',
+            'items' => ['$ref' => '#/components/schemas/' . OrderItem::class],
+            'minItems' => 1,
+            'maxItems' => 2,
+        ], $schema['properties']['items']);
     }
 
     /**

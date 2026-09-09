@@ -20,6 +20,7 @@ use Kinetis\Tests\Http\Fixtures\NoteController;
 use Kinetis\Tests\Http\Fixtures\NullableFieldsController;
 use Kinetis\Tests\Http\Fixtures\ObjectDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
+use Kinetis\Tests\Http\Fixtures\ObjectMapFieldController;
 use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
 use Kinetis\Tests\Http\Fixtures\QueryLiteralController;
@@ -1153,6 +1154,40 @@ final class DispatcherTest extends TestCase
         /** @var array{errors: array<string, list<string>>} $body */
         $body = json_decode((string) $response->getBody(), true);
         self::assertSame(['must be a JSON array, not a JSON object.'], $body['errors']['tags']);
+    }
+
+    /**
+     * The mirror image, through the same real wire bytes: an
+     * #[ObjectMap] property takes the JSON object a plain `array` one
+     * refuses, `{}` included, and the controller receives it as a plain
+     * PHP array.
+     */
+    public function test_an_object_map_field_accepts_a_real_json_object_body(): void
+    {
+        $router = new Router();
+        $router->register(ObjectMapFieldController::class);
+        $match = $router->match('POST', '/object-map-field');
+
+        $request = new ServerRequest('POST', '/object-map-field', self::JSON_HEADERS, body: '{"name": "Alon", "meta": {"locale": "en"}}');
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['name' => 'Alon', 'meta' => ['locale' => 'en']], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_an_object_map_field_rejects_a_real_json_array_body(): void
+    {
+        $router = new Router();
+        $router->register(ObjectMapFieldController::class);
+        $match = $router->match('POST', '/object-map-field');
+
+        $request = new ServerRequest('POST', '/object-map-field', self::JSON_HEADERS, body: '{"name": "Alon", "meta": []}');
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(422, $response->getStatusCode());
+        /** @var array{errors: array<string, list<string>>} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame(['must be a JSON object, not a JSON array.'], $body['errors']['meta']);
     }
 
     /**

@@ -63,6 +63,21 @@ final class UnsupportedDtoDefinitionException extends RuntimeException
         );
     }
 
+    public static function objectMapOnNonArrayParameter(string $class, string $parameter): self
+    {
+        return self::forParameter($class, $parameter, '#[ObjectMap] only applies to a parameter typed array.');
+    }
+
+    public static function objectMapWithListOf(string $class, string $parameter): self
+    {
+        return self::forParameter(
+            $class,
+            $parameter,
+            '#[ObjectMap] admits a JSON object and #[ListOf] a JSON array, so a parameter carrying both '
+            . 'accepts nothing. Declare one of them.',
+        );
+    }
+
     public static function unsupportedBuiltinType(string $class, string $parameter, string $type): self
     {
         return self::forParameter(

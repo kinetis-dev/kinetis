@@ -15,6 +15,7 @@ use Kinetis\Tests\Http\Fixtures\RegisterAccountRequest;
 use Kinetis\Tests\Http\Fixtures\UpdateStatusRequest;
 use DateTimeImmutable;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Tests\Validation\Fixtures\BoundedListsRequest;
 use Kinetis\Tests\Validation\Fixtures\BoundlessIntFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\CallableFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\FalseTypedFieldRequest;
@@ -26,10 +27,15 @@ use Kinetis\Tests\Validation\Fixtures\ListOfOnAStringRequest;
 use Kinetis\Tests\Validation\Fixtures\EnumDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\MutuallyRecursiveParent;
 use Kinetis\Tests\Validation\Fixtures\NestedObjectDefaultRequest;
+use Kinetis\Tests\Validation\Fixtures\NestedObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullTypedFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectMapListOfRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectMapOnAStringRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\PlainArrayFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
@@ -705,6 +711,225 @@ final class HydratorTest extends TestCase
         self::assertSame([], $instance->tags);
     }
 
+    // --- #[ObjectMap]: the one `array` property whose wire shape is a
+    // JSON object. Provenance is the whole admission rule, so every test
+    // below that supplies a real object goes through decodedBody(), the
+    // same JsonTree::convert() pipeline Dispatcher and McpServer use. ---
+
+    public function test_an_object_map_property_receives_the_json_objects_plain_array_form(): void
+    {
+        $dto = Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody(
+            '{"name": "Alon", "meta": {"locale": "en", "beta": true}}',
+        ));
+
+        self::assertSame(['locale' => 'en', 'beta' => true], $dto->meta);
+    }
+
+    /**
+     * `{}` is exactly the value a plain `array` property must reject and
+     * an #[ObjectMap] one must accept — the pair that makes provenance,
+     * not shape, the deciding rule.
+     */
+    public function test_an_empty_json_object_fills_an_object_map_property(): void
+    {
+        $dto = Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": {}}'));
+
+        self::assertSame([], $dto->meta);
+    }
+
+    /**
+     * A JSON object nested inside the map reaches the property as a
+     * plain array, exactly like a `mixed` property's own contents — no
+     * JsonObject marker leaks into application code.
+     */
+    public function test_object_maps_nested_json_objects_arrive_unwrapped(): void
+    {
+        $dto = Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody(
+            '{"name": "Alon", "meta": {"limits": {"perPage": 20}, "tags": ["a"]}}',
+        ));
+
+        self::assertSame(['limits' => ['perPage' => 20], 'tags' => ['a']], $dto->meta);
+    }
+
+    public function test_an_object_map_property_inside_a_nested_dto_hydrates_under_its_own_path(): void
+    {
+        $dto = Hydrator::hydrate(NestedObjectMapRequest::class, self::decodedBody(
+            '{"payload": {"name": "Alon", "meta": {"locale": "en"}}}',
+        ));
+
+        self::assertSame(['locale' => 'en'], $dto->payload->meta);
+    }
+
+    public function test_a_json_array_is_rejected_for_an_object_map_property(): void
+    {
+        try {
+            Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": ["a", "b"]}'));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['meta' => ['must be a JSON object, not a JSON array.']], $e->errors);
+        }
+    }
+
+    public function test_a_scalar_is_rejected_for_an_object_map_property(): void
+    {
+        try {
+            Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": 42}'));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['meta' => ['must be an object, integer given.']], $e->errors);
+        }
+    }
+
+    /**
+     * The nullable variant of the shape: `?array` takes an explicitly
+     * null value as the property's value, exactly like every other
+     * nullable declaration — the object map's own shape check never
+     * reaches it.
+     */
+    public function test_null_hydrates_a_nullable_object_map_property(): void
+    {
+        $dto = Hydrator::hydrate(NullableObjectMapRequest::class, self::decodedBody('{"meta": null}'));
+
+        self::assertNull($dto->meta);
+    }
+
+    public function test_null_is_rejected_for_a_non_nullable_object_map_property(): void
+    {
+        try {
+            Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": null}'));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['meta' => ['must not be null.']], $e->errors);
+        }
+    }
+
+    /**
+     * A nested object map's own failure surfaces under the dotted path,
+     * alongside every other error in the same response.
+     */
+    public function test_a_nested_object_map_failure_surfaces_under_its_dotted_path(): void
+    {
+        try {
+            Hydrator::hydrate(NestedObjectMapRequest::class, self::decodedBody(
+                '{"payload": {"name": "Alon", "meta": []}}',
+            ));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['payload.meta' => ['must be a JSON object, not a JSON array.']], $e->errors);
+        }
+    }
+
+    /**
+     * The provenance rule stated as a behavior: a hand-built PHP map
+     * passed straight to hydrate() — the shape a form-decoded body or a
+     * `json_decode(..., associative: true)` call also produces — carries
+     * no object/array distinction to read, so it cannot fill an
+     * #[ObjectMap] property.
+     */
+    public function test_an_unmarked_php_map_cannot_fill_an_object_map_property(): void
+    {
+        try {
+            Hydrator::hydrate(ObjectMapFieldRequest::class, ['name' => 'Alon', 'meta' => ['locale' => 'en']]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['meta' => ['must be a JSON object, not a JSON array.']], $e->errors);
+        }
+    }
+
+    public function test_compile_plan_flags_an_object_map_parameter_and_nothing_else(): void
+    {
+        $plan = Hydrator::compilePlan(ObjectMapFieldRequest::class);
+
+        self::assertFalse($plan['parameters'][0]['objectMap']);
+        self::assertTrue($plan['parameters'][1]['objectMap']);
+        self::assertNull($plan['parameters'][1]['listItemClass']);
+    }
+
+    public function test_hydrating_an_object_map_from_a_compiled_plan_matches_the_live_path(): void
+    {
+        $plan = Hydrator::compilePlan(ObjectMapFieldRequest::class);
+        $data = self::decodedBody('{"name": "Alon", "meta": {"locale": "en"}}');
+
+        self::assertEquals(
+            Hydrator::hydrate(ObjectMapFieldRequest::class, $data),
+            Hydrator::hydrate(ObjectMapFieldRequest::class, $data, $plan),
+        );
+    }
+
+    public function test_object_map_on_a_non_array_parameter_is_rejected_when_the_plan_is_compiled(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('#[ObjectMap] only applies to a parameter typed array.');
+
+        Hydrator::compilePlan(ObjectMapOnAStringRequest::class);
+    }
+
+    public function test_object_map_combined_with_list_of_is_rejected_when_the_plan_is_compiled(): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage('#[ObjectMap] admits a JSON object and #[ListOf] a JSON array');
+
+        Hydrator::compilePlan(ObjectMapListOfRequest::class);
+    }
+
+    // --- #[MinItems]/#[MaxItems]: bounded list input, on a plain
+    // `array` property and a #[ListOf] one alike. Hydrator has already
+    // established the JSON array shape by the time either runs. ---
+
+    public function test_a_list_within_its_item_bounds_hydrates(): void
+    {
+        $dto = Hydrator::hydrate(BoundedListsRequest::class, self::decodedBody(
+            '{"tags": ["a"], "items": [{"product": "Widget", "quantity": 2}]}',
+        ));
+
+        self::assertSame(['a'], $dto->tags);
+        self::assertCount(1, $dto->items);
+    }
+
+    public function test_a_list_at_both_item_bounds_hydrates(): void
+    {
+        $dto = Hydrator::hydrate(BoundedListsRequest::class, self::decodedBody(
+            '{"tags": ["a", "b", "c"], "items": [{"product": "Widget", "quantity": 2}, {"product": "Gadget", "quantity": 5}]}',
+        ));
+
+        self::assertCount(3, $dto->tags);
+        self::assertCount(2, $dto->items);
+    }
+
+    public function test_a_list_below_min_items_or_above_max_items_is_a_validation_error(): void
+    {
+        try {
+            Hydrator::hydrate(BoundedListsRequest::class, self::decodedBody(
+                '{"tags": [], "items": [{"product": "a", "quantity": 1}, {"product": "b", "quantity": 1}, {"product": "c", "quantity": 1}]}',
+            ));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame([
+                'tags' => ['must contain at least 1 items.'],
+                'items' => ['must contain at most 2 items.'],
+            ], $e->errors);
+        }
+    }
+
+    /**
+     * The bound applies to the hydrated #[ListOf] elements, so it is
+     * counted after each one has been built, not against the raw wire
+     * value — and an element that fails its own validation stops the
+     * property before the bound runs, rather than being counted as
+     * present.
+     */
+    public function test_a_list_of_element_failure_replaces_the_item_bound_check(): void
+    {
+        try {
+            Hydrator::hydrate(BoundedListsRequest::class, self::decodedBody(
+                '{"tags": ["a"], "items": [{"product": "Widget", "quantity": 0}]}',
+            ));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['items.0.quantity' => ['must be greater than 0.']], $e->errors);
+        }
+    }
+
     // Hydrator::SUPPORTED_BUILTIN_TYPES is the closed set a request value
     // may be bound to. typeMismatchMessage() is the one boundary shared by
     // #[Body] fields here, #[Query]/path parameters via Dispatcher, and MCP
@@ -1297,6 +1522,7 @@ final class HydratorTest extends TestCase
                 'nestedPlan' => null,
                 'listItemClass' => null,
                 'listItemPlan' => null,
+                'objectMap' => false,
                 'hasDefault' => true,
                 'defaultValue' => $parameter->getDefaultValue(),
                 'allowsNull' => true,

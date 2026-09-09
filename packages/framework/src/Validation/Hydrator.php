@@ -42,6 +42,10 @@ use ReflectionType;
  *   array whose every element is either object-shaped (hydrated into
  *   SomeClass) or already a SomeClass instance. Element errors surface
  *   under a dotted "field.index" / "field.index.nestedField" key.
+ * - A parameter typed `array` carrying #[ObjectMap]: a JSON object of
+ *   arbitrary keys, handed to the constructor as its plain array form.
+ *   Unlike every other accepted shape, this one admits only a value
+ *   carrying JsonObject provenance — see resolveObjectMapValue().
  * - A nullable variant of any of the above.
  *
  * Every other definition is rejected with an
@@ -52,8 +56,9 @@ use ReflectionType;
  * recursion has no finite plan and nothing var_export() could bake into a
  * cache file), a class type reflection cannot resolve (self/parent/static),
  * a builtin type outside SUPPORTED_BUILTIN_TYPES, #[ListOf] on a parameter
- * that isn't typed `array`, and #[ListOf] naming a class that cannot be
- * instantiated.
+ * that isn't typed `array`, #[ListOf] naming a class that cannot be
+ * instantiated, #[ObjectMap] on a parameter that isn't typed `array`, and
+ * #[ObjectMap] combined with #[ListOf].
  *
  * A parameter's own default value is captured under the rule
  * Kinetis\Reflection\ParameterDefault owns, shared with Dispatcher's
@@ -107,6 +112,7 @@ use ReflectionType;
  *     nestedPlan: ?array<string, mixed>,
  *     listItemClass: ?class-string,
  *     listItemPlan: ?array<string, mixed>,
+ *     objectMap: bool,
  *     hasDefault: bool,
  *     defaultValue: mixed,
  *     allowsNull: bool,
@@ -147,7 +153,7 @@ final class Hydrator
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
         'name', 'scalarType', 'dtoClass', 'nestedPlan', 'listItemClass', 'listItemPlan',
-        'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+        'objectMap', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
     ];
 
     /**
@@ -290,6 +296,7 @@ final class Hydrator
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'scalarType');
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'dtoClass');
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'listItemClass');
+            ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'objectMap');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'hasDefault');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'allowsNull');
             // defaultValue's own presence is already guaranteed by
@@ -323,6 +330,7 @@ final class Hydrator
      *     nestedPlan: ?array<string, mixed>,
      *     listItemClass: ?class-string,
      *     listItemPlan: ?array<string, mixed>,
+     *     objectMap: bool,
      *     hasDefault: bool,
      *     defaultValue: mixed,
      *     allowsNull: bool,
@@ -335,6 +343,7 @@ final class Hydrator
     {
         $type = $parameter->getType();
         [$dtoClass, $nestedPlan, $listItemClass, $listItemPlan] = self::compileNesting($type, $parameter, $class, $visiting);
+        $objectMap = self::compileObjectMap($type, $parameter, $class, $listItemClass !== null);
         $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
 
         if ($scalarType !== null && !in_array($scalarType, self::SUPPORTED_BUILTIN_TYPES, true)) {
@@ -348,6 +357,7 @@ final class Hydrator
             'nestedPlan' => $nestedPlan,
             'listItemClass' => $listItemClass,
             'listItemPlan' => $listItemPlan,
+            'objectMap' => $objectMap,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
             'defaultValue' => ParameterDefault::capture($parameter, $class),
             // An untyped parameter accepts anything, null included.
@@ -405,6 +415,39 @@ final class Hydrator
         return self::isInstantiable($nestedClass)
             ? [$nestedClass, self::compileNestedPlan($nestedClass, $class, $name, $visiting), null, null]
             : [$nestedClass, null, null, null];
+    }
+
+    /**
+     * Whether this parameter carries #[ObjectMap], having first refused
+     * the two declarations that cannot mean anything: a type other than
+     * builtin `array`, since the attribute exists only to pick which
+     * JSON shape an `array` field admits and no other type offers that
+     * choice; and #[ListOf] on the same parameter, whose JSON array is
+     * precisely the shape #[ObjectMap] refuses. A union type is already
+     * rejected by compileNesting(), which runs first.
+     *
+     * The boolean is the whole plan entry: the attribute takes no
+     * options, so nothing else about it has to survive into an
+     * artifact.
+     *
+     * @param class-string $class
+     * @throws UnsupportedDtoDefinitionException
+     */
+    private static function compileObjectMap(?ReflectionType $type, ReflectionParameter $parameter, string $class, bool $isList): bool
+    {
+        if ($parameter->getAttributes(ObjectMap::class) === []) {
+            return false;
+        }
+
+        if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
+            throw UnsupportedDtoDefinitionException::objectMapOnNonArrayParameter($class, $parameter->getName());
+        }
+
+        if ($isList) {
+            throw UnsupportedDtoDefinitionException::objectMapWithListOf($class, $parameter->getName());
+        }
+
+        return true;
     }
 
     /**
@@ -569,6 +612,10 @@ final class Hydrator
             return self::resolveListValue($name, $value, $parameter, $normalizeFormLiterals);
         }
 
+        if ($parameter['objectMap']) {
+            return self::resolveObjectMapValue($name, $value);
+        }
+
         if ($normalizeFormLiterals) {
             $value = self::normalizeTextualBoolean($parameter['scalarType'], $value);
         }
@@ -620,6 +667,46 @@ final class Hydrator
             'false' => false,
             default => $value,
         };
+    }
+
+    /**
+     * The #[ObjectMap] branch of resolveParameterValue(): a JSON object,
+     * of any keys, unwrapped into the plain array the property receives.
+     *
+     * Provenance is the whole check. A JSON object and a JSON array
+     * decode to the same PHP array — `{}` and `[]` most visibly — so
+     * only the JsonObject marker JsonTree::convert() puts on every JSON
+     * object distinguishes them, and a value that never carried the
+     * marker cannot be read as an object without guessing. A
+     * form-encoded body and a direct Hydrator::hydrate() call with a
+     * hand-built array both fall on that side: neither source has a JSON
+     * object to preserve, so neither fills an #[ObjectMap] property.
+     *
+     * unwrap() is recursive, so nested objects inside the map reach the
+     * property as plain arrays too, exactly like a `mixed` field's own
+     * contents.
+     *
+     * @return array{0: mixed, 1: array<string, list<string>>}
+     */
+    private static function resolveObjectMapValue(string $name, mixed $value): array
+    {
+        if (!$value instanceof JsonObject) {
+            return [null, [$name => [self::objectMapShapeMessage($value)]]];
+        }
+
+        return [JsonTree::unwrap($value), []];
+    }
+
+    /**
+     * A value that had to be a JSON object and wasn't. An array names
+     * the real problem — inside the marked pipeline it is a genuine JSON
+     * array, `[]` included — rather than describeType()'s generic label.
+     */
+    private static function objectMapShapeMessage(mixed $value): string
+    {
+        return is_array($value)
+            ? self::NOT_A_JSON_OBJECT
+            : 'must be an object, ' . self::describeType($value) . self::GIVEN_SUFFIX;
     }
 
     /**
