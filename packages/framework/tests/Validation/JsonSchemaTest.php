@@ -10,6 +10,7 @@ use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Validation\Fixtures\ApplicationRulesRequest;
 use Kinetis\Tests\Validation\Fixtures\BoundedListsRequest;
+use Kinetis\Tests\Validation\Fixtures\ClaimsKeyword;
 use Kinetis\Tests\Validation\Fixtures\DuplicateKeywordRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
@@ -31,6 +32,7 @@ use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
 use Kinetis\Validation\Exception\JsonSchemaException;
 use Kinetis\Validation\JsonSchema;
+use Kinetis\Validation\ListOf;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionFunction;
@@ -270,6 +272,61 @@ final class JsonSchemaTest extends TestCase
         $this->expectExceptionMessage('both contribute the JSON Schema keyword "minLength"');
 
         JsonSchema::forClass(DuplicateKeywordRequest::class);
+    }
+
+    /**
+     * The PHP declaration owns the shape and a rule refines it. A rule
+     * contributing `type` back would publish a shape Hydrator does not
+     * check against — its type check reads the declared PHP type and
+     * nothing else — so the declaration is refused rather than merged,
+     * the same answer two rules claiming one keyword get.
+     */
+    public function test_a_rule_cannot_restate_the_type_the_php_declaration_owns(): void
+    {
+        $fn = static function (#[ClaimsKeyword('type', 'string')] int $count) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('contributes the JSON Schema keyword "type", which the parameter\'s own PHP type already states');
+
+        JsonSchema::schemaForScalar($params[0], $params[0]->getType());
+    }
+
+    /**
+     * The same ownership one level in: a #[ListOf] list's `items` comes
+     * from the item class the attribute names, so a rule may bound the
+     * list (#[MinItems] contributes `minItems`) but never redescribe
+     * what is in it.
+     */
+    public function test_a_rule_cannot_restate_the_items_a_list_of_declaration_owns(): void
+    {
+        $fn = static function (
+            #[ClaimsKeyword('items', ['type' => 'string'])]
+            #[ListOf(OrderItem::class)]
+            array $items,
+        ) {};
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('contributes the JSON Schema keyword "items"');
+
+        JsonSchema::forParameters((new ReflectionFunction($fn))->getParameters());
+    }
+
+    /**
+     * The rule this refusal is scoped to: a keyword no declaration
+     * states is the rule's own, and whatever it nests inside that
+     * keyword is never inspected — an `enum` full of values, a
+     * `format`'s name, a rule's own nested `type` under its own keyword.
+     */
+    public function test_a_rule_owning_its_own_keyword_still_merges(): void
+    {
+        $fn = static function (#[ClaimsKeyword('contentSchema', ['type' => 'string'])] string $note) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'string', 'contentSchema' => ['type' => 'string']],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 
     public function test_a_regex_leaves_the_rest_of_a_parameters_schema_intact(): void

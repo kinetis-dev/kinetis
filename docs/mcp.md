@@ -78,6 +78,14 @@ parameter typed `int` takes the JSON number `42`, not the JSON string
 `"42"`; see {doc}`routing-validation`'s "Scalar type checking" for the
 full table.
 
+Presence and null are validation too, in the same vocabulary: an
+argument the tool's `inputSchema` lists as required and the call omitted
+comes back as `required` at that argument's own path, and an explicit
+`null` for a parameter whose declared type refuses one comes back as
+`null_not_allowed` — for a DTO-typed parameter as much as a scalar one.
+Both are argument feedback in the `isError: true` result below, never a
+transport-level failure.
+
 The tool's JSON Schema input is built automatically from the method's
 parameters, so `#[Email]`/`#[MinLength]`/etc. describe an MCP tool's
 arguments exactly as precisely as they describe an HTTP request body.

@@ -715,11 +715,31 @@ generated OpenAPI or MCP schema is broader than the check the request
 actually gets. Every other constraint in the table maps onto a keyword; see
 [Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
 
+A rule's constructor arguments reach a client twice — as a violation's
+`parameters` and as a published schema keyword — so a definition with no
+truthful form in either is refused with an `InvalidArgumentException`
+where the constraint is first instantiated, during hydration or schema
+generation: a negative `#[MinLength]`, `#[MaxLength]`, `#[MinItems]` or
+`#[MaxItems]` bound; a non-finite `#[GreaterThan]`/`#[LessThan]`
+threshold; an `#[In]` choice set that is empty, keyed, or carries a
+non-scalar or non-finite member; and a `#[Regex]` pattern PCRE cannot
+compile, which left to run would match nothing and reject every value
+the field ever receives.
+
 Two rules on the same field may not contribute the *same* keyword.
 `#[MinLength(3)] #[MinLength(5)]` states two different minimum lengths
 and only one of them could be published, so generating the schema fails
 with `Exception\JsonSchemaException` rather than letting declaration
 order silently decide which bound a client is told about.
+
+A rule may not restate the shape the PHP declaration itself owns,
+either. The declared type is what `Hydrator` checks a value against, so
+a rule contributing `type` — or `items`, on a `#[ListOf]` field — would
+publish a shape no request is held to, and `Exception\JsonSchemaException`
+refuses that declaration for the same reason. A rule refines the
+declared shape (`#[MinLength(3)] string` narrows which strings bind); it
+cannot replace it. What a rule nests *inside* its own keyword is its own
+business and is never inspected.
 
 `#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]` and
 `#[MinItems]`/`#[MaxItems]` compose on the same field for a length,
@@ -735,11 +755,9 @@ public int $percentage,
 
 `#[MinItems]`/`#[MaxItems]` bound a list-shaped `array` field: a plain
 one, or a [`#[ListOf]`](#collections-of-nested-dtos) one whose elements
-are counted once they have hydrated. A negative bound describes no list
-at all and is refused with an `InvalidArgumentException` where the
-constraint is first instantiated, during hydration or schema generation.
-The list-shape check itself stays `Hydrator`'s, so a field that isn't a
-JSON array fails there first and never reaches the bound.
+are counted once they have hydrated. The list-shape check itself stays
+`Hydrator`'s, so a field that isn't a JSON array fails there first and
+never reaches the bound.
 
 `Hydrator::hydrate()` checks **every** constrained field before
 constructing the DTO — a request with three invalid fields gets all three
@@ -855,12 +873,13 @@ All three agree on these:
 
 They differ on the numeric and boolean scalars:
 
-- An **`int`** accepts, under every source, a JSON integer (`42`) and a
-  float with no fractional part (`42.0`) — JSON has one number type, so a
-  producer writing an integer that way still wrote an integer — both
-  inside PHP's native integer range. `Text` and `Native` additionally
-  accept an integer's textual spelling: a plain base-10 string (`"42"`,
-  `"+42"`, `"-42"`). `Json` does not — the schema published for that
+- An **`int`** accepts, under `Json` and `Native`, a JSON integer (`42`)
+  and a float with no fractional part (`42.0`) — JSON has one number
+  type, so a producer writing an integer that way still wrote an integer
+  — both inside PHP's native integer range. `Text` and `Native` accept
+  an integer's textual spelling: a plain base-10 string (`"42"`,
+  `"+42"`, `"-42"`), which under `Text` is the only spelling there is.
+  `Json` accepts no string — the schema published for that
   field says `{"type": "integer"}`, and `"42"` is a string. Where a
   string is accepted it is read as written, never through a float, so a
   decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
@@ -870,17 +889,25 @@ They differ on the numeric and boolean scalars:
   integer within the platform integer range."), never a truncated cast —
   `4.5` does not become `4`. An array or a boolean is rejected under
   every source.
-- A **`float`** accepts either JSON number under every source, and
-  rejects any value that isn't finite (`"1e999"` overflows to `INF`).
-  `Text` and `Native` additionally accept a numeric string; `Json` does
-  not. A non-numeric string, an array or a boolean is rejected
+- A **`float`** accepts either JSON number under `Json` and `Native`,
+  and a numeric string — `Text`'s only spelling — under `Text` and
+  `Native`. It rejects any value that isn't finite (`"1e999"` overflows
+  to `INF`). A non-numeric string, an array or a boolean is rejected
   everywhere.
-- A **`bool`** accepts `true`/`false` under every source. `Text` adds the
-  four textual spellings OpenAPI documents — `"true"`, `"false"`, `"1"`,
-  `"0"` — and `Native` adds `1`, `0`, `"1"`, `"0"`, which is what a
-  `TINYINT(1)` column produces depending on the driver. Under `Json`,
-  none of those: a JSON boolean is spelled `true` or `false` and nothing
-  else, so `"true"` and `1` are both a `422`.
+- A **`bool`** is the JSON literal `true`/`false` under `Json` and
+  `Native`, and `Native` adds `1`, `0`, `"1"`, `"0"`, which is what a
+  `TINYINT(1)` column produces depending on the driver. `Text` has the
+  four textual spellings OpenAPI documents and only those — `"true"`,
+  `"false"`, `"1"`, `"0"`. Under `Json`, nothing but the literal: a JSON
+  boolean is spelled `true` or `false`, so `"true"` and `1` are both a
+  `422`.
+
+Each source is held to its own domain rather than trusted to stay
+inside it. `Text` carries raw strings, so a scalar declaration reading a
+`Text` value binds a textual spelling and nothing else: a real PHP
+`int`, `float` or `bool` is no more a `Text` value than `"42"` is a JSON
+integer. (`array`/`iterable` still take a real array under `Text` — a
+repeated key produces one — and `mixed` is unconstrained everywhere.)
 
 A mismatch is a `422` carrying a violation at that field's own path, in
 the same `errors` list a failed constraint produces — not a value silently
@@ -936,10 +963,9 @@ under `InputSource::Text`, always, whatever the request body's own
 content type says. Several consequences follow directly from this:
 
 - **`bool` accepts the OpenAPI-documented `"true"`/`"false"` spelling
-  too, not just `"1"`/`"0"`.** `Text` translates those two literal
-  spellings into real PHP booleans before the type check, so the check
-  receives an equivalent value rather than a string standing in for one —
-  and the `(bool)` cast never meets the string `"false"`, which would
+  too, not just `"1"`/`"0"`.** Once the type check has accepted one,
+  `Text` translates those two literal spellings into real PHP booleans,
+  so the `(bool)` cast never meets the string `"false"`, which would
   cast to `true`. `bool`'s own `"1"`/`"0"` spellings are unaffected.
 - **A numeric string binds an `int`/`float` parameter**, since text is
   the only spelling a query string or a path segment has. The same

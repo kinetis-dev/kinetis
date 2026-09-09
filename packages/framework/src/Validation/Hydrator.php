@@ -85,8 +85,8 @@ use ReflectionType;
  * that message was built from. resolveScalar() is the one entry every
  * source of a raw scalar goes through — a #[Body] DTO field here, a
  * #[Query]/path parameter via Kinetis\Http\Dispatcher, an MCP tool
- * argument via Kinetis\Mcp\McpDispatcher — so null handling, source
- * normalization, type checking, casting and the field's own constraints
+ * argument via Kinetis\Mcp\McpDispatcher — so null handling, type
+ * checking, source normalization, casting and the field's own constraints
  * all happen once, in one order, and a wrong-shaped value can never
  * reach a real constructor unchecked regardless of which one dispatched
  * it. objectExpectedViolation() and requiredViolation() stay public
@@ -645,10 +645,11 @@ final class Hydrator
      * The one raw-scalar resolution path, entered by every source: a
      * #[Body] DTO field via resolveParameterValue() above, a
      * #[Query]/path parameter via Kinetis\Http\Dispatcher, and an MCP
-     * tool argument via Kinetis\Mcp\McpDispatcher. Null, source
-     * normalization, the declared-type check, the cast, and the field's
-     * own constraints happen here, in that order, so no source can end
-     * up applying a different order or reaching a different answer.
+     * tool argument via Kinetis\Mcp\McpDispatcher. Null, the
+     * declared-type check for the value's own source, that source's own
+     * normalization, the cast, and the field's own constraints happen
+     * here, in that order, so no source can end up applying a different
+     * order or reaching a different answer.
      *
      * Presence is not here. Whether a value is absent, and what an
      * absent one means, is knowable only where it was read: a query key
@@ -677,8 +678,6 @@ final class Hydrator
             return $allowsNull ? [null, []] : [null, [self::nullNotAllowedViolation($path)]];
         }
 
-        $value = self::normalizeForSource($source, $scalarType, $value);
-
         if ($scalarType !== null) {
             $violation = self::typeMismatchViolation($path, $scalarType, $value, $source);
 
@@ -686,6 +685,8 @@ final class Hydrator
                 return [null, [$violation]];
             }
         }
+
+        $value = self::normalizeForSource($source, $scalarType, $value);
 
         // The type check above (for array/iterable specifically) runs
         // against the still-JsonObject-marked value, so it can correctly
@@ -706,15 +707,15 @@ final class Hydrator
      * The one source-specific rewrite there is: `true`/`false` spelled
      * as text. A query string, a path segment and a form-encoded body
      * have no boolean literal, and OpenAPI documents those two words as
-     * a boolean's textual spelling — so they become real booleans before
-     * the shared type check, which then receives an equivalent value
-     * rather than a string standing in for one, and castScalar() never
-     * meets the string `"false"`, whose `(bool)` cast is `true`.
+     * a boolean's textual spelling — so once the type check above has
+     * accepted one, it becomes the boolean it spells, and castScalar()
+     * never meets the string `"false"`, whose `(bool)` cast is `true`.
      *
-     * `bool`'s `"1"`/`"0"` spellings need no rewrite: they pass the
-     * check as raw strings and cast correctly. Nothing else, from any
-     * source, is rewritten at all — a JSON body's own string `"true"`
-     * stays a string, and stays a violation.
+     * `bool`'s `"1"`/`"0"` spellings need no rewrite: they cast
+     * correctly as raw strings. Nothing else, from any source, is
+     * rewritten at all — a JSON body's own string `"true"` never
+     * reaches here, having already been refused as a string where a
+     * boolean was declared.
      */
     private static function normalizeForSource(InputSource $source, ?string $scalarType, mixed $value): mixed
     {
@@ -730,9 +731,15 @@ final class Hydrator
     }
 
     /**
+     * An explicitly-null value for a target whose declared type does not
+     * accept one. Public for Kinetis\Mcp\McpDispatcher, which decides
+     * null for a DTO-typed tool argument before it examines the value's
+     * shape, exactly as resolveParameterValue() does for a #[Body] DTO
+     * field.
+     *
      * @param list<string|int> $path
      */
-    private static function nullNotAllowedViolation(array $path): Violation
+    public static function nullNotAllowedViolation(array $path): Violation
     {
         return new Violation($path, self::CODE_NULL_NOT_ALLOWED, 'must not be null.');
     }
@@ -840,16 +847,12 @@ final class Hydrator
      * describeType()'s generic label.
      *
      * @param list<string|int> $path
+     * @param class-string $class
      */
     private static function classTypedMismatchViolation(array $path, mixed $value, string $class, bool $hydratable): Violation
     {
         if (!$hydratable || is_object($value)) {
-            return new Violation(
-                $path,
-                self::CODE_NOT_AN_INSTANCE,
-                'must be a ' . $class . ' instance.',
-                ['class' => $class],
-            );
+            return self::notAnInstanceViolation($path, $class);
         }
 
         return is_array($value)
@@ -982,41 +985,48 @@ final class Hydrator
     }
 
     /**
-     * `int` accepts a real int from every source, and a finite float
-     * with no fractional part inside the range the `(int)` cast below
-     * can represent: JSON has a single number type, so a producer
-     * writing `42.0` still wrote the integer 42.
+     * `int` accepts a real int under Json and Native, and there a
+     * finite float with no fractional part inside the range the `(int)`
+     * cast below can represent: JSON has a single number type, so a
+     * producer writing `42.0` still wrote the integer 42.
      *
      * A *string* spelled as a plain base-10 integer (`"42"`, `"+42"`,
      * `"-42"`) is an integer's textual spelling, and binds under Text
      * and Native only — under Json a string is a string, and the schema
-     * said integer. Such a string is read as written, never through a
-     * float: a float has 53 bits of mantissa, so `"1.0000000000000001"`
-     * and `"1"` are the same float and only one of them is an integer. A
-     * decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`) and
-     * a whitespace-padded one are all rejected for the same reason `4.5`
-     * is — the field declares an integer and gets one, never a value the
-     * `(int)` cast has to reinterpret.
+     * said integer. It is Text's only spelling, text being the only
+     * thing that source carries. Such a string is read as written,
+     * never through a float: a float has 53 bits of mantissa, so
+     * `"1.0000000000000001"` and `"1"` are the same float and only one
+     * of them is an integer. A decimal spelling (`"42.0"`), an exponent
+     * spelling (`"4.2e1"`) and a whitespace-padded one are all rejected
+     * for the same reason `4.5` is — the field declares an integer and
+     * gets one, never a value the `(int)` cast has to reinterpret.
      *
      * @param list<string|int> $path
      */
     private static function integerMismatchViolation(array $path, mixed $value, InputSource $source): ?Violation
     {
-        if (is_int($value)) {
-            return null;
-        }
+        // A native number binds under Json and Native, each of which
+        // carries real PHP values. Text carries none: every scalar it
+        // holds is a raw string, so an `int` field there binds the
+        // textual spelling below and nothing else.
+        if ($source !== InputSource::Text) {
+            if (is_int($value)) {
+                return null;
+            }
 
-        if (is_float($value)) {
-            // (float) PHP_INT_MAX rounds up to 2**63, one past the largest
-            // representable int, so the upper bound is exclusive;
-            // PHP_INT_MIN is exactly -2**63 as a float, so the lower one
-            // is not.
-            $exactInteger = is_finite($value)
-                && $value === floor($value)
-                && $value >= (float) PHP_INT_MIN
-                && $value < (float) PHP_INT_MAX;
+            if (is_float($value)) {
+                // (float) PHP_INT_MAX rounds up to 2**63, one past the
+                // largest representable int, so the upper bound is
+                // exclusive; PHP_INT_MIN is exactly -2**63 as a float,
+                // so the lower one is not.
+                $exactInteger = is_finite($value)
+                    && $value === floor($value)
+                    && $value >= (float) PHP_INT_MIN
+                    && $value < (float) PHP_INT_MAX;
 
-            return $exactInteger ? null : self::notAnInteger($path);
+                return $exactInteger ? null : self::notAnInteger($path);
+            }
         }
 
         if (is_string($value) && $source !== InputSource::Json) {
@@ -1042,22 +1052,26 @@ final class Hydrator
     }
 
     /**
-     * `float` accepts either JSON number from every source, and a
-     * numeric string — a number's textual spelling — under Text and
-     * Native only. It rejects any value that isn't finite: `"1e999"`
-     * overflows to INF, which is not a number any consumer of this field
-     * can act on.
+     * `float` accepts either JSON number under Json and Native, and a
+     * numeric string — a number's textual spelling, and Text's only one
+     * — under Text and Native. It rejects any value that isn't finite:
+     * `"1e999"` overflows to INF, which is not a number any consumer of
+     * this field can act on.
      *
      * @param list<string|int> $path
      */
     private static function floatMismatchViolation(array $path, mixed $value, InputSource $source): ?Violation
     {
-        if (is_int($value)) {
-            return null;
-        }
+        // See integerMismatchViolation(): a native number is a spelling
+        // Text does not have.
+        if ($source !== InputSource::Text) {
+            if (is_int($value)) {
+                return null;
+            }
 
-        if (is_float($value)) {
-            return is_finite($value) ? null : self::notFinite($path);
+            if (is_float($value)) {
+                return is_finite($value) ? null : self::notFinite($path);
+            }
         }
 
         if (is_string($value) && $source !== InputSource::Json && is_numeric($value)) {
@@ -1076,17 +1090,23 @@ final class Hydrator
     }
 
     /**
-     * Under Json a `bool` field takes the JSON literal and nothing else.
-     * Text and Native additionally admit `1`/`0` and their string
-     * spellings, which every textual source and every database driver
-     * produces; Text's own `"true"`/`"false"` have already become real
-     * booleans in normalizeForSource().
+     * Each source's own boolean vocabulary. Json takes the JSON literal
+     * and nothing else. Text takes the four spellings a query string, a
+     * path segment or a form body can write — `true`, `false`, `1`, `0`
+     * — as the strings they arrive as, and normalizeForSource() turns
+     * the two words into real booleans once this check has accepted
+     * them. Native takes real booleans plus the `1`/`0`/`"1"`/`"0"` a
+     * database driver produces for a boolean column.
      *
      * @param list<string|int> $path
      */
     private static function booleanMismatchViolation(array $path, mixed $value, InputSource $source): ?Violation
     {
-        $accepted = $source === InputSource::Json ? [true, false] : [true, false, 0, 1, '0', '1'];
+        $accepted = match ($source) {
+            InputSource::Json => [true, false],
+            InputSource::Text => ['true', 'false', '1', '0'],
+            InputSource::Native => [true, false, 0, 1, '0', '1'],
+        };
 
         if (in_array($value, $accepted, true)) {
             return null;
@@ -1114,6 +1134,25 @@ final class Hydrator
             self::CODE_TYPE_MISMATCH,
             'must be ' . $article . $expected . ', ' . $given . self::GIVEN_SUFFIX,
             ['expected' => $expected, 'given' => $given],
+        );
+    }
+
+    /**
+     * An object that is not the declared class, for a target that takes
+     * an already-constructed instance and has no way to build one from
+     * the value given. Public for Kinetis\Mcp\McpDispatcher, whose
+     * DTO-typed tool arguments accept the identical value.
+     *
+     * @param list<string|int> $path
+     * @param class-string $class
+     */
+    public static function notAnInstanceViolation(array $path, string $class): Violation
+    {
+        return new Violation(
+            $path,
+            self::CODE_NOT_AN_INSTANCE,
+            'must be a ' . $class . ' instance.',
+            ['class' => $class],
         );
     }
 

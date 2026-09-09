@@ -41,10 +41,14 @@ enum InputSource
      * `application/x-www-form-urlencoded` or `multipart/form-data` body.
      * Every value is a raw string (or a list of them, for a repeated
      * key), so each scalar type has a canonical textual spelling and
-     * that spelling is what binds: a plain base-10 integer for `int`, a
-     * finite numeric literal for `float`, and `true`/`false`/`1`/`0` for
-     * `bool`. A value spelled any other way is rejected rather than
-     * coerced, and no scalar type accepts an array.
+     * that spelling is what binds: a string for `string`, a plain
+     * base-10 integer for `int`, a finite numeric literal for `float`,
+     * and `true`/`false`/`1`/`0` for `bool`. A value spelled any other
+     * way is rejected rather than coerced; a native `int`, `float` or
+     * `bool` is no spelling at all here, since this source has no way to
+     * write one; and no scalar type accepts an array. `mixed` stays
+     * unconstrained, as it is everywhere, and `array`/`iterable` still
+     * take a real array — the one shape a repeated key produces.
      */
     case Text;
 

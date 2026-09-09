@@ -189,11 +189,10 @@ final class JsonSchema
      */
     private static function schemaForListOf(ReflectionParameter $parameter, string $listItemClass, ?callable $classSchema, bool $nullable): array
     {
-        return self::withNullableSchema([
+        return self::withNullableSchema(self::withConstraintSchema([
             'type' => 'array',
             'items' => self::objectSchemaFor($listItemClass, $classSchema),
-            ...self::constraintSchema($parameter),
-        ], $nullable);
+        ], $parameter), $nullable);
     }
 
     /**
@@ -271,10 +270,11 @@ final class JsonSchema
      *
      * forType() itself keeps returning a genuinely empty PHP array `[]`
      * for `mixed`/an untyped or union parameter — deliberately, so the
-     * spread below stays safe (PHP's array-spread operator throws for a
-     * non-iterable `stdClass`, and a constraint attribute on a
-     * `mixed`-typed parameter is legal syntax, so this isn't a
-     * hypothetical). The empty-schema-means-"anything" PHP array is only
+     * merge below stays safe (withConstraintSchema() reads keys from its
+     * base and adds to it, neither of which a `stdClass` does, and a
+     * constraint attribute on a `mixed`-typed parameter is legal syntax,
+     * so this isn't a hypothetical). The empty-schema-means-"anything"
+     * PHP array is only
      * ever cast to a real `stdClass` — so it encodes as JSON `{}`, not
      * the invalid `[]` a bare empty array would produce — once every
      * constraint has already been merged into a genuine plain array, on
@@ -285,32 +285,43 @@ final class JsonSchema
      */
     public static function schemaForScalar(ReflectionParameter $parameter, ?ReflectionType $type): array|\stdClass
     {
-        $schema = [...self::forType($type), ...self::constraintSchema($parameter)];
+        $schema = self::withConstraintSchema(self::forType($type), $parameter);
 
         return $schema === [] ? (object) [] : $schema;
     }
 
     /**
-     * Every rule declared on one parameter, merged into a single schema
-     * fragment — read through Hydrator::collectConstraints(), from the
-     * same literal descriptors Hydrator validates against, so the
-     * published schema and the enforced check can never describe
-     * different rule sets. Each rule is constructed here, asked for its
-     * keywords, and discarded.
+     * $base — the keywords the parameter's own PHP declaration owns —
+     * plus every rule declared on it, merged into a single schema
+     * fragment. The rules are read through
+     * Hydrator::collectConstraints(), from the same literal descriptors
+     * Hydrator validates against, so the published schema and the
+     * enforced check can never describe different rule sets. Each rule
+     * is constructed here, asked for its keywords, and discarded.
      *
-     * Two rules on one parameter may not contribute the same keyword. A
+     * A keyword may be claimed once, by exactly one owner. The PHP type
+     * states the shape — `type`, and a #[ListOf]'s `items` — and a rule
+     * refines it: `#[MinLength(3)] string` narrows which strings the
+     * field takes, and cannot make it something other than a string,
+     * because Hydrator's own type check is not reading the rule. A rule
+     * contributing `type` back would publish a shape the request is not
+     * checked against, so it is refused rather than merged. Two rules
+     * claiming one keyword are refused for the same reason: a
      * `#[MinLength(3)] #[MinLength(5)]` pair states two different
      * minimum lengths, and letting declaration order silently pick one
-     * would publish a document stating a bound the request is not
-     * checked against. That is a definition error, refused here rather
-     * than resolved.
+     * would publish a bound the request is not checked against.
      *
+     * A rule's own keyword is its own: whatever it nests inside that
+     * keyword — an `enum`'s members, a `format`'s name — is the rule
+     * speaking about its own subject and is never inspected here.
+     *
+     * @param array<string, mixed> $base
      * @return array<string, mixed>
      * @throws JsonSchemaException
      */
-    private static function constraintSchema(ReflectionParameter $parameter): array
+    private static function withConstraintSchema(array $base, ReflectionParameter $parameter): array
     {
-        $schema = [];
+        $schema = $base;
         $declaredBy = [];
 
         foreach (Hydrator::collectConstraints($parameter) as $descriptor) {
@@ -319,6 +330,10 @@ final class JsonSchema
             foreach (new $class(...$descriptor['args'])->schema() as $keyword => $value) {
                 if (array_key_exists($keyword, $declaredBy)) {
                     throw JsonSchemaException::duplicateKeyword($keyword, $declaredBy[$keyword], $class);
+                }
+
+                if (array_key_exists($keyword, $base)) {
+                    throw JsonSchemaException::declaredShapeKeyword($keyword, $class);
                 }
 
                 $declaredBy[$keyword] = $class;
@@ -388,11 +403,12 @@ final class JsonSchema
      * that is the empty schema object `{}`, never the empty schema array
      * `[]` a bare PHP `[]` would serialize as. This method still returns
      * a genuine, uncast PHP `[]` for both, deliberately: schemaForScalar()
-     * — the one real caller — merges each Constraint attribute's own
-     * schema fragment into this return value via array-spread, which
-     * throws for a non-iterable `stdClass`; casting here would make that
-     * merge unsafe the moment a constraint attribute is legally (if
-     * oddly) placed on a `mixed`-typed parameter. schemaForScalar()
+     * — the one real caller — hands this return value to
+     * withConstraintSchema() as the base each Constraint attribute's own
+     * keywords merge onto, an array operation a `stdClass` cannot stand
+     * in for; casting here would break that merge the moment a
+     * constraint attribute is legally (if oddly) placed on a
+     * `mixed`-typed parameter. schemaForScalar()
      * applies the `(object)` cast itself, once, only on its own final
      * return value, after every constraint has already been merged as a
      * plain array — see its own docblock.

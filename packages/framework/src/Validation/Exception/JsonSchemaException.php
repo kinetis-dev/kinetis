@@ -14,14 +14,16 @@ use RuntimeException;
  * than publishing a document that describes the wrong wire shape to a
  * client or agent.
  *
- * Three declarations reach this. A builtin type outside
+ * Four declarations reach this. A builtin type outside
  * Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES, which no
  * request value can carry. A class type that cannot be instantiated, for
  * which Hydrator accepts only an already-constructed instance, so no
- * wire value could satisfy an expanded object schema either. And two
- * rules on one parameter claiming the same JSON Schema keyword, where
+ * wire value could satisfy an expanded object schema either. Two rules
+ * on one parameter claiming the same JSON Schema keyword, where
  * publishing either one alone would understate what the request is
- * checked against.
+ * checked against. And a rule claiming a keyword the parameter's own PHP
+ * type already states, which would publish a shape Hydrator does not
+ * check the request against at all.
  */
 final class JsonSchemaException extends RuntimeException
 {
@@ -39,6 +41,16 @@ final class JsonSchemaException extends RuntimeException
         return new self(
             "Cannot generate a JSON Schema for \"{$class}\": it cannot be instantiated, so no request "
             . 'value can be hydrated into it. Use an instantiable class.',
+        );
+    }
+
+    public static function declaredShapeKeyword(string $keyword, string $constraint): self
+    {
+        return new self(
+            "Constraint \"{$constraint}\" contributes the JSON Schema keyword \"{$keyword}\", which the "
+            . 'parameter\'s own PHP type already states. A rule refines the declared shape and cannot '
+            . 'replace it: the declared type is what the request is checked against. Change the '
+            . 'parameter\'s type, or drop that keyword from the rule.',
         );
     }
 

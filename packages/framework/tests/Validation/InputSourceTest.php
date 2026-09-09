@@ -192,6 +192,55 @@ final class InputSourceTest extends TestCase
     }
 
     /**
+     * @return iterable<string, array{array<string, mixed>, list<string|int>}>
+     */
+    public static function textNativePrimitives(): iterable
+    {
+        yield 'a native int for an int field' => [['count' => 42], ['count']];
+        yield 'a native float for a float field' => [['ratio' => 1.5], ['ratio']];
+        yield 'a native int for a float field' => [['ratio' => 2], ['ratio']];
+        yield 'a native bool for a bool field' => [['flag' => true], ['flag']];
+        yield 'the numeric boolean convention for a bool field' => [['flag' => 1], ['flag']];
+    }
+
+    /**
+     * Text is text. A query string, a path segment and a form body
+     * carry raw strings and have no way to write a PHP `int`, `float` or
+     * `bool`, so those are not spellings this source has — the same
+     * reason Json refuses `"42"`. Taking one anyway would make the
+     * source's own documented domain untrue and would quietly bind a
+     * value for a caller that named the wrong source for the bytes it
+     * read.
+     *
+     * @param array<string, mixed> $overrides
+     * @param list<string|int> $path
+     */
+    #[DataProvider('textNativePrimitives')]
+    public function test_text_rejects_a_native_primitive(array $overrides, array $path): void
+    {
+        $data = [...['count' => '1', 'ratio' => '1', 'flag' => '1', 'label' => 'x'], ...$overrides];
+
+        self::assertSame([['path' => $path, 'code' => 'type_mismatch']], self::failures($data, InputSource::Text));
+    }
+
+    /**
+     * The same values under Native, which is where they belong: a
+     * rejection above is about the source, never about the value.
+     */
+    public function test_the_native_primitives_text_rejects_bind_under_native(): void
+    {
+        $request = Hydrator::hydrate(
+            SourceSpellingsRequest::class,
+            ['count' => 42, 'ratio' => 1.5, 'flag' => true, 'label' => 'x'],
+            source: InputSource::Native,
+        );
+
+        self::assertSame(42, $request->count);
+        self::assertSame(1.5, $request->ratio);
+        self::assertTrue($request->flag);
+    }
+
+    /**
      * A driver decides for itself whether a column arrives as an int or
      * as its decimal string, and a `TINYINT(1)` boolean arrives as `1`
      * or `"1"` depending on the connection — so a row handed straight to
