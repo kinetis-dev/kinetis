@@ -125,9 +125,10 @@ final class JsonSchema
      * is null for a method's own parameter list. That is the whole
      * difference between the two: a DTO field may declare the `T|Absent`
      * presence union, a transport method parameter may not, and neither
-     * may declare any other composite type. Rejecting one here means a
-     * tool whose schema cannot be stated truthfully fails at
-     * registration, before an agent is ever shown it.
+     * may declare any other composite type. Rejecting one — in
+     * {@see propertySchema()}, where a parameter's effective type is
+     * settled — means a tool whose schema cannot be stated truthfully
+     * fails at registration, before an agent is ever shown it.
      *
      * `additionalProperties: false` is on every object this produces,
      * including one with no properties at all. It is what
@@ -156,81 +157,7 @@ final class JsonSchema
                 continue;
             }
 
-            // A presence union is described by the type a supplied value
-            // has; every other parameter by what it declares. Hydrator
-            // owns which unions are legal and what they mean, so the
-            // schema cannot drift from what hydration accepts.
-            $absent = $dtoClass !== null ? Hydrator::absentUnion($parameter, $dtoClass) : null;
-            $type = $absent !== null ? $absent[0] : $declared;
-
-            if ($type !== null && !$type instanceof ReflectionNamedType) {
-                throw JsonSchemaException::compositeType($parameter->getName());
-            }
-
-            $nullable = $absent !== null ? $absent[1] : ($type instanceof ReflectionNamedType && $type->allowsNull());
-            // Asked of every parameter, not only the ones that reach
-            // the list branch below, so a #[ListOf]/#[Each] declaration
-            // Hydrator would refuse is refused here too — whatever else
-            // the parameter declares.
-            $listItem = Hydrator::listItem($parameter, $type);
-
-            if ($type instanceof ReflectionNamedType && $type->getName() === UploadedFileInterface::class) {
-                // An UploadedFileInterface-typed #[Body] field is never a
-                // nested DTO — Dispatcher merges it in directly from the
-                // request's own normalized uploaded files (see
-                // mergeUploads()'s own docblock), so
-                // schemaForClassTyped()'s "expand the constructor" logic
-                // has nothing to reflect here (the interface has no
-                // constructor at all) and would otherwise fall back to a
-                // bare, untruthful {type: object}. `{type: string, format:
-                // binary}` is OpenAPI's own real convention for a file
-                // upload field inside a multipart-serialized schema —
-                // truthful for the one content type that can actually
-                // carry one; see OpenApiGenerator::describeRequestBody()
-                // for how the surrounding requestBody itself is scoped
-                // per content type.
-                $properties[$parameter->getName()] = self::withNullableSchema(['type' => 'string', 'format' => 'binary'], $nullable);
-            } elseif ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-                /** @var class-string $class */
-                $class = $type->getName();
-                // A backed enum is a DTO field's own shape: its wire
-                // value is a scalar, and Hydrator turns that into the
-                // case. A transport method's parameter list stays where
-                // it was — an enum there is a class no request value can
-                // construct, so schemaForClassTyped() refuses it and the
-                // tool fails registration rather than advertising a
-                // schema McpDispatcher could not bind.
-                $backingType = $dtoClass !== null ? Hydrator::backedEnumScalarType($class, $parameter) : null;
-
-                $properties[$parameter->getName()] = $backingType !== null
-                    ? self::schemaForEnum($parameter, $class, $backingType, $nullable)
-                    : self::schemaForClassTyped($class, $classSchema, $nullable);
-            } elseif (self::isObjectMap($parameter, $type)) {
-                // #[ObjectMap] is the one `array`-typed property whose
-                // wire shape is a JSON object, so it is the one that
-                // must not fall through to forType()'s `{type: array}`.
-                // `additionalProperties: true` is JSON Schema's own
-                // spelling for "any keys, any values", which is exactly
-                // what Hydrator admits — no per-key schema is declared
-                // because none is checked.
-                $properties[$parameter->getName()] = self::withNullableSchema(
-                    ['type' => 'object', 'additionalProperties' => true],
-                    $nullable,
-                );
-            } elseif ($listItem !== null) {
-                $properties[$parameter->getName()] = self::schemaForListOf($parameter, $listItem, $classSchema, $nullable);
-            } else {
-                $schema = self::schemaForScalar($parameter, $type);
-                // T inside a presence union is never itself nullable —
-                // `null` is a sibling member of the union, not part of T —
-                // so forType() had nothing to widen and the declared
-                // `null` is added here instead. (`mixed` cannot appear in
-                // a PHP union, so the stdClass "anything" schema never
-                // reaches this branch.)
-                $properties[$parameter->getName()] = $absent !== null && is_array($schema)
-                    ? self::withNullableSchema($schema, $absent[1])
-                    : $schema;
-            }
+            $properties[$parameter->getName()] = self::propertySchema($parameter, $declared, $classSchema, $dtoClass);
 
             // Nullability and required presence are independent axes:
             // null is a permitted *value* (reflected in the schema above),
@@ -256,6 +183,133 @@ final class JsonSchema
             'required' => $required,
             'additionalProperties' => false,
         ];
+    }
+
+    /**
+     * One parameter's published schema: the branch its type selects,
+     * widened for null wherever the declaration admits it.
+     *
+     * A presence union is described by the type a supplied value has;
+     * every other parameter by what it declares. Hydrator owns which
+     * unions are legal and what they mean, so the schema cannot drift
+     * from what hydration accepts.
+     *
+     * @param (callable(class-string): array<string, mixed>)|null $classSchema
+     * @param class-string|null $dtoClass as objectSchema() passes it.
+     * @return array<string, mixed>|\stdClass
+     * @throws JsonSchemaException
+     */
+    private static function propertySchema(
+        ReflectionParameter $parameter,
+        ?ReflectionType $declared,
+        ?callable $classSchema,
+        ?string $dtoClass,
+    ): array|\stdClass {
+        $absent = $dtoClass !== null ? Hydrator::absentUnion($parameter, $dtoClass) : null;
+        $type = $absent !== null ? $absent[0] : $declared;
+
+        // Every branch below reads $type as a named type or as nothing
+        // at all; this refusal is what establishes that.
+        if ($type !== null && !$type instanceof ReflectionNamedType) {
+            throw JsonSchemaException::compositeType($parameter->getName());
+        }
+
+        $nullable = $absent !== null ? $absent[1] : ($type !== null && $type->allowsNull());
+        // Asked of every parameter, not only the ones that reach the
+        // list branch below, so a #[ListOf]/#[Each] declaration Hydrator
+        // would refuse is refused here too — whatever else the parameter
+        // declares.
+        $listItem = Hydrator::listItem($parameter, $type);
+
+        if ($type !== null && $type->getName() === UploadedFileInterface::class) {
+            // An UploadedFileInterface-typed #[Body] field is never a
+            // nested DTO — Dispatcher merges it in directly from the
+            // request's own normalized uploaded files (see
+            // mergeUploads()'s own docblock), so
+            // schemaForClassTyped()'s "expand the constructor" logic
+            // has nothing to reflect here (the interface has no
+            // constructor at all) and would otherwise fall back to a
+            // bare, untruthful {type: object}. `{type: string, format:
+            // binary}` is OpenAPI's own real convention for a file
+            // upload field inside a multipart-serialized schema —
+            // truthful for the one content type that can actually
+            // carry one; see OpenApiGenerator::describeRequestBody()
+            // for how the surrounding requestBody itself is scoped
+            // per content type.
+            $schema = self::withNullableSchema(['type' => 'string', 'format' => 'binary'], $nullable);
+        } elseif ($type !== null && !$type->isBuiltin()) {
+            $schema = self::schemaForNonBuiltin($parameter, $type, $classSchema, $dtoClass, $nullable);
+        } elseif (self::isObjectMap($parameter, $type)) {
+            // #[ObjectMap] is the one `array`-typed property whose
+            // wire shape is a JSON object, so it is the one that
+            // must not fall through to forType()'s `{type: array}`.
+            // `additionalProperties: true` is JSON Schema's own
+            // spelling for "any keys, any values", which is exactly
+            // what Hydrator admits — no per-key schema is declared
+            // because none is checked.
+            $schema = self::withNullableSchema(['type' => 'object', 'additionalProperties' => true], $nullable);
+        } elseif ($listItem !== null) {
+            $schema = self::schemaForListOf($parameter, $listItem, $classSchema, $nullable);
+        } else {
+            $schema = self::scalarPropertySchema($parameter, $type, $absent);
+        }
+
+        return $schema;
+    }
+
+    /**
+     * A class-typed parameter's schema: the scalar its backed-enum cases
+     * are written as, or the class's own expanded object schema.
+     *
+     * A backed enum is a DTO field's own shape: its wire value is a
+     * scalar, and Hydrator turns that into the case. A transport
+     * method's parameter list stays where it was — an enum there is a
+     * class no request value can construct, so schemaForClassTyped()
+     * refuses it and the tool fails registration rather than advertising
+     * a schema McpDispatcher could not bind.
+     *
+     * @param (callable(class-string): array<string, mixed>)|null $classSchema
+     * @param class-string|null $dtoClass
+     * @return array<string, mixed>
+     */
+    private static function schemaForNonBuiltin(
+        ReflectionParameter $parameter,
+        ReflectionNamedType $type,
+        ?callable $classSchema,
+        ?string $dtoClass,
+        bool $nullable,
+    ): array {
+        /** @var class-string $class */
+        $class = $type->getName();
+        $backingType = $dtoClass !== null ? Hydrator::backedEnumScalarType($class, $parameter) : null;
+
+        return $backingType !== null
+            ? self::schemaForEnum($parameter, $class, $backingType, $nullable)
+            : self::schemaForClassTyped($class, $classSchema, $nullable);
+    }
+
+    /**
+     * A scalar (or untyped) parameter's schema.
+     *
+     * T inside a presence union is never itself nullable — `null` is a
+     * sibling member of the union, not part of T — so forType() had
+     * nothing to widen and the declared `null` is added here instead.
+     * (`mixed` cannot appear in a PHP union, so the stdClass "anything"
+     * schema never reaches this branch.)
+     *
+     * @param array{0: ReflectionNamedType, 1: bool}|null $absent
+     * @return array<string, mixed>|\stdClass
+     */
+    private static function scalarPropertySchema(
+        ReflectionParameter $parameter,
+        ?ReflectionNamedType $type,
+        ?array $absent,
+    ): array|\stdClass {
+        $schema = self::schemaForScalar($parameter, $type);
+
+        return $absent !== null && is_array($schema)
+            ? self::withNullableSchema($schema, $absent[1])
+            : $schema;
     }
 
     /**
