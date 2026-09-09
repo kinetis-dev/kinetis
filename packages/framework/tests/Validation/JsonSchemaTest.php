@@ -14,6 +14,7 @@ use Kinetis\Tests\Validation\Fixtures\ClaimsKeyword;
 use Kinetis\Tests\Validation\Fixtures\DuplicateKeywordRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
+use Kinetis\Tests\Validation\Fixtures\NullableInFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
@@ -236,6 +237,79 @@ final class JsonSchemaTest extends TestCase
         foreach ($expected as $index => $schema) {
             self::assertSame($schema, JsonSchema::schemaForScalar($params[$index], $params[$index]->getType()));
         }
+    }
+
+    /**
+     * A nullable declaration's `enum` must admit `null` exactly like its
+     * `type` does — JSON Schema requires every keyword on a schema to
+     * hold at once, so publishing `type: [string, null]` beside an
+     * `enum` that omits `null` would reject the very value the type
+     * admits, even though Hydrator accepts it.
+     */
+    public function test_a_nullable_in_constrained_scalar_widens_both_type_and_enum(): void
+    {
+        $fn = static function (#[In(['draft', 'published'])] ?string $status) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => ['string', 'null'], 'enum' => ['draft', 'published', null]],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    public function test_the_same_in_constraint_on_a_non_nullable_scalar_does_not_gain_null(): void
+    {
+        $fn = static function (#[In(['draft', 'published'])] string $status) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'string', 'enum' => ['draft', 'published']],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    public function test_a_nullable_in_constrained_dto_field_widens_both_type_and_enum(): void
+    {
+        $schema = JsonSchema::forClass(NullableInFieldRequest::class);
+
+        self::assertSame(
+            ['type' => ['string', 'null'], 'enum' => ['draft', 'published', null]],
+            $schema['properties']['nullableStatus'],
+        );
+        self::assertSame(
+            ['type' => 'string', 'enum' => ['draft', 'published']],
+            $schema['properties']['status'],
+        );
+    }
+
+    /**
+     * Both an untyped parameter and a `mixed`-typed one accept an
+     * explicit `null` at runtime — Hydrator::compileParameter() answers
+     * `allowsNull` for the untyped case the same way ReflectionNamedType
+     * answers allowsNull() for `mixed` — so #[In]'s `enum` has to gain
+     * `null` for both, not only for the one that carries its own
+     * ReflectionNamedType to ask.
+     *
+     * @param callable(): void $declaration
+     */
+    #[DataProvider('anyValueDeclarationProvider')]
+    public function test_an_in_constraint_on_an_any_value_declaration_gains_null(callable $declaration): void
+    {
+        $params = (new ReflectionFunction($declaration(...)))->getParameters();
+
+        self::assertSame(
+            ['enum' => ['draft', 'published', null]],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{callable}>
+     */
+    public static function anyValueDeclarationProvider(): iterable
+    {
+        yield 'untyped' => [static function (#[In(['draft', 'published'])] $status) {}];
+        yield 'mixed' => [static function (#[In(['draft', 'published'])] mixed $status) {}];
     }
 
     public function test_a_runtime_only_constraint_leaves_the_schema_untouched(): void

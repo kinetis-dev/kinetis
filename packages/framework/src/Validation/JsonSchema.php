@@ -486,8 +486,15 @@ final class JsonSchema
      * showed only `{type: integer}`, with no hint of the constraint a
      * client would actually need to satisfy.
      *
-     * forType() itself keeps returning a genuinely empty PHP array `[]`
-     * for `mixed` and an untyped parameter — deliberately, so the
+     * This reads baseTypeSchema() rather than forType() so nullability is
+     * widened once, last, over the completed schema — the same ordering
+     * schemaForEnum() uses — rather than by forType() before a rule's
+     * keywords are merged in. Widening first would leave a rule
+     * contributing a second closed domain (#[In]'s `enum`) rejecting the
+     * `null` the widened `type` already admits.
+     *
+     * baseTypeSchema() itself keeps returning a genuinely empty PHP array
+     * `[]` for `mixed` and an untyped parameter — deliberately, so the
      * merge below stays safe (withConstraintSchema() reads keys from its
      * base and adds to it, neither of which a `stdClass` does, and a
      * constraint attribute on a `mixed`-typed parameter is legal syntax,
@@ -496,14 +503,27 @@ final class JsonSchema
      * ever cast to a real `stdClass` — so it encodes as JSON `{}`, not
      * the invalid `[]` a bare empty array would produce — once every
      * constraint has already been merged into a genuine plain array, on
-     * the way out. A schema left non-empty by a merged constraint (e.g.
-     * `#[In(['a', 'b'])] mixed $x`) is untouched.
+     * the way out. A schema left non-empty by a merged constraint still
+     * widens for null: `#[In(['a', 'b'])] mixed $x` has no `type`
+     * keyword for withNullableSchema() to touch, but its merged `enum`
+     * grows to admit `null` exactly like a nullable scalar's does —
+     * `resolveScalar()` returns an explicit `null` for `mixed` without
+     * ever running the rule against it, the same short-circuit an
+     * untyped or nullable-scalar field gets.
      *
      * @return array<string, mixed>|\stdClass
      */
     public static function schemaForScalar(ReflectionParameter $parameter, ?ReflectionType $type): array|\stdClass
     {
-        $schema = self::withConstraintSchema(self::forType($type), $parameter);
+        $base = $type instanceof ReflectionNamedType ? self::baseTypeSchema($type) : [];
+        // Hydrator::compileParameter() sets its own compiled plan's
+        // `allowsNull` the identical way: an untyped parameter has no
+        // ReflectionNamedType to ask, but resolveScalar() still accepts
+        // an explicit null for it before running its constraints, so the
+        // published schema has to widen for null here too, not only when
+        // $type carries its own answer.
+        $nullable = $type === null || $type->allowsNull();
+        $schema = self::withNullableSchema(self::withConstraintSchema($base, $parameter), $nullable);
 
         return $schema === [] ? (object) [] : $schema;
     }
@@ -600,9 +620,9 @@ final class JsonSchema
     }
 
     /**
-     * The JSON Schema fragment for one builtin type. Only
-     * `Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES` is
-     * describable: every other builtin — `null`, `true`, `false`,
+     * The JSON Schema fragment for one builtin type, widened for
+     * nullability. Only `Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES`
+     * is describable: every other builtin — `null`, `true`, `false`,
      * `object`, `callable` — has no request value that could satisfy it,
      * and is refused here rather than published as a schema no client
      * could ever meet. `iterable` shares `array`'s fragment: decoded
@@ -612,24 +632,20 @@ final class JsonSchema
      * `self`/`parent`/`static` report `isBuiltin() === false` and are
      * routed through objectSchema()'s class-typed branch instead.)
      *
-     * `mixed` and an untyped parameter (the latter never a
-     * ReflectionNamedType, so caught by the guard clause immediately
-     * below) both mean "any JSON value" — JSON Schema's own way to say
-     * that is the empty schema object `{}`, never the empty schema array
-     * `[]` a bare PHP `[]` would serialize as. This method still returns
-     * a genuine, uncast PHP `[]` for both, deliberately: schemaForScalar()
-     * — the one real caller — hands this return value to
-     * withConstraintSchema() as the base each Constraint attribute's own
-     * keywords merge onto, an array operation a `stdClass` cannot stand
-     * in for; casting here would break that merge the moment a
-     * constraint attribute is legally (if oddly) placed on a
-     * `mixed`-typed parameter. A composite type never reaches here at
-     * all: objectSchema() refuses one before describing the parameter,
-     * and the guard clause below is what answers an untyped one.
-     * schemaForScalar()
-     * applies the `(object)` cast itself, once, only on its own final
-     * return value, after every constraint has already been merged as a
-     * plain array — see its own docblock.
+     * An untyped parameter is never a ReflectionNamedType, so it is
+     * caught by the guard clause below rather than reaching
+     * baseTypeSchema() at all; `mixed` reaches it and comes back `[]`,
+     * which withNullableSchema() correctly leaves alone (nothing to
+     * widen) regardless of allowsNull() — "any JSON value" already
+     * includes `null`.
+     *
+     * schemaForScalar() does not call this directly: it reads
+     * baseTypeSchema() itself and widens nullability only after a
+     * parameter's constraint keywords are merged in, so a rule
+     * contributing a second closed domain (#[In]'s `enum`) is widened
+     * too — see that method's own docblock. This method keeps widening
+     * immediately because it is also a direct, public probe of one
+     * declared type's own schema, with no constraint to merge.
      *
      * @return array<string, mixed>
      */
@@ -639,7 +655,20 @@ final class JsonSchema
             return [];
         }
 
-        $schema = match ($type->getName()) {
+        return self::withNullableSchema(self::baseTypeSchema($type), $type->allowsNull());
+    }
+
+    /**
+     * One declared builtin type's own schema, before any nullability
+     * widening or constraint merge — the non-null declaration domain
+     * schemaForScalar() and forType() both widen or merge onto, each in
+     * its own order.
+     *
+     * @return array<string, mixed>
+     */
+    private static function baseTypeSchema(ReflectionNamedType $type): array
+    {
+        return match ($type->getName()) {
             'int' => ['type' => 'integer'],
             'float' => ['type' => 'number'],
             'bool' => ['type' => 'boolean'],
@@ -651,14 +680,10 @@ final class JsonSchema
             'array', 'iterable' => ['type' => 'array'],
             // `mixed` genuinely accepts every JSON value, null included —
             // the empty schema (`{}` once schemaForScalar() casts it, see
-            // this method's own docblock for why not here) is JSON
-            // Schema's own way to say "anything", so withNullableSchema()
-            // below correctly leaves it alone (nothing to widen) regardless
-            // of allowsNull().
+            // its own docblock for why not here) is JSON Schema's own way
+            // to say "anything".
             'mixed' => [],
             default => throw JsonSchemaException::unsupportedBuiltinType($type->getName()),
         };
-
-        return self::withNullableSchema($schema, $type->allowsNull());
     }
 }
