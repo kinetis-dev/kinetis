@@ -585,6 +585,25 @@ final class JsonSchemaTest extends TestCase
         JsonSchema::forParameters($params);
     }
 
+    /**
+     * A transport method's own parameter list is where this refusal
+     * fires: a DTO field's non-presence union is already refused in
+     * Hydrator's hydration vocabulary, where the plan is compiled.
+     * Neither a union nor an intersection has one wire shape a schema
+     * could state, so the method fails registration instead of
+     * advertising a shape no request could match.
+     */
+    public function test_a_composite_typed_transport_parameter_is_rejected(): void
+    {
+        $fn = static function (int|string $a) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('a union or intersection type has no single wire shape to publish');
+
+        JsonSchema::forParameters($params);
+    }
+
     public function test_an_uploaded_file_field_is_still_described_as_a_binary_string(): void
     {
         $schema = JsonSchema::forClass(AvatarUploadRequest::class);
