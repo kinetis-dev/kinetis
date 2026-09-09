@@ -8,6 +8,7 @@ use DomainException;
 use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 use Kinetis\AuthJwt\Exception\RefreshTokenUnavailableException;
 use Kinetis\AuthJwt\Exception\RevocationUnavailableException;
+use Kinetis\AuthJwt\JwtAuthenticator;
 use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\JwtSigningKey;
@@ -15,6 +16,7 @@ use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\RefreshTokenStore;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\AuthJwt\Tests\Fixtures\FailingSimpleCache;
+use Kinetis\AuthJwt\Tests\Fixtures\ThrowingSimpleCache;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\CallableRequestHandler;
 use Nyholm\Psr7\ServerRequest;
@@ -29,10 +31,11 @@ use Throwable;
  * SensitiveParameterValue in the frame instead.
  *
  * One representative failure per credential this package passes — key
- * material, issued claims, the request a bearer token arrived in, a
- * refresh token, a revocation id — against the public entry path that
- * carries it. Frames owned by firebase/php-jwt, PSR-7 and the
- * application are outside this package's reach and are not asserted on.
+ * material, issued claims, the request a bearer token arrived in, the
+ * extracted token bytes themselves, a refresh token, a revocation id —
+ * against the public entry path that carries it. Frames owned by
+ * firebase/php-jwt, PSR-7 and the application are outside this
+ * package's reach and are not asserted on.
  */
 final class TraceSecrecyTest extends TestCase
 {
@@ -93,7 +96,10 @@ final class TraceSecrecyTest extends TestCase
         $app = new AppScope();
         $app->boot();
 
-        $middleware = new JwtAuthMiddleware(JwtVerificationKeys::hmacSecret(self::SECRET), $app->createRequestScope());
+        $middleware = new JwtAuthMiddleware(
+            new JwtAuthenticator(JwtVerificationKeys::hmacSecret(self::SECRET)),
+            $app->createRequestScope(),
+        );
 
         try {
             $middleware->process(
@@ -103,6 +109,29 @@ final class TraceSecrecyTest extends TestCase
             self::fail('Expected the handler failure to propagate.');
         } catch (RuntimeException $e) {
             self::assertRedactedAt($e, JwtAuthMiddleware::class . '::process', $token);
+        }
+    }
+
+    /**
+     * The token leaves the request at the parser and travels on as bare
+     * bytes, so the service it reaches carries it as an ordinary
+     * argument — redacted there too. A revocation lookup that throws is
+     * the failure that raises while authenticate() is still on the
+     * stack, which is what makes its frame observable at all.
+     */
+    public function test_a_failing_revocation_lookup_hides_the_token(): void
+    {
+        $token = new JwtIssuer(JwtSigningKey::hmacSecret(self::SECRET))->issue('user-42');
+        $authenticator = new JwtAuthenticator(
+            JwtVerificationKeys::hmacSecret(self::SECRET),
+            revocationStore: new RevocationStore(new ThrowingSimpleCache()),
+        );
+
+        try {
+            $authenticator->authenticate($token);
+            self::fail('Expected the revocation lookup failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertRedactedAt($e, JwtAuthenticator::class . '::authenticate', $token);
         }
     }
 

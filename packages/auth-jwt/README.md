@@ -22,37 +22,36 @@ Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
-A PSR-15 route middleware that verifies an `Authorization: Bearer <token>`
-header's signature and registers the decoded claims on the current
-request as both `CurrentUserInterface` and the concrete `JwtUser` (the
-identical object either way — inject `JwtUser` directly when you need a
-claim beyond the subject, `roles` or `jti` for instance), plus an issuer
-for signing tokens.
-Verification via [`firebase/php-jwt`](https://github.com/googleapis/php-jwt)
-(HS256/RS256, optional per-token revocation) — no database or cache
-lookup; the signed claims are the entire authentication decision.
+`JwtAuthenticator` holds the whole verification decision — a token in, a
+`JwtUser` or `null` out — and a PSR-15 route middleware reads the
+`Authorization: Bearer <token>` header, hands the credential over, and
+registers the result on the current request as both
+`CurrentUserInterface` and the concrete `JwtUser` (the identical object
+either way — inject `JwtUser` directly when you need a claim beyond the
+subject, `roles` or `jti` for instance). Plus an issuer for signing
+tokens. Verification via
+[`firebase/php-jwt`](https://github.com/googleapis/php-jwt)
+(HS256/RS256) — no required user or database lookup; the signed claims
+are the authentication decision on their own. Configuring a revocation
+store adds one optional per-token cache lookup.
+
+```php
+// bootstrap.php — one configured authenticator, shared by every request.
+use Kinetis\AuthJwt\JwtAuthenticator;
+use Kinetis\AuthJwt\JwtVerificationKeys;
+
+$app->instance(JwtAuthenticator::class, new JwtAuthenticator(
+    JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
+));
+```
 
 ```php
 use Kinetis\AuthJwt\JwtAuthMiddleware;
-use Kinetis\AuthJwt\JwtVerificationKeys;
-use Kinetis\Config\Config;
-use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\CurrentUserInterface;
 
-final class AppJwtAuthMiddleware extends JwtAuthMiddleware
-{
-    public function __construct(RequestScope $scope, Config $config)
-    {
-        parent::__construct(
-            JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
-            $scope,
-        );
-    }
-}
-
-#[Middleware(AppJwtAuthMiddleware::class)]
+#[Middleware(JwtAuthMiddleware::class)]
 final readonly class OrderController
 {
     public function __construct(
@@ -69,7 +68,7 @@ final readonly class OrderController
 
 Keys are configured through one immutable value on each side:
 `JwtVerificationKeys::hmacSecret()`/`rsaPublicKey()`/`jwks()` for the
-middleware, `JwtSigningKey::hmacSecret()`/`rsaPrivateKey()` for
+authenticator, `JwtSigningKey::hmacSecret()`/`rsaPrivateKey()` for
 `JwtIssuer`. Each names its own algorithm and key id, and validates the
 material where it is written rather than on the first request.
 

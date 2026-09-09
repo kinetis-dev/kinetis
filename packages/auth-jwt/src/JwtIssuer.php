@@ -17,7 +17,7 @@ use Kinetis\AuthJwt\Exception\JwtIssuerException;
  *
  * $issuer/$audience stamp fixed `iss`/`aud` claims on every token this
  * instance issues — the trusted-configuration side of
- * JwtAuthMiddleware's own $expectedIssuer/$acceptedAudiences.
+ * JwtAuthenticator's own $expectedIssuer/$acceptedAudiences.
  * Deliberately not settable through $claims: a value an application
  * could override per call would not be trustworthy configuration, the
  * same reasoning `sub`/`iat`/`jti`/`exp` already follow. $audience

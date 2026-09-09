@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Auth;
 
 use Kinetis\Container\RequestScope;
-use Kinetis\Http\Auth\BearerCredentialParser;
+use Kinetis\Http\Auth\AuthorizationToken68Parser;
 use Kinetis\Http\CurrentUserInterface;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
@@ -34,17 +34,18 @@ use Psr\Http\Server\RequestHandlerInterface;
  * concrete implementation of it.
  *
  * The `Authorization` header itself is parsed by
- * Kinetis\Http\Auth\BearerCredentialParser — the exact accepted wire
- * grammar (case-insensitive scheme, one-or-more-SP separator, the
- * token68/b64token credential alphabet) is documented there once and
- * shared with Kinetis\AuthJwt\JwtAuthMiddleware, rather than duplicated
- * and risking drift between the two.
+ * Kinetis\Http\Auth\AuthorizationToken68Parser with the `Bearer`
+ * scheme — the exact accepted wire grammar (case-insensitive scheme,
+ * one-or-more-SP separator, the token68/b64token credential alphabet)
+ * is documented there once and shared with
+ * Kinetis\AuthJwt\JwtAuthMiddleware, rather than duplicated and risking
+ * drift between the two.
  *
  * Not final, for the same reason JwtAuthMiddleware and
  * RateLimitMiddleware are not: an attribute only attaches to a class by
  * declaring it there, so joining a middleware group
- * (#[AsMiddlewareGroup('mcp')] on a thin subclass) requires one — as
- * does fixing constructor defaults, the reason the other two are open.
+ * (#[AsMiddlewareGroup('mcp')] on an otherwise empty subclass) requires
+ * one.
  */
 readonly class BearerAuthMiddleware implements MiddlewareInterface
 {
@@ -56,7 +57,7 @@ readonly class BearerAuthMiddleware implements MiddlewareInterface
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $token = BearerCredentialParser::parse($request);
+        $token = AuthorizationToken68Parser::parse($request, 'Bearer');
 
         if ($token === null) {
             return $this->unauthorized();

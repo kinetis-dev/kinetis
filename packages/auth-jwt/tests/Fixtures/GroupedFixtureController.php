@@ -8,14 +8,14 @@ use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\CurrentUserInterface;
 
-#[Middleware(IssuerAudienceCheckingFixtureMiddleware::class)]
-final readonly class IssuerAudienceCheckedFixtureController
+#[Middleware('@jwt')]
+final readonly class GroupedFixtureController
 {
     public function __construct(
         private CurrentUserInterface $user,
     ) {}
 
-    #[Get('/issuer-audience-checked')]
+    #[Get('/grouped')]
     public function show(): array
     {
         return ['userId' => $this->user->id()];

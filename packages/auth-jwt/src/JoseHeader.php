@@ -25,7 +25,7 @@ namespace Kinetis\AuthJwt;
  *
  * parse() answers null for every rejection rather than naming a reason:
  * its caller's whole vocabulary for an unusable token is one generic
- * 401 (see JwtAuthMiddleware).
+ * rejection (see JwtAuthenticator).
  *
  * The limits are fixed rather than configurable, and each sits far
  * above what a real token needs, so a hostile sender cannot choose how

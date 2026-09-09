@@ -28,7 +28,8 @@ final class HttpCacheTest extends TestCase
                     'parameters' => [
                         [
                             'name' => 'name', 'scalarType' => 'string', 'dtoClass' => null, 'nestedPlan' => null,
-                            'listItemClass' => null, 'listItemPlan' => null, 'hasDefault' => false, 'defaultValue' => null,
+                            'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false,
+                            'hasDefault' => false, 'defaultValue' => null,
                             'allowsNull' => false,
                             'constraints' => [
                                 ['class' => 'Kinetis\\Validation\\Constraints\\MinLength', 'args' => [3]],
@@ -97,7 +98,8 @@ final class HttpCacheTest extends TestCase
                     'parameters' => [
                         [
                             'name' => 'name', 'scalarType' => 'string', 'dtoClass' => null, 'nestedPlan' => null,
-                            'listItemClass' => null, 'listItemPlan' => null, 'hasDefault' => false, 'defaultValue' => null,
+                            'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false,
+                            'hasDefault' => false, 'defaultValue' => null,
                             'allowsNull' => false, 'constraints' => [],
                         ],
                     ],

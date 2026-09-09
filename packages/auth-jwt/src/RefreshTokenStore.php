@@ -13,7 +13,7 @@ use Psr\SimpleCache\CacheInterface;
  * A cache-backed, opaque refresh token — unlike an access token, this
  * needs storage, but only touched at a dedicated refresh endpoint, not
  * on every request, so it doesn't reopen the no-storage-lookup reasoning
- * JwtIssuer/JwtAuthMiddleware are built around.
+ * JwtIssuer/JwtAuthenticator are built around.
  *
  * Single-use: redeem() consumes a token the moment it's looked up, valid
  * or not, in one atomic operation — reading it and deleting it in two

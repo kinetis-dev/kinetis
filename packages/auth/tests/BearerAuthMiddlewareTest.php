@@ -161,21 +161,22 @@ final class BearerAuthMiddlewareTest extends TestCase
     /**
      * A concise grammar matrix run through the real process() entry
      * point — the same shape of matrix core's own
-     * BearerCredentialParserTest already proves at the parser level, run
-     * here to prove the middleware actually calls the parser and acts
-     * on its result correctly, not just that the parser itself is
-     * correct in isolation. $expectedCredential is the exact bytes
-     * expected to reach the provider on success, or null when the
-     * header must never reach the provider at all.
+     * AuthorizationToken68ParserTest already proves at the parser
+     * level, run here to prove the middleware actually calls the parser
+     * with the `Bearer` scheme and acts on its result correctly, not
+     * just that the parser itself is correct in isolation.
+     * $expectedCredential is the exact bytes expected to reach the
+     * provider on success, or null when the header must never reach the
+     * provider at all.
      *
      * Leading/trailing whitespace around the header value is
      * deliberately not one of these cases: nyholm/psr7 (used throughout
      * Kinetis) already strips it when a header is set, per RFC 9110's
      * own OWS-stripping guidance — confirmed directly, not assumed — so
      * a real request built through it can never carry that whitespace
-     * as far as this parser. Core's own BearerCredentialParserTest
-     * proves that case against the raw string, where it's actually
-     * reachable.
+     * as far as this parser. Core's own
+     * AuthorizationToken68ParserTest proves that case against the raw
+     * string, where it's actually reachable.
      *
      * @return iterable<string, array{string, string|null}>
      */
@@ -213,10 +214,10 @@ final class BearerAuthMiddlewareTest extends TestCase
     }
 
     /**
-     * Two genuinely separate Authorization header lines never reach the
+     * Two separate Authorization header lines never reach the
      * provider at all — the same ambiguity core's own
-     * BearerCredentialParserTest proves at the parser level, proven here
-     * through the real middleware.
+     * AuthorizationToken68ParserTest proves at the parser level, proven
+     * here through the real middleware.
      */
     public function test_duplicate_authorization_headers_never_reach_the_provider(): void
     {

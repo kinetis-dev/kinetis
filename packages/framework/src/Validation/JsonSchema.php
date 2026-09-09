@@ -9,7 +9,9 @@ use Kinetis\Validation\Constraints\Email;
 use Kinetis\Validation\Constraints\GreaterThan;
 use Kinetis\Validation\Constraints\In;
 use Kinetis\Validation\Constraints\LessThan;
+use Kinetis\Validation\Constraints\MaxItems;
 use Kinetis\Validation\Constraints\MaxLength;
+use Kinetis\Validation\Constraints\MinItems;
 use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
@@ -114,8 +116,20 @@ final class JsonSchema
                 /** @var class-string $class */
                 $class = $type->getName();
                 $properties[$parameter->getName()] = self::schemaForClassTyped($class, $classSchema, $nullable);
+            } elseif (self::isObjectMap($parameter)) {
+                // #[ObjectMap] is the one `array`-typed property whose
+                // wire shape is a JSON object, so it is the one that
+                // must not fall through to forType()'s `{type: array}`.
+                // `additionalProperties: true` is JSON Schema's own
+                // spelling for "any keys, any values", which is exactly
+                // what Hydrator admits — no per-key schema is declared
+                // because none is checked.
+                $properties[$parameter->getName()] = self::withNullableSchema(
+                    ['type' => 'object', 'additionalProperties' => true],
+                    $nullable,
+                );
             } elseif (($listItemClass = self::listItemClassFor($parameter)) !== null) {
-                $properties[$parameter->getName()] = self::schemaForListOf($listItemClass, $classSchema, $nullable);
+                $properties[$parameter->getName()] = self::schemaForListOf($parameter, $listItemClass, $classSchema, $nullable);
             } else {
                 $properties[$parameter->getName()] = self::schemaForScalar($parameter, $type);
             }
@@ -167,15 +181,22 @@ final class JsonSchema
      * {type: object} that would tell an agent nothing about what each
      * element looks like.
      *
+     * Constraint attributes merge here for the same reason they merge
+     * into schemaForScalar()'s plain-array schema: Hydrator runs every
+     * Constraint on a #[ListOf] property once its elements are hydrated,
+     * so a `#[MinItems(1)]` the request actually has to satisfy belongs
+     * in the schema describing it.
+     *
      * @param class-string $listItemClass
      * @param (callable(class-string): array<string, mixed>)|null $classSchema
      * @return array<string, mixed>
      */
-    private static function schemaForListOf(string $listItemClass, ?callable $classSchema, bool $nullable): array
+    private static function schemaForListOf(ReflectionParameter $parameter, string $listItemClass, ?callable $classSchema, bool $nullable): array
     {
         return self::withNullableSchema([
             'type' => 'array',
             'items' => self::objectSchemaFor($listItemClass, $classSchema),
+            ...self::constraintSchema($parameter),
         ], $nullable);
     }
 
@@ -254,27 +275,60 @@ final class JsonSchema
      *
      * forType() itself keeps returning a genuinely empty PHP array `[]`
      * for `mixed`/an untyped or union parameter — deliberately, so the
-     * `[...$schema, ...]` spread two lines below stays safe (PHP's array-
-     * spread operator throws for a non-iterable `stdClass`, and a
-     * constraint attribute on a `mixed`-typed parameter is legal syntax,
-     * so this isn't a hypothetical). The empty-schema-means-"anything"
-     * PHP array is only ever cast to a real `stdClass` — so it encodes as
-     * JSON `{}`, not the invalid `[]` a bare empty array would produce —
-     * once every constraint has already been merged into a genuine plain
-     * array, on the way out. A schema left non-empty by a merged
-     * constraint (e.g. `#[In(['a', 'b'])] mixed $x`) is untouched.
+     * spread below stays safe (PHP's array-spread operator throws for a
+     * non-iterable `stdClass`, and a constraint attribute on a
+     * `mixed`-typed parameter is legal syntax, so this isn't a
+     * hypothetical). The empty-schema-means-"anything" PHP array is only
+     * ever cast to a real `stdClass` — so it encodes as JSON `{}`, not
+     * the invalid `[]` a bare empty array would produce — once every
+     * constraint has already been merged into a genuine plain array, on
+     * the way out. A schema left non-empty by a merged constraint (e.g.
+     * `#[In(['a', 'b'])] mixed $x`) is untouched.
      *
      * @return array<string, mixed>|\stdClass
      */
     public static function schemaForScalar(ReflectionParameter $parameter, ?ReflectionType $type): array|\stdClass
     {
-        $schema = self::forType($type);
+        $schema = [...self::forType($type), ...self::constraintSchema($parameter)];
+
+        return $schema === [] ? (object) [] : $schema;
+    }
+
+    /**
+     * Every Constraint attribute on one parameter, merged into a single
+     * schema fragment in declaration order — the same set Hydrator runs
+     * against the value, so the schema and the check cannot disagree
+     * about which constraints apply. A later constraint writing a
+     * keyword an earlier one already wrote wins, matching the order
+     * Hydrator itself evaluates them in.
+     *
+     * @return array<string, mixed>
+     */
+    private static function constraintSchema(ReflectionParameter $parameter): array
+    {
+        $schema = [];
 
         foreach ($parameter->getAttributes(Constraint::class, ReflectionAttribute::IS_INSTANCEOF) as $attribute) {
             $schema = [...$schema, ...self::forConstraint($attribute->newInstance())];
         }
 
-        return $schema === [] ? (object) [] : $schema;
+        return $schema;
+    }
+
+    /**
+     * Whether $parameter is typed `array` and carries #[ObjectMap] — the
+     * same attribute Kinetis\Validation\Hydrator reads to admit a JSON
+     * object there, read here so the schema and the hydration behavior
+     * it describes can never disagree about which properties are object
+     * maps.
+     */
+    private static function isObjectMap(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+
+        return $type instanceof ReflectionNamedType
+            && $type->getName() === 'array'
+            && $parameter->getAttributes(ObjectMap::class) !== [];
     }
 
     /**
@@ -369,6 +423,8 @@ final class JsonSchema
             $constraint instanceof Email => ['format' => 'email'],
             $constraint instanceof MinLength => ['minLength' => $constraint->length()],
             $constraint instanceof MaxLength => ['maxLength' => $constraint->length()],
+            $constraint instanceof MinItems => ['minItems' => $constraint->count()],
+            $constraint instanceof MaxItems => ['maxItems' => $constraint->count()],
             $constraint instanceof GreaterThan => ['exclusiveMinimum' => $constraint->threshold()],
             $constraint instanceof LessThan => ['exclusiveMaximum' => $constraint->threshold()],
             $constraint instanceof In => ['enum' => $constraint->choices()],

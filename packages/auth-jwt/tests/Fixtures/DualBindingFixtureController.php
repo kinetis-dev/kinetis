@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt\Tests\Fixtures;
 
+use Kinetis\AuthJwt\JwtAuthMiddleware;
 use Kinetis\AuthJwt\JwtUser;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
@@ -16,7 +17,7 @@ use Kinetis\Http\CurrentUserInterface;
  * they resolve to the identical object, and that a claim only JwtUser
  * exposes (a custom one, plus jti) is genuinely reachable through it.
  */
-#[Middleware(FixtureJwtAuthMiddleware::class)]
+#[Middleware(JwtAuthMiddleware::class)]
 final readonly class DualBindingFixtureController
 {
     public function __construct(
