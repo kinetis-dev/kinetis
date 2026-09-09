@@ -19,8 +19,8 @@ use UnexpectedValueException;
  * string a subject always is here (see JwtIssuer) — the same identity
  * RefreshTokenStore::redeem() hands back, so one application id names
  * one user across the access token and the refresh token alike.
- * JwtAuthMiddleware rejects a token whose `sub` is anything else, so a
- * JwtUser it registered always has one.
+ * JwtAuthenticator rejects a token whose `sub` is anything else, so a
+ * JwtUser it returned always has one.
  */
 final readonly class JwtUser implements CurrentUserInterface
 {

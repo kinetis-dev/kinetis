@@ -37,15 +37,15 @@ final readonly class OrderController
 
 ## The accepted `Authorization` header
 
-`Kinetis\Http\Auth\BearerCredentialParser` (core) parses the header —
-the same class {doc}`auth-jwt`'s `JwtAuthMiddleware` uses, so both
-packages accept identical input rather than risking two independently-
-drifting parsers. The scheme (`Bearer`) is matched case-insensitively;
-the separator between scheme and credential must be one or more literal
-space characters (a tab or other whitespace doesn't count); the
-credential itself must consist only of the RFC 6750 `b64token`
-characters (`A-Za-z0-9-._~+/`) with `=` padding allowed only as a
-trailing run. A request with anything other than exactly one
+`Kinetis\Http\Auth\AuthorizationToken68Parser` (core) parses the header,
+called with the `Bearer` scheme — the same class {doc}`auth-jwt`'s
+`JwtAuthMiddleware` uses, so both packages accept identical input rather
+than risking two independently-drifting parsers. The scheme is matched
+case-insensitively; the separator between scheme and credential must be
+one or more literal space characters (a tab or other whitespace doesn't
+count); the credential itself must consist only of the RFC 6750
+`b64token` characters (`A-Za-z0-9-._~+/`) with `=` padding allowed only
+as a trailing run. A request with anything other than exactly one
 `Authorization` header line is rejected too — two lines are ambiguous,
 not a value to comma-join and hope. Any of this failing is
 indistinguishable from an unknown token: the same generic `401`.
@@ -351,5 +351,6 @@ failure without this guard.
   middleware distinction, and `RequestScope` self-injection.
 - {doc}`persistence` — `Query`/`TransactionGuard` for a database-backed
   `UserProviderInterface`.
-- {doc}`auth-jwt` — stateless JWT verification instead, with no token
-  storage at all.
+- {doc}`auth-jwt` — stateless JWT verification instead, with no user
+  storage of your own to implement: the signed claims carry the
+  identity, and only optional per-token revocation touches a store.

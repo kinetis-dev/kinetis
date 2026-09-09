@@ -8,43 +8,44 @@ composer require kinetis/auth-jwt
 ```
 ````
 
-Stateless JWT authentication: a PSR-15 route middleware that verifies an
-`Authorization: Bearer <token>` header's signature and registers the
-decoded claims on the current request as both `CurrentUserInterface` and
-the concrete `JwtUser` (the identical object either way — see "Reading
-claims beyond `id()`" below), plus an issuer for signing tokens.
-Verification via
+Stateless JWT authentication in two pieces: `JwtAuthenticator` holds the
+whole verification decision — a token in, a `JwtUser` or `null` out — and
+`JwtAuthMiddleware` is the PSR-15 route middleware that reads the
+`Authorization: Bearer <token>` header, hands the credential over, and
+registers the result on the current request as both
+`CurrentUserInterface` and the concrete `JwtUser` (the identical object
+either way — see "Reading claims beyond `id()`" below). Plus an issuer
+for signing tokens. Verification via
 [`firebase/php-jwt`](https://github.com/googleapis/php-jwt) — no
-database or cache lookup, and no equivalent of {doc}`auth`'s
-`UserProviderInterface`: the signed claims are the entire authentication
-decision. The `Authorization` header itself is parsed by
-`Kinetis\Http\Auth\BearerCredentialParser` (core), the same class
-{doc}`auth`'s `BearerAuthMiddleware` uses — see that page's "The
-accepted `Authorization` header" section for the exact wire grammar.
+required user or database lookup, and no equivalent of {doc}`auth`'s
+`UserProviderInterface`: the signed claims are the authentication
+decision on their own. Configuring a revocation store adds the one
+optional cache lookup this package makes per request — see "Revoking
+tokens" below. The `Authorization` header itself is parsed by
+`Kinetis\Http\Auth\AuthorizationToken68Parser` (core) with the `Bearer`
+scheme, the same class {doc}`auth`'s `BearerAuthMiddleware` uses — see
+that page's "The accepted `Authorization` header" section for the exact
+wire grammar.
+
+```{code-block} php
+// bootstrap.php — one configured authenticator, shared by every request.
+use Kinetis\AuthJwt\JwtAuthenticator;
+use Kinetis\AuthJwt\JwtVerificationKeys;
+
+$app->instance(JwtAuthenticator::class, new JwtAuthenticator(
+    JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
+    expectedIssuer: 'my-app',
+    acceptedAudiences: ['my-app-api'],
+));
+```
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwtAuthMiddleware;
-use Kinetis\AuthJwt\JwtVerificationKeys;
-use Kinetis\Config\Config;
-use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\CurrentUserInterface;
 
-final class AppJwtAuthMiddleware extends JwtAuthMiddleware
-{
-    public function __construct(RequestScope $scope, Config $config)
-    {
-        parent::__construct(
-            JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
-            $scope,
-            expectedIssuer: 'my-app',
-            acceptedAudiences: ['my-app-api'],
-        );
-    }
-}
-
-#[Middleware(AppJwtAuthMiddleware::class)]
+#[Middleware(JwtAuthMiddleware::class)]
 final readonly class OrderController
 {
     public function __construct(
@@ -73,30 +74,61 @@ algorithm and key id:
 
 | Value | Named constructors | Used by |
 | --- | --- | --- |
-| `JwtVerificationKeys` | `hmacSecret()`, `rsaPublicKey()`, `jwks()` | `JwtAuthMiddleware` |
+| `JwtVerificationKeys` | `hmacSecret()`, `rsaPublicKey()`, `jwks()` | `JwtAuthenticator` |
 | `JwtSigningKey` | `hmacSecret()`, `rsaPrivateKey()` | `JwtIssuer` |
 
 There is no form that hands a private key to a verifier, and no
-algorithm argument on the middleware or the issuer that a key could
+algorithm argument on the authenticator or the issuer that a key could
 contradict. Everything is checked where the value is written — see
 "Cryptographic configuration is validated at construction" below.
 
-## Supplying your own secret
+## Registering the authenticator
 
-Extend `JwtAuthMiddleware` with a constructor taking only `RequestScope`
-and (optionally) your own `Config`, both class-typed, and pass your keys
-to `parent::__construct()` — the pattern in the example above. Kinetis
-builds a subclass shaped this way automatically, with no extra setup.
+`JwtAuthenticator` is immutable, request-neutral configuration: keys,
+an optional revocation store, and the optional issuer/audience
+constraints, all validated at construction. Build one at boot and
+`$app->instance()` it on `AppScope`, as the example above does — one
+instance serves every request a worker handles.
+
+What construction settles is the configuration: parsing the key
+material or a JWKS document (the OpenSSL work), and validating the
+issuer/audience constraints. Authenticating a token is per-request work
+regardless — reading and validating its JOSE header, verifying the
+signature against the selected key, checking `sub`/`iss`/`aud`, and,
+when a revocation store is configured, one cache lookup. Registering the
+authenticator keeps the first out of the request path; it does not make
+the second cheaper.
+
+`JwtAuthMiddleware` itself needs no registration at all. Referenced as
+`#[Middleware(JwtAuthMiddleware::class)]`, it is autowired from the
+route's own `RequestScope`, which supplies itself and reaches `AppScope`
+for the authenticator.
 
 ```{warning}
 Don't register `JwtAuthMiddleware::class` itself on `AppScope` with a
 factory that also resolves `RequestScope` — `AppScope` throws
 `DisconnectedRequestScopeException` rather than reaching the real
 per-request one (see {doc}`container`'s "Resolving `RequestScope` itself,
-from the wrong scope"). The subclass above avoids this entirely: it's
-resolved through the request's own `RequestScope`, which already has
-itself registered.
+from the wrong scope"). Leaving the middleware unregistered avoids this
+entirely: it is resolved through the request's own `RequestScope`, which
+already has itself registered.
 ```
+
+````{note}
+Changing what the middleware accepts means registering a different
+`JwtAuthenticator`, never subclassing the middleware. The one reason to
+declare a subclass is an attribute that needs a class to sit on —
+`#[AsMiddlewareGroup('broadcasting')]`, for instance — and such a
+subclass stays empty:
+
+```{code-block} php
+use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
+
+#[AsMiddlewareGroup('broadcasting')]
+final class BroadcastJwtAuthMiddleware extends JwtAuthMiddleware {}
+```
+````
 
 ```{warning}
 Prefer `Config::required('JWT_SECRET')` over `Config::string('JWT_SECRET',
@@ -129,8 +161,8 @@ $token = $issuer->issue($user->id(), ttlSeconds: 3600 * 24 * 30);         // 30 
 $token = $issuer->issue($user->id(), ttlSeconds: null);                  // never expires
 ```
 
-`issuer`/`audience` here must match `AppJwtAuthMiddleware`'s own
-`expectedIssuer`/`acceptedAudiences` above exactly, or every token this
+`issuer`/`audience` here must match the registered `JwtAuthenticator`'s
+own `expectedIssuer`/`acceptedAudiences` above exactly, or every token this
 issues will fail that check. `audience` also accepts a list of strings
 (`audience: ['my-app-api', 'my-app-admin']`) for a token meant to be
 accepted by more than one service — a verifier's own
@@ -175,10 +207,10 @@ kinds.
 
 An empty subject throws (`Exception\JwtIssuerException` from
 `JwtIssuer::issue()`, `Exception\RefreshTokenUnavailableException` from
-`RefreshTokenStore`), and `JwtAuthMiddleware` answers a token whose
-`sub` is anything but a non-empty string — absent, a JSON number, empty
-— with the usual `401`: such a token names no user the application can
-act on.
+`RefreshTokenStore`), and `JwtAuthenticator` refuses a token whose `sub`
+is anything but a non-empty string — absent, a JSON number, empty — so
+the request gets the usual `401`: such a token names no user the
+application can act on.
 
 ## Reading claims beyond `id()`
 
@@ -263,21 +295,15 @@ Every `JwtIssuer`-issued token already satisfies this; it only matters
 for a hand-built or third-party token.
 
 ```{code-block} php
+// bootstrap.php
+use Kinetis\AuthJwt\JwtAuthenticator;
+use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\RevocationStore;
-use Kinetis\Config\Config;
-use Psr\SimpleCache\CacheInterface;
 
-final class AppJwtAuthMiddleware extends JwtAuthMiddleware
-{
-    public function __construct(RequestScope $scope, Config $config, CacheInterface $cache)
-    {
-        parent::__construct(
-            JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
-            $scope,
-            revocationStore: new RevocationStore($cache),
-        );
-    }
-}
+$app->instance(JwtAuthenticator::class, new JwtAuthenticator(
+    JwtVerificationKeys::hmacSecret($config->required('JWT_SECRET')),
+    revocationStore: new RevocationStore($cache),
+));
 ```
 
 A logout endpoint revokes the *current* token by injecting `JwtUser`
@@ -454,15 +480,20 @@ failure shape exactly:
 
 An empty or malformed key on your own side is not caught here — that's a
 misconfiguration, not a client-supplied bad token, and surfaces as a real
-error rather than a silent `401`.
+error rather than a silent `401`. A revocation lookup that *fails* — a
+cache that is down, rather than one reporting the token revoked — is
+treated the same way: the exception propagates instead of becoming a
+`401`, because a store that could not answer has said nothing about the
+token.
 
 ### Credentials stay out of this package's frames
 
 A stack frame carries the arguments it was called with, so any backtrace
 renders them. Key material, issued claims, the request a bearer token
-arrived in, a refresh token, and a revocation id are marked
-`#[\SensitiveParameter]` where this package passes them, so a trace
-through its own frames shows a redacted placeholder instead. Frames
+arrived in, the token bytes the parser hands to `JwtAuthenticator`, a
+refresh token, and a revocation id are marked `#[\SensitiveParameter]`
+where this package passes them, so a trace through its own frames shows
+a redacted placeholder instead. Frames
 owned by `firebase/php-jwt`, PSR-7, or your own application are outside
 its reach.
 
@@ -478,7 +509,7 @@ secret — `rsaPrivateKey()` signs, `rsaPublicKey()` verifies, both taking
 PEM-format strings:
 
 ```{code-block} php
-use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtAuthenticator;
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\JwtSigningKey;
 use Kinetis\AuthJwt\JwtVerificationKeys;
@@ -488,16 +519,10 @@ $issuer = new JwtIssuer(
 );
 $token = $issuer->issue($user->id());
 
-final class AppJwtAuthMiddleware extends JwtAuthMiddleware
-{
-    public function __construct(RequestScope $scope)
-    {
-        parent::__construct(
-            JwtVerificationKeys::rsaPublicKey((string) file_get_contents('/path/to/public.pem')),
-            $scope,
-        );
-    }
-}
+// bootstrap.php
+$app->instance(JwtAuthenticator::class, new JwtAuthenticator(
+    JwtVerificationKeys::rsaPublicKey((string) file_get_contents('/path/to/public.pem')),
+));
 ```
 
 There is no way to hand the same key to both sides for `RS256`: the
@@ -506,7 +531,7 @@ Keeping the private key out of anything that only verifies tokens is the
 entire point of choosing an asymmetric algorithm.
 
 ```{note}
-`JwtAuthMiddleware`'s `expectedIssuer`/`acceptedAudiences` (configured on
+`JwtAuthenticator`'s `expectedIssuer`/`acceptedAudiences` (configured on
 the primary example above) are what actually stop two services sharing
 one `HS256` secret from accepting each other's tokens — checked as part
 of authentication itself, before a user is ever registered on the
@@ -579,7 +604,7 @@ advertise a key or algorithm this package's own verifier would refuse.
 ## What a token must be before verification starts
 
 A JOSE header arrives unsigned, shaped however whoever sent the token
-chose to shape it. `JwtAuthMiddleware` reads and validates it — through
+chose to shape it. `JwtAuthenticator` reads and validates it — through
 `Kinetis\AuthJwt\JoseHeader` — before any of the token reaches
 `JWT::decode()`, because `firebase/php-jwt` types `alg` and `kid` only
 where it happens to use them: a header naming either as a JSON array or
@@ -644,26 +669,20 @@ $issuer = new JwtIssuer(JwtSigningKey::rsaPrivateKey(
 ```
 
 ```{code-block} php
+// bootstrap.php
 use Kinetis\AuthJwt\JwkSet;
-use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtAuthenticator;
 use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\PublishedRsaKey;
 
-final class AppJwtAuthMiddleware extends JwtAuthMiddleware
-{
-    public function __construct(RequestScope $scope)
-    {
-        $jwks = JwkSet::fromRsaPublicKeys([
-            new PublishedRsaKey('2025-key', (string) file_get_contents('/path/to/2025-public.pem')),
-            new PublishedRsaKey('2026-key', (string) file_get_contents('/path/to/2026-public.pem')),
-        ]);
+$jwks = JwkSet::fromRsaPublicKeys([
+    new PublishedRsaKey('2025-key', (string) file_get_contents('/path/to/2025-public.pem')),
+    new PublishedRsaKey('2026-key', (string) file_get_contents('/path/to/2026-public.pem')),
+]);
 
-        parent::__construct(
-            JwtVerificationKeys::jwks((string) json_encode($jwks, JSON_THROW_ON_ERROR)),
-            $scope,
-        );
-    }
-}
+$app->instance(JwtAuthenticator::class, new JwtAuthenticator(
+    JwtVerificationKeys::jwks((string) json_encode($jwks, JSON_THROW_ON_ERROR)),
+));
 ```
 
 A token's own `kid` header (written by whichever signing key signed it)
@@ -674,9 +693,9 @@ wait out the old key's own token lifetime, then drop it from the set.
 
 A JWK Set is the only multi-key form, so the same list of keys a
 deployment publishes at `.well-known/jwks.json` is the one it verifies
-against — the two cannot drift. Building the value once at boot and
-binding it on `AppScope` keeps the OpenSSL work off every request; see
-"Verifying against a published JWKS" below.
+against — the two cannot drift. Building the authenticator once at boot
+keeps the OpenSSL work off every request; see "Verifying against a
+published JWKS" below.
 
 ### Publishing public keys as a JWKS
 
@@ -720,40 +739,22 @@ publish exactly the kids `JwtVerificationKeys::jwks()` reads back.
 
 `Kinetis\AuthJwt\JwtVerificationKeys::jwks()` is the other direction:
 raw JWKS JSON, whatever a `.well-known/jwks.json` URL answers with,
-parsed into the keys `JwtAuthMiddleware` verifies against. It is the
-only multi-key form.
+parsed into the keys `JwtAuthenticator` verifies against. It is the only
+multi-key form.
 
-Build it once, at boot, and bind it — parsing runs OpenSSL over every
-key in the document, which is not work to repeat per request:
+Build it once, at boot, inside the authenticator you register — parsing
+runs OpenSSL over every key in the document, which is not work to repeat
+per request:
 
 ```{code-block} php
 // bootstrap.php
+use Kinetis\AuthJwt\JwtAuthenticator;
 use Kinetis\AuthJwt\JwtVerificationKeys;
 
-$app->instance(JwtVerificationKeys::class, JwtVerificationKeys::jwks(
-    (string) file_get_contents('/path/to/jwks.json'),
+$app->instance(JwtAuthenticator::class, new JwtAuthenticator(
+    JwtVerificationKeys::jwks((string) file_get_contents('/path/to/jwks.json')),
 ));
 ```
-
-```{code-block} php
-use Kinetis\AuthJwt\JwtAuthMiddleware;
-use Kinetis\AuthJwt\JwtVerificationKeys;
-use Kinetis\Container\RequestScope;
-
-final class AppJwtAuthMiddleware extends JwtAuthMiddleware
-{
-    public function __construct(RequestScope $scope, JwtVerificationKeys $keys)
-    {
-        parent::__construct($keys, $scope);
-    }
-}
-```
-
-`JwtVerificationKeys` belongs on `AppScope`: it needs no `RequestScope`
-of its own, and the middleware above is still resolved through the
-request's own scope, which reaches `AppScope` for it — so the warning in
-"Supplying your own secret" doesn't apply to registering the keys
-themselves.
 
 A kid is matched as the exact string the document published, so `"0"`,
 `"00"` and `"zero"` are three separately selectable keys. A token

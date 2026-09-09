@@ -11,7 +11,7 @@ use stdClass;
 use UnexpectedValueException;
 
 /**
- * The keys JwtAuthMiddleware verifies against, and the one place a
+ * The keys JwtAuthenticator verifies against, and the one place a
  * verification algorithm and the set of selectable `kid`s are named.
  * Immutable, holds no request state, and validates everything at
  * construction — never on the first request.

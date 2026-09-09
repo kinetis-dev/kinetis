@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\AuthJwt\Tests;
 
-use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtAuthenticator;
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\JwtSigningKey;
 use Kinetis\AuthJwt\JwtUser;
@@ -12,11 +12,6 @@ use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\RefreshTokenStore;
 use Kinetis\AuthJwt\RevocationStore;
 use Kinetis\AuthJwt\Tests\Fixtures\InMemorySimpleCache;
-use Kinetis\Container\AppScope;
-use Kinetis\Container\RequestScope;
-use Kinetis\Http\CallableRequestHandler;
-use Nyholm\Psr7\Response;
-use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -43,14 +38,13 @@ final class SubjectIdentityTest extends TestCase
         $accessToken = new JwtIssuer($signingKey)->issue(self::APPLICATION_ID);
         $refreshToken = $refreshTokens->issue(self::APPLICATION_ID);
 
-        $scope = $this->scope();
-        $authenticated = $this->middleware($scope, $revocations)
-            ->process($this->requestWithToken($accessToken), $this->handler());
+        $authenticator = new JwtAuthenticator(
+            JwtVerificationKeys::hmacSecret(self::SECRET),
+            revocationStore: $revocations,
+        );
+        $user = $authenticator->authenticate($accessToken);
 
-        self::assertSame(200, $authenticated->getStatusCode());
-
-        $user = $scope->get(JwtUser::class);
-
+        self::assertInstanceOf(JwtUser::class, $user);
         self::assertSame('42', $user->id());
 
         // A refresh endpoint: the redeemed subject is the same string
@@ -66,35 +60,7 @@ final class SubjectIdentityTest extends TestCase
         $revocations->revokeToken($user);
         $refreshTokens->revoke($reissuedRefreshToken);
 
-        $afterRevocation = $this->middleware($this->scope(), $revocations)
-            ->process($this->requestWithToken($accessToken), $this->handler());
-
-        self::assertSame(401, $afterRevocation->getStatusCode());
+        self::assertNull($authenticator->authenticate($accessToken));
         self::assertNull($refreshTokens->redeem($reissuedRefreshToken));
-    }
-
-    private function middleware(RequestScope $scope, RevocationStore $revocations): JwtAuthMiddleware
-    {
-        $keys = JwtVerificationKeys::hmacSecret(self::SECRET);
-
-        return new JwtAuthMiddleware($keys, $scope, revocationStore: $revocations);
-    }
-
-    private function scope(): RequestScope
-    {
-        $app = new AppScope();
-        $app->boot();
-
-        return $app->createRequestScope();
-    }
-
-    private function handler(): CallableRequestHandler
-    {
-        return new CallableRequestHandler(static fn () => new Response(200));
-    }
-
-    private function requestWithToken(string $token): ServerRequest
-    {
-        return new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer {$token}"]);
     }
 }

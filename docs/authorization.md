@@ -221,8 +221,7 @@ already carries the middleware list `#[Middleware]` produces.
 
 The one thing `#[Middleware(class-string)]` can't carry is an argument —
 so a role check is a thin, per-role subclass, the same pattern
-`Kinetis\Http\Middleware\RateLimitMiddleware`/`JwtAuthMiddleware` are left
-non-`final` for:
+`Kinetis\Http\Middleware\RateLimitMiddleware` is left non-`final` for:
 
 ```{code-block} php
 class RequireRoleMiddleware implements MiddlewareInterface

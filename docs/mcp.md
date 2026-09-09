@@ -182,10 +182,10 @@ works here (see {doc}`middleware`). Three layers, in the order they run:
    Declare membership on the middleware class and it joins the
    endpoint's pipeline at the attribute's default priority `50` —
    after the origin check at `100`, before the identity guard at `0`.
-   Because the group resolves from the request's scope,
-   `kinetis/auth`'s `BearerAuthMiddleware` and `kinetis/auth-jwt`'s
-   `JwtAuthMiddleware` subclasses work here unchanged, and the
-   `CurrentUserInterface` they publish reaches the tool:
+   Because the group resolves from the request's scope, an empty
+   subclass of `kinetis/auth`'s `BearerAuthMiddleware` or
+   `kinetis/auth-jwt`'s `JwtAuthMiddleware` is the whole integration,
+   and the `CurrentUserInterface` it publishes reaches the tool:
 
    ```{code-block} php
    use Kinetis\Auth\BearerAuthMiddleware;

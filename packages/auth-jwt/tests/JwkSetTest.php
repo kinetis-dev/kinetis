@@ -8,20 +8,16 @@ use Firebase\JWT\JWK;
 use Firebase\JWT\JWT;
 use Kinetis\AuthJwt\Exception\JwtConfigurationException;
 use Kinetis\AuthJwt\JwkSet;
-use Kinetis\AuthJwt\JwtAuthMiddleware;
+use Kinetis\AuthJwt\JwtAuthenticator;
 use Kinetis\AuthJwt\JwtIssuer;
 use Kinetis\AuthJwt\JwtKeyValidator;
 use Kinetis\AuthJwt\JwtSigningKey;
+use Kinetis\AuthJwt\JwtUser;
 use Kinetis\AuthJwt\JwtVerificationKeys;
 use Kinetis\AuthJwt\PublishedRsaKey;
 use Kinetis\AuthJwt\Tests\Fixtures\RsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\SecondRsaKeyPair;
 use Kinetis\AuthJwt\Tests\Fixtures\UndersizedRsaKeyPair;
-use Kinetis\Container\AppScope;
-use Kinetis\Http\CallableRequestHandler;
-use Kinetis\Http\CurrentUserInterface;
-use Nyholm\Psr7\Response;
-use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -97,27 +93,19 @@ final class JwkSetTest extends TestCase
 
     /**
      * The same round trip one step further: the parsed key set feeds a
-     * real JwtAuthMiddleware construction, and a real request carrying
-     * a token signed under the matching kid authenticates through it.
+     * real JwtAuthenticator, and a token signed under the matching kid
+     * authenticates through it.
      */
-    public function test_the_produced_jwk_set_composes_with_a_real_jwt_auth_middleware(): void
+    public function test_the_produced_jwk_set_composes_with_a_real_authenticator(): void
     {
         $set = JwkSet::fromRsaPublicKeys([new PublishedRsaKey('current', RsaKeyPair::PUBLIC_KEY)]);
         $keys = JwtVerificationKeys::jwks((string) json_encode($set, JSON_THROW_ON_ERROR));
 
-        $app = new AppScope();
-        $app->boot();
-        $scope = $app->createRequestScope();
-        $middleware = new JwtAuthMiddleware($keys, $scope);
-
         $token = JWT::encode(['sub' => 'user-42', 'iat' => time()], RsaKeyPair::PRIVATE_KEY, 'RS256', 'current');
-        $request = new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer {$token}"]);
-        $handler = new CallableRequestHandler(static fn () => new Response(200));
+        $user = new JwtAuthenticator($keys)->authenticate($token);
 
-        $response = $middleware->process($request, $handler);
-
-        self::assertSame(200, $response->getStatusCode());
-        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
+        self::assertInstanceOf(JwtUser::class, $user);
+        self::assertSame('user-42', $user->id());
     }
 
     /**
@@ -170,17 +158,11 @@ final class JwkSetTest extends TestCase
         $set = JwkSet::fromRsaPublicKeys([new PublishedRsaKey($kid, RsaKeyPair::PUBLIC_KEY)]);
         $keys = JwtVerificationKeys::jwks((string) json_encode($set, JSON_THROW_ON_ERROR));
 
-        $app = new AppScope();
-        $app->boot();
-        $scope = $app->createRequestScope();
         $token = new JwtIssuer(JwtSigningKey::rsaPrivateKey(RsaKeyPair::PRIVATE_KEY, kid: $kid))->issue('user-42');
-        $response = new JwtAuthMiddleware($keys, $scope)->process(
-            new ServerRequest('GET', '/', headers: ['Authorization' => "Bearer {$token}"]),
-            new CallableRequestHandler(static fn () => new Response(200)),
-        );
+        $user = new JwtAuthenticator($keys)->authenticate($token);
 
-        self::assertSame(200, $response->getStatusCode());
-        self::assertSame('user-42', $scope->get(CurrentUserInterface::class)->id());
+        self::assertInstanceOf(JwtUser::class, $user);
+        self::assertSame('user-42', $user->id());
     }
 
     public function test_a_kid_at_the_length_limit_is_publishable(): void
