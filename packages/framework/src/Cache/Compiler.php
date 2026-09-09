@@ -48,8 +48,9 @@ use ReflectionMethod;
  * fully nested-inclusive result — there's no independent lookup
  * anywhere by a nested DTO's class name for this discovery pass to
  * feed. It is also where a DTO definition Hydrator cannot hydrate
- * (a union or intersection parameter type, a recursive class reference,
- * an invalid #[ListOf]) fails the build, rather than a live request.
+ * (an intersection or unsupported union parameter type, a recursive
+ * class reference, an invalid #[ListOf]) fails the build, rather than a
+ * live request.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
  * @phpstan-import-type DiscoveredMiddleware from GlobalMiddlewareDiscovery

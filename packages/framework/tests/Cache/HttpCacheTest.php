@@ -27,14 +27,17 @@ final class HttpCacheTest extends TestCase
                     'hasConstructor' => true,
                     'parameters' => [
                         [
-                            'name' => 'name', 'scalarType' => 'string', 'dtoClass' => null, 'nestedPlan' => null,
-                            'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false,
+                            'name' => 'name', 'scalarType' => 'string', 'enumClass' => null, 'dtoClass' => null, 'nestedPlan' => null,
+                            'listItem' => null, 'objectMap' => false, 'absent' => false,
                             'hasDefault' => false, 'defaultValue' => null,
                             'allowsNull' => false,
                             'constraints' => [
                                 ['class' => 'Kinetis\\Validation\\Constraints\\MinLength', 'args' => [3]],
                             ],
                         ],
+                    ],
+                    'objectRules' => [
+                        ['class' => 'Kinetis\\Validation\\ObjectConstraints\\AtLeastOneProvided', 'args' => ['name']],
                     ],
                 ],
             ],
@@ -46,6 +49,11 @@ final class HttpCacheTest extends TestCase
         $reconstructed = HttpCache::fromArray($cache->toArray());
 
         self::assertEquals($cache, $reconstructed);
+        self::assertTrue($reconstructed->hydrationPlans['App\\Dto']['parameters'][0]['absent'] === false);
+        self::assertSame(
+            [['class' => 'Kinetis\\Validation\\ObjectConstraints\\AtLeastOneProvided', 'args' => ['name']]],
+            $reconstructed->hydrationPlans['App\\Dto']['objectRules'],
+        );
         self::assertSame(1, $reconstructed->httpBindingPlans['App\\C::index'][0]['defaultValue']);
         self::assertSame(false, $reconstructed->httpBindingPlans['App\\C::index'][1]['defaultValue']);
         self::assertNull($reconstructed->httpBindingPlans['App\\C::index'][2]['defaultValue']);
@@ -97,12 +105,13 @@ final class HttpCacheTest extends TestCase
                     'hasConstructor' => true,
                     'parameters' => [
                         [
-                            'name' => 'name', 'scalarType' => 'string', 'dtoClass' => null, 'nestedPlan' => null,
-                            'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false,
+                            'name' => 'name', 'scalarType' => 'string', 'enumClass' => null, 'dtoClass' => null, 'nestedPlan' => null,
+                            'listItem' => null, 'objectMap' => false, 'absent' => false,
                             'hasDefault' => false, 'defaultValue' => null,
                             'allowsNull' => false, 'constraints' => [],
                         ],
                     ],
+                    'objectRules' => [],
                 ],
             ],
             globalMiddleware: [],
@@ -161,6 +170,43 @@ final class HttpCacheTest extends TestCase
     {
         $data = $this->validData();
         unset($data['hydrationPlans']['App\\Dto']['hasConstructor']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    /**
+     * The two fields the presence union and DTO-level rules added. An
+     * artifact written before either existed carries neither, which is
+     * exactly the stale shape a format bump exists to keep out — and a
+     * missing field must be refused rather than read as `false`/`[]` on
+     * a production request.
+     */
+    public function test_from_array_rejects_a_hydration_plan_missing_its_object_rules(): void
+    {
+        $data = $this->validData();
+        unset($data['hydrationPlans']['App\\Dto']['objectRules']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_hydration_plan_parameter_missing_its_presence_flag(): void
+    {
+        $data = $this->validData();
+        unset($data['hydrationPlans']['App\\Dto']['parameters'][0]['absent']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_hydration_plan_whose_object_rules_are_not_descriptors(): void
+    {
+        $data = $this->validData();
+        $data['hydrationPlans']['App\\Dto']['objectRules'] = [['class' => 'App\\Rule']];
 
         $this->expectException(CacheArtifactExceptionInterface::class);
 

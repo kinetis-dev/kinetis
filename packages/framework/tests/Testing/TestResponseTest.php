@@ -6,11 +6,15 @@ namespace Kinetis\Tests\Testing;
 
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
+use Kinetis\Http\ProblemDetailsValidationExceptionRenderer;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Testing\TestApplication;
 use Kinetis\Testing\TestClient;
 use Kinetis\Testing\TestResponse;
 use Kinetis\Tests\Http\Fixtures\UserController;
+use Kinetis\Validation\Exception\ValidationException;
+use Kinetis\Validation\Violation;
+use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\AssertionFailedError;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -78,10 +82,57 @@ final class TestResponseTest extends TestCase
     public function test_validation_error_assertion_fails_for_a_field_that_passed(): void
     {
         $this->expectException(AssertionFailedError::class);
-        $this->expectExceptionMessage('Expected a validation error for "name"');
+        $this->expectExceptionMessage('Expected a validation error at path ["name"]');
 
         $this->client()->post('/users', ['email' => 'not-an-email', 'name' => 'Ada Lovelace'])
             ->assertValidationError('name');
+    }
+
+    /**
+     * A violation addressing the payload as a whole carries no path
+     * segments, and no arguments is how a test names it. Rendered
+     * through the real renderer, so what is asserted against is the
+     * document an application would receive.
+     */
+    public function test_the_root_path_is_assertable_with_no_arguments(): void
+    {
+        $this->rendered(new Violation([], 'incomplete_update', 'must supply at least one field.'))
+            ->assertValidationError();
+    }
+
+    /**
+     * Whole-path matching keeps the root unambiguous in both
+     * directions: it never stands in for a named or nested path, and no
+     * named or nested path stands in for it.
+     */
+    public function test_the_root_path_and_a_named_path_never_satisfy_each_other(): void
+    {
+        $root = $this->rendered(new Violation([], 'incomplete_update', 'must supply at least one field.'));
+        $named = $this->rendered(new Violation(['items', 0, 'sku'], 'required', 'is required.'));
+
+        self::assertFails(fn () => $root->assertValidationError('items', 0, 'sku'));
+        self::assertFails(fn () => $named->assertValidationError());
+
+        $named->assertValidationError('items', 0, 'sku');
+    }
+
+    private function rendered(Violation $violation): TestResponse
+    {
+        return new TestResponse(new ProblemDetailsValidationExceptionRenderer()->render(
+            ValidationException::fromViolations([$violation]),
+            new ServerRequest('POST', '/users'),
+        ));
+    }
+
+    private static function assertFails(callable $assertion): void
+    {
+        try {
+            $assertion();
+        } catch (AssertionFailedError) {
+            return;
+        }
+
+        self::fail('the assertion passed when it should have failed');
     }
 
     public function test_the_body_can_be_read_more_than_once(): void

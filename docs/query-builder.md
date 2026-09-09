@@ -101,7 +101,10 @@ $total = new Query($db)->table('orders')->where('status', '=', 'paid')->count();
 
 Pass a DTO class and each row is hydrated through `Hydrator::hydrate()`,
 constraints included (`#[Email]`, `#[MinLength]`, ...); omit it and you get
-plain arrays.
+plain arrays. Rows are read under `InputSource::Native`, `hydrate()`'s own
+default — a driver decides for itself whether a column arrives as an `int`
+or as its decimal string, and a `TINYINT(1)` as `1` or `"1"`, so both
+spellings bind. See {doc}`routing-validation`'s "Scalar type checking".
 
 `count()` counts the rows your `where()`/`whereIn()`/`whereRaw()`
 predicates and `join()`s select, as `COUNT(*)`. Order, limit and offset

@@ -312,7 +312,7 @@ public function receive(ServerRequestInterface $request): array
 
 A parameter typed `UploadedFileInterface` — no attribute needed, checked
 immediately after `ServerRequestInterface` — is resolved directly from
-the request's uploaded-files bag by parameter name. See
+the request's uploaded files by parameter name. See
 [Multipart/form-data & file uploads](#multipart-form-data-file-uploads)
 below.
 
@@ -323,9 +323,13 @@ use Psr\Http\Message\UploadedFileInterface;
 public function receiveFile(UploadedFileInterface $file): array
 ```
 
-A request without the expected file resolves like a missing `#[Query]`
-value: the parameter's default if it has one, `null` if its type allows
-null, and a `422` (`is required.`) otherwise.
+A request without the expected file — including one whose file control
+the user left empty — resolves like a missing `#[Query]` value: the
+parameter's default if it has one, `null` if its type allows null, and a
+`422` (`is required.`) otherwise. A file that is present runs the
+parameter's own `Constraint` attributes, after its transport status has
+been checked; the parameter itself stays outside the generated OpenAPI
+document.
 
 ### Class-typed parameters: services and request context
 
@@ -475,7 +479,7 @@ knows or cares which content type produced the data it's validating.
 
 An `UploadedFileInterface`-typed parameter doesn't have to sit inside a
 `#[Body]` DTO — a top-level controller parameter of that type, with no
-attribute, is resolved directly from the request's uploaded-files bag by
+attribute, is resolved directly from the request's uploaded files by
 parameter name:
 
 ```{code-block} php
@@ -499,6 +503,189 @@ event body under `kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
 the uploaded-files bag from them through `Kinetis\Http\Form`. There is
 one parse, under every runtime; see {doc}`runtime-adapters`.
 ```
+
+### An empty file control is an omitted field
+
+A browser submits a file input the user left alone as a *present* part
+carrying `UPLOAD_ERR_NO_FILE`, not as nothing at all. Binding reads that
+as ordinary omission, exactly as it reads a text field the form never
+sent:
+
+- a defaultless field or parameter reports `is required.`;
+- one with a default takes its default;
+- a nullable one binds `null`;
+- an `UploadedFileInterface|Absent` DTO field binds `Absent::Value`, so
+  an update DTO can tell "no file was chosen" from "this file was
+  cleared". See [Required, optional, and absent
+  fields](#required-optional-and-absent-fields).
+
+The same pruning runs at every depth. A branch left with nothing in it
+is omitted in turn, so a repeated control whose every part was empty is
+an absent field rather than a supplied empty list — `[]` is a list the
+client sent, which a `#[MinItems]` rule would then measure.
+
+This is what *binding* reads. The PSR-7 request keeps the bag its
+runtime adapter built, `UPLOAD_ERR_NO_FILE` parts included, so
+middleware and a `ServerRequestInterface`-typed parameter still see
+exactly what arrived.
+
+### Nested and repeated file controls
+
+Files nest and repeat under the same bracket convention text fields do,
+and the two trees are merged into one set of fields before the DTO is
+hydrated. `profile[name]` arrives as text and `profile[avatar]` as a
+file; both hydrate the same nested DTO:
+
+```{code-block} php
+final readonly class ProfileDetails
+{
+    public function __construct(
+        public string $name,
+        public UploadedFileInterface $avatar,
+    ) {}
+}
+
+final readonly class ProfileUploadRequest
+{
+    public function __construct(
+        public ProfileDetails $profile,
+    ) {}
+}
+```
+
+At each key: two arrays merge, and anything else leaves the parsed text
+in place. A form naming one key as both a text value and a file has
+contradicted itself, so the text stays and the field reports the
+ordinary declared-type violation any other wrong value would get. A JSON
+body never consumes uploaded files at all — a JSON document names every
+value it sends.
+
+A repeated control is a `#[ListOf]` field naming
+`UploadedFileInterface`, the one interface `#[ListOf]` admits:
+
+```{code-block} php
+use Kinetis\Validation\Constraints\FileExtension;
+use Kinetis\Validation\{Each, ListOf};
+
+final readonly class PhotoUploadRequest
+{
+    public function __construct(
+        #[ListOf(UploadedFileInterface::class)]
+        #[Each(FileExtension::class, ['png'])]
+        public array $photos,
+    ) {}
+}
+```
+
+A *flat* repeated control closes its indices back up after empty parts
+are dropped: `photos[]` sent as file, empty, file binds two files at
+`0` and `1`. An index there is nothing but position among files, so the
+elements a handler receives are the files that arrived, in order, with
+no holes.
+
+A list of *nested DTOs* keeps its positions instead, because there an
+index is the one the parsed text names too:
+
+```{code-block} php
+final readonly class GalleryEntry
+{
+    public function __construct(
+        public string $caption,
+        public ?UploadedFileInterface $image = null,
+    ) {}
+}
+
+final readonly class GalleryUploadRequest
+{
+    public function __construct(
+        #[ListOf(GalleryEntry::class)]
+        public array $entries,
+    ) {}
+}
+```
+
+Three captioned entries whose middle `entries[1][image]` control was
+left empty bind the second entry without an image and leave
+`entries[2][image]` on the third entry, where the client put it.
+Closing those indices up would merge the third file into the second
+entry's caption, and an optional field would hydrate that misbinding
+without a violation. Map-shaped branches keep their keys as well, which
+are field names a DTO declares rather than positions.
+
+### A file that did not arrive
+
+Every typed route into an uploaded file — a DTO field, a `#[ListOf]`
+element, a direct parameter — checks the part's PSR-7 status before
+anything else looks at it. A status other than `UPLOAD_ERR_OK` is one
+violation at the field's own path:
+
+```{code-block} json
+{
+    "path": ["photos", 1],
+    "code": "upload_failed",
+    "message": "could not be uploaded.",
+    "parameters": {"error": 3}
+}
+```
+
+`parameters.error` is the raw `UPLOAD_ERR_*` constant, for a log to
+read. No rule on the field runs, and nothing opens the stream — a failed
+part has no readable stream, so a rule that ran would raise a `500` for
+what is a client-visible transfer failure. `UPLOAD_ERR_NO_FILE` never
+reaches this point: it is already omission, above.
+
+### Rules about an uploaded file
+
+Two built-in rules describe a file, on a DTO field, on a `#[Each]` of an
+upload list, or on a direct controller parameter:
+
+```{code-block} php
+use Kinetis\Validation\Constraints\{FileExtension, FileSize};
+
+#[Post('/scans')]
+public function scan(
+    #[FileSize(maxBytes: 5_000_000, minBytes: 1)]
+    #[FileExtension(['png', 'jpg'])]
+    UploadedFileInterface $file,
+): array
+```
+
+`#[FileSize]` bounds the size the part itself reported, inclusive on
+both ends. PSR-7 permits a null size, and a bound cannot be checked
+against a size that does not exist, so such a file fails closed with
+`file_size_unknown` rather than passing unchecked.
+
+`#[FileExtension]` is a policy about the *client-supplied filename*, an
+untrusted label the server has not verified. It is not a MIME type and
+it is not sniffed content: a name ending in `.png` says nothing about
+the bytes behind it. A suffix is written without its leading dot and may
+contain dots of its own, so `png` and `tar.gz` are both declarable, and
+each matches the end of the name after the dot that separates it —
+`archive.tar.gz` satisfies `gz` and `tar.gz` alike, while a name with no
+separating dot satisfies neither. Matching is ASCII case-insensitive, so
+`PHOTO.PNG` satisfies `png`. The name never appears in the violation:
+the message and its `choices` parameter carry the declared suffixes,
+which the server wrote.
+
+Neither rule opens the file, and Kinetis validates no upload's contents
+anywhere: content checks belong where the content is actually read.
+
+### Uploads in the generated document
+
+An `UploadedFileInterface` field is published as
+`{"type": "string", "format": "binary"}` — OpenAPI's own convention for
+a file inside a multipart-serialized schema — and a `#[ListOf]` of them
+as an `array` of that item. A `#[Body]` DTO that declares an upload
+anywhere in it, on a nested DTO or a list element included, advertises
+`multipart/form-data` **alone**: only a multipart body can carry a file,
+and a JSON or urlencoded entry beside it would describe a request that
+cannot hydrate the DTO it names. An upload-free DTO keeps all three
+encodings it genuinely accepts.
+
+A direct `UploadedFileInterface` *parameter* is outside generated input
+metadata entirely — it is not a request body, and none is synthesized
+for it. An application that needs its upload input documented declares
+the file as a field of a `#[Body]` DTO.
 
 ## Returning a status other than the route's default
 
@@ -681,20 +868,75 @@ final readonly class CreateProductRequest
 }
 ```
 
-| Attribute | Checks | Constructor |
-|---|---|---|
-| `#[Email]` | `filter_var($value, FILTER_VALIDATE_EMAIL)` | *(no arguments)* |
-| `#[NotBlank]` | not empty or all-whitespace after `trim()` | *(no arguments)* |
-| `#[MinLength(n)]` | `mb_strlen($value) >= n` | `int $length` |
-| `#[MaxLength(n)]` | `mb_strlen($value) <= n` | `int $length` |
-| `#[GreaterThan(n)]` | `$value > n` | `int\|float $threshold` |
-| `#[LessThan(n)]` | `$value < n` | `int\|float $threshold` |
-| `#[Regex($pattern)]` | `preg_match($pattern, $value) === 1` | `string $pattern` |
-| `#[In($choices)]` | `in_array($value, $choices, true)` | `array $choices` |
-| `#[MinItems(n)]` | a list of at least `n` elements | `int $count` |
-| `#[MaxItems(n)]` | a list of at most `n` elements | `int $count` |
-| `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* |
-| `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* |
+Each rule owns three things: what it checks, the stable `code` its
+violation carries, and the JSON Schema keyword that states the same rule
+to a client reading the generated document.
+
+| Attribute | Checks | Constructor | Violation code | Schema keyword |
+|---|---|---|---|---|
+| `#[Email]` | `filter_var($value, FILTER_VALIDATE_EMAIL)` | *(no arguments)* | `email` | `format: email` |
+| `#[NotBlank]` | not empty or all-whitespace after `trim()` | *(no arguments)* | `not_blank` | *(none)* |
+| `#[MinLength(n)]` | `mb_strlen($value) >= n` | `int $length` | `min_length` | `minLength` |
+| `#[MaxLength(n)]` | `mb_strlen($value) <= n` | `int $length` | `max_length` | `maxLength` |
+| `#[GreaterThan(n)]` | `$value > n` | `int\|float $threshold` | `greater_than` | `exclusiveMinimum` |
+| `#[LessThan(n)]` | `$value < n` | `int\|float $threshold` | `less_than` | `exclusiveMaximum` |
+| `#[GreaterThanOrEqual(n)]` | `$value >= n` | `int\|float $threshold` | `greater_than_or_equal` | `minimum` |
+| `#[LessThanOrEqual(n)]` | `$value <= n` | `int\|float $threshold` | `less_than_or_equal` | `maximum` |
+| `#[MultipleOf(n)]` | `$value % n === 0` | `int $divisor` | `multiple_of` | `multipleOf` |
+| `#[Regex($pattern)]` | `preg_match($pattern, $value) === 1` | `string $pattern` | `regex` | *(none)* |
+| `#[In($choices)]` | `in_array($value, $choices, true)` | `array $choices` | `in` | `enum` |
+| `#[NotIn($choices)]` | `!in_array($value, $choices, true)` | `array $choices` | `not_in` | `not: {enum: ...}` |
+| `#[MinItems(n)]` | a list of at least `n` elements | `int $count` | `min_items` | `minItems` |
+| `#[MaxItems(n)]` | a list of at most `n` elements | `int $count` | `max_items` | `maxItems` |
+| `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* | `url` | `format: uri` |
+| `#[Uuid]` | RFC 9562's UUID string form | *(no arguments)* | `uuid` | `format: uuid` |
+| `#[Ip]` | `filter_var($value, FILTER_VALIDATE_IP)` | *(no arguments)* | `ip` | `anyOf` (`format: ipv4`, `format: ipv6`) |
+| `#[Date]` | `YYYY-MM-DD` naming a real calendar day | *(no arguments)* | `date` | `format: date` |
+| `#[DateTime]` | an RFC 3339 `date-time` | *(no arguments)* | `date_time` | `format: date-time` |
+| `#[FileSize($max, $min)]` | an uploaded file's reported size, inclusive on both bounds | `int $maxBytes, int $minBytes = 0` | `file_too_large`, `file_too_small` | *(none)* |
+| `#[FileExtension($extensions)]` | an uploaded file's client filename ends in one of them | `array $extensions` | `file_extension` | *(none)* |
+
+`#[GreaterThan]`, `#[LessThan]`, `#[GreaterThanOrEqual]` and
+`#[LessThanOrEqual]` report `not_a_number`, `#[MultipleOf]` reports
+`not_an_integer`, `#[MinItems]`/`#[MaxItems]` report `not_a_list`, and
+`#[FileSize]`/`#[FileExtension]` report `not_a_file`, for a value of the
+wrong shape entirely. Through a request that never
+happens — the declared type is checked before any rule runs — but a rule
+invoked directly still answers rather than counting something with no
+count. The string rules have no such second code: `#[Email]`, `#[Url]`,
+`#[Uuid]`, `#[Ip]`, `#[Date]` and `#[DateTime]` each fold a non-string
+into their own code, since a value that is not a string is not the thing
+they name either.
+
+`#[MultipleOf]` is about whole numbers on both sides. Its divisor is an
+`int` of at least 1, and a `float` value reports `not_an_integer` rather
+than being tested: divisibility in binary floating point would need a
+tolerance the published `multipleOf` does not carry. Zero and negative
+multiples satisfy it.
+
+`#[Date]` and `#[DateTime]` read a fixed ASCII grammar and then check the
+numbers, rather than handing the value to a PHP date parser — which would
+accept `2024-1-1`, roll `2023-02-29` forward into March, and apply a
+local timezone the request never mentioned. `#[Date]` is `YYYY-MM-DD`
+alone, so its years run `0001` through `9999`. `#[DateTime]` is RFC 3339's
+`date-time` with two deliberate reductions: a leap second (`:60`) and the
+space separator RFC 3339 permits in place of `T` are both rejected, the
+first because nothing downstream of a validated string can place one, the
+second because admitting two spellings under one `format: date-time`
+would publish a document broader than the check. An offset is required —
+`Z`, `z`, or a signed `HH:MM`, `-00:00` included — a fraction of any
+length is accepted, and a trailing newline is not part of either value.
+
+`#[Uuid]` is RFC 9562's string form and nothing more: 32 hexadecimal
+digits in 8-4-4-4-12 groups, upper or lower case. Version and variant are
+fields of the identifier rather than of its spelling, so the nil and max
+UUIDs and versions 6, 7 and 8 all bind — a rule reading those nibbles
+would reject identifiers the RFC defines for a spelling no client can
+change.
+
+`#[Ip]` accepts an address of either family and nothing around it: a zone
+identifier, a CIDR prefix, bracket notation and surrounding whitespace
+are each something other than an address, and none of them binds.
 
 `#[Regex]` and `#[NotBlank]` are runtime-only: neither has an equivalent
 JSON Schema keyword. `pattern` holds an undelimited ECMA-262 expression, a
@@ -702,10 +944,51 @@ different dialect from the delimited PHP PCRE `#[Regex]` takes, and no
 keyword carries `#[NotBlank]`'s trim-aware blank-string semantics —
 `minLength: 1` rejects the empty string, not `"   "`. For those two a
 generated OpenAPI or MCP schema is broader than the check the request
-actually gets. Every other constraint in the table maps onto a keyword; see
+actually gets.
+
+`#[FileSize]` and `#[FileExtension]` publish nothing for a different
+reason: both describe a multipart part, which the document represents as
+`{"type": "string", "format": "binary"}`. JSON Schema's string keywords
+measure that string's own characters and say nothing about the bytes of
+the part or the name the client attached to it, so publishing one would
+state a rule the request is not checked against. Every other constraint
+in the table maps onto a keyword; see
 [Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
 
-`#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]` and
+A rule's constructor arguments reach a client twice — as a violation's
+`parameters` and as a published schema keyword — so a definition with no
+truthful form in either is refused with an `InvalidArgumentException`
+where the constraint is first instantiated, during hydration or schema
+generation: a negative `#[MinLength]`, `#[MaxLength]`, `#[MinItems]` or
+`#[MaxItems]` bound; a non-finite threshold on any of the four numeric
+bounds; a `#[MultipleOf]` divisor below 1, since zero divides nothing and
+a negative divisor names the same multiples as its absolute value while
+publishing a `multipleOf` JSON Schema does not allow; an `#[In]` or
+`#[NotIn]` set that is empty, keyed, or carries a non-scalar or
+non-finite member; a `#[FileSize]` with a negative bound or a minimum
+above its maximum; a `#[FileExtension]` set that is empty or keyed, or
+whose members are not alphanumeric suffixes written without a leading
+dot (`png`, `tar.gz`); and a `#[Regex]` pattern PCRE cannot compile,
+which left to run would match nothing and reject every value the field
+ever receives.
+
+Two rules on the same field may not contribute the *same* keyword.
+`#[MinLength(3)] #[MinLength(5)]` states two different minimum lengths
+and only one of them could be published, so generating the schema fails
+with `Exception\JsonSchemaException` rather than letting declaration
+order silently decide which bound a client is told about.
+
+A rule may not restate the shape the PHP declaration itself owns,
+either. The declared type is what `Hydrator` checks a value against, so
+a rule contributing `type` — or `items`, on a `#[ListOf]` field — would
+publish a shape no request is held to, and `Exception\JsonSchemaException`
+refuses that declaration for the same reason. A rule refines the
+declared shape (`#[MinLength(3)] string` narrows which strings bind); it
+cannot replace it. What a rule nests *inside* its own keyword is its own
+business and is never inspected.
+
+`#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]`,
+`#[GreaterThanOrEqual]`/`#[LessThanOrEqual]` and
 `#[MinItems]`/`#[MaxItems]` compose on the same field for a length,
 numeric or cardinality range — `Hydrator` runs every
 `Constraint`-implementing attribute on a parameter, not just the first
@@ -718,29 +1001,54 @@ public int $percentage,
 ```
 
 `#[MinItems]`/`#[MaxItems]` bound a list-shaped `array` field: a plain
-one, or a [`#[ListOf]`](#collections-of-nested-dtos) one whose elements
-are counted once they have hydrated. A negative bound describes no list
-at all and is refused with an `InvalidArgumentException` where the
-constraint is first instantiated, during hydration or schema generation.
-The list-shape check itself stays `Hydrator`'s, so a field that isn't a
-JSON array fails there first and never reaches the bound.
+one, or a [`#[ListOf]`](#typed-collections) one whose elements
+are counted once they have hydrated. The list-shape check itself stays
+`Hydrator`'s, so a field that isn't a JSON array fails there first and
+never reaches the bound. A rule about a list's *elements* rather than
+the list itself is declared with
+[`#[Each]`](#a-rule-for-every-element).
 
 `Hydrator::hydrate()` checks **every** constrained field before
 constructing the DTO — a request with three invalid fields gets all three
-errors back in one response, not just the first one it happened to
-encounter:
+violations back in one response, not just the first one it happened to
+encounter. The default response is an [RFC 9457][rfc9457] problem
+details document, served as `application/problem+json`:
 
 ```{code-block} json
 {
-    "errors": {
-        "name": ["must be at least 3 characters."],
-        "email": ["must be a valid email address."]
-    }
+    "type": "about:blank",
+    "title": "Unprocessable Content",
+    "status": 422,
+    "detail": "The request data failed validation.",
+    "errors": [
+        {
+            "path": ["name"],
+            "code": "min_length",
+            "message": "must be at least 3 characters.",
+            "parameters": {"length": 3}
+        },
+        {
+            "path": ["email"],
+            "code": "email",
+            "message": "must be a valid email address.",
+            "parameters": {}
+        }
+    ]
 }
 ```
 
-A failed validation short-circuits straight to a `422` — the controller
-method is never invoked at all.
+Each entry names where the failure is as a list of path segments — a
+member name is a string, a list index an integer, so neither can be
+mistaken for the other — plus a stable `code` a client can switch on,
+the default-English `message`, and the `parameters` that message was
+built from, for an application that translates or rewords it.
+
+A failed validation never reaches the controller method. The response
+itself is produced at the terminal boundary, so an application can
+replace it wholesale — see
+[Rendering validation failures](middleware.md#rendering-validation-failures).
+
+[rfc9457]: https://www.rfc-editor.org/rfc/rfc9457.html
 
 An empty body is treated as no data at all, so a DTO with only optional
 fields hydrates from its own defaults — the same outcome a `{}` body
@@ -760,11 +1068,11 @@ where the object/array distinction still exists:
 
 Before a value is cast to a `#[Body]` field's, `#[Query]` parameter's, or
 path parameter's declared scalar type, its actual shape is checked
-first — casting only ever happens once that check passes. This is the
-one check shared by every source of typed input: a `#[Body]` DTO field,
-a `#[Query]`/path parameter, and — since `Kinetis\Mcp\McpDispatcher`
-delegates to the identical `Hydrator::typeMismatchMessage()` method — an
-MCP tool's own top-level argument.
+first — casting only ever happens once that check passes. Every source of
+typed input enters the same method, `Hydrator::resolveScalar()`: a
+`#[Body]` DTO field, a `#[Query]`/path parameter, and an MCP tool's own
+top-level argument, which `Kinetis\Mcp\McpDispatcher` hands to it
+directly.
 
 A request value binds to one of seven builtin types:
 `string`, `int`, `float`, `bool`, `array`, `iterable`, `mixed`. Every
@@ -772,25 +1080,22 @@ other builtin — `null`, `true`, `false`, `object`, `callable` — is a
 definition error, not a runtime one: see "Builtin types outside the
 supported set" below.
 
+Which *spelling* satisfies a declared type depends on where the value
+came from, because different sources can say different things. A JSON
+document distinguishes `42` from `"42"`; a query string has no spelling
+for a number other than its text. `Kinetis\Validation\InputSource` names
+the three vocabularies, and the caller that read the bytes picks one:
+
+| Source | Chosen for | Carries |
+|---|---|---|
+| `Json` | a JSON `#[Body]`, an MCP tool argument | already-decoded JSON values, each with its own type |
+| `Text` | `#[Query]`, path segments, `application/x-www-form-urlencoded` and `multipart/form-data` bodies | raw strings only |
+| `Native` | a direct `Hydrator::hydrate()` call — a database row, an array a service built itself | whatever PHP values the caller already holds |
+
+All three agree on these:
+
 - A `string`-typed field/parameter must actually be a string. An array,
   object, number, or boolean is rejected.
-- An `int`-typed field/parameter accepts three things, all inside PHP's
-  native integer range: a JSON integer (`42`), a float with no fractional
-  part (`42.0`), and a string spelled as a plain base-10 integer (`"42"`,
-  `"+42"`, `"-42"`). A string is read as written, never through a float,
-  so a decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
-  whitespace-padded one, and a value a `double` cannot tell apart from an
-  integer (`"1.0000000000000001"`) are all rejected. So is a fractional,
-  non-finite, or out-of-range number: the result is a `422` ("must be an
-  integer within the platform integer range."), never a truncated cast —
-  `4.5` does not become `4`. An array or a boolean is rejected too.
-- A `float`-typed field/parameter accepts a real number or a numeric
-  string, and rejects any value that isn't finite (`"1e999"` overflows to
-  `INF`) as well as a non-numeric string, an array, or a boolean.
-- A `bool`-typed field/parameter accepts exactly `true`, `false`, `1`,
-  `0`, `"1"`, or `"0"` for a `#[Body]`/MCP value — see "Query and path
-  values are raw strings" below for the different, source-specific
-  spellings a `#[Query]`/path value actually needs.
 - An `array`-typed field/parameter (no `#[ListOf]`) must be a real JSON
   *array* (`[...]`), never a JSON object (`{...}`) — including the empty
   object `{}`, and including one whose own keys happen to look
@@ -800,9 +1105,9 @@ supported set" below.
   marked before `array_is_list()` is ever consulted, so a map-shaped
   value — of any shape, empty included — is always rejected with its own
   message ("must be a JSON array, not a JSON object."), never silently
-  accepted. `#[ListOf]`'s own array (a real JSON array of nested DTOs)
-  gets the identical list-shape check. An `array` field that is meant to
-  take a JSON object declares it — see
+  accepted. `#[ListOf]`'s own array (a real JSON array of whatever
+  elements it names) gets the identical list-shape check. An `array`
+  field that is meant to take a JSON object declares it — see
   [Object-map properties](#object-map-properties).
 - An `iterable`-typed field/parameter gets the identical check as
   `array` — decoded JSON input can only ever produce a PHP array, never
@@ -815,17 +1120,57 @@ supported set" below.
   PHP array would otherwise serialize as the invalid JSON array `[]`
   where JSON Schema requires an object.
 
-A mismatch is a `422` with a message under that field's key, in the same
-`errors` structure a failed constraint produces — not a value silently
+They differ on the numeric and boolean scalars:
+
+- An **`int`** accepts, under `Json` and `Native`, a JSON integer (`42`)
+  and a float with no fractional part (`42.0`) — JSON has one number
+  type, so a producer writing an integer that way still wrote an integer
+  — both inside PHP's native integer range. `Text` and `Native` accept
+  an integer's textual spelling: a plain base-10 string (`"42"`,
+  `"+42"`, `"-42"`), which under `Text` is the only spelling there is.
+  `Json` accepts no string — the schema published for that
+  field says `{"type": "integer"}`, and `"42"` is a string. Where a
+  string is accepted it is read as written, never through a float, so a
+  decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
+  whitespace-padded one, and a value a `double` cannot tell apart from an
+  integer (`"1.0000000000000001"`) are all rejected. So is a fractional,
+  non-finite, or out-of-range number: the result is a `422` ("must be an
+  integer within the platform integer range."), never a truncated cast —
+  `4.5` does not become `4`. An array or a boolean is rejected under
+  every source.
+- A **`float`** accepts either JSON number under `Json` and `Native`,
+  and a numeric string — `Text`'s only spelling — under `Text` and
+  `Native`. It rejects any value that isn't finite (`"1e999"` overflows
+  to `INF`). A non-numeric string, an array or a boolean is rejected
+  everywhere.
+- A **`bool`** is the JSON literal `true`/`false` under `Json` and
+  `Native`, and `Native` adds `1`, `0`, `"1"`, `"0"`, which is what a
+  `TINYINT(1)` column produces depending on the driver. `Text` has the
+  four textual spellings OpenAPI documents and only those — `"true"`,
+  `"false"`, `"1"`, `"0"`. Under `Json`, nothing but the literal: a JSON
+  boolean is spelled `true` or `false`, so `"true"` and `1` are both a
+  `422`.
+
+Each source is held to its own domain rather than trusted to stay
+inside it. `Text` carries raw strings, so a scalar declaration reading a
+`Text` value binds a textual spelling and nothing else: a real PHP
+`int`, `float` or `bool` is no more a `Text` value than `"42"` is a JSON
+integer. (`array`/`iterable` still take a real array under `Text` — a
+repeated key produces one — and `mixed` is unconstrained everywhere.)
+
+A mismatch is a `422` carrying a violation at that field's own path, in
+the same `errors` list a failed constraint produces — not a value silently
 coerced into something that happens to look plausible (an array becoming
 the literal string `"Array"`, a non-numeric string becoming `0`), and
-never a raw `TypeError` escaping the constructor. Every field's own
-errors are collected together before throwing once, so two
-independently-invalid fields in the same request both surface in the
-same response, not just whichever one happened to be checked first. An
-MCP tool's own validation failure surfaces the same `{field: [messages]}`
-shape inside a `tools/call` result's `isError: true` content, rather than
-a JSON-RPC-level error — see {doc}`mcp`.
+never a raw `TypeError` escaping the constructor. Its `code` is
+`type_mismatch`, with the declared and received type names in
+`parameters`. Every field's own violations are collected together before
+throwing once, so two independently-invalid fields in the same request
+both surface in the same response, not just whichever one happened to be
+checked first. An MCP tool's own validation failure carries that same
+ordered `errors` list inside a `tools/call` result's `isError: true`
+content — the violations, not the HTTP problem document around them —
+rather than a JSON-RPC-level error; see {doc}`mcp`.
 
 ### Builtin types outside the supported set
 
@@ -859,20 +1204,21 @@ its type is that parameter's own business.
 
 ### Query and path values are raw strings
 
-The type-mismatch check above is genuinely the same method regardless of
-source — but the *value* it checks is not. A `#[Body]`/MCP value is
-already a real, JSON-decoded PHP value (a genuine `bool`, `array`, ...);
-a `#[Query]`/path value only ever arrives as a raw string (or, for a
-`#[Query]` array-style parameter — `?tags=a&tags=b` — a list of them).
-Several consequences follow directly from this:
+A `#[Body]`/MCP value is already a real, JSON-decoded PHP value (a
+genuine `bool`, `array`, ...); a `#[Query]`/path value only ever arrives
+as a raw string (or, for a `#[Query]` array-style parameter —
+`?tags=a&tags=b` — a list of them). `Dispatcher` therefore resolves both
+under `InputSource::Text`, always, whatever the request body's own
+content type says. Several consequences follow directly from this:
 
 - **`bool` accepts the OpenAPI-documented `"true"`/`"false"` spelling
-  too, not just `"1"`/`"0"`.** `Hydrator::normalizeTextualBoolean()`
-  translates those two literal string spellings into real PHP
-  `true`/`false` before the shared check runs — the one place a
-  `#[Query]`/path *source* differs from a JSON body, so the same check
-  still receives an equivalent value. `bool`'s own `"1"`/`"0"`
-  spellings are unaffected.
+  too, not just `"1"`/`"0"`.** Once the type check has accepted one,
+  `Text` translates those two literal spellings into real PHP booleans,
+  so the `(bool)` cast never meets the string `"false"`, which would
+  cast to `true`. `bool`'s own `"1"`/`"0"` spellings are unaffected.
+- **A numeric string binds an `int`/`float` parameter**, since text is
+  the only spelling a query string or a path segment has. The same
+  string in a JSON body does not; see "Scalar type checking" above.
 - **A `#[Query]`/path parameter typed outside the supported set is
   rejected at registration**, not at request time — see "Builtin types
   outside the supported set" above.
@@ -914,19 +1260,26 @@ reaching the identical DTO: `describeRequestBody()`'s advertised
 content types, `application/json` included, always apply, on the exact
 same route, based purely on which the client actually sent.
 
-Every `#[Body]`-reachable route also advertises
-`application/x-www-form-urlencoded` and `multipart/form-data` in its
-generated `requestBody` alongside `application/json` — the identical
-schema under all three, since `Dispatcher` hydrates the same DTO class
-regardless of which the client sent; the wire representation is what
-differs, laid out below.
+Every `#[Body]`-reachable route whose DTO declares no uploaded file also
+advertises `application/x-www-form-urlencoded` and `multipart/form-data`
+in its generated `requestBody` alongside `application/json` — the
+identical schema under all three, since `Dispatcher` hydrates the same
+DTO class regardless of which the client sent; the wire representation is
+what differs, laid out below. A DTO that *does* declare an upload
+advertises `multipart/form-data` alone, since neither of the other two
+can carry a file.
 
-- `bool` accepts both the `"1"`/`"0"` spelling *and* the
-  `"true"`/`"false"` spelling for a form-encoded value — the identical
-  normalization `#[Query]`/path already has, applied here only when
-  `Dispatcher` knows the whole request body is form-encoded, so a real
-  JSON request for the same field still rejects the JSON *string*
-  `"true"` (as opposed to the JSON boolean literal `true`).
+- Every field is read under `InputSource::Text`, the same vocabulary
+  `#[Query]`/path values use, so `bool` accepts both the `"1"`/`"0"` and
+  the `"true"`/`"false"` spelling and `int`/`float` accept their textual
+  ones. The source is the *request's*, not the route's: `Dispatcher`
+  picks it from the `Content-Type` the client actually sent, so a real
+  JSON request for the identical DTO class still rejects the JSON
+  *string* `"true"` (as opposed to the JSON boolean literal `true`) and
+  the JSON string `"3"` for an `int` field. It reaches a list's own scalar
+  elements, and a nested or `#[ListOf]` DTO's own scalar fields, via
+  PHP's bracket-style `field[sub]=value` convention — a form-encoded
+  body is exactly as textual one level down.
 - `array`/`iterable` get the identical map-shaped-value rejection
   documented above (a form-encoded field parsed into a genuinely
   associative PHP array is rejected the same way a JSON object is), but
@@ -936,16 +1289,16 @@ differs, laid out below.
   shape comes directly from PHP's parsed-body array, unchanged.
 - An `UploadedFileInterface`-typed field is described as `{type: string,
   format: binary}` — OpenAPI's own real convention for a file upload
-  inside a multipart-serialized schema — genuinely satisfiable only via
-  `multipart/form-data`, the one content type of the three that can
-  actually carry a file.
+  inside a multipart-serialized schema. It is satisfiable only via
+  `multipart/form-data`, which is why a DTO carrying one advertises that
+  content type alone.
 
 Missing and explicitly-null values get the same treatment, whether or not
 the field carries any constraint attributes: a `#[Body]` DTO field whose
 key is absent from the request is `is required.` unless the constructor
 parameter has a default, and a field sent as JSON `null` whose declared
-type doesn't allow null is `must not be null.` — both under the field's
-key in the same `422`, never a raw `TypeError` from the constructor.
+type doesn't allow null is `must not be null.` — both at the field's own
+path in the same `422`, never a raw `TypeError` from the constructor.
 Nullability and required presence are independent: a nullable field with
 no default (`?string $name`) still rejects an absent key, only accepting
 one explicitly present and set to `null` — the generated OpenAPI schema
@@ -976,33 +1329,249 @@ The property's visibility declaration is simply irrelevant to how it's
 bound and validated — the constructor parameter is what both classes
 actually inspect.
 
+### Required, optional, and absent fields
+
+A constructor parameter with no default is required: omitting its member
+is an `is required.` violation, whether or not the declared type accepts
+`null`. A parameter with a default may be omitted and receives that
+default, and no rule on it runs — an omitted default is the
+application's own value, not something the client sent.
+
+That leaves one question a default alone cannot answer. On an update, a
+field the client did not mention and a field the client explicitly
+cleared are different instructions, and `?string $bio = null` binds
+`null` for both. `Kinetis\Validation\Absent` is the third state:
+
+```{code-block} php
+use Kinetis\Validation\Absent;
+use Kinetis\Validation\Constraints\{MaxLength, NotBlank};
+
+final readonly class UpdateArticleRequest
+{
+    public function __construct(
+        #[NotBlank, MaxLength(255)]
+        public string|Absent $title = Absent::Value,
+        public string|null|Absent $summary = Absent::Value,
+    ) {}
+}
+```
+
+`$title` is `Absent::Value` when the member was omitted and the string
+when one was sent; sending `null` is a `null_not_allowed` violation,
+since the declared type does not name `null`. `$summary` adds `null` to
+the union, so all three answers are available: omitted, cleared, or set.
+
+Exactly two union forms are supported, `T|Absent` and `T|null|Absent`,
+and the parameter must default to exactly `Absent::Value`. `T` is one
+otherwise-supported field type — a scalar, a backed enum, a nested DTO,
+a `#[ListOf]` list, an `#[ObjectMap]` — and a supplied value is checked
+against it exactly as `T` alone would be. Anything else about the declaration is a
+definition error; see "DTO definitions Kinetis rejects" below.
+
+Nothing a client sends can produce the marker. It comes from the
+parameter's own default and nowhere else, so an `Absent` value appearing
+in hydrated data is read as the wrong type for that field, never as
+omission. The generated schema describes `T` (widened with `null` only
+where the union names it), never `Absent`, and leaves the member out of
+`required` because the declaration carries a default.
+
+This is a DTO constructor field's contract. A `#[Query]` parameter, a
+path parameter and an MCP tool method parameter still reject every union
+— an absent query key is already answered by that parameter's own
+default, and there is no member to be missing. Create and update stay
+separate DTO classes: the HTTP method never selects behavior, and one
+class never changes shape per verb.
+
+### Unknown members are rejected for JSON
+
+A JSON request body, and an MCP tool call's arguments, describe an object
+whose members are exactly the DTO's own. A member outside that set is
+something the client believes it is sending and the application will
+never read — a misspelling, a renamed field, a value meant for a
+different endpoint — so it is an `is not expected.` violation on its own
+path (code `unexpected_field`), reported alongside every other failure
+the same request has:
+
+```{code-block} json
+{
+    "errors": [
+        { "path": ["email"], "code": "required", "message": "is required." },
+        { "path": ["nmae"], "code": "unexpected_field", "message": "is not expected." }
+    ]
+}
+```
+
+Closure applies at every nesting level: a nested DTO's own object and a
+`#[ListOf]` DTO element's are closed under their own paths. An
+`#[ObjectMap]` property stays open inside itself — arbitrary keys are
+what it accepts — while the DTO holding it is closed like any other.
+
+Form-encoded and multipart bodies are **not** closed. They legitimately
+carry members that are not fields — a CSRF token, the submit button's own
+name, a honeypot — and rejecting those would break input that is doing
+nothing wrong. A direct `Hydrator::hydrate()` call is not closed either:
+its `InputSource::Native` default exists for callers handing over PHP
+values they already hold, such as a database row wider than the DTO
+reading it.
+
+Every generated object schema states the closed contract with
+`additionalProperties: false`, including a DTO with no fields at all.
+That is the strict reading of the two closed sources; a form body is
+deliberately more tolerant at runtime, so a client that sends only what
+the document describes is accepted whichever source it writes in.
+
 ### Writing your own constraint
 
-A constraint is any class implementing the one-method `Constraint`
-interface:
+A constraint is any class implementing the two-method `Constraint`
+interface. `validate()` answers what a broken value gets back;
+`schema()` answers which JSON Schema keywords state the same rule to a
+client generating requests from the published document.
 
 ```{code-block} php
 use Kinetis\Validation\Constraint;
+use Kinetis\Validation\Violation;
 use Attribute;
 
 #[Attribute(Attribute::TARGET_PARAMETER | Attribute::TARGET_PROPERTY)]
 final readonly class Uppercase implements Constraint
 {
-    public function validate(mixed $value): ?string
+    public function validate(mixed $value): ?Violation
     {
-        if (!is_string($value) || $value !== strtoupper($value)) {
-            return 'must be all uppercase.';
+        if (!is_string($value) || preg_match('/^[A-Z]+$/', $value) !== 1) {
+            return new Violation([], 'uppercase', 'must be all uppercase letters.');
         }
 
         return null;
     }
+
+    public function schema(): array
+    {
+        return ['pattern' => '^[A-Z]+$'];
+    }
 }
 ```
 
-Returning `null` means valid; any non-null string becomes that field's
-error message. Any attribute implementing `Constraint` on a parameter is
-picked up automatically — there is no fixed list of "known" constraints to
-register your own class into.
+Returning `null` from `validate()` means valid. A `Violation` carries the
+stable `code` a client switches on, the default-English `message`, and
+the `parameters` that message was built from — its `path` is relative to
+the value being checked, so it is normally `[]` and `Hydrator` prefixes
+the owning field's own path. Every built-in rule is written exactly this
+way; none of them is special-cased anywhere.
+
+`schema()` returns the JSON Schema 2020-12 keywords for the rule, merged
+into the schema of whatever it guards — `['pattern' => '^[A-Z]+$']`
+above, an ECMA-262 expression because that is the dialect JSON Schema
+uses. A rule no keyword expresses returns `[]`, exactly as `#[NotBlank]`
+and `#[Regex]` do: it still runs, it simply publishes nothing. Never
+state a keyword the check does not actually enforce — the point of one
+class owning both answers is that the document and the check cannot
+disagree.
+
+Any attribute implementing `Constraint` on a parameter is picked up
+automatically, in validation and in the generated OpenAPI/MCP schema
+alike — there is no fixed list of "known" constraints to register your
+own class into, and nothing to configure.
+
+A rule is constructed fresh for each validation or schema operation from
+the literal arguments its attribute was written with, and discarded, so
+it must be pure: no I/O, no container, no request state, nothing retained
+between calls. A rule that throws is a programmer error and propagates as
+an ordinary exception, not a `422`.
+
+### Rules about the whole DTO
+
+A `Constraint` sees one value, so it cannot express a rule relating two
+of them. `ObjectConstraint` is the class-level counterpart: a rule about
+the whole DTO, discovered from a class attribute the same way a field
+rule is discovered from a parameter attribute.
+
+```{code-block} php
+use Kinetis\Validation\ObjectConstraints\{AtLeastOneProvided, SameAs};
+
+#[AtLeastOneProvided('title', 'summary')]
+final readonly class UpdateArticleRequest { /* ... */ }
+```
+
+| Attribute | Checks | Constructor | Violation path | Violation code | Schema |
+|---|---|---|---|---|---|
+| `#[AtLeastOneProvided(...)]` | the input supplied at least one of the named fields | `string ...$fields` | `[]` | `at_least_one_provided` | `anyOf` of one `required` per field |
+| `#[SameAs($field, $other)]` | the two fields hold the identical value | `string $field, string $other` | `[$field]` | `same_as` | *(none)* |
+
+`#[AtLeastOneProvided]` is what makes an empty update a client error
+rather than a silent no-op write. It asks about presence only, never
+values: a field sent as `null` counts as supplied wherever the
+declaration accepts `null`, because clearing a field is a change.
+
+`#[SameAs]` compares only when the input supplied both members —
+whether either had to be there at all is the declaration's question, or
+another rule's. It reads both values off the constructed object by
+reflection, so a promoted `private` field needs no getter, and reports on
+`$field`, the one the client is asked to retype. No JSON Schema keyword
+compares two properties' values, so it publishes nothing rather than
+something weaker.
+
+Writing your own is the field-rule contract, one level out:
+
+```{code-block} php
+use Kinetis\Validation\{ObjectConstraint, ValidationContext, Violation};
+use Attribute;
+
+#[Attribute(Attribute::TARGET_CLASS)]
+final readonly class EndsAfterItStarts implements ObjectConstraint
+{
+    public function fields(): array
+    {
+        return ['startsAt', 'endsAt'];
+    }
+
+    public function validate(object $value, ValidationContext $context): iterable
+    {
+        if ($value->endsAt <= $value->startsAt) {
+            yield new Violation(['endsAt'], 'ends_after_start', 'must be after startsAt.');
+        }
+    }
+
+    public function schema(): array
+    {
+        return [];
+    }
+}
+```
+
+`fields()` names every constructor field the rule reads off the object or
+asks the context about — the names its attribute was configured with, or
+the ones it has hardcoded, as here. Kinetis checks each of them against
+the guarded class's constructor where the hydration plan is compiled and
+where the schema is generated, so a mistyped name fails as a definition
+error instead of a rule that silently never matches or an `anyOf` no
+request can satisfy. A rule about the object as a whole, naming no field,
+returns `[]`.
+
+Object rules run once, last: after every field has resolved, passed its
+own rules, and the DTO has been constructed. If any field failed, no
+object rule runs at all — the only values available then are the
+declaration's own defaults, and a rule reporting on those would be
+reporting on something the client never sent.
+
+`ValidationContext` carries the one thing a constructed object cannot be
+asked: which of its own constructor fields the input actually supplied.
+`wasSupplied(string): bool` is its whole read surface. It holds no
+request, container, transport or DTO, and is built for one hydration.
+
+Yielded paths are relative to the DTO — `[]` addresses the object as a
+whole — and the owner prefixes its own field name or list index when the
+DTO is a nested one, exactly as it does for a field failure. Like a field
+rule, an object rule is constructed fresh from the literal arguments its
+attribute was written with and discarded, so it must be pure. Throwing,
+or yielding anything other than a `Violation`, is a programmer error and
+propagates as an ordinary exception, not a `422`.
+
+`schema()` contributes object-level keywords, merged into the class's own
+schema under the same one-owner rule field rules follow: a rule cannot
+claim `type`, `properties`, `required` or `additionalProperties`, which
+the PHP declaration owns, nor a keyword another rule on the same class
+already contributed. Either is a definition error rather than a silently
+overwritten bound.
 
 ### Nested DTOs
 
@@ -1041,14 +1610,19 @@ final readonly class CreateOrderRequest
 
 A nested DTO's own validation runs the same way its parent's does — every
 field, top-level and nested, is checked before construction, and a nested
-field's error surfaces under a dotted key (`shippingAddress.street`) rather
+field's violation carries the whole route to it as path segments rather
 than only reporting the outer field name:
 
 ```{code-block} json
 {
-    "errors": {
-        "shippingAddress.street": ["must be at least 3 characters."]
-    }
+    "errors": [
+        {
+            "path": ["shippingAddress", "street"],
+            "code": "min_length",
+            "message": "must be at least 3 characters.",
+            "parameters": {"length": 3}
+        }
+    ]
 }
 ```
 
@@ -1056,9 +1630,11 @@ A class-typed field accepts exactly two shapes and nothing else: an
 object-shaped value, hydrated into the declared class; or a value that is
 already an instance of that class, taken as given — most notably an
 `UploadedFileInterface` merged in for a
-[multipart](#multipart-form-data-file-uploads) field. A scalar, a `null`
-for a non-nullable field, or an object of some other class is a `422`
-under that field's key, never a raw `TypeError` from the constructor.
+[multipart](#multipart-form-data-file-uploads) field, which is
+additionally checked for the transport status described there. A scalar,
+a `null` for a non-nullable field, or an object of some other class is a
+`422` at that field's own path, never a raw `TypeError` from the
+constructor.
 
 Object-shaped means a JSON object (`{...}`, including `{}`) or — for a
 direct `Hydrator::hydrate()` call or a form-encoded body, neither of which
@@ -1068,20 +1644,133 @@ object, not a JSON array.") even for a class whose every field has a
 default and would otherwise have accepted no fields at all.
 
 A field typed as a class that cannot be instantiated — an interface, an
-abstract class, an enum — accepts only an existing instance: nothing on
-the wire can construct one, so an array or a scalar for it is a `422`
+abstract class, a unit enum — accepts only an existing instance: nothing
+on the wire can construct one, so an array or a scalar for it is a `422`
 ("must be a `Psr\Http\Message\UploadedFileInterface` instance."). That
 is exactly how a `#[Body]` DTO's own file field works, since `Dispatcher`
-merges the uploaded file in as an object.
+merges the uploaded file in as an object. A *backed* enum is the one
+exception — its cases have wire values — see
+[Backed enum fields](#backed-enum-fields).
 
-### Collections of nested DTOs
+### Backed enum fields
 
-A constructor parameter typed `array` and carrying
-`#[ListOf(SomeClass::class)]` is hydrated as a list of nested DTOs — each
-object-shaped element is hydrated the same way a single nested DTO field is:
+A constructor parameter typed as a backed enum takes the case its
+backing value names:
 
 ```{code-block} php
-use Kinetis\Validation\Constraints\GreaterThan;
+enum Priority: int
+{
+    case Low = 1;
+    case Normal = 2;
+    case High = 3;
+}
+
+final readonly class CreateTicketRequest
+{
+    public function __construct(
+        public string $subject,
+        public Priority $priority,
+        public ?Priority $escalation = null,
+    ) {}
+}
+```
+
+```{code-block} json
+{ "subject": "Printer offline", "priority": 2 }
+```
+
+The wire value is the scalar the enum is backed by — a JSON number for
+an `int`-backed enum, a string for a `string`-backed one — and it is
+checked as that scalar before any case is looked up, so every rule in
+[Scalar type checking](#scalar-type-checking) applies unchanged: a JSON
+body refuses the string `"2"` where an `int`-backed enum is declared, a
+query string or form body accepts it (text is all either carries), and
+`2.0` binds because that is how a producer with one number type writes
+the integer `2`.
+
+A correctly typed value that names no case is a `422` at that field's
+own path, carrying every backing value the enum has:
+
+```{code-block} json
+{
+    "path": ["priority"],
+    "code": "enum_case",
+    "message": "must be one of: 1, 2, 3.",
+    "parameters": {"choices": [1, 2, 3]}
+}
+```
+
+A value that is already a case of that enum is taken as given, the way
+a [class-typed field](#nested-dtos) takes an instance. Rules run
+against the resolved case, not the backing value, so an application
+rule declared on the field receives a `Priority`; its own schema
+keywords merge beside the enum's `type` and `enum`, which — like any
+other declared shape — a rule may not restate.
+
+The generated document publishes both halves of the domain — the
+backing `type` and the exact `enum` — and a nullable field widens both,
+since `null` has to satisfy each:
+
+```{code-block} json
+{
+    "priority": { "type": "integer", "enum": [1, 2, 3] },
+    "escalation": { "type": ["integer", "null"], "enum": [1, 2, 3, null] }
+}
+```
+
+This is a DTO field's shape and only that. An MCP tool argument typed
+directly as a backed enum still fails registration — a tool's arguments
+are one flat object with no DTO to own the distinction, so there is no
+truthful schema to advertise — and a controller method parameter typed
+as a class is looked for in the request container like any other, not
+read from the request. A *unit* enum has no backing values at all, so a
+field declaring one stays instance-only, exactly like an interface —
+the `BackedEnum` interface itself included, since it names no cases of
+its own either.
+
+### Typed collections
+
+A constructor parameter typed `array` and carrying `#[ListOf]` declares
+what its elements are — `array` itself carries no element type for
+Kinetis to reflect on. Four families are admitted, and the attribute
+names one of them:
+
+```{code-block} php
+use Kinetis\Validation\ListOf;
+
+final readonly class PublishRequest
+{
+    public function __construct(
+        #[ListOf('string')]
+        public array $tags,
+        #[ListOf(Priority::class)]
+        public array $priorities,
+        #[ListOf(OrderItem::class)]
+        public array $items,
+    ) {}
+}
+```
+
+- A **scalar** — `string`, `int`, `float` or `bool` — resolves each
+  element exactly as a field of that type resolves its own value,
+  including the source's own spellings.
+- A **backed enum** resolves each element's backing value first and
+  then the case it names, exactly as a
+  [backed enum field](#backed-enum-fields) does.
+- An **instantiable class** hydrates each object-shaped element into
+  that class, or takes an element already an instance of it.
+- **`Psr\Http\Message\UploadedFileInterface`**, and no other
+  interface, takes each element as the uploaded file it already is —
+  the repeated file control a `photos[]` form sends. See
+  [Nested and repeated file controls](#nested-and-repeated-file-controls).
+
+The field itself must be a real JSON array; a JSON object for it is the
+same `422` a plain `array` field gets. No element is nullable — a list
+declares one element type — so a `null` element is a violation at its
+own index rather than a hole in the list.
+
+```{code-block} php
+use Kinetis\Validation\Constraints\{GreaterThan, MinLength};
 use Kinetis\Validation\ListOf;
 
 final readonly class OrderItem
@@ -1114,27 +1803,90 @@ final readonly class CreateOrderRequest
 }
 ```
 
-Each element's own validation errors surface under a dotted
-`field.index.nestedField` key, alongside every other error in the same
-response:
+Every element's own violations carry the field name, the element's
+index as an integer segment, and — for a DTO element — the nested field
+name, alongside every other violation in the same response:
 
 ```{code-block} json
 {
-    "errors": {
-        "items.1.quantity": ["must be greater than 0."]
+    "errors": [
+        {
+            "path": ["items", 1, "quantity"],
+            "code": "greater_than",
+            "message": "must be greater than 0.",
+            "parameters": {"threshold": 0}
+        }
+    ]
+}
+```
+
+A scalar or enum element carries the same path without the third
+segment — `["tags", 0]` — since the element is the value that failed.
+
+An index stays an integer all the way out, so an element's position is
+never confused with a member named `1`. Every element is attempted, so
+one request reports every bad element rather than only the first.
+
+#### A rule for every element
+
+`#[Each]` declares a rule that runs against each element of a scalar,
+backed-enum or uploaded-file list, rather than against the list itself.
+It is repeatable, and each occurrence names a `Constraint` class plus the
+arguments that rule's own constructor takes — positional or named:
+
+```{code-block} php
+use Kinetis\Validation\Constraints\{MinItems, MinLength, Regex};
+use Kinetis\Validation\{Each, ListOf};
+
+final readonly class TagRequest
+{
+    public function __construct(
+        #[MinItems(1)]
+        #[ListOf('string')]
+        #[Each(MinLength::class, 2)]
+        #[Each(Regex::class, pattern: '/^[a-z-]+$/')]
+        public array $tags,
+    ) {}
+}
+```
+
+The two levels of rule describe different things and run in that order:
+
+1. Each element is resolved to the declared element type. An element of
+   the wrong type gets its type violation and runs none of its rules —
+   a rule describes a value of that type, and this one never became
+   one.
+2. Every resolved element runs every `#[Each]` rule. Failures aggregate
+   under `["tags", <index>]` paths, together with any further path the
+   rule's own violation carries.
+3. Only once every element has succeeded do the field's own rules run.
+   `#[MinItems]` counts a list that was actually built, so a single bad
+   element leaves it nothing to count and it does not report.
+
+A rule declared with `#[Each]` sees an element of the declared type —
+an enum list's rules receive the resolved case, not its backing value.
+The rule class itself is built when it runs, from the arguments as
+written, so an argument it refuses raises where any other rule's
+arguments do, at construction.
+
+In the generated document the two levels stay separate too: the field's
+own rules contribute keywords to the array, and its `#[Each]` rules to
+`items`, beside whatever the element type already states there.
+
+```{code-block} json
+{
+    "tags": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 2 },
+        "minItems": 1
     }
 }
 ```
 
-Every element gets the same two-shape contract a single nested DTO field
-has: object-shaped and hydrated into the item class, or already an
-instance of it. A scalar, a `null`, a nested JSON array, or an object of
-another class is a `422` under that element's own `field.index` key —
-`items.1: must be an object, value given.` — alongside every other error
-in the response.
-
-`#[ListOf]` itself is only valid on a parameter typed `array`, and its
-item class must be a class that can be instantiated.
+`#[ListOf]` and `#[Each]` declare a DTO constructor field. A controller
+or MCP tool method parameter binds one value each and traverses no
+elements, so a list whose elements are checked belongs in a `#[Body]`
+DTO, or in the DTO an MCP tool takes as its argument.
 
 ### Object-map properties
 
@@ -1168,10 +1920,11 @@ same value a `mixed` field would have received. No schema is declared or
 checked for the keys or the values.
 
 A JSON array, a scalar, or a `null` for a non-nullable property is a
-`422` under that property's own key — `preferences: must be a JSON
-object, not a JSON array.` — alongside every other error in the same
-response. Inside a [nested DTO](#nested-dtos) it surfaces under the
-dotted `field.preferences` key, exactly like any other nested field.
+`422` at that property's own path — `["preferences"]`, with the message
+`must be a JSON object, not a JSON array.` — alongside every other
+violation in the same response. Inside a [nested DTO](#nested-dtos) the
+parent field is prepended, `["profile", "preferences"]`, exactly like
+any other nested field.
 
 `{}` is accepted and hydrates to `[]`, which is precisely the value a
 plain `array` field rejects. That pair is decided by *provenance*, not
@@ -1192,19 +1945,26 @@ other a JSON array, so a parameter carrying both would accept nothing.
 A hydration plan is compiled from a DTO's constructor by reflection —
 ahead of time by `kinetis build`, or on that class's first hydration
 otherwise. It supports a finite set of parameter shapes: one of the seven supported
-builtin types, a single named class (hydrated when it can be
-instantiated, instance-only when it can't), an `array` carrying
-`#[ListOf]`, an `array` carrying `#[ObjectMap]`, and nullable variants
-of each.
+builtin types, a backed enum, a single named class (hydrated when it
+can be instantiated, instance-only when it can't), an `array` carrying
+`#[ListOf]`, an `array` carrying `#[ObjectMap]`, nullable variants of
+each, and the presence union `T|Absent`/`T|null|Absent` around any of
+them (see "Required, optional, and absent fields" above).
 
 Anything else is rejected while the plan is compiled, with an
 `UnsupportedDtoDefinitionException` naming the class and the parameter —
 so the definition fails at build time, or on that route's first request
 in development, rather than as a `TypeError` on a live one:
 
-- A **union** or **intersection** parameter type (`int|string`,
-  `Countable&ArrayAccess`). Kinetis hydrates neither; declare a single
-  named type.
+- An **intersection** parameter type (`Countable&ArrayAccess`), or a
+  **union** other than the two presence forms (`int|string`). Declare a
+  single named type, or `T|Absent`/`T|null|Absent` where the field needs
+  to tell an omitted member from an explicit `null`.
+- A malformed presence union: `Absent` with no value type beside it
+  (`?Absent`), with two of them (`int|string|Absent`), with no default,
+  or with a default other than `Absent::Value`. Nothing but that default
+  can produce the marker, so any other spelling names a field that could
+  never hold one.
 - A **recursive or mutually recursive** class reference — a `Comment`
   with a `Comment $parent` field, or two DTOs naming each other. A plan
   embeds each nested class's own plan inline, so a cycle has no finite
@@ -1215,19 +1975,35 @@ in development, rather than as a `TypeError` on a live one:
   `parent`, `static`.
 - A builtin type outside the supported set — see "Builtin types outside
   the supported set" above.
-- `#[ListOf]` on a parameter that isn't typed `array`, or naming a class
-  that cannot be instantiated.
+- `#[ListOf]` on a parameter that isn't typed `array`, or naming an
+  element type outside the four families
+  [it admits](#typed-collections) — another builtin, an empty name, a
+  name no class answers to, an interface other than
+  `UploadedFileInterface`, an abstract class, a unit enum.
+- A backed enum with no cases, named by a field or by a `#[ListOf]`. No
+  value can name a case that does not exist, and JSON Schema's `enum`
+  may not be empty, so such a field could only publish a schema it
+  rejects every request against.
+- `#[Each]` on a parameter that declares no `#[ListOf]`, on a list of
+  DTOs — whose elements carry their own fields' rules — or naming a
+  class that does not implement `Constraint`. An upload list *may* carry
+  it: an uploaded file has no fields of its own on which a rule could
+  otherwise be written.
 - `#[ObjectMap]` on a parameter that isn't typed `array`, or on the same
   parameter as `#[ListOf]`.
 - A `#[Body]` DTO class that cannot itself be instantiated.
+- An `ObjectConstraint` class attribute naming a field the constructor
+  does not declare — see "Rules about the whole DTO" above. Schema
+  generation reads the same rules and refuses it identically.
 
 The generated OpenAPI document and MCP tool input schemas hold the same
 line: a class-typed field whose class cannot be instantiated has no
 truthful object schema, so schema generation refuses it rather than
 emitting a bare `{"type": "object"}` no request could satisfy.
-`UploadedFileInterface` is the one such type both sides accept — it is
-described as `{"type": "string", "format": "binary"}` and supplied by
-`Dispatcher` from the request's uploaded-files bag.
+`UploadedFileInterface` is the one such type both sides accept, as a
+field and as a `#[ListOf]` element alike — it is described as
+`{"type": "string", "format": "binary"}` and supplied by `Dispatcher`
+from the request's normalized uploaded files.
 
 ### Default values a plan captures
 
@@ -1295,8 +2071,10 @@ attach to them behaves like middleware anywhere else.
 
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,
-`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `enum`,
-`minItems`/`maxItems`, `format: uri`, `format: uuid`) — except
+`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`,
+`minimum`/`maximum`, `multipleOf`, `enum`, `not`, `minItems`/`maxItems`,
+`format: uri`, `format: uuid`, `format: date`, `format: date-time`, and
+`#[Ip]`'s `anyOf` of the two address formats) — except
 `#[NotBlank]` and `#[Regex]`, which have no JSON Schema keyword to map
 onto. `#[Query]` parameters and path parameters become `parameters`
 entries, with the identical constraint-to-keyword mapping applied to
@@ -1308,16 +2086,25 @@ schema too — `UserResponse` (or `?UserResponse`, or a union like
 return, with no shape reflection can recover, leaves the response
 description-only.
 
-A [`#[ListOf]` field](#collections-of-nested-dtos) becomes a `{"type":
-"array", "items": ...}` schema, with `items` describing the element class
-the same way any other DTO reference does, and any constraint keyword the
-field carries merged in beside them. An
+A [`#[ListOf]` field](#typed-collections) becomes a `{"type": "array",
+"items": ...}` schema: `items` describes the element class the same way
+any other DTO reference does, or the element's own scalar type or
+backed-enum domain, with each `#[Each]` rule's keywords merged into it
+and the field's own constraint keywords merged beside `items`. A
+[backed enum field](#backed-enum-fields) becomes its backing `type` and
+the exact `enum` of its cases. An
 [`#[ObjectMap]` field](#object-map-properties) becomes `{"type":
 "object", "additionalProperties": true}` — the schema for the arbitrary
 keys and values it actually accepts.
 
+Every DTO object schema itself says `additionalProperties: false`, and
+carries whatever object-level keywords its
+[class-level rules](#rules-about-the-whole-dto) contribute — see
+"Unknown members are rejected for JSON" above for what the runtime holds
+each source to.
+
 Every DTO schema — whether reached via a `requestBody`, a response, or a
-[`#[ListOf]`](#collections-of-nested-dtos) element, at any depth — is
+[`#[ListOf]`](#typed-collections) element, at any depth — is
 deduplicated into `components/schemas` and referenced by `$ref`, rather
 than inlined at each point of use:
 

@@ -15,9 +15,11 @@ use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
 use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
+use Kinetis\Tests\Http\Fixtures\UploadBindingController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Reflection\Fixtures\HiddenChildOfRoutedBase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/Fixtures/global_namespace_dto.php';
@@ -552,5 +554,91 @@ final class OpenApiGeneratorTest extends TestCase
 
         self::assertSame(['type' => 'string', 'format' => 'binary'], $schema['properties']['avatar']);
         self::assertSame(['name', 'avatar'], $schema['required']);
+    }
+
+    public function test_an_upload_list_publishes_binary_string_items(): void
+    {
+        $document = (new OpenApiGenerator(self::uploadRouter()))->generate();
+
+        self::assertSame(
+            ['type' => 'array', 'items' => ['type' => 'string', 'format' => 'binary']],
+            $document['components']['schemas']['PhotoUploadRequest']['properties']['photos'],
+        );
+    }
+
+    /**
+     * Only a multipart body can carry a file, and Dispatcher merges
+     * uploaded files into a form-encoded body alone — so a JSON or
+     * urlencoded entry beside this one would advertise a request that
+     * cannot hydrate the DTO it names. The upload is found wherever the
+     * compiled plan puts it: on the DTO itself, on a nested DTO, on a
+     * list element, or on a DTO reached through a list element.
+     *
+     * @param class-string $controller
+     */
+    #[DataProvider('uploadBearingRoutes')]
+    public function test_a_dto_declaring_an_upload_publishes_multipart_alone(string $controller, string $path): void
+    {
+        $router = new Router();
+        $router->register($controller);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        self::assertSame(
+            ['multipart/form-data'],
+            array_keys($document['paths'][$path]['post']['requestBody']['content']),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{class-string, string}>
+     */
+    public static function uploadBearingRoutes(): iterable
+    {
+        yield 'a field of the DTO itself' => [UploadController::class, '/avatars'];
+        yield 'a field of a nested DTO' => [UploadBindingController::class, '/profiles'];
+        yield 'the element type of a list' => [UploadBindingController::class, '/photos'];
+        yield 'a field of a list element DTO' => [UploadBindingController::class, '/galleries'];
+    }
+
+    /**
+     * The narrowing is scoped to DTOs that actually declare an upload:
+     * an upload-free DTO on the same generator keeps all three encodings
+     * it genuinely accepts.
+     */
+    public function test_an_upload_free_dto_keeps_every_content_type_it_accepts(): void
+    {
+        $router = new Router();
+        $router->register(UploadBindingController::class);
+        $router->register(UserController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        self::assertSame(
+            ['application/json', 'application/x-www-form-urlencoded', 'multipart/form-data'],
+            array_keys($document['paths']['/users']['post']['requestBody']['content']),
+        );
+    }
+
+    /**
+     * An UploadedFileInterface-typed controller parameter is not
+     * request-body input and is not synthesized into any: the route
+     * publishes no requestBody at all. An application that needs its
+     * upload input documented declares the file on a #[Body] DTO.
+     */
+    public function test_a_direct_upload_parameter_produces_no_generated_input_metadata(): void
+    {
+        $document = (new OpenApiGenerator(self::uploadRouter()))->generate();
+
+        $operation = $document['paths']['/scans']['post'];
+
+        self::assertArrayNotHasKey('requestBody', $operation);
+        self::assertArrayNotHasKey('parameters', $operation);
+    }
+
+    private static function uploadRouter(): Router
+    {
+        $router = new Router();
+        $router->register(UploadBindingController::class);
+
+        return $router;
     }
 }

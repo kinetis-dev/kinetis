@@ -8,25 +8,39 @@ use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
+use Kinetis\Tests\Validation\Fixtures\ApplicationRulesRequest;
 use Kinetis\Tests\Validation\Fixtures\BoundedListsRequest;
+use Kinetis\Tests\Validation\Fixtures\ClaimsKeyword;
+use Kinetis\Tests\Validation\Fixtures\DuplicateKeywordRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
+use Kinetis\Tests\Validation\Fixtures\NullableInFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
+use Kinetis\Validation\Constraints\Date;
+use Kinetis\Validation\Constraints\DateTime;
 use Kinetis\Validation\Constraints\Email;
 use Kinetis\Validation\Constraints\GreaterThan;
+use Kinetis\Validation\Constraints\GreaterThanOrEqual;
 use Kinetis\Validation\Constraints\In;
+use Kinetis\Validation\Constraints\Ip;
 use Kinetis\Validation\Constraints\LessThan;
+use Kinetis\Validation\Constraints\LessThanOrEqual;
+use Kinetis\Validation\Constraints\MaxItems;
 use Kinetis\Validation\Constraints\MaxLength;
+use Kinetis\Validation\Constraints\MinItems;
 use Kinetis\Validation\Constraints\MinLength;
+use Kinetis\Validation\Constraints\MultipleOf;
 use Kinetis\Validation\Constraints\NotBlank;
+use Kinetis\Validation\Constraints\NotIn;
 use Kinetis\Validation\Constraints\Regex;
 use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
 use Kinetis\Validation\Exception\JsonSchemaException;
 use Kinetis\Validation\JsonSchema;
+use Kinetis\Validation\ListOf;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionFunction;
@@ -191,26 +205,223 @@ final class JsonSchemaTest extends TestCase
         self::assertSame(['$ref' => '#/components/schemas/' . OrderItem::class], $itemsSchema['items']);
     }
 
-    public function test_maps_each_constraint_to_its_json_schema_keyword(): void
+    /**
+     * Each rule's keywords reach a parameter's schema through the same
+     * #[Attribute] -> {class, args} descriptor reading Hydrator
+     * validates through, so this is the published document, not a
+     * separate mapping table that could drift from it. Each rule's own
+     * schema() answer is asserted in ConstraintCatalogueTest.
+     */
+    public function test_each_constraint_merges_its_own_keywords_into_the_parameters_schema(): void
     {
-        self::assertSame(['format' => 'email'], JsonSchema::forConstraint(new Email()));
-        self::assertSame(['minLength' => 5], JsonSchema::forConstraint(new MinLength(5)));
-        self::assertSame(['maxLength' => 20], JsonSchema::forConstraint(new MaxLength(20)));
-        self::assertSame(['exclusiveMinimum' => 0], JsonSchema::forConstraint(new GreaterThan(0)));
-        self::assertSame(['exclusiveMaximum' => 120], JsonSchema::forConstraint(new LessThan(120)));
-        self::assertSame(['enum' => ['admin', 'member']], JsonSchema::forConstraint(new In(['admin', 'member'])));
-        self::assertSame(['format' => 'uri'], JsonSchema::forConstraint(new Url()));
-        self::assertSame(['format' => 'uuid'], JsonSchema::forConstraint(new Uuid()));
+        $fn = static function (
+            #[Email] string $email,
+            #[MinLength(5)] string $atLeast,
+            #[MaxLength(20)] string $atMost,
+            #[GreaterThan(0)] int $above,
+            #[LessThan(120)] int $below,
+            #[In(['admin', 'member'])] string $role,
+            #[NotIn(['root'])] string $notRoot,
+            #[GreaterThanOrEqual(1)] int $atLeastOne,
+            #[LessThanOrEqual(120)] int $atMostAHundred,
+            #[MultipleOf(6)] int $inPacks,
+            #[Url] string $link,
+            #[Uuid] string $id,
+            #[Ip] string $address,
+            #[Date] string $day,
+            #[DateTime] string $at,
+            #[MinItems(1)] array $some,
+            #[MaxItems(3)] array $few,
+        ) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $expected = [
+            ['type' => 'string', 'format' => 'email'],
+            ['type' => 'string', 'minLength' => 5],
+            ['type' => 'string', 'maxLength' => 20],
+            ['type' => 'integer', 'exclusiveMinimum' => 0],
+            ['type' => 'integer', 'exclusiveMaximum' => 120],
+            ['type' => 'string', 'enum' => ['admin', 'member']],
+            ['type' => 'string', 'not' => ['enum' => ['root']]],
+            ['type' => 'integer', 'minimum' => 1],
+            ['type' => 'integer', 'maximum' => 120],
+            ['type' => 'integer', 'multipleOf' => 6],
+            ['type' => 'string', 'format' => 'uri'],
+            ['type' => 'string', 'format' => 'uuid'],
+            ['type' => 'string', 'anyOf' => [['format' => 'ipv4'], ['format' => 'ipv6']]],
+            ['type' => 'string', 'format' => 'date'],
+            ['type' => 'string', 'format' => 'date-time'],
+            ['type' => 'array', 'minItems' => 1],
+            ['type' => 'array', 'maxItems' => 3],
+        ];
+
+        foreach ($expected as $index => $schema) {
+            self::assertSame($schema, JsonSchema::schemaForScalar($params[$index], $params[$index]->getType()));
+        }
     }
 
-    public function test_not_blank_has_no_distinct_json_schema_keyword(): void
+    /**
+     * A nullable declaration's `enum` must admit `null` exactly like its
+     * `type` does — JSON Schema requires every keyword on a schema to
+     * hold at once, so publishing `type: [string, null]` beside an
+     * `enum` that omits `null` would reject the very value the type
+     * admits, even though Hydrator accepts it.
+     */
+    public function test_a_nullable_in_constrained_scalar_widens_both_type_and_enum(): void
     {
-        self::assertSame([], JsonSchema::forConstraint(new NotBlank()));
+        $fn = static function (#[In(['draft', 'published'])] ?string $status) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => ['string', 'null'], 'enum' => ['draft', 'published', null]],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 
-    public function test_regex_contributes_no_json_schema_keyword(): void
+    public function test_the_same_in_constraint_on_a_non_nullable_scalar_does_not_gain_null(): void
     {
-        self::assertSame([], JsonSchema::forConstraint(new Regex('/^[A-Z]+$/')));
+        $fn = static function (#[In(['draft', 'published'])] string $status) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'string', 'enum' => ['draft', 'published']],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    public function test_a_nullable_in_constrained_dto_field_widens_both_type_and_enum(): void
+    {
+        $schema = JsonSchema::forClass(NullableInFieldRequest::class);
+
+        self::assertSame(
+            ['type' => ['string', 'null'], 'enum' => ['draft', 'published', null]],
+            $schema['properties']['nullableStatus'],
+        );
+        self::assertSame(
+            ['type' => 'string', 'enum' => ['draft', 'published']],
+            $schema['properties']['status'],
+        );
+    }
+
+    /**
+     * Both an untyped parameter and a `mixed`-typed one accept an
+     * explicit `null` at runtime — Hydrator::compileParameter() answers
+     * `allowsNull` for the untyped case the same way ReflectionNamedType
+     * answers allowsNull() for `mixed` — so #[In]'s `enum` has to gain
+     * `null` for both, not only for the one that carries its own
+     * ReflectionNamedType to ask.
+     *
+     * @param callable(): void $declaration
+     */
+    #[DataProvider('anyValueDeclarationProvider')]
+    public function test_an_in_constraint_on_an_any_value_declaration_gains_null(callable $declaration): void
+    {
+        $params = (new ReflectionFunction($declaration(...)))->getParameters();
+
+        self::assertSame(
+            ['enum' => ['draft', 'published', null]],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{callable}>
+     */
+    public static function anyValueDeclarationProvider(): iterable
+    {
+        yield 'untyped' => [static function (#[In(['draft', 'published'])] $status) {}];
+        yield 'mixed' => [static function (#[In(['draft', 'published'])] mixed $status) {}];
+    }
+
+    public function test_a_runtime_only_constraint_leaves_the_schema_untouched(): void
+    {
+        $fn = static function (#[NotBlank] string $name, #[Regex('/^[A-Z]+$/')] string $code) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(['type' => 'string'], JsonSchema::schemaForScalar($params[0], $params[0]->getType()));
+        self::assertSame(['type' => 'string'], JsonSchema::schemaForScalar($params[1], $params[1]->getType()));
+    }
+
+    /**
+     * An application constraint describes itself in the published
+     * document with nothing registered anywhere — the same reading that
+     * finds #[Email] finds it, and the keywords come from the rule.
+     */
+    public function test_an_application_constraint_publishes_its_own_keywords(): void
+    {
+        $schema = JsonSchema::forClass(ApplicationRulesRequest::class);
+
+        // #[Uppercase]'s `pattern` merged in; #[NotReserved], which has
+        // no keyword to state, added nothing.
+        self::assertSame(['type' => 'string', 'pattern' => '^[A-Z]+$'], $schema['properties']['code']);
+    }
+
+    /**
+     * Declaration order must never silently decide which of two bounds
+     * a client is told about: one of them would then be a rule the
+     * request is checked against but the document never mentions.
+     */
+    public function test_two_rules_claiming_the_same_keyword_are_refused(): void
+    {
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('both contribute the JSON Schema keyword "minLength"');
+
+        JsonSchema::forClass(DuplicateKeywordRequest::class);
+    }
+
+    /**
+     * The PHP declaration owns the shape and a rule refines it. A rule
+     * contributing `type` back would publish a shape Hydrator does not
+     * check against — its type check reads the declared PHP type and
+     * nothing else — so the declaration is refused rather than merged,
+     * the same answer two rules claiming one keyword get.
+     */
+    public function test_a_rule_cannot_restate_the_type_the_php_declaration_owns(): void
+    {
+        $fn = static function (#[ClaimsKeyword('type', 'string')] int $count) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('contributes the JSON Schema keyword "type", which the parameter\'s own PHP type already states');
+
+        JsonSchema::schemaForScalar($params[0], $params[0]->getType());
+    }
+
+    /**
+     * The same ownership one level in: a #[ListOf] list's `items` comes
+     * from the item class the attribute names, so a rule may bound the
+     * list (#[MinItems] contributes `minItems`) but never redescribe
+     * what is in it.
+     */
+    public function test_a_rule_cannot_restate_the_items_a_list_of_declaration_owns(): void
+    {
+        $fn = static function (
+            #[ClaimsKeyword('items', ['type' => 'string'])]
+            #[ListOf(OrderItem::class)]
+            array $items,
+        ) {};
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('contributes the JSON Schema keyword "items"');
+
+        JsonSchema::forParameters((new ReflectionFunction($fn))->getParameters());
+    }
+
+    /**
+     * The rule this refusal is scoped to: a keyword no declaration
+     * states is the rule's own, and whatever it nests inside that
+     * keyword is never inspected — an `enum` full of values, a
+     * `format`'s name, a rule's own nested `type` under its own keyword.
+     */
+    public function test_a_rule_owning_its_own_keyword_still_merges(): void
+    {
+        $fn = static function (#[ClaimsKeyword('contentSchema', ['type' => 'string'])] string $note) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'string', 'contentSchema' => ['type' => 'string']],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 
     public function test_a_regex_leaves_the_rest_of_a_parameters_schema_intact(): void
@@ -229,12 +440,25 @@ final class JsonSchemaTest extends TestCase
         $schema = JsonSchema::forParameters([]);
 
         self::assertInstanceOf(\stdClass::class, $schema['properties']);
-        self::assertSame('{"type":"object","properties":{},"required":[]}', json_encode($schema, JSON_THROW_ON_ERROR));
+        self::assertSame(
+            '{"type":"object","properties":{},"required":[],"additionalProperties":false}',
+            json_encode($schema, JSON_THROW_ON_ERROR),
+        );
     }
 
-    public function test_a_class_with_no_constructor_gets_a_bare_object_schema(): void
+    /**
+     * A class with no constructor declares no members at all, which is a
+     * closed object with none rather than an unconstrained one — the same
+     * `additionalProperties: false` every other DTO object carries.
+     */
+    public function test_a_class_with_no_constructor_gets_a_closed_object_schema_with_no_properties(): void
     {
-        self::assertSame(['type' => 'object'], JsonSchema::forClass(NoConstructorFixture::class));
+        $schema = JsonSchema::forClass(NoConstructorFixture::class);
+
+        self::assertSame('object', $schema['type']);
+        self::assertEquals((object) [], $schema['properties']);
+        self::assertSame([], $schema['required']);
+        self::assertFalse($schema['additionalProperties']);
     }
 
     public function test_excluded_types_are_skipped_entirely_not_added_to_properties_or_required(): void
@@ -366,5 +590,64 @@ final class JsonSchemaTest extends TestCase
         $schema = JsonSchema::forClass(AvatarUploadRequest::class);
 
         self::assertSame(['type' => 'string', 'format' => 'binary'], $schema['properties']['avatar']);
+    }
+
+    /**
+     * #[Ip]'s keywords are an `anyOf` union of the two families' own
+     * formats, and nullability is still the declared `type`'s to widen:
+     * the union names which address spellings are addresses, never
+     * whether the member may be null, so both keywords hold at once
+     * exactly as JSON Schema requires.
+     */
+    public function test_a_nullable_ip_constrained_scalar_widens_its_type_beside_the_family_union(): void
+    {
+        $fn = static function (#[Ip] ?string $address) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            [
+                'type' => ['string', 'null'],
+                'anyOf' => [['format' => 'ipv4'], ['format' => 'ipv6']],
+            ],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    /**
+     * The keyword-collision rule is about keywords, not about subjects:
+     * an admitted set and an excluded one are two different keywords, so
+     * both are published and a client generating requests is held to
+     * both — exactly as Hydrator runs both rules.
+     */
+    public function test_an_admitted_and_an_excluded_set_coexist_on_one_field(): void
+    {
+        $fn = static function (#[In(['a', 'b', 'c'])] #[NotIn(['c'])] string $letter) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            [
+                'type' => 'string',
+                'enum' => ['a', 'b', 'c'],
+                'not' => ['enum' => ['c']],
+            ],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    /**
+     * The same for the exclusive and inclusive halves of one bound:
+     * `exclusiveMinimum` and `minimum` are distinct keywords stating
+     * distinct rules, so declaring both is a narrower field rather than
+     * a duplicate-keyword refusal.
+     */
+    public function test_an_exclusive_and_an_inclusive_lower_bound_coexist_on_one_field(): void
+    {
+        $fn = static function (#[GreaterThan(0)] #[GreaterThanOrEqual(1)] int $count) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'integer', 'exclusiveMinimum' => 0, 'minimum' => 1],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 }

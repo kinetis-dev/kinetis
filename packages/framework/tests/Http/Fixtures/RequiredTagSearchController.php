@@ -10,7 +10,7 @@ use Kinetis\Http\Attributes\Query;
 /**
  * An array-typed #[Query] parameter with no default: the repeated-key
  * form is the only thing that satisfies it, so any other spelling of the
- * same intent leaves it missing and the route answers 422.
+ * same intent leaves it missing and binding fails validation.
  */
 final readonly class RequiredTagSearchController
 {

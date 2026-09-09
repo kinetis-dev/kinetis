@@ -16,18 +16,24 @@ use Kinetis\Cache\PluginCache;
 use Kinetis\Mcp\Exception\DuplicateDefinitionException;
 use Kinetis\Mcp\McpRegistry;
 use Kinetis\Mcp\Tests\Fixtures\AccountController;
+use Kinetis\Mcp\Tests\Fixtures\UnionArgumentToolController;
 use Kinetis\Mcp\Tests\Fixtures\BuiltinCoverageToolController;
 use Kinetis\Mcp\Tests\Fixtures\DuplicateResourceUriController;
 use Kinetis\Mcp\Tests\Fixtures\DuplicateToolNameController;
 use Kinetis\Mcp\Tests\Fixtures\EmptyCollectionsToolController;
+use Kinetis\Mcp\Tests\Fixtures\EnumArgumentToolController;
 use Kinetis\Mcp\Tests\Fixtures\JsonHostileSchemaValuesToolController;
 use Kinetis\Mcp\Tests\Fixtures\NullableFieldsToolController;
 use Kinetis\Mcp\Tests\Fixtures\IntraClassDuplicateResourceController;
 use Kinetis\Mcp\Tests\Fixtures\IntraClassDuplicateToolController;
 use Kinetis\Mcp\Tests\Fixtures\MixedNewAndConflictingToolController;
+use Kinetis\Mcp\Tests\Fixtures\Severity;
+use Kinetis\Mcp\Tests\Fixtures\TypedListRequest;
+use Kinetis\Mcp\Tests\Fixtures\TypedListToolController;
 use Kinetis\Mcp\Tests\Fixtures\UnsupportedParameterToolController;
 use Kinetis\Mcp\Tests\Fixtures\ZeroParameterToolController;
 use Kinetis\Validation\Exception\JsonSchemaException;
+use Kinetis\Validation\JsonSchema;
 use PHPUnit\Framework\TestCase;
 
 final class McpRegistryTest extends TestCase
@@ -59,7 +65,14 @@ final class McpRegistryTest extends TestCase
 
         self::assertNotNull($tool);
         self::assertSame(
-            ['type' => 'object', 'properties' => ['userId' => ['type' => 'integer']], 'required' => ['userId']],
+            [
+                'type' => 'object',
+                'properties' => ['userId' => ['type' => 'integer']],
+                'required' => ['userId'],
+                // The arguments object is closed: McpDispatcher rejects
+                // every key that is not a client-facing parameter.
+                'additionalProperties' => false,
+            ],
             $tool->inputSchema,
         );
     }
@@ -173,7 +186,7 @@ final class McpRegistryTest extends TestCase
         $artifact = self::publishAndReloadArtifact($live);
 
         self::assertSame(
-            '{"type":"object","properties":{},"required":[]}',
+            '{"type":"object","properties":{},"required":[],"additionalProperties":false}',
             $artifact['tools'][0]['inputSchemaJson'],
         );
 
@@ -183,7 +196,7 @@ final class McpRegistryTest extends TestCase
         self::assertInstanceOf(\stdClass::class, $reloadedTool->inputSchema['properties']);
         self::assertSame([], $reloadedTool->inputSchema['required']);
         self::assertSame(
-            '{"type":"object","properties":{},"required":[]}',
+            '{"type":"object","properties":{},"required":[],"additionalProperties":false}',
             json_encode($reloadedTool->inputSchema, JSON_THROW_ON_ERROR),
         );
     }
@@ -219,12 +232,12 @@ final class McpRegistryTest extends TestCase
 
     /**
      * The adversarial pairing, through the real cache round trip: an
-     * empty `#[In([])]` enum and an empty top-level `required` list,
-     * which are JSON arrays, beside a `mixed`-typed argument's empty
-     * schema object and a nested DTO carrying a second empty object and
-     * a second empty list two levels further down. The stored JSON text
-     * is the one notation that tells the two apart, so each value comes
-     * back the type it went in as, whatever depth it sits at.
+     * empty top-level `required` list, which is a JSON array, beside a
+     * `mixed`-typed argument's empty schema object and a nested DTO
+     * carrying a second empty object and a second empty list two levels
+     * further down. The stored JSON text is the one notation that tells
+     * the two apart, so each value comes back the type it went in as,
+     * whatever depth it sits at.
      */
     public function test_empty_arrays_and_empty_objects_keep_their_json_types_through_a_real_cache_round_trip(): void
     {
@@ -234,8 +247,9 @@ final class McpRegistryTest extends TestCase
         $tool = $live->findTool('empty_collections');
         self::assertNotNull($tool);
 
-        $document = '{"type":"object","properties":{"choice":{"enum":[]},"note":{},'
-            . '"nested":{"type":["object","null"],"properties":{},"required":[]}},"required":[]}';
+        $document = '{"type":"object","properties":{"note":{},'
+            . '"nested":{"type":["object","null"],"properties":{},"required":[],"additionalProperties":false}},'
+            . '"required":[],"additionalProperties":false}';
         self::assertSame($document, json_encode($tool->inputSchema, JSON_THROW_ON_ERROR));
 
         $artifact = self::publishAndReloadArtifact($live);
@@ -248,9 +262,8 @@ final class McpRegistryTest extends TestCase
         self::assertSame($document, json_encode($reloadedTool->inputSchema, JSON_THROW_ON_ERROR));
 
         // Asserted value by value as well, so a failure names which of
-        // the four lost its JSON type rather than only that the
+        // the three lost its JSON type rather than only that the
         // document differs somewhere.
-        self::assertSame([], $reloadedTool->inputSchema['properties']['choice']['enum']);
         self::assertSame([], $reloadedTool->inputSchema['required']);
         self::assertInstanceOf(\stdClass::class, $reloadedTool->inputSchema['properties']['note']);
         self::assertInstanceOf(\stdClass::class, $reloadedTool->inputSchema['properties']['nested']['properties']);
@@ -298,6 +311,84 @@ final class McpRegistryTest extends TestCase
 
         self::assertNotNull($reloadedTool);
         self::assertSame(['type' => 'string'], $reloadedTool->inputSchema['properties']['pattern']);
+    }
+
+    /**
+     * A tool method parameter may not declare a union — including the
+     * `T|Absent` presence union a DTO constructor field may — because a
+     * tool's arguments are one flat object with no DTO to own the
+     * distinction and no truthful schema to publish for it. Refused at
+     * registration, so the tool is never advertised.
+     */
+    public function test_a_union_typed_tool_argument_is_rejected_at_registration(): void
+    {
+        $registry = new McpRegistry();
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('union or intersection type');
+
+        $registry->register(UnionArgumentToolController::class);
+    }
+
+    /**
+     * A backed enum is a DTO field's shape, not a tool argument's:
+     * McpDispatcher binds a tool's own arguments through the shared
+     * method-parameter path, which has no enum branch, so a tool
+     * declaring one fails registration instead of publishing a schema
+     * no call could be dispatched against.
+     */
+    public function test_a_backed_enum_tool_argument_is_rejected_at_registration(): void
+    {
+        $registry = new McpRegistry();
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage(Severity::class);
+
+        $registry->register(EnumArgumentToolController::class);
+    }
+
+    /**
+     * The same DTO field an OpenAPI document describes, described the
+     * same way here: both entry points read one classification, so an
+     * agent and an HTTP client are told the same thing about the same
+     * list.
+     */
+    public function test_a_typed_collection_dto_argument_publishes_its_item_schema(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(TypedListToolController::class);
+
+        $tool = $registry->findTool('typed_list');
+
+        self::assertNotNull($tool);
+        self::assertSame(
+            JsonSchema::forClass(TypedListRequest::class),
+            $tool->inputSchema['properties']['data'],
+        );
+        self::assertSame(
+            ['type' => 'array', 'items' => ['type' => 'string', 'minLength' => 2]],
+            $tool->inputSchema['properties']['data']['properties']['tags'],
+        );
+        self::assertSame(
+            ['type' => 'string', 'enum' => ['info', 'warning']],
+            $tool->inputSchema['properties']['data']['properties']['severity'],
+        );
+    }
+
+    /**
+     * Closure reaches every object the document describes, not only the
+     * top-level arguments one.
+     */
+    public function test_a_nested_dto_argument_schema_is_closed_too(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(AccountController::class);
+
+        $tool = $registry->findTool('create_user');
+
+        self::assertNotNull($tool);
+        self::assertFalse($tool->inputSchema['additionalProperties']);
+        self::assertFalse($tool->inputSchema['properties']['data']['additionalProperties']);
     }
 
     public function test_implements_the_frameworks_cacheable_discovery_interface(): void

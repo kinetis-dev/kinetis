@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Kinetis\Mcp;
 
 use Kinetis\Instrumentation\Telemetry;
-use Kinetis\Mcp\Exception\UnresolvableParameterException;
+use Kinetis\Validation\Constraint;
+use Kinetis\Validation\Exception\JsonSchemaException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
+use Kinetis\Validation\InputSource;
 use Kinetis\Validation\JsonObject;
-use Kinetis\Validation\JsonTree;
 use Psr\Container\ContainerInterface;
 use ReflectionMethod;
 use Throwable;
@@ -24,18 +25,46 @@ use ReflectionNamedType;
  * typed parameter, which is always injected directly rather than looked up
  * in the arguments object.
  *
- * $bindingPlans/$hydrationPlans are optional, compiled-ahead-of-time
- * replacements for what derivePlan()/Hydrator::compilePlan() would otherwise
- * reflect fresh on every call — see Kinetis\Cache\Compiler. A tool/resource
- * or DTO absent from either map falls back to live reflection transparently.
+ * That arguments object is closed: every key the call carries must name a
+ * client-facing parameter of the method, and one that does not is a
+ * violation on its own path rather than a silently discarded key. The
+ * injected ProgressReporter parameter is never one of those names. Every
+ * argument failure a call has — unknown, missing, wrong-typed, or refused
+ * by a rule — is collected and reported together, so an agent correcting a
+ * call sees all of it at once. A resource has no client argument object,
+ * and an already-constructed DTO instance handed straight to a parameter
+ * has no member map to close.
+ *
+ * $bindingPlans/$hydrationPlans are an optional seam for supplying those
+ * plans ready-made instead of reflecting them fresh on every call; nothing
+ * fills them today, and a tool/resource or DTO absent from either map falls
+ * back to live reflection transparently. No method bound here may declare
+ * a composite type: derivePlan() refuses one in the same vocabulary a
+ * tool's schema generation refuses it at registration, so a plan can never
+ * bind as mixed what registration would not admit.
+ *
+ * A tool call's arguments arrive as one decoded JSON object, so every
+ * value they carry is written in InputSource::Json — the same vocabulary
+ * an HTTP JSON body is written in, and the one the tool's own published
+ * inputSchema promises.
  *
  * @phpstan-import-type HydrationPlan from Hydrator
+ * @phpstan-type McpBindingPlanParameter array{
+ *     name: string,
+ *     isProgressReporter: bool,
+ *     dtoClass: ?string,
+ *     scalarType: ?string,
+ *     hasDefault: bool,
+ *     defaultValue: mixed,
+ *     allowsNull: bool,
+ *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
+ * }
  */
 final class McpDispatcher
 {
     public function __construct(
         private readonly ContainerInterface $container,
-        /** @var array<string, list<array{name:string, isProgressReporter:bool, dtoClass:?string, scalarType:?string, hasDefault:bool, defaultValue:mixed}>> */
+        /** @var array<string, list<McpBindingPlanParameter>> */
         private readonly array $bindingPlans = [],
         /** @var array<string, HydrationPlan> */
         private readonly array $hydrationPlans = [],
@@ -100,9 +129,15 @@ final class McpDispatcher
     }
 
     /**
-     * Pure reflection -> plan; no call-time arguments involved. Used both by
-     * the live per-call fallback above (when no compiled plan exists for
-     * this tool/resource) and by Kinetis\Cache\Compiler ahead of time.
+     * Pure reflection -> plan; no call-time arguments involved. Used by the
+     * live per-call fallback above, whenever no compiled plan exists for
+     * this tool/resource.
+     *
+     * A composite type — an intersection, or any union — is refused here in
+     * the same vocabulary McpRegistry's schema generation refuses it in: a
+     * tool argument is one flat value with one wire shape, and a plan
+     * binding it would otherwise treat it as mixed, so the two derivation
+     * paths would disagree about what the method may declare.
      *
      * A ProgressReporter-typed parameter is tagged rather than omitted: were
      * it absent from the plan entirely, resolving it would still need a
@@ -110,7 +145,8 @@ final class McpDispatcher
      * progress-reporting tool, reintroducing exactly the per-call reflection
      * cost this exists to remove.
      *
-     * @return list<array{name:string, isProgressReporter:bool, dtoClass:?string, scalarType:?string, hasDefault:bool, defaultValue:mixed}>
+     * @return list<McpBindingPlanParameter>
+     * @throws JsonSchemaException
      */
     public static function derivePlan(ReflectionMethod $method): array
     {
@@ -118,18 +154,29 @@ final class McpDispatcher
 
         foreach ($method->getParameters() as $parameter) {
             $type = $parameter->getType();
-            $isProgressReporter = $type instanceof ReflectionNamedType && $type->getName() === ProgressReporter::class;
+
+            if ($type !== null && !$type instanceof ReflectionNamedType) {
+                throw JsonSchemaException::compositeType($parameter->getName());
+            }
+
+            $isProgressReporter = $type !== null && $type->getName() === ProgressReporter::class;
             $hasDefault = $parameter->isDefaultValueAvailable();
 
             $plan[] = [
                 'name' => $parameter->getName(),
                 'isProgressReporter' => $isProgressReporter,
-                'dtoClass' => $type instanceof ReflectionNamedType && !$type->isBuiltin() && !$isProgressReporter
+                'dtoClass' => $type !== null && !$type->isBuiltin() && !$isProgressReporter
                     ? $type->getName()
                     : null,
-                'scalarType' => $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null,
+                'scalarType' => $type !== null && $type->isBuiltin() ? $type->getName() : null,
                 'hasDefault' => $hasDefault,
                 'defaultValue' => $hasDefault ? $parameter->getDefaultValue() : null,
+                // An untyped parameter accepts anything, null included.
+                'allowsNull' => $type === null || $type->allowsNull(),
+                // Only meaningful for a scalar argument — a DTO-typed
+                // one carries its own fields' rules inside its hydration
+                // plan, exactly as an HTTP #[Body] parameter does.
+                'constraints' => Hydrator::collectConstraints($parameter),
             ];
         }
 
@@ -140,7 +187,7 @@ final class McpDispatcher
      * The one resolution algorithm both the live and compiled paths share —
      * the only difference between them is how $plan was obtained.
      *
-     * @param list<array{name:string, isProgressReporter:bool, dtoClass:?string, scalarType:?string, hasDefault:bool, defaultValue:mixed}> $plan
+     * @param list<McpBindingPlanParameter> $plan
      * @param array<string, mixed> $arguments
      * @return array<string, mixed>
      * @throws ValidationException
@@ -148,17 +195,29 @@ final class McpDispatcher
     private function resolveFromPlan(array $plan, array $arguments, ?ProgressReporter $progress): array
     {
         $resolved = [];
+        $violations = [];
+        $client = [];
 
         foreach ($plan as $param) {
             $name = $param['name'];
 
             if ($param['isProgressReporter']) {
+                // Injected by the server, so it is not a name the client
+                // may send — and never counted as one when the arguments
+                // object is closed below.
                 $resolved[$name] = $progress ?? new ProgressReporter(null);
                 continue;
             }
 
+            $client[$name] = true;
+
             if (array_key_exists($name, $arguments)) {
-                $resolved[$name] = $this->resolveValueFromPlan($arguments[$name], $param);
+                try {
+                    $resolved[$name] = $this->resolveValueFromPlan($arguments[$name], $param);
+                } catch (ValidationException $e) {
+                    $violations = [...$violations, ...$e->violations];
+                }
+
                 continue;
             }
 
@@ -167,25 +226,83 @@ final class McpDispatcher
                 continue;
             }
 
-            throw UnresolvableParameterException::forParameter($name);
+            // An argument the call had to carry and did not is invalid
+            // client input, not a server fault: it reports as the same
+            // `required` violation an absent #[Body] DTO member and an
+            // absent #[Query] parameter report, in the same envelope the
+            // tool's other argument failures use, so an agent can see
+            // what to send next.
+            $violations[] = Hydrator::requiredViolation([$name]);
+        }
+
+        // The arguments object is closed for the same reason a JSON DTO
+        // object is: the tool's published inputSchema says
+        // `additionalProperties: false`, and an argument the method has no
+        // parameter for is one the agent believes it is passing and the
+        // tool will never read. Reported in the call's own order, after
+        // the parameters' own failures, and in the same envelope — one
+        // response tells an agent everything it got wrong, rather than
+        // one mistake per round trip.
+        foreach (array_keys($arguments) as $name) {
+            if (!isset($client[$name])) {
+                $violations[] = Hydrator::unexpectedFieldViolation([$name]);
+            }
+        }
+
+        if ($violations !== []) {
+            throw ValidationException::fromViolations($violations);
         }
 
         return $resolved;
     }
 
     /**
-     * Applies the same declared-type-mismatch policy
-     * Kinetis\Http\Dispatcher applies to #[Query]/path parameters and
-     * Hydrator applies to #[Body] fields — an MCP tool argument's JSON
-     * value is exactly as typed as a JSON request body, so there's no
-     * reason for a third, more permissive copy of this logic here.
+     * A scalar argument enters Hydrator::resolveScalar(), the one path a
+     * #[Body] DTO field and a #[Query]/path parameter also take: null
+     * handling, the declared-type check, the cast and the parameter's
+     * own constraint attributes are the same code producing the same
+     * violations, so a wrong-shaped argument carries the identical path,
+     * code and message it would carry over HTTP — and a
+     * #[GreaterThan]/#[In] a tool's inputSchema publishes is a rule the
+     * call is actually checked against.
      *
-     * @param array{name:string, isProgressReporter:bool, dtoClass:?string, scalarType:?string, hasDefault:bool, defaultValue:mixed} $param
+     * A DTO-typed argument takes the branch below, which answers the
+     * same questions in the same order for an object-shaped value: null
+     * first, then the shape. Every answer either binds a value or is a
+     * violation; nothing this method returns can fail the controller's
+     * own signature.
+     *
+     * @param McpBindingPlanParameter $param
      * @throws ValidationException
      */
     private function resolveValueFromPlan(mixed $value, array $param): mixed
     {
         if ($param['dtoClass'] !== null) {
+            /** @var class-string $dtoClass */
+            $dtoClass = $param['dtoClass'];
+
+            // Null is decided before any shape is examined, exactly as
+            // Hydrator does for a #[Body] DTO field: a nullable
+            // parameter takes null as its value, and a non-nullable one
+            // reports the same `null_not_allowed` violation rather than
+            // handing the controller a null its signature refuses and
+            // letting a raw TypeError stand in for the answer.
+            if ($value === null) {
+                if ($param['allowsNull']) {
+                    return null;
+                }
+
+                throw ValidationException::fromViolations([
+                    Hydrator::nullNotAllowedViolation([$param['name']]),
+                ]);
+            }
+
+            // An already-constructed instance is taken as given, the
+            // same value a class-typed #[Body] field accepts.
+            if ($value instanceof $dtoClass) {
+                return $value;
+            }
+
             // A DTO-typed tool argument's own real value — a genuine JSON
             // object — arrives marked as a JsonObject once McpServer's own
             // JsonTree::convert() step is in the picture (see its own
@@ -196,66 +313,33 @@ final class McpDispatcher
             }
 
             if (is_array($value)) {
-                /** @var class-string $dtoClass */
-                $dtoClass = $param['dtoClass'];
-
-                return Hydrator::hydrate($dtoClass, $value, $this->hydrationPlans[$dtoClass] ?? null);
+                return Hydrator::hydrate($dtoClass, $value, $this->hydrationPlans[$dtoClass] ?? null, InputSource::Json);
             }
 
-            if (is_scalar($value)) {
-                throw ValidationException::forErrors([
-                    $param['name'] => ['must be an object, ' . self::describeType($value) . ' given.'],
-                ]);
-            }
-
-            // null, or already an object — pass through unchanged.
-            return $value;
+            // Anything else is a value this parameter cannot be given:
+            // an object of some other class no JSON document could have
+            // carried, or a scalar where the tool's inputSchema declares
+            // an object.
+            throw ValidationException::fromViolations([
+                is_object($value)
+                    ? Hydrator::notAnInstanceViolation([$param['name']], $dtoClass)
+                    : Hydrator::objectExpectedViolation([$param['name']], $value),
+            ]);
         }
 
-        $scalarType = $param['scalarType'];
+        [$resolved, $violations] = Hydrator::resolveScalar(
+            InputSource::Json,
+            [$param['name']],
+            $value,
+            $param['scalarType'],
+            $param['allowsNull'],
+            $param['constraints'],
+        );
 
-        if ($scalarType !== null) {
-            $message = Hydrator::typeMismatchMessage($scalarType, $value);
-
-            if ($message !== null) {
-                throw ValidationException::forErrors([$param['name'] => [$message]]);
-            }
+        if ($violations !== []) {
+            throw ValidationException::fromViolations($violations);
         }
 
-        // The type-mismatch check above runs against the still-marked
-        // value, so it can correctly reject an object-shaped argument for
-        // an array/iterable-typed parameter — but the value a mixed-typed
-        // argument (or an array/iterable argument's own nested contents)
-        // actually receives must never leak that marker; see Hydrator::
-        // resolveParameterValue()'s identical reasoning for the #[Body]
-        // case this mirrors.
-        return $this->castScalar(JsonTree::unwrap($value), $scalarType);
-    }
-
-    private static function describeType(mixed $value): string
-    {
-        return match (true) {
-            is_array($value) => 'array',
-            is_bool($value) => 'boolean',
-            is_float($value) => 'float',
-            is_int($value) => 'integer',
-            is_object($value) => 'object',
-            default => 'value',
-        };
-    }
-
-    private function castScalar(mixed $value, ?string $scalarType): mixed
-    {
-        if ($scalarType === null || $value === null) {
-            return $value;
-        }
-
-        return match ($scalarType) {
-            'int' => (int) $value,
-            'float' => (float) $value,
-            'bool' => (bool) $value,
-            'string' => (string) $value,
-            default => $value,
-        };
+        return $resolved;
     }
 }

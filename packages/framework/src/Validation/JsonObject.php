@@ -14,9 +14,9 @@ namespace Kinetis\Validation;
  * this, by decoding with `json_decode(..., associative: false)` first
  * (a real `stdClass`/array distinction PHP's own decoder already makes
  * for free) and wrapping every `stdClass` node it finds, so
- * `Hydrator::typeMismatchMessage()`'s array/iterable/`#[ListOf]` checks
- * can reject an object-shaped wire value outright, regardless of what
- * its own keys happen to look like.
+ * `Hydrator::resolveScalar()`'s array/iterable check and its
+ * `#[ListOf]` counterpart can reject an object-shaped wire value
+ * outright, regardless of what its own keys happen to look like.
  *
  * Deliberately a thin wrapper, not `Kinetis\Mcp\JsonObject` reused
  * directly: that class solves a narrower, protocol-specific problem

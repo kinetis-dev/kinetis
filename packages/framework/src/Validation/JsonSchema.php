@@ -5,18 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\Validation;
 
 use Kinetis\Validation\Exception\JsonSchemaException;
-use Kinetis\Validation\Constraints\Email;
-use Kinetis\Validation\Constraints\GreaterThan;
-use Kinetis\Validation\Constraints\In;
-use Kinetis\Validation\Constraints\LessThan;
-use Kinetis\Validation\Constraints\MaxItems;
-use Kinetis\Validation\Constraints\MaxLength;
-use Kinetis\Validation\Constraints\MinItems;
-use Kinetis\Validation\Constraints\MinLength;
-use Kinetis\Validation\Constraints\Url;
-use Kinetis\Validation\Constraints\Uuid;
+use BackedEnum;
 use Psr\Http\Message\UploadedFileInterface;
-use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionNamedType;
 use ReflectionParameter;
@@ -30,6 +20,18 @@ use ReflectionType;
  * both an HTTP request body and an MCP tool call's arguments, so the
  * type-to-schema logic shouldn't live twice.
  *
+ * A rule's own keywords come from the rule — {@see Constraint::schema()},
+ * asked on an instance built from the same literal `{class, args}`
+ * descriptor Hydrator validates against — never from a list of framework
+ * classes this file knows about. An application constraint therefore
+ * describes itself in a generated OpenAPI document and an MCP tool's
+ * `inputSchema` with nothing to register.
+ *
+ * Every object this produces is closed — `additionalProperties: false`
+ * — and every DTO class may state cross-field rules of its own through
+ * {@see ObjectConstraint::schema()}, merged the same way a field rule's
+ * keywords are and refused on the same collision.
+ *
  * Nullability and required presence are deliberately independent: a
  * nullable type (`?string`, a nullable class-typed/#[ListOf] field) is
  * reflected in the property's own schema — `type: ['string', 'null']`,
@@ -39,16 +41,39 @@ use ReflectionType;
  * key "is this parameter required" purely on whether it has a default,
  * never on nullability — a defaultless nullable field still rejects an
  * *absent* key exactly like a non-nullable one does, only accepting an
- * *explicitly-null* value once present. `forParameters()`'s own
- * `required` array matches this: `!isDefaultValueAvailable()` alone,
- * with no `allowsNull()` term. `OpenApiGenerator`'s own `#[Query]`/path
- * parameter `required` (computed independently of this class, never
- * through `forParameters()`) already followed this same rule and needed
- * no change — it never consulted nullability either.
+ * *explicitly-null* value once present. The `required` array matches
+ * this: `!isDefaultValueAvailable()` alone, with no `allowsNull()` term
+ * — which is also what leaves a `T|Absent` presence field optional,
+ * since such a field always declares a default. `OpenApiGenerator`'s
+ * own `#[Query]`/path parameter `required` (computed independently of
+ * this class) already followed this same rule and needed no change — it
+ * never consulted nullability either.
  */
 final class JsonSchema
 {
     /**
+     * The JSON type each scalar spelling publishes. forType() answers
+     * the same question for a declared type; a #[ListOf] element and a
+     * backed enum's backing value arrive as a plain type name instead,
+     * with no ReflectionType behind them.
+     *
+     * @var array<string, string>
+     */
+    private const array WIRE_TYPES = ['string' => 'string', 'int' => 'integer', 'float' => 'number', 'bool' => 'boolean'];
+
+    /**
+     * One DTO class's own object schema, built from its constructor.
+     *
+     * This is the DTO half of the two schema entry points, and the only
+     * one where a `T|Absent` presence union is a legal declaration: the
+     * published property describes T, widened with `null` where the union
+     * names it, and the member is optional because the declaration
+     * carries a default. Absent itself never appears — no client can send
+     * it, so no schema may ask for it.
+     *
+     * A class with no constructor has no members at all, which is a
+     * closed object with empty `properties`, not an unconstrained one.
+     *
      * @param class-string $class
      * @param (callable(class-string): array<string, mixed>)|null $classSchema used
      *        instead of inlining a nested class-typed parameter's own schema — see
@@ -58,13 +83,18 @@ final class JsonSchema
      */
     public static function forClass(string $class, ?callable $classSchema = null): array
     {
-        $constructor = (new ReflectionClass($class))->getConstructor();
+        $reflection = new ReflectionClass($class);
+        $constructor = $reflection->getConstructor();
 
-        if ($constructor === null) {
-            return ['type' => 'object'];
-        }
-
-        return self::forParameters($constructor->getParameters(), classSchema: $classSchema);
+        return self::withObjectRuleSchema(
+            self::objectSchema(
+                $constructor === null ? [] : $constructor->getParameters(),
+                [],
+                $classSchema,
+                $class,
+            ),
+            $reflection,
+        );
     }
 
     /**
@@ -84,23 +114,71 @@ final class JsonSchema
      */
     public static function forParameters(array $parameters, array $excludeTypes = [], ?callable $classSchema = null): array
     {
+        return self::objectSchema($parameters, $excludeTypes, $classSchema, null);
+    }
+
+    /**
+     * The one object-schema builder both entry points share: properties,
+     * required, and the closure every Kinetis-described object carries.
+     *
+     * $dtoClass names the DTO whose constructor these parameters are, and
+     * is null for a method's own parameter list. That is the whole
+     * difference between the two: a DTO field may declare the `T|Absent`
+     * presence union, a transport method parameter may not, and neither
+     * may declare any other composite type. Rejecting one here means a
+     * tool whose schema cannot be stated truthfully fails at
+     * registration, before an agent is ever shown it.
+     *
+     * `additionalProperties: false` is on every object this produces,
+     * including one with no properties at all. It is what
+     * `Kinetis\Validation\Hydrator` enforces for JSON input and
+     * `Kinetis\Mcp\McpDispatcher` for a tool's arguments; a form-encoded
+     * body is deliberately more tolerant at runtime (see
+     * Hydrator::unknownMemberViolations()), so a client that sends only
+     * what the document describes is always accepted, whichever source it
+     * writes in.
+     *
+     * @param list<ReflectionParameter> $parameters
+     * @param list<class-string> $excludeTypes
+     * @param (callable(class-string): array<string, mixed>)|null $classSchema
+     * @param class-string|null $dtoClass
+     * @return array<string, mixed>
+     */
+    private static function objectSchema(array $parameters, array $excludeTypes, ?callable $classSchema, ?string $dtoClass): array
+    {
         $properties = [];
         $required = [];
 
         foreach ($parameters as $parameter) {
-            $type = $parameter->getType();
+            $declared = $parameter->getType();
 
-            if ($type instanceof ReflectionNamedType && in_array($type->getName(), $excludeTypes, true)) {
+            if ($declared instanceof ReflectionNamedType && in_array($declared->getName(), $excludeTypes, true)) {
                 continue;
             }
 
-            $nullable = $type instanceof ReflectionNamedType && $type->allowsNull();
+            // A presence union is described by the type a supplied value
+            // has; every other parameter by what it declares. Hydrator
+            // owns which unions are legal and what they mean, so the
+            // schema cannot drift from what hydration accepts.
+            $absent = $dtoClass !== null ? Hydrator::absentUnion($parameter, $dtoClass) : null;
+            $type = $absent !== null ? $absent[0] : $declared;
+
+            if ($type !== null && !$type instanceof ReflectionNamedType) {
+                throw JsonSchemaException::compositeType($parameter->getName());
+            }
+
+            $nullable = $absent !== null ? $absent[1] : ($type instanceof ReflectionNamedType && $type->allowsNull());
+            // Asked of every parameter, not only the ones that reach
+            // the list branch below, so a #[ListOf]/#[Each] declaration
+            // Hydrator would refuse is refused here too — whatever else
+            // the parameter declares.
+            $listItem = Hydrator::listItem($parameter, $type);
 
             if ($type instanceof ReflectionNamedType && $type->getName() === UploadedFileInterface::class) {
                 // An UploadedFileInterface-typed #[Body] field is never a
                 // nested DTO — Dispatcher merges it in directly from the
-                // request's own uploaded-files bag (see
-                // uploadedFilesByFieldName()'s own docblock), so
+                // request's own normalized uploaded files (see
+                // mergeUploads()'s own docblock), so
                 // schemaForClassTyped()'s "expand the constructor" logic
                 // has nothing to reflect here (the interface has no
                 // constructor at all) and would otherwise fall back to a
@@ -115,8 +193,19 @@ final class JsonSchema
             } elseif ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
                 /** @var class-string $class */
                 $class = $type->getName();
-                $properties[$parameter->getName()] = self::schemaForClassTyped($class, $classSchema, $nullable);
-            } elseif (self::isObjectMap($parameter)) {
+                // A backed enum is a DTO field's own shape: its wire
+                // value is a scalar, and Hydrator turns that into the
+                // case. A transport method's parameter list stays where
+                // it was — an enum there is a class no request value can
+                // construct, so schemaForClassTyped() refuses it and the
+                // tool fails registration rather than advertising a
+                // schema McpDispatcher could not bind.
+                $backingType = $dtoClass !== null ? Hydrator::backedEnumScalarType($class, $parameter) : null;
+
+                $properties[$parameter->getName()] = $backingType !== null
+                    ? self::schemaForEnum($parameter, $class, $backingType, $nullable)
+                    : self::schemaForClassTyped($class, $classSchema, $nullable);
+            } elseif (self::isObjectMap($parameter, $type)) {
                 // #[ObjectMap] is the one `array`-typed property whose
                 // wire shape is a JSON object, so it is the one that
                 // must not fall through to forType()'s `{type: array}`.
@@ -128,10 +217,19 @@ final class JsonSchema
                     ['type' => 'object', 'additionalProperties' => true],
                     $nullable,
                 );
-            } elseif (($listItemClass = self::listItemClassFor($parameter)) !== null) {
-                $properties[$parameter->getName()] = self::schemaForListOf($parameter, $listItemClass, $classSchema, $nullable);
+            } elseif ($listItem !== null) {
+                $properties[$parameter->getName()] = self::schemaForListOf($parameter, $listItem, $classSchema, $nullable);
             } else {
-                $properties[$parameter->getName()] = self::schemaForScalar($parameter, $type);
+                $schema = self::schemaForScalar($parameter, $type);
+                // T inside a presence union is never itself nullable —
+                // `null` is a sibling member of the union, not part of T —
+                // so forType() had nothing to widen and the declared
+                // `null` is added here instead. (`mixed` cannot appear in
+                // a PHP union, so the stdClass "anything" schema never
+                // reaches this branch.)
+                $properties[$parameter->getName()] = $absent !== null && is_array($schema)
+                    ? self::withNullableSchema($schema, $absent[1])
+                    : $schema;
             }
 
             // Nullability and required presence are independent axes:
@@ -156,7 +254,37 @@ final class JsonSchema
             // as {}, not [].
             'properties' => $properties === [] ? (object) [] : $properties,
             'required' => $required,
+            'additionalProperties' => false,
         ];
+    }
+
+    /**
+     * The class's own ObjectConstraint attributes, asked for the
+     * object-level keywords that state them, merged onto the schema its
+     * PHP declaration owns.
+     *
+     * The collision rule is the field rules' own, one level out: `type`,
+     * `properties`, `required` and `additionalProperties` are the
+     * declaration's — the first three state what the constructor is, the
+     * last what Hydrator enforces — and a rule refines that without
+     * replacing any of it. Two rules claiming one keyword are refused for the same
+     * reason a `#[MinLength(3)] #[MinLength(5)]` pair is: a schema could
+     * state only one of them, and letting declaration order pick would
+     * publish a bound the request is not checked against.
+     *
+     * A cross-field rule that no keyword expresses contributes `[]` and
+     * leaves the schema exactly as truthful as it was — narrower at
+     * runtime than the document says, which is documented rather than
+     * approximated.
+     *
+     * @param array<string, mixed> $schema
+     * @param ReflectionClass<object> $class
+     * @return array<string, mixed>
+     * @throws JsonSchemaException
+     */
+    private static function withObjectRuleSchema(array $schema, ReflectionClass $class): array
+    {
+        return self::withRuleKeywords($schema, Hydrator::collectObjectRules($class));
     }
 
     /**
@@ -175,29 +303,116 @@ final class JsonSchema
     }
 
     /**
-     * array + #[ListOf(SomeClass::class)] — same expand-instead-of-collapse
-     * reasoning as schemaForClassTyped(), just one level further out:
-     * {type: array, items: <SomeClass's own schema>} instead of a bare
-     * {type: object} that would tell an agent nothing about what each
-     * element looks like.
+     * array + #[ListOf] — same expand-instead-of-collapse reasoning as
+     * schemaForClassTyped(), one level further out: {type: array,
+     * items: <the element's own schema>} instead of a bare {type:
+     * array} that would tell an agent nothing about what each element
+     * looks like.
      *
-     * Constraint attributes merge here for the same reason they merge
-     * into schemaForScalar()'s plain-array schema: Hydrator runs every
-     * Constraint on a #[ListOf] property once its elements are hydrated,
-     * so a `#[MinItems(1)]` the request actually has to satisfy belongs
-     * in the schema describing it.
+     * The two levels own different keywords, and each is stated once.
+     * The field's own Constraint attributes describe the list —
+     * `#[MinItems(1)]` is a bound the request has to satisfy — and
+     * merge onto the array; its #[Each] rules describe one element and
+     * merge onto `items`, which is exactly where Hydrator applies them.
      *
-     * @param class-string $listItemClass
+     * @param array{scalarType: ?string, enumClass: ?class-string, dtoClass: ?class-string, constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>} $item
      * @param (callable(class-string): array<string, mixed>)|null $classSchema
      * @return array<string, mixed>
      */
-    private static function schemaForListOf(ReflectionParameter $parameter, string $listItemClass, ?callable $classSchema, bool $nullable): array
+    private static function schemaForListOf(ReflectionParameter $parameter, array $item, ?callable $classSchema, bool $nullable): array
     {
-        return self::withNullableSchema([
+        return self::withNullableSchema(self::withConstraintSchema([
             'type' => 'array',
-            'items' => self::objectSchemaFor($listItemClass, $classSchema),
-            ...self::constraintSchema($parameter),
-        ], $nullable);
+            'items' => self::itemSchema($item, $classSchema),
+        ], $parameter), $nullable);
+    }
+
+    /**
+     * One #[ListOf] element's own schema, from the same classification
+     * Hydrator resolves it with: a DTO's expanded object schema, an
+     * uploaded file's binary string, a backed enum's type-and-cases
+     * pair, or the JSON type of the scalar it declares — with every
+     * #[Each] rule's keywords merged in.
+     *
+     * @param array{scalarType: ?string, enumClass: ?class-string, dtoClass: ?class-string, constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>} $item
+     * @param (callable(class-string): array<string, mixed>)|null $classSchema
+     * @return array<string, mixed>
+     * @throws JsonSchemaException
+     */
+    private static function itemSchema(array $item, ?callable $classSchema): array
+    {
+        if ($item['dtoClass'] === UploadedFileInterface::class) {
+            // The same {type: string, format: binary} an
+            // UploadedFileInterface-typed field publishes, for the same
+            // reason — see objectSchema() — with the element's own
+            // #[Each] rules merged in through the one keyword merge
+            // every other element already uses.
+            return self::withRuleKeywords(['type' => 'string', 'format' => 'binary'], $item['constraints']);
+        }
+
+        if ($item['dtoClass'] !== null) {
+            // A DTO list carries no #[Each] rules — Hydrator refuses
+            // them there — so nothing merges onto an element that
+            // already states its own fields' rules.
+            return self::objectSchemaFor($item['dtoClass'], $classSchema);
+        }
+
+        /** @var string $scalarType a non-DTO element always declares one */
+        $scalarType = $item['scalarType'];
+
+        $base = $item['enumClass'] !== null
+            ? self::enumSchema($item['enumClass'], $scalarType)
+            : ['type' => self::WIRE_TYPES[$scalarType]];
+
+        return self::withRuleKeywords($base, $item['constraints']);
+    }
+
+    /**
+     * A backed-enum field: the enum's own domain, plus every rule
+     * declared on the field, merged through the one keyword merge a
+     * scalar field and a list element already use — so a rule the
+     * runtime applies to the resolved case is stated in the document
+     * too, and a rule claiming `type` or `enum` is refused here as it
+     * is anywhere else.
+     *
+     * A rule's keywords describe the wire value, which for an enum is
+     * its backing scalar; the rule itself sees the case. Nullability is
+     * widened last, over both domains the merged schema now carries.
+     *
+     * @param class-string $enum
+     * @return array<string, mixed>
+     * @throws JsonSchemaException
+     */
+    private static function schemaForEnum(ReflectionParameter $parameter, string $enum, string $backingType, bool $nullable): array
+    {
+        return self::withNullableSchema(
+            self::withConstraintSchema(self::enumSchema($enum, $backingType), $parameter),
+            $nullable,
+        );
+    }
+
+    /**
+     * A backed enum's own two keywords: the JSON type its backing
+     * values carry, and the exact set of them. Both are the domain
+     * Hydrator binds — it resolves the wire value as that scalar and
+     * then asks the enum for the case naming it — so a client
+     * generating requests from this document can send nothing the
+     * field rejects.
+     *
+     * The cases are read here rather than carried anywhere: a schema is
+     * built where it is published, and an enum's cases are fixed for
+     * the process's lifetime.
+     *
+     * @param class-string $enum
+     * @return array<string, mixed>
+     */
+    private static function enumSchema(string $enum, string $backingType): array
+    {
+        /** @var class-string<BackedEnum> $enum */
+        return [
+            'type' => self::WIRE_TYPES[$backingType],
+            'enum' => array_map(static fn (BackedEnum $case): int|string => $case->value, $enum::cases()),
+        ];
     }
 
     /**
@@ -205,13 +420,15 @@ final class JsonSchema
      * whatever $classSchema substitutes for it (OpenApiGenerator's `$ref`).
      *
      * A class that cannot be instantiated (an interface, an abstract class,
-     * an enum) is rejected rather than described: `Kinetis\Validation\Hydrator`
-     * accepts only an already-constructed instance for such a field, and
-     * refuses it outright as a #[ListOf] item class — see its own docblock —
-     * so no wire value could satisfy the {type: object} schema expanding it
-     * would produce. The one interface a request can carry,
-     * `UploadedFileInterface`, never reaches here; forParameters()
-     * describes it as `{type: string, format: binary}` directly.
+     * a unit enum) is rejected rather than described:
+     * `Kinetis\Validation\Hydrator` accepts only an already-constructed
+     * instance for such a field, and refuses every other one outright as a
+     * #[ListOf] element type — see its own docblock — so no wire value
+     * could satisfy the {type: object} schema expanding it would produce.
+     * Two class types never reach here: `UploadedFileInterface`, which
+     * objectSchema() and itemSchema() both describe as
+     * `{type: string, format: binary}`, and a backed enum on a DTO field,
+     * which objectSchema() describes as that enum's own domain.
      *
      * @param class-string $class
      * @param (callable(class-string): array<string, mixed>)|null $classSchema
@@ -259,6 +476,13 @@ final class JsonSchema
             $schema['type'] = is_array($schema['type']) ? [...$schema['type'], 'null'] : [$schema['type'], 'null'];
         }
 
+        // A closed set of values is a second domain the same value has
+        // to satisfy, so widening only `type` would publish a schema
+        // that still rejects the null the declaration accepts.
+        if (isset($schema['enum']) && is_array($schema['enum'])) {
+            $schema['enum'] = [...$schema['enum'], null];
+        }
+
         return $schema;
     }
 
@@ -273,92 +497,143 @@ final class JsonSchema
      * showed only `{type: integer}`, with no hint of the constraint a
      * client would actually need to satisfy.
      *
-     * forType() itself keeps returning a genuinely empty PHP array `[]`
-     * for `mixed`/an untyped or union parameter — deliberately, so the
-     * spread below stays safe (PHP's array-spread operator throws for a
-     * non-iterable `stdClass`, and a constraint attribute on a
-     * `mixed`-typed parameter is legal syntax, so this isn't a
-     * hypothetical). The empty-schema-means-"anything" PHP array is only
+     * This reads baseTypeSchema() rather than forType() so nullability is
+     * widened once, last, over the completed schema — the same ordering
+     * schemaForEnum() uses — rather than by forType() before a rule's
+     * keywords are merged in. Widening first would leave a rule
+     * contributing a second closed domain (#[In]'s `enum`) rejecting the
+     * `null` the widened `type` already admits.
+     *
+     * baseTypeSchema() itself keeps returning a genuinely empty PHP array
+     * `[]` for `mixed` and an untyped parameter — deliberately, so the
+     * merge below stays safe (withConstraintSchema() reads keys from its
+     * base and adds to it, neither of which a `stdClass` does, and a
+     * constraint attribute on a `mixed`-typed parameter is legal syntax,
+     * so this isn't a hypothetical). The empty-schema-means-"anything"
+     * PHP array is only
      * ever cast to a real `stdClass` — so it encodes as JSON `{}`, not
      * the invalid `[]` a bare empty array would produce — once every
      * constraint has already been merged into a genuine plain array, on
-     * the way out. A schema left non-empty by a merged constraint (e.g.
-     * `#[In(['a', 'b'])] mixed $x`) is untouched.
+     * the way out. A schema left non-empty by a merged constraint still
+     * widens for null: `#[In(['a', 'b'])] mixed $x` has no `type`
+     * keyword for withNullableSchema() to touch, but its merged `enum`
+     * grows to admit `null` exactly like a nullable scalar's does —
+     * `resolveScalar()` returns an explicit `null` for `mixed` without
+     * ever running the rule against it, the same short-circuit an
+     * untyped or nullable-scalar field gets.
      *
      * @return array<string, mixed>|\stdClass
      */
     public static function schemaForScalar(ReflectionParameter $parameter, ?ReflectionType $type): array|\stdClass
     {
-        $schema = [...self::forType($type), ...self::constraintSchema($parameter)];
+        $base = $type instanceof ReflectionNamedType ? self::baseTypeSchema($type) : [];
+        // Hydrator::compileParameter() sets its own compiled plan's
+        // `allowsNull` the identical way: an untyped parameter has no
+        // ReflectionNamedType to ask, but resolveScalar() still accepts
+        // an explicit null for it before running its constraints, so the
+        // published schema has to widen for null here too, not only when
+        // $type carries its own answer.
+        $nullable = $type === null || $type->allowsNull();
+        $schema = self::withNullableSchema(self::withConstraintSchema($base, $parameter), $nullable);
 
         return $schema === [] ? (object) [] : $schema;
     }
 
     /**
-     * Every Constraint attribute on one parameter, merged into a single
-     * schema fragment in declaration order — the same set Hydrator runs
-     * against the value, so the schema and the check cannot disagree
-     * about which constraints apply. A later constraint writing a
-     * keyword an earlier one already wrote wins, matching the order
-     * Hydrator itself evaluates them in.
+     * $base — the keywords the parameter's own PHP declaration owns —
+     * plus every rule declared on it, merged into a single schema
+     * fragment. The rules are read through
+     * Hydrator::collectConstraints(), from the same literal descriptors
+     * Hydrator validates against, so the published schema and the
+     * enforced check can never describe different rule sets. Each rule
+     * is constructed here, asked for its keywords, and discarded.
      *
+     * A keyword may be claimed once, by exactly one owner. The PHP type
+     * states the shape — `type`, and a #[ListOf]'s `items` — and a rule
+     * refines it: `#[MinLength(3)] string` narrows which strings the
+     * field takes, and cannot make it something other than a string,
+     * because Hydrator's own type check is not reading the rule. A rule
+     * contributing `type` back would publish a shape the request is not
+     * checked against, so it is refused rather than merged. Two rules
+     * claiming one keyword are refused for the same reason: a
+     * `#[MinLength(3)] #[MinLength(5)]` pair states two different
+     * minimum lengths, and letting declaration order silently pick one
+     * would publish a bound the request is not checked against.
+     *
+     * A rule's own keyword is its own: whatever it nests inside that
+     * keyword — an `enum`'s members, a `format`'s name — is the rule
+     * speaking about its own subject and is never inspected here.
+     *
+     * @param array<string, mixed> $base
      * @return array<string, mixed>
+     * @throws JsonSchemaException
      */
-    private static function constraintSchema(ReflectionParameter $parameter): array
+    private static function withConstraintSchema(array $base, ReflectionParameter $parameter): array
     {
-        $schema = [];
+        return self::withRuleKeywords($base, Hydrator::collectConstraints($parameter));
+    }
 
-        foreach ($parameter->getAttributes(Constraint::class, ReflectionAttribute::IS_INSTANCEOF) as $attribute) {
-            $schema = [...$schema, ...self::forConstraint($attribute->newInstance())];
+    /**
+     * The one keyword merge, for the three things that own rules: a
+     * field or parameter, a DTO class, and one #[ListOf] element. Each
+     * builds every rule from its literal {class, args} descriptor, asks
+     * it for keywords, and discards it.
+     *
+     * A keyword may be claimed once, by exactly one owner, and $base is
+     * the declaration's own — refusals are stated on
+     * withConstraintSchema() above, and they hold identically wherever
+     * this is called from.
+     *
+     * @param array<string, mixed> $base
+     * @param list<array{class: class-string<Constraint>|class-string<ObjectConstraint>, args: array<int|string, mixed>}> $rules
+     * @return array<string, mixed>
+     * @throws JsonSchemaException
+     */
+    private static function withRuleKeywords(array $base, array $rules): array
+    {
+        $schema = $base;
+        $declaredBy = [];
+
+        foreach ($rules as $descriptor) {
+            $ruleClass = $descriptor['class'];
+
+            foreach (new $ruleClass(...$descriptor['args'])->schema() as $keyword => $value) {
+                if (array_key_exists($keyword, $declaredBy)) {
+                    throw JsonSchemaException::duplicateKeyword($keyword, $declaredBy[$keyword], $ruleClass);
+                }
+
+                if (array_key_exists($keyword, $base)) {
+                    throw JsonSchemaException::declaredShapeKeyword($keyword, $ruleClass);
+                }
+
+                $declaredBy[$keyword] = $ruleClass;
+                $schema[$keyword] = $value;
+            }
         }
 
         return $schema;
     }
 
     /**
-     * Whether $parameter is typed `array` and carries #[ObjectMap] — the
-     * same attribute Kinetis\Validation\Hydrator reads to admit a JSON
-     * object there, read here so the schema and the hydration behavior
-     * it describes can never disagree about which properties are object
-     * maps.
+     * Whether $parameter's value type is `array` and it carries
+     * #[ObjectMap] — the same attribute Kinetis\Validation\Hydrator reads
+     * to admit a JSON object there, read here so the schema and the
+     * hydration behavior it describes can never disagree about which
+     * properties are object maps. $type is the parameter's value type,
+     * already resolved through any presence union, for the same reason
+     * Hydrator resolves it before asking the same question.
      */
-    private static function isObjectMap(ReflectionParameter $parameter): bool
+    private static function isObjectMap(ReflectionParameter $parameter, ?ReflectionType $type): bool
     {
-        $type = $parameter->getType();
-
         return $type instanceof ReflectionNamedType
             && $type->getName() === 'array'
             && $parameter->getAttributes(ObjectMap::class) !== [];
     }
 
     /**
-     * @return class-string|null null unless $parameter is typed `array` and
-     *     carries a #[ListOf(SomeClass::class)] attribute — the same
-     *     attribute Kinetis\Validation\Hydrator reads to hydrate a list of
-     *     nested DTOs, reused here so the schema and the hydration behavior
-     *     it describes can never disagree about which parameters are lists.
-     */
-    private static function listItemClassFor(ReflectionParameter $parameter): ?string
-    {
-        $type = $parameter->getType();
-
-        if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
-            return null;
-        }
-
-        $attributes = $parameter->getAttributes(ListOf::class);
-
-        if ($attributes === []) {
-            return null;
-        }
-
-        return $attributes[0]->newInstance()->itemClass();
-    }
-
-    /**
-     * The JSON Schema fragment for one builtin type. Only
-     * `Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES` is
-     * describable: every other builtin — `null`, `true`, `false`,
+     * The JSON Schema fragment for one builtin type, widened for
+     * nullability. Only `Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES`
+     * is describable: every other builtin — `null`, `true`, `false`,
      * `object`, `callable` — has no request value that could satisfy it,
      * and is refused here rather than published as a schema no client
      * could ever meet. `iterable` shares `array`'s fragment: decoded
@@ -366,22 +641,22 @@ final class JsonSchema
      * `Traversable`, and a plain array satisfies PHP's `iterable`.
      * (`void`/`never` fatal at declaration time on a parameter;
      * `self`/`parent`/`static` report `isBuiltin() === false` and are
-     * routed through forParameters()'s class-typed branch instead.)
+     * routed through objectSchema()'s class-typed branch instead.)
      *
-     * `mixed` and an untyped/union/intersection parameter (never a
-     * ReflectionNamedType, so caught by the guard clause immediately
-     * below) both mean "any JSON value" — JSON Schema's own way to say
-     * that is the empty schema object `{}`, never the empty schema array
-     * `[]` a bare PHP `[]` would serialize as. This method still returns
-     * a genuine, uncast PHP `[]` for both, deliberately: schemaForScalar()
-     * — the one real caller — merges each Constraint attribute's own
-     * schema fragment into this return value via array-spread, which
-     * throws for a non-iterable `stdClass`; casting here would make that
-     * merge unsafe the moment a constraint attribute is legally (if
-     * oddly) placed on a `mixed`-typed parameter. schemaForScalar()
-     * applies the `(object)` cast itself, once, only on its own final
-     * return value, after every constraint has already been merged as a
-     * plain array — see its own docblock.
+     * An untyped parameter is never a ReflectionNamedType, so it is
+     * caught by the guard clause below rather than reaching
+     * baseTypeSchema() at all; `mixed` reaches it and comes back `[]`,
+     * which withNullableSchema() correctly leaves alone (nothing to
+     * widen) regardless of allowsNull() — "any JSON value" already
+     * includes `null`.
+     *
+     * schemaForScalar() does not call this directly: it reads
+     * baseTypeSchema() itself and widens nullability only after a
+     * parameter's constraint keywords are merged in, so a rule
+     * contributing a second closed domain (#[In]'s `enum`) is widened
+     * too — see that method's own docblock. This method keeps widening
+     * immediately because it is also a direct, public probe of one
+     * declared type's own schema, with no constraint to merge.
      *
      * @return array<string, mixed>
      */
@@ -391,48 +666,35 @@ final class JsonSchema
             return [];
         }
 
-        $schema = match ($type->getName()) {
+        return self::withNullableSchema(self::baseTypeSchema($type), $type->allowsNull());
+    }
+
+    /**
+     * One declared builtin type's own schema, before any nullability
+     * widening or constraint merge — the non-null declaration domain
+     * schemaForScalar() and forType() both widen or merge onto, each in
+     * its own order.
+     *
+     * @return array<string, mixed>
+     */
+    private static function baseTypeSchema(ReflectionNamedType $type): array
+    {
+        return match ($type->getName()) {
             'int' => ['type' => 'integer'],
             'float' => ['type' => 'number'],
             'bool' => ['type' => 'boolean'],
             'string' => ['type' => 'string'],
             // A plain `array` (no #[ListOf]) is a real JSON array on the
-            // wire, which is what Hydrator::typeMismatchMessage() also
-            // enforces — never an `object`, which would describe the
-            // wrong wire shape entirely.
+            // wire, which is what Hydrator's own check enforces — never
+            // an `object`, which would describe the wrong wire shape
+            // entirely.
             'array', 'iterable' => ['type' => 'array'],
             // `mixed` genuinely accepts every JSON value, null included —
             // the empty schema (`{}` once schemaForScalar() casts it, see
-            // this method's own docblock for why not here) is JSON
-            // Schema's own way to say "anything", so withNullableSchema()
-            // below correctly leaves it alone (nothing to widen) regardless
-            // of allowsNull().
+            // its own docblock for why not here) is JSON Schema's own way
+            // to say "anything".
             'mixed' => [],
             default => throw JsonSchemaException::unsupportedBuiltinType($type->getName()),
-        };
-
-        return self::withNullableSchema($schema, $type->allowsNull());
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public static function forConstraint(Constraint $constraint): array
-    {
-        return match (true) {
-            $constraint instanceof Email => ['format' => 'email'],
-            $constraint instanceof MinLength => ['minLength' => $constraint->length()],
-            $constraint instanceof MaxLength => ['maxLength' => $constraint->length()],
-            $constraint instanceof MinItems => ['minItems' => $constraint->count()],
-            $constraint instanceof MaxItems => ['maxItems' => $constraint->count()],
-            $constraint instanceof GreaterThan => ['exclusiveMinimum' => $constraint->threshold()],
-            $constraint instanceof LessThan => ['exclusiveMaximum' => $constraint->threshold()],
-            $constraint instanceof In => ['enum' => $constraint->choices()],
-            $constraint instanceof Url => ['format' => 'uri'],
-            $constraint instanceof Uuid => ['format' => 'uuid'],
-            // A constraint without an equivalent JSON Schema keyword
-            // leaves the schema unchanged.
-            default => [],
         };
     }
 }

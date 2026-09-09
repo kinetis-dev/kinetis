@@ -11,6 +11,7 @@ use Kinetis\Mcp\McpDispatcher;
 use Kinetis\Mcp\McpRegistry;
 use Kinetis\Mcp\McpServer;
 use Kinetis\Mcp\Tests\Fixtures\InMemoryLogger;
+use Kinetis\Mcp\Tests\Fixtures\NullableDtoArgumentToolController;
 use Kinetis\Mcp\Tests\Fixtures\AccountController;
 use Kinetis\Mcp\Tests\Fixtures\BuiltinCoverageToolController;
 use Kinetis\Mcp\Tests\Fixtures\ProgressReportingController;
@@ -68,6 +69,23 @@ final class McpServerTest extends TestCase
         ];
     }
 
+    /**
+     * The `errors` member of a tool-error result: the same ordered
+     * structured violations the HTTP renderer puts in its problem
+     * document, decoded from the text content this envelope carries.
+     *
+     * @param array<string, mixed> $response
+     * @return list<array<string, mixed>>
+     */
+    private static function toolErrors(array $response): array
+    {
+        /** @var array{result: array{content: list<array{text: string}>}} $response */
+        $payload = json_decode($response['result']['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR);
+
+        /** @var array{errors: list<array<string, mixed>>} $payload */
+        return $payload['errors'];
+    }
+
     public function test_tools_list_reports_registered_tools(): void
     {
         $response = $this->server()->handle([
@@ -112,9 +130,120 @@ final class McpServerTest extends TestCase
 
         self::assertArrayNotHasKey('error', $response);
         self::assertTrue($response['result']['isError']);
-        $errors = json_decode($response['result']['content'][0]['text'], true)['errors'];
-        self::assertArrayHasKey('name', $errors);
-        self::assertArrayHasKey('email', $errors);
+
+        $errors = self::toolErrors($response);
+
+        self::assertSame([['name'], ['email']], array_column($errors, 'path'));
+        self::assertSame('min_length', $errors[0]['code']);
+        self::assertSame('must be at least 3 characters.', $errors[0]['message']);
+        self::assertSame(['length' => 3], $errors[0]['parameters']);
+    }
+
+    /**
+     * An argument naming no parameter travels the same structured route
+     * an ordinary argument failure does — the same envelope, the same
+     * ordered violations — so an agent that misspelled an argument reads
+     * what to fix rather than a silently accepted no-op.
+     */
+    public function test_tools_call_with_an_unknown_argument_reports_structured_errors(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'get_user_status',
+                'arguments' => new JsonObject(['userId' => 42, 'userID' => 42]),
+                '_meta' => $this->meta(),
+            ],
+        ]);
+
+        self::assertArrayNotHasKey('error', $response);
+        self::assertTrue($response['result']['isError']);
+
+        $errors = self::toolErrors($response);
+
+        self::assertCount(1, $errors);
+        self::assertSame(['userID'], $errors[0]['path']);
+        self::assertSame('unexpected_field', $errors[0]['code']);
+        self::assertSame('is not expected.', $errors[0]['message']);
+    }
+
+    /**
+     * An argument the call omitted reaches the client as argument
+     * feedback, not as the fixed "Tool execution failed." string a
+     * genuine tool fault gets (see
+     * test_a_throwing_tool_reports_a_generic_failure_and_logs_the_real_exception()):
+     * toolErrors() decoding at all is the discrimination, since that
+     * content is not JSON, and the violation it finds names the
+     * argument to send.
+     */
+    public function test_tools_call_with_an_absent_required_argument_reports_structured_errors(): void
+    {
+        $response = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'method' => 'tools/call',
+            'params' => ['name' => 'get_user_status', 'arguments' => new JsonObject([]), '_meta' => $this->meta()],
+        ]);
+
+        self::assertArrayNotHasKey('error', $response);
+        self::assertTrue($response['result']['isError']);
+
+        $errors = self::toolErrors($response);
+
+        self::assertCount(1, $errors);
+        self::assertSame(['userId'], $errors[0]['path']);
+        self::assertSame('required', $errors[0]['code']);
+        self::assertSame('is required.', $errors[0]['message']);
+    }
+
+    /**
+     * An explicit null for a DTO-typed argument: a violation when the
+     * parameter refuses null, and the argument's own value when it
+     * accepts one — the same two answers over the transport that
+     * McpDispatcher reaches directly.
+     */
+    public function test_tools_call_reports_a_null_dto_argument_by_what_the_parameter_declares(): void
+    {
+        $refused = $this->server()->handle([
+            'jsonrpc' => '2.0',
+            'id' => 5,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'create_user',
+                'arguments' => new JsonObject(['data' => null]),
+                '_meta' => $this->meta(),
+            ],
+        ]);
+
+        self::assertArrayNotHasKey('error', $refused);
+        self::assertTrue($refused['result']['isError']);
+
+        $errors = self::toolErrors($refused);
+
+        self::assertSame([['data']], array_column($errors, 'path'));
+        self::assertSame('null_not_allowed', $errors[0]['code']);
+
+        $registry = new McpRegistry();
+        $registry->register(NullableDtoArgumentToolController::class);
+
+        $app = new AppScope();
+        $app->boot();
+
+        $accepted = new McpServer($registry, new McpDispatcher($app))->handle([
+            'jsonrpc' => '2.0',
+            'id' => 6,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'update_user',
+                'arguments' => new JsonObject(['data' => null]),
+                '_meta' => $this->meta(),
+            ],
+        ]);
+
+        self::assertFalse($accepted['result']['isError']);
+        self::assertSame(['name' => null], json_decode($accepted['result']['content'][0]['text'], true));
     }
 
     public function test_tools_call_with_an_unknown_tool_name_is_an_rpc_error(): void
@@ -862,14 +991,14 @@ final class McpServerTest extends TestCase
 
     // The MCP error envelope/content contract for a wrong-shaped
     // builtin-typed argument, pinned through a real JSON-RPC tools/call.
-    // Hydrator::typeMismatchMessage() is the exact same check an HTTP
-    // #[Query]/path parameter or #[Body] field gets; this proves McpServer
+    // Hydrator::resolveScalar() is the exact same path an HTTP
+    // #[Query]/path parameter or #[Body] field takes; this proves McpServer
     // carries its ValidationException through to the same isError:true +
-    // {errors: {...}} shape every DTO-argument validation failure already
+    // {errors: [...]} shape every DTO-argument validation failure already
     // gets (see test_tools_call_with_invalid_dto_arguments_reports_is_error_not_an_rpc_error
     // above), for a plain top-level scalar argument too.
 
-    public function test_a_wrong_shaped_plain_array_argument_reports_is_error_with_the_field_message(): void
+    public function test_a_wrong_shaped_plain_array_argument_reports_is_error_with_its_own_violation(): void
     {
         $response = $this->builtinCoverageServer()->handle([
             'jsonrpc' => '2.0',
@@ -884,8 +1013,15 @@ final class McpServerTest extends TestCase
 
         self::assertArrayNotHasKey('error', $response);
         self::assertTrue($response['result']['isError']);
-        $errors = json_decode($response['result']['content'][0]['text'], true)['errors'];
-        self::assertSame(['must be an array, value given.'], $errors['tags']);
+        self::assertSame(
+            [[
+                'path' => ['tags'],
+                'code' => 'type_mismatch',
+                'message' => 'must be an array, value given.',
+                'parameters' => ['expected' => 'array', 'given' => 'value'],
+            ]],
+            self::toolErrors($response),
+        );
     }
 
     public function test_a_correctly_shaped_call_across_every_supported_builtin_category_succeeds(): void
@@ -969,8 +1105,15 @@ final class McpServerTest extends TestCase
         $response = $this->builtinCoverageServer()->handle($message);
 
         self::assertTrue($response['result']['isError']);
-        $errors = json_decode($response['result']['content'][0]['text'], true)['errors'];
-        self::assertSame(['must be a JSON array, not a JSON object.'], $errors['tags']);
+        self::assertSame(
+            [[
+                'path' => ['tags'],
+                'code' => 'not_a_json_array',
+                'message' => 'must be a JSON array, not a JSON object.',
+                'parameters' => [],
+            ]],
+            self::toolErrors($response),
+        );
     }
 
     /**

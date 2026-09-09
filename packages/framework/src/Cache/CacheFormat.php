@@ -30,5 +30,5 @@ namespace Kinetis\Cache;
  */
 final class CacheFormat
 {
-    public const int VERSION = 20;
+    public const int VERSION = 21;
 }

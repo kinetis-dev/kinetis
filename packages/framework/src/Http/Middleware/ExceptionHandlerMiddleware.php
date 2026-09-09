@@ -6,9 +6,12 @@ namespace Kinetis\Http\Middleware;
 
 use Kinetis\Http\Exception\HttpStatusExceptionInterface;
 use Kinetis\Http\Middleware\Exception\HttpStatusMappingException;
+use Kinetis\Http\ProblemDetailsValidationExceptionRenderer;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Http\ValidationExceptionRendererInterface;
 use Kinetis\Logging\SafeLogger;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\Validation\Exception\ValidationException;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -25,7 +28,8 @@ use Throwable;
  * TransactionGuard::rollbackDangling() uses. An uncaught exception from
  * anywhere in the pipeline — a controller, a route-level middleware,
  * application code in general — is caught here instead of propagating
- * out of Kernel::handle() entirely: one implementing
+ * out of Kernel::handle() entirely: a Kinetis\Validation\Exception\ValidationException
+ * becomes whatever $renderer answers with, one implementing
  * Kinetis\Http\Exception\HttpStatusExceptionInterface becomes the status
  * it declares, everything else becomes a 500.
  *
@@ -64,6 +68,23 @@ use Throwable;
  * logged with the *original* exception, plus the mapping failure itself
  * (a `HttpStatusMappingException`) as extra context when there was a
  * concrete secondary `Throwable` to report — never silently discarded.
+ *
+ * A `ValidationException` is recognized first, and rendered inside the
+ * same kind of nested boundary: an application-bound
+ * `ValidationExceptionRendererInterface` is arbitrary application code,
+ * so if `render()` throws, the original validation failure is logged
+ * with that rendering failure as context and the request gets the same
+ * generic 500. Nothing about the returned response is second-guessed —
+ * see that interface's own docblock for why every status is legal. A
+ * validation failure rendered normally is not logged: it is the
+ * client's mistake being reported, not a framework fault.
+ *
+ * $renderer is an ordinary constructor default rather than an
+ * AppScope registration: an application binding the interface before
+ * `AppScope::boot()` wins through `Container\Autowire`, which prefers
+ * whatever the container can supply over a parameter's own default,
+ * and one that binds nothing gets the immutable, stateless default
+ * object with no registration of any kind.
  */
 final readonly class ExceptionHandlerMiddleware implements MiddlewareInterface
 {
@@ -73,6 +94,7 @@ final readonly class ExceptionHandlerMiddleware implements MiddlewareInterface
     public function __construct(
         private LoggerInterface $logger,
         private AppEnvironment $environment = AppEnvironment::Production,
+        private ValidationExceptionRendererInterface $renderer = new ProblemDetailsValidationExceptionRenderer(),
     ) {}
 
     #[\Override]
@@ -82,8 +104,18 @@ final readonly class ExceptionHandlerMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         } catch (Throwable $e) {
             $mappingFailure = null;
+            $renderFailure = null;
 
-            if ($e instanceof HttpStatusExceptionInterface) {
+            if ($e instanceof ValidationException) {
+                $response = $this->tryValidationResponse($e, $request, $renderFailure);
+
+                if ($response !== null) {
+                    // The client's own malformed input, reported to
+                    // the client. Not a framework fault, so not
+                    // logged.
+                    return $response;
+                }
+            } elseif ($e instanceof HttpStatusExceptionInterface) {
                 $response = $this->tryHttpStatusResponse($e, $mappingFailure);
 
                 if ($response !== null) {
@@ -112,9 +144,33 @@ final readonly class ExceptionHandlerMiddleware implements MiddlewareInterface
                 $context['mappingFailure'] = $mappingFailure;
             }
 
+            if ($renderFailure !== null) {
+                $context['renderFailure'] = $renderFailure;
+            }
+
             SafeLogger::log($this->logger, LogLevel::ERROR, 'Unhandled exception while handling {method} {path}: {message}', $context);
 
             return $this->internalErrorResponse($e);
+        }
+    }
+
+    /**
+     * Returns the rendered validation response, or null when the bound
+     * renderer itself threw — in which case $renderFailure carries what
+     * it threw, for process()'s own generic-500 fallback to log
+     * alongside the validation failure that was being rendered.
+     *
+     * Nothing about a returned response is inspected: status,
+     * content type and body are the renderer's to decide.
+     */
+    private function tryValidationResponse(ValidationException $e, ServerRequestInterface $request, ?Throwable &$renderFailure): ?ResponseInterface
+    {
+        try {
+            return $this->renderer->render($e, $request);
+        } catch (Throwable $cause) {
+            $renderFailure = $cause;
+
+            return null;
         }
     }
 

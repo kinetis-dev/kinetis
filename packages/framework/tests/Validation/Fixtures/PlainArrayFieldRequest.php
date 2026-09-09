@@ -11,7 +11,7 @@ final readonly class PlainArrayFieldRequest
         // A genuinely nullable *plain* array — no #[ListOf] at all,
         // distinct from a #[ListOf] array (which additionally hydrates
         // each element as a nested DTO): only the shared list-shape
-        // check (see Hydrator::listShapeMismatchMessage()) applies here.
+        // check (see Hydrator::listShapeMismatchViolation()) applies here.
         public ?array $optionalTags = null,
     ) {}
 }

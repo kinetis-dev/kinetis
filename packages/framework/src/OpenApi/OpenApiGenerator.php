@@ -13,8 +13,10 @@ use Kinetis\Http\Pagination\CursorPaginator;
 use Kinetis\Http\Pagination\Paginator;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonSchema;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\UploadedFileInterface;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -215,14 +217,28 @@ final class OpenApiGenerator
 
     /**
      * Dispatcher's own resolveBodyFromPlan() branches purely on the real
-     * request's Content-Type header — any #[Body] DTO can be submitted as
-     * `application/json`, `application/x-www-form-urlencoded`, or
-     * `multipart/form-data`, unconditionally, with no route-level opt-in
-     * required for any of the three. Every content type therefore gets
-     * the identical schema here too — an earlier version advertised only
+     * request's Content-Type header — a #[Body] DTO with no uploaded file
+     * in it can be submitted as `application/json`,
+     * `application/x-www-form-urlencoded`, or `multipart/form-data`,
+     * unconditionally, with no route-level opt-in required for any of the
+     * three. Every one of those content types therefore gets the identical
+     * schema here too — an earlier version advertised only
      * `application/json`, which was untruthful about the other two
      * genuinely-working encodings a client following this document would
      * have no way to discover.
+     *
+     * A DTO that declares an uploaded file anywhere in it publishes
+     * `multipart/form-data` alone. Only a multipart body can carry a file
+     * at all, and Dispatcher merges uploaded files into a form-encoded
+     * body only — so a JSON or urlencoded entry would advertise a request
+     * that cannot hydrate the DTO it names. Narrower than the runtime is
+     * safe; wider is a document that lies.
+     *
+     * An UploadedFileInterface-typed *controller parameter* is not
+     * described here at all — it is not a request body, and this method
+     * describes the one #[Body] parameter it was handed. An application
+     * that needs its upload input documented declares the file as a field
+     * of a #[Body] DTO.
      *
      * @return array<string, mixed>|null
      */
@@ -238,6 +254,10 @@ final class OpenApiGenerator
         $dtoClass = $type->getName();
         $schema = ['schema' => $this->schemaRefFor($dtoClass)];
 
+        if (self::declaresUpload(Hydrator::compilePlan($dtoClass))) {
+            return ['required' => true, 'content' => ['multipart/form-data' => $schema]];
+        }
+
         return [
             'required' => true,
             'content' => [
@@ -246,6 +266,48 @@ final class OpenApiGenerator
                 'multipart/form-data' => $schema,
             ],
         ];
+    }
+
+    /**
+     * Whether a compiled hydration plan binds an uploaded file anywhere:
+     * a field of its own, an element of a #[ListOf] field, or either of
+     * those inside a nested DTO, at any depth.
+     *
+     * Read from the plan rather than re-reflected, so the document is
+     * scoped by exactly what hydration would bind. The plan is plain
+     * data with no cycles — a recursive class reference is refused where
+     * the plan is compiled — so this walk terminates.
+     *
+     * @param array<string, mixed> $plan
+     */
+    private static function declaresUpload(array $plan): bool
+    {
+        /** @var list<array<string, mixed>> $parameters */
+        $parameters = $plan['parameters'];
+
+        foreach ($parameters as $parameter) {
+            if ($parameter['dtoClass'] === UploadedFileInterface::class) {
+                return true;
+            }
+
+            $item = $parameter['listItem'];
+
+            if (is_array($item)) {
+                if ($item['dtoClass'] === UploadedFileInterface::class) {
+                    return true;
+                }
+
+                if (is_array($item['nestedPlan']) && self::declaresUpload($item['nestedPlan'])) {
+                    return true;
+                }
+            }
+
+            if (is_array($parameter['nestedPlan']) && self::declaresUpload($parameter['nestedPlan'])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

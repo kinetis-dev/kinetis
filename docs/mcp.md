@@ -67,9 +67,48 @@ there's no `#[Body]`/`#[Query]` distinction to make the way HTTP routing
 needs one (see {doc}`routing-validation`) — every parameter is resolved
 from that object the same way. A class-typed parameter (like
 `CreateUserRequest` above) is validated using the same constraint
-attributes an HTTP request body uses; a failed validation becomes a
-normal tool result with `isError: true`, not a transport-level error —
-more on that distinction [below](#error-handling).
+attributes an HTTP request body uses, and so is a scalar one; a failed
+validation becomes a normal tool result with `isError: true`, not a
+transport-level error — more on that distinction [below](#error-handling).
+
+A tool call's arguments are a decoded JSON object, so they are read under
+`Kinetis\Validation\InputSource::Json` — the same vocabulary a JSON HTTP
+body is read under, and the one this tool's own `inputSchema` promises. A
+parameter typed `int` takes the JSON number `42`, not the JSON string
+`"42"`; see {doc}`routing-validation`'s "Scalar type checking" for the
+full table.
+
+Presence and null are validation too, in the same vocabulary: an
+argument the tool's `inputSchema` lists as required and the call omitted
+comes back as `required` at that argument's own path, and an explicit
+`null` for a parameter whose declared type refuses one comes back as
+`null_not_allowed` — for a DTO-typed parameter as much as a scalar one.
+Both are argument feedback in the `isError: true` result below, never a
+transport-level failure.
+
+The arguments object is closed, exactly as its published `inputSchema`
+says with `additionalProperties: false`: a key naming no parameter of
+the method comes back as `unexpected_field` on its own path, rather than
+being discarded while the call looks accepted. A `ProgressReporter`
+parameter is injected by the server and is never one of those names — it
+is neither required of a call nor accepted from one. Every argument
+failure a call has — unknown, missing, wrong-typed, or refused by a rule
+— arrives together in one result, so an agent correcting a call sees all
+of it at once. A DTO-typed argument's own object is closed one level in,
+and so is every DTO nested inside it.
+
+A tool method parameter declares a single named type. A union or
+intersection has no truthful `inputSchema` to publish, so it is refused
+when the tool is registered rather than advertised and then rejected —
+including the `T|Absent` presence union, which is a DTO constructor
+field's contract and needs a member that is either there or not (see
+{doc}`routing-validation`'s "Required, optional, and absent fields"). A
+DTO-typed argument may use it on its own fields.
+
+Binding refuses the same declaration in the same words: deriving a tool's
+or resource's parameter plan rejects a composite type rather than binding
+it as `mixed`, so what a method may declare does not depend on which path
+reached it.
 
 The tool's JSON Schema input is built automatically from the method's
 parameters, so `#[Email]`/`#[MinLength]`/etc. describe an MCP tool's
@@ -492,7 +531,7 @@ in its content, **not** a JSON-RPC transport error:
     "jsonrpc": "2.0",
     "id": 1,
     "result": {
-        "content": [{"type": "text", "text": "{\"errors\":{\"email\":[\"must be a valid email address.\"]}}"}],
+        "content": [{"type": "text", "text": "{\"errors\":[{\"path\":[\"email\"],\"code\":\"email\",\"message\":\"must be a valid email address.\",\"parameters\":{}}]}"}],
         "isError": true
     }
 }
@@ -505,12 +544,16 @@ distinguish from a broken connection. Only genuine protocol-level problems
 real JSON-RPC `error` response.
 
 What the content carries depends on the failure. A failed validation
-carries its real `errors` map, as above — that's the argument feedback an
-agent needs to retry correctly. Any other exception carries the fixed
-string `Tool execution failed.`, with the real exception going to the
-logger instead — an unexpected failure's message can hold SQL error text,
-file paths, or anything else internal, none of which belongs in a
-response to whatever agent happens to be connected.
+carries its real violations, as above — an ordered `errors` list whose
+entries each name a segmented `path`, a stable `code`, a `message` and
+the `parameters` it was built from, the same structure the HTTP default
+renderer puts in its RFC 9457 document, though never that document
+itself. That is the argument feedback an agent needs to retry correctly.
+Any other exception carries the fixed string `Tool execution failed.`,
+with the real exception going to the logger instead — an unexpected
+failure's message can hold SQL error text, file paths, or anything else
+internal, none of which belongs in a response to whatever agent happens
+to be connected.
 
 A resource method throwing is different: `readResource()` has no inner
 try/catch of its own the way a tool call does, so the exception

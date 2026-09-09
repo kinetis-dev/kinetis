@@ -12,6 +12,10 @@ use Kinetis\Tests\Fixtures\ConfigurableHttpStatusException;
 use Kinetis\Tests\Fixtures\FixtureHttpStatusException;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Fixtures\ThrowingLogger;
+use Kinetis\Tests\Http\Fixtures\RedirectingValidationRenderer;
+use Kinetis\Tests\Http\Fixtures\ThrowingValidationRenderer;
+use Kinetis\Validation\Exception\ValidationException;
+use Kinetis\Validation\Violation;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -360,6 +364,90 @@ final class ExceptionHandlerMiddlewareTest extends TestCase
         $body = json_decode((string) $response->getBody(), true);
         self::assertSame(ConfigurableHttpStatusException::class, $body['exception']);
         self::assertSame('broken', $body['message']);
+        self::assertCount(1, $logger->entries, 'the logging attempt itself was made, and failed, before being discarded');
+    }
+
+    private static function failingHandler(): CallableRequestHandler
+    {
+        return new CallableRequestHandler(static function (): never {
+            throw ValidationException::fromViolations([new Violation(['email'], 'required', 'is required.')]);
+        });
+    }
+
+    /**
+     * A validation failure is the client's own malformed input reported
+     * back to it, not a framework fault, so nothing is logged.
+     */
+    public function test_a_validation_exception_is_rendered_by_the_default_renderer(): void
+    {
+        $logger = new InMemoryLogger();
+        $middleware = new ExceptionHandlerMiddleware($logger);
+
+        $response = $middleware->process(new ServerRequest('POST', '/users'), self::failingHandler());
+
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame('application/problem+json', $response->getHeaderLine('Content-Type'));
+        self::assertStringContainsString('"path":["email"]', (string) $response->getBody());
+        self::assertSame([], $logger->records);
+    }
+
+    public function test_a_bound_renderer_replaces_the_default_and_keeps_its_own_status(): void
+    {
+        $middleware = new ExceptionHandlerMiddleware(
+            new NullLogger(),
+            AppEnvironment::Production,
+            new RedirectingValidationRenderer(),
+        );
+
+        $response = $middleware->process(new ServerRequest('POST', '/users'), self::failingHandler());
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('email', $response->getHeaderLine('X-Failed-Fields'));
+    }
+
+    /**
+     * The nested boundary an arbitrary application renderer needs: its
+     * own failure falls through to the same generic 500 every other
+     * uncaught Throwable takes, carrying both the failure it could not
+     * render and the reason it could not.
+     */
+    public function test_a_throwing_renderer_falls_through_to_the_logged_generic_500(): void
+    {
+        $logger = new InMemoryLogger();
+        $middleware = new ExceptionHandlerMiddleware(
+            $logger,
+            AppEnvironment::Production,
+            new ThrowingValidationRenderer(),
+        );
+
+        $response = $middleware->process(new ServerRequest('POST', '/users'), self::failingHandler());
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertSame(['error' => 'Internal server error.'], json_decode((string) $response->getBody(), true));
+
+        self::assertCount(1, $logger->records);
+        $context = $logger->records[0]['context'];
+        self::assertInstanceOf(ValidationException::class, $context['exception']);
+        self::assertSame(ThrowingValidationRenderer::MESSAGE, $context['renderFailure']->getMessage());
+        self::assertArrayNotHasKey('mappingFailure', $context, 'no HTTP status mapping was attempted here');
+    }
+
+    /**
+     * A throwing logger cannot turn a rendering failure into an escape
+     * either: the 500 this class guarantees survives both.
+     */
+    public function test_a_throwing_renderer_and_a_throwing_logger_still_produce_the_500(): void
+    {
+        $logger = new ThrowingLogger();
+        $middleware = new ExceptionHandlerMiddleware(
+            $logger,
+            AppEnvironment::Production,
+            new ThrowingValidationRenderer(),
+        );
+
+        $response = $middleware->process(new ServerRequest('POST', '/users'), self::failingHandler());
+
+        self::assertSame(500, $response->getStatusCode());
         self::assertCount(1, $logger->entries, 'the logging attempt itself was made, and failed, before being discarded');
     }
 }

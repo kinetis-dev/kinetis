@@ -9,9 +9,13 @@ use Kinetis\Mcp\McpDispatcher;
 use Kinetis\Mcp\McpRegistry;
 use Kinetis\Mcp\ProgressReporter;
 use Kinetis\Mcp\Tests\Fixtures\AccountController;
+use Kinetis\Mcp\Tests\Fixtures\ConstrainedArgumentToolController;
+use Kinetis\Mcp\Tests\Fixtures\NullableDtoArgumentToolController;
 use Kinetis\Mcp\Tests\Fixtures\NullableFieldsToolController;
 use Kinetis\Mcp\Tests\Fixtures\ProgressReportingController;
+use Kinetis\Mcp\Tests\Fixtures\UnionArgumentToolController;
 use Kinetis\Mcp\ToolDefinition;
+use Kinetis\Validation\Exception\JsonSchemaException;
 use Kinetis\Validation\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 
@@ -38,9 +42,31 @@ final class McpDispatcherTest extends TestCase
         $tool = $this->registry()->findTool('get_user_status');
         self::assertNotNull($tool);
 
-        $result = $this->dispatcher()->callTool($tool, ['userId' => '42']);
+        $result = $this->dispatcher()->callTool($tool, ['userId' => 42]);
 
         self::assertSame(['userId' => 42, 'status' => 'active'], $result);
+    }
+
+    /**
+     * A tool call's arguments are a decoded JSON object, and the tool's
+     * own published inputSchema says `{"type": "integer"}` for this one,
+     * so the numeric string an untyped source might send is a violation
+     * rather than a value quietly cast behind the schema's back.
+     */
+    public function test_a_numeric_string_does_not_satisfy_an_integer_argument(): void
+    {
+        $tool = $this->registry()->findTool('get_user_status');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, ['userId' => '42']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['userId'], $e->violations[0]->path);
+            self::assertSame('type_mismatch', $e->violations[0]->code);
+            self::assertSame('integer', $e->violations[0]->parameters['expected']);
+        }
     }
 
     public function test_calls_a_tool_with_a_dto_argument_and_validates_it(): void
@@ -74,7 +100,7 @@ final class McpDispatcherTest extends TestCase
             $this->dispatcher()->callTool($tool, ['userId' => 'not-a-number']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('userId', $e->errors);
+            self::assertArrayHasKey('userId', $e->grouped());
         }
     }
 
@@ -87,7 +113,7 @@ final class McpDispatcherTest extends TestCase
             $this->dispatcher()->callTool($tool, ['data' => 'not-an-object']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('data', $e->errors);
+            self::assertArrayHasKey('data', $e->grouped());
         }
     }
 
@@ -114,11 +140,11 @@ final class McpDispatcherTest extends TestCase
         } catch (ValidationException $e) {
             // Not "data.requiredNullable": callTool()'s own 'data' param is
             // the top-level DTO itself here, hydrated directly via
-            // Hydrator::hydrate() — the dotted "parent.nested" key only
-            // appears when a DTO is nested *inside* another one
-            // (resolveNestedDtoValue()), which this fixture's own single
-            // top-level DTO argument never is.
-            self::assertSame(['is required.'], $e->errors['requiredNullable']);
+            // Hydrator::hydrate() — a parent segment is prefixed onto a
+            // violation's path only when a DTO is nested *inside*
+            // another one, which this fixture's own single top-level DTO
+            // argument never is.
+            self::assertSame(['is required.'], $e->grouped()['requiredNullable']);
         }
     }
 
@@ -219,6 +245,123 @@ final class McpDispatcherTest extends TestCase
         self::assertSame(['done' => true], $result);
     }
 
+    /**
+     * A constraint attribute on a scalar tool argument is a rule the
+     * tool's own inputSchema already publishes (`exclusiveMinimum`,
+     * `enum`), so the call is checked against it — the same rule, the
+     * same violation, as the identical attribute on an HTTP #[Query]
+     * parameter.
+     */
+    public function test_a_constraint_on_a_scalar_argument_is_enforced(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(ConstrainedArgumentToolController::class);
+        $tool = $registry->findTool('list_page');
+        self::assertNotNull($tool);
+
+        self::assertSame(
+            ['page' => 2, 'direction' => 'desc'],
+            $this->dispatcher()->callTool($tool, ['page' => 2, 'direction' => 'desc']),
+        );
+
+        // Each argument is resolved and reported on its own, the way
+        // this dispatcher has always reported a wrong-shaped one.
+        foreach ([['page' => 0], ['direction' => 'sideways']] as $index => $override) {
+            try {
+                $this->dispatcher()->callTool($tool, [...['page' => 2, 'direction' => 'asc'], ...$override]);
+                self::fail('Expected a ValidationException.');
+            } catch (ValidationException $e) {
+                self::assertCount(1, $e->violations);
+                self::assertSame([array_key_first($override)], $e->violations[0]->path);
+                self::assertSame(['greater_than', 'in'][$index], $e->violations[0]->code);
+            }
+        }
+    }
+
+    /**
+     * An explicitly-null argument for a parameter whose declared type
+     * refuses null is a violation carrying the same code a #[Body] field
+     * gets, never a raw TypeError at invocation.
+     */
+    public function test_an_explicit_null_for_a_non_nullable_argument_is_a_validation_error(): void
+    {
+        $tool = $this->registry()->findTool('get_user_status');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, ['userId' => null]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['userId'], $e->violations[0]->path);
+            self::assertSame('null_not_allowed', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * An argument the call had to carry and did not is invalid client
+     * input, reported in the same structured vocabulary every other
+     * argument failure uses — the same `required` violation an absent
+     * #[Body] member and an absent #[Query] parameter produce — rather
+     * than as a server-side failure the client cannot act on.
+     */
+    public function test_an_absent_defaultless_argument_is_a_required_violation(): void
+    {
+        $tool = $this->registry()->findTool('get_user_status');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, []);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['userId'], $e->violations[0]->path);
+            self::assertSame('required', $e->violations[0]->code);
+            self::assertSame('is required.', $e->violations[0]->message);
+        }
+    }
+
+    /**
+     * Null is decided by the declared type, before any shape is
+     * examined: a DTO-typed argument that accepts null takes it as its
+     * value, and no hydration is attempted for a value there is nothing
+     * to hydrate.
+     */
+    public function test_a_nullable_dto_typed_argument_accepts_an_explicit_null(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(NullableDtoArgumentToolController::class);
+        $tool = $registry->findTool('update_user');
+        self::assertNotNull($tool);
+
+        self::assertSame(['name' => null], $this->dispatcher()->callTool($tool, ['data' => null]));
+        self::assertSame(
+            ['name' => 'Alon'],
+            $this->dispatcher()->callTool($tool, ['data' => ['name' => 'Alon', 'email' => 'alon@example.com']]),
+        );
+    }
+
+    /**
+     * The other half of that decision: a DTO-typed argument whose
+     * declared type refuses null reports the same `null_not_allowed`
+     * violation a scalar argument and a #[Body] field report, never
+     * passing the null through to the controller as a TypeError.
+     */
+    public function test_an_explicit_null_for_a_non_nullable_dto_argument_is_a_validation_error(): void
+    {
+        $tool = $this->registry()->findTool('create_user');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, ['data' => null]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['data'], $e->violations[0]->path);
+            self::assertSame('null_not_allowed', $e->violations[0]->code);
+            self::assertSame('must not be null.', $e->violations[0]->message);
+        }
+    }
+
     public function test_derive_plan_tags_a_scalar_a_dto_and_a_progress_reporter_parameter_correctly(): void
     {
         $tool = $this->registry()->findTool('create_user');
@@ -244,6 +387,20 @@ final class McpDispatcherTest extends TestCase
         self::assertNull($progressPlan[0]['dtoClass']);
     }
 
+    /**
+     * Registration refuses this tool's schema, but a plan is derived
+     * from the method itself — so binding has to refuse the same
+     * declaration rather than treating an argument with no single wire
+     * shape as mixed.
+     */
+    public function test_derive_plan_rejects_a_composite_argument_type(): void
+    {
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('union or intersection type');
+
+        McpDispatcher::derivePlan(new \ReflectionMethod(UnionArgumentToolController::class, 'run'));
+    }
+
     public function test_a_hand_built_plan_resolves_arguments_identically_to_the_live_path(): void
     {
         $app = new AppScope();
@@ -256,13 +413,15 @@ final class McpDispatcherTest extends TestCase
             'scalarType' => 'int',
             'hasDefault' => false,
             'defaultValue' => null,
+            'allowsNull' => false,
+            'constraints' => [],
         ]];
 
         $dispatcher = new McpDispatcher($app, ['Kinetis\Mcp\Tests\Fixtures\AccountController::getUserStatus' => $plan]);
         $tool = $this->registry()->findTool('get_user_status');
         self::assertNotNull($tool);
 
-        $result = $dispatcher->callTool($tool, ['userId' => '42']);
+        $result = $dispatcher->callTool($tool, ['userId' => 42]);
 
         self::assertSame(['userId' => 42, 'status' => 'active'], $result);
     }
@@ -278,8 +437,100 @@ final class McpDispatcherTest extends TestCase
         $tool = $this->registry()->findTool('get_user_status');
         self::assertNotNull($tool);
 
-        $result = $dispatcher->callTool($tool, ['userId' => '42']);
+        $result = $dispatcher->callTool($tool, ['userId' => 42]);
 
         self::assertSame(['userId' => 42, 'status' => 'active'], $result);
+    }
+
+    /**
+     * The arguments object is closed, exactly as the tool's own
+     * inputSchema says: a key naming no parameter is a misspelling or a
+     * leftover the tool will never read, so it fails rather than being
+     * silently discarded.
+     */
+    public function test_an_unknown_top_level_argument_is_rejected(): void
+    {
+        $tool = $this->registry()->findTool('get_user_status');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, ['userId' => 42, 'userID' => 42]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['userID'], $e->violations[0]->path);
+            self::assertSame('unexpected_field', $e->violations[0]->code);
+            self::assertSame('is not expected.', $e->violations[0]->message);
+        }
+    }
+
+    /**
+     * One response tells an agent everything wrong with its call, rather
+     * than one mistake per round trip.
+     */
+    public function test_unknown_arguments_are_combined_with_missing_and_wrong_typed_ones(): void
+    {
+        $tool = $this->registry()->findTool('get_user_status');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, ['stray' => 1, 'other' => 2]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                [['userId'], ['stray'], ['other']],
+                array_map(static fn ($violation) => $violation->path, $e->violations),
+            );
+            self::assertSame(
+                ['required', 'unexpected_field', 'unexpected_field'],
+                array_map(static fn ($violation) => $violation->code, $e->violations),
+            );
+        }
+    }
+
+    /**
+     * A DTO argument's own object is closed by the hydrator, one level
+     * in. Its path follows this dispatcher's existing convention for a
+     * DTO-typed argument — the DTO's own member name, unprefixed, the
+     * same as every other failure inside one (see
+     * test_a_defaultless_nullable_nested_field_rejects_omission()).
+     */
+    public function test_an_unknown_member_of_a_dto_argument_is_rejected(): void
+    {
+        $tool = $this->registry()->findTool('create_user');
+        self::assertNotNull($tool);
+
+        try {
+            $this->dispatcher()->callTool($tool, [
+                'data' => ['name' => 'Alon', 'email' => 'alon@example.com', 'nmae' => 'typo'],
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['nmae'], $e->violations[0]->path);
+            self::assertSame('unexpected_field', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * ProgressReporter is injected by the server, so it is not a name a
+     * client may send — it is neither required of a call nor accepted
+     * from one.
+     */
+    public function test_the_progress_reporter_is_not_a_client_argument_name(): void
+    {
+        $registry = new McpRegistry();
+        $registry->register(ProgressReportingController::class);
+        $tool = $registry->findTool('count_to_three');
+        self::assertNotNull($tool);
+
+        self::assertSame(['done' => true], $this->dispatcher()->callTool($tool, []));
+
+        try {
+            $this->dispatcher()->callTool($tool, ['progress' => 'mine']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['progress'], $e->violations[0]->path);
+            self::assertSame('unexpected_field', $e->violations[0]->code);
+        }
     }
 }
