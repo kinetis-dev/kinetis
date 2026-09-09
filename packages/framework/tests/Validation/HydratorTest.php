@@ -538,9 +538,11 @@ final class HydratorTest extends TestCase
 
         $itemsParam = $plan['parameters'][1];
         self::assertSame('items', $itemsParam['name']);
-        self::assertSame(OrderItem::class, $itemsParam['listItemClass']);
-        self::assertNotNull($itemsParam['listItemPlan']);
-        self::assertSame(OrderItem::class, $itemsParam['listItemPlan']['className']);
+        self::assertSame(
+            ['scalarType' => null, 'enumClass' => null, 'dtoClass' => OrderItem::class, 'constraints' => []],
+            array_diff_key($itemsParam['listItem'], ['nestedPlan' => null]),
+        );
+        self::assertSame(OrderItem::class, $itemsParam['listItem']['nestedPlan']['className']);
     }
 
     public function test_hydrating_a_list_from_a_compiled_plan_matches_the_live_path(): void
@@ -903,7 +905,7 @@ final class HydratorTest extends TestCase
 
         self::assertFalse($plan['parameters'][0]['objectMap']);
         self::assertTrue($plan['parameters'][1]['objectMap']);
-        self::assertNull($plan['parameters'][1]['listItemClass']);
+        self::assertNull($plan['parameters'][1]['listItem']);
     }
 
     public function test_hydrating_an_object_map_from_a_compiled_plan_matches_the_live_path(): void
@@ -1581,10 +1583,10 @@ final class HydratorTest extends TestCase
             'parameters' => [[
                 'name' => 'since',
                 'scalarType' => null,
+                'enumClass' => null,
                 'dtoClass' => DateTimeImmutable::class,
                 'nestedPlan' => null,
-                'listItemClass' => null,
-                'listItemPlan' => null,
+                'listItem' => null,
                 'objectMap' => false,
                 'absent' => false,
                 'hasDefault' => true,

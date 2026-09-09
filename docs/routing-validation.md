@@ -754,10 +754,12 @@ public int $percentage,
 ```
 
 `#[MinItems]`/`#[MaxItems]` bound a list-shaped `array` field: a plain
-one, or a [`#[ListOf]`](#collections-of-nested-dtos) one whose elements
+one, or a [`#[ListOf]`](#typed-collections) one whose elements
 are counted once they have hydrated. The list-shape check itself stays
 `Hydrator`'s, so a field that isn't a JSON array fails there first and
-never reaches the bound.
+never reaches the bound. A rule about a list's *elements* rather than
+the list itself is declared with
+[`#[Each]`](#a-rule-for-every-element).
 
 `Hydrator::hydrate()` checks **every** constrained field before
 constructing the DTO — a request with three invalid fields gets all three
@@ -856,9 +858,9 @@ All three agree on these:
   marked before `array_is_list()` is ever consulted, so a map-shaped
   value — of any shape, empty included — is always rejected with its own
   message ("must be a JSON array, not a JSON object."), never silently
-  accepted. `#[ListOf]`'s own array (a real JSON array of nested DTOs)
-  gets the identical list-shape check. An `array` field that is meant to
-  take a JSON object declares it — see
+  accepted. `#[ListOf]`'s own array (a real JSON array of whatever
+  elements it names) gets the identical list-shape check. An `array`
+  field that is meant to take a JSON object declares it — see
   [Object-map properties](#object-map-properties).
 - An `iterable`-typed field/parameter gets the identical check as
   `array` — decoded JSON input can only ever produce a PHP array, never
@@ -1025,10 +1027,10 @@ differs, laid out below.
   picks it from the `Content-Type` the client actually sent, so a real
   JSON request for the identical DTO class still rejects the JSON
   *string* `"true"` (as opposed to the JSON boolean literal `true`) and
-  the JSON string `"3"` for an `int` field. It reaches a nested or
-  `#[ListOf]` DTO's own scalar fields too, via PHP's bracket-style
-  `field[sub]=value` convention — a form-encoded body is exactly as
-  textual one level down.
+  the JSON string `"3"` for an `int` field. It reaches a list's own scalar
+  elements, and a nested or `#[ListOf]` DTO's own scalar fields, via
+  PHP's bracket-style `field[sub]=value` convention — a form-encoded
+  body is exactly as textual one level down.
 - `array`/`iterable` get the identical map-shaped-value rejection
   documented above (a form-encoded field parsed into a genuinely
   associative PHP array is rejected the same way a JSON object is), but
@@ -1112,9 +1114,9 @@ the union, so all three answers are available: omitted, cleared, or set.
 
 Exactly two union forms are supported, `T|Absent` and `T|null|Absent`,
 and the parameter must default to exactly `Absent::Value`. `T` is one
-otherwise-supported field type — a scalar, a nested DTO, a `#[ListOf]`
-list, an `#[ObjectMap]` — and a supplied value is checked against it
-exactly as `T` alone would be. Anything else about the declaration is a
+otherwise-supported field type — a scalar, a backed enum, a nested DTO,
+a `#[ListOf]` list, an `#[ObjectMap]` — and a supplied value is checked
+against it exactly as `T` alone would be. Anything else about the declaration is a
 definition error; see "DTO definitions Kinetis rejects" below.
 
 Nothing a client sends can produce the marker. It comes from the
@@ -1151,7 +1153,7 @@ the same request has:
 ```
 
 Closure applies at every nesting level: a nested DTO's own object and a
-`#[ListOf]` element's are closed under their own paths. An
+`#[ListOf]` DTO element's are closed under their own paths. An
 `#[ObjectMap]` property stays open inside itself — arbitrary keys are
 what it accepts — while the DTO holding it is closed like any other.
 
@@ -1391,20 +1393,129 @@ object, not a JSON array.") even for a class whose every field has a
 default and would otherwise have accepted no fields at all.
 
 A field typed as a class that cannot be instantiated — an interface, an
-abstract class, an enum — accepts only an existing instance: nothing on
-the wire can construct one, so an array or a scalar for it is a `422`
+abstract class, a unit enum — accepts only an existing instance: nothing
+on the wire can construct one, so an array or a scalar for it is a `422`
 ("must be a `Psr\Http\Message\UploadedFileInterface` instance."). That
 is exactly how a `#[Body]` DTO's own file field works, since `Dispatcher`
-merges the uploaded file in as an object.
+merges the uploaded file in as an object. A *backed* enum is the one
+exception — its cases have wire values — see
+[Backed enum fields](#backed-enum-fields).
 
-### Collections of nested DTOs
+### Backed enum fields
 
-A constructor parameter typed `array` and carrying
-`#[ListOf(SomeClass::class)]` is hydrated as a list of nested DTOs — each
-object-shaped element is hydrated the same way a single nested DTO field is:
+A constructor parameter typed as a backed enum takes the case its
+backing value names:
 
 ```{code-block} php
-use Kinetis\Validation\Constraints\GreaterThan;
+enum Priority: int
+{
+    case Low = 1;
+    case Normal = 2;
+    case High = 3;
+}
+
+final readonly class CreateTicketRequest
+{
+    public function __construct(
+        public string $subject,
+        public Priority $priority,
+        public ?Priority $escalation = null,
+    ) {}
+}
+```
+
+```{code-block} json
+{ "subject": "Printer offline", "priority": 2 }
+```
+
+The wire value is the scalar the enum is backed by — a JSON number for
+an `int`-backed enum, a string for a `string`-backed one — and it is
+checked as that scalar before any case is looked up, so every rule in
+[Scalar type checking](#scalar-type-checking) applies unchanged: a JSON
+body refuses the string `"2"` where an `int`-backed enum is declared, a
+query string or form body accepts it (text is all either carries), and
+`2.0` binds because that is how a producer with one number type writes
+the integer `2`.
+
+A correctly typed value that names no case is a `422` at that field's
+own path, carrying every backing value the enum has:
+
+```{code-block} json
+{
+    "path": ["priority"],
+    "code": "enum_case",
+    "message": "must be one of: 1, 2, 3.",
+    "parameters": {"choices": [1, 2, 3]}
+}
+```
+
+A value that is already a case of that enum is taken as given, the way
+a [class-typed field](#nested-dtos) takes an instance. Rules run
+against the resolved case, not the backing value, so an application
+rule declared on the field receives a `Priority`; its own schema
+keywords merge beside the enum's `type` and `enum`, which — like any
+other declared shape — a rule may not restate.
+
+The generated document publishes both halves of the domain — the
+backing `type` and the exact `enum` — and a nullable field widens both,
+since `null` has to satisfy each:
+
+```{code-block} json
+{
+    "priority": { "type": "integer", "enum": [1, 2, 3] },
+    "escalation": { "type": ["integer", "null"], "enum": [1, 2, 3, null] }
+}
+```
+
+This is a DTO field's shape and only that. An MCP tool argument typed
+directly as a backed enum still fails registration — a tool's arguments
+are one flat object with no DTO to own the distinction, so there is no
+truthful schema to advertise — and a controller method parameter typed
+as a class is looked for in the request container like any other, not
+read from the request. A *unit* enum has no backing values at all, so a
+field declaring one stays instance-only, exactly like an interface —
+the `BackedEnum` interface itself included, since it names no cases of
+its own either.
+
+### Typed collections
+
+A constructor parameter typed `array` and carrying `#[ListOf]` declares
+what its elements are — `array` itself carries no element type for
+Kinetis to reflect on. Three families are admitted, and the attribute
+names one of them:
+
+```{code-block} php
+use Kinetis\Validation\ListOf;
+
+final readonly class PublishRequest
+{
+    public function __construct(
+        #[ListOf('string')]
+        public array $tags,
+        #[ListOf(Priority::class)]
+        public array $priorities,
+        #[ListOf(OrderItem::class)]
+        public array $items,
+    ) {}
+}
+```
+
+- A **scalar** — `string`, `int`, `float` or `bool` — resolves each
+  element exactly as a field of that type resolves its own value,
+  including the source's own spellings.
+- A **backed enum** resolves each element's backing value first and
+  then the case it names, exactly as a
+  [backed enum field](#backed-enum-fields) does.
+- An **instantiable class** hydrates each object-shaped element into
+  that class, or takes an element already an instance of it.
+
+The field itself must be a real JSON array; a JSON object for it is the
+same `422` a plain `array` field gets. No element is nullable — a list
+declares one element type — so a `null` element is a violation at its
+own index rather than a hole in the list.
+
+```{code-block} php
+use Kinetis\Validation\Constraints\{GreaterThan, MinLength};
 use Kinetis\Validation\ListOf;
 
 final readonly class OrderItem
@@ -1437,9 +1548,9 @@ final readonly class CreateOrderRequest
 }
 ```
 
-Each element's own violations carry the field name, the element's index
-as an integer segment, and the nested field name, alongside every other
-violation in the same response:
+Every element's own violations carry the field name, the element's
+index as an integer segment, and — for a DTO element — the nested field
+name, alongside every other violation in the same response:
 
 ```{code-block} json
 {
@@ -1454,18 +1565,73 @@ violation in the same response:
 }
 ```
 
+A scalar or enum element carries the same path without the third
+segment — `["tags", 0]` — since the element is the value that failed.
+
 An index stays an integer all the way out, so an element's position is
-never confused with a member named `1`.
+never confused with a member named `1`. Every element is attempted, so
+one request reports every bad element rather than only the first.
 
-Every element gets the same two-shape contract a single nested DTO field
-has: object-shaped and hydrated into the item class, or already an
-instance of it. A scalar, a `null`, a nested JSON array, or an object of
-another class is a `422` at that element's own `["items", 1]` path —
-`must be an object, value given.` — alongside every other violation in
-the response.
+#### A rule for every element
 
-`#[ListOf]` itself is only valid on a parameter typed `array`, and its
-item class must be a class that can be instantiated.
+`#[Each]` declares a rule that runs against each element of a scalar or
+backed-enum list, rather than against the list itself. It is
+repeatable, and each occurrence names a `Constraint` class plus the
+arguments that rule's own constructor takes — positional or named:
+
+```{code-block} php
+use Kinetis\Validation\Constraints\{MinItems, MinLength, Regex};
+use Kinetis\Validation\{Each, ListOf};
+
+final readonly class TagRequest
+{
+    public function __construct(
+        #[MinItems(1)]
+        #[ListOf('string')]
+        #[Each(MinLength::class, 2)]
+        #[Each(Regex::class, pattern: '/^[a-z-]+$/')]
+        public array $tags,
+    ) {}
+}
+```
+
+The two levels of rule describe different things and run in that order:
+
+1. Each element is resolved to the declared element type. An element of
+   the wrong type gets its type violation and runs none of its rules —
+   a rule describes a value of that type, and this one never became
+   one.
+2. Every resolved element runs every `#[Each]` rule. Failures aggregate
+   under `["tags", <index>]` paths, together with any further path the
+   rule's own violation carries.
+3. Only once every element has succeeded do the field's own rules run.
+   `#[MinItems]` counts a list that was actually built, so a single bad
+   element leaves it nothing to count and it does not report.
+
+A rule declared with `#[Each]` sees an element of the declared type —
+an enum list's rules receive the resolved case, not its backing value.
+The rule class itself is built when it runs, from the arguments as
+written, so an argument it refuses raises where any other rule's
+arguments do, at construction.
+
+In the generated document the two levels stay separate too: the field's
+own rules contribute keywords to the array, and its `#[Each]` rules to
+`items`, beside whatever the element type already states there.
+
+```{code-block} json
+{
+    "tags": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 2 },
+        "minItems": 1
+    }
+}
+```
+
+`#[ListOf]` and `#[Each]` declare a DTO constructor field. A controller
+or MCP tool method parameter binds one value each and traverses no
+elements, so a list whose elements are checked belongs in a `#[Body]`
+DTO, or in the DTO an MCP tool takes as its argument.
 
 ### Object-map properties
 
@@ -1524,8 +1690,8 @@ other a JSON array, so a parameter carrying both would accept nothing.
 A hydration plan is compiled from a DTO's constructor by reflection —
 ahead of time by `kinetis build`, or on that class's first hydration
 otherwise. It supports a finite set of parameter shapes: one of the seven supported
-builtin types, a single named class (hydrated when it can be
-instantiated, instance-only when it can't), an `array` carrying
+builtin types, a backed enum, a single named class (hydrated when it
+can be instantiated, instance-only when it can't), an `array` carrying
 `#[ListOf]`, an `array` carrying `#[ObjectMap]`, nullable variants of
 each, and the presence union `T|Absent`/`T|null|Absent` around any of
 them (see "Required, optional, and absent fields" above).
@@ -1554,8 +1720,18 @@ in development, rather than as a `TypeError` on a live one:
   `parent`, `static`.
 - A builtin type outside the supported set — see "Builtin types outside
   the supported set" above.
-- `#[ListOf]` on a parameter that isn't typed `array`, or naming a class
-  that cannot be instantiated.
+- `#[ListOf]` on a parameter that isn't typed `array`, or naming an
+  element type outside the three families
+  [it admits](#typed-collections) — another builtin, an empty name, a
+  name no class answers to, an interface, an abstract class, a unit
+  enum.
+- A backed enum with no cases, named by a field or by a `#[ListOf]`. No
+  value can name a case that does not exist, and JSON Schema's `enum`
+  may not be empty, so such a field could only publish a schema it
+  rejects every request against.
+- `#[Each]` on a parameter that declares no `#[ListOf]`, on a list of
+  DTOs — whose elements carry their own fields' rules — or naming a
+  class that does not implement `Constraint`.
 - `#[ObjectMap]` on a parameter that isn't typed `array`, or on the same
   parameter as `#[ListOf]`.
 - A `#[Body]` DTO class that cannot itself be instantiated.
@@ -1650,10 +1826,13 @@ schema too — `UserResponse` (or `?UserResponse`, or a union like
 return, with no shape reflection can recover, leaves the response
 description-only.
 
-A [`#[ListOf]` field](#collections-of-nested-dtos) becomes a `{"type":
-"array", "items": ...}` schema, with `items` describing the element class
-the same way any other DTO reference does, and any constraint keyword the
-field carries merged in beside them. An
+A [`#[ListOf]` field](#typed-collections) becomes a `{"type": "array",
+"items": ...}` schema: `items` describes the element class the same way
+any other DTO reference does, or the element's own scalar type or
+backed-enum domain, with each `#[Each]` rule's keywords merged into it
+and the field's own constraint keywords merged beside `items`. A
+[backed enum field](#backed-enum-fields) becomes its backing `type` and
+the exact `enum` of its cases. An
 [`#[ObjectMap]` field](#object-map-properties) becomes `{"type":
 "object", "additionalProperties": true}` — the schema for the arbitrary
 keys and values it actually accepts.
@@ -1665,7 +1844,7 @@ carries whatever object-level keywords its
 each source to.
 
 Every DTO schema — whether reached via a `requestBody`, a response, or a
-[`#[ListOf]`](#collections-of-nested-dtos) element, at any depth — is
+[`#[ListOf]`](#typed-collections) element, at any depth — is
 deduplicated into `components/schemas` and referenced by `$ref`, rather
 than inlined at each point of use:
 

@@ -14,6 +14,7 @@ use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Cache\Exception\UnexportableArtifactException;
 use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\PluginCache;
+use Kinetis\Tests\Validation\Fixtures\EachRulesRequest;
 use Kinetis\Tests\Validation\Fixtures\EnumDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Kinetis\Validation\Hydrator;
@@ -286,6 +287,31 @@ final class CacheStoreTest extends TestCase
         self::assertStringContainsString(
             SortDirection::class . '::Ascending',
             (string) file_get_contents($store->path()),
+        );
+    }
+
+    /**
+     * A typed collection's own plan through the real artifact: written
+     * by var_export(), required back, and validated by the loader that
+     * every production boot goes through. The item descriptor is plain
+     * data — class names, type names and literal rule arguments — so
+     * there is nothing in it an artifact could not carry.
+     */
+    public function test_a_typed_collection_plan_survives_the_artifact_round_trip(): void
+    {
+        $store = new CacheStore($this->directory);
+        $store->write($this->cacheCarrying(Hydrator::compilePlan(EachRulesRequest::class)));
+
+        $reloaded = $store->load()?->http->hydrationPlans[EachRulesRequest::class];
+
+        self::assertNotNull($reloaded);
+        self::assertSame(
+            Hydrator::compilePlan(EachRulesRequest::class),
+            $reloaded,
+        );
+        self::assertSame(
+            ['AB', 'CD'],
+            Hydrator::hydrate(EachRulesRequest::class, ['codes' => ['AB', 'CD']], $reloaded)->codes,
         );
     }
 

@@ -64,13 +64,67 @@ final class UnsupportedDtoDefinitionException extends RuntimeException
         return self::forParameter($class, $parameter, '#[ListOf] only applies to a parameter typed array.');
     }
 
-    public static function listItemNotInstantiable(string $class, string $parameter, string $itemClass): self
+    /**
+     * A #[ListOf] naming something no element could ever be: an empty
+     * name, a builtin with no element vocabulary (`array`, `iterable`,
+     * `mixed`, ...), a name no class answers to, or a class nothing on
+     * the wire can produce — an interface, an abstract class, a unit
+     * enum. `Psr\Http\Message\UploadedFileInterface` falls here too: a
+     * list of uploads has no wire representation Kinetis hydrates.
+     */
+    public static function unsupportedListItemType(string $class, string $parameter, string $itemType): self
     {
         return self::forParameter(
             $class,
             $parameter,
-            "#[ListOf({$itemClass}::class)] names a class that cannot be instantiated, so no element could "
-            . 'ever be hydrated into it.',
+            "#[ListOf(\"{$itemType}\")] names a type no element can have. A list item is string, int, "
+            . 'float, bool, a backed enum, or a class that can be instantiated.',
+        );
+    }
+
+    /**
+     * A backed enum with no cases, named by a DTO field or a #[ListOf].
+     * Legal PHP, and useless as an input domain: no value matches a
+     * case that does not exist, and JSON Schema's `enum` may not be
+     * empty, so such a field could only publish a schema it rejects
+     * every request against.
+     */
+    public static function emptyBackedEnum(string $class, string $parameter, string $enum): self
+    {
+        return self::forParameter(
+            $class,
+            $parameter,
+            "{$enum} is a backed enum with no cases, so no value could ever name one of them.",
+        );
+    }
+
+    public static function eachWithoutListOf(string $class, string $parameter): self
+    {
+        return self::forParameter(
+            $class,
+            $parameter,
+            '#[Each] states a rule about every element of a list, and this parameter declares no #[ListOf]. '
+            . 'Declare the list, or write the rule on the field itself.',
+        );
+    }
+
+    public static function eachOnDtoList(string $class, string $parameter, string $itemClass): self
+    {
+        return self::forParameter(
+            $class,
+            $parameter,
+            "#[Each] applies to scalar and backed-enum elements, and this list holds {$itemClass} objects. "
+            . 'Declare the rule on the field of that class it describes.',
+        );
+    }
+
+    public static function eachNotAConstraint(string $class, string $parameter, string $constraint): self
+    {
+        return self::forParameter(
+            $class,
+            $parameter,
+            "#[Each(\"{$constraint}\")] does not name a Kinetis\\Validation\\Constraint implementation, "
+            . 'so nothing could be asked of an element.',
         );
     }
 

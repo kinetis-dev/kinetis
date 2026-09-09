@@ -11,8 +11,10 @@ use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
 use Kinetis\Reflection\ParameterDefault;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\ValidationException;
+use BackedEnum;
 use ReflectionAttribute;
 use ReflectionClass;
+use ReflectionEnum;
 use ReflectionNamedType;
 use ReflectionParameter;
 use ReflectionType;
@@ -35,15 +37,24 @@ use ReflectionUnionType;
  *   is already an instance of it is taken as given. Object-shaped means a
  *   JSON object (a JsonObject marker) or a map-shaped PHP array; a JSON
  *   array is not an object and never hydrates one, `[]` included.
- * - A parameter typed as a single non-instantiable class (an interface, an
- *   abstract class, an enum): only an existing instance is accepted. No
- *   request value can construct one — the case this exists for is the
- *   UploadedFileInterface Dispatcher merges into a multipart field.
- * - A parameter typed `array` carrying #[ListOf(SomeClass::class)]: a JSON
- *   array whose every element is either object-shaped (hydrated into
- *   SomeClass) or already a SomeClass instance. Element violations
- *   surface under the ["field", index] / ["field", index, "nestedField"]
- *   path.
+ * - A parameter typed as a single non-instantiable class (an interface,
+ *   an abstract class, a unit enum): only an existing instance is
+ *   accepted. No request value can construct one — the case this exists
+ *   for is the UploadedFileInterface Dispatcher merges into a multipart
+ *   field.
+ * - A parameter typed as a backed enum: the case its backing value
+ *   names. The value is resolved as that backing scalar first, so a
+ *   wrong primitive is an ordinary type violation and a correctly typed
+ *   value naming no case an enum_case one, never a TypeError. An
+ *   existing case is taken as given.
+ * - A parameter typed `array` carrying #[ListOf]: a JSON array whose
+ *   every element is one value of the element type that attribute
+ *   names — a scalar, a backed enum case, or a DTO hydrated from an
+ *   object-shaped element (or already an instance of it). Element
+ *   violations surface under the ["field", index] /
+ *   ["field", index, "nestedField"] path. A scalar or backed-enum list
+ *   may also carry #[Each] rules, which every element passes before the
+ *   field's own rules ever see the list. See listItem().
  * - A parameter typed `array` carrying #[ObjectMap]: a JSON object of
  *   arbitrary keys, handed to the constructor as its plain array form.
  *   Unlike every other accepted shape, this one admits only a value
@@ -76,10 +87,12 @@ use ReflectionUnionType;
  * recursion has no finite plan and nothing var_export() could bake into a
  * cache file), a class type reflection cannot resolve (self/parent/static),
  * a builtin type outside SUPPORTED_BUILTIN_TYPES, #[ListOf] on a parameter
- * that isn't typed `array`, #[ListOf] naming a class that cannot be
- * instantiated, #[ObjectMap] on a parameter that isn't typed `array`,
- * #[ObjectMap] combined with #[ListOf], and an ObjectConstraint naming a
- * field this constructor does not declare.
+ * that isn't typed `array`, #[ListOf] naming an element type outside the
+ * admitted set, a backed enum with no cases, #[Each] on a parameter
+ * declaring no #[ListOf] or on a list of DTOs, #[Each] naming a class
+ * that is not a Constraint, #[ObjectMap] on a parameter that isn't typed
+ * `array`, #[ObjectMap] combined with #[ListOf], and an ObjectConstraint
+ * naming a field this constructor does not declare.
  *
  * A parameter's own default value is captured under the rule
  * Kinetis\Reflection\ParameterDefault owns, shared with Dispatcher's
@@ -139,13 +152,20 @@ use ReflectionUnionType;
  * actually shaped exactly like HydrationPlan itself at runtime; only the
  * static type is less precise at arbitrary nesting depth.
  *
+ * @phpstan-type HydrationPlanListItem array{
+ *     scalarType: ?string,
+ *     enumClass: ?class-string,
+ *     dtoClass: ?class-string,
+ *     nestedPlan: ?array<string, mixed>,
+ *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
+ * }
  * @phpstan-type HydrationPlanParameter array{
  *     name: string,
  *     scalarType: ?string,
+ *     enumClass: ?class-string,
  *     dtoClass: ?class-string,
  *     nestedPlan: ?array<string, mixed>,
- *     listItemClass: ?class-string,
- *     listItemPlan: ?array<string, mixed>,
+ *     listItem: ?array<string, mixed>,
  *     objectMap: bool,
  *     absent: bool,
  *     hasDefault: bool,
@@ -199,6 +219,8 @@ final class Hydrator
 
     private const string CODE_UNEXPECTED_FIELD = 'unexpected_field';
 
+    private const string CODE_ENUM_CASE = 'enum_case';
+
     /**
      * The builtin types a request-bound parameter may declare. A DTO
      * field outside this set fails when its plan is compiled; a
@@ -215,9 +237,23 @@ final class Hydrator
     private const array HYDRATION_PLAN_KEYS = ['className', 'hasConstructor', 'parameters', 'objectRules'];
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
-        'name', 'scalarType', 'dtoClass', 'nestedPlan', 'listItemClass', 'listItemPlan',
+        'name', 'scalarType', 'enumClass', 'dtoClass', 'nestedPlan', 'listItem',
         'objectMap', 'absent', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
     ];
+
+    private const array HYDRATION_PLAN_LIST_ITEM_KEYS = [
+        'scalarType', 'enumClass', 'dtoClass', 'nestedPlan', 'constraints',
+    ];
+
+    /**
+     * The scalar spellings #[ListOf] admits as an element type — a
+     * subset of SUPPORTED_BUILTIN_TYPES. `array` and `iterable` would
+     * name a list of lists, whose own elements nothing describes, and
+     * `mixed` an element type that is no type at all.
+     *
+     * @var list<string>
+     */
+    private const array LIST_ITEM_SCALAR_TYPES = ['string', 'int', 'float', 'bool'];
 
     /**
      * Memoized compilePlan() output — see the class docblock for why this
@@ -313,8 +349,9 @@ final class Hydrator
     /**
      * Validates a compiled `array<string, HydrationPlan>` map — this
      * class is the one abstraction that owns `HydrationPlan`'s shape
-     * (recursive `nestedPlan`/`listItemPlan` included), so this is the
-     * one place that shape is ever checked, called by
+     * (its recursive `nestedPlan` and its list-item descriptor
+     * included), so this is the one place that shape is ever checked,
+     * called by
      * `Kinetis\Cache\HttpCache::fromArray()` rather than that class
      * re-deriving the same recursive rules itself. Every top-level key
      * must be a real string (PHP silently coerces a numeric-looking
@@ -339,12 +376,9 @@ final class Hydrator
     }
 
     /**
-     * One `HydrationPlan` shape, recursing into every parameter's own
-     * non-null `nestedPlan`/`listItemPlan` — themselves the identical
-     * shape, one level deeper, exactly as `compilePlan()` embeds them.
-     * Naturally bounded by the data itself: `compilePlan()` rejects a
-     * recursive definition outright, so a circular plan is not
-     * producible in the first place.
+     * One `HydrationPlan` shape, recursing into every plan nested
+     * inside it — a parameter's own `nestedPlan`, and the one a list
+     * item's descriptor carries.
      *
      * @param array<array-key, mixed> $plan
      * @throws CacheArtifactExceptionInterface
@@ -363,8 +397,8 @@ final class Hydrator
 
             ArtifactValidation::string($parameter, 'HydrationPlanParameter', 'name');
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'scalarType');
+            ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'enumClass');
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'dtoClass');
-            ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'listItemClass');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'objectMap');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'absent');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'hasDefault');
@@ -374,39 +408,70 @@ final class Hydrator
             // default with no single type to check further.
             ArtifactValidation::listOfConstraintDescriptors($parameter, 'HydrationPlanParameter', 'constraints');
 
-            foreach (['nestedPlan', 'listItemPlan'] as $planField) {
-                $nested = $parameter[$planField] ?? null;
-
-                if ($nested === null) {
-                    continue;
-                }
-
-                if (!is_array($nested)) {
-                    throw InvalidCacheArtifactException::wrongFieldType('HydrationPlanParameter', $planField, 'an array or null');
-                }
-
-                self::validatePlan($nested);
-            }
+            self::validateNestedPlan($parameter, 'HydrationPlanParameter', 'nestedPlan');
+            self::validateListItem($parameter['listItem'] ?? null);
         }
+    }
+
+    /**
+     * One `HydrationPlanListItem` descriptor: the plain-data element
+     * shape a #[ListOf] parameter carries, and null on every other one.
+     * Which of its `enumClass`/`dtoClass`/`scalarType` fields are filled
+     * is what names the element family, so each is checked for its own
+     * type here and the branch is read at runtime.
+     *
+     * @throws CacheArtifactExceptionInterface
+     */
+    private static function validateListItem(mixed $item): void
+    {
+        if ($item === null) {
+            return;
+        }
+
+        if (!is_array($item)) {
+            throw InvalidCacheArtifactException::wrongFieldType('HydrationPlanParameter', 'listItem', 'an array or null');
+        }
+
+        ArtifactValidation::exactKeys($item, 'HydrationPlanListItem', self::HYDRATION_PLAN_LIST_ITEM_KEYS);
+
+        ArtifactValidation::nullableString($item, 'HydrationPlanListItem', 'scalarType');
+        ArtifactValidation::nullableString($item, 'HydrationPlanListItem', 'enumClass');
+        ArtifactValidation::nullableString($item, 'HydrationPlanListItem', 'dtoClass');
+        ArtifactValidation::listOfConstraintDescriptors($item, 'HydrationPlanListItem', 'constraints');
+
+        self::validateNestedPlan($item, 'HydrationPlanListItem', 'nestedPlan');
+    }
+
+    /**
+     * One inline plan a parameter or a list item carries — itself the
+     * identical `HydrationPlan` shape, one level deeper, exactly as
+     * `compilePlan()` embeds it, or null where nothing is nested.
+     * Naturally bounded by the data itself: `compilePlan()` rejects a
+     * recursive definition outright, so a circular plan is not
+     * producible in the first place.
+     *
+     * @param array<array-key, mixed> $owner
+     * @throws CacheArtifactExceptionInterface
+     */
+    private static function validateNestedPlan(array $owner, string $type, string $field): void
+    {
+        $nested = $owner[$field] ?? null;
+
+        if ($nested === null) {
+            return;
+        }
+
+        if (!is_array($nested)) {
+            throw InvalidCacheArtifactException::wrongFieldType($type, $field, 'an array or null');
+        }
+
+        self::validatePlan($nested);
     }
 
     /**
      * @param class-string $class
      * @param array<class-string, true> $visiting
-     * @return array{
-     *     name: string,
-     *     scalarType: ?string,
-     *     dtoClass: ?class-string,
-     *     nestedPlan: ?array<string, mixed>,
-     *     listItemClass: ?class-string,
-     *     listItemPlan: ?array<string, mixed>,
-     *     objectMap: bool,
-     *     absent: bool,
-     *     hasDefault: bool,
-     *     defaultValue: mixed,
-     *     allowsNull: bool,
-     *     constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>,
-     * }
+     * @return HydrationPlanParameter
      * @throws UnsupportedDtoDefinitionException
      * @throws UnsupportedDefaultValueException
      */
@@ -421,9 +486,14 @@ final class Hydrator
         // way, which is what keeps `T|Absent` exactly as expressive as `T`
         // and no more.
         $type = $absent !== null ? $absent[0] : $declared;
-        [$dtoClass, $nestedPlan, $listItemClass, $listItemPlan] = self::compileNesting($type, $parameter, $class, $visiting);
-        $objectMap = self::compileObjectMap($type, $parameter, $class, $listItemClass !== null);
-        $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
+        [$enumScalarType, $enumClass, $dtoClass, $nestedPlan, $listItem] = self::compileNesting($type, $parameter, $class, $visiting);
+        $objectMap = self::compileObjectMap($type, $parameter, $class, $listItem !== null);
+        // A backed enum's wire value is the scalar its cases are
+        // written in, so the field carries that type; every other
+        // scalar is the declaration's own builtin. Both are int or
+        // string for an enum, so only a declared builtin can fall
+        // outside the supported set.
+        $scalarType = $enumScalarType ?? ($type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null);
 
         if ($scalarType !== null && !in_array($scalarType, self::SUPPORTED_BUILTIN_TYPES, true)) {
             throw UnsupportedDtoDefinitionException::unsupportedBuiltinType($class, $parameter->getName(), $scalarType);
@@ -432,10 +502,10 @@ final class Hydrator
         return [
             'name' => $parameter->getName(),
             'scalarType' => $scalarType,
+            'enumClass' => $enumClass,
             'dtoClass' => $dtoClass,
             'nestedPlan' => $nestedPlan,
-            'listItemClass' => $listItemClass,
-            'listItemPlan' => $listItemPlan,
+            'listItem' => $listItem,
             'objectMap' => $objectMap,
             'absent' => $absent !== null,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
@@ -554,14 +624,19 @@ final class Hydrator
     }
 
     /**
-     * The class-typed half of one parameter's plan: a nested DTO class and
-     * its own inline plan, or a #[ListOf] item class and its own. A
-     * non-instantiable nested class keeps its class name with a null plan —
-     * the field then accepts an existing instance and nothing else.
+     * The half of one parameter's plan its declared type and #[ListOf]
+     * decide, as `[enum backing type, enum class, DTO class, that DTO's
+     * own inline plan, list item descriptor]`. A non-instantiable
+     * nested class keeps its class name with a null plan — the field
+     * then accepts an existing instance and nothing else.
+     *
+     * The first element is filled only for a backed enum, whose wire
+     * value is the scalar its cases are written in; every other scalar
+     * type is read from the declaration by the caller.
      *
      * @param class-string $class
      * @param array<class-string, true> $visiting
-     * @return array{0: ?class-string, 1: ?array<string, mixed>, 2: ?class-string, 3: ?array<string, mixed>}
+     * @return array{0: ?string, 1: ?class-string, 2: ?class-string, 3: ?array<string, mixed>, 4: ?array<string, mixed>}
      * @throws UnsupportedDtoDefinitionException
      */
     private static function compileNesting(?ReflectionType $type, ReflectionParameter $parameter, string $class, array $visiting): array
@@ -572,24 +647,22 @@ final class Hydrator
             throw UnsupportedDtoDefinitionException::compositeType($class, $name);
         }
 
-        $listOf = $parameter->getAttributes(ListOf::class);
+        $item = self::listItem($parameter, $type);
 
-        if ($listOf !== []) {
-            if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
-                throw UnsupportedDtoDefinitionException::listOfOnNonArrayParameter($class, $name);
-            }
+        if ($item !== null) {
+            $itemClass = $item['dtoClass'];
 
-            $itemClass = $listOf[0]->newInstance()->itemClass();
-
-            if (!self::isInstantiable($itemClass)) {
-                throw UnsupportedDtoDefinitionException::listItemNotInstantiable($class, $name, $itemClass);
-            }
-
-            return [null, null, $itemClass, self::compileNestedPlan($itemClass, $class, $name, $visiting)];
+            return [null, null, null, null, [
+                'scalarType' => $item['scalarType'],
+                'enumClass' => $item['enumClass'],
+                'dtoClass' => $itemClass,
+                'nestedPlan' => $itemClass === null ? null : self::compileNestedPlan($itemClass, $class, $name, $visiting),
+                'constraints' => $item['constraints'],
+            ]];
         }
 
         if (!$type instanceof ReflectionNamedType || $type->isBuiltin()) {
-            return [null, null, null, null];
+            return [null, null, null, null, null];
         }
 
         /** @var class-string $nestedClass */
@@ -599,9 +672,196 @@ final class Hydrator
             throw UnsupportedDtoDefinitionException::unresolvableClass($class, $name, $nestedClass);
         }
 
+        $backingType = self::backedEnumScalarType($nestedClass, $parameter);
+
+        if ($backingType !== null) {
+            return [$backingType, $nestedClass, null, null, null];
+        }
+
         return self::isInstantiable($nestedClass)
-            ? [$nestedClass, self::compileNestedPlan($nestedClass, $class, $name, $visiting), null, null]
-            : [$nestedClass, null, null, null];
+            ? [null, null, $nestedClass, self::compileNestedPlan($nestedClass, $class, $name, $visiting), null]
+            : [null, null, $nestedClass, null, null];
+    }
+
+    /**
+     * The element domain one parameter's #[ListOf] admits, plus the
+     * #[Each] rules every element runs — or null when the parameter
+     * declares no list at all. Exactly one of `scalarType`,
+     * `enumClass` and `dtoClass` names a scalar element, a backed-enum
+     * one and a DTO one respectively; for an enum, `scalarType`
+     * additionally carries the backing type its wire value has.
+     *
+     * Public so Kinetis\Validation\JsonSchema describes exactly what
+     * hydration accepts: `items` is built from this same
+     * classification, and a declaration refused here is refused there,
+     * in the same words, rather than published as a schema no request
+     * could ever satisfy.
+     *
+     * $type is the parameter's value type, already resolved through any
+     * presence union, for the same reason every other question about
+     * the parameter is asked of that type.
+     *
+     * @return array{scalarType: ?string, enumClass: ?class-string, dtoClass: ?class-string, constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>}|null
+     * @throws UnsupportedDtoDefinitionException
+     */
+    public static function listItem(ReflectionParameter $parameter, ?ReflectionType $type): ?array
+    {
+        $listOf = $parameter->getAttributes(ListOf::class);
+        $each = $parameter->getAttributes(Each::class);
+
+        if ($listOf === []) {
+            if ($each !== []) {
+                throw UnsupportedDtoDefinitionException::eachWithoutListOf(self::owner($parameter), $parameter->getName());
+            }
+
+            return null;
+        }
+
+        if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
+            throw UnsupportedDtoDefinitionException::listOfOnNonArrayParameter(self::owner($parameter), $parameter->getName());
+        }
+
+        $kind = self::listItemKind($listOf[0]->newInstance()->itemType(), $parameter);
+
+        return [
+            'scalarType' => $kind['scalarType'],
+            'enumClass' => $kind['enumClass'],
+            'dtoClass' => $kind['dtoClass'],
+            'constraints' => self::itemRules($each, $parameter, $kind['dtoClass']),
+        ];
+    }
+
+    /**
+     * Which of the three element families #[ListOf] named. Everything
+     * else is refused here: an empty name, a builtin with no element
+     * vocabulary, a name no class answers to, and a class no wire value
+     * could ever produce — an interface, an abstract class, a unit enum.
+     *
+     * @return array{scalarType: ?string, enumClass: ?class-string, dtoClass: ?class-string}
+     * @throws UnsupportedDtoDefinitionException
+     */
+    private static function listItemKind(string $itemType, ReflectionParameter $parameter): array
+    {
+        if (in_array($itemType, self::LIST_ITEM_SCALAR_TYPES, true)) {
+            return ['scalarType' => $itemType, 'enumClass' => null, 'dtoClass' => null];
+        }
+
+        $backingType = self::backedEnumScalarType($itemType, $parameter);
+
+        if ($backingType !== null) {
+            /** @var class-string $enumClass */
+            $enumClass = $itemType;
+
+            return ['scalarType' => $backingType, 'enumClass' => $enumClass, 'dtoClass' => null];
+        }
+
+        if (self::isInstantiable($itemType)) {
+            /** @var class-string $dtoClass */
+            $dtoClass = $itemType;
+
+            return ['scalarType' => null, 'enumClass' => null, 'dtoClass' => $dtoClass];
+        }
+
+        throw UnsupportedDtoDefinitionException::unsupportedListItemType(
+            self::owner($parameter),
+            $parameter->getName(),
+            $itemType,
+        );
+    }
+
+    /**
+     * The scalar type a backed enum's cases are written in, or null
+     * when $class is not a backed enum at all.
+     *
+     * Public so Kinetis\Validation\JsonSchema publishes the `type` a
+     * field of that enum actually binds. An enum with no cases is
+     * refused wherever it is met: no value can name a case that does
+     * not exist, and JSON Schema has no empty `enum` to publish.
+     *
+     * enum_exists() is what makes the BackedEnum relationship a
+     * question about a real enum. The interface satisfies `is_a()`
+     * against itself, and its inherited cases() is abstract — asking it
+     * for cases is an engine Error, not an empty list — so a field or a
+     * #[ListOf] naming the interface itself answers null here and keeps
+     * the instance-only shape every other non-instantiable class type
+     * has.
+     *
+     * @throws UnsupportedDtoDefinitionException
+     */
+    public static function backedEnumScalarType(string $class, ReflectionParameter $parameter): ?string
+    {
+        if (!enum_exists($class) || !is_a($class, BackedEnum::class, true)) {
+            return null;
+        }
+
+        if ($class::cases() === []) {
+            throw UnsupportedDtoDefinitionException::emptyBackedEnum(
+                self::owner($parameter),
+                $parameter->getName(),
+                $class,
+            );
+        }
+
+        $backingType = new ReflectionEnum($class)->getBackingType();
+        // A backed enum always reports one; is_a() above has already
+        // established that this class is one.
+        assert($backingType instanceof ReflectionNamedType);
+
+        return $backingType->getName();
+    }
+
+    /**
+     * One list's #[Each] rules, in declaration order, as the same
+     * literal {class, args} descriptors a field rule gets — positional
+     * and named arguments kept exactly as written, since that is what
+     * the rule is built from. The rule class itself is never
+     * constructed here, so arguments it refuses fail where every other
+     * rule's do, when the rule is first built.
+     *
+     * @param list<ReflectionAttribute<Each>> $attributes
+     * @param ?class-string $dtoClass the element class of a DTO list, null for any other
+     * @return list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>
+     * @throws UnsupportedDtoDefinitionException
+     */
+    private static function itemRules(array $attributes, ReflectionParameter $parameter, ?string $dtoClass): array
+    {
+        if ($attributes !== [] && $dtoClass !== null) {
+            throw UnsupportedDtoDefinitionException::eachOnDtoList(
+                self::owner($parameter),
+                $parameter->getName(),
+                $dtoClass,
+            );
+        }
+
+        $rules = [];
+
+        foreach ($attributes as $attribute) {
+            $each = $attribute->newInstance();
+            $constraint = $each->constraint();
+
+            if (!is_a($constraint, Constraint::class, true)) {
+                throw UnsupportedDtoDefinitionException::eachNotAConstraint(
+                    self::owner($parameter),
+                    $parameter->getName(),
+                    $constraint,
+                );
+            }
+
+            $rules[] = ['class' => $constraint, 'args' => $each->arguments()];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * The class a definition failure names: the one whose constructor
+     * declares $parameter. A DTO field always has one; a method's own
+     * parameter list, which JsonSchema describes through the same
+     * classification, falls back to the function's own name.
+     */
+    private static function owner(ReflectionParameter $parameter): string
+    {
+        return $parameter->getDeclaringClass()?->getName() ?? $parameter->getDeclaringFunction()->getName();
     }
 
     /**
@@ -912,12 +1172,12 @@ final class Hydrator
 
     /**
      * Resolves one parameter's raw value into its hydrated, fully
-     * validated form — a nested DTO, a list of nested DTOs, an object
-     * map, or a cast scalar — matching whichever of $parameter's
-     * dtoClass/listItemClass/objectMap/plain-scalar shape applies. A
-     * non-empty second element means the parameter failed; the caller
-     * merges those violations into its own list and binds no argument
-     * for it.
+     * validated form — a nested DTO, a backed enum case, a typed list,
+     * an object map, or a cast scalar — matching whichever of
+     * $parameter's dtoClass/enumClass/listItem/objectMap/plain-scalar
+     * shape applies. A non-empty second element means the parameter
+     * failed; the caller merges those violations into its own list and
+     * binds no argument for it.
      *
      * $source threads through both recursive branches: a form-encoded
      * body reaching a nested or list DTO's own scalar fields (via PHP's
@@ -956,8 +1216,24 @@ final class Hydrator
             $nestedPlan = $parameter['nestedPlan'];
 
             $resolved = self::resolveClassTypedValue([$name], $value, $parameter['dtoClass'], $nestedPlan, $source);
-        } elseif ($parameter['listItemClass'] !== null) {
-            $resolved = self::resolveListValue($name, $value, $parameter, $source);
+        } elseif ($parameter['enumClass'] !== null) {
+            // The enum path runs the field's own rules itself, against
+            // the case it resolved — the value the field holds, and the
+            // one a rule about that field describes.
+            return self::resolveEnumValue(
+                $source,
+                [$name],
+                $value,
+                $parameter['enumClass'],
+                $parameter['scalarType'],
+                $parameter['allowsNull'],
+                $parameter['constraints'],
+            );
+        } elseif ($parameter['listItem'] !== null) {
+            /** @var HydrationPlanListItem $listItem */
+            $listItem = $parameter['listItem'];
+
+            $resolved = self::resolveListValue($name, $value, $listItem, $source);
         } elseif ($parameter['objectMap']) {
             $resolved = self::resolveObjectMapValue($name, $value);
         } else {
@@ -1197,46 +1473,160 @@ final class Hydrator
     }
 
     /**
-     * The listItemClass branch of resolveParameterValue(): the field's own
-     * value must be a real JSON array (the shape its JSON Schema claims),
-     * and every element is resolved as one class-typed value under its own
-     * ["field", index] path.
+     * The listItem branch of resolveParameterValue(): the field's own
+     * value must be a real JSON array (the shape its JSON Schema
+     * claims), and every element is resolved as one value of the
+     * declared element type under its own ["field", index] path.
      *
-     * @param HydrationPlanParameter $parameter
+     * Every element is attempted, so one request reports every bad
+     * element rather than only the first. One failure leaves the whole
+     * field unresolved, which is what keeps the list's own rules —
+     * #[MinItems], an application rule counting or summing elements —
+     * from ever running against a list that was never built.
+     *
+     * @param HydrationPlanListItem $item
      * @return array{0: mixed, 1: list<Violation>}
      */
-    private static function resolveListValue(string $name, mixed $value, array $parameter, InputSource $source): array
+    private static function resolveListValue(string $name, mixed $value, array $item, InputSource $source): array
     {
         if (!is_array($value) || !array_is_list($value)) {
             return [null, [self::listShapeViolation([$name], $value)]];
         }
 
-        /** @var class-string $listItemClass */
-        $listItemClass = $parameter['listItemClass'];
-        /** @var HydrationPlan|null $listItemPlan */
-        $listItemPlan = $parameter['listItemPlan'];
         $items = [];
         $violations = [];
 
-        foreach ($value as $index => $item) {
-            [$hydratedItem, $itemViolations] = self::resolveClassTypedValue(
-                [$name, $index],
-                $item,
-                $listItemClass,
-                $listItemPlan,
-                $source,
-            );
+        foreach ($value as $index => $element) {
+            [$resolved, $elementViolations] = self::resolveListItem([$name, $index], $element, $item, $source);
 
-            if ($itemViolations !== []) {
-                $violations = [...$violations, ...$itemViolations];
+            if ($elementViolations !== []) {
+                $violations = [...$violations, ...$elementViolations];
 
                 continue;
             }
 
-            $items[] = $hydratedItem;
+            $items[] = $resolved;
         }
 
         return $violations !== [] ? [null, $violations] : [$items, []];
+    }
+
+    /**
+     * One element, resolved as whichever family its #[ListOf] named: a
+     * DTO hydrated from an object-shaped element (or taken as an
+     * instance) exactly as a single DTO-typed field is, a backed enum
+     * read from its backing value, or a scalar read through the one
+     * shared raw-scalar path — the same path the field itself would
+     * take, so an element's type check, source normalization and rules
+     * cannot drift from a scalar field's.
+     *
+     * The element's own #[Each] rules travel with it into whichever
+     * resolver produces the value, so they run once the element's type
+     * is established and never after it failed. No element is nullable:
+     * a null one is a violation at its own index rather than an
+     * unchecked hole in the list.
+     *
+     * @param list<string|int> $path
+     * @param HydrationPlanListItem $item
+     * @return array{0: mixed, 1: list<Violation>}
+     */
+    private static function resolveListItem(array $path, mixed $value, array $item, InputSource $source): array
+    {
+        if ($item['dtoClass'] !== null) {
+            /** @var HydrationPlan|null $nestedPlan */
+            $nestedPlan = $item['nestedPlan'];
+
+            return self::resolveClassTypedValue($path, $value, $item['dtoClass'], $nestedPlan, $source);
+        }
+
+        if ($item['enumClass'] !== null) {
+            return self::resolveEnumValue($source, $path, $value, $item['enumClass'], $item['scalarType'], false, $item['constraints']);
+        }
+
+        return self::resolveScalar($source, $path, $value, $item['scalarType'], false, $item['constraints']);
+    }
+
+    /**
+     * One backed-enum value: a field declaring that enum, or one
+     * element of a #[ListOf] naming it.
+     *
+     * An existing case is taken as given, exactly as a class-typed
+     * field takes an instance. Anything else is the case's backing
+     * value, resolved through resolveScalar() as the scalar the enum is
+     * backed by — so a JSON body stays strict, a query string or form
+     * body keeps its textual spellings, the integer-range and
+     * finite-number checks still apply, and tryFrom() only ever sees a
+     * correctly typed primitive rather than raising a TypeError under
+     * strict_types. A correctly typed value naming no case is one
+     * violation at this path.
+     *
+     * Rules run against the resolved case, which is the value the field
+     * or element holds.
+     *
+     * @param list<string|int> $path
+     * @param class-string $enumClass
+     * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
+     * @return array{0: mixed, 1: list<Violation>}
+     */
+    private static function resolveEnumValue(
+        InputSource $source,
+        array $path,
+        mixed $value,
+        string $enumClass,
+        ?string $backingType,
+        bool $allowsNull,
+        array $constraints,
+    ): array {
+        if ($value === null) {
+            return $allowsNull ? [null, []] : [null, [self::nullNotAllowedViolation($path)]];
+        }
+
+        if ($value instanceof $enumClass) {
+            return [$value, self::constraintViolations($constraints, $value, $path)];
+        }
+
+        [$backing, $violations] = self::resolveScalar($source, $path, $value, $backingType, false);
+
+        if ($violations !== []) {
+            return [null, $violations];
+        }
+
+        // A plan's enumClass is exactly the backed enum compileNesting()
+        // put there, and resolveScalar() has just established the value
+        // is the primitive that enum is backed by.
+        /** @var class-string<BackedEnum> $enum */
+        $enum = $enumClass;
+        /** @var int|string $backingValue */
+        $backingValue = $backing;
+        $case = $enum::tryFrom($backingValue);
+
+        if ($case === null) {
+            return [null, [self::enumCaseViolation($path, $enum)]];
+        }
+
+        return [$case, self::constraintViolations($constraints, $case, $path)];
+    }
+
+    /**
+     * A correctly typed backing value naming no case of $enumClass —
+     * the same membership vocabulary #[In] speaks, since it is the same
+     * question asked of a closed set. The choices are the enum's own
+     * backing values, read where the failure happens: a plan holds
+     * class names and literals, never case objects.
+     *
+     * @param list<string|int> $path
+     * @param class-string<BackedEnum> $enumClass
+     */
+    private static function enumCaseViolation(array $path, string $enumClass): Violation
+    {
+        $choices = array_map(static fn (BackedEnum $case): int|string => $case->value, $enumClass::cases());
+
+        return new Violation(
+            $path,
+            self::CODE_ENUM_CASE,
+            'must be one of: ' . implode(', ', array_map('strval', $choices)) . '.',
+            ['choices' => $choices],
+        );
     }
 
     /**
