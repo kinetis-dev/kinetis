@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Validation;
 
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
+use Kinetis\Tests\Validation\Fixtures\DateListRequest;
 use Kinetis\Tests\Validation\Fixtures\EachNotAConstraintRequest;
 use Kinetis\Tests\Validation\Fixtures\EachOnADtoListRequest;
 use Kinetis\Tests\Validation\Fixtures\EachRulesRequest;
@@ -277,6 +278,27 @@ final class TypedCollectionsTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(['codes'], $e->violations[0]->path);
             self::assertSame('min_items', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * A catalogue rule is an #[Each] rule like any other: it sees one
+     * resolved element, and its violation is reported at that element's
+     * own index rather than on the list.
+     */
+    public function test_a_catalogue_rule_runs_per_element_at_its_own_index(): void
+    {
+        try {
+            Hydrator::hydrate(
+                DateListRequest::class,
+                self::decodedBody('{"dates": ["2024-02-29", "2023-02-29"]}'),
+                null,
+                InputSource::Json,
+            );
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame([['dates', 1]], array_column($e->violations, 'path'));
+            self::assertSame('date', $e->violations[0]->code);
         }
     }
 

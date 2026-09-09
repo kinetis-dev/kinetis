@@ -19,15 +19,22 @@ use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
+use Kinetis\Validation\Constraints\Date;
+use Kinetis\Validation\Constraints\DateTime;
 use Kinetis\Validation\Constraints\Email;
 use Kinetis\Validation\Constraints\GreaterThan;
+use Kinetis\Validation\Constraints\GreaterThanOrEqual;
 use Kinetis\Validation\Constraints\In;
+use Kinetis\Validation\Constraints\Ip;
 use Kinetis\Validation\Constraints\LessThan;
+use Kinetis\Validation\Constraints\LessThanOrEqual;
 use Kinetis\Validation\Constraints\MaxItems;
 use Kinetis\Validation\Constraints\MaxLength;
 use Kinetis\Validation\Constraints\MinItems;
 use Kinetis\Validation\Constraints\MinLength;
+use Kinetis\Validation\Constraints\MultipleOf;
 use Kinetis\Validation\Constraints\NotBlank;
+use Kinetis\Validation\Constraints\NotIn;
 use Kinetis\Validation\Constraints\Regex;
 use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
@@ -214,8 +221,15 @@ final class JsonSchemaTest extends TestCase
             #[GreaterThan(0)] int $above,
             #[LessThan(120)] int $below,
             #[In(['admin', 'member'])] string $role,
+            #[NotIn(['root'])] string $notRoot,
+            #[GreaterThanOrEqual(1)] int $atLeastOne,
+            #[LessThanOrEqual(120)] int $atMostAHundred,
+            #[MultipleOf(6)] int $inPacks,
             #[Url] string $link,
             #[Uuid] string $id,
+            #[Ip] string $address,
+            #[Date] string $day,
+            #[DateTime] string $at,
             #[MinItems(1)] array $some,
             #[MaxItems(3)] array $few,
         ) {};
@@ -228,8 +242,15 @@ final class JsonSchemaTest extends TestCase
             ['type' => 'integer', 'exclusiveMinimum' => 0],
             ['type' => 'integer', 'exclusiveMaximum' => 120],
             ['type' => 'string', 'enum' => ['admin', 'member']],
+            ['type' => 'string', 'not' => ['enum' => ['root']]],
+            ['type' => 'integer', 'minimum' => 1],
+            ['type' => 'integer', 'maximum' => 120],
+            ['type' => 'integer', 'multipleOf' => 6],
             ['type' => 'string', 'format' => 'uri'],
             ['type' => 'string', 'format' => 'uuid'],
+            ['type' => 'string', 'anyOf' => [['format' => 'ipv4'], ['format' => 'ipv6']]],
+            ['type' => 'string', 'format' => 'date'],
+            ['type' => 'string', 'format' => 'date-time'],
             ['type' => 'array', 'minItems' => 1],
             ['type' => 'array', 'maxItems' => 3],
         ];
@@ -569,5 +590,64 @@ final class JsonSchemaTest extends TestCase
         $schema = JsonSchema::forClass(AvatarUploadRequest::class);
 
         self::assertSame(['type' => 'string', 'format' => 'binary'], $schema['properties']['avatar']);
+    }
+
+    /**
+     * #[Ip]'s keywords are an `anyOf` union of the two families' own
+     * formats, and nullability is still the declared `type`'s to widen:
+     * the union names which address spellings are addresses, never
+     * whether the member may be null, so both keywords hold at once
+     * exactly as JSON Schema requires.
+     */
+    public function test_a_nullable_ip_constrained_scalar_widens_its_type_beside_the_family_union(): void
+    {
+        $fn = static function (#[Ip] ?string $address) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            [
+                'type' => ['string', 'null'],
+                'anyOf' => [['format' => 'ipv4'], ['format' => 'ipv6']],
+            ],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    /**
+     * The keyword-collision rule is about keywords, not about subjects:
+     * an admitted set and an excluded one are two different keywords, so
+     * both are published and a client generating requests is held to
+     * both — exactly as Hydrator runs both rules.
+     */
+    public function test_an_admitted_and_an_excluded_set_coexist_on_one_field(): void
+    {
+        $fn = static function (#[In(['a', 'b', 'c'])] #[NotIn(['c'])] string $letter) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            [
+                'type' => 'string',
+                'enum' => ['a', 'b', 'c'],
+                'not' => ['enum' => ['c']],
+            ],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
+    }
+
+    /**
+     * The same for the exclusive and inclusive halves of one bound:
+     * `exclusiveMinimum` and `minimum` are distinct keywords stating
+     * distinct rules, so declaring both is a narrower field rather than
+     * a duplicate-keyword refusal.
+     */
+    public function test_an_exclusive_and_an_inclusive_lower_bound_coexist_on_one_field(): void
+    {
+        $fn = static function (#[GreaterThan(0)] #[GreaterThanOrEqual(1)] int $count) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(
+            ['type' => 'integer', 'exclusiveMinimum' => 0, 'minimum' => 1],
+            JsonSchema::schemaForScalar($params[0], $params[0]->getType()),
+        );
     }
 }

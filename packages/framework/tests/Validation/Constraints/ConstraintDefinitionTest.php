@@ -8,10 +8,14 @@ use Closure;
 use InvalidArgumentException;
 use Kinetis\Validation\Constraint;
 use Kinetis\Validation\Constraints\GreaterThan;
+use Kinetis\Validation\Constraints\GreaterThanOrEqual;
 use Kinetis\Validation\Constraints\In;
 use Kinetis\Validation\Constraints\LessThan;
+use Kinetis\Validation\Constraints\LessThanOrEqual;
 use Kinetis\Validation\Constraints\MaxLength;
 use Kinetis\Validation\Constraints\MinLength;
+use Kinetis\Validation\Constraints\MultipleOf;
+use Kinetis\Validation\Constraints\NotIn;
 use Kinetis\Validation\Constraints\Regex;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -71,6 +75,46 @@ final class ConstraintDefinitionTest extends TestCase
             static fn (): Constraint => new In([1.5, INF]),
             'In choices must be finite numbers, INF given.',
         ];
+        yield 'an infinite inclusive lower bound' => [
+            static fn (): Constraint => new GreaterThanOrEqual(INF),
+            'GreaterThanOrEqual threshold must be a finite number, INF given.',
+        ];
+        yield 'a NAN inclusive lower bound' => [
+            static fn (): Constraint => new GreaterThanOrEqual(NAN),
+            'GreaterThanOrEqual threshold must be a finite number, NAN given.',
+        ];
+        yield 'an infinite inclusive upper bound' => [
+            static fn (): Constraint => new LessThanOrEqual(-INF),
+            'LessThanOrEqual threshold must be a finite number, -INF given.',
+        ];
+        yield 'a NAN inclusive upper bound' => [
+            static fn (): Constraint => new LessThanOrEqual(NAN),
+            'LessThanOrEqual threshold must be a finite number, NAN given.',
+        ];
+        yield 'an empty excluded set' => [
+            static fn (): Constraint => new NotIn([]),
+            'NotIn choices must be a non-empty list of scalars.',
+        ];
+        yield 'a keyed excluded set' => [
+            static fn (): Constraint => new NotIn(['admin' => 'Administrator']),
+            'NotIn choices must be a non-empty list of scalars.',
+        ];
+        yield 'a non-scalar excluded value' => [
+            static fn (): Constraint => new NotIn([['admin']]),
+            'NotIn choices must be scalars, array given.',
+        ];
+        yield 'a non-finite excluded value' => [
+            static fn (): Constraint => new NotIn([1.5, INF]),
+            'NotIn choices must be finite numbers, INF given.',
+        ];
+        yield 'a zero divisor' => [
+            static fn (): Constraint => new MultipleOf(0),
+            'MultipleOf divisor must be at least 1, got 0.',
+        ];
+        yield 'a negative divisor' => [
+            static fn (): Constraint => new MultipleOf(-6),
+            'MultipleOf divisor must be at least 1, got -6.',
+        ];
         yield 'an undelimited pattern' => [
             static fn (): Constraint => new Regex('^[A-Z]+$'),
             'Regex pattern "^[A-Z]+$" is not a valid PCRE.',
@@ -104,6 +148,11 @@ final class ConstraintDefinitionTest extends TestCase
         yield 'a negative float bound' => [static fn (): Constraint => new LessThan(-1.5)];
         yield 'a single choice' => [static fn (): Constraint => new In(['admin'])];
         yield 'mixed scalar choices' => [static fn (): Constraint => new In([1, 2.5, true, 'x'])];
+        yield 'an inclusive integer bound' => [static fn (): Constraint => new GreaterThanOrEqual(0)];
+        yield 'a negative inclusive float bound' => [static fn (): Constraint => new LessThanOrEqual(-1.5)];
+        yield 'a single excluded value' => [static fn (): Constraint => new NotIn(['root'])];
+        yield 'mixed excluded scalars' => [static fn (): Constraint => new NotIn([1, 2.5, true, 'x'])];
+        yield 'a divisor of one' => [static fn (): Constraint => new MultipleOf(1)];
         yield 'a slash-delimited pattern' => [static fn (): Constraint => new Regex('/^[A-Z]+$/')];
         yield 'a hash-delimited pattern with a modifier' => [static fn (): Constraint => new Regex('#^x#i')];
     }

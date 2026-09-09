@@ -693,18 +693,60 @@ to a client reading the generated document.
 | `#[MaxLength(n)]` | `mb_strlen($value) <= n` | `int $length` | `max_length` | `maxLength` |
 | `#[GreaterThan(n)]` | `$value > n` | `int\|float $threshold` | `greater_than` | `exclusiveMinimum` |
 | `#[LessThan(n)]` | `$value < n` | `int\|float $threshold` | `less_than` | `exclusiveMaximum` |
+| `#[GreaterThanOrEqual(n)]` | `$value >= n` | `int\|float $threshold` | `greater_than_or_equal` | `minimum` |
+| `#[LessThanOrEqual(n)]` | `$value <= n` | `int\|float $threshold` | `less_than_or_equal` | `maximum` |
+| `#[MultipleOf(n)]` | `$value % n === 0` | `int $divisor` | `multiple_of` | `multipleOf` |
 | `#[Regex($pattern)]` | `preg_match($pattern, $value) === 1` | `string $pattern` | `regex` | *(none)* |
 | `#[In($choices)]` | `in_array($value, $choices, true)` | `array $choices` | `in` | `enum` |
+| `#[NotIn($choices)]` | `!in_array($value, $choices, true)` | `array $choices` | `not_in` | `not: {enum: ...}` |
 | `#[MinItems(n)]` | a list of at least `n` elements | `int $count` | `min_items` | `minItems` |
 | `#[MaxItems(n)]` | a list of at most `n` elements | `int $count` | `max_items` | `maxItems` |
 | `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* | `url` | `format: uri` |
-| `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* | `uuid` | `format: uuid` |
+| `#[Uuid]` | RFC 9562's UUID string form | *(no arguments)* | `uuid` | `format: uuid` |
+| `#[Ip]` | `filter_var($value, FILTER_VALIDATE_IP)` | *(no arguments)* | `ip` | `anyOf` (`format: ipv4`, `format: ipv6`) |
+| `#[Date]` | `YYYY-MM-DD` naming a real calendar day | *(no arguments)* | `date` | `format: date` |
+| `#[DateTime]` | an RFC 3339 `date-time` | *(no arguments)* | `date_time` | `format: date-time` |
 
-`#[GreaterThan]`/`#[LessThan]` report `not_a_number`, and
-`#[MinItems]`/`#[MaxItems]` report `not_a_list`, for a value of the wrong
-shape entirely. Through a request that never happens — the declared type
-is checked before any rule runs — but a rule invoked directly still
-answers rather than counting something with no count.
+`#[GreaterThan]`, `#[LessThan]`, `#[GreaterThanOrEqual]` and
+`#[LessThanOrEqual]` report `not_a_number`, `#[MultipleOf]` reports
+`not_an_integer`, and `#[MinItems]`/`#[MaxItems]` report `not_a_list`,
+for a value of the wrong shape entirely. Through a request that never
+happens — the declared type is checked before any rule runs — but a rule
+invoked directly still answers rather than counting something with no
+count. The string rules have no such second code: `#[Email]`, `#[Url]`,
+`#[Uuid]`, `#[Ip]`, `#[Date]` and `#[DateTime]` each fold a non-string
+into their own code, since a value that is not a string is not the thing
+they name either.
+
+`#[MultipleOf]` is about whole numbers on both sides. Its divisor is an
+`int` of at least 1, and a `float` value reports `not_an_integer` rather
+than being tested: divisibility in binary floating point would need a
+tolerance the published `multipleOf` does not carry. Zero and negative
+multiples satisfy it.
+
+`#[Date]` and `#[DateTime]` read a fixed ASCII grammar and then check the
+numbers, rather than handing the value to a PHP date parser — which would
+accept `2024-1-1`, roll `2023-02-29` forward into March, and apply a
+local timezone the request never mentioned. `#[Date]` is `YYYY-MM-DD`
+alone, so its years run `0001` through `9999`. `#[DateTime]` is RFC 3339's
+`date-time` with two deliberate reductions: a leap second (`:60`) and the
+space separator RFC 3339 permits in place of `T` are both rejected, the
+first because nothing downstream of a validated string can place one, the
+second because admitting two spellings under one `format: date-time`
+would publish a document broader than the check. An offset is required —
+`Z`, `z`, or a signed `HH:MM`, `-00:00` included — a fraction of any
+length is accepted, and a trailing newline is not part of either value.
+
+`#[Uuid]` is RFC 9562's string form and nothing more: 32 hexadecimal
+digits in 8-4-4-4-12 groups, upper or lower case. Version and variant are
+fields of the identifier rather than of its spelling, so the nil and max
+UUIDs and versions 6, 7 and 8 all bind — a rule reading those nibbles
+would reject identifiers the RFC defines for a spelling no client can
+change.
+
+`#[Ip]` accepts an address of either family and nothing around it: a zone
+identifier, a CIDR prefix, bracket notation and surrounding whitespace
+are each something other than an address, and none of them binds.
 
 `#[Regex]` and `#[NotBlank]` are runtime-only: neither has an equivalent
 JSON Schema keyword. `pattern` holds an undelimited ECMA-262 expression, a
@@ -720,11 +762,14 @@ A rule's constructor arguments reach a client twice — as a violation's
 truthful form in either is refused with an `InvalidArgumentException`
 where the constraint is first instantiated, during hydration or schema
 generation: a negative `#[MinLength]`, `#[MaxLength]`, `#[MinItems]` or
-`#[MaxItems]` bound; a non-finite `#[GreaterThan]`/`#[LessThan]`
-threshold; an `#[In]` choice set that is empty, keyed, or carries a
-non-scalar or non-finite member; and a `#[Regex]` pattern PCRE cannot
-compile, which left to run would match nothing and reject every value
-the field ever receives.
+`#[MaxItems]` bound; a non-finite threshold on any of the four numeric
+bounds; a `#[MultipleOf]` divisor below 1, since zero divides nothing and
+a negative divisor names the same multiples as its absolute value while
+publishing a `multipleOf` JSON Schema does not allow; an `#[In]` or
+`#[NotIn]` set that is empty, keyed, or carries a non-scalar or
+non-finite member; and a `#[Regex]` pattern PCRE cannot compile, which
+left to run would match nothing and reject every value the field ever
+receives.
 
 Two rules on the same field may not contribute the *same* keyword.
 `#[MinLength(3)] #[MinLength(5)]` states two different minimum lengths
@@ -741,7 +786,8 @@ declared shape (`#[MinLength(3)] string` narrows which strings bind); it
 cannot replace it. What a rule nests *inside* its own keyword is its own
 business and is never inspected.
 
-`#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]` and
+`#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]`,
+`#[GreaterThanOrEqual]`/`#[LessThanOrEqual]` and
 `#[MinItems]`/`#[MaxItems]` compose on the same field for a length,
 numeric or cardinality range — `Hydrator` runs every
 `Constraint`-implementing attribute on a parameter, not just the first
@@ -1813,8 +1859,10 @@ attach to them behaves like middleware anywhere else.
 
 `#[Body]` DTOs become `requestBody` schemas, with every constraint from the
 table above mapped onto the matching JSON Schema keyword (`format: email`,
-`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`, `enum`,
-`minItems`/`maxItems`, `format: uri`, `format: uuid`) — except
+`minLength`/`maxLength`, `exclusiveMinimum`/`exclusiveMaximum`,
+`minimum`/`maximum`, `multipleOf`, `enum`, `not`, `minItems`/`maxItems`,
+`format: uri`, `format: uuid`, `format: date`, `format: date-time`, and
+`#[Ip]`'s `anyOf` of the two address formats) — except
 `#[NotBlank]` and `#[Regex]`, which have no JSON Schema keyword to map
 onto. `#[Query]` parameters and path parameters become `parameters`
 entries, with the identical constraint-to-keyword mapping applied to
