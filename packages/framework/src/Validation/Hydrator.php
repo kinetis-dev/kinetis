@@ -12,6 +12,7 @@ use Kinetis\Reflection\ParameterDefault;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\ValidationException;
 use BackedEnum;
+use Psr\Http\Message\UploadedFileInterface;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionEnum;
@@ -40,8 +41,12 @@ use ReflectionUnionType;
  * - A parameter typed as a single non-instantiable class (an interface,
  *   an abstract class, a unit enum): only an existing instance is
  *   accepted. No request value can construct one — the case this exists
- *   for is the UploadedFileInterface Dispatcher merges into a multipart
- *   field.
+ *   for is the UploadedFileInterface Kinetis\Http\Dispatcher merges
+ *   into a form-encoded body from the request's normalized uploaded
+ *   files. That one interface is resolved through
+ *   resolveUploadedFile() rather than as a bare instance: its transport
+ *   status is checked before its own rules are, and before any code can
+ *   touch its stream.
  * - A parameter typed as a backed enum: the case its backing value
  *   names. The value is resolved as that backing scalar first, so a
  *   wrong primitive is an ordinary type violation and a correctly typed
@@ -49,12 +54,13 @@ use ReflectionUnionType;
  *   existing case is taken as given.
  * - A parameter typed `array` carrying #[ListOf]: a JSON array whose
  *   every element is one value of the element type that attribute
- *   names — a scalar, a backed enum case, or a DTO hydrated from an
- *   object-shaped element (or already an instance of it). Element
- *   violations surface under the ["field", index] /
- *   ["field", index, "nestedField"] path. A scalar or backed-enum list
- *   may also carry #[Each] rules, which every element passes before the
- *   field's own rules ever see the list. See listItem().
+ *   names — a scalar, a backed enum case, an uploaded file, or a DTO
+ *   hydrated from an object-shaped element (or already an instance of
+ *   it). Element violations surface under the ["field", index] /
+ *   ["field", index, "nestedField"] path. A scalar, backed-enum or
+ *   upload list may also carry #[Each] rules, which every element
+ *   passes before the field's own rules ever see the list. See
+ *   listItem().
  * - A parameter typed `array` carrying #[ObjectMap]: a JSON object of
  *   arbitrary keys, handed to the constructor as its plain array form.
  *   Unlike every other accepted shape, this one admits only a value
@@ -129,9 +135,13 @@ use ReflectionUnionType;
  * checking, source normalization, casting and the field's own constraints
  * all happen once, in one order, and a wrong-shaped value can never
  * reach a real constructor unchecked regardless of which one dispatched
- * it. objectExpectedViolation(), requiredViolation() and
- * unexpectedFieldViolation() stay public beside it for the three
- * failures a caller detects before it has a scalar to resolve at all.
+ * it. resolveUploadedFile() is that same one entry for an uploaded
+ * file, whose transport status is checked before its rules are, and it
+ * is equally shared: a #[Body] DTO field, a #[ListOf] element, and an
+ * UploadedFileInterface-typed controller parameter all bind through it.
+ * objectExpectedViolation(), requiredViolation() and
+ * unexpectedFieldViolation() stay public beside them for the three
+ * failures a caller detects before it has a value to resolve at all.
  *
  * Holds exactly one piece of static state: a memoization cache of
  * compilePlan() output, keyed by DTO class. This is a deliberate,
@@ -192,6 +202,8 @@ final class Hydrator
 
     private const string NOT_AN_INTEGER = 'must be an integer within the platform integer range.';
 
+    private const string UPLOAD_FAILED = 'could not be uploaded.';
+
     /**
      * The stable machine names every input source reports for a value
      * hydration itself refused. One code per message template, so a
@@ -220,6 +232,8 @@ final class Hydrator
     private const string CODE_UNEXPECTED_FIELD = 'unexpected_field';
 
     private const string CODE_ENUM_CASE = 'enum_case';
+
+    private const string CODE_UPLOAD_FAILED = 'upload_failed';
 
     /**
      * The builtin types a request-bound parameter may declare. A DTO
@@ -656,7 +670,13 @@ final class Hydrator
                 'scalarType' => $item['scalarType'],
                 'enumClass' => $item['enumClass'],
                 'dtoClass' => $itemClass,
-                'nestedPlan' => $itemClass === null ? null : self::compileNestedPlan($itemClass, $class, $name, $visiting),
+                // An upload element has no constructor to compile and
+                // takes an instance as given, exactly as a single
+                // upload field does — the same null plan a
+                // non-instantiable class-typed field already carries.
+                'nestedPlan' => $itemClass === null || !self::isInstantiable($itemClass)
+                    ? null
+                    : self::compileNestedPlan($itemClass, $class, $name, $visiting),
                 'constraints' => $item['constraints'],
             ]];
         }
@@ -688,8 +708,11 @@ final class Hydrator
      * #[Each] rules every element runs — or null when the parameter
      * declares no list at all. Exactly one of `scalarType`,
      * `enumClass` and `dtoClass` names a scalar element, a backed-enum
-     * one and a DTO one respectively; for an enum, `scalarType`
-     * additionally carries the backing type its wire value has.
+     * one and a class one respectively; for an enum, `scalarType`
+     * additionally carries the backing type its wire value has. A
+     * `dtoClass` of UploadedFileInterface is the one class element that
+     * is not a DTO: it holds an uploaded file, taken as given after its
+     * transport status passes.
      *
      * Public so Kinetis\Validation\JsonSchema describes exactly what
      * hydration accepts: `items` is built from this same
@@ -732,10 +755,13 @@ final class Hydrator
     }
 
     /**
-     * Which of the three element families #[ListOf] named. Everything
-     * else is refused here: an empty name, a builtin with no element
-     * vocabulary, a name no class answers to, and a class no wire value
-     * could ever produce — an interface, an abstract class, a unit enum.
+     * Which element family #[ListOf] named. Everything else is refused
+     * here: an empty name, a builtin with no element vocabulary, a name
+     * no class answers to, and a class no wire value could ever
+     * produce — an interface, an abstract class, a unit enum.
+     * UploadedFileInterface is the single named exception: a repeated
+     * file control is a real wire shape, so a list of it is a real
+     * element domain even though the interface cannot be instantiated.
      *
      * @return array{scalarType: ?string, enumClass: ?class-string, dtoClass: ?class-string}
      * @throws UnsupportedDtoDefinitionException
@@ -755,7 +781,13 @@ final class Hydrator
             return ['scalarType' => $backingType, 'enumClass' => $enumClass, 'dtoClass' => null];
         }
 
-        if (self::isInstantiable($itemType)) {
+        // The one non-instantiable element type with a wire
+        // representation: a repeated file control is a real multipart
+        // shape, and Kinetis\Http\Dispatcher hands the normalized
+        // branch over as a list of instances. It is admitted by exact
+        // name — every other interface, abstract class and unit enum
+        // still names an element no request could produce.
+        if ($itemType === UploadedFileInterface::class || self::isInstantiable($itemType)) {
             /** @var class-string $dtoClass */
             $dtoClass = $itemType;
 
@@ -825,7 +857,10 @@ final class Hydrator
      */
     private static function itemRules(array $attributes, ReflectionParameter $parameter, ?string $dtoClass): array
     {
-        if ($attributes !== [] && $dtoClass !== null) {
+        // An upload element is not a DTO whose own fields could carry
+        // the rule instead: a rule about one uploaded file has nowhere
+        // else to be written, so #[Each] is the declaration for it.
+        if ($attributes !== [] && $dtoClass !== null && $dtoClass !== UploadedFileInterface::class) {
             throw UnsupportedDtoDefinitionException::eachOnDtoList(
                 self::owner($parameter),
                 $parameter->getName(),
@@ -1211,6 +1246,15 @@ final class Hydrator
             return $parameter['allowsNull'] ? [null, []] : [null, [self::nullNotAllowedViolation([$name])]];
         }
 
+        if ($parameter['dtoClass'] === UploadedFileInterface::class) {
+            // Returned rather than falling through to the shared
+            // constraint pass below: the upload path runs the field's
+            // own rules itself, after the transport status gate, so
+            // they run exactly once and never against a file that
+            // failed to arrive.
+            return self::resolveUploadedFile([$name], $value, $parameter['constraints']);
+        }
+
         if ($parameter['dtoClass'] !== null) {
             /** @var HydrationPlan|null $nestedPlan */
             $nestedPlan = $parameter['nestedPlan'];
@@ -1316,6 +1360,57 @@ final class Hydrator
     }
 
     /**
+     * The one uploaded-file resolution path, the counterpart
+     * {@see resolveScalar()} is for a raw scalar. Every typed route
+     * into an uploaded file enters here: a #[Body] DTO field declaring
+     * UploadedFileInterface, one element of a
+     * #[ListOf(UploadedFileInterface::class)] field, and an
+     * UploadedFileInterface-typed controller parameter via
+     * Kinetis\Http\Dispatcher — so the transport status, the rule
+     * order and the violation vocabulary are the same answer wherever a
+     * file is bound.
+     *
+     * The order is what makes the rest safe. A value that is not an
+     * instance at all gets the ordinary instance violation; a file
+     * whose PSR-7 status is not UPLOAD_ERR_OK gets one `upload_failed`
+     * carrying the raw status as `error`, and nothing further is asked
+     * of it. Only a file that actually arrived reaches its own rules,
+     * so no rule — and no stream read behind one — ever runs against a
+     * file whose stream would throw.
+     *
+     * One code covers every non-OK status. The supported multipart
+     * parser produces exactly UPLOAD_ERR_OK and UPLOAD_ERR_NO_FILE, and
+     * a NO_FILE leaf is already omission by the time a value reaches
+     * here; a status from anywhere else describes a server or client
+     * transfer that did not complete, which is one fact a client can
+     * act on, with `error` keeping the exact status for a log.
+     *
+     * Nothing is retained: the rules are built from their literal
+     * descriptors, asked, and discarded, exactly as a scalar field's
+     * are.
+     *
+     * @param list<string|int> $path the caller's own path to this value
+     * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
+     * @return array{0: mixed, 1: list<Violation>} the file, and the
+     *         violations it raised — a non-empty list means the caller
+     *         must bind nothing for it
+     */
+    public static function resolveUploadedFile(array $path, mixed $value, array $constraints = []): array
+    {
+        if (!$value instanceof UploadedFileInterface) {
+            return [null, [self::notAnInstanceViolation($path, UploadedFileInterface::class)]];
+        }
+
+        $error = $value->getError();
+
+        if ($error !== UPLOAD_ERR_OK) {
+            return [null, [new Violation($path, self::CODE_UPLOAD_FAILED, self::UPLOAD_FAILED, ['error' => $error])]];
+        }
+
+        return [$value, self::constraintViolations($constraints, $value, $path)];
+    }
+
+    /**
      * The one source-specific rewrite there is: `true`/`false` spelled
      * as text. A query string, a path segment and a form-encoded body
      * have no boolean literal, and OpenAPI documents those two words as
@@ -1404,11 +1499,12 @@ final class Hydrator
      * shapes are accepted and nothing else: an object-shaped value — a
      * JsonObject marker or a map-shaped PHP array — hydrated into $class
      * against $plan; or a value that is already a $class instance, taken
-     * as given (the UploadedFileInterface Dispatcher merges into a
-     * multipart field, or a caller hydrating from data it partly built
-     * itself). $plan is null exactly when $class cannot be instantiated,
-     * so no value could ever be hydrated into it and an instance is the
-     * only accepted shape.
+     * as given (a caller hydrating from data it partly built itself).
+     * $plan is null exactly when $class cannot be instantiated, so no
+     * value could ever be hydrated into it and an instance is the only
+     * accepted shape. UploadedFileInterface never reaches here: both the
+     * field and the element branch route it to resolveUploadedFile()
+     * first, which gates its transport status before anything else.
      *
      * @param list<string|int> $path
      * @param class-string $class
@@ -1512,13 +1608,14 @@ final class Hydrator
     }
 
     /**
-     * One element, resolved as whichever family its #[ListOf] named: a
-     * DTO hydrated from an object-shaped element (or taken as an
-     * instance) exactly as a single DTO-typed field is, a backed enum
-     * read from its backing value, or a scalar read through the one
-     * shared raw-scalar path — the same path the field itself would
-     * take, so an element's type check, source normalization and rules
-     * cannot drift from a scalar field's.
+     * One element, resolved as whichever family its #[ListOf] named: an
+     * uploaded file through the one shared upload path, a DTO hydrated
+     * from an object-shaped element (or taken as an instance) exactly
+     * as a single DTO-typed field is, a backed enum read from its
+     * backing value, or a scalar read through the one shared
+     * raw-scalar path — each the same path the field itself would take,
+     * so an element's status check, type check, source normalization
+     * and rules cannot drift from a field's.
      *
      * The element's own #[Each] rules travel with it into whichever
      * resolver produces the value, so they run once the element's type
@@ -1532,6 +1629,10 @@ final class Hydrator
      */
     private static function resolveListItem(array $path, mixed $value, array $item, InputSource $source): array
     {
+        if ($item['dtoClass'] === UploadedFileInterface::class) {
+            return self::resolveUploadedFile($path, $value, $item['constraints']);
+        }
+
         if ($item['dtoClass'] !== null) {
             /** @var HydrationPlan|null $nestedPlan */
             $nestedPlan = $item['nestedPlan'];

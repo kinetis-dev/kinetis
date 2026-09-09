@@ -42,8 +42,8 @@ use ReflectionType;
  * (#[Body] DTO, #[Query] scalar, a same-named path parameter, a
  * ServerRequestInterface-typed parameter that receives the raw request
  * directly, or an UploadedFileInterface-typed parameter pulled from the
- * request's uploaded-files bag by name), resolves the controller through
- * the container, invokes it, and encodes the return value as a JSON
+ * request's normalized uploaded files by name), resolves the controller
+ * through the container, invokes it, and encodes the return value as a JSON
  * PSR-7 response. Binding comes first so that a request rejected as a
  * 400 or 415, or refused by validation, never constructs the
  * controller, and no constructor or registered factory runs on its
@@ -54,10 +54,19 @@ use ReflectionType;
  * {@see MediaType} classifies them; a nonblank body under any other
  * media type — or under none at all — is a 415 raised before hydration.
  * A parameter typed ServerRequestInterface is untouched by that rule and
- * still receives any raw or binary body. An UploadedFileInterface-typed
- * constructor parameter on that same DTO needs no special handling in
- * Hydrator itself, since the files bag is merged into the data array
- * before hydration.
+ * still receives any raw or binary body.
+ *
+ * This class owns the request's uploaded files as *transport*. Once per
+ * dispatch, normalizeUploads() turns getUploadedFiles() into the tree
+ * binding sees — empty file controls dropped, emptied branches dropped,
+ * pruned flat file lists closed back up while a branch of sub-branches
+ * keeps its positions — and both file-reading sources read that
+ * one tree: a form-encoded #[Body] DTO through mergeUploads(), which
+ * folds it into the parsed text at every depth, and an
+ * UploadedFileInterface-typed parameter through its own top-level name.
+ * What each of them then *is* — a real file, a failed transfer, a value
+ * that is no file at all — is Hydrator's answer, given once in
+ * Hydrator::resolveUploadedFile() for both.
  *
  * $bindingPlans/$hydrationPlans are optional, compiled-ahead-of-time
  * replacements for what derivePlan()/Hydrator::compilePlan() would otherwise
@@ -65,11 +74,14 @@ use ReflectionType;
  * absent from either map falls back to live reflection transparently; the
  * cache never needs to be complete for correctness, only for speed.
  *
- * A #[Query]/path parameter's own Constraint attributes (#[GreaterThan],
- * #[In], ...) are captured in the plan and evaluated in
- * resolveScalarFromPlan(), after the declared-type-mismatch check and
- * cast — the same two-stage shape Hydrator uses for a #[Body] DTO
- * field, applied uniformly to every parameter source.
+ * A parameter's own Constraint attributes (#[GreaterThan], #[In],
+ * #[FileExtension], ...) are captured in the plan and evaluated after
+ * whatever check establishes the value's shape: in
+ * resolveScalarFromPlan() for a #[Query]/path parameter, after the
+ * declared-type-mismatch check and cast, and in
+ * Hydrator::resolveUploadedFile() for an uploaded file, after its
+ * transport status. The same two-stage shape Hydrator uses for a
+ * #[Body] DTO field, applied uniformly to every parameter source.
  *
  * A binding failure from any source leaves this class as the
  * Kinetis\Validation\Exception\ValidationException it is, carrying every
@@ -294,8 +306,9 @@ final class Dispatcher
                 'defaultValue' => ParameterDefault::capture($parameter, $owner),
                 // An untyped parameter accepts anything, null included.
                 'allowsNull' => $type === null || $type->allowsNull(),
-                // Only meaningful for 'query'/'path' — a #[Body] DTO's own
-                // constraints are Hydrator's concern, not this method's.
+                // Only meaningful for 'query'/'path'/'uploadedFile' — a
+                // #[Body] DTO's own field constraints are Hydrator's
+                // concern, not this method's.
                 'constraints' => Hydrator::collectConstraints($parameter),
             ];
         }
@@ -359,6 +372,11 @@ final class Dispatcher
     {
         $arguments = [];
         $violations = [];
+        // Normalized once for the whole plan, not per parameter: a
+        // route binding both a #[Body] DTO and a direct file parameter
+        // reads one tree, so the two can never disagree about which
+        // files this request actually carries.
+        $uploads = self::normalizeUploads($request->getUploadedFiles()) ?? [];
 
         foreach ($plan as $param) {
             $name = $param['name'];
@@ -366,8 +384,8 @@ final class Dispatcher
             try {
                 $arguments[$name] = match ($param['source']) {
                     'request' => $request,
-                    'uploadedFile' => $this->resolveUploadedFileFromPlan($request->getUploadedFiles()[$name] ?? null, $name, $param),
-                    'body' => $this->resolveBodyFromPlan($param, $request),
+                    'uploadedFile' => $this->resolveUploadedFileFromPlan($uploads[$name] ?? null, $name, $param),
+                    'body' => $this->resolveBodyFromPlan($param, $request, $uploads),
                     'query' => $this->resolveScalarFromPlan(self::rawQueryValue($request, $name, $param), $name, $param),
                     'path' => $this->resolveScalarFromPlan($match->pathParams[$name], $name, $param),
                     'container' => $this->resolveFromContainer($param),
@@ -392,11 +410,12 @@ final class Dispatcher
 
     /**
      * @param HttpBindingPlan $param
+     * @param array<array-key, mixed> $uploads the request's normalized uploaded files
      * @throws ValidationException
      * @throws MalformedRequestBodyException
      * @throws UnsupportedBodyMediaTypeException
      */
-    private function resolveBodyFromPlan(array $param, ServerRequestInterface $request): object
+    private function resolveBodyFromPlan(array $param, ServerRequestInterface $request, array $uploads): object
     {
         $contentType = $request->getHeaderLine('Content-Type');
 
@@ -428,14 +447,11 @@ final class Dispatcher
         /** @var class-string $dtoClass */
         $dtoClass = $param['dtoClass'];
 
-        // A DTO constructor parameter typed UploadedFileInterface is an
-        // ordinary non-instantiable class-typed field to Hydrator: it
-        // accepts an existing instance of the declared interface and
-        // nothing else, so merging the files bag in here is what makes
-        // the field resolvable — Hydrator never needs to know files exist
-        // at all. Left-wins union: a same-named regular field, if one
-        // somehow exists, isn't silently overwritten by a file.
-        $data = $decoded + $this->uploadedFilesByFieldName($request);
+        // Only a form body carries files. A JSON document names every
+        // value it sends, and merging an uploaded file into it would
+        // bind a field the document never mentioned.
+        /** @var array<string, mixed> $data */
+        $data = $formEncoded ? self::mergeUploads($decoded, $uploads) : $decoded;
 
         $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
 
@@ -517,46 +533,144 @@ final class Dispatcher
      * A request without the expected file resolves like a missing #[Query]
      * value: the default if one exists, null if the parameter accepts it,
      * and an "is required." violation otherwise — a client forgetting a
-     * file field is malformed input, not a server error.
+     * file field, or submitting an empty file control, is malformed input,
+     * not a server error.
+     *
+     * A file that is present goes through the same
+     * Hydrator::resolveUploadedFile() a #[Body] DTO's own upload field
+     * does, so the parameter's own Constraint attributes — captured by
+     * derivePlan() like every other parameter's — actually run, after
+     * the transport status has been checked.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException
      */
     private function resolveUploadedFileFromPlan(mixed $file, string $name, array $param): mixed
     {
-        if ($file !== null) {
-            return $file;
+        if ($file === null) {
+            if ($param['hasDefault']) {
+                return $param['defaultValue'];
+            }
+
+            if ($param['allowsNull']) {
+                return null;
+            }
+
+            throw ValidationException::fromViolations([Hydrator::requiredViolation([$name])]);
         }
 
-        if ($param['hasDefault']) {
-            return $param['defaultValue'];
+        [$resolved, $violations] = Hydrator::resolveUploadedFile([$name], $file, $param['constraints']);
+
+        if ($violations !== []) {
+            throw ValidationException::fromViolations($violations);
         }
 
-        if ($param['allowsNull']) {
-            return null;
-        }
-
-        throw ValidationException::fromViolations([Hydrator::requiredViolation([$name])]);
+        return $resolved;
     }
 
     /**
-     * Flat, single-level only — matches Hydrator's own DTO-discovery
-     * scanning discipline elsewhere. A nested (array-style, `photos[]`)
-     * file input isn't merged here.
+     * The request's uploaded-files tree as binding sees it: every leaf
+     * a real file, every branch one that still holds something.
      *
-     * @return array<string, UploadedFileInterface>
+     * A browser submits an *empty* file control as a present
+     * UPLOAD_ERR_NO_FILE part, not as nothing at all — a leaf whose
+     * stream throws the moment anything reads it. Ordinary omission is
+     * what that means, so such a leaf is dropped here, before any plan
+     * can bind it: a required field then reports "is required." and a
+     * defaulted or nullable one gets its default, exactly as a text
+     * field the form never sent does.
+     *
+     * A branch left empty by that pruning is dropped in turn, and
+     * answers null rather than `[]`. The distinction is the point: `[]`
+     * is a supplied empty file list, which a `#[ListOf]` field would
+     * bind and a #[MinItems] rule would then measure, and a form whose
+     * every file control was left empty supplied no list at all.
+     *
+     * A pruned *flat* list is closed back up: a list-shaped branch
+     * whose every child is a file gets array_values(), so `photos[]`
+     * sent as file, empty, file binds two files at 0 and 1. A branch
+     * that named a sub-branch keeps its keys even when it was
+     * list-shaped, and whether that sub-branch survived pruning or not,
+     * because there an index is a position the parsed text names too:
+     * `entries[1][image]` left empty while `entries[2][image]` arrived
+     * must keep the third file at 2, or mergeUploads() would fold it
+     * into the second entry's text. A map-shaped branch keeps its keys,
+     * which are field names a DTO declares and never positions.
+     *
+     * This is binding's view alone. The PSR-7 request keeps the bag its
+     * runtime adapter built, NO_FILE parts included.
+     *
+     * @param array<array-key, mixed> $files
+     * @return array<array-key, mixed>|null null when nothing survived
      */
-    private function uploadedFilesByFieldName(ServerRequestInterface $request): array
+    private static function normalizeUploads(array $files): ?array
     {
-        $files = [];
+        $wasList = array_is_list($files);
+        $normalized = [];
+        $structural = false;
 
-        foreach ($request->getUploadedFiles() as $name => $file) {
-            if ($file instanceof UploadedFileInterface) {
-                $files[$name] = $file;
+        foreach ($files as $key => $file) {
+            if (is_array($file)) {
+                $structural = true;
+                $branch = self::normalizeUploads($file);
+
+                if ($branch !== null) {
+                    $normalized[$key] = $branch;
+                }
+
+                continue;
+            }
+
+            if ($file instanceof UploadedFileInterface && $file->getError() === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+
+            $normalized[$key] = $file;
+        }
+
+        if ($normalized === []) {
+            return null;
+        }
+
+        return $wasList && !$structural ? array_values($normalized) : $normalized;
+    }
+
+    /**
+     * The form's text values and its normalized files as one field map,
+     * which is the shape Hydrator hydrates a #[Body] DTO from: a
+     * multipart form sends both, PHP parses each into its own tree by
+     * the same bracket convention, and a DTO declares one field per
+     * name regardless of which tree carried it. That is what lets a
+     * nested `profile[name]` text field and a `profile[avatar]` file
+     * hydrate the same nested DTO.
+     *
+     * One rule at every key, applied recursively: two arrays merge,
+     * and anything else leaves the parsed text in place. A file-only
+     * key is added. Text winning is not a preference between two
+     * plausible values — a form naming one key as both text and file
+     * has already contradicted itself, and keeping the text makes it
+     * the ordinary declared-type violation the field would report for
+     * any other wrong value, rather than a silently chosen winner.
+     *
+     * @param array<array-key, mixed> $data parsed text values
+     * @param array<array-key, mixed> $files normalized uploaded files
+     * @return array<array-key, mixed>
+     */
+    private static function mergeUploads(array $data, array $files): array
+    {
+        foreach ($files as $key => $file) {
+            if (!array_key_exists($key, $data)) {
+                $data[$key] = $file;
+
+                continue;
+            }
+
+            if (is_array($data[$key]) && is_array($file)) {
+                $data[$key] = self::mergeUploads($data[$key], $file);
             }
         }
 
-        return $files;
+        return $data;
     }
 
     /**

@@ -177,8 +177,8 @@ final class JsonSchema
             if ($type instanceof ReflectionNamedType && $type->getName() === UploadedFileInterface::class) {
                 // An UploadedFileInterface-typed #[Body] field is never a
                 // nested DTO — Dispatcher merges it in directly from the
-                // request's own uploaded-files bag (see
-                // uploadedFilesByFieldName()'s own docblock), so
+                // request's own normalized uploaded files (see
+                // mergeUploads()'s own docblock), so
                 // schemaForClassTyped()'s "expand the constructor" logic
                 // has nothing to reflect here (the interface has no
                 // constructor at all) and would otherwise fall back to a
@@ -329,9 +329,10 @@ final class JsonSchema
 
     /**
      * One #[ListOf] element's own schema, from the same classification
-     * Hydrator resolves it with: a DTO's expanded object schema, a
-     * backed enum's type-and-cases pair, or the JSON type of the scalar
-     * it declares — with every #[Each] rule's keywords merged in.
+     * Hydrator resolves it with: a DTO's expanded object schema, an
+     * uploaded file's binary string, a backed enum's type-and-cases
+     * pair, or the JSON type of the scalar it declares — with every
+     * #[Each] rule's keywords merged in.
      *
      * @param array{scalarType: ?string, enumClass: ?class-string, dtoClass: ?class-string, constraints: list<array{class: class-string<Constraint>, args: array<int|string, mixed>}>} $item
      * @param (callable(class-string): array<string, mixed>)|null $classSchema
@@ -340,6 +341,15 @@ final class JsonSchema
      */
     private static function itemSchema(array $item, ?callable $classSchema): array
     {
+        if ($item['dtoClass'] === UploadedFileInterface::class) {
+            // The same {type: string, format: binary} an
+            // UploadedFileInterface-typed field publishes, for the same
+            // reason — see objectSchema() — with the element's own
+            // #[Each] rules merged in through the one keyword merge
+            // every other element already uses.
+            return self::withRuleKeywords(['type' => 'string', 'format' => 'binary'], $item['constraints']);
+        }
+
         if ($item['dtoClass'] !== null) {
             // A DTO list carries no #[Each] rules — Hydrator refuses
             // them there — so nothing merges onto an element that
@@ -412,12 +422,13 @@ final class JsonSchema
      * A class that cannot be instantiated (an interface, an abstract class,
      * a unit enum) is rejected rather than described:
      * `Kinetis\Validation\Hydrator` accepts only an already-constructed
-     * instance for such a field, and refuses it outright as a #[ListOf]
-     * element type — see its own docblock — so no wire value could satisfy
-     * the {type: object} schema expanding it would produce. Two class types
-     * never reach here: `UploadedFileInterface`, which objectSchema()
-     * describes as `{type: string, format: binary}`, and a backed enum on a
-     * DTO field, which it describes as that enum's own domain.
+     * instance for such a field, and refuses every other one outright as a
+     * #[ListOf] element type — see its own docblock — so no wire value
+     * could satisfy the {type: object} schema expanding it would produce.
+     * Two class types never reach here: `UploadedFileInterface`, which
+     * objectSchema() and itemSchema() both describe as
+     * `{type: string, format: binary}`, and a backed enum on a DTO field,
+     * which objectSchema() describes as that enum's own domain.
      *
      * @param class-string $class
      * @param (callable(class-string): array<string, mixed>)|null $classSchema

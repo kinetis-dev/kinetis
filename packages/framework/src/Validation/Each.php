@@ -31,11 +31,13 @@ use Attribute;
  * counts elements — and those run only once every element has
  * resolved and passed its own `#[Each]` rules.
  *
- * Valid only on a `#[ListOf]` whose elements are scalars or backed
- * enums. A DTO list carries its item class's own rules instead, and a
- * parameter with no `#[ListOf]` has no elements to describe: both are
- * refused where the plan is compiled and where a schema is generated.
- * See Hydrator::listItem().
+ * Valid only on a `#[ListOf]` whose elements are scalars, backed enums
+ * or uploaded files — an uploaded file has no fields of its own on
+ * which a rule like `#[FileExtension]` could otherwise be written. A
+ * DTO list carries its item class's own rules instead, and a parameter
+ * with no `#[ListOf]` has no elements to describe: both are refused
+ * where the plan is compiled and where a schema is generated. See
+ * Hydrator::listItem().
  */
 #[Attribute(Attribute::TARGET_PARAMETER | Attribute::IS_REPEATABLE)]
 final readonly class Each

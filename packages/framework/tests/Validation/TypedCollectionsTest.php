@@ -4,7 +4,14 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Validation;
 
+use Kinetis\Cache\CacheStore;
+use Kinetis\Cache\CommandCache;
+use Kinetis\Cache\CompiledCache;
+use Kinetis\Cache\EventCache;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
+use Kinetis\Cache\HttpCache;
+use Kinetis\Cache\PluginCache;
+use Kinetis\Tests\Fixtures\UnreadableUploadedFile;
 use Kinetis\Tests\Validation\Fixtures\DateListRequest;
 use Kinetis\Tests\Validation\Fixtures\EachNotAConstraintRequest;
 use Kinetis\Tests\Validation\Fixtures\EachOnADtoListRequest;
@@ -15,11 +22,13 @@ use Kinetis\Tests\Validation\Fixtures\ListOfAnInterfaceRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfMixedRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfNothingRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfTheBackedEnumInterfaceRequest;
+use Kinetis\Tests\Validation\Fixtures\ListOfUploadedFilesRequest;
 use Kinetis\Tests\Validation\Fixtures\ListPresenceRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\Priority;
 use Kinetis\Tests\Validation\Fixtures\TypedListsRequest;
 use Kinetis\Validation\Absent;
+use Kinetis\Validation\Constraints\FileExtension;
 use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Each;
 use Kinetis\Validation\Exception\JsonSchemaException;
@@ -33,12 +42,15 @@ use Kinetis\Validation\JsonTree;
 use Kinetis\Validation\ListOf;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Nyholm\Psr7\Stream;
+use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\UploadedFileInterface;
 use ReflectionFunction;
 
 /**
  * #[ListOf] over each element family it admits, and the #[Each] rules
- * a scalar or backed-enum list runs on every element.
+ * a scalar, backed-enum or uploaded-file list runs on every element.
  */
 final class TypedCollectionsTest extends TestCase
 {
@@ -353,7 +365,7 @@ final class TypedCollectionsTest extends TestCase
     public function test_each_on_a_dto_list_is_a_definition_error(): void
     {
         $this->expectException(UnsupportedDtoDefinitionException::class);
-        $this->expectExceptionMessage('#[Each] applies to scalar and backed-enum elements');
+        $this->expectExceptionMessage('#[Each] applies to scalar, backed-enum and uploaded-file elements');
 
         Hydrator::compilePlan(EachOnADtoListRequest::class);
     }
@@ -385,7 +397,7 @@ final class TypedCollectionsTest extends TestCase
     {
         yield 'a builtin with no element vocabulary' => [ListOfMixedRequest::class, 'mixed'];
         yield 'an empty name' => [ListOfNothingRequest::class, ''];
-        yield 'an interface' => [ListOfAnInterfaceRequest::class, 'Psr\Http\Message\UploadedFileInterface'];
+        yield 'an interface' => [ListOfAnInterfaceRequest::class, 'Psr\Http\Message\StreamInterface'];
         // BackedEnum satisfies is_a() against itself while its
         // inherited cases() is abstract, so classifying it as a backed
         // enum asks the engine for cases it cannot produce.
@@ -681,6 +693,140 @@ final class TypedCollectionsTest extends TestCase
         $viaParameters = JsonSchema::forParameters(new ReflectionFunction($fn)->getParameters());
 
         self::assertSame($viaClass, $viaParameters['properties']['data']);
+    }
+
+    // --- A list of uploaded files. The one non-instantiable element
+    // class #[ListOf] admits, because a repeated file control is a real
+    // multipart shape. ---
+
+    public function test_an_upload_list_compiles_to_a_class_element_with_no_nested_plan(): void
+    {
+        $plan = Hydrator::compilePlan(ListOfUploadedFilesRequest::class);
+
+        self::assertSame([
+            'scalarType' => null,
+            'enumClass' => null,
+            'dtoClass' => UploadedFileInterface::class,
+            // Nothing to hydrate an element from: the interface has no
+            // constructor, and an element is an instance the transport
+            // already built.
+            'nestedPlan' => null,
+            'constraints' => [['class' => FileExtension::class, 'args' => [['png']]]],
+        ], $plan['parameters'][0]['listItem']);
+    }
+
+    public function test_an_upload_list_binds_every_file_and_runs_its_element_rule(): void
+    {
+        $dto = Hydrator::hydrate(ListOfUploadedFilesRequest::class, [
+            'photos' => [self::upload('one.png'), self::upload('two.PNG')],
+        ]);
+
+        self::assertSame(['one.png', 'two.PNG'], array_map(
+            static fn (UploadedFileInterface $file): ?string => $file->getClientFilename(),
+            $dto->photos,
+        ));
+
+        try {
+            Hydrator::hydrate(ListOfUploadedFilesRequest::class, ['photos' => [self::upload('one.gif')]]);
+            self::fail('Expected the element rule to refuse the suffix.');
+        } catch (ValidationException $e) {
+            self::assertSame(['photos', 0], $e->violations[0]->path);
+            self::assertSame('file_extension', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * The status gate comes before the rule. A file that did not arrive
+     * has nothing a rule could describe, and its stream throws — which
+     * is what the double here proves nothing reached for.
+     */
+    public function test_a_failed_element_reports_its_status_and_nothing_else(): void
+    {
+        try {
+            Hydrator::hydrate(ListOfUploadedFilesRequest::class, [
+                'photos' => [self::upload('one.png'), new UnreadableUploadedFile(UPLOAD_ERR_PARTIAL, null, 'x.txt')],
+            ]);
+            self::fail('Expected the failed element to report.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['photos', 1], $e->violations[0]->path);
+            self::assertSame('upload_failed', $e->violations[0]->code);
+            self::assertSame(['error' => UPLOAD_ERR_PARTIAL], $e->violations[0]->parameters);
+        }
+    }
+
+    public function test_an_element_that_is_no_file_at_all_reports_the_declared_interface(): void
+    {
+        try {
+            Hydrator::hydrate(ListOfUploadedFilesRequest::class, ['photos' => ['one.png']]);
+            self::fail('Expected the element to be refused.');
+        } catch (ValidationException $e) {
+            self::assertSame(['photos', 0], $e->violations[0]->path);
+            self::assertSame('not_an_instance', $e->violations[0]->code);
+        }
+    }
+
+    public function test_an_upload_list_publishes_a_binary_string_item(): void
+    {
+        $schema = JsonSchema::forClass(ListOfUploadedFilesRequest::class);
+
+        self::assertSame(
+            ['type' => 'array', 'items' => ['type' => 'string', 'format' => 'binary']],
+            $schema['properties']['photos'],
+        );
+    }
+
+    /**
+     * The same list, reached through a plan that was compiled, written
+     * to a real artifact with var_export(), and required back — the
+     * path a production request actually takes.
+     */
+    public function test_an_upload_list_survives_a_real_cache_write_and_reload(): void
+    {
+        $directory = sys_get_temp_dir() . '/kinetis_upload_list_cache_' . bin2hex(random_bytes(8));
+        $store = new CacheStore($directory);
+
+        try {
+            $store->write(new CompiledCache(
+                http: new HttpCache(
+                    routes: [],
+                    httpBindingPlans: [],
+                    hydrationPlans: [
+                        ListOfUploadedFilesRequest::class => Hydrator::compilePlan(ListOfUploadedFilesRequest::class),
+                    ],
+                    globalMiddleware: [],
+                    openApiMiddleware: [],
+                ),
+                commands: new CommandCache([]),
+                events: new EventCache([]),
+                plugins: new PluginCache([]),
+            ));
+
+            $reloaded = $store->load();
+            self::assertNotNull($reloaded);
+
+            $plan = $reloaded->http->hydrationPlans[ListOfUploadedFilesRequest::class];
+            self::assertSame(UploadedFileInterface::class, $plan['parameters'][0]['listItem']['dtoClass']);
+
+            $dto = Hydrator::hydrate(
+                ListOfUploadedFilesRequest::class,
+                ['photos' => [self::upload('one.png')]],
+                $plan,
+            );
+
+            self::assertSame('one.png', $dto->photos[0]->getClientFilename());
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $entry) {
+                is_dir($entry) ? @rmdir($entry) : @unlink($entry);
+            }
+
+            @rmdir($directory);
+        }
+    }
+
+    private static function upload(string $filename): UploadedFileInterface
+    {
+        return new UploadedFile(Stream::create('bytes'), 5, UPLOAD_ERR_OK, $filename, 'image/png');
     }
 
     /**

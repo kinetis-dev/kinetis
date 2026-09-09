@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Validation;
 
 use Kinetis\Tests\Http\Fixtures\Address;
+use Kinetis\Tests\Fixtures\UnreadableUploadedFile;
 use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
+use Kinetis\Tests\Validation\Fixtures\AvatarRulesRequest;
 use Kinetis\Tests\Http\Fixtures\CreateNoteRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Http\Fixtures\CreateProductRequest;
@@ -49,6 +51,7 @@ use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\InputSource;
+use Kinetis\Validation\Violation;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Stream;
@@ -1272,8 +1275,9 @@ final class HydratorTest extends TestCase
     }
 
     // --- A field typed as a class that cannot be instantiated accepts an
-    // existing instance and nothing else — the UploadedFileInterface a
-    // multipart request carries. ---
+    // existing instance and nothing else. UploadedFileInterface is that
+    // field with a transport status in front of it: the file has to have
+    // arrived before any rule on the field describes it. ---
 
     public function test_compile_plan_records_a_non_instantiable_field_with_no_nested_plan(): void
     {
@@ -1329,6 +1333,53 @@ final class HydratorTest extends TestCase
                 ['avatar' => ['must be a ' . UploadedFileInterface::class . ' instance.']],
                 $e->grouped(),
             );
+        }
+    }
+
+    public function test_an_upload_field_runs_each_of_its_rules_exactly_once(): void
+    {
+        try {
+            Hydrator::hydrate(AvatarRulesRequest::class, [
+                'avatar' => new UploadedFile(Stream::create('a much longer body'), 18, UPLOAD_ERR_OK, 'x.txt', 'text/plain'),
+            ]);
+            self::fail('Expected both rules to report.');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                [['avatar'], ['avatar']],
+                array_map(static fn (Violation $v): array => $v->path, $e->violations),
+            );
+            self::assertSame(
+                ['file_extension', 'file_too_large'],
+                array_map(static fn (Violation $v): string => $v->code, $e->violations),
+            );
+        }
+    }
+
+    public function test_an_upload_field_that_passes_its_rules_binds_the_file(): void
+    {
+        $file = new UploadedFile(Stream::create('bytes'), 5, UPLOAD_ERR_OK, 'a.PNG', 'image/png');
+
+        self::assertSame($file, Hydrator::hydrate(AvatarRulesRequest::class, ['avatar' => $file])->avatar);
+    }
+
+    /**
+     * A file that did not arrive is one fact, reported once. Its rules
+     * never run — the double here throws from every content operation,
+     * and its filename would fail #[FileExtension] if one had.
+     */
+    public function test_a_failed_upload_field_reports_its_status_and_no_rule(): void
+    {
+        try {
+            Hydrator::hydrate(AvatarRulesRequest::class, [
+                'avatar' => new UnreadableUploadedFile(UPLOAD_ERR_INI_SIZE, null, 'x.txt'),
+            ]);
+            self::fail('Expected the failed upload to report.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['avatar'], $e->violations[0]->path);
+            self::assertSame('upload_failed', $e->violations[0]->code);
+            self::assertSame('could not be uploaded.', $e->violations[0]->message);
+            self::assertSame(['error' => UPLOAD_ERR_INI_SIZE], $e->violations[0]->parameters);
         }
     }
 
@@ -1511,7 +1562,7 @@ final class HydratorTest extends TestCase
     public function test_list_of_naming_a_class_that_cannot_be_instantiated_is_rejected(): void
     {
         $this->expectException(UnsupportedDtoDefinitionException::class);
-        $this->expectExceptionMessage('ListOfAnInterfaceRequest::$files');
+        $this->expectExceptionMessage('ListOfAnInterfaceRequest::$streams');
 
         Hydrator::compilePlan(ListOfAnInterfaceRequest::class);
     }

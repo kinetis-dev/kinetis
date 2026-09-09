@@ -8,6 +8,8 @@ use Kinetis\Validation\Constraint;
 use Kinetis\Validation\Constraints\Date;
 use Kinetis\Validation\Constraints\DateTime;
 use Kinetis\Validation\Constraints\Email;
+use Kinetis\Validation\Constraints\FileExtension;
+use Kinetis\Validation\Constraints\FileSize;
 use Kinetis\Validation\Constraints\GreaterThan;
 use Kinetis\Validation\Constraints\GreaterThanOrEqual;
 use Kinetis\Validation\Constraints\In;
@@ -115,6 +117,17 @@ final class ConstraintCatalogueTest extends TestCase
         yield 'date-time, a non-string' => [new DateTime(), null, 'date_time', 'must be an RFC 3339 date-time.', []];
         yield 'min items, non-list' => [new MinItems(1), 'nope', 'not_a_list', 'must be a JSON array.', []];
         yield 'max items, non-list' => [new MaxItems(1), 'nope', 'not_a_list', 'must be a JSON array.', []];
+        // The file family names its own subject the same way: a rule
+        // about an uploaded file, asked about anything else, says so
+        // rather than reporting a bound it never measured.
+        yield 'file size, a non-file' => [new FileSize(10), 'nope', 'not_a_file', 'must be an uploaded file.', []];
+        yield 'file extension, a non-file' => [
+            new FileExtension(['png']),
+            'nope',
+            'not_a_file',
+            'must be an uploaded file.',
+            [],
+        ];
     }
 
     /**
@@ -203,6 +216,12 @@ final class ConstraintCatalogueTest extends TestCase
         // state a rule the request is not checked against.
         yield 'not blank' => [new NotBlank(), []];
         yield 'regex' => [new Regex('/^[A-Z]+$/'), []];
+        // #[FileSize] and #[FileExtension] are runtime-only for the
+        // same reason: both describe a multipart part, which a
+        // `{type: string, format: binary}` schema stands for without
+        // publishing its byte count or the name the client wrote.
+        yield 'file size' => [new FileSize(10), []];
+        yield 'file extension' => [new FileExtension(['png']), []];
     }
 
     /**

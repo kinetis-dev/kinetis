@@ -26,7 +26,8 @@ use PHPUnit\Framework\TestCase;
  * as a published JSON Schema keyword — so a definition with no truthful
  * form in either fails where it is written, not on the request that
  * happens to hit it. #[MinItems]/#[MaxItems]' own bound is in
- * ItemCountTest.
+ * ItemCountTest, and #[FileSize]/#[FileExtension]' own in
+ * FileRulesTest.
  */
 final class ConstraintDefinitionTest extends TestCase
 {

@@ -312,7 +312,7 @@ public function receive(ServerRequestInterface $request): array
 
 A parameter typed `UploadedFileInterface` — no attribute needed, checked
 immediately after `ServerRequestInterface` — is resolved directly from
-the request's uploaded-files bag by parameter name. See
+the request's uploaded files by parameter name. See
 [Multipart/form-data & file uploads](#multipart-form-data-file-uploads)
 below.
 
@@ -323,9 +323,13 @@ use Psr\Http\Message\UploadedFileInterface;
 public function receiveFile(UploadedFileInterface $file): array
 ```
 
-A request without the expected file resolves like a missing `#[Query]`
-value: the parameter's default if it has one, `null` if its type allows
-null, and a `422` (`is required.`) otherwise.
+A request without the expected file — including one whose file control
+the user left empty — resolves like a missing `#[Query]` value: the
+parameter's default if it has one, `null` if its type allows null, and a
+`422` (`is required.`) otherwise. A file that is present runs the
+parameter's own `Constraint` attributes, after its transport status has
+been checked; the parameter itself stays outside the generated OpenAPI
+document.
 
 ### Class-typed parameters: services and request context
 
@@ -475,7 +479,7 @@ knows or cares which content type produced the data it's validating.
 
 An `UploadedFileInterface`-typed parameter doesn't have to sit inside a
 `#[Body]` DTO — a top-level controller parameter of that type, with no
-attribute, is resolved directly from the request's uploaded-files bag by
+attribute, is resolved directly from the request's uploaded files by
 parameter name:
 
 ```{code-block} php
@@ -499,6 +503,189 @@ event body under `kinetis/bref-adapter`'s `BrefLambdaAdapter`, and the
 the uploaded-files bag from them through `Kinetis\Http\Form`. There is
 one parse, under every runtime; see {doc}`runtime-adapters`.
 ```
+
+### An empty file control is an omitted field
+
+A browser submits a file input the user left alone as a *present* part
+carrying `UPLOAD_ERR_NO_FILE`, not as nothing at all. Binding reads that
+as ordinary omission, exactly as it reads a text field the form never
+sent:
+
+- a defaultless field or parameter reports `is required.`;
+- one with a default takes its default;
+- a nullable one binds `null`;
+- an `UploadedFileInterface|Absent` DTO field binds `Absent::Value`, so
+  an update DTO can tell "no file was chosen" from "this file was
+  cleared". See [Required, optional, and absent
+  fields](#required-optional-and-absent-fields).
+
+The same pruning runs at every depth. A branch left with nothing in it
+is omitted in turn, so a repeated control whose every part was empty is
+an absent field rather than a supplied empty list — `[]` is a list the
+client sent, which a `#[MinItems]` rule would then measure.
+
+This is what *binding* reads. The PSR-7 request keeps the bag its
+runtime adapter built, `UPLOAD_ERR_NO_FILE` parts included, so
+middleware and a `ServerRequestInterface`-typed parameter still see
+exactly what arrived.
+
+### Nested and repeated file controls
+
+Files nest and repeat under the same bracket convention text fields do,
+and the two trees are merged into one set of fields before the DTO is
+hydrated. `profile[name]` arrives as text and `profile[avatar]` as a
+file; both hydrate the same nested DTO:
+
+```{code-block} php
+final readonly class ProfileDetails
+{
+    public function __construct(
+        public string $name,
+        public UploadedFileInterface $avatar,
+    ) {}
+}
+
+final readonly class ProfileUploadRequest
+{
+    public function __construct(
+        public ProfileDetails $profile,
+    ) {}
+}
+```
+
+At each key: two arrays merge, and anything else leaves the parsed text
+in place. A form naming one key as both a text value and a file has
+contradicted itself, so the text stays and the field reports the
+ordinary declared-type violation any other wrong value would get. A JSON
+body never consumes uploaded files at all — a JSON document names every
+value it sends.
+
+A repeated control is a `#[ListOf]` field naming
+`UploadedFileInterface`, the one interface `#[ListOf]` admits:
+
+```{code-block} php
+use Kinetis\Validation\Constraints\FileExtension;
+use Kinetis\Validation\{Each, ListOf};
+
+final readonly class PhotoUploadRequest
+{
+    public function __construct(
+        #[ListOf(UploadedFileInterface::class)]
+        #[Each(FileExtension::class, ['png'])]
+        public array $photos,
+    ) {}
+}
+```
+
+A *flat* repeated control closes its indices back up after empty parts
+are dropped: `photos[]` sent as file, empty, file binds two files at
+`0` and `1`. An index there is nothing but position among files, so the
+elements a handler receives are the files that arrived, in order, with
+no holes.
+
+A list of *nested DTOs* keeps its positions instead, because there an
+index is the one the parsed text names too:
+
+```{code-block} php
+final readonly class GalleryEntry
+{
+    public function __construct(
+        public string $caption,
+        public ?UploadedFileInterface $image = null,
+    ) {}
+}
+
+final readonly class GalleryUploadRequest
+{
+    public function __construct(
+        #[ListOf(GalleryEntry::class)]
+        public array $entries,
+    ) {}
+}
+```
+
+Three captioned entries whose middle `entries[1][image]` control was
+left empty bind the second entry without an image and leave
+`entries[2][image]` on the third entry, where the client put it.
+Closing those indices up would merge the third file into the second
+entry's caption, and an optional field would hydrate that misbinding
+without a violation. Map-shaped branches keep their keys as well, which
+are field names a DTO declares rather than positions.
+
+### A file that did not arrive
+
+Every typed route into an uploaded file — a DTO field, a `#[ListOf]`
+element, a direct parameter — checks the part's PSR-7 status before
+anything else looks at it. A status other than `UPLOAD_ERR_OK` is one
+violation at the field's own path:
+
+```{code-block} json
+{
+    "path": ["photos", 1],
+    "code": "upload_failed",
+    "message": "could not be uploaded.",
+    "parameters": {"error": 3}
+}
+```
+
+`parameters.error` is the raw `UPLOAD_ERR_*` constant, for a log to
+read. No rule on the field runs, and nothing opens the stream — a failed
+part has no readable stream, so a rule that ran would raise a `500` for
+what is a client-visible transfer failure. `UPLOAD_ERR_NO_FILE` never
+reaches this point: it is already omission, above.
+
+### Rules about an uploaded file
+
+Two built-in rules describe a file, on a DTO field, on a `#[Each]` of an
+upload list, or on a direct controller parameter:
+
+```{code-block} php
+use Kinetis\Validation\Constraints\{FileExtension, FileSize};
+
+#[Post('/scans')]
+public function scan(
+    #[FileSize(maxBytes: 5_000_000, minBytes: 1)]
+    #[FileExtension(['png', 'jpg'])]
+    UploadedFileInterface $file,
+): array
+```
+
+`#[FileSize]` bounds the size the part itself reported, inclusive on
+both ends. PSR-7 permits a null size, and a bound cannot be checked
+against a size that does not exist, so such a file fails closed with
+`file_size_unknown` rather than passing unchecked.
+
+`#[FileExtension]` is a policy about the *client-supplied filename*, an
+untrusted label the server has not verified. It is not a MIME type and
+it is not sniffed content: a name ending in `.png` says nothing about
+the bytes behind it. A suffix is written without its leading dot and may
+contain dots of its own, so `png` and `tar.gz` are both declarable, and
+each matches the end of the name after the dot that separates it —
+`archive.tar.gz` satisfies `gz` and `tar.gz` alike, while a name with no
+separating dot satisfies neither. Matching is ASCII case-insensitive, so
+`PHOTO.PNG` satisfies `png`. The name never appears in the violation:
+the message and its `choices` parameter carry the declared suffixes,
+which the server wrote.
+
+Neither rule opens the file, and Kinetis validates no upload's contents
+anywhere: content checks belong where the content is actually read.
+
+### Uploads in the generated document
+
+An `UploadedFileInterface` field is published as
+`{"type": "string", "format": "binary"}` — OpenAPI's own convention for
+a file inside a multipart-serialized schema — and a `#[ListOf]` of them
+as an `array` of that item. A `#[Body]` DTO that declares an upload
+anywhere in it, on a nested DTO or a list element included, advertises
+`multipart/form-data` **alone**: only a multipart body can carry a file,
+and a JSON or urlencoded entry beside it would describe a request that
+cannot hydrate the DTO it names. An upload-free DTO keeps all three
+encodings it genuinely accepts.
+
+A direct `UploadedFileInterface` *parameter* is outside generated input
+metadata entirely — it is not a request body, and none is synthesized
+for it. An application that needs its upload input documented declares
+the file as a field of a `#[Body]` DTO.
 
 ## Returning a status other than the route's default
 
@@ -706,11 +893,14 @@ to a client reading the generated document.
 | `#[Ip]` | `filter_var($value, FILTER_VALIDATE_IP)` | *(no arguments)* | `ip` | `anyOf` (`format: ipv4`, `format: ipv6`) |
 | `#[Date]` | `YYYY-MM-DD` naming a real calendar day | *(no arguments)* | `date` | `format: date` |
 | `#[DateTime]` | an RFC 3339 `date-time` | *(no arguments)* | `date_time` | `format: date-time` |
+| `#[FileSize($max, $min)]` | an uploaded file's reported size, inclusive on both bounds | `int $maxBytes, int $minBytes = 0` | `file_too_large`, `file_too_small` | *(none)* |
+| `#[FileExtension($extensions)]` | an uploaded file's client filename ends in one of them | `array $extensions` | `file_extension` | *(none)* |
 
 `#[GreaterThan]`, `#[LessThan]`, `#[GreaterThanOrEqual]` and
 `#[LessThanOrEqual]` report `not_a_number`, `#[MultipleOf]` reports
-`not_an_integer`, and `#[MinItems]`/`#[MaxItems]` report `not_a_list`,
-for a value of the wrong shape entirely. Through a request that never
+`not_an_integer`, `#[MinItems]`/`#[MaxItems]` report `not_a_list`, and
+`#[FileSize]`/`#[FileExtension]` report `not_a_file`, for a value of the
+wrong shape entirely. Through a request that never
 happens — the declared type is checked before any rule runs — but a rule
 invoked directly still answers rather than counting something with no
 count. The string rules have no such second code: `#[Email]`, `#[Url]`,
@@ -754,7 +944,15 @@ different dialect from the delimited PHP PCRE `#[Regex]` takes, and no
 keyword carries `#[NotBlank]`'s trim-aware blank-string semantics —
 `minLength: 1` rejects the empty string, not `"   "`. For those two a
 generated OpenAPI or MCP schema is broader than the check the request
-actually gets. Every other constraint in the table maps onto a keyword; see
+actually gets.
+
+`#[FileSize]` and `#[FileExtension]` publish nothing for a different
+reason: both describe a multipart part, which the document represents as
+`{"type": "string", "format": "binary"}`. JSON Schema's string keywords
+measure that string's own characters and say nothing about the bytes of
+the part or the name the client attached to it, so publishing one would
+state a rule the request is not checked against. Every other constraint
+in the table maps onto a keyword; see
 [Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
 
 A rule's constructor arguments reach a client twice — as a violation's
@@ -767,9 +965,12 @@ bounds; a `#[MultipleOf]` divisor below 1, since zero divides nothing and
 a negative divisor names the same multiples as its absolute value while
 publishing a `multipleOf` JSON Schema does not allow; an `#[In]` or
 `#[NotIn]` set that is empty, keyed, or carries a non-scalar or
-non-finite member; and a `#[Regex]` pattern PCRE cannot compile, which
-left to run would match nothing and reject every value the field ever
-receives.
+non-finite member; a `#[FileSize]` with a negative bound or a minimum
+above its maximum; a `#[FileExtension]` set that is empty or keyed, or
+whose members are not alphanumeric suffixes written without a leading
+dot (`png`, `tar.gz`); and a `#[Regex]` pattern PCRE cannot compile,
+which left to run would match nothing and reject every value the field
+ever receives.
 
 Two rules on the same field may not contribute the *same* keyword.
 `#[MinLength(3)] #[MinLength(5)]` states two different minimum lengths
@@ -1059,12 +1260,14 @@ reaching the identical DTO: `describeRequestBody()`'s advertised
 content types, `application/json` included, always apply, on the exact
 same route, based purely on which the client actually sent.
 
-Every `#[Body]`-reachable route also advertises
-`application/x-www-form-urlencoded` and `multipart/form-data` in its
-generated `requestBody` alongside `application/json` — the identical
-schema under all three, since `Dispatcher` hydrates the same DTO class
-regardless of which the client sent; the wire representation is what
-differs, laid out below.
+Every `#[Body]`-reachable route whose DTO declares no uploaded file also
+advertises `application/x-www-form-urlencoded` and `multipart/form-data`
+in its generated `requestBody` alongside `application/json` — the
+identical schema under all three, since `Dispatcher` hydrates the same
+DTO class regardless of which the client sent; the wire representation is
+what differs, laid out below. A DTO that *does* declare an upload
+advertises `multipart/form-data` alone, since neither of the other two
+can carry a file.
 
 - Every field is read under `InputSource::Text`, the same vocabulary
   `#[Query]`/path values use, so `bool` accepts both the `"1"`/`"0"` and
@@ -1086,9 +1289,9 @@ differs, laid out below.
   shape comes directly from PHP's parsed-body array, unchanged.
 - An `UploadedFileInterface`-typed field is described as `{type: string,
   format: binary}` — OpenAPI's own real convention for a file upload
-  inside a multipart-serialized schema — genuinely satisfiable only via
-  `multipart/form-data`, the one content type of the three that can
-  actually carry a file.
+  inside a multipart-serialized schema. It is satisfiable only via
+  `multipart/form-data`, which is why a DTO carrying one advertises that
+  content type alone.
 
 Missing and explicitly-null values get the same treatment, whether or not
 the field carries any constraint attributes: a `#[Body]` DTO field whose
@@ -1427,9 +1630,11 @@ A class-typed field accepts exactly two shapes and nothing else: an
 object-shaped value, hydrated into the declared class; or a value that is
 already an instance of that class, taken as given — most notably an
 `UploadedFileInterface` merged in for a
-[multipart](#multipart-form-data-file-uploads) field. A scalar, a `null`
-for a non-nullable field, or an object of some other class is a `422`
-at that field's own path, never a raw `TypeError` from the constructor.
+[multipart](#multipart-form-data-file-uploads) field, which is
+additionally checked for the transport status described there. A scalar,
+a `null` for a non-nullable field, or an object of some other class is a
+`422` at that field's own path, never a raw `TypeError` from the
+constructor.
 
 Object-shaped means a JSON object (`{...}`, including `{}`) or — for a
 direct `Hydrator::hydrate()` call or a form-encoded body, neither of which
@@ -1527,7 +1732,7 @@ its own either.
 
 A constructor parameter typed `array` and carrying `#[ListOf]` declares
 what its elements are — `array` itself carries no element type for
-Kinetis to reflect on. Three families are admitted, and the attribute
+Kinetis to reflect on. Four families are admitted, and the attribute
 names one of them:
 
 ```{code-block} php
@@ -1554,6 +1759,10 @@ final readonly class PublishRequest
   [backed enum field](#backed-enum-fields) does.
 - An **instantiable class** hydrates each object-shaped element into
   that class, or takes an element already an instance of it.
+- **`Psr\Http\Message\UploadedFileInterface`**, and no other
+  interface, takes each element as the uploaded file it already is —
+  the repeated file control a `photos[]` form sends. See
+  [Nested and repeated file controls](#nested-and-repeated-file-controls).
 
 The field itself must be a real JSON array; a JSON object for it is the
 same `422` a plain `array` field gets. No element is nullable — a list
@@ -1620,9 +1829,9 @@ one request reports every bad element rather than only the first.
 
 #### A rule for every element
 
-`#[Each]` declares a rule that runs against each element of a scalar or
-backed-enum list, rather than against the list itself. It is
-repeatable, and each occurrence names a `Constraint` class plus the
+`#[Each]` declares a rule that runs against each element of a scalar,
+backed-enum or uploaded-file list, rather than against the list itself.
+It is repeatable, and each occurrence names a `Constraint` class plus the
 arguments that rule's own constructor takes — positional or named:
 
 ```{code-block} php
@@ -1767,17 +1976,19 @@ in development, rather than as a `TypeError` on a live one:
 - A builtin type outside the supported set — see "Builtin types outside
   the supported set" above.
 - `#[ListOf]` on a parameter that isn't typed `array`, or naming an
-  element type outside the three families
+  element type outside the four families
   [it admits](#typed-collections) — another builtin, an empty name, a
-  name no class answers to, an interface, an abstract class, a unit
-  enum.
+  name no class answers to, an interface other than
+  `UploadedFileInterface`, an abstract class, a unit enum.
 - A backed enum with no cases, named by a field or by a `#[ListOf]`. No
   value can name a case that does not exist, and JSON Schema's `enum`
   may not be empty, so such a field could only publish a schema it
   rejects every request against.
 - `#[Each]` on a parameter that declares no `#[ListOf]`, on a list of
   DTOs — whose elements carry their own fields' rules — or naming a
-  class that does not implement `Constraint`.
+  class that does not implement `Constraint`. An upload list *may* carry
+  it: an uploaded file has no fields of its own on which a rule could
+  otherwise be written.
 - `#[ObjectMap]` on a parameter that isn't typed `array`, or on the same
   parameter as `#[ListOf]`.
 - A `#[Body]` DTO class that cannot itself be instantiated.
@@ -1789,9 +2000,10 @@ The generated OpenAPI document and MCP tool input schemas hold the same
 line: a class-typed field whose class cannot be instantiated has no
 truthful object schema, so schema generation refuses it rather than
 emitting a bare `{"type": "object"}` no request could satisfy.
-`UploadedFileInterface` is the one such type both sides accept — it is
-described as `{"type": "string", "format": "binary"}` and supplied by
-`Dispatcher` from the request's uploaded-files bag.
+`UploadedFileInterface` is the one such type both sides accept, as a
+field and as a `#[ListOf]` element alike — it is described as
+`{"type": "string", "format": "binary"}` and supplied by `Dispatcher`
+from the request's normalized uploaded files.
 
 ### Default values a plan captures
 

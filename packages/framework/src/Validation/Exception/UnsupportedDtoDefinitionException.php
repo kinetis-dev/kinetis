@@ -69,8 +69,10 @@ final class UnsupportedDtoDefinitionException extends RuntimeException
      * name, a builtin with no element vocabulary (`array`, `iterable`,
      * `mixed`, ...), a name no class answers to, or a class nothing on
      * the wire can produce — an interface, an abstract class, a unit
-     * enum. `Psr\Http\Message\UploadedFileInterface` falls here too: a
-     * list of uploads has no wire representation Kinetis hydrates.
+     * enum. `Psr\Http\Message\UploadedFileInterface` is the one
+     * interface that does not fall here: a repeated file control is a
+     * real multipart shape, so a list of uploads is a real element
+     * domain.
      */
     public static function unsupportedListItemType(string $class, string $parameter, string $itemType): self
     {
@@ -78,7 +80,8 @@ final class UnsupportedDtoDefinitionException extends RuntimeException
             $class,
             $parameter,
             "#[ListOf(\"{$itemType}\")] names a type no element can have. A list item is string, int, "
-            . 'float, bool, a backed enum, or a class that can be instantiated.',
+            . 'float, bool, a backed enum, a class that can be instantiated, or '
+            . 'Psr\\Http\\Message\\UploadedFileInterface.',
         );
     }
 
@@ -113,8 +116,8 @@ final class UnsupportedDtoDefinitionException extends RuntimeException
         return self::forParameter(
             $class,
             $parameter,
-            "#[Each] applies to scalar and backed-enum elements, and this list holds {$itemClass} objects. "
-            . 'Declare the rule on the field of that class it describes.',
+            '#[Each] applies to scalar, backed-enum and uploaded-file elements, and this list holds '
+            . "{$itemClass} objects. Declare the rule on the field of that class it describes.",
         );
     }
 
