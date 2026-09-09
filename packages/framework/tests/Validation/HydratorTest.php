@@ -48,6 +48,7 @@ use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
+use Kinetis\Validation\InputSource;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Stream;
@@ -348,8 +349,8 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertCount(1, $e->violations);
             self::assertSame(['shippingAddress', 'street'], $e->violations[0]->path);
-            self::assertSame('constraint', $e->violations[0]->code);
-            self::assertSame(['constraint' => MinLength::class], $e->violations[0]->parameters);
+            self::assertSame('min_length', $e->violations[0]->code);
+            self::assertSame(['length' => 3], $e->violations[0]->parameters);
         }
     }
 
@@ -991,10 +992,10 @@ final class HydratorTest extends TestCase
     }
 
     // Hydrator::SUPPORTED_BUILTIN_TYPES is the closed set a request value
-    // may be bound to. typeMismatchViolation() is the one boundary shared by
-    // #[Body] fields here, #[Query]/path parameters via Dispatcher, and MCP
-    // tool arguments via McpDispatcher — proving it here proves it
-    // everywhere.
+    // may be bound to. resolveScalar() is the one path shared by #[Body]
+    // fields here, #[Query]/path parameters via Dispatcher, and MCP tool
+    // arguments via McpDispatcher — proving it here proves it everywhere.
+    // Which spellings each source admits is InputSourceTest's.
 
     public function test_iterable_gets_the_identical_array_check_as_plain_array(): void
     {
@@ -1025,10 +1026,12 @@ final class HydratorTest extends TestCase
 
     public function test_mixed_accepts_any_non_null_value(): void
     {
-        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', 'anything'));
-        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', 42));
-        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', ['a', 'b']));
-        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', true));
+        foreach (['anything', 42, ['a', 'b'], true] as $value) {
+            self::assertSame(
+                [$value, []],
+                Hydrator::resolveScalar(InputSource::Json, ['field'], $value, 'mixed', allowsNull: false),
+            );
+        }
     }
 
     /**

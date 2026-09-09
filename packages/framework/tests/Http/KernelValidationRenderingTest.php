@@ -14,8 +14,6 @@ use Kinetis\Tests\Http\Fixtures\RedirectingValidationRenderer;
 use Kinetis\Tests\Http\Fixtures\RerenderingValidationRenderer;
 use Kinetis\Tests\Http\Fixtures\ThrowingValidationRenderer;
 use Kinetis\Tests\Http\Fixtures\ValidationRenderingController;
-use Kinetis\Validation\Constraints\Email;
-use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Exception\ValidationException;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
@@ -77,15 +75,15 @@ final class KernelValidationRenderingTest extends TestCase
             'errors' => [
                 [
                     'path' => ['name'],
-                    'code' => 'constraint',
+                    'code' => 'min_length',
                     'message' => 'must be at least 3 characters.',
-                    'parameters' => ['constraint' => MinLength::class],
+                    'parameters' => ['length' => 3],
                 ],
                 [
                     'path' => ['email'],
-                    'code' => 'constraint',
+                    'code' => 'email',
                     'message' => 'must be a valid email address.',
-                    'parameters' => ['constraint' => Email::class],
+                    'parameters' => [],
                 ],
             ],
         ], json_decode((string) $response->getBody(), true, flags: JSON_THROW_ON_ERROR));
@@ -137,7 +135,7 @@ final class KernelValidationRenderingTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('text/html; charset=utf-8', $response->getHeaderLine('Content-Type'));
         self::assertSame(
-            '<ul><li>name: constraint</li><li>email: constraint</li></ul>',
+            '<ul><li>name: min_length</li><li>email: email</li></ul>',
             (string) $response->getBody(),
         );
     }

@@ -8,7 +8,9 @@ use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\AvatarUploadRequest;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
+use Kinetis\Tests\Validation\Fixtures\ApplicationRulesRequest;
 use Kinetis\Tests\Validation\Fixtures\BoundedListsRequest;
+use Kinetis\Tests\Validation\Fixtures\DuplicateKeywordRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
@@ -19,7 +21,9 @@ use Kinetis\Validation\Constraints\Email;
 use Kinetis\Validation\Constraints\GreaterThan;
 use Kinetis\Validation\Constraints\In;
 use Kinetis\Validation\Constraints\LessThan;
+use Kinetis\Validation\Constraints\MaxItems;
 use Kinetis\Validation\Constraints\MaxLength;
+use Kinetis\Validation\Constraints\MinItems;
 use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Constraints\NotBlank;
 use Kinetis\Validation\Constraints\Regex;
@@ -191,26 +195,81 @@ final class JsonSchemaTest extends TestCase
         self::assertSame(['$ref' => '#/components/schemas/' . OrderItem::class], $itemsSchema['items']);
     }
 
-    public function test_maps_each_constraint_to_its_json_schema_keyword(): void
+    /**
+     * Each rule's keywords reach a parameter's schema through the same
+     * #[Attribute] -> {class, args} descriptor reading Hydrator
+     * validates through, so this is the published document, not a
+     * separate mapping table that could drift from it. Each rule's own
+     * schema() answer is asserted in ConstraintCatalogueTest.
+     */
+    public function test_each_constraint_merges_its_own_keywords_into_the_parameters_schema(): void
     {
-        self::assertSame(['format' => 'email'], JsonSchema::forConstraint(new Email()));
-        self::assertSame(['minLength' => 5], JsonSchema::forConstraint(new MinLength(5)));
-        self::assertSame(['maxLength' => 20], JsonSchema::forConstraint(new MaxLength(20)));
-        self::assertSame(['exclusiveMinimum' => 0], JsonSchema::forConstraint(new GreaterThan(0)));
-        self::assertSame(['exclusiveMaximum' => 120], JsonSchema::forConstraint(new LessThan(120)));
-        self::assertSame(['enum' => ['admin', 'member']], JsonSchema::forConstraint(new In(['admin', 'member'])));
-        self::assertSame(['format' => 'uri'], JsonSchema::forConstraint(new Url()));
-        self::assertSame(['format' => 'uuid'], JsonSchema::forConstraint(new Uuid()));
+        $fn = static function (
+            #[Email] string $email,
+            #[MinLength(5)] string $atLeast,
+            #[MaxLength(20)] string $atMost,
+            #[GreaterThan(0)] int $above,
+            #[LessThan(120)] int $below,
+            #[In(['admin', 'member'])] string $role,
+            #[Url] string $link,
+            #[Uuid] string $id,
+            #[MinItems(1)] array $some,
+            #[MaxItems(3)] array $few,
+        ) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        $expected = [
+            ['type' => 'string', 'format' => 'email'],
+            ['type' => 'string', 'minLength' => 5],
+            ['type' => 'string', 'maxLength' => 20],
+            ['type' => 'integer', 'exclusiveMinimum' => 0],
+            ['type' => 'integer', 'exclusiveMaximum' => 120],
+            ['type' => 'string', 'enum' => ['admin', 'member']],
+            ['type' => 'string', 'format' => 'uri'],
+            ['type' => 'string', 'format' => 'uuid'],
+            ['type' => 'array', 'minItems' => 1],
+            ['type' => 'array', 'maxItems' => 3],
+        ];
+
+        foreach ($expected as $index => $schema) {
+            self::assertSame($schema, JsonSchema::schemaForScalar($params[$index], $params[$index]->getType()));
+        }
     }
 
-    public function test_not_blank_has_no_distinct_json_schema_keyword(): void
+    public function test_a_runtime_only_constraint_leaves_the_schema_untouched(): void
     {
-        self::assertSame([], JsonSchema::forConstraint(new NotBlank()));
+        $fn = static function (#[NotBlank] string $name, #[Regex('/^[A-Z]+$/')] string $code) {};
+        $params = (new ReflectionFunction($fn))->getParameters();
+
+        self::assertSame(['type' => 'string'], JsonSchema::schemaForScalar($params[0], $params[0]->getType()));
+        self::assertSame(['type' => 'string'], JsonSchema::schemaForScalar($params[1], $params[1]->getType()));
     }
 
-    public function test_regex_contributes_no_json_schema_keyword(): void
+    /**
+     * An application constraint describes itself in the published
+     * document with nothing registered anywhere — the same reading that
+     * finds #[Email] finds it, and the keywords come from the rule.
+     */
+    public function test_an_application_constraint_publishes_its_own_keywords(): void
     {
-        self::assertSame([], JsonSchema::forConstraint(new Regex('/^[A-Z]+$/')));
+        $schema = JsonSchema::forClass(ApplicationRulesRequest::class);
+
+        // #[Uppercase]'s `pattern` merged in; #[NotReserved], which has
+        // no keyword to state, added nothing.
+        self::assertSame(['type' => 'string', 'pattern' => '^[A-Z]+$'], $schema['properties']['code']);
+    }
+
+    /**
+     * Declaration order must never silently decide which of two bounds
+     * a client is told about: one of them would then be a rule the
+     * request is checked against but the document never mentions.
+     */
+    public function test_two_rules_claiming_the_same_keyword_are_refused(): void
+    {
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('both contribute the JSON Schema keyword "minLength"');
+
+        JsonSchema::forClass(DuplicateKeywordRequest::class);
     }
 
     public function test_a_regex_leaves_the_rest_of_a_parameters_schema_intact(): void

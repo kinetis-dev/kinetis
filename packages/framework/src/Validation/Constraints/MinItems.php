@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Validation\Constraints;
 
 use Kinetis\Validation\Constraint;
+use Kinetis\Validation\Violation;
 use Attribute;
 use InvalidArgumentException;
 
@@ -26,21 +27,27 @@ final readonly class MinItems implements Constraint
     }
 
     #[\Override]
-    public function validate(mixed $value): ?string
+    public function validate(mixed $value): ?Violation
     {
         if (!is_array($value) || !array_is_list($value)) {
-            return 'must be a JSON array.';
+            return new Violation([], 'not_a_list', 'must be a JSON array.');
         }
 
         if (count($value) < $this->count) {
-            return "must contain at least {$this->count} items.";
+            return new Violation(
+                [],
+                'min_items',
+                "must contain at least {$this->count} items.",
+                ['count' => $this->count],
+            );
         }
 
         return null;
     }
 
-    public function count(): int
+    #[\Override]
+    public function schema(): array
     {
-        return $this->count;
+        return ['minItems' => $this->count];
     }
 }

@@ -96,7 +96,7 @@ final class TestResponseTest extends TestCase
      */
     public function test_the_root_path_is_assertable_with_no_arguments(): void
     {
-        $this->rendered(new Violation([], 'constraint', 'must supply at least one field.'))
+        $this->rendered(new Violation([], 'incomplete_update', 'must supply at least one field.'))
             ->assertValidationError();
     }
 
@@ -107,7 +107,7 @@ final class TestResponseTest extends TestCase
      */
     public function test_the_root_path_and_a_named_path_never_satisfy_each_other(): void
     {
-        $root = $this->rendered(new Violation([], 'constraint', 'must supply at least one field.'));
+        $root = $this->rendered(new Violation([], 'incomplete_update', 'must supply at least one field.'));
         $named = $this->rendered(new Violation(['items', 0, 'sku'], 'required', 'is required.'));
 
         self::assertFails(fn () => $root->assertValidationError('items', 0, 'sku'));

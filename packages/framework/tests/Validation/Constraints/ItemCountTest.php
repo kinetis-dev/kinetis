@@ -10,10 +10,11 @@ use Kinetis\Validation\Constraints\MinItems;
 use PHPUnit\Framework\TestCase;
 
 /**
- * #[MinItems]/#[MaxItems]' own contract, invoked directly — the
- * boundaries, the constructor bound, and what a value Hydrator would
- * never have let through gets back. Their behavior on a real DTO is in
- * HydratorTest, and their JSON Schema keywords in JsonSchemaTest.
+ * #[MinItems]/#[MaxItems]' own boundaries, invoked directly — where the
+ * bound flips, what the constructor refuses, and what a value Hydrator
+ * would never have let through gets back. Their codes, parameters and
+ * schema keywords are in ConstraintCatalogueTest, and their behavior on
+ * a real DTO in HydratorTest.
  */
 final class ItemCountTest extends TestCase
 {
@@ -25,7 +26,7 @@ final class ItemCountTest extends TestCase
 
     public function test_min_items_rejects_a_list_below_the_bound(): void
     {
-        self::assertSame('must contain at least 2 items.', new MinItems(2)->validate(['a']));
+        self::assertSame('must contain at least 2 items.', new MinItems(2)->validate(['a'])?->message);
     }
 
     public function test_max_items_accepts_a_list_at_or_below_the_bound(): void
@@ -36,7 +37,7 @@ final class ItemCountTest extends TestCase
 
     public function test_max_items_rejects_a_list_above_the_bound(): void
     {
-        self::assertSame('must contain at most 2 items.', new MaxItems(2)->validate(['a', 'b', 'c']));
+        self::assertSame('must contain at most 2 items.', new MaxItems(2)->validate(['a', 'b', 'c'])?->message);
     }
 
     /**
@@ -46,7 +47,7 @@ final class ItemCountTest extends TestCase
     public function test_a_zero_bound_is_enforced_as_written(): void
     {
         self::assertNull(new MaxItems(0)->validate([]));
-        self::assertSame('must contain at most 0 items.', new MaxItems(0)->validate(['a']));
+        self::assertSame('must contain at most 0 items.', new MaxItems(0)->validate(['a'])?->message);
         self::assertNull(new MinItems(0)->validate([]));
     }
 
@@ -81,10 +82,15 @@ final class ItemCountTest extends TestCase
      */
     public function test_a_non_list_value_gets_a_list_shape_message(): void
     {
-        self::assertSame('must be a JSON array.', new MinItems(1)->validate('nope'));
-        self::assertSame('must be a JSON array.', new MaxItems(1)->validate('nope'));
-        self::assertSame('must be a JSON array.', new MinItems(1)->validate(['key' => 'value']));
-        self::assertSame('must be a JSON array.', new MaxItems(1)->validate(['key' => 'value']));
-        self::assertSame('must be a JSON array.', new MinItems(0)->validate(null));
+        foreach ([new MinItems(1), new MaxItems(1)] as $constraint) {
+            foreach (['nope', ['key' => 'value']] as $value) {
+                $violation = $constraint->validate($value);
+
+                self::assertSame('not_a_list', $violation?->code);
+                self::assertSame('must be a JSON array.', $violation?->message);
+            }
+        }
+
+        self::assertSame('must be a JSON array.', new MinItems(0)->validate(null)?->message);
     }
 }

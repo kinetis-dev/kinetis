@@ -67,9 +67,16 @@ there's no `#[Body]`/`#[Query]` distinction to make the way HTTP routing
 needs one (see {doc}`routing-validation`) — every parameter is resolved
 from that object the same way. A class-typed parameter (like
 `CreateUserRequest` above) is validated using the same constraint
-attributes an HTTP request body uses; a failed validation becomes a
-normal tool result with `isError: true`, not a transport-level error —
-more on that distinction [below](#error-handling).
+attributes an HTTP request body uses, and so is a scalar one; a failed
+validation becomes a normal tool result with `isError: true`, not a
+transport-level error — more on that distinction [below](#error-handling).
+
+A tool call's arguments are a decoded JSON object, so they are read under
+`Kinetis\Validation\InputSource::Json` — the same vocabulary a JSON HTTP
+body is read under, and the one this tool's own `inputSchema` promises. A
+parameter typed `int` takes the JSON number `42`, not the JSON string
+`"42"`; see {doc}`routing-validation`'s "Scalar type checking" for the
+full table.
 
 The tool's JSON Schema input is built automatically from the method's
 parameters, so `#[Email]`/`#[MinLength]`/etc. describe an MCP tool's
@@ -492,7 +499,7 @@ in its content, **not** a JSON-RPC transport error:
     "jsonrpc": "2.0",
     "id": 1,
     "result": {
-        "content": [{"type": "text", "text": "{\"errors\":[{\"path\":[\"email\"],\"code\":\"constraint\",\"message\":\"must be a valid email address.\",\"parameters\":{\"constraint\":\"Kinetis\\\\Validation\\\\Constraints\\\\Email\"}}]}"}],
+        "content": [{"type": "text", "text": "{\"errors\":[{\"path\":[\"email\"],\"code\":\"email\",\"message\":\"must be a valid email address.\",\"parameters\":{}}]}"}],
         "isError": true
     }
 }

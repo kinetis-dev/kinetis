@@ -14,7 +14,7 @@ final class ValidationExceptionTest extends TestCase
     public function test_it_carries_its_violations_in_the_order_they_were_raised(): void
     {
         $name = new Violation(['name'], 'required', 'is required.');
-        $email = new Violation(['email'], 'constraint', 'must be a valid email address.');
+        $email = new Violation(['email'], 'email', 'must be a valid email address.');
 
         $exception = ValidationException::fromViolations([$name, $email]);
 
@@ -50,7 +50,7 @@ final class ValidationExceptionTest extends TestCase
     {
         $exception = ValidationException::fromViolations([
             new Violation(['shippingAddress', 'street'], 'required', 'is required.'),
-            new Violation(['items', 1, 'quantity'], 'constraint', 'must be greater than 0.'),
+            new Violation(['items', 1, 'quantity'], 'greater_than', 'must be greater than 0.'),
         ]);
 
         self::assertSame([
@@ -62,9 +62,9 @@ final class ValidationExceptionTest extends TestCase
     public function test_grouped_collects_every_message_raised_against_one_path(): void
     {
         $exception = ValidationException::fromViolations([
-            new Violation(['name'], 'constraint', 'must be at least 3 characters.'),
-            new Violation(['email'], 'constraint', 'must be a valid email address.'),
-            new Violation(['name'], 'constraint', 'must match the expected format.'),
+            new Violation(['name'], 'min_length', 'must be at least 3 characters.'),
+            new Violation(['email'], 'email', 'must be a valid email address.'),
+            new Violation(['name'], 'regex', 'must match the expected format.'),
         ]);
 
         self::assertSame([
@@ -81,7 +81,7 @@ final class ValidationExceptionTest extends TestCase
     public function test_grouped_spells_the_root_path_as_a_dollar_sign(): void
     {
         $exception = ValidationException::fromViolations([
-            new Violation([], 'constraint', 'must supply at least one field.'),
+            new Violation([], 'incomplete_update', 'must supply at least one field.'),
             new Violation(['name'], 'required', 'is required.'),
         ]);
 

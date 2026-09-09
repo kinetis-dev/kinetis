@@ -23,9 +23,9 @@ use Psr\Http\Message\ServerRequestInterface;
  *     "errors": [
  *         {
  *             "path": ["items", 0, "quantity"],
- *             "code": "constraint",
+ *             "code": "greater_than",
  *             "message": "must be greater than 0.",
- *             "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\GreaterThan"}
+ *             "parameters": {"threshold": 0}
  *         }
  *     ]
  * }

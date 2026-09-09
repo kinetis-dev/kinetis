@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Validation\Constraints;
 
 use Kinetis\Validation\Constraint;
+use Kinetis\Validation\Violation;
 use Attribute;
 
 #[Attribute(Attribute::TARGET_PARAMETER | Attribute::TARGET_PROPERTY)]
@@ -15,21 +16,27 @@ final readonly class GreaterThan implements Constraint
     ) {}
 
     #[\Override]
-    public function validate(mixed $value): ?string
+    public function validate(mixed $value): ?Violation
     {
         if (!is_int($value) && !is_float($value)) {
-            return 'must be a number.';
+            return new Violation([], 'not_a_number', 'must be a number.');
         }
 
         if ($value <= $this->threshold) {
-            return "must be greater than {$this->threshold}.";
+            return new Violation(
+                [],
+                'greater_than',
+                "must be greater than {$this->threshold}.",
+                ['threshold' => $this->threshold],
+            );
         }
 
         return null;
     }
 
-    public function threshold(): int|float
+    #[\Override]
+    public function schema(): array
     {
-        return $this->threshold;
+        return ['exclusiveMinimum' => $this->threshold];
     }
 }

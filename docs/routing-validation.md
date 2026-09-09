@@ -681,20 +681,30 @@ final readonly class CreateProductRequest
 }
 ```
 
-| Attribute | Checks | Constructor |
-|---|---|---|
-| `#[Email]` | `filter_var($value, FILTER_VALIDATE_EMAIL)` | *(no arguments)* |
-| `#[NotBlank]` | not empty or all-whitespace after `trim()` | *(no arguments)* |
-| `#[MinLength(n)]` | `mb_strlen($value) >= n` | `int $length` |
-| `#[MaxLength(n)]` | `mb_strlen($value) <= n` | `int $length` |
-| `#[GreaterThan(n)]` | `$value > n` | `int\|float $threshold` |
-| `#[LessThan(n)]` | `$value < n` | `int\|float $threshold` |
-| `#[Regex($pattern)]` | `preg_match($pattern, $value) === 1` | `string $pattern` |
-| `#[In($choices)]` | `in_array($value, $choices, true)` | `array $choices` |
-| `#[MinItems(n)]` | a list of at least `n` elements | `int $count` |
-| `#[MaxItems(n)]` | a list of at most `n` elements | `int $count` |
-| `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* |
-| `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* |
+Each rule owns three things: what it checks, the stable `code` its
+violation carries, and the JSON Schema keyword that states the same rule
+to a client reading the generated document.
+
+| Attribute | Checks | Constructor | Violation code | Schema keyword |
+|---|---|---|---|---|
+| `#[Email]` | `filter_var($value, FILTER_VALIDATE_EMAIL)` | *(no arguments)* | `email` | `format: email` |
+| `#[NotBlank]` | not empty or all-whitespace after `trim()` | *(no arguments)* | `not_blank` | *(none)* |
+| `#[MinLength(n)]` | `mb_strlen($value) >= n` | `int $length` | `min_length` | `minLength` |
+| `#[MaxLength(n)]` | `mb_strlen($value) <= n` | `int $length` | `max_length` | `maxLength` |
+| `#[GreaterThan(n)]` | `$value > n` | `int\|float $threshold` | `greater_than` | `exclusiveMinimum` |
+| `#[LessThan(n)]` | `$value < n` | `int\|float $threshold` | `less_than` | `exclusiveMaximum` |
+| `#[Regex($pattern)]` | `preg_match($pattern, $value) === 1` | `string $pattern` | `regex` | *(none)* |
+| `#[In($choices)]` | `in_array($value, $choices, true)` | `array $choices` | `in` | `enum` |
+| `#[MinItems(n)]` | a list of at least `n` elements | `int $count` | `min_items` | `minItems` |
+| `#[MaxItems(n)]` | a list of at most `n` elements | `int $count` | `max_items` | `maxItems` |
+| `#[Url]` | `filter_var($value, FILTER_VALIDATE_URL)` | *(no arguments)* | `url` | `format: uri` |
+| `#[Uuid]` | matches an RFC 4122 UUID | *(no arguments)* | `uuid` | `format: uuid` |
+
+`#[GreaterThan]`/`#[LessThan]` report `not_a_number`, and
+`#[MinItems]`/`#[MaxItems]` report `not_a_list`, for a value of the wrong
+shape entirely. Through a request that never happens — the declared type
+is checked before any rule runs — but a rule invoked directly still
+answers rather than counting something with no count.
 
 `#[Regex]` and `#[NotBlank]` are runtime-only: neither has an equivalent
 JSON Schema keyword. `pattern` holds an undelimited ECMA-262 expression, a
@@ -704,6 +714,12 @@ keyword carries `#[NotBlank]`'s trim-aware blank-string semantics —
 generated OpenAPI or MCP schema is broader than the check the request
 actually gets. Every other constraint in the table maps onto a keyword; see
 [Zero-config OpenAPI & Swagger UI](#zero-config-openapi--swagger-ui).
+
+Two rules on the same field may not contribute the *same* keyword.
+`#[MinLength(3)] #[MinLength(5)]` states two different minimum lengths
+and only one of them could be published, so generating the schema fails
+with `Exception\JsonSchemaException` rather than letting declaration
+order silently decide which bound a client is told about.
 
 `#[MinLength]`/`#[MaxLength]`, `#[GreaterThan]`/`#[LessThan]` and
 `#[MinItems]`/`#[MaxItems]` compose on the same field for a length,
@@ -740,15 +756,15 @@ details document, served as `application/problem+json`:
     "errors": [
         {
             "path": ["name"],
-            "code": "constraint",
+            "code": "min_length",
             "message": "must be at least 3 characters.",
-            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\MinLength"}
+            "parameters": {"length": 3}
         },
         {
             "path": ["email"],
-            "code": "constraint",
+            "code": "email",
             "message": "must be a valid email address.",
-            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\Email"}
+            "parameters": {}
         }
     ]
 }
@@ -785,11 +801,11 @@ where the object/array distinction still exists:
 
 Before a value is cast to a `#[Body]` field's, `#[Query]` parameter's, or
 path parameter's declared scalar type, its actual shape is checked
-first — casting only ever happens once that check passes. This is the
-one check shared by every source of typed input: a `#[Body]` DTO field,
-a `#[Query]`/path parameter, and — since `Kinetis\Mcp\McpDispatcher`
-delegates to the identical `Hydrator::typeMismatchViolation()` method — an
-MCP tool's own top-level argument.
+first — casting only ever happens once that check passes. Every source of
+typed input enters the same method, `Hydrator::resolveScalar()`: a
+`#[Body]` DTO field, a `#[Query]`/path parameter, and an MCP tool's own
+top-level argument, which `Kinetis\Mcp\McpDispatcher` hands to it
+directly.
 
 A request value binds to one of seven builtin types:
 `string`, `int`, `float`, `bool`, `array`, `iterable`, `mixed`. Every
@@ -797,25 +813,22 @@ other builtin — `null`, `true`, `false`, `object`, `callable` — is a
 definition error, not a runtime one: see "Builtin types outside the
 supported set" below.
 
+Which *spelling* satisfies a declared type depends on where the value
+came from, because different sources can say different things. A JSON
+document distinguishes `42` from `"42"`; a query string has no spelling
+for a number other than its text. `Kinetis\Validation\InputSource` names
+the three vocabularies, and the caller that read the bytes picks one:
+
+| Source | Chosen for | Carries |
+|---|---|---|
+| `Json` | a JSON `#[Body]`, an MCP tool argument | already-decoded JSON values, each with its own type |
+| `Text` | `#[Query]`, path segments, `application/x-www-form-urlencoded` and `multipart/form-data` bodies | raw strings only |
+| `Native` | a direct `Hydrator::hydrate()` call — a database row, an array a service built itself | whatever PHP values the caller already holds |
+
+All three agree on these:
+
 - A `string`-typed field/parameter must actually be a string. An array,
   object, number, or boolean is rejected.
-- An `int`-typed field/parameter accepts three things, all inside PHP's
-  native integer range: a JSON integer (`42`), a float with no fractional
-  part (`42.0`), and a string spelled as a plain base-10 integer (`"42"`,
-  `"+42"`, `"-42"`). A string is read as written, never through a float,
-  so a decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
-  whitespace-padded one, and a value a `double` cannot tell apart from an
-  integer (`"1.0000000000000001"`) are all rejected. So is a fractional,
-  non-finite, or out-of-range number: the result is a `422` ("must be an
-  integer within the platform integer range."), never a truncated cast —
-  `4.5` does not become `4`. An array or a boolean is rejected too.
-- A `float`-typed field/parameter accepts a real number or a numeric
-  string, and rejects any value that isn't finite (`"1e999"` overflows to
-  `INF`) as well as a non-numeric string, an array, or a boolean.
-- A `bool`-typed field/parameter accepts exactly `true`, `false`, `1`,
-  `0`, `"1"`, or `"0"` for a `#[Body]`/MCP value — see "Query and path
-  values are raw strings" below for the different, source-specific
-  spellings a `#[Query]`/path value actually needs.
 - An `array`-typed field/parameter (no `#[ListOf]`) must be a real JSON
   *array* (`[...]`), never a JSON object (`{...}`) — including the empty
   object `{}`, and including one whose own keys happen to look
@@ -839,6 +852,35 @@ supported set" below.
   a bare `[]` — PHP has no native empty-object type, so a naive empty
   PHP array would otherwise serialize as the invalid JSON array `[]`
   where JSON Schema requires an object.
+
+They differ on the numeric and boolean scalars:
+
+- An **`int`** accepts, under every source, a JSON integer (`42`) and a
+  float with no fractional part (`42.0`) — JSON has one number type, so a
+  producer writing an integer that way still wrote an integer — both
+  inside PHP's native integer range. `Text` and `Native` additionally
+  accept an integer's textual spelling: a plain base-10 string (`"42"`,
+  `"+42"`, `"-42"`). `Json` does not — the schema published for that
+  field says `{"type": "integer"}`, and `"42"` is a string. Where a
+  string is accepted it is read as written, never through a float, so a
+  decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`), a
+  whitespace-padded one, and a value a `double` cannot tell apart from an
+  integer (`"1.0000000000000001"`) are all rejected. So is a fractional,
+  non-finite, or out-of-range number: the result is a `422` ("must be an
+  integer within the platform integer range."), never a truncated cast —
+  `4.5` does not become `4`. An array or a boolean is rejected under
+  every source.
+- A **`float`** accepts either JSON number under every source, and
+  rejects any value that isn't finite (`"1e999"` overflows to `INF`).
+  `Text` and `Native` additionally accept a numeric string; `Json` does
+  not. A non-numeric string, an array or a boolean is rejected
+  everywhere.
+- A **`bool`** accepts `true`/`false` under every source. `Text` adds the
+  four textual spellings OpenAPI documents — `"true"`, `"false"`, `"1"`,
+  `"0"` — and `Native` adds `1`, `0`, `"1"`, `"0"`, which is what a
+  `TINYINT(1)` column produces depending on the driver. Under `Json`,
+  none of those: a JSON boolean is spelled `true` or `false` and nothing
+  else, so `"true"` and `1` are both a `422`.
 
 A mismatch is a `422` carrying a violation at that field's own path, in
 the same `errors` list a failed constraint produces — not a value silently
@@ -886,20 +928,22 @@ its type is that parameter's own business.
 
 ### Query and path values are raw strings
 
-The type-mismatch check above is genuinely the same method regardless of
-source — but the *value* it checks is not. A `#[Body]`/MCP value is
-already a real, JSON-decoded PHP value (a genuine `bool`, `array`, ...);
-a `#[Query]`/path value only ever arrives as a raw string (or, for a
-`#[Query]` array-style parameter — `?tags=a&tags=b` — a list of them).
-Several consequences follow directly from this:
+A `#[Body]`/MCP value is already a real, JSON-decoded PHP value (a
+genuine `bool`, `array`, ...); a `#[Query]`/path value only ever arrives
+as a raw string (or, for a `#[Query]` array-style parameter —
+`?tags=a&tags=b` — a list of them). `Dispatcher` therefore resolves both
+under `InputSource::Text`, always, whatever the request body's own
+content type says. Several consequences follow directly from this:
 
 - **`bool` accepts the OpenAPI-documented `"true"`/`"false"` spelling
-  too, not just `"1"`/`"0"`.** `Hydrator::normalizeTextualBoolean()`
-  translates those two literal string spellings into real PHP
-  `true`/`false` before the shared check runs — the one place a
-  `#[Query]`/path *source* differs from a JSON body, so the same check
-  still receives an equivalent value. `bool`'s own `"1"`/`"0"`
-  spellings are unaffected.
+  too, not just `"1"`/`"0"`.** `Text` translates those two literal
+  spellings into real PHP booleans before the type check, so the check
+  receives an equivalent value rather than a string standing in for one —
+  and the `(bool)` cast never meets the string `"false"`, which would
+  cast to `true`. `bool`'s own `"1"`/`"0"` spellings are unaffected.
+- **A numeric string binds an `int`/`float` parameter**, since text is
+  the only spelling a query string or a path segment has. The same
+  string in a JSON body does not; see "Scalar type checking" above.
 - **A `#[Query]`/path parameter typed outside the supported set is
   rejected at registration**, not at request time — see "Builtin types
   outside the supported set" above.
@@ -948,12 +992,17 @@ schema under all three, since `Dispatcher` hydrates the same DTO class
 regardless of which the client sent; the wire representation is what
 differs, laid out below.
 
-- `bool` accepts both the `"1"`/`"0"` spelling *and* the
-  `"true"`/`"false"` spelling for a form-encoded value — the identical
-  normalization `#[Query]`/path already has, applied here only when
-  `Dispatcher` knows the whole request body is form-encoded, so a real
-  JSON request for the same field still rejects the JSON *string*
-  `"true"` (as opposed to the JSON boolean literal `true`).
+- Every field is read under `InputSource::Text`, the same vocabulary
+  `#[Query]`/path values use, so `bool` accepts both the `"1"`/`"0"` and
+  the `"true"`/`"false"` spelling and `int`/`float` accept their textual
+  ones. The source is the *request's*, not the route's: `Dispatcher`
+  picks it from the `Content-Type` the client actually sent, so a real
+  JSON request for the identical DTO class still rejects the JSON
+  *string* `"true"` (as opposed to the JSON boolean literal `true`) and
+  the JSON string `"3"` for an `int` field. It reaches a nested or
+  `#[ListOf]` DTO's own scalar fields too, via PHP's bracket-style
+  `field[sub]=value` convention — a form-encoded body is exactly as
+  textual one level down.
 - `array`/`iterable` get the identical map-shaped-value rejection
   documented above (a form-encoded field parsed into a genuinely
   associative PHP array is rejected the same way a JSON object is), but
@@ -1005,31 +1054,61 @@ actually inspect.
 
 ### Writing your own constraint
 
-A constraint is any class implementing the one-method `Constraint`
-interface:
+A constraint is any class implementing the two-method `Constraint`
+interface. `validate()` answers what a broken value gets back;
+`schema()` answers which JSON Schema keywords state the same rule to a
+client generating requests from the published document.
 
 ```{code-block} php
 use Kinetis\Validation\Constraint;
+use Kinetis\Validation\Violation;
 use Attribute;
 
 #[Attribute(Attribute::TARGET_PARAMETER | Attribute::TARGET_PROPERTY)]
 final readonly class Uppercase implements Constraint
 {
-    public function validate(mixed $value): ?string
+    public function validate(mixed $value): ?Violation
     {
-        if (!is_string($value) || $value !== strtoupper($value)) {
-            return 'must be all uppercase.';
+        if (!is_string($value) || preg_match('/^[A-Z]+$/', $value) !== 1) {
+            return new Violation([], 'uppercase', 'must be all uppercase letters.');
         }
 
         return null;
     }
+
+    public function schema(): array
+    {
+        return ['pattern' => '^[A-Z]+$'];
+    }
 }
 ```
 
-Returning `null` means valid; any non-null string becomes that field's
-error message. Any attribute implementing `Constraint` on a parameter is
-picked up automatically — there is no fixed list of "known" constraints to
-register your own class into.
+Returning `null` from `validate()` means valid. A `Violation` carries the
+stable `code` a client switches on, the default-English `message`, and
+the `parameters` that message was built from — its `path` is relative to
+the value being checked, so it is normally `[]` and `Hydrator` prefixes
+the owning field's own path. Every built-in rule is written exactly this
+way; none of them is special-cased anywhere.
+
+`schema()` returns the JSON Schema 2020-12 keywords for the rule, merged
+into the schema of whatever it guards — `['pattern' => '^[A-Z]+$']`
+above, an ECMA-262 expression because that is the dialect JSON Schema
+uses. A rule no keyword expresses returns `[]`, exactly as `#[NotBlank]`
+and `#[Regex]` do: it still runs, it simply publishes nothing. Never
+state a keyword the check does not actually enforce — the point of one
+class owning both answers is that the document and the check cannot
+disagree.
+
+Any attribute implementing `Constraint` on a parameter is picked up
+automatically, in validation and in the generated OpenAPI/MCP schema
+alike — there is no fixed list of "known" constraints to register your
+own class into, and nothing to configure.
+
+A rule is constructed fresh for each validation or schema operation from
+the literal arguments its attribute was written with, and discarded, so
+it must be pure: no I/O, no container, no request state, nothing retained
+between calls. A rule that throws is a programmer error and propagates as
+an ordinary exception, not a `422`.
 
 ### Nested DTOs
 
@@ -1076,9 +1155,9 @@ than only reporting the outer field name:
     "errors": [
         {
             "path": ["shippingAddress", "street"],
-            "code": "constraint",
+            "code": "min_length",
             "message": "must be at least 3 characters.",
-            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\MinLength"}
+            "parameters": {"length": 3}
         }
     ]
 }
@@ -1155,9 +1234,9 @@ violation in the same response:
     "errors": [
         {
             "path": ["items", 1, "quantity"],
-            "code": "constraint",
+            "code": "greater_than",
             "message": "must be greater than 0.",
-            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\GreaterThan"}
+            "parameters": {"threshold": 0}
         }
     ]
 }

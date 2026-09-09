@@ -13,10 +13,10 @@ final class ViolationTest extends TestCase
 {
     public function test_it_keeps_every_part_of_the_failure(): void
     {
-        $violation = new Violation(['items', 2, 'quantity'], 'constraint', 'must be greater than 0.', ['bound' => 0]);
+        $violation = new Violation(['items', 2, 'quantity'], 'greater_than', 'must be greater than 0.', ['bound' => 0]);
 
         self::assertSame(['items', 2, 'quantity'], $violation->path);
-        self::assertSame('constraint', $violation->code);
+        self::assertSame('greater_than', $violation->code);
         self::assertSame('must be greater than 0.', $violation->message);
         self::assertSame(['bound' => 0], $violation->parameters);
     }
@@ -28,12 +28,12 @@ final class ViolationTest extends TestCase
 
     public function test_under_prepends_segments_in_order_without_touching_the_rest(): void
     {
-        $violation = new Violation(['quantity'], 'constraint', 'must be greater than 0.', ['bound' => 0]);
+        $violation = new Violation(['quantity'], 'greater_than', 'must be greater than 0.', ['bound' => 0]);
 
         $nested = $violation->under('items', 2);
 
         self::assertSame(['items', 2, 'quantity'], $nested->path);
-        self::assertSame('constraint', $nested->code);
+        self::assertSame('greater_than', $nested->code);
         self::assertSame('must be greater than 0.', $nested->message);
         self::assertSame(['bound' => 0], $nested->parameters);
         // The original is untouched: a violation prefixed for one
@@ -86,12 +86,12 @@ final class ViolationTest extends TestCase
 
     public function test_a_list_valued_parameter_survives_as_a_json_array(): void
     {
-        $violation = new Violation(['role'], 'constraint', 'must be one of the allowed values.', [
+        $violation = new Violation(['role'], 'in', 'must be one of the allowed values.', [
             'allowed' => ['admin', 'editor'],
         ]);
 
         self::assertSame(
-            '{"path":["role"],"code":"constraint","message":"must be one of the allowed values.",'
+            '{"path":["role"],"code":"in","message":"must be one of the allowed values.",'
             . '"parameters":{"allowed":["admin","editor"]}}',
             json_encode($violation, JSON_THROW_ON_ERROR),
         );
@@ -215,14 +215,14 @@ final class ViolationTest extends TestCase
      */
     public function test_finite_floats_are_kept_and_encode_as_themselves(): void
     {
-        $violation = new Violation(['price'], 'constraint', 'must be between the bounds.', [
+        $violation = new Violation(['price'], 'between', 'must be between the bounds.', [
             'min' => 0.5,
             'max' => -1.25,
             'bounds' => [0.5, -1.25],
         ]);
 
         self::assertSame(
-            '{"path":["price"],"code":"constraint","message":"must be between the bounds.",'
+            '{"path":["price"],"code":"between","message":"must be between the bounds.",'
             . '"parameters":{"min":0.5,"max":-1.25,"bounds":[0.5,-1.25]}}',
             json_encode($violation, JSON_THROW_ON_ERROR),
         );

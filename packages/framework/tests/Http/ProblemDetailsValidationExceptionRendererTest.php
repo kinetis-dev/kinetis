@@ -47,15 +47,15 @@ final class ProblemDetailsValidationExceptionRendererTest extends TestCase
     public function test_the_errors_extension_carries_every_violation_in_order(): void
     {
         $exception = ValidationException::fromViolations([
-            new Violation(['items', 0, 'quantity'], 'constraint', 'must be greater than 0.', ['constraint' => 'GreaterThan']),
+            new Violation(['items', 0, 'quantity'], 'greater_than', 'must be greater than 0.', ['threshold' => 0]),
             new Violation(['customerName'], 'required', 'is required.'),
         ]);
 
         self::assertSame(
             '{"type":"about:blank","title":"Unprocessable Content","status":422,'
             . '"detail":"The request data failed validation.","errors":['
-            . '{"path":["items",0,"quantity"],"code":"constraint","message":"must be greater than 0.",'
-            . '"parameters":{"constraint":"GreaterThan"}},'
+            . '{"path":["items",0,"quantity"],"code":"greater_than","message":"must be greater than 0.",'
+            . '"parameters":{"threshold":0}},'
             . '{"path":["customerName"],"code":"required","message":"is required.","parameters":{}}'
             . ']}',
             $this->render($exception),
@@ -71,7 +71,7 @@ final class ProblemDetailsValidationExceptionRendererTest extends TestCase
     public function test_an_invalid_utf8_message_is_substituted_rather_than_defeating_the_response(): void
     {
         $exception = ValidationException::fromViolations([
-            new Violation(['name'], 'constraint', "must not contain \xB1\x31", ['given' => "\xB1\x31"]),
+            new Violation(['name'], 'regex', "must not contain \xB1\x31", ['given' => "\xB1\x31"]),
         ]);
 
         $body = $this->render($exception);

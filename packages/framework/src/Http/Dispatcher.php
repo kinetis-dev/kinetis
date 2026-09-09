@@ -21,6 +21,7 @@ use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Validation\Constraint;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
+use Kinetis\Validation\InputSource;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
 use Nyholm\Psr7\Response;
@@ -427,10 +428,19 @@ final class Dispatcher
         $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
 
         try {
-            // normalizeFormLiterals is scoped to genuinely form-encoded
-            // requests: a JSON request for the identical DTO class keeps
-            // rejecting the JSON string "true".
-            return Hydrator::hydrate($dtoClass, $data, $this->hydrationPlans[$dtoClass] ?? null, normalizeFormLiterals: $formEncoded);
+            // The source is the request's own, not the route's: the
+            // same #[Body] DTO class binds a JSON document and a form
+            // body on the same route, and only the content type the
+            // client actually sent says which vocabulary its values are
+            // written in. A JSON request keeps rejecting the JSON
+            // string "true" for a bool field; a form body, which has no
+            // other spelling, binds it.
+            return Hydrator::hydrate(
+                $dtoClass,
+                $data,
+                $this->hydrationPlans[$dtoClass] ?? null,
+                $formEncoded ? InputSource::Text : InputSource::Json,
+            );
         } finally {
             Telemetry::global()->hydrationEnded($hydrationToken);
         }
@@ -448,7 +458,7 @@ final class Dispatcher
      * and `{}` are the same value.
      *
      * Decoded with `associative: false`, not `true`, and run through
-     * `JsonTree::convert()` — this is what lets `Hydrator::typeMismatchViolation()`'s
+     * `JsonTree::convert()` — this is what lets `Hydrator`'s
      * array/iterable/`#[ListOf]` checks reject a JSON *object* wherever an
      * array is declared, including one whose own keys happen to look
      * sequential (`{"0":"a","1":"b"}`), which `array_is_list()` alone
@@ -665,23 +675,24 @@ final class Dispatcher
     }
 
     /**
-     * Applies the identical declared-type-mismatch check
-     * Hydrator::typeMismatchViolation() runs for #[Body] DTO fields,
-     * before casting — a #[Query]/path value with the wrong shape (an
-     * array for a scalar param, a non-numeric string for an int/float
-     * one, ...) is a violation, never a silently wrong cast (e.g.
-     * "not-a-number" -> 0). Once cast, the parameter's own Constraint
-     * attributes run against the cast value — the same
-     * #[GreaterThan]/#[In]/etc. attributes that work on a #[Body] DTO
-     * field, honored identically here.
+     * Presence first, then Hydrator::resolveScalar() — the one path a
+     * #[Body] DTO field and an MCP tool argument also take, so the type
+     * check, the cast and the parameter's own #[GreaterThan]/#[In]/etc.
+     * attributes are the same code producing the same violations, never
+     * a second copy of the rules maintained beside them. A #[Query]/path
+     * value with the wrong shape (an array for a scalar param, a
+     * non-numeric string for an int/float one) is a violation, never a
+     * silently wrong cast (`"not-a-number"` -> `0`).
      *
-     * The check itself is genuinely the same method regardless of source
-     * — but a #[Query]/path *value* is not: it only ever arrives as a raw
-     * string (or, for a #[Query] array-style parameter, a PHP array),
-     * never a real JSON-decoded bool the way a request body's own
-     * `true`/`false` literal is, so
-     * Hydrator::normalizeTextualBoolean() runs first; see its own
-     * docblock.
+     * Presence stays here because only this method can tell what an
+     * absent value means: a query key that never appeared and a path
+     * segment are both read as `null`, and a #[Query] parameter that
+     * accepts null takes it, where a DTO member's own absence is `is
+     * required.` unless it has a default.
+     *
+     * InputSource::Text is unconditional: a query string and a path
+     * segment carry text and nothing else, on every request, whatever
+     * the body's content type says about the body.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException
@@ -704,19 +715,14 @@ final class Dispatcher
             return null;
         }
 
-        $scalarType = $param['scalarType'];
-        $raw = Hydrator::normalizeTextualBoolean($scalarType, $raw);
-
-        if ($scalarType !== null) {
-            $violation = Hydrator::typeMismatchViolation([$name], $scalarType, $raw);
-
-            if ($violation !== null) {
-                throw ValidationException::fromViolations([$violation]);
-            }
-        }
-
-        $value = Hydrator::castScalar($raw, $scalarType);
-        $violations = Hydrator::constraintViolations($param['constraints'], $value, [$name]);
+        [$value, $violations] = Hydrator::resolveScalar(
+            InputSource::Text,
+            [$name],
+            $raw,
+            $param['scalarType'],
+            $param['allowsNull'],
+            $param['constraints'],
+        );
 
         if ($violations !== []) {
             throw ValidationException::fromViolations($violations);

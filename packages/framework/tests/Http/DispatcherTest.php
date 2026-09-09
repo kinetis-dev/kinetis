@@ -1260,6 +1260,48 @@ final class DispatcherTest extends TestCase
         self::assertSame(['must be a boolean, value given.'], $errors['flag']);
     }
 
+    // The same #[Body] DTO class binds either encoding on the same
+    // route, so the source is the request's own: the numeric string an
+    // int field takes over a form body is a violation over a JSON one,
+    // where the published schema says `{"type": "integer"}`. Proven on a
+    // #[ListOf] element, so it also shows the source reaching a nested
+    // DTO's own fields rather than stopping at the top level.
+
+    public function test_a_json_body_rejects_a_numeric_string_for_an_int_field(): void
+    {
+        $router = new Router();
+        $router->register(OrderItemsController::class);
+        $match = $router->match('POST', '/orders-with-items');
+
+        $request = new ServerRequest('POST', '/orders-with-items', self::JSON_HEADERS, body: '{"customerName": "Alon", "items": [{"product": "widget", "quantity": "3"}]}');
+        $violations = $this->failedDispatch(
+            fn (): ResponseInterface => $this->dispatcher()->dispatch($match, $request),
+        )->violations;
+
+        self::assertCount(1, $violations);
+        self::assertSame(['items', 0, 'quantity'], $violations[0]->path);
+        self::assertSame('type_mismatch', $violations[0]->code);
+        self::assertSame(['expected' => 'integer', 'given' => 'value'], $violations[0]->parameters);
+    }
+
+    public function test_a_form_encoded_body_binds_a_numeric_string_for_the_same_int_field(): void
+    {
+        $router = new Router();
+        $router->register(OrderItemsController::class);
+        $match = $router->match('POST', '/orders-with-items');
+
+        $request = (new ServerRequest('POST', '/orders-with-items'))
+            ->withHeader('Content-Type', 'application/x-www-form-urlencoded')
+            ->withParsedBody(['customerName' => 'Alon', 'items' => [['product' => 'widget', 'quantity' => '3']]]);
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(
+            ['customerName' => 'Alon', 'items' => [['product' => 'widget', 'quantity' => 3]]],
+            json_decode((string) $response->getBody(), true),
+        );
+    }
+
     private function formEncodedFlag(string $spelling): ResponseInterface
     {
         $router = new Router();

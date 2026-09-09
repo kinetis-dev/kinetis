@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Validation\Constraints;
 
 use Kinetis\Validation\Constraint;
+use Kinetis\Validation\Violation;
 use Attribute;
 
 #[Attribute(Attribute::TARGET_PARAMETER | Attribute::TARGET_PROPERTY)]
@@ -18,20 +19,23 @@ final readonly class In implements Constraint
     ) {}
 
     #[\Override]
-    public function validate(mixed $value): ?string
+    public function validate(mixed $value): ?Violation
     {
-        if (!in_array($value, $this->choices, true)) {
-            return 'must be one of: ' . implode(', ', array_map('strval', $this->choices)) . '.';
+        if (in_array($value, $this->choices, true)) {
+            return null;
         }
 
-        return null;
+        return new Violation(
+            [],
+            'in',
+            'must be one of: ' . implode(', ', array_map('strval', $this->choices)) . '.',
+            ['choices' => $this->choices],
+        );
     }
 
-    /**
-     * @return list<scalar>
-     */
-    public function choices(): array
+    #[\Override]
+    public function schema(): array
     {
-        return $this->choices;
+        return ['enum' => $this->choices];
     }
 }

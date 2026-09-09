@@ -67,15 +67,12 @@ use ReflectionType;
  * there, at the same point, with an UnsupportedDefaultValueException.
  *
  * Every builtin-typed parameter is type-checked before it is cast, never
- * after. `string` requires an actual string; `int` requires a real int, a
- * finite float with no fractional part, or a string spelled as a plain
- * base-10 integer (`42`, `42.0`, `"42"`), all inside PHP's native integer
- * range, and rejects a fractional, non-finite, out-of-range or
- * differently-spelled value (`"42.0"`, `"4.2e1"`) rather than truncating or
- * reinterpreting it; `float` accepts a real number or a numeric string and
- * rejects anything not finite; `bool` accepts only `true`, `false`, `1`,
- * `0`, `"1"`, `"0"`; `array`/`iterable` both require a real JSON array.
- * `mixed` accepts anything by definition.
+ * after, and which spellings that check admits is the caller's declared
+ * InputSource: a JSON body promises JSON primitives, a query string or a
+ * form body carries text, and a database row carries whatever its driver
+ * produced. See InputSource itself for the three vocabularies. What they
+ * agree on: `string` requires an actual string, `array`/`iterable` both
+ * require a real JSON array, and `mixed` accepts anything by definition.
  *
  * A missing or explicitly-null value is a separate concern from a
  * wrong-shaped one: a missing key on a defaultless parameter is "is
@@ -85,15 +82,16 @@ use ReflectionType;
  *
  * Every failure this class raises is a Kinetis\Validation\Violation
  * carrying a segmented path, a stable code, the message, and the values
- * that message was built from. The violation factories below —
- * typeMismatchViolation(), objectExpectedViolation(),
- * requiredViolation(), constraintViolations() — are public because they
- * are the one boundary shared by every input source: a #[Body] DTO field
- * here, a #[Query]/path parameter via Kinetis\Http\Dispatcher, and an
- * MCP tool argument via Kinetis\Mcp\McpDispatcher all report the
- * identical code and message for the identical failure, and a
- * wrong-shaped value can never reach a real constructor unchecked
- * regardless of which one dispatched it.
+ * that message was built from. resolveScalar() is the one entry every
+ * source of a raw scalar goes through — a #[Body] DTO field here, a
+ * #[Query]/path parameter via Kinetis\Http\Dispatcher, an MCP tool
+ * argument via Kinetis\Mcp\McpDispatcher — so null handling, source
+ * normalization, type checking, casting and the field's own constraints
+ * all happen once, in one order, and a wrong-shaped value can never
+ * reach a real constructor unchecked regardless of which one dispatched
+ * it. objectExpectedViolation() and requiredViolation() stay public
+ * beside it for the two failures a caller detects before it has a
+ * scalar to resolve at all.
  *
  * Holds exactly one piece of static state: a memoization cache of
  * compilePlan() output, keyed by DTO class. This is a deliberate,
@@ -146,12 +144,13 @@ final class Hydrator
     private const string NOT_AN_INTEGER = 'must be an integer within the platform integer range.';
 
     /**
-     * The stable machine names every input source reports. One code per
-     * message template, so a renderer that rebuilds or translates a
-     * message never has to parse the English one: TYPE_MISMATCH carries
-     * `expected`/`given` type names, NOT_AN_INSTANCE the required
-     * `class`, CONSTRAINT the constraint class that produced the
-     * message, and the rest describe themselves.
+     * The stable machine names every input source reports for a value
+     * hydration itself refused. One code per message template, so a
+     * renderer that rebuilds or translates a message never has to parse
+     * the English one: TYPE_MISMATCH carries `expected`/`given` type
+     * names, NOT_AN_INSTANCE the required `class`, and the rest
+     * describe themselves. A rule that a well-shaped value then broke
+     * reports the rule's own code instead — see Constraint.
      */
     private const string CODE_REQUIRED = 'required';
 
@@ -168,8 +167,6 @@ final class Hydrator
     private const string CODE_NOT_A_JSON_OBJECT = 'not_a_json_object';
 
     private const string CODE_NOT_AN_INSTANCE = 'not_an_instance';
-
-    private const string CODE_CONSTRAINT = 'constraint';
 
     /**
      * The builtin types a request-bound parameter may declare. A DTO
@@ -200,10 +197,14 @@ final class Hydrator
     private static array $planCache = [];
 
     /**
-     * $normalizeFormLiterals applies normalizeTextualBoolean() to a
-     * `bool`-typed field, and is set only when `Dispatcher` knows the
-     * whole request body is form-encoded rather than JSON — see that
-     * method's own docblock for why the source has to decide it.
+     * $source declares which wire vocabulary $data was written in, and
+     * therefore which spellings of each declared scalar type bind — see
+     * InputSource. It defaults to Native, the vocabulary of a caller
+     * that already holds PHP values (a database row from
+     * `Kinetis\QueryBuilder\Query`, an array a service assembled
+     * itself). A transport names its own: `Kinetis\Http\Dispatcher`
+     * passes Json or Text per request from the body's media type,
+     * `Kinetis\Mcp\McpDispatcher` passes Json.
      *
      * @template T of object
      * @param class-string<T> $class
@@ -214,13 +215,13 @@ final class Hydrator
      * @throws UnsupportedDtoDefinitionException
      * @throws UnsupportedDefaultValueException
      */
-    public static function hydrate(string $class, array $data, ?array $compiledPlan = null, bool $normalizeFormLiterals = false): object
+    public static function hydrate(string $class, array $data, ?array $compiledPlan = null, InputSource $source = InputSource::Native): object
     {
         /** @var T */
         return self::hydrateFromPlan(
             $compiledPlan ?? self::$planCache[$class] ??= self::compilePlan($class),
             $data,
-            $normalizeFormLiterals,
+            $source,
         );
     }
 
@@ -541,7 +542,7 @@ final class Hydrator
      * @param array<string, mixed> $data
      * @throws ValidationException
      */
-    private static function hydrateFromPlan(array $plan, array $data, bool $normalizeFormLiterals = false): object
+    private static function hydrateFromPlan(array $plan, array $data, InputSource $source): object
     {
         /** @var class-string $className */
         $className = $plan['className'];
@@ -566,26 +567,13 @@ final class Hydrator
                 continue;
             }
 
-            // An explicitly-null value for a parameter whose declared type
-            // doesn't allow null would otherwise slip between the "is
-            // required" check above (the key exists) and the type-mismatch
-            // check (which exempts null) and reach the constructor as a raw
-            // TypeError.
-            if ($data[$name] === null && !$parameter['allowsNull']) {
-                $violations[] = new Violation([$name], self::CODE_NULL_NOT_ALLOWED, 'must not be null.');
-
-                continue;
-            }
-
-            [$value, $valueViolations] = self::resolveParameterValue($name, $data[$name], $parameter, $normalizeFormLiterals);
+            [$value, $valueViolations] = self::resolveParameterValue($name, $data[$name], $parameter, $source);
 
             if ($valueViolations !== []) {
                 $violations = [...$violations, ...$valueViolations];
 
                 continue;
             }
-
-            $violations = [...$violations, ...self::constraintViolations($parameter['constraints'], $value, [$name])];
 
             $arguments[$name] = $value;
         }
@@ -598,91 +586,139 @@ final class Hydrator
     }
 
     /**
-     * Resolves one parameter's raw value into its hydrated form — a nested
-     * DTO, a list of nested DTOs, or a cast scalar — matching whichever of
-     * $parameter's dtoClass/listItemClass/plain-scalar shape applies. A
-     * non-empty second element means hydration failed for this parameter;
-     * the caller merges those violations into its own list and skips both
-     * the constraints loop and assigning $arguments[$name] for it.
+     * Resolves one parameter's raw value into its hydrated, fully
+     * validated form — a nested DTO, a list of nested DTOs, an object
+     * map, or a cast scalar — matching whichever of $parameter's
+     * dtoClass/listItemClass/objectMap/plain-scalar shape applies. A
+     * non-empty second element means the parameter failed; the caller
+     * merges those violations into its own list and binds no argument
+     * for it.
      *
-     * $normalizeFormLiterals — see hydrate()'s own docblock. Applied
-     * before the type-mismatch check, so the check receives an equivalent
-     * value rather than a string standing in for one. It threads through
-     * both recursive branches: a form-encoded body reaching a nested or
-     * list DTO's own scalar fields (via PHP's bracket-style
-     * `field[sub]=value` convention) is exactly as non-JSON a source as
-     * the top level.
+     * $source threads through both recursive branches: a form-encoded
+     * body reaching a nested or list DTO's own scalar fields (via PHP's
+     * bracket-style `field[sub]=value` convention) is written in exactly
+     * the same vocabulary as the top level.
      *
      * @param HydrationPlanParameter $parameter
      * @return array{0: mixed, 1: list<Violation>}
      */
-    private static function resolveParameterValue(string $name, mixed $value, array $parameter, bool $normalizeFormLiterals = false): array
+    private static function resolveParameterValue(string $name, mixed $value, array $parameter, InputSource $source): array
     {
+        // Null is decided before any shape is examined. For a parameter
+        // whose declared type doesn't accept it, null would otherwise
+        // slip past every check below (each exempts it) and reach the
+        // constructor as a raw TypeError. For one that does, null is the
+        // value, whatever the declared shape — and no rule runs against
+        // it, since a rule describes what a present value must look like
+        // and the declared type has already said null is allowed.
         if ($value === null) {
-            // hydrateFromPlan() above has already rejected null for a
-            // parameter whose declared type doesn't accept it; for one
-            // that does, null is the value, whatever its declared shape.
-            return [null, []];
+            return $parameter['allowsNull'] ? [null, []] : [null, [self::nullNotAllowedViolation([$name])]];
         }
 
         if ($parameter['dtoClass'] !== null) {
             /** @var HydrationPlan|null $nestedPlan */
             $nestedPlan = $parameter['nestedPlan'];
 
-            return self::resolveClassTypedValue([$name], $value, $parameter['dtoClass'], $nestedPlan, $normalizeFormLiterals);
+            $resolved = self::resolveClassTypedValue([$name], $value, $parameter['dtoClass'], $nestedPlan, $source);
+        } elseif ($parameter['listItemClass'] !== null) {
+            $resolved = self::resolveListValue($name, $value, $parameter, $source);
+        } elseif ($parameter['objectMap']) {
+            $resolved = self::resolveObjectMapValue($name, $value);
+        } else {
+            // The one shared raw-scalar path, which runs the field's own
+            // constraints itself. Reached by every parameter #[ListOf]
+            // and #[ObjectMap] did not claim, `array`/`iterable`
+            // included.
+            return self::resolveScalar($source, [$name], $value, $parameter['scalarType'], $parameter['allowsNull'], $parameter['constraints']);
         }
 
-        if ($parameter['listItemClass'] !== null) {
-            return self::resolveListValue($name, $value, $parameter, $normalizeFormLiterals);
+        // A constraint reads a hydrated value — #[MinItems] counts
+        // elements a #[ListOf] field has already built — so it runs only
+        // once that value exists. A parameter that failed to resolve has
+        // nothing for a rule to describe.
+        return $resolved[1] !== []
+            ? $resolved
+            : [$resolved[0], self::constraintViolations($parameter['constraints'], $resolved[0], [$name])];
+    }
+
+    /**
+     * The one raw-scalar resolution path, entered by every source: a
+     * #[Body] DTO field via resolveParameterValue() above, a
+     * #[Query]/path parameter via Kinetis\Http\Dispatcher, and an MCP
+     * tool argument via Kinetis\Mcp\McpDispatcher. Null, source
+     * normalization, the declared-type check, the cast, and the field's
+     * own constraints happen here, in that order, so no source can end
+     * up applying a different order or reaching a different answer.
+     *
+     * Presence is not here. Whether a value is absent, and what an
+     * absent one means, is knowable only where it was read: a query key
+     * that never appeared and a DTO member missing from a decoded object
+     * are different facts with their own answers. A caller resolves
+     * absence first and calls this with the value it actually has.
+     *
+     * A constraint that throws is a programmer or server error, not a
+     * client violation: it propagates as an ordinary exception.
+     *
+     * @param list<string|int> $path the caller's own path to this value
+     * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
+     * @return array{0: mixed, 1: list<Violation>} the resolved value, and
+     *         the violations it raised — a non-empty list means the value
+     *         is unusable and the caller must bind nothing for it
+     */
+    public static function resolveScalar(
+        InputSource $source,
+        array $path,
+        mixed $value,
+        ?string $scalarType,
+        bool $allowsNull,
+        array $constraints = [],
+    ): array {
+        if ($value === null) {
+            return $allowsNull ? [null, []] : [null, [self::nullNotAllowedViolation($path)]];
         }
 
-        if ($parameter['objectMap']) {
-            return self::resolveObjectMapValue($name, $value);
-        }
+        $value = self::normalizeForSource($source, $scalarType, $value);
 
-        if ($normalizeFormLiterals) {
-            $value = self::normalizeTextualBoolean($parameter['scalarType'], $value);
-        }
-
-        if ($parameter['scalarType'] !== null) {
-            $violation = self::typeMismatchViolation([$name], $parameter['scalarType'], $value);
+        if ($scalarType !== null) {
+            $violation = self::typeMismatchViolation($path, $scalarType, $value, $source);
 
             if ($violation !== null) {
                 return [null, [$violation]];
             }
         }
 
-        // The type-mismatch check above (for array/iterable specifically)
-        // runs against the still-JsonObject-marked value, so it can
-        // correctly reject an object-shaped wire value — but the value a
-        // `mixed` field (or an array/iterable field's own nested
-        // contents, which JsonTree::convert() may have marked at any
-        // depth) actually receives must never leak that marker: unwrap()
-        // recursively restores the plain-array tree application code has
-        // always seen. A no-op for anything that was never marked at all
-        // (a #[Query]/path scalar, or a direct Hydrator::hydrate() call
-        // that never went through JsonTree::convert()).
-        return [self::castScalar(JsonTree::unwrap($value), $parameter['scalarType']), []];
+        // The type check above (for array/iterable specifically) runs
+        // against the still-JsonObject-marked value, so it can correctly
+        // reject an object-shaped wire value — but the value a `mixed`
+        // field (or an array/iterable field's own nested contents, which
+        // JsonTree::convert() may have marked at any depth) actually
+        // receives must never leak that marker: unwrap() recursively
+        // restores the plain-array tree application code has always
+        // seen. A no-op for anything that was never marked at all (a
+        // #[Query]/path scalar, or a Native hydrate() call that never
+        // went through JsonTree::convert()).
+        $value = self::castScalar(JsonTree::unwrap($value), $scalarType);
+
+        return [$value, self::constraintViolations($constraints, $value, $path)];
     }
 
     /**
-     * A query string, a path segment and a form-encoded body all carry
-     * text only: a `bool` value arrives as a raw string there, never
-     * PHP's real `true`/`false` the way an already-decoded JSON body's
-     * own boolean literal does. Translating the two canonical spellings
-     * OpenAPI documents for a boolean is what lets those sources reach
-     * typeMismatchViolation()'s shared check with an equivalent value.
-     * `bool`'s own `"1"`/`"0"` spellings already pass that check as raw
-     * strings; anything else — including a real array a repeated query
-     * key or bracketed form field name produces — passes through
-     * unchanged.
+     * The one source-specific rewrite there is: `true`/`false` spelled
+     * as text. A query string, a path segment and a form-encoded body
+     * have no boolean literal, and OpenAPI documents those two words as
+     * a boolean's textual spelling — so they become real booleans before
+     * the shared type check, which then receives an equivalent value
+     * rather than a string standing in for one, and castScalar() never
+     * meets the string `"false"`, whose `(bool)` cast is `true`.
      *
-     * Called only from those three sources, never for a JSON body: the
-     * JSON *string* `"true"` stays a string, and stays a violation.
+     * `bool`'s `"1"`/`"0"` spellings need no rewrite: they pass the
+     * check as raw strings and cast correctly. Nothing else, from any
+     * source, is rewritten at all — a JSON body's own string `"true"`
+     * stays a string, and stays a violation.
      */
-    public static function normalizeTextualBoolean(?string $scalarType, mixed $value): mixed
+    private static function normalizeForSource(InputSource $source, ?string $scalarType, mixed $value): mixed
     {
-        if ($scalarType !== 'bool' || !is_string($value)) {
+        if ($source !== InputSource::Text || $scalarType !== 'bool' || !is_string($value)) {
             return $value;
         }
 
@@ -691,6 +727,14 @@ final class Hydrator
             'false' => false,
             default => $value,
         };
+    }
+
+    /**
+     * @param list<string|int> $path
+     */
+    private static function nullNotAllowedViolation(array $path): Violation
+    {
+        return new Violation($path, self::CODE_NULL_NOT_ALLOWED, 'must not be null.');
     }
 
     /**
@@ -752,7 +796,7 @@ final class Hydrator
      * @param HydrationPlan|null $plan
      * @return array{0: mixed, 1: list<Violation>}
      */
-    private static function resolveClassTypedValue(array $path, mixed $value, string $class, ?array $plan, bool $normalizeFormLiterals): array
+    private static function resolveClassTypedValue(array $path, mixed $value, string $class, ?array $plan, InputSource $source): array
     {
         if ($value instanceof $class) {
             return [$value, []];
@@ -777,7 +821,7 @@ final class Hydrator
         }
 
         try {
-            return [self::hydrateFromPlan($plan, $data, $normalizeFormLiterals), []];
+            return [self::hydrateFromPlan($plan, $data, $source), []];
         } catch (ValidationException $e) {
             $nested = [];
 
@@ -822,7 +866,7 @@ final class Hydrator
      * @param HydrationPlanParameter $parameter
      * @return array{0: mixed, 1: list<Violation>}
      */
-    private static function resolveListValue(string $name, mixed $value, array $parameter, bool $normalizeFormLiterals): array
+    private static function resolveListValue(string $name, mixed $value, array $parameter, InputSource $source): array
     {
         if (!is_array($value) || !array_is_list($value)) {
             return [null, [self::listShapeViolation([$name], $value)]];
@@ -841,7 +885,7 @@ final class Hydrator
                 $item,
                 $listItemClass,
                 $listItemPlan,
-                $normalizeFormLiterals,
+                $source,
             );
 
             if ($itemViolations !== []) {
@@ -857,31 +901,21 @@ final class Hydrator
     }
 
     /**
-     * The declared-type-mismatch check that runs before castScalar() casts
-     * anything — see the class docblock for the policy this implements and
-     * why. `null` is exempt: a missing value is handled by
-     * hydrateFromPlan()'s own "is required" check, and an explicitly-null
-     * value for a non-nullable parameter by its "must not be null." check.
-     *
-     * Public specifically so Kinetis\Http\Dispatcher can apply the identical
-     * policy to #[Query]/path parameters, and Kinetis\Mcp\McpDispatcher to
-     * tool arguments — one uniform rule regardless of source, not a
-     * second, separately-maintained copy of it. $path is the caller's,
-     * since only the caller knows what it is resolving.
+     * The declared-type-mismatch check resolveScalar() runs before
+     * castScalar() casts anything — see the class docblock and
+     * InputSource for the policy this implements and why. Reached only
+     * from there, with a value already known non-null and already
+     * normalized for $source.
      *
      * @param list<string|int> $path
      */
-    public static function typeMismatchViolation(array $path, string $scalarType, mixed $value): ?Violation
+    private static function typeMismatchViolation(array $path, string $scalarType, mixed $value, InputSource $source): ?Violation
     {
-        if ($value === null) {
-            return null;
-        }
-
         return match ($scalarType) {
             'string' => is_string($value) ? null : self::mismatch($path, 'string', $value),
-            'int' => self::integerMismatchViolation($path, $value),
-            'float' => self::floatMismatchViolation($path, $value),
-            'bool' => self::booleanMismatchViolation($path, $value),
+            'int' => self::integerMismatchViolation($path, $value, $source),
+            'float' => self::floatMismatchViolation($path, $value, $source),
+            'bool' => self::booleanMismatchViolation($path, $value, $source),
             // A plain `array` field (no #[ListOf] — that shape is handled
             // entirely separately, by resolveListValue()) needs this
             // check for the same reason every other builtin type does:
@@ -948,22 +982,25 @@ final class Hydrator
     }
 
     /**
-     * `int` accepts three things: a real int; a finite float with no
-     * fractional part, inside the range the `(int)` cast below can
-     * represent; and a string spelled as a plain base-10 integer whose
-     * own value is in that range (`"42"`, `"+42"`, `"-42"`).
+     * `int` accepts a real int from every source, and a finite float
+     * with no fractional part inside the range the `(int)` cast below
+     * can represent: JSON has a single number type, so a producer
+     * writing `42.0` still wrote the integer 42.
      *
-     * A string is read as written, never through a float: a float has 53
-     * bits of mantissa, so `"1.0000000000000001"` and `"1"` are the same
-     * float and only one of them is an integer. A decimal spelling
-     * (`"42.0"`), an exponent spelling (`"4.2e1"`) and a whitespace-padded
-     * one are all rejected for the same reason `4.5` is — the field
-     * declares an integer and gets one, never a value the `(int)` cast
-     * has to reinterpret.
+     * A *string* spelled as a plain base-10 integer (`"42"`, `"+42"`,
+     * `"-42"`) is an integer's textual spelling, and binds under Text
+     * and Native only — under Json a string is a string, and the schema
+     * said integer. Such a string is read as written, never through a
+     * float: a float has 53 bits of mantissa, so `"1.0000000000000001"`
+     * and `"1"` are the same float and only one of them is an integer. A
+     * decimal spelling (`"42.0"`), an exponent spelling (`"4.2e1"`) and
+     * a whitespace-padded one are all rejected for the same reason `4.5`
+     * is — the field declares an integer and gets one, never a value the
+     * `(int)` cast has to reinterpret.
      *
      * @param list<string|int> $path
      */
-    private static function integerMismatchViolation(array $path, mixed $value): ?Violation
+    private static function integerMismatchViolation(array $path, mixed $value, InputSource $source): ?Violation
     {
         if (is_int($value)) {
             return null;
@@ -982,7 +1019,7 @@ final class Hydrator
             return $exactInteger ? null : self::notAnInteger($path);
         }
 
-        if (is_string($value)) {
+        if (is_string($value) && $source !== InputSource::Json) {
             // FILTER_VALIDATE_INT is the base-10 integer-spelling check
             // and the native-range check in one, with no float step in
             // between to round a digit away. It tolerates surrounding
@@ -1005,13 +1042,15 @@ final class Hydrator
     }
 
     /**
-     * `float` accepts a real number or a numeric string, and rejects any
-     * value that isn't finite — `"1e999"` overflows to INF, which is not a
-     * number any consumer of this field can act on.
+     * `float` accepts either JSON number from every source, and a
+     * numeric string — a number's textual spelling — under Text and
+     * Native only. It rejects any value that isn't finite: `"1e999"`
+     * overflows to INF, which is not a number any consumer of this field
+     * can act on.
      *
      * @param list<string|int> $path
      */
-    private static function floatMismatchViolation(array $path, mixed $value): ?Violation
+    private static function floatMismatchViolation(array $path, mixed $value, InputSource $source): ?Violation
     {
         if (is_int($value)) {
             return null;
@@ -1021,7 +1060,7 @@ final class Hydrator
             return is_finite($value) ? null : self::notFinite($path);
         }
 
-        if (is_string($value) && is_numeric($value)) {
+        if (is_string($value) && $source !== InputSource::Json && is_numeric($value)) {
             return is_finite((float) $value) ? null : self::notFinite($path);
         }
 
@@ -1037,11 +1076,19 @@ final class Hydrator
     }
 
     /**
+     * Under Json a `bool` field takes the JSON literal and nothing else.
+     * Text and Native additionally admit `1`/`0` and their string
+     * spellings, which every textual source and every database driver
+     * produces; Text's own `"true"`/`"false"` have already become real
+     * booleans in normalizeForSource().
+     *
      * @param list<string|int> $path
      */
-    private static function booleanMismatchViolation(array $path, mixed $value): ?Violation
+    private static function booleanMismatchViolation(array $path, mixed $value, InputSource $source): ?Violation
     {
-        if (in_array($value, [true, false, 0, 1, '0', '1'], true)) {
+        $accepted = $source === InputSource::Json ? [true, false] : [true, false, 0, 1, '0', '1'];
+
+        if (in_array($value, $accepted, true)) {
             return null;
         }
 
@@ -1096,37 +1143,30 @@ final class Hydrator
     }
 
     /**
-     * Runs a parameter's own constraint descriptors against an already
-     * type-checked, already cast value, adapting each rule's message to
-     * a violation. The Constraint contract still answers with a string,
-     * so this is the one place that string becomes a code and a
-     * parameter naming the rule that produced it. Public for
-     * Kinetis\Http\Dispatcher, whose #[Query]/path parameters carry the
-     * identical descriptors.
+     * Runs a field's own rules against an already type-checked, already
+     * resolved value. Each rule is constructed from its literal
+     * `{class, args}` descriptor, asked once, and discarded — nothing
+     * about a rule instance survives the call, so none of them can carry
+     * state into the next request.
      *
-     * A rule that throws is a programmer failure, not a client
-     * violation: it propagates as an ordinary exception.
+     * A rule answers with its own code, message and parameters; the only
+     * thing this adds is where the failure happened, prefixing the
+     * owning field's path onto the value-relative one the rule returned.
      *
      * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
      * @param list<string|int> $path
      * @return list<Violation>
      */
-    public static function constraintViolations(array $constraints, mixed $value, array $path): array
+    private static function constraintViolations(array $constraints, mixed $value, array $path): array
     {
         $violations = [];
 
         foreach ($constraints as $descriptor) {
             $constraintClass = $descriptor['class'];
-            $constraint = new $constraintClass(...$descriptor['args']);
-            $message = $constraint->validate($value);
+            $violation = new $constraintClass(...$descriptor['args'])->validate($value);
 
-            if ($message !== null) {
-                $violations[] = new Violation(
-                    $path,
-                    self::CODE_CONSTRAINT,
-                    $message,
-                    ['constraint' => $constraintClass],
-                );
+            if ($violation !== null) {
+                $violations[] = $violation->under(...$path);
             }
         }
 
@@ -1147,13 +1187,11 @@ final class Hydrator
     }
 
     /**
-     * Casts a value that has already passed typeMismatchViolation() to its
-     * declared builtin type — every accepted value is exactly
-     * representable in it, so no cast here can lose information. Public
-     * specifically so Kinetis\Http\Dispatcher casts a #[Query]/path value
-     * through the identical rules rather than a second copy of them.
+     * Casts a value that has already passed typeMismatchViolation() to
+     * its declared builtin type — every accepted value is exactly
+     * representable in it, so no cast here can lose information.
      */
-    public static function castScalar(mixed $value, ?string $scalarType): mixed
+    private static function castScalar(mixed $value, ?string $scalarType): mixed
     {
         if ($scalarType === null || $value === null) {
             return $value;

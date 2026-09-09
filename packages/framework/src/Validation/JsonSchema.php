@@ -5,18 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Validation;
 
 use Kinetis\Validation\Exception\JsonSchemaException;
-use Kinetis\Validation\Constraints\Email;
-use Kinetis\Validation\Constraints\GreaterThan;
-use Kinetis\Validation\Constraints\In;
-use Kinetis\Validation\Constraints\LessThan;
-use Kinetis\Validation\Constraints\MaxItems;
-use Kinetis\Validation\Constraints\MaxLength;
-use Kinetis\Validation\Constraints\MinItems;
-use Kinetis\Validation\Constraints\MinLength;
-use Kinetis\Validation\Constraints\Url;
-use Kinetis\Validation\Constraints\Uuid;
 use Psr\Http\Message\UploadedFileInterface;
-use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionNamedType;
 use ReflectionParameter;
@@ -29,6 +18,13 @@ use ReflectionType;
  * #[Email]/#[MinLength]/#[GreaterThan] constraint attributes describe
  * both an HTTP request body and an MCP tool call's arguments, so the
  * type-to-schema logic shouldn't live twice.
+ *
+ * A rule's own keywords come from the rule — {@see Constraint::schema()},
+ * asked on an instance built from the same literal `{class, args}`
+ * descriptor Hydrator validates against — never from a list of framework
+ * classes this file knows about. An application constraint therefore
+ * describes itself in a generated OpenAPI document and an MCP tool's
+ * `inputSchema` with nothing to register.
  *
  * Nullability and required presence are deliberately independent: a
  * nullable type (`?string`, a nullable class-typed/#[ListOf] field) is
@@ -295,21 +291,39 @@ final class JsonSchema
     }
 
     /**
-     * Every Constraint attribute on one parameter, merged into a single
-     * schema fragment in declaration order — the same set Hydrator runs
-     * against the value, so the schema and the check cannot disagree
-     * about which constraints apply. A later constraint writing a
-     * keyword an earlier one already wrote wins, matching the order
-     * Hydrator itself evaluates them in.
+     * Every rule declared on one parameter, merged into a single schema
+     * fragment — read through Hydrator::collectConstraints(), from the
+     * same literal descriptors Hydrator validates against, so the
+     * published schema and the enforced check can never describe
+     * different rule sets. Each rule is constructed here, asked for its
+     * keywords, and discarded.
+     *
+     * Two rules on one parameter may not contribute the same keyword. A
+     * `#[MinLength(3)] #[MinLength(5)]` pair states two different
+     * minimum lengths, and letting declaration order silently pick one
+     * would publish a document stating a bound the request is not
+     * checked against. That is a definition error, refused here rather
+     * than resolved.
      *
      * @return array<string, mixed>
+     * @throws JsonSchemaException
      */
     private static function constraintSchema(ReflectionParameter $parameter): array
     {
         $schema = [];
+        $declaredBy = [];
 
-        foreach ($parameter->getAttributes(Constraint::class, ReflectionAttribute::IS_INSTANCEOF) as $attribute) {
-            $schema = [...$schema, ...self::forConstraint($attribute->newInstance())];
+        foreach (Hydrator::collectConstraints($parameter) as $descriptor) {
+            $class = $descriptor['class'];
+
+            foreach (new $class(...$descriptor['args'])->schema() as $keyword => $value) {
+                if (array_key_exists($keyword, $declaredBy)) {
+                    throw JsonSchemaException::duplicateKeyword($keyword, $declaredBy[$keyword], $class);
+                }
+
+                $declaredBy[$keyword] = $class;
+                $schema[$keyword] = $value;
+            }
         }
 
         return $schema;
@@ -397,9 +411,9 @@ final class JsonSchema
             'bool' => ['type' => 'boolean'],
             'string' => ['type' => 'string'],
             // A plain `array` (no #[ListOf]) is a real JSON array on the
-            // wire, which is what Hydrator::typeMismatchViolation() also
-            // enforces — never an `object`, which would describe the
-            // wrong wire shape entirely.
+            // wire, which is what Hydrator's own check enforces — never
+            // an `object`, which would describe the wrong wire shape
+            // entirely.
             'array', 'iterable' => ['type' => 'array'],
             // `mixed` genuinely accepts every JSON value, null included —
             // the empty schema (`{}` once schemaForScalar() casts it, see
@@ -412,27 +426,5 @@ final class JsonSchema
         };
 
         return self::withNullableSchema($schema, $type->allowsNull());
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public static function forConstraint(Constraint $constraint): array
-    {
-        return match (true) {
-            $constraint instanceof Email => ['format' => 'email'],
-            $constraint instanceof MinLength => ['minLength' => $constraint->length()],
-            $constraint instanceof MaxLength => ['maxLength' => $constraint->length()],
-            $constraint instanceof MinItems => ['minItems' => $constraint->count()],
-            $constraint instanceof MaxItems => ['maxItems' => $constraint->count()],
-            $constraint instanceof GreaterThan => ['exclusiveMinimum' => $constraint->threshold()],
-            $constraint instanceof LessThan => ['exclusiveMaximum' => $constraint->threshold()],
-            $constraint instanceof In => ['enum' => $constraint->choices()],
-            $constraint instanceof Url => ['format' => 'uri'],
-            $constraint instanceof Uuid => ['format' => 'uuid'],
-            // A constraint without an equivalent JSON Schema keyword
-            // leaves the schema unchanged.
-            default => [],
-        };
     }
 }
