@@ -44,6 +44,7 @@ use Kinetis\Tests\Validation\Fixtures\SelfReferencingRequest;
 use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Kinetis\Tests\Validation\Fixtures\TrueTypedFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\UnionTypedFieldRequest;
+use Kinetis\Validation\Constraints\MinLength;
 use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\Exception\ValidationException;
 use Kinetis\Validation\Hydrator;
@@ -79,7 +80,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(UpdateStatusRequest::class, ['status' => 'a']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('status', $e->errors);
+            self::assertArrayHasKey('status', $e->grouped());
         }
     }
 
@@ -89,8 +90,8 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon', 'email' => 'not-an-email']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('email', $e->errors);
-            self::assertArrayNotHasKey('name', $e->errors);
+            self::assertArrayHasKey('email', $e->grouped());
+            self::assertArrayNotHasKey('name', $e->grouped());
         }
     }
 
@@ -100,7 +101,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Al', 'email' => 'alon@example.com']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('name', $e->errors);
+            self::assertArrayHasKey('name', $e->grouped());
         }
     }
 
@@ -110,7 +111,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('email', $e->errors);
+            self::assertArrayHasKey('email', $e->grouped());
         }
     }
 
@@ -120,7 +121,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Al', 'email' => 'not-an-email']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertCount(2, $e->errors);
+            self::assertCount(2, $e->grouped());
         }
     }
 
@@ -138,7 +139,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateProductRequest::class, ['sku' => 'ABC123', 'price' => 0]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('price', $e->errors);
+            self::assertArrayHasKey('price', $e->grouped());
         }
     }
 
@@ -148,7 +149,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateProductRequest::class, ['sku' => 'not-a-sku', 'price' => 9.99]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('sku', $e->errors);
+            self::assertArrayHasKey('sku', $e->grouped());
         }
     }
 
@@ -178,7 +179,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'username' => '   ']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('username', $e->errors);
+            self::assertArrayHasKey('username', $e->grouped());
         }
     }
 
@@ -188,7 +189,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'bio' => str_repeat('x', 21)]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('bio', $e->errors);
+            self::assertArrayHasKey('bio', $e->grouped());
         }
     }
 
@@ -198,7 +199,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'age' => 120]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('age', $e->errors);
+            self::assertArrayHasKey('age', $e->grouped());
         }
     }
 
@@ -208,7 +209,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'role' => 'superadmin']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('role', $e->errors);
+            self::assertArrayHasKey('role', $e->grouped());
         }
     }
 
@@ -218,7 +219,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'website' => 'not a url']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('website', $e->errors);
+            self::assertArrayHasKey('website', $e->grouped());
         }
     }
 
@@ -228,7 +229,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'referralId' => 'not-a-uuid']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('referralId', $e->errors);
+            self::assertArrayHasKey('referralId', $e->grouped());
         }
     }
 
@@ -262,9 +263,9 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Al', 'email' => 'not-an-email'], $plan);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertCount(2, $e->errors);
-            self::assertArrayHasKey('name', $e->errors);
-            self::assertArrayHasKey('email', $e->errors);
+            self::assertCount(2, $e->grouped());
+            self::assertArrayHasKey('name', $e->grouped());
+            self::assertArrayHasKey('email', $e->grouped());
         }
     }
 
@@ -276,7 +277,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => 'Alon'], $plan);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('email', $e->errors);
+            self::assertArrayHasKey('email', $e->grouped());
         }
     }
 
@@ -291,7 +292,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateProductRequest::class, ['sku' => 'ABC123', 'price' => 0], $plan);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('price', $e->errors);
+            self::assertArrayHasKey('price', $e->grouped());
         }
     }
 
@@ -315,7 +316,7 @@ final class HydratorTest extends TestCase
         self::assertSame('Cupertino', $dto->shippingAddress->city);
     }
 
-    public function test_a_nested_dtos_validation_errors_surface_under_a_dotted_key(): void
+    public function test_a_nested_dtos_validation_errors_group_under_a_dotted_key(): void
     {
         try {
             Hydrator::hydrate(CreateOrderRequest::class, [
@@ -324,12 +325,70 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('shippingAddress.street', $e->errors);
-            self::assertArrayNotHasKey('customerName', $e->errors);
+            self::assertArrayHasKey('shippingAddress.street', $e->grouped());
+            self::assertArrayNotHasKey('customerName', $e->grouped());
         }
     }
 
-    public function test_a_missing_nested_required_field_is_reported_under_a_dotted_key(): void
+    /**
+     * The dotted keys above are grouped()'s projection; what hydration
+     * actually produces is a segmented path, which is what survives a
+     * member name containing a dot. Asserted here on the violations
+     * themselves, together with the code and parameters a renderer
+     * needs to rebuild the message without parsing it.
+     */
+    public function test_a_nested_dtos_violation_carries_its_segmented_path_code_and_parameters(): void
+    {
+        try {
+            Hydrator::hydrate(CreateOrderRequest::class, [
+                'customerName' => 'Alon',
+                'shippingAddress' => ['street' => 'x', 'city' => 'Cupertino'],
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['shippingAddress', 'street'], $e->violations[0]->path);
+            self::assertSame('constraint', $e->violations[0]->code);
+            self::assertSame(['constraint' => MinLength::class], $e->violations[0]->parameters);
+        }
+    }
+
+    /**
+     * A list index stays an int all the way out, so an element's own
+     * position is never confused with a member named "1".
+     */
+    public function test_a_list_elements_violation_carries_its_index_as_an_integer_segment(): void
+    {
+        try {
+            Hydrator::hydrate(OrderWithItems::class, [
+                'customerName' => 'Alon',
+                'items' => [['product' => 'A1', 'quantity' => 1], ['product' => 'B2', 'quantity' => 0]],
+            ]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame([['items', 1, 'quantity']], array_column($e->violations, 'path'));
+        }
+    }
+
+    /**
+     * The three failure kinds hydration raises without any constraint
+     * attribute involved, each carrying the machine parts of its own
+     * message.
+     */
+    public function test_presence_and_type_failures_carry_their_own_codes(): void
+    {
+        try {
+            Hydrator::hydrate(CreateOrderRequest::class, ['shippingAddress' => 'not-an-object']);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame([['customerName'], ['shippingAddress']], array_column($e->violations, 'path'));
+            self::assertSame(['required', 'type_mismatch'], array_column($e->violations, 'code'));
+            self::assertSame([], $e->violations[0]->parameters);
+            self::assertSame(['expected' => 'object', 'given' => 'value'], $e->violations[1]->parameters);
+        }
+    }
+
+    public function test_a_missing_nested_required_field_groups_under_a_dotted_key(): void
     {
         try {
             Hydrator::hydrate(CreateOrderRequest::class, [
@@ -338,7 +397,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('shippingAddress.city', $e->errors);
+            self::assertArrayHasKey('shippingAddress.city', $e->grouped());
         }
     }
 
@@ -351,8 +410,8 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('customerName', $e->errors);
-            self::assertArrayHasKey('shippingAddress.street', $e->errors);
+            self::assertArrayHasKey('customerName', $e->grouped());
+            self::assertArrayHasKey('shippingAddress.street', $e->grouped());
         }
     }
 
@@ -417,7 +476,7 @@ final class HydratorTest extends TestCase
         self::assertSame([], $dto->items);
     }
 
-    public function test_a_list_items_validation_errors_surface_under_a_dotted_index_key(): void
+    public function test_a_list_items_validation_errors_group_under_a_dotted_index_key(): void
     {
         try {
             Hydrator::hydrate(OrderWithItems::class, [
@@ -429,8 +488,8 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('items.1.quantity', $e->errors);
-            self::assertArrayNotHasKey('items.0.quantity', $e->errors);
+            self::assertArrayHasKey('items.1.quantity', $e->grouped());
+            self::assertArrayNotHasKey('items.0.quantity', $e->grouped());
         }
     }
 
@@ -443,8 +502,8 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('customerName', $e->errors);
-            self::assertArrayHasKey('items.0.quantity', $e->errors);
+            self::assertArrayHasKey('customerName', $e->grouped());
+            self::assertArrayHasKey('items.0.quantity', $e->grouped());
         }
     }
 
@@ -503,7 +562,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => ['aaa', 'bbb'], 'email' => 'a@b.com']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('name', $e->errors);
+            self::assertArrayHasKey('name', $e->grouped());
         }
     }
 
@@ -515,7 +574,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => [], 'email' => 'a@b.com']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('name', $e->errors);
+            self::assertArrayHasKey('name', $e->grouped());
         }
     }
 
@@ -525,7 +584,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateUserRequest::class, ['name' => ['x' => 1], 'email' => 'a@b.com']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('name', $e->errors);
+            self::assertArrayHasKey('name', $e->grouped());
         }
     }
 
@@ -535,7 +594,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'age' => 'not-a-number']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('age', $e->errors);
+            self::assertArrayHasKey('age', $e->grouped());
         }
     }
 
@@ -545,7 +604,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(RegisterAccountRequest::class, [...$this->validAccountData(), 'age' => [1, 2, 3]]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('age', $e->errors);
+            self::assertArrayHasKey('age', $e->grouped());
         }
     }
 
@@ -562,7 +621,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(HiddenRequest::class, ['ok' => 'yes']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('ok', $e->errors);
+            self::assertArrayHasKey('ok', $e->grouped());
         }
     }
 
@@ -574,8 +633,8 @@ final class HydratorTest extends TestCase
         }
     }
 
-    // --- A nested-DTO field given a non-array value is a 422, not an
-    // uncaught TypeError. ---
+    // --- A nested-DTO field given a non-array value is a violation,
+    // not an uncaught TypeError. ---
 
     public function test_a_scalar_value_for_a_nested_dto_field_is_rejected_not_a_type_error(): void
     {
@@ -586,7 +645,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('shippingAddress', $e->errors);
+            self::assertArrayHasKey('shippingAddress', $e->grouped());
         }
     }
 
@@ -599,7 +658,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertArrayHasKey('items', $e->errors);
+            self::assertArrayHasKey('items', $e->grouped());
         }
     }
 
@@ -617,7 +676,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items' => ['must be a JSON array, not a JSON object.']], $e->errors);
+            self::assertSame(['items' => ['must be a JSON array, not a JSON object.']], $e->grouped());
         }
     }
 
@@ -627,7 +686,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateNoteRequest::class, ['title' => null, 'subtitle' => null]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['title' => ['must not be null.']], $e->errors);
+            self::assertSame(['title' => ['must not be null.']], $e->grouped());
         }
     }
 
@@ -647,14 +706,14 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateNoteRequest::class, ['title' => null, 'subtitle' => null], $plan);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['title' => ['must not be null.']], $e->errors);
+            self::assertSame(['title' => ['must not be null.']], $e->grouped());
         }
     }
 
     /**
-     * A plain `array` field (no #[ListOf]) gets the same
-     * 422/validation-error contract every other builtin type does, never
-     * a raw TypeError from `new $className(...)`.
+     * A plain `array` field (no #[ListOf]) produces the same violation
+     * every other builtin type does, never a raw TypeError from
+     * `new $className(...)`.
      */
     public function test_a_non_array_value_for_a_plain_array_field_is_a_validation_error_not_a_type_error(): void
     {
@@ -662,7 +721,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => 'not-an-array']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['tags' => ['must be an array, value given.']], $e->errors);
+            self::assertSame(['tags' => ['must be an array, value given.']], $e->grouped());
         }
     }
 
@@ -693,7 +752,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => ['key' => 'value']]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['tags' => ['must be a JSON array, not a JSON object.']], $e->errors);
+            self::assertSame(['tags' => ['must be a JSON array, not a JSON object.']], $e->grouped());
         }
     }
 
@@ -766,7 +825,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": ["a", "b"]}'));
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['meta' => ['must be a JSON object, not a JSON array.']], $e->errors);
+            self::assertSame(['meta' => ['must be a JSON object, not a JSON array.']], $e->grouped());
         }
     }
 
@@ -776,7 +835,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": 42}'));
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['meta' => ['must be an object, integer given.']], $e->errors);
+            self::assertSame(['meta' => ['must be an object, integer given.']], $e->grouped());
         }
     }
 
@@ -799,15 +858,16 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody('{"name": "Alon", "meta": null}'));
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['meta' => ['must not be null.']], $e->errors);
+            self::assertSame(['meta' => ['must not be null.']], $e->grouped());
         }
     }
 
     /**
-     * A nested object map's own failure surfaces under the dotted path,
-     * alongside every other error in the same response.
+     * A nested object map's own failure carries the parent field in its
+     * path, alongside every other violation in the same failure; the
+     * dotted key below is grouped()'s projection of that path.
      */
-    public function test_a_nested_object_map_failure_surfaces_under_its_dotted_path(): void
+    public function test_a_nested_object_map_failure_groups_under_its_dotted_path(): void
     {
         try {
             Hydrator::hydrate(NestedObjectMapRequest::class, self::decodedBody(
@@ -815,7 +875,7 @@ final class HydratorTest extends TestCase
             ));
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['payload.meta' => ['must be a JSON object, not a JSON array.']], $e->errors);
+            self::assertSame(['payload.meta' => ['must be a JSON object, not a JSON array.']], $e->grouped());
         }
     }
 
@@ -832,7 +892,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(ObjectMapFieldRequest::class, ['name' => 'Alon', 'meta' => ['locale' => 'en']]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['meta' => ['must be a JSON object, not a JSON array.']], $e->errors);
+            self::assertSame(['meta' => ['must be a JSON object, not a JSON array.']], $e->grouped());
         }
     }
 
@@ -907,7 +967,7 @@ final class HydratorTest extends TestCase
             self::assertSame([
                 'tags' => ['must contain at least 1 items.'],
                 'items' => ['must contain at most 2 items.'],
-            ], $e->errors);
+            ], $e->grouped());
         }
     }
 
@@ -926,12 +986,12 @@ final class HydratorTest extends TestCase
             ));
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items.0.quantity' => ['must be greater than 0.']], $e->errors);
+            self::assertSame(['items.0.quantity' => ['must be greater than 0.']], $e->grouped());
         }
     }
 
     // Hydrator::SUPPORTED_BUILTIN_TYPES is the closed set a request value
-    // may be bound to. typeMismatchMessage() is the one boundary shared by
+    // may be bound to. typeMismatchViolation() is the one boundary shared by
     // #[Body] fields here, #[Query]/path parameters via Dispatcher, and MCP
     // tool arguments via McpDispatcher — proving it here proves it
     // everywhere.
@@ -942,7 +1002,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(IterableFieldRequest::class, ['items' => 'not-an-array']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items' => ['must be an array, value given.']], $e->errors);
+            self::assertSame(['items' => ['must be an array, value given.']], $e->grouped());
         }
     }
 
@@ -959,16 +1019,16 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(IterableFieldRequest::class, ['items' => ['key' => 'value']]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items' => ['must be a JSON array, not a JSON object.']], $e->errors);
+            self::assertSame(['items' => ['must be a JSON array, not a JSON object.']], $e->grouped());
         }
     }
 
     public function test_mixed_accepts_any_non_null_value(): void
     {
-        self::assertNull(Hydrator::typeMismatchMessage('mixed', 'anything'));
-        self::assertNull(Hydrator::typeMismatchMessage('mixed', 42));
-        self::assertNull(Hydrator::typeMismatchMessage('mixed', ['a', 'b']));
-        self::assertNull(Hydrator::typeMismatchMessage('mixed', true));
+        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', 'anything'));
+        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', 42));
+        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', ['a', 'b']));
+        self::assertNull(Hydrator::typeMismatchViolation(['field'], 'mixed', true));
     }
 
     /**
@@ -1015,12 +1075,12 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['shippingAddress' => ['must be a ' . Address::class . ' instance.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
 
-    public function test_a_scalar_list_element_is_rejected_under_its_own_dotted_index_key(): void
+    public function test_a_scalar_list_element_is_rejected_and_groups_under_its_own_dotted_index_key(): void
     {
         try {
             Hydrator::hydrate(OrderWithItems::class, [
@@ -1029,7 +1089,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items.1' => ['must be an object, value given.']], $e->errors);
+            self::assertSame(['items.1' => ['must be an object, value given.']], $e->grouped());
         }
     }
 
@@ -1039,7 +1099,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(OrderWithItems::class, ['customerName' => 'Alon', 'items' => [null]]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items.0' => ['must be an object, null given.']], $e->errors);
+            self::assertSame(['items.0' => ['must be an object, null given.']], $e->grouped());
         }
     }
 
@@ -1052,7 +1112,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items.0' => ['must be a ' . OrderItem::class . ' instance.']], $e->errors);
+            self::assertSame(['items.0' => ['must be a ' . OrderItem::class . ' instance.']], $e->grouped());
         }
     }
 
@@ -1064,7 +1124,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(OrderWithItems::class, ['customerName' => 'Alon', 'items' => [42]], $plan);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items.0' => ['must be an object, integer given.']], $e->errors);
+            self::assertSame(['items.0' => ['must be an object, integer given.']], $e->grouped());
         }
     }
 
@@ -1109,7 +1169,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['shippingAddress' => ['must be a JSON object, not a JSON array.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1128,7 +1188,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['shippingAddress' => ['must be a JSON object, not a JSON array.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1146,7 +1206,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['settings' => ['must be a JSON object, not a JSON array.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1159,7 +1219,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['extras.0' => ['must be a JSON object, not a JSON array.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1178,7 +1238,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['extras.1' => ['must be a JSON object, not a JSON array.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1247,7 +1307,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['avatar' => ['must be a ' . UploadedFileInterface::class . ' instance.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1262,7 +1322,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['avatar' => ['must be a ' . UploadedFileInterface::class . ' instance.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1326,7 +1386,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['count' => ['must be an integer within the platform integer range.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1342,7 +1402,7 @@ final class HydratorTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(
                 ['count' => ['must be an integer within the platform integer range.']],
-                $e->errors,
+                $e->grouped(),
             );
         }
     }
@@ -1353,7 +1413,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(BoundlessIntFieldRequest::class, ['count' => true]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['count' => ['must be an integer, boolean given.']], $e->errors);
+            self::assertSame(['count' => ['must be an integer, boolean given.']], $e->grouped());
         }
     }
 
@@ -1381,7 +1441,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(CreateProductRequest::class, ['sku' => 'ABC123', 'price' => $value]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['price' => ['must be a finite number.']], $e->errors);
+            self::assertSame(['price' => ['must be a finite number.']], $e->grouped());
         }
     }
 

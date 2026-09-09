@@ -128,21 +128,47 @@ final class TestResponse implements ResponseInterface
     }
 
     /**
-     * A validation failure names every field that failed at once (see
-     * Kinetis\Validation\Hydrator), so this asserts the 422 and the field
-     * together — the pair a test actually cares about.
+     * A validation failure reports every violation at once (see
+     * Kinetis\Validation\Hydrator), so this asserts the 422 and the
+     * violated path together — the pair a test actually cares about.
+     *
+     * The path is variadic and matched whole:
+     * `assertValidationError('items', 0, 'quantity')` passes only for a
+     * violation whose own path is exactly those three segments. A
+     * single dotted string would be ambiguous where a member name
+     * contains a dot, and would lose the string/int distinction between
+     * a member name and a list index.
+     *
+     * No arguments asserts the root path — the empty segment list a
+     * violation addressing the payload as a whole carries, which a
+     * DTO-level rule produces. Whole-path matching is what keeps that
+     * unambiguous: the root matches only a violation with no segments,
+     * never one under a named field.
+     *
+     * Reads the default renderer's document — see
+     * Kinetis\Http\ProblemDetailsValidationExceptionRenderer. An
+     * application that binds its own
+     * Kinetis\Http\ValidationExceptionRendererInterface asserts against
+     * whatever that one produces instead.
      */
-    public function assertValidationError(string $field): self
+    public function assertValidationError(string|int ...$path): self
     {
         $this->assertStatus(422);
 
         $errors = $this->jsonPath('errors');
+        $spelled = json_encode($path, JSON_THROW_ON_ERROR);
 
-        Assert::assertIsArray($errors, 'Expected an "errors" object in the response.' . $this->bodyForFailure());
-        Assert::assertArrayHasKey(
-            $field,
+        Assert::assertIsArray($errors, 'Expected an "errors" list in the response.' . $this->bodyForFailure());
+
+        $paths = array_map(
+            static fn (mixed $error): mixed => is_array($error) ? $error['path'] ?? null : null,
             $errors,
-            "Expected a validation error for \"{$field}\"." . $this->bodyForFailure(),
+        );
+
+        Assert::assertContains(
+            $path,
+            $paths,
+            "Expected a validation error at path {$spelled}." . $this->bodyForFailure(),
         );
 
         return $this;

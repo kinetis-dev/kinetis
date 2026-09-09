@@ -62,6 +62,12 @@ key, `mappingFailure`, holding a `Middleware\Exception\HttpStatusMappingExceptio
 describing what went wrong trying to map it, chaining the real secondary
 cause via `getPrevious()` when there was one.
 
+A `Kinetis\Http\ValidationExceptionRendererInterface` that throws logs
+the same way too — `exception` the `ValidationException` being rendered,
+and `renderFailure` whatever the renderer threw. A validation failure
+rendered normally logs nothing at all: it reports a client mistake, not
+a framework fault.
+
 This log call is best-effort: a registered logger that itself throws
 cannot prevent the `500` this middleware exists to guarantee. The same
 is true wherever else a framework internal logs from inside a fallback

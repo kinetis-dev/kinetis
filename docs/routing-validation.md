@@ -727,20 +727,45 @@ JSON array fails there first and never reaches the bound.
 
 `Hydrator::hydrate()` checks **every** constrained field before
 constructing the DTO — a request with three invalid fields gets all three
-errors back in one response, not just the first one it happened to
-encounter:
+violations back in one response, not just the first one it happened to
+encounter. The default response is an [RFC 9457][rfc9457] problem
+details document, served as `application/problem+json`:
 
 ```{code-block} json
 {
-    "errors": {
-        "name": ["must be at least 3 characters."],
-        "email": ["must be a valid email address."]
-    }
+    "type": "about:blank",
+    "title": "Unprocessable Content",
+    "status": 422,
+    "detail": "The request data failed validation.",
+    "errors": [
+        {
+            "path": ["name"],
+            "code": "constraint",
+            "message": "must be at least 3 characters.",
+            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\MinLength"}
+        },
+        {
+            "path": ["email"],
+            "code": "constraint",
+            "message": "must be a valid email address.",
+            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\Email"}
+        }
+    ]
 }
 ```
 
-A failed validation short-circuits straight to a `422` — the controller
-method is never invoked at all.
+Each entry names where the failure is as a list of path segments — a
+member name is a string, a list index an integer, so neither can be
+mistaken for the other — plus a stable `code` a client can switch on,
+the default-English `message`, and the `parameters` that message was
+built from, for an application that translates or rewords it.
+
+A failed validation never reaches the controller method. The response
+itself is produced at the terminal boundary, so an application can
+replace it wholesale — see
+[Rendering validation failures](middleware.md#rendering-validation-failures).
+
+[rfc9457]: https://www.rfc-editor.org/rfc/rfc9457.html
 
 An empty body is treated as no data at all, so a DTO with only optional
 fields hydrates from its own defaults — the same outcome a `{}` body
@@ -763,7 +788,7 @@ path parameter's declared scalar type, its actual shape is checked
 first — casting only ever happens once that check passes. This is the
 one check shared by every source of typed input: a `#[Body]` DTO field,
 a `#[Query]`/path parameter, and — since `Kinetis\Mcp\McpDispatcher`
-delegates to the identical `Hydrator::typeMismatchMessage()` method — an
+delegates to the identical `Hydrator::typeMismatchViolation()` method — an
 MCP tool's own top-level argument.
 
 A request value binds to one of seven builtin types:
@@ -815,17 +840,19 @@ supported set" below.
   PHP array would otherwise serialize as the invalid JSON array `[]`
   where JSON Schema requires an object.
 
-A mismatch is a `422` with a message under that field's key, in the same
-`errors` structure a failed constraint produces — not a value silently
+A mismatch is a `422` carrying a violation at that field's own path, in
+the same `errors` list a failed constraint produces — not a value silently
 coerced into something that happens to look plausible (an array becoming
 the literal string `"Array"`, a non-numeric string becoming `0`), and
-never a raw `TypeError` escaping the constructor. Every field's own
-errors are collected together before throwing once, so two
-independently-invalid fields in the same request both surface in the
-same response, not just whichever one happened to be checked first. An
-MCP tool's own validation failure surfaces the same `{field: [messages]}`
-shape inside a `tools/call` result's `isError: true` content, rather than
-a JSON-RPC-level error — see {doc}`mcp`.
+never a raw `TypeError` escaping the constructor. Its `code` is
+`type_mismatch`, with the declared and received type names in
+`parameters`. Every field's own violations are collected together before
+throwing once, so two independently-invalid fields in the same request
+both surface in the same response, not just whichever one happened to be
+checked first. An MCP tool's own validation failure carries that same
+ordered `errors` list inside a `tools/call` result's `isError: true`
+content — the violations, not the HTTP problem document around them —
+rather than a JSON-RPC-level error; see {doc}`mcp`.
 
 ### Builtin types outside the supported set
 
@@ -944,8 +971,8 @@ Missing and explicitly-null values get the same treatment, whether or not
 the field carries any constraint attributes: a `#[Body]` DTO field whose
 key is absent from the request is `is required.` unless the constructor
 parameter has a default, and a field sent as JSON `null` whose declared
-type doesn't allow null is `must not be null.` — both under the field's
-key in the same `422`, never a raw `TypeError` from the constructor.
+type doesn't allow null is `must not be null.` — both at the field's own
+path in the same `422`, never a raw `TypeError` from the constructor.
 Nullability and required presence are independent: a nullable field with
 no default (`?string $name`) still rejects an absent key, only accepting
 one explicitly present and set to `null` — the generated OpenAPI schema
@@ -1041,14 +1068,19 @@ final readonly class CreateOrderRequest
 
 A nested DTO's own validation runs the same way its parent's does — every
 field, top-level and nested, is checked before construction, and a nested
-field's error surfaces under a dotted key (`shippingAddress.street`) rather
+field's violation carries the whole route to it as path segments rather
 than only reporting the outer field name:
 
 ```{code-block} json
 {
-    "errors": {
-        "shippingAddress.street": ["must be at least 3 characters."]
-    }
+    "errors": [
+        {
+            "path": ["shippingAddress", "street"],
+            "code": "constraint",
+            "message": "must be at least 3 characters.",
+            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\MinLength"}
+        }
+    ]
 }
 ```
 
@@ -1058,7 +1090,7 @@ already an instance of that class, taken as given — most notably an
 `UploadedFileInterface` merged in for a
 [multipart](#multipart-form-data-file-uploads) field. A scalar, a `null`
 for a non-nullable field, or an object of some other class is a `422`
-under that field's key, never a raw `TypeError` from the constructor.
+at that field's own path, never a raw `TypeError` from the constructor.
 
 Object-shaped means a JSON object (`{...}`, including `{}`) or — for a
 direct `Hydrator::hydrate()` call or a form-encoded body, neither of which
@@ -1114,24 +1146,32 @@ final readonly class CreateOrderRequest
 }
 ```
 
-Each element's own validation errors surface under a dotted
-`field.index.nestedField` key, alongside every other error in the same
-response:
+Each element's own violations carry the field name, the element's index
+as an integer segment, and the nested field name, alongside every other
+violation in the same response:
 
 ```{code-block} json
 {
-    "errors": {
-        "items.1.quantity": ["must be greater than 0."]
-    }
+    "errors": [
+        {
+            "path": ["items", 1, "quantity"],
+            "code": "constraint",
+            "message": "must be greater than 0.",
+            "parameters": {"constraint": "Kinetis\\Validation\\Constraints\\GreaterThan"}
+        }
+    ]
 }
 ```
+
+An index stays an integer all the way out, so an element's position is
+never confused with a member named `1`.
 
 Every element gets the same two-shape contract a single nested DTO field
 has: object-shaped and hydrated into the item class, or already an
 instance of it. A scalar, a `null`, a nested JSON array, or an object of
-another class is a `422` under that element's own `field.index` key —
-`items.1: must be an object, value given.` — alongside every other error
-in the response.
+another class is a `422` at that element's own `["items", 1]` path —
+`must be an object, value given.` — alongside every other violation in
+the response.
 
 `#[ListOf]` itself is only valid on a parameter typed `array`, and its
 item class must be a class that can be instantiated.
@@ -1168,10 +1208,11 @@ same value a `mixed` field would have received. No schema is declared or
 checked for the keys or the values.
 
 A JSON array, a scalar, or a `null` for a non-nullable property is a
-`422` under that property's own key — `preferences: must be a JSON
-object, not a JSON array.` — alongside every other error in the same
-response. Inside a [nested DTO](#nested-dtos) it surfaces under the
-dotted `field.preferences` key, exactly like any other nested field.
+`422` at that property's own path — `["preferences"]`, with the message
+`must be a JSON object, not a JSON array.` — alongside every other
+violation in the same response. Inside a [nested DTO](#nested-dtos) the
+parent field is prepended, `["profile", "preferences"]`, exactly like
+any other nested field.
 
 `{}` is accepted and hydrates to `[]`, which is precisely the value a
 plain `array` field rejects. That pair is decided by *provenance*, not

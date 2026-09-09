@@ -44,8 +44,9 @@ use ReflectionType;
  * request's uploaded-files bag by name), resolves the controller through
  * the container, invokes it, and encodes the return value as a JSON
  * PSR-7 response. Binding comes first so that a request rejected as a
- * 400, 415 or 422 never constructs the controller, and no constructor or
- * registered factory runs on its behalf. A #[Body] DTO is read from
+ * 400 or 415, or refused by validation, never constructs the
+ * controller, and no constructor or registered factory runs on its
+ * behalf. A #[Body] DTO is read from
  * getParsedBody() for multipart/form-data and
  * application/x-www-form-urlencoded, and decoded as JSON for
  * application/json and any application/*+json subtype, as
@@ -68,6 +69,17 @@ use ReflectionType;
  * resolveScalarFromPlan(), after the declared-type-mismatch check and
  * cast — the same two-stage shape Hydrator uses for a #[Body] DTO
  * field, applied uniformly to every parameter source.
+ *
+ * A binding failure from any source leaves this class as the
+ * Kinetis\Validation\Exception\ValidationException it is, carrying every
+ * violation the whole plan produced. It is not turned into a response
+ * here: route and application middleware get to catch it — one storing
+ * flash errors and redirecting, say, while the session is still alive —
+ * and whatever reaches the terminal
+ * Kinetis\Http\Middleware\ExceptionHandlerMiddleware is rendered by the
+ * application's own Kinetis\Http\ValidationExceptionRendererInterface.
+ * A 400 or 415 stays here: neither carries per-field structure, and
+ * neither is a candidate for that seam.
  *
  * A parameter's own default value is captured under the rule
  * Kinetis\Reflection\ParameterDefault owns, shared with Hydrator's
@@ -100,6 +112,9 @@ final class Dispatcher
         private readonly array $hydrationPlans = [],
     ) {}
 
+    /**
+     * @throws ValidationException
+     */
     public function dispatch(RouteMatch $match, ServerRequestInterface $request): ResponseInterface
     {
         $route = $match->route;
@@ -108,8 +123,8 @@ final class Dispatcher
         // instance is needed to derive it. That keeps container
         // resolution of the controller — and with it its constructor or
         // registered factory — behind the argument-binding step below, so
-        // a request rejected as a 400/415/422 never constructs the
-        // controller.
+        // a request rejected as a 400/415, or refused by validation,
+        // never constructs the controller.
         $plan = $this->bindingPlans[$key]
             ?? self::derivePlan(new ReflectionMethod($route->controllerClass, $route->controllerMethod), $route);
 
@@ -119,8 +134,6 @@ final class Dispatcher
             return ErrorResponse::create(400, $e->getMessage());
         } catch (UnsupportedBodyMediaTypeException $e) {
             return ErrorResponse::create(415, $e->getMessage());
-        } catch (ValidationException $e) {
-            return $this->json(['errors' => $e->errors], 422);
         }
 
         $controller = $this->container->get($route->controllerClass);
@@ -332,7 +345,7 @@ final class Dispatcher
     private function resolveFromPlan(array $plan, RouteMatch $match, ServerRequestInterface $request): array
     {
         $arguments = [];
-        $errors = [];
+        $violations = [];
 
         foreach ($plan as $param) {
             $name = $param['name'];
@@ -350,17 +363,15 @@ final class Dispatcher
             } catch (ValidationException $e) {
                 // Collected rather than rethrown immediately, so several
                 // #[Query]/path type mismatches on the same route all
-                // surface together in one 422 — the same "every error at
-                // once" discipline Hydrator itself already applies within
-                // a single DTO.
-                foreach ($e->errors as $field => $messages) {
-                    $errors[$field] = $messages;
-                }
+                // surface together in one failure — the same "every
+                // violation at once" discipline Hydrator itself already
+                // applies within a single DTO.
+                $violations = [...$violations, ...$e->violations];
             }
         }
 
-        if ($errors !== []) {
-            throw ValidationException::forErrors($errors);
+        if ($violations !== []) {
+            throw ValidationException::fromViolations($violations);
         }
 
         return $arguments;
@@ -437,7 +448,7 @@ final class Dispatcher
      * and `{}` are the same value.
      *
      * Decoded with `associative: false`, not `true`, and run through
-     * `JsonTree::convert()` — this is what lets `Hydrator::typeMismatchMessage()`'s
+     * `JsonTree::convert()` — this is what lets `Hydrator::typeMismatchViolation()`'s
      * array/iterable/`#[ListOf]` checks reject a JSON *object* wherever an
      * array is declared, including one whose own keys happen to look
      * sequential (`{"0":"a","1":"b"}`), which `array_is_list()` alone
@@ -483,8 +494,8 @@ final class Dispatcher
     /**
      * A request without the expected file resolves like a missing #[Query]
      * value: the default if one exists, null if the parameter accepts it,
-     * and an "is required." entry in the route's 422 otherwise — a client
-     * forgetting a file field is malformed input, not a server error.
+     * and an "is required." violation otherwise — a client forgetting a
+     * file field is malformed input, not a server error.
      *
      * @param HttpBindingPlan $param
      * @throws ValidationException
@@ -503,7 +514,7 @@ final class Dispatcher
             return null;
         }
 
-        throw ValidationException::forErrors([$name => ['is required.']]);
+        throw ValidationException::fromViolations([Hydrator::requiredViolation([$name])]);
     }
 
     /**
@@ -655,13 +666,14 @@ final class Dispatcher
 
     /**
      * Applies the identical declared-type-mismatch check
-     * Hydrator::typeMismatchMessage() runs for #[Body] DTO fields, before
-     * casting — a #[Query]/path value with the wrong shape (an array for a
-     * scalar param, a non-numeric string for an int/float one, ...) is a
-     * 422, never a silently wrong cast (e.g. "not-a-number" -> 0). Once
-     * cast, the parameter's own Constraint attributes run against the
-     * cast value — the same #[GreaterThan]/#[In]/etc. attributes that
-     * work on a #[Body] DTO field, honored identically here.
+     * Hydrator::typeMismatchViolation() runs for #[Body] DTO fields,
+     * before casting — a #[Query]/path value with the wrong shape (an
+     * array for a scalar param, a non-numeric string for an int/float
+     * one, ...) is a violation, never a silently wrong cast (e.g.
+     * "not-a-number" -> 0). Once cast, the parameter's own Constraint
+     * attributes run against the cast value — the same
+     * #[GreaterThan]/#[In]/etc. attributes that work on a #[Body] DTO
+     * field, honored identically here.
      *
      * The check itself is genuinely the same method regardless of source
      * — but a #[Query]/path *value* is not: it only ever arrives as a raw
@@ -684,9 +696,9 @@ final class Dispatcher
             // A missing value can only legally become null if the parameter
             // actually accepts null — otherwise it would explode as a raw
             // TypeError at controller invocation instead of joining the
-            // route's other binding errors in one 422.
+            // route's other binding violations in one failure.
             if (!$param['allowsNull']) {
-                throw ValidationException::forErrors([$name => ['is required.']]);
+                throw ValidationException::fromViolations([Hydrator::requiredViolation([$name])]);
             }
 
             return null;
@@ -696,30 +708,18 @@ final class Dispatcher
         $raw = Hydrator::normalizeTextualBoolean($scalarType, $raw);
 
         if ($scalarType !== null) {
-            $message = Hydrator::typeMismatchMessage($scalarType, $raw);
+            $violation = Hydrator::typeMismatchViolation([$name], $scalarType, $raw);
 
-            if ($message !== null) {
-                throw ValidationException::forErrors([$name => [$message]]);
+            if ($violation !== null) {
+                throw ValidationException::fromViolations([$violation]);
             }
         }
 
         $value = Hydrator::castScalar($raw, $scalarType);
+        $violations = Hydrator::constraintViolations($param['constraints'], $value, [$name]);
 
-        $errors = [];
-
-        foreach ($param['constraints'] as $descriptor) {
-            /** @var class-string<Constraint> $constraintClass */
-            $constraintClass = $descriptor['class'];
-            $constraint = new $constraintClass(...$descriptor['args']);
-            $message = $constraint->validate($value);
-
-            if ($message !== null) {
-                $errors[$name][] = $message;
-            }
-        }
-
-        if ($errors !== []) {
-            throw ValidationException::forErrors($errors);
+        if ($violations !== []) {
+            throw ValidationException::fromViolations($violations);
         }
 
         return $value;

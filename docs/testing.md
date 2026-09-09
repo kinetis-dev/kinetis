@@ -238,7 +238,7 @@ $response->assertCreated()
 | `assertJson(array)` | the whole decoded body matches exactly |
 | `assertJsonPath(path, value)` | the value at a dot path — `order.items.0.sku` |
 | `assertJsonPathMissing(path)` | nothing is at that path |
-| `assertValidationError(field)` | the response is 422 and names that field |
+| `assertValidationError(...$path)` | the response is 422 and carries a violation at exactly that segmented path — `('items', 0, 'sku')`, or no arguments for a violation against the payload as a whole |
 | `assertBodyContains(string)` | the raw body contains the text |
 
 A failed assertion prints the response body alongside the mismatch, since

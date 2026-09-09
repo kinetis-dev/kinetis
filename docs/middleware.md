@@ -492,6 +492,60 @@ Middleware registration is a flat class-string list at both levels — a
 middleware needing a threshold or a config value takes it through the
 container via constructor injection, like anything else.
 
+### Rendering validation failures
+
+A `Kinetis\Validation\Exception\ValidationException` is recognized here
+before anything else, and handed to whichever
+`Kinetis\Http\ValidationExceptionRendererInterface` the container can
+supply:
+
+```{code-block} php
+interface ValidationExceptionRendererInterface
+{
+    public function render(
+        ValidationException $exception,
+        ServerRequestInterface $request,
+    ): ResponseInterface;
+}
+```
+
+The default is `Kinetis\Http\ProblemDetailsValidationExceptionRenderer`,
+an [RFC 9457][rfc9457] problem details document at `422` — see
+{doc}`routing-validation` for its exact body. It is an ordinary
+constructor default, so nothing is registered for it and binding your
+own implementation before `AppScope::boot()` is all it takes to replace
+it everywhere:
+
+```{code-block} php
+$app->bind(ValidationExceptionRendererInterface::class, FormRedirectRenderer::class);
+```
+
+Your renderer decides the whole response. No status range is imposed: a
+`303` back to the form, a re-rendered `200` page, and a problem document
+of your own design are all legitimate. It reads `$exception->violations`
+— each a `Kinetis\Validation\Violation` with a segmented `path`, a
+stable `code`, a `message` and its `parameters` — or
+`$exception->grouped()`, a lossy convenience projecting those paths onto
+dotted keys with their messages, which is the shape an HTML form
+usually wants.
+
+The renderer is resolved from `AppScope` and shared by every request, so
+it must be worker-safe: constructor dependencies only, and neither the
+request nor the exception kept past `render()`. By the time it runs the
+request scope is already disposed, so a request-scoped service is gone.
+A workflow that needs one — storing flash errors in the session before
+redirecting, most of all — catches `ValidationException` in route or
+application middleware instead, closer to the controller, where the
+session is still open and its cookie can still reach the response.
+
+A renderer that throws cannot defeat this boundary: the original
+validation failure is logged with the rendering failure as context, and
+the request gets the same generic `500` as any other uncaught exception.
+A validation failure rendered normally is not logged — it reports a
+client mistake, not a framework fault.
+
+[rfc9457]: https://www.rfc-editor.org/rfc/rfc9457.html
+
 ### Mapping your own exceptions to a status
 
 An exception thrown from a controller (or anything further inside the

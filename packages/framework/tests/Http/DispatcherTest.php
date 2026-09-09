@@ -8,6 +8,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Exception\UnresolvableParameterException;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Http\Routing\RouteMatch;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Instrumentation\NullTelemetry;
 use Kinetis\Instrumentation\Telemetry;
@@ -38,7 +39,9 @@ use Nyholm\Psr7\Stream;
 use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Kinetis\Validation\Exception\ValidationException;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 
 final class DispatcherTest extends TestCase
 {
@@ -69,6 +72,38 @@ final class DispatcherTest extends TestCase
         $router->register(UserController::class);
 
         return $router;
+    }
+
+    /**
+     * A binding failure is a thrown ValidationException carrying every
+     * violation, not a response: Dispatcher renders none, so route
+     * middleware can catch it and the terminal
+     * ExceptionHandlerMiddleware renders whatever reaches it — see
+     * KernelValidationRenderingTest for that end of the contract.
+     *
+     * grouped() is what these assertions read, since what they pin is
+     * which field failed with which message; the segmented paths those
+     * keys are projected from are asserted where a path is the subject.
+     *
+     * @return array<string, list<string>>
+     */
+    private function validationFailure(RouteMatch $match, ServerRequestInterface $request): array
+    {
+        return $this->failedDispatch(fn (): ResponseInterface => $this->dispatcher()->dispatch($match, $request))->grouped();
+    }
+
+    /**
+     * @param callable(): ResponseInterface $dispatch
+     */
+    private function failedDispatch(callable $dispatch): ValidationException
+    {
+        try {
+            $dispatch();
+        } catch (ValidationException $e) {
+            return $e;
+        }
+
+        self::fail('Expected the dispatch to fail validation.');
     }
 
     public function test_dispatches_a_body_bound_dto_and_returns_json(): void
@@ -427,7 +462,7 @@ final class DispatcherTest extends TestCase
         );
     }
 
-    public function test_a_nested_dtos_invalid_field_returns_422_with_a_dotted_error_key(): void
+    public function test_a_nested_dtos_invalid_field_fails_under_its_own_segmented_path(): void
     {
         $router = new Router();
         $router->register(OrderController::class);
@@ -438,12 +473,9 @@ final class DispatcherTest extends TestCase
             'shippingAddress' => ['street' => 'x', 'city' => 'Cupertino'],
         ]));
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('shippingAddress.street', $body['errors']);
+        self::assertArrayHasKey('shippingAddress.street', $errors);
     }
 
     public function test_a_controller_returning_a_response_interface_is_passed_through_untouched(): void
@@ -473,24 +505,20 @@ final class DispatcherTest extends TestCase
         self::assertSame(['id' => 42], json_decode((string) $response->getBody(), true));
     }
 
-    public function test_invalid_body_returns_422_with_errors_instead_of_running_the_controller(): void
+    public function test_an_invalid_body_fails_validation_instead_of_running_the_controller(): void
     {
         $router = $this->router();
         $match = $router->match('POST', '/users');
         $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Al', 'email' => 'not-an-email']));
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('name', $body['errors']);
-        self::assertArrayHasKey('email', $body['errors']);
+        self::assertArrayHasKey('name', $errors);
+        self::assertArrayHasKey('email', $errors);
     }
 
     // --- A syntactically invalid or non-object JSON body is a 400,
-    // distinct from a 422 field-validation failure — never silently
+    // distinct from a field-validation failure — never silently
     // treated as an empty/default body. ---
 
     public function test_malformed_json_body_returns_400(): void
@@ -584,30 +612,26 @@ final class DispatcherTest extends TestCase
         );
     }
 
-    // --- A #[Query]/path value with the wrong shape is a 422, not a
-    // silently-wrong cast ("not-a-number" -> 0, an array -> 1, a
-    // non-numeric path segment -> 0). ---
+    // --- A #[Query]/path value with the wrong shape fails validation
+    // rather than casting silently wrong ("not-a-number" -> 0, an
+    // array -> 1, a non-numeric path segment -> 0). ---
 
-    public function test_a_non_numeric_query_value_returns_422_instead_of_casting_to_zero(): void
+    public function test_a_non_numeric_query_value_fails_validation_instead_of_casting_to_zero(): void
     {
         $router = $this->router();
         $match = $router->match('GET', '/users');
         $request = (new ServerRequest('GET', '/users'))->withQueryParams(['page' => 'not-a-number']);
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('page', $body['errors']);
+        self::assertArrayHasKey('page', $errors);
     }
 
     /**
      * A #[Query]/path value is always a raw string, so it is the source
      * where `int`'s string rule decides everything: only a plain base-10
-     * integer spelling binds, and every other spelling is a 422 rather
-     * than a value the cast silently reinterprets.
+     * integer spelling binds, and every other spelling fails validation
+     * rather than becoming a value the cast silently reinterprets.
      *
      * @return iterable<string, list<string>>
      */
@@ -620,19 +644,15 @@ final class DispatcherTest extends TestCase
     }
 
     #[DataProvider('nonIntegerQueryStrings')]
-    public function test_a_non_integer_query_value_for_an_int_parameter_returns_422_instead_of_truncating(string $page): void
+    public function test_a_non_integer_query_value_for_an_int_parameter_fails_validation_instead_of_truncating(string $page): void
     {
         $router = $this->router();
         $match = $router->match('GET', '/users');
         $request = (new ServerRequest('GET', '/users'))->withQueryParams(['page' => $page]);
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be an integer within the platform integer range.'], $body['errors']['page']);
+        self::assertSame(['must be an integer within the platform integer range.'], $errors['page']);
     }
 
     public function test_an_integer_query_string_is_still_accepted_for_an_int_parameter(): void
@@ -651,45 +671,37 @@ final class DispatcherTest extends TestCase
      * A path placeholder captures one raw string too, so the identical
      * rule applies where a route binds `{id}` to an `int`.
      */
-    public function test_a_non_integer_path_segment_returns_422_instead_of_truncating(): void
+    public function test_a_non_integer_path_segment_fails_validation_instead_of_truncating(): void
     {
         $router = $this->router();
         $match = $router->match('GET', '/users/1.5');
         $request = new ServerRequest('GET', '/users/1.5');
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be an integer within the platform integer range.'], $body['errors']['id']);
+        self::assertSame(['must be an integer within the platform integer range.'], $errors['id']);
     }
 
-    public function test_an_array_style_query_value_returns_422_instead_of_casting_to_one(): void
+    public function test_an_array_style_query_value_fails_validation_instead_of_casting_to_one(): void
     {
         $router = $this->router();
         $match = $router->match('GET', '/users');
         $request = (new ServerRequest('GET', '/users'))->withQueryParams(['page' => ['1', '2']]);
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
+        self::assertSame(['must be an integer, array given.'], $errors['page']);
     }
 
-    public function test_a_non_numeric_path_segment_returns_422_instead_of_casting_to_zero(): void
+    public function test_a_non_numeric_path_segment_fails_validation_instead_of_casting_to_zero(): void
     {
         $router = $this->router();
         $match = $router->match('GET', '/users/abc');
         $request = new ServerRequest('GET', '/users/abc');
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('id', $body['errors']);
+        self::assertArrayHasKey('id', $errors);
     }
 
     public function test_multiple_query_type_mismatches_on_one_route_are_all_reported_together(): void
@@ -698,14 +710,10 @@ final class DispatcherTest extends TestCase
         $match = $router->match('GET', '/users');
         $request = (new ServerRequest('GET', '/users'))->withQueryParams(['page' => 'x', 'limit' => 'y']);
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('page', $body['errors']);
-        self::assertArrayHasKey('limit', $body['errors']);
+        self::assertArrayHasKey('page', $errors);
+        self::assertArrayHasKey('limit', $errors);
     }
 
     // --- #[Query]/path-parameter Constraint attributes are enforced. ---
@@ -718,20 +726,16 @@ final class DispatcherTest extends TestCase
         return $router;
     }
 
-    public function test_a_query_constraint_violation_returns_422(): void
+    public function test_a_query_constraint_violation_fails_validation(): void
     {
         $router = $this->constrainedRouter();
         $match = $router->match('GET', '/probe');
         $request = (new ServerRequest('GET', '/probe'))->withQueryParams(['page' => '-999', 'sort' => 'DROP']);
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('page', $body['errors']);
-        self::assertArrayHasKey('sort', $body['errors']);
+        self::assertArrayHasKey('page', $errors);
+        self::assertArrayHasKey('sort', $errors);
     }
 
     public function test_a_query_value_satisfying_its_constraint_is_accepted(): void
@@ -746,19 +750,15 @@ final class DispatcherTest extends TestCase
         self::assertSame(['page' => 5, 'sort' => 'desc'], json_decode((string) $response->getBody(), true));
     }
 
-    public function test_a_path_parameter_constraint_violation_returns_422(): void
+    public function test_a_path_parameter_constraint_violation_fails_validation(): void
     {
         $router = $this->constrainedRouter();
         $match = $router->match('GET', '/items/abc');
         $request = new ServerRequest('GET', '/items/abc');
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertArrayHasKey('code', $body['errors']);
+        self::assertArrayHasKey('code', $errors);
     }
 
     public function test_a_path_parameter_satisfying_its_constraint_is_accepted(): void
@@ -834,19 +834,16 @@ final class DispatcherTest extends TestCase
         self::assertSame(['id' => 42], json_decode((string) $response->getBody(), true));
     }
 
-    public function test_an_explicitly_null_body_field_for_a_non_nullable_parameter_returns_422(): void
+    public function test_an_explicitly_null_body_field_for_a_non_nullable_parameter_fails_validation(): void
     {
         $router = new Router();
         $router->register(NoteController::class);
         $match = $router->match('POST', '/notes');
         $request = new ServerRequest('POST', '/notes', self::JSON_HEADERS, body: json_encode(['title' => null, 'subtitle' => null]));
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must not be null.'], $body['errors']['title']);
+        self::assertSame(['must not be null.'], $errors['title']);
     }
 
     public function test_an_explicitly_null_body_field_for_a_nullable_parameter_dispatches_normally(): void
@@ -862,18 +859,15 @@ final class DispatcherTest extends TestCase
         self::assertSame(['title' => 'hello', 'subtitle' => null], json_decode((string) $response->getBody(), true));
     }
 
-    public function test_a_missing_required_query_parameter_returns_422(): void
+    public function test_a_missing_required_query_parameter_fails_validation(): void
     {
         $router = new Router();
         $router->register(NoteController::class);
         $match = $router->match('GET', '/notes/search');
 
-        $response = $this->dispatcher()->dispatch($match, new ServerRequest('GET', '/notes/search'));
+        $errors = $this->validationFailure($match, new ServerRequest('GET', '/notes/search'));
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['is required.'], $body['errors']['term']);
+        self::assertSame(['is required.'], $errors['term']);
     }
 
     public function test_a_missing_nullable_query_parameter_resolves_to_null(): void
@@ -888,18 +882,15 @@ final class DispatcherTest extends TestCase
         self::assertSame(['term' => null], json_decode((string) $response->getBody(), true));
     }
 
-    public function test_a_missing_uploaded_file_for_a_non_nullable_parameter_returns_422(): void
+    public function test_a_missing_uploaded_file_for_a_non_nullable_parameter_fails_validation(): void
     {
         $router = new Router();
         $router->register(UploadController::class);
         $match = $router->match('POST', '/files');
 
-        $response = $this->dispatcher()->dispatch($match, new ServerRequest('POST', '/files'));
+        $errors = $this->validationFailure($match, new ServerRequest('POST', '/files'));
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['is required.'], $body['errors']['file']);
+        self::assertSame(['is required.'], $errors['file']);
     }
 
     // KINETIS-75: proving real dispatch outcomes match exactly what
@@ -921,12 +912,9 @@ final class DispatcherTest extends TestCase
         $match = $this->nullableFieldsRouter()->match('POST', '/nullable-fields');
         $request = new ServerRequest('POST', '/nullable-fields', self::JSON_HEADERS, body: '{}');
 
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['is required.'], $body['errors']['requiredNullable']);
+        self::assertSame(['is required.'], $errors['requiredNullable']);
     }
 
     public function test_a_defaultless_nullable_field_accepts_an_explicit_null(): void
@@ -1022,19 +1010,16 @@ final class DispatcherTest extends TestCase
     // and the supported builtin set, through a real dispatched request —
     // not just a Hydrator unit call.
 
-    public function test_a_wrong_shaped_plain_array_body_field_returns_422_not_a_type_error(): void
+    public function test_a_wrong_shaped_plain_array_body_field_fails_validation_not_a_type_error(): void
     {
         $router = new Router();
         $router->register(PlainArrayFieldController::class);
         $match = $router->match('POST', '/plain-array-field');
 
         $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode(['tags' => 'not-an-array']));
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be an array, value given.'], $body['errors']['tags']);
+        self::assertSame(['must be an array, value given.'], $errors['tags']);
     }
 
     public function test_a_correctly_shaped_plain_array_body_field_dispatches_normally(): void
@@ -1096,7 +1081,7 @@ final class DispatcherTest extends TestCase
         self::assertSame(['b', 'c'], json_decode((string) $response->getBody(), true)['optionalTags']);
     }
 
-    public function test_a_wrong_shaped_nullable_plain_array_body_field_returns_422(): void
+    public function test_a_wrong_shaped_nullable_plain_array_body_field_fails_validation(): void
     {
         $router = new Router();
         $router->register(PlainArrayFieldController::class);
@@ -1106,12 +1091,9 @@ final class DispatcherTest extends TestCase
             'tags' => ['a'],
             'optionalTags' => ['key' => 'value'],
         ]));
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be a JSON array, not a JSON object.'], $body['errors']['optionalTags']);
+        self::assertSame(['must be a JSON array, not a JSON object.'], $errors['optionalTags']);
     }
 
     /**
@@ -1133,12 +1115,9 @@ final class DispatcherTest extends TestCase
         $match = $router->match('POST', '/plain-array-field');
 
         $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: '{"tags": {"0": "a", "1": "b"}}');
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be a JSON array, not a JSON object.'], $body['errors']['tags']);
+        self::assertSame(['must be a JSON array, not a JSON object.'], $errors['tags']);
     }
 
     public function test_an_empty_json_object_is_still_rejected_for_a_plain_array_field(): void
@@ -1148,12 +1127,9 @@ final class DispatcherTest extends TestCase
         $match = $router->match('POST', '/plain-array-field');
 
         $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: '{"tags": {}}');
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be a JSON array, not a JSON object.'], $body['errors']['tags']);
+        self::assertSame(['must be a JSON array, not a JSON object.'], $errors['tags']);
     }
 
     /**
@@ -1182,12 +1158,9 @@ final class DispatcherTest extends TestCase
         $match = $router->match('POST', '/object-map-field');
 
         $request = new ServerRequest('POST', '/object-map-field', self::JSON_HEADERS, body: '{"name": "Alon", "meta": []}');
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be a JSON object, not a JSON array.'], $body['errors']['meta']);
+        self::assertSame(['must be a JSON object, not a JSON array.'], $errors['meta']);
     }
 
     /**
@@ -1258,18 +1231,15 @@ final class DispatcherTest extends TestCase
 
     /**
      * A spelling that is neither the normalized "true"/"false" form nor
-     * the raw PHP literal still 422s — the normalization narrows the
+     * the raw PHP literal still fails — the normalization narrows the
      * accepted spellings rather than making the check pass once form
      * encoding is involved at all.
      */
     public function test_a_form_encoded_boolean_field_still_rejects_a_spelling_that_is_neither_convention(): void
     {
-        $response = $this->formEncodedFlag('yes');
+        $errors = $this->failedDispatch(fn (): ResponseInterface => $this->formEncodedFlag('yes'))->grouped();
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be a boolean, value given.'], $body['errors']['flag']);
+        self::assertSame(['must be a boolean, value given.'], $errors['flag']);
     }
 
     /**
@@ -1285,12 +1255,9 @@ final class DispatcherTest extends TestCase
         $match = $router->match('POST', '/builtin-coverage');
 
         $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "flag": "true"}');
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be a boolean, value given.'], $body['errors']['flag']);
+        self::assertSame(['must be a boolean, value given.'], $errors['flag']);
     }
 
     private function formEncodedFlag(string $spelling): ResponseInterface
@@ -1331,7 +1298,7 @@ final class DispatcherTest extends TestCase
         );
     }
 
-    public function test_a_wrong_shaped_iterable_body_field_returns_422_alongside_a_correct_payload(): void
+    public function test_a_wrong_shaped_iterable_body_field_fails_validation_alongside_a_correct_payload(): void
     {
         $router = new Router();
         $router->register(BuiltinCoverageController::class);
@@ -1341,12 +1308,9 @@ final class DispatcherTest extends TestCase
             'tags' => [],
             'items' => 'nope',
         ]));
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        /** @var array{errors: array<string, list<string>>} $body */
-        $body = json_decode((string) $response->getBody(), true);
-        self::assertSame(['must be an array, value given.'], $body['errors']['items']);
+        self::assertSame(['must be an array, value given.'], $errors['items']);
     }
 
     // A #[Query]/path value is a raw string, never an already-decoded JSON
@@ -1380,7 +1344,9 @@ final class DispatcherTest extends TestCase
 
     public function test_a_query_boolean_rejects_a_spelling_that_is_neither_convention(): void
     {
-        self::assertSame(422, $this->queryFlag('yes')->getStatusCode());
+        $errors = $this->failedDispatch(fn (): ResponseInterface => $this->queryFlag('yes'))->grouped();
+
+        self::assertSame(['must be a boolean, value given.'], $errors['flag']);
     }
 
     public function test_an_omitted_query_boolean_uses_its_default(): void
@@ -1518,10 +1484,9 @@ final class DispatcherTest extends TestCase
         $match = $router->match('GET', '/required-tag-search');
 
         $request = new ServerRequest('GET', '/required-tag-search?tags%5B%5D=a');
-        $response = $this->dispatcher()->dispatch($match, $request);
+        $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(422, $response->getStatusCode());
-        self::assertStringContainsString('tags', (string) $response->getBody());
+        self::assertSame(['is required.'], $errors['tags']);
     }
 
     public function test_an_omitted_query_array_parameter_uses_its_default(): void

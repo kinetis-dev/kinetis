@@ -24,8 +24,8 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 - Routes, request binding, and validation declared with native PHP
   attributes — no YAML, no XML, no config file to keep in step with the
   code.
-- Typed DTOs in and out. A malformed request is a `422` with every field
-  error at once, before your controller runs.
+- Typed DTOs in and out. A malformed request is an RFC 9457 `422`
+  carrying every violation at once, before your controller runs.
 - OpenAPI 3.1 and a Swagger UI generated from the same
   attributes. Nothing to write, nothing to update.
 - Controllers, commands, event listeners, and middleware found

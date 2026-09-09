@@ -492,7 +492,7 @@ in its content, **not** a JSON-RPC transport error:
     "jsonrpc": "2.0",
     "id": 1,
     "result": {
-        "content": [{"type": "text", "text": "{\"errors\":{\"email\":[\"must be a valid email address.\"]}}"}],
+        "content": [{"type": "text", "text": "{\"errors\":[{\"path\":[\"email\"],\"code\":\"constraint\",\"message\":\"must be a valid email address.\",\"parameters\":{\"constraint\":\"Kinetis\\\\Validation\\\\Constraints\\\\Email\"}}]}"}],
         "isError": true
     }
 }
@@ -505,12 +505,16 @@ distinguish from a broken connection. Only genuine protocol-level problems
 real JSON-RPC `error` response.
 
 What the content carries depends on the failure. A failed validation
-carries its real `errors` map, as above — that's the argument feedback an
-agent needs to retry correctly. Any other exception carries the fixed
-string `Tool execution failed.`, with the real exception going to the
-logger instead — an unexpected failure's message can hold SQL error text,
-file paths, or anything else internal, none of which belongs in a
-response to whatever agent happens to be connected.
+carries its real violations, as above — an ordered `errors` list whose
+entries each name a segmented `path`, a stable `code`, a `message` and
+the `parameters` it was built from, the same structure the HTTP default
+renderer puts in its RFC 9457 document, though never that document
+itself. That is the argument feedback an agent needs to retry correctly.
+Any other exception carries the fixed string `Tool execution failed.`,
+with the real exception going to the logger instead — an unexpected
+failure's message can hold SQL error text, file paths, or anything else
+internal, none of which belongs in a response to whatever agent happens
+to be connected.
 
 A resource method throwing is different: `readResource()` has no inner
 try/catch of its own the way a tool call does, so the exception

@@ -397,7 +397,7 @@ final class JsonSchema
             'bool' => ['type' => 'boolean'],
             'string' => ['type' => 'string'],
             // A plain `array` (no #[ListOf]) is a real JSON array on the
-            // wire, which is what Hydrator::typeMismatchMessage() also
+            // wire, which is what Hydrator::typeMismatchViolation() also
             // enforces — never an `object`, which would describe the
             // wrong wire shape entirely.
             'array', 'iterable' => ['type' => 'array'],

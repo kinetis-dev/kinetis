@@ -93,7 +93,7 @@ final class TestResponseFailureTest extends TestCase
     public function test_validation_error_assertion_rejects_a_successful_response(): void
     {
         $this->assertFails(
-            fn () => $this->json(['errors' => ['email' => 'x']], 200)->assertValidationError('email'),
+            fn () => $this->json(['errors' => [['path' => ['email']]]], 200)->assertValidationError('email'),
         );
     }
 
