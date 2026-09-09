@@ -156,6 +156,11 @@ final class CacheStoreTest extends TestCase
         yield 'no format version' => ['<?php return ["http" => []];'];
         yield 'a different format version' => ['<?php return ["formatVersion" => ' . (CacheFormat::VERSION + 1) . '];'];
         yield 'a string format version' => ['<?php return ["formatVersion" => "' . CacheFormat::VERSION . '"];'];
+        // The format hydration plans carried before they recorded
+        // DTO-level rules and presence unions. Its parameters and plan
+        // roots are missing fields this build reads, so it must never be
+        // reconstructed — only recompiled.
+        yield 'the previous format version' => ['<?php return ["formatVersion" => 20];'];
     }
 
     /**

@@ -345,12 +345,25 @@ final class JsonSchemaTest extends TestCase
         $schema = JsonSchema::forParameters([]);
 
         self::assertInstanceOf(\stdClass::class, $schema['properties']);
-        self::assertSame('{"type":"object","properties":{},"required":[]}', json_encode($schema, JSON_THROW_ON_ERROR));
+        self::assertSame(
+            '{"type":"object","properties":{},"required":[],"additionalProperties":false}',
+            json_encode($schema, JSON_THROW_ON_ERROR),
+        );
     }
 
-    public function test_a_class_with_no_constructor_gets_a_bare_object_schema(): void
+    /**
+     * A class with no constructor declares no members at all, which is a
+     * closed object with none rather than an unconstrained one — the same
+     * `additionalProperties: false` every other DTO object carries.
+     */
+    public function test_a_class_with_no_constructor_gets_a_closed_object_schema_with_no_properties(): void
     {
-        self::assertSame(['type' => 'object'], JsonSchema::forClass(NoConstructorFixture::class));
+        $schema = JsonSchema::forClass(NoConstructorFixture::class);
+
+        self::assertSame('object', $schema['type']);
+        self::assertEquals((object) [], $schema['properties']);
+        self::assertSame([], $schema['required']);
+        self::assertFalse($schema['additionalProperties']);
     }
 
     public function test_excluded_types_are_skipped_entirely_not_added_to_properties_or_required(): void

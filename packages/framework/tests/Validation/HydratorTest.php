@@ -1586,11 +1586,13 @@ final class HydratorTest extends TestCase
                 'listItemClass' => null,
                 'listItemPlan' => null,
                 'objectMap' => false,
+                'absent' => false,
                 'hasDefault' => true,
                 'defaultValue' => $parameter->getDefaultValue(),
                 'allowsNull' => true,
                 'constraints' => [],
             ]],
+            'objectRules' => [],
         ];
 
         self::assertSame(

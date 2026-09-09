@@ -70,6 +70,27 @@ final class UnresolvableParameterException extends RuntimeException
     }
 
     /**
+     * A union- or intersection-typed `#[Query]`/path parameter. One
+     * request value has one shape, so a parameter declaring several has
+     * no binding a document could describe — and the one union Kinetis
+     * does accept, `T|Kinetis\Validation\Absent`, is a DTO constructor
+     * field's presence contract, filled from the member a JSON object
+     * either carries or omits. A query string and a path segment have no
+     * such member: an absent query key and an absent path segment are
+     * already answered by the parameter's own default. Thrown from the
+     * same `Router::register()`-time boundary as
+     * forUnsupportedBuiltinType().
+     */
+    public static function forCompositeType(string $name, string $source): self
+    {
+        return new self(
+            "Controller parameter \"\${$name}\" is a {$source} parameter declaring a union or intersection "
+            . 'type — a single request value cannot be bound to more than one type. Declare a single named '
+            . 'type, or move the parameter to #[Body], where a DTO field may declare a T|Absent presence union.'
+        );
+    }
+
+    /**
      * An `array`/`iterable`-typed path parameter — genuinely unsatisfiable,
      * unconditionally, unlike a `#[Query]` array (`?tags=a&tags=b` works
      * there, see {doc}`routing-validation`'s "Query and path values are

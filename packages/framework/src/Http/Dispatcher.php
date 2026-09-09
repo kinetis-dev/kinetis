@@ -257,6 +257,18 @@ final class Dispatcher
                 throw UnresolvableParameterException::forUnsupportedBuiltinType($name, $source, $scalarType);
             }
 
+            // A composite type on a request-reading parameter binds
+            // nothing truthfully: a query string and a path segment carry
+            // one value, in one shape, and a union declares more than one
+            // — including the `T|Absent` presence union, which is a DTO
+            // constructor field's contract and not a controller
+            // signature's. Left unchecked, such a parameter would report
+            // no scalar type at all and quietly bind like `mixed`, which
+            // its own OpenAPI schema would then contradict.
+            if ($readsRequestInput && $type !== null && !$type instanceof ReflectionNamedType) {
+                throw UnresolvableParameterException::forCompositeType($name, $source);
+            }
+
             // An array/iterable-typed path parameter is equally
             // impossible, unconditionally — unlike #[Query] (a repeated
             // query key, ?tags=a&tags=b, works, see "Query and path

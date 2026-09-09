@@ -86,6 +86,30 @@ comes back as `required` at that argument's own path, and an explicit
 Both are argument feedback in the `isError: true` result below, never a
 transport-level failure.
 
+The arguments object is closed, exactly as its published `inputSchema`
+says with `additionalProperties: false`: a key naming no parameter of
+the method comes back as `unexpected_field` on its own path, rather than
+being discarded while the call looks accepted. A `ProgressReporter`
+parameter is injected by the server and is never one of those names — it
+is neither required of a call nor accepted from one. Every argument
+failure a call has — unknown, missing, wrong-typed, or refused by a rule
+— arrives together in one result, so an agent correcting a call sees all
+of it at once. A DTO-typed argument's own object is closed one level in,
+and so is every DTO nested inside it.
+
+A tool method parameter declares a single named type. A union or
+intersection has no truthful `inputSchema` to publish, so it is refused
+when the tool is registered rather than advertised and then rejected —
+including the `T|Absent` presence union, which is a DTO constructor
+field's contract and needs a member that is either there or not (see
+{doc}`routing-validation`'s "Required, optional, and absent fields"). A
+DTO-typed argument may use it on its own fields.
+
+Binding refuses the same declaration in the same words: deriving a tool's
+or resource's parameter plan rejects a composite type rather than binding
+it as `mixed`, so what a method may declare does not depend on which path
+reached it.
+
 The tool's JSON Schema input is built automatically from the method's
 parameters, so `#[Email]`/`#[MinLength]`/etc. describe an MCP tool's
 arguments exactly as precisely as they describe an HTTP request body.

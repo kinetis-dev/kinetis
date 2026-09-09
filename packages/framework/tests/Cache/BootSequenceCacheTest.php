@@ -212,9 +212,10 @@ final class BootSequenceCacheTest extends TestCase
                     'hasConstructor' => true,
                     'parameters' => [[
                         'name' => 'meta', 'scalarType' => 'array', 'dtoClass' => null, 'nestedPlan' => null,
-                        'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false,
+                        'listItemClass' => null, 'listItemPlan' => null, 'objectMap' => false, 'absent' => false,
                         'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => [],
                     ]],
+                    'objectRules' => [],
                 ],
             ],
             globalMiddleware: [],

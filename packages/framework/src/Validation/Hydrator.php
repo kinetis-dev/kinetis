@@ -16,6 +16,7 @@ use ReflectionClass;
 use ReflectionNamedType;
 use ReflectionParameter;
 use ReflectionType;
+use ReflectionUnionType;
 
 /**
  * Builds a DTO from raw array data (typically a decoded JSON request body),
@@ -48,18 +49,37 @@ use ReflectionType;
  *   Unlike every other accepted shape, this one admits only a value
  *   carrying JsonObject provenance — see resolveObjectMapValue().
  * - A nullable variant of any of the above.
+ * - `T|Absent` or `T|null|Absent`, defaulted to exactly Absent::Value,
+ *   where T is exactly one of the shapes above: the presence union an
+ *   update DTO uses to tell an omitted member from one explicitly sent
+ *   as null. See Absent, and absentUnion() for the four ways such a
+ *   declaration is rejected. This is the only union a DTO field may
+ *   declare, and it exists for DTO constructor fields alone —
+ *   Kinetis\Http\Dispatcher, Kinetis\Mcp\McpRegistry and
+ *   Kinetis\Mcp\McpDispatcher still reject every union on a controller
+ *   or tool method parameter.
+ *
+ * A DTO class may also carry ObjectConstraint attributes: cross-field
+ * rules that run once, against the constructed object, after every field
+ * has resolved and passed its own rules. compilePlan() stores them at the
+ * plan root as the same literal {class, args} descriptors a field rule
+ * gets, and checks each rule's own fields() names against this
+ * constructor first. See ObjectConstraint, collectObjectRules() and
+ * objectRuleViolations().
  *
  * Every other definition is rejected with an
  * UnsupportedDtoDefinitionException while the plan is compiled — at build
  * time for an AOT-compiled plan, on the first hydrate() call for a live
- * one: a union or intersection parameter type, a recursive or mutually
+ * one: an intersection type, a union that is not one of the two Absent
+ * forms, a malformed Absent union, a recursive or mutually
  * recursive class reference (a plan embeds each nested class inline, so
  * recursion has no finite plan and nothing var_export() could bake into a
  * cache file), a class type reflection cannot resolve (self/parent/static),
  * a builtin type outside SUPPORTED_BUILTIN_TYPES, #[ListOf] on a parameter
  * that isn't typed `array`, #[ListOf] naming a class that cannot be
- * instantiated, #[ObjectMap] on a parameter that isn't typed `array`, and
- * #[ObjectMap] combined with #[ListOf].
+ * instantiated, #[ObjectMap] on a parameter that isn't typed `array`,
+ * #[ObjectMap] combined with #[ListOf], and an ObjectConstraint naming a
+ * field this constructor does not declare.
  *
  * A parameter's own default value is captured under the rule
  * Kinetis\Reflection\ParameterDefault owns, shared with Dispatcher's
@@ -80,6 +100,13 @@ use ReflectionType;
  * type doesn't allow null is "must not be null." — both validation
  * failures, never a raw TypeError escaping the constructor.
  *
+ * A member the DTO does not declare is a third: under InputSource::Json
+ * it is "is not expected." on its own path, at every nesting level, so a
+ * misspelled field fails instead of silently doing nothing. Text and
+ * Native stay open — a form body legitimately carries CSRF, submit and
+ * honeypot fields, and a Native caller hands over whatever row it read —
+ * so neither rejects an unknown member. See unknownMemberViolations().
+ *
  * Every failure this class raises is a Kinetis\Validation\Violation
  * carrying a segmented path, a stable code, the message, and the values
  * that message was built from. resolveScalar() is the one entry every
@@ -89,9 +116,9 @@ use ReflectionType;
  * checking, source normalization, casting and the field's own constraints
  * all happen once, in one order, and a wrong-shaped value can never
  * reach a real constructor unchecked regardless of which one dispatched
- * it. objectExpectedViolation() and requiredViolation() stay public
- * beside it for the two failures a caller detects before it has a
- * scalar to resolve at all.
+ * it. objectExpectedViolation(), requiredViolation() and
+ * unexpectedFieldViolation() stay public beside it for the three
+ * failures a caller detects before it has a scalar to resolve at all.
  *
  * Holds exactly one piece of static state: a memoization cache of
  * compilePlan() output, keyed by DTO class. This is a deliberate,
@@ -120,6 +147,7 @@ use ReflectionType;
  *     listItemClass: ?class-string,
  *     listItemPlan: ?array<string, mixed>,
  *     objectMap: bool,
+ *     absent: bool,
  *     hasDefault: bool,
  *     defaultValue: mixed,
  *     allowsNull: bool,
@@ -129,6 +157,7 @@ use ReflectionType;
  *     className: class-string,
  *     hasConstructor: bool,
  *     parameters: list<HydrationPlanParameter>,
+ *     objectRules: list<array{class: class-string<ObjectConstraint>, args: array<int|string, mixed>}>,
  * }
  */
 final class Hydrator
@@ -168,6 +197,8 @@ final class Hydrator
 
     private const string CODE_NOT_AN_INSTANCE = 'not_an_instance';
 
+    private const string CODE_UNEXPECTED_FIELD = 'unexpected_field';
+
     /**
      * The builtin types a request-bound parameter may declare. A DTO
      * field outside this set fails when its plan is compiled; a
@@ -181,11 +212,11 @@ final class Hydrator
      */
     public const array SUPPORTED_BUILTIN_TYPES = ['string', 'int', 'float', 'bool', 'array', 'iterable', 'mixed'];
 
-    private const array HYDRATION_PLAN_KEYS = ['className', 'hasConstructor', 'parameters'];
+    private const array HYDRATION_PLAN_KEYS = ['className', 'hasConstructor', 'parameters', 'objectRules'];
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
         'name', 'scalarType', 'dtoClass', 'nestedPlan', 'listItemClass', 'listItemPlan',
-        'objectMap', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+        'objectMap', 'absent', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
     ];
 
     /**
@@ -263,9 +294,10 @@ final class Hydrator
         }
 
         $constructor = $reflection->getConstructor();
+        $objectRules = self::collectObjectRules($reflection);
 
         if ($constructor === null) {
-            return ['className' => $class, 'hasConstructor' => false, 'parameters' => []];
+            return ['className' => $class, 'hasConstructor' => false, 'parameters' => [], 'objectRules' => $objectRules];
         }
 
         $visiting[$class] = true;
@@ -275,7 +307,7 @@ final class Hydrator
             $parameters[] = self::compileParameter($parameter, $class, $visiting);
         }
 
-        return ['className' => $class, 'hasConstructor' => true, 'parameters' => $parameters];
+        return ['className' => $class, 'hasConstructor' => true, 'parameters' => $parameters, 'objectRules' => $objectRules];
     }
 
     /**
@@ -323,6 +355,7 @@ final class Hydrator
 
         ArtifactValidation::string($plan, 'HydrationPlan', 'className');
         ArtifactValidation::bool($plan, 'HydrationPlan', 'hasConstructor');
+        ArtifactValidation::listOfConstraintDescriptors($plan, 'HydrationPlan', 'objectRules');
         $parameters = ArtifactValidation::listOfArrays($plan, 'HydrationPlan', 'parameters');
 
         foreach ($parameters as $parameter) {
@@ -333,6 +366,7 @@ final class Hydrator
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'dtoClass');
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'listItemClass');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'objectMap');
+            ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'absent');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'hasDefault');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'allowsNull');
             // defaultValue's own presence is already guaranteed by
@@ -367,6 +401,7 @@ final class Hydrator
      *     listItemClass: ?class-string,
      *     listItemPlan: ?array<string, mixed>,
      *     objectMap: bool,
+     *     absent: bool,
      *     hasDefault: bool,
      *     defaultValue: mixed,
      *     allowsNull: bool,
@@ -377,7 +412,15 @@ final class Hydrator
      */
     private static function compileParameter(ReflectionParameter $parameter, string $class, array $visiting): array
     {
-        $type = $parameter->getType();
+        $declared = $parameter->getType();
+        $absent = self::absentUnion($parameter, $class);
+        // From here on the parameter is described by the one type a
+        // supplied value has: T itself for a presence union, the declared
+        // type otherwise. Everything below — nesting, #[ObjectMap], the
+        // builtin check — asks the same questions of the same shape either
+        // way, which is what keeps `T|Absent` exactly as expressive as `T`
+        // and no more.
+        $type = $absent !== null ? $absent[0] : $declared;
         [$dtoClass, $nestedPlan, $listItemClass, $listItemPlan] = self::compileNesting($type, $parameter, $class, $visiting);
         $objectMap = self::compileObjectMap($type, $parameter, $class, $listItemClass !== null);
         $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
@@ -394,12 +437,120 @@ final class Hydrator
             'listItemClass' => $listItemClass,
             'listItemPlan' => $listItemPlan,
             'objectMap' => $objectMap,
+            'absent' => $absent !== null,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
             'defaultValue' => ParameterDefault::capture($parameter, $class),
-            // An untyped parameter accepts anything, null included.
-            'allowsNull' => $type === null || $type->allowsNull(),
+            // An untyped parameter accepts anything, null included. A
+            // presence union answers for its own value type: `null` is
+            // permitted only where the declaration names it, never merely
+            // because Absent made the type a union.
+            'allowsNull' => $absent !== null ? $absent[1] : ($type === null || $type->allowsNull()),
             'constraints' => self::collectConstraints($parameter),
         ];
+    }
+
+    /**
+     * The value type behind a `T|Absent`/`T|null|Absent` presence union,
+     * and whether that union declares `null` — or null when $parameter
+     * declares no union at all, which is every other parameter and the
+     * common case.
+     *
+     * Public for Kinetis\Validation\JsonSchema, which has to describe the
+     * same parameter and must reach exactly the same answer: the schema
+     * publishes T (widened with `null` where declared), never Absent, and
+     * marks the member optional because the declaration carries a default.
+     * A second implementation of these rules could publish a union the
+     * hydrator does not accept.
+     *
+     * Union members are matched by name, never by position: `string|Absent`
+     * and `Absent|string` are the same declaration, and nothing here reads
+     * the order Reflection reports them in. Four declarations are refused
+     * rather than given an approximate meaning: the marker with no value
+     * type beside it, two value types beside it, no default at all
+     * (nothing but the default can ever produce the marker, so the field
+     * could never hold it), and a default that is not Absent::Value. A
+     * union with no Absent member, and any intersection, remain the plain
+     * composite-type rejection they already were.
+     *
+     * @return array{0: ReflectionNamedType, 1: bool}|null
+     * @throws UnsupportedDtoDefinitionException
+     */
+    public static function absentUnion(ReflectionParameter $parameter, string $owner): ?array
+    {
+        $type = $parameter->getType();
+        $name = $parameter->getName();
+
+        // `Absent` and `?Absent` are named types, not unions: PHP folds a
+        // two-member `X|null` back into a nullable named type. Either way
+        // the declaration names the marker and no value, which is the
+        // same mistake a union spelling it would make.
+        if ($type instanceof ReflectionNamedType && $type->getName() === Absent::class) {
+            throw UnsupportedDtoDefinitionException::absentUnionWithoutValueType($owner, $name);
+        }
+
+        if (!$type instanceof ReflectionUnionType) {
+            return null;
+        }
+
+        $valueTypes = [];
+        $allowsNull = false;
+        $hasAbsent = false;
+
+        foreach ($type->getTypes() as $member) {
+            // A DNF union member (`(A&B)|null`) is an intersection, which
+            // no hydrated value shape corresponds to.
+            if (!$member instanceof ReflectionNamedType) {
+                throw UnsupportedDtoDefinitionException::compositeType($owner, $name);
+            }
+
+            if ($member->getName() === 'null') {
+                $allowsNull = true;
+            } elseif ($member->getName() === Absent::class) {
+                $hasAbsent = true;
+            } else {
+                $valueTypes[] = $member;
+            }
+        }
+
+        if (!$hasAbsent) {
+            throw UnsupportedDtoDefinitionException::compositeType($owner, $name);
+        }
+
+        if (count($valueTypes) > 1) {
+            $names = array_map(static fn (ReflectionNamedType $t): string => $t->getName(), $valueTypes);
+            // Reflection reports union members in its own order, which is
+            // neither the declaration's nor stable across the shapes a
+            // union can take; sorting makes one declaration produce one
+            // message.
+            sort($names);
+
+            throw UnsupportedDtoDefinitionException::absentUnionWithMultipleValueTypes(
+                $owner,
+                $name,
+                implode(' and ', $names),
+            );
+        }
+
+        if (!$parameter->isDefaultValueAvailable()) {
+            throw UnsupportedDtoDefinitionException::absentUnionWithoutDefault($owner, $name);
+        }
+
+        /** @var mixed $default */
+        $default = $parameter->getDefaultValue();
+
+        if ($default !== Absent::Value) {
+            throw UnsupportedDtoDefinitionException::absentUnionWithWrongDefault(
+                $owner,
+                $name,
+                get_debug_type($default),
+            );
+        }
+
+        // A union always carries at least two members, and PHP folds the
+        // two-member `Absent|null` back into the named `?Absent` refused
+        // above — so a union reaching here names at least one value type.
+        /** @var non-empty-list<ReflectionNamedType> $valueTypes */
+        return [$valueTypes[0], $allowsNull];
     }
 
     /**
@@ -532,6 +683,64 @@ final class Hydrator
     }
 
     /**
+     * A DTO class's own ObjectConstraint attributes, captured as the same
+     * literal {class, args} descriptors a field rule gets, so a plan
+     * stays plain data an artifact can hold.
+     *
+     * Public for the same reason collectConstraints() is: Kinetis\Validation\JsonSchema
+     * asks the identical attributes for their schema keywords, from the
+     * identical descriptors, so a published document and an enforced rule
+     * cannot describe different rule sets.
+     *
+     * Each rule is built here once, asked which constructor fields it
+     * names, and discarded — the descriptor is what leaves this method.
+     * That check belongs here because both callers pass through it: a
+     * rule naming a field $class's constructor does not declare fails
+     * before a plan or a schema is ever accepted, instead of publishing
+     * an anyOf no request could satisfy or silently never matching. It
+     * also runs the rule's own constructor, so arguments the rule itself
+     * refuses fail where the definition is compiled too.
+     *
+     * @param ReflectionClass<object> $class
+     * @return list<array{class: class-string<ObjectConstraint>, args: array<int|string, mixed>}>
+     * @throws UnsupportedDtoDefinitionException
+     */
+    public static function collectObjectRules(ReflectionClass $class): array
+    {
+        $attributes = $class->getAttributes(ObjectConstraint::class, ReflectionAttribute::IS_INSTANCEOF);
+
+        if ($attributes === []) {
+            return [];
+        }
+
+        $declared = array_map(
+            static fn (ReflectionParameter $parameter): string => $parameter->getName(),
+            $class->getConstructor()?->getParameters() ?? [],
+        );
+
+        $rules = [];
+
+        foreach ($attributes as $attribute) {
+            foreach ($attribute->newInstance()->fields() as $field) {
+                if (!in_array($field, $declared, true)) {
+                    throw UnsupportedDtoDefinitionException::objectRuleUnknownField(
+                        $class->getName(),
+                        $attribute->getName(),
+                        $field,
+                    );
+                }
+            }
+
+            $rules[] = [
+                'class' => $attribute->getName(),
+                'args' => $attribute->getArguments(),
+            ];
+        }
+
+        return $rules;
+    }
+
+    /**
      * The one hydration algorithm both the live and compiled paths share —
      * the only difference between them is how $plan was obtained. Needs no
      * Reflection object at all: `new $className(...$arguments)` supports
@@ -547,12 +756,9 @@ final class Hydrator
         /** @var class-string $className */
         $className = $plan['className'];
 
-        if (!$plan['hasConstructor']) {
-            return new $className();
-        }
-
         $violations = [];
         $arguments = [];
+        $supplied = [];
 
         foreach ($plan['parameters'] as $parameter) {
             $name = $parameter['name'];
@@ -567,6 +773,13 @@ final class Hydrator
                 continue;
             }
 
+            // Supplied means the input named the member, whatever it said
+            // about it — an explicit null included. An object rule reading
+            // presence needs the client's own answer, not the resolved
+            // value's; and a member that failed never reaches a rule at
+            // all, since no rule runs after a field failure.
+            $supplied[] = $name;
+
             [$value, $valueViolations] = self::resolveParameterValue($name, $data[$name], $parameter, $source);
 
             if ($valueViolations !== []) {
@@ -578,11 +791,123 @@ final class Hydrator
             $arguments[$name] = $value;
         }
 
+        $violations = [...$violations, ...self::unknownMemberViolations($plan, $data, $source)];
+
         if ($violations !== []) {
             throw ValidationException::fromViolations($violations);
         }
 
-        return new $className(...$arguments);
+        $object = $plan['hasConstructor'] ? new $className(...$arguments) : new $className();
+        $ruleViolations = self::objectRuleViolations($plan, $object, $supplied);
+
+        if ($ruleViolations !== []) {
+            throw ValidationException::fromViolations($ruleViolations);
+        }
+
+        return $object;
+    }
+
+    /**
+     * Every member of $data the DTO does not declare — under
+     * InputSource::Json, and only there.
+     *
+     * A JSON document and an MCP tool call describe an object whose
+     * members are exactly the DTO's own, so a member outside that set is
+     * something the client believes it is sending and the application
+     * will never read: a misspelling, a field that was renamed, a value
+     * meant for a different endpoint. Silently discarding it makes the
+     * request look accepted while doing none of what it asked, which is
+     * why the generated schema says `additionalProperties: false` and
+     * why this makes that true.
+     *
+     * The other two sources stay open, and not by omission. A
+     * form-encoded or multipart body legitimately carries members no DTO
+     * declares — a CSRF token, the submit button's own name, a honeypot
+     * field — and Kinetis\QueryBuilder hands hydrate() whole database
+     * rows whose columns are wider than the DTO reading them. Closing
+     * either would break input that is doing nothing wrong.
+     *
+     * Reported in the input's own order, after the declared members'
+     * failures, so one request produces one deterministic list however
+     * the two kinds interleave.
+     *
+     * @param HydrationPlan $plan
+     * @param array<string, mixed> $data
+     * @return list<Violation>
+     */
+    private static function unknownMemberViolations(array $plan, array $data, InputSource $source): array
+    {
+        if ($source !== InputSource::Json) {
+            return [];
+        }
+
+        $declared = [];
+
+        foreach ($plan['parameters'] as $parameter) {
+            $declared[$parameter['name']] = true;
+        }
+
+        $violations = [];
+
+        foreach (array_keys($data) as $member) {
+            if (!isset($declared[$member])) {
+                $violations[] = self::unexpectedFieldViolation([$member]);
+            }
+        }
+
+        return $violations;
+    }
+
+    /**
+     * The DTO's own ObjectConstraint attributes, run against the
+     * constructed object.
+     *
+     * They run last, and only on a DTO that fully succeeded: a
+     * cross-field rule reads real field values, and after a field failure
+     * the only values available are the declaration's own defaults, so a
+     * rule running then would report on something the client never sent.
+     * They are also the only rules that see presence — which members the
+     * input actually named — because that is the one thing a constructed
+     * object cannot be asked. See ValidationContext.
+     *
+     * Each rule is constructed from its literal {class, args} descriptor,
+     * asked once, and discarded, exactly as a field rule is; the context
+     * is built for this one hydration and outlives nothing. A rule that
+     * yields anything but a Violation has broken its own contract, which
+     * is a definition failure, never a client response.
+     *
+     * @param HydrationPlan $plan
+     * @param list<string> $supplied
+     * @return list<Violation>
+     * @throws UnsupportedDtoDefinitionException
+     */
+    private static function objectRuleViolations(array $plan, object $object, array $supplied): array
+    {
+        if ($plan['objectRules'] === []) {
+            return [];
+        }
+
+        $context = new ValidationContext($supplied);
+        $violations = [];
+
+        foreach ($plan['objectRules'] as $descriptor) {
+            $ruleClass = $descriptor['class'];
+
+            /** @var mixed $violation */
+            foreach (new $ruleClass(...$descriptor['args'])->validate($object, $context) as $violation) {
+                if (!$violation instanceof Violation) {
+                    throw UnsupportedDtoDefinitionException::objectRuleYieldedNonViolation(
+                        $plan['className'],
+                        $ruleClass,
+                        get_debug_type($violation),
+                    );
+                }
+
+                $violations[] = $violation;
+            }
+        }
+
+        return $violations;
     }
 
     /**
@@ -604,6 +929,17 @@ final class Hydrator
      */
     private static function resolveParameterValue(string $name, mixed $value, array $parameter, InputSource $source): array
     {
+        // Absent marks a member the input did not mention, so the input
+        // cannot be the thing that produces it. Checked before the shape
+        // below rather than left to it: for most value types the marker
+        // already fails the type check, but a declaration whose T is a
+        // supertype of an enum case (`UnitEnum|Absent`) would otherwise
+        // accept the marker as a real value and read an omission the
+        // client never made.
+        if ($parameter['absent'] && $value === Absent::Value) {
+            return [null, [self::mismatch([$name], self::expectedWireType($parameter), $value)]];
+        }
+
         // Null is decided before any shape is examined. For a parameter
         // whose declared type doesn't accept it, null would otherwise
         // slip past every check below (each exempts it) and reach the
@@ -1182,6 +1518,21 @@ final class Hydrator
     }
 
     /**
+     * A member of a closed input object that names nothing the target
+     * declares. Public for Kinetis\Mcp\McpDispatcher, which closes a
+     * tool call's own top-level `arguments` object the same way a JSON
+     * DTO object is closed here — one code and one sentence, so an agent
+     * reads the same answer whether it misspelled a tool argument or a
+     * field inside one.
+     *
+     * @param list<string|int> $path
+     */
+    public static function unexpectedFieldViolation(array $path): Violation
+    {
+        return new Violation($path, self::CODE_UNEXPECTED_FIELD, 'is not expected.');
+    }
+
+    /**
      * Runs a field's own rules against an already type-checked, already
      * resolved value. Each rule is constructed from its literal
      * `{class, args}` descriptor, asked once, and discarded — nothing
@@ -1210,6 +1561,31 @@ final class Hydrator
         }
 
         return $violations;
+    }
+
+    /**
+     * The wire type name a presence union's own value type publishes —
+     * the same word its JSON Schema `type` carries, so the sentence a
+     * rejected Absent marker produces reads exactly like every other
+     * declared-type mismatch on that field. A presence union always names
+     * a value type, so one of these branches always applies; `mixed`
+     * cannot appear in a PHP union at all.
+     *
+     * @param HydrationPlanParameter $parameter
+     */
+    private static function expectedWireType(array $parameter): string
+    {
+        if ($parameter['dtoClass'] !== null || $parameter['objectMap']) {
+            return 'object';
+        }
+
+        return match ($parameter['scalarType']) {
+            'int' => 'integer',
+            'float' => 'number',
+            'bool' => 'boolean',
+            'string' => 'string',
+            default => 'array',
+        };
     }
 
     private static function describeType(mixed $value): string

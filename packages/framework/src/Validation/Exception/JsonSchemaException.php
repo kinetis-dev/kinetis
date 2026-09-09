@@ -12,9 +12,15 @@ use RuntimeException;
  * representation this class could produce — thrown at schema-generation
  * time (OpenAPI document generation, or MCP tool registration) rather
  * than publishing a document that describes the wrong wire shape to a
- * client or agent.
+ * client or agent. Kinetis\Mcp\McpDispatcher raises compositeType()
+ * from its own binding-plan derivation for the same declaration, so a
+ * method the published schema could not describe is never bound either.
  *
- * Four declarations reach this. A builtin type outside
+ * Five declarations reach this. A composite type — an intersection, or
+ * any union other than the `Kinetis\Validation\Absent` presence union a
+ * DTO field may declare — which has no single wire shape to publish and
+ * which neither a controller nor an MCP tool method may declare at all.
+ * A builtin type outside
  * Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES, which no
  * request value can carry. A class type that cannot be instantiated, for
  * which Hydrator accepts only an already-constructed instance, so no
@@ -27,6 +33,24 @@ use RuntimeException;
  */
 final class JsonSchemaException extends RuntimeException
 {
+    /**
+     * A parameter whose type is an intersection, or a union with no
+     * truthful description: an MCP tool or resource method parameter,
+     * which may declare neither — in a published schema or in a binding
+     * plan — or a DTO field declaring an intersection. A DTO's own
+     * `T|Absent` presence union never reaches here (it publishes T), and
+     * any other union on a DTO field is already refused by
+     * `Kinetis\Validation\Hydrator::absentUnion()` in the hydration
+     * vocabulary, where the definition is compiled.
+     */
+    public static function compositeType(string $parameter): self
+    {
+        return new self(
+            "Cannot generate a JSON Schema for parameter \"\${$parameter}\": a union or intersection type "
+            . 'has no single wire shape to publish. Declare a single named type.',
+        );
+    }
+
     public static function unsupportedBuiltinType(string $type): self
     {
         return new self(

@@ -29,6 +29,8 @@ use Kinetis\Tests\Http\Fixtures\RawRequestController;
 use Kinetis\Tests\Http\Fixtures\RequiredTagSearchController;
 use Kinetis\Tests\Http\Fixtures\TagSearchController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedPathTypeController;
+use Kinetis\Tests\Http\Fixtures\PresenceUnionQueryController;
+use Kinetis\Tests\Http\Fixtures\UnionPathTypeController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedQueryTypeController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
@@ -1441,6 +1443,34 @@ final class DispatcherTest extends TestCase
         $this->expectExceptionMessage('marker');
 
         $router->register(UnsupportedPathTypeController::class);
+    }
+
+    /**
+     * The presence union `T|Absent` is a DTO constructor field's
+     * contract, filled from a JSON member that is either there or not. A
+     * query key has no such member — an absent one is already answered by
+     * the parameter's own default — so the declaration is rejected at the
+     * same registration boundary rather than quietly binding like
+     * `mixed`, which its own published schema would contradict.
+     */
+    public function test_a_presence_union_query_parameter_is_rejected_at_registration(): void
+    {
+        $router = new Router();
+
+        $this->expectException(UnresolvableParameterException::class);
+        $this->expectExceptionMessage('union or intersection type');
+
+        $router->register(PresenceUnionQueryController::class);
+    }
+
+    public function test_a_union_typed_path_parameter_is_rejected_at_registration(): void
+    {
+        $router = new Router();
+
+        $this->expectException(UnresolvableParameterException::class);
+        $this->expectExceptionMessage('union or intersection type');
+
+        $router->register(UnionPathTypeController::class);
     }
 
     /**

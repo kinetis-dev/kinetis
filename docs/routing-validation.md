@@ -1078,6 +1078,97 @@ The property's visibility declaration is simply irrelevant to how it's
 bound and validated — the constructor parameter is what both classes
 actually inspect.
 
+### Required, optional, and absent fields
+
+A constructor parameter with no default is required: omitting its member
+is an `is required.` violation, whether or not the declared type accepts
+`null`. A parameter with a default may be omitted and receives that
+default, and no rule on it runs — an omitted default is the
+application's own value, not something the client sent.
+
+That leaves one question a default alone cannot answer. On an update, a
+field the client did not mention and a field the client explicitly
+cleared are different instructions, and `?string $bio = null` binds
+`null` for both. `Kinetis\Validation\Absent` is the third state:
+
+```{code-block} php
+use Kinetis\Validation\Absent;
+use Kinetis\Validation\Constraints\{MaxLength, NotBlank};
+
+final readonly class UpdateArticleRequest
+{
+    public function __construct(
+        #[NotBlank, MaxLength(255)]
+        public string|Absent $title = Absent::Value,
+        public string|null|Absent $summary = Absent::Value,
+    ) {}
+}
+```
+
+`$title` is `Absent::Value` when the member was omitted and the string
+when one was sent; sending `null` is a `null_not_allowed` violation,
+since the declared type does not name `null`. `$summary` adds `null` to
+the union, so all three answers are available: omitted, cleared, or set.
+
+Exactly two union forms are supported, `T|Absent` and `T|null|Absent`,
+and the parameter must default to exactly `Absent::Value`. `T` is one
+otherwise-supported field type — a scalar, a nested DTO, a `#[ListOf]`
+list, an `#[ObjectMap]` — and a supplied value is checked against it
+exactly as `T` alone would be. Anything else about the declaration is a
+definition error; see "DTO definitions Kinetis rejects" below.
+
+Nothing a client sends can produce the marker. It comes from the
+parameter's own default and nowhere else, so an `Absent` value appearing
+in hydrated data is read as the wrong type for that field, never as
+omission. The generated schema describes `T` (widened with `null` only
+where the union names it), never `Absent`, and leaves the member out of
+`required` because the declaration carries a default.
+
+This is a DTO constructor field's contract. A `#[Query]` parameter, a
+path parameter and an MCP tool method parameter still reject every union
+— an absent query key is already answered by that parameter's own
+default, and there is no member to be missing. Create and update stay
+separate DTO classes: the HTTP method never selects behavior, and one
+class never changes shape per verb.
+
+### Unknown members are rejected for JSON
+
+A JSON request body, and an MCP tool call's arguments, describe an object
+whose members are exactly the DTO's own. A member outside that set is
+something the client believes it is sending and the application will
+never read — a misspelling, a renamed field, a value meant for a
+different endpoint — so it is an `is not expected.` violation on its own
+path (code `unexpected_field`), reported alongside every other failure
+the same request has:
+
+```{code-block} json
+{
+    "errors": [
+        { "path": ["email"], "code": "required", "message": "is required." },
+        { "path": ["nmae"], "code": "unexpected_field", "message": "is not expected." }
+    ]
+}
+```
+
+Closure applies at every nesting level: a nested DTO's own object and a
+`#[ListOf]` element's are closed under their own paths. An
+`#[ObjectMap]` property stays open inside itself — arbitrary keys are
+what it accepts — while the DTO holding it is closed like any other.
+
+Form-encoded and multipart bodies are **not** closed. They legitimately
+carry members that are not fields — a CSRF token, the submit button's own
+name, a honeypot — and rejecting those would break input that is doing
+nothing wrong. A direct `Hydrator::hydrate()` call is not closed either:
+its `InputSource::Native` default exists for callers handing over PHP
+values they already hold, such as a database row wider than the DTO
+reading it.
+
+Every generated object schema states the closed contract with
+`additionalProperties: false`, including a DTO with no fields at all.
+That is the strict reading of the two closed sources; a form body is
+deliberately more tolerant at runtime, so a client that sends only what
+the document describes is accepted whichever source it writes in.
+
 ### Writing your own constraint
 
 A constraint is any class implementing the two-method `Constraint`
@@ -1135,6 +1226,101 @@ the literal arguments its attribute was written with, and discarded, so
 it must be pure: no I/O, no container, no request state, nothing retained
 between calls. A rule that throws is a programmer error and propagates as
 an ordinary exception, not a `422`.
+
+### Rules about the whole DTO
+
+A `Constraint` sees one value, so it cannot express a rule relating two
+of them. `ObjectConstraint` is the class-level counterpart: a rule about
+the whole DTO, discovered from a class attribute the same way a field
+rule is discovered from a parameter attribute.
+
+```{code-block} php
+use Kinetis\Validation\ObjectConstraints\{AtLeastOneProvided, SameAs};
+
+#[AtLeastOneProvided('title', 'summary')]
+final readonly class UpdateArticleRequest { /* ... */ }
+```
+
+| Attribute | Checks | Constructor | Violation path | Violation code | Schema |
+|---|---|---|---|---|---|
+| `#[AtLeastOneProvided(...)]` | the input supplied at least one of the named fields | `string ...$fields` | `[]` | `at_least_one_provided` | `anyOf` of one `required` per field |
+| `#[SameAs($field, $other)]` | the two fields hold the identical value | `string $field, string $other` | `[$field]` | `same_as` | *(none)* |
+
+`#[AtLeastOneProvided]` is what makes an empty update a client error
+rather than a silent no-op write. It asks about presence only, never
+values: a field sent as `null` counts as supplied wherever the
+declaration accepts `null`, because clearing a field is a change.
+
+`#[SameAs]` compares only when the input supplied both members —
+whether either had to be there at all is the declaration's question, or
+another rule's. It reads both values off the constructed object by
+reflection, so a promoted `private` field needs no getter, and reports on
+`$field`, the one the client is asked to retype. No JSON Schema keyword
+compares two properties' values, so it publishes nothing rather than
+something weaker.
+
+Writing your own is the field-rule contract, one level out:
+
+```{code-block} php
+use Kinetis\Validation\{ObjectConstraint, ValidationContext, Violation};
+use Attribute;
+
+#[Attribute(Attribute::TARGET_CLASS)]
+final readonly class EndsAfterItStarts implements ObjectConstraint
+{
+    public function fields(): array
+    {
+        return ['startsAt', 'endsAt'];
+    }
+
+    public function validate(object $value, ValidationContext $context): iterable
+    {
+        if ($value->endsAt <= $value->startsAt) {
+            yield new Violation(['endsAt'], 'ends_after_start', 'must be after startsAt.');
+        }
+    }
+
+    public function schema(): array
+    {
+        return [];
+    }
+}
+```
+
+`fields()` names every constructor field the rule reads off the object or
+asks the context about — the names its attribute was configured with, or
+the ones it has hardcoded, as here. Kinetis checks each of them against
+the guarded class's constructor where the hydration plan is compiled and
+where the schema is generated, so a mistyped name fails as a definition
+error instead of a rule that silently never matches or an `anyOf` no
+request can satisfy. A rule about the object as a whole, naming no field,
+returns `[]`.
+
+Object rules run once, last: after every field has resolved, passed its
+own rules, and the DTO has been constructed. If any field failed, no
+object rule runs at all — the only values available then are the
+declaration's own defaults, and a rule reporting on those would be
+reporting on something the client never sent.
+
+`ValidationContext` carries the one thing a constructed object cannot be
+asked: which of its own constructor fields the input actually supplied.
+`wasSupplied(string): bool` is its whole read surface. It holds no
+request, container, transport or DTO, and is built for one hydration.
+
+Yielded paths are relative to the DTO — `[]` addresses the object as a
+whole — and the owner prefixes its own field name or list index when the
+DTO is a nested one, exactly as it does for a field failure. Like a field
+rule, an object rule is constructed fresh from the literal arguments its
+attribute was written with and discarded, so it must be pure. Throwing,
+or yielding anything other than a `Violation`, is a programmer error and
+propagates as an ordinary exception, not a `422`.
+
+`schema()` contributes object-level keywords, merged into the class's own
+schema under the same one-owner rule field rules follow: a rule cannot
+claim `type`, `properties`, `required` or `additionalProperties`, which
+the PHP declaration owns, nor a keyword another rule on the same class
+already contributed. Either is a definition error rather than a silently
+overwritten bound.
 
 ### Nested DTOs
 
@@ -1340,17 +1526,24 @@ ahead of time by `kinetis build`, or on that class's first hydration
 otherwise. It supports a finite set of parameter shapes: one of the seven supported
 builtin types, a single named class (hydrated when it can be
 instantiated, instance-only when it can't), an `array` carrying
-`#[ListOf]`, an `array` carrying `#[ObjectMap]`, and nullable variants
-of each.
+`#[ListOf]`, an `array` carrying `#[ObjectMap]`, nullable variants of
+each, and the presence union `T|Absent`/`T|null|Absent` around any of
+them (see "Required, optional, and absent fields" above).
 
 Anything else is rejected while the plan is compiled, with an
 `UnsupportedDtoDefinitionException` naming the class and the parameter —
 so the definition fails at build time, or on that route's first request
 in development, rather than as a `TypeError` on a live one:
 
-- A **union** or **intersection** parameter type (`int|string`,
-  `Countable&ArrayAccess`). Kinetis hydrates neither; declare a single
-  named type.
+- An **intersection** parameter type (`Countable&ArrayAccess`), or a
+  **union** other than the two presence forms (`int|string`). Declare a
+  single named type, or `T|Absent`/`T|null|Absent` where the field needs
+  to tell an omitted member from an explicit `null`.
+- A malformed presence union: `Absent` with no value type beside it
+  (`?Absent`), with two of them (`int|string|Absent`), with no default,
+  or with a default other than `Absent::Value`. Nothing but that default
+  can produce the marker, so any other spelling names a field that could
+  never hold one.
 - A **recursive or mutually recursive** class reference — a `Comment`
   with a `Comment $parent` field, or two DTOs naming each other. A plan
   embeds each nested class's own plan inline, so a cycle has no finite
@@ -1366,6 +1559,9 @@ in development, rather than as a `TypeError` on a live one:
 - `#[ObjectMap]` on a parameter that isn't typed `array`, or on the same
   parameter as `#[ListOf]`.
 - A `#[Body]` DTO class that cannot itself be instantiated.
+- An `ObjectConstraint` class attribute naming a field the constructor
+  does not declare — see "Rules about the whole DTO" above. Schema
+  generation reads the same rules and refuses it identically.
 
 The generated OpenAPI document and MCP tool input schemas hold the same
 line: a class-typed field whose class cannot be instantiated has no
@@ -1461,6 +1657,12 @@ field carries merged in beside them. An
 [`#[ObjectMap]` field](#object-map-properties) becomes `{"type":
 "object", "additionalProperties": true}` — the schema for the arbitrary
 keys and values it actually accepts.
+
+Every DTO object schema itself says `additionalProperties: false`, and
+carries whatever object-level keywords its
+[class-level rules](#rules-about-the-whole-dto) contribute — see
+"Unknown members are rejected for JSON" above for what the runtime holds
+each source to.
 
 Every DTO schema — whether reached via a `requestBody`, a response, or a
 [`#[ListOf]`](#collections-of-nested-dtos) element, at any depth — is
