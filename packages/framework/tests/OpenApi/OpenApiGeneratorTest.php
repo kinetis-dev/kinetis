@@ -14,6 +14,7 @@ use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
+use Kinetis\Tests\Http\Fixtures\RootedBodyController;
 use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
 use Kinetis\Tests\Http\Fixtures\UploadBindingController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
@@ -632,6 +633,56 @@ final class OpenApiGeneratorTest extends TestCase
 
         self::assertArrayNotHasKey('requestBody', $operation);
         self::assertArrayNotHasKey('parameters', $operation);
+    }
+
+    /**
+     * A rooted body publishes the document Dispatcher reads: a closed
+     * object whose one required member holds the DTO's own component.
+     * An unrooted route of the same DTO keeps its bare reference.
+     */
+    public function test_a_rooted_body_wraps_its_dto_reference_in_the_rooted_document(): void
+    {
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(RootedBodyController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $reference = ['$ref' => '#/components/schemas/CreateUserRequest'];
+        $content = $document['paths']['/rooted/users']['post']['requestBody']['content'];
+
+        self::assertSame(
+            ['application/json', 'application/x-www-form-urlencoded', 'multipart/form-data'],
+            array_keys($content),
+        );
+
+        foreach ($content as $mediaType) {
+            self::assertSame(
+                ['schema' => [
+                    'type' => 'object',
+                    'properties' => ['user' => $reference],
+                    'required' => ['user'],
+                    'additionalProperties' => false,
+                ]],
+                $mediaType,
+            );
+        }
+
+        self::assertSame($reference, $document['paths']['/users']['post']['requestBody']['content']['application/json']['schema']);
+    }
+
+    public function test_a_rooted_upload_dto_still_publishes_multipart_alone(): void
+    {
+        $router = new Router();
+        $router->register(RootedBodyController::class);
+        $document = (new OpenApiGenerator($router))->generate();
+
+        $content = $document['paths']['/rooted/avatars']['post']['requestBody']['content'];
+
+        self::assertSame(['multipart/form-data'], array_keys($content));
+        self::assertSame(
+            ['profile' => ['$ref' => '#/components/schemas/AvatarUploadRequest']],
+            $content['multipart/form-data']['schema']['properties'],
+        );
     }
 
     private static function uploadRouter(): Router

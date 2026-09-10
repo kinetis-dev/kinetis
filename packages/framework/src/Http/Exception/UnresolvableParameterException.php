@@ -91,6 +91,38 @@ final class UnresolvableParameterException extends RuntimeException
     }
 
     /**
+     * A second `#[Body]` parameter on one controller method. A request
+     * carries one document, and every `#[Body]` parameter validates that
+     * document's outer object as its own — under JSON a rooted one
+     * refuses each member but its root — so two of them could never
+     * accept the same request. Thrown from the same `Router::register()`-time boundary
+     * as forUnsupportedBuiltinType().
+     */
+    public static function forSecondBodyParameter(string $name, string $first): self
+    {
+        return new self(
+            "Controller parameter \"\${$name}\" is a second #[Body] parameter: \"\${$first}\" already binds "
+            . 'the request body, and a method binds it to exactly one parameter. Declare one DTO for the '
+            . "whole document, or one #[Body('root')] parameter for a single top-level member."
+        );
+    }
+
+    /**
+     * A `#[Body('')]` root. A root names one top-level member of the
+     * request document; the whole document is bound by omitting the
+     * argument, so an empty name is refused rather than read as a member
+     * spelled `""`. Thrown from the same `Router::register()`-time
+     * boundary as forUnsupportedBuiltinType().
+     */
+    public static function forEmptyBodyRoot(string $name): self
+    {
+        return new self(
+            "Controller parameter \"\${$name}\" declares #[Body] with an empty root. A root names one "
+            . 'top-level member of the request document; omit the argument to bind the whole document.'
+        );
+    }
+
+    /**
      * An `array`/`iterable`-typed path parameter — genuinely unsatisfiable,
      * unconditionally, unlike a `#[Query]` array (`?tags=a&tags=b` works
      * there, see {doc}`routing-validation`'s "Query and path values are

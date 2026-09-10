@@ -1653,4 +1653,31 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(ObjectDefaultRequest::class, [], $capturedPlan)->since,
         );
     }
+
+    /**
+     * The public DTO resolver answers exactly as a nested DTO field does
+     * for the two object shapes a decoded document never produces but a
+     * form merge or a direct caller can: its own instance, and another.
+     */
+    public function test_resolve_dto_value_takes_an_existing_instance_as_given(): void
+    {
+        $user = new CreateUserRequest('Alon', 'alon@example.com');
+
+        self::assertSame([$user, []], Hydrator::resolveDtoValue(InputSource::Json, ['user'], $user, CreateUserRequest::class));
+    }
+
+    public function test_resolve_dto_value_refuses_an_object_of_another_class(): void
+    {
+        [$value, $violations] = Hydrator::resolveDtoValue(
+            InputSource::Text,
+            ['user'],
+            new CreateNoteRequest('title', null),
+            CreateUserRequest::class,
+        );
+
+        self::assertNull($value);
+        self::assertCount(1, $violations);
+        self::assertSame(['user'], $violations[0]->path);
+        self::assertSame('not_an_instance', $violations[0]->code);
+    }
 }

@@ -104,6 +104,7 @@ use ReflectionType;
  *     name: string,
  *     source: string,
  *     dtoClass: ?string, // the DTO for 'body', the service class for 'container'
+ *     bodyRoot: ?string, // the top-level member a 'body' DTO is read from; null reads the whole document
  *     scalarType: ?string,
  *     hasDefault: bool,
  *     defaultValue: mixed,
@@ -114,7 +115,7 @@ use ReflectionType;
 final class Dispatcher
 {
     private const array BINDING_PLAN_KEYS = [
-        'name', 'source', 'dtoClass', 'scalarType', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+        'name', 'source', 'dtoClass', 'bodyRoot', 'scalarType', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
     ];
 
     public function __construct(
@@ -195,7 +196,7 @@ final class Dispatcher
      * class re-deriving the same rules itself. Every top-level key must
      * be a real string (PHP silently coerces a numeric-looking array key
      * to int); every value must be a list of entries, each with exactly
-     * the eight fields `derivePlan()` itself always produces, correctly
+     * the nine fields `derivePlan()` itself always produces, correctly
      * typed. `defaultValue` is never checked beyond "the key is
      * present" — it holds an arbitrary PHP default value, which has no
      * single type to validate against.
@@ -224,6 +225,7 @@ final class Dispatcher
                 ArtifactValidation::string($entry, 'HttpBindingPlan', 'name');
                 ArtifactValidation::string($entry, 'HttpBindingPlan', 'source');
                 ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'dtoClass');
+                ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'bodyRoot');
                 ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'scalarType');
                 ArtifactValidation::bool($entry, 'HttpBindingPlan', 'hasDefault');
                 ArtifactValidation::bool($entry, 'HttpBindingPlan', 'allowsNull');
@@ -241,7 +243,8 @@ final class Dispatcher
      * the live per-request fallback above (when no compiled plan exists)
      * and by Kinetis\Cache\Compiler ahead of time — one derivation algorithm,
      * not two that could drift apart. Also where a #[Query]/path parameter
-     * no request value could satisfy is rejected.
+     * no request value could satisfy is rejected, and where a second
+     * #[Body] parameter or an empty #[Body] root is.
      *
      * @return list<HttpBindingPlan>
      * @throws UnresolvableParameterException
@@ -252,12 +255,32 @@ final class Dispatcher
         $plan = [];
         $pathParameterNames = $route->pathParameterNames();
         $owner = $method->getDeclaringClass()->getName() . '::' . $method->getName() . '()';
+        $bodyParameter = null;
 
         foreach ($method->getParameters() as $parameter) {
             $name = $parameter->getName();
             $type = $parameter->getType();
             [$source, $dtoClass] = self::resolveSource($parameter, $name, $type, $pathParameterNames);
             $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
+            $bodyRoot = null;
+
+            // A request carries one document, and every #[Body]
+            // parameter validates its outer object as its own — under
+            // JSON a rooted one refuses each member but its root — so a
+            // second one could never accept the same request as the
+            // first.
+            if ($source === 'body') {
+                if ($bodyParameter !== null) {
+                    throw UnresolvableParameterException::forSecondBodyParameter($name, $bodyParameter);
+                }
+
+                $bodyParameter = $name;
+                $bodyRoot = $parameter->getAttributes(Body::class)[0]->newInstance()->root();
+
+                if ($bodyRoot === '') {
+                    throw UnresolvableParameterException::forEmptyBodyRoot($name);
+                }
+            }
 
             // Only a query or path parameter reads request input here. A
             // 'default'-source parameter is filled from its own default
@@ -297,6 +320,7 @@ final class Dispatcher
                 'name' => $name,
                 'source' => $source,
                 'dtoClass' => $dtoClass,
+                'bodyRoot' => $bodyRoot,
                 // Already null for 'request'/'uploadedFile'/'body' without
                 // special-casing here: none of those three types is ever
                 // isBuiltin(), so $scalarType is already null by the time
@@ -453,36 +477,79 @@ final class Dispatcher
         /** @var array<string, mixed> $data */
         $data = $formEncoded ? self::mergeUploads($decoded, $uploads) : $decoded;
 
+        // The source is the request's own, not the route's: the same
+        // #[Body] DTO class binds a JSON document and a form body on the
+        // same route, and only the content type the client actually sent
+        // says which vocabulary its values are written in. A JSON request
+        // keeps rejecting the JSON string "true" for a bool field; a form
+        // body, which has no other spelling, binds it.
+        $source = $formEncoded ? InputSource::Text : InputSource::Json;
+        $plan = $this->hydrationPlans[$dtoClass] ?? null;
+
         $hydrationToken = Telemetry::global()->hydrationStarted($dtoClass);
 
         try {
-            // The source is the request's own, not the route's: the
-            // same #[Body] DTO class binds a JSON document and a form
-            // body on the same route, and only the content type the
-            // client actually sent says which vocabulary its values are
-            // written in. A JSON request keeps rejecting the JSON
-            // string "true" for a bool field; a form body, which has no
-            // other spelling, binds it.
-            return Hydrator::hydrate(
-                $dtoClass,
-                $data,
-                $this->hydrationPlans[$dtoClass] ?? null,
-                $formEncoded ? InputSource::Text : InputSource::Json,
-            );
+            return $param['bodyRoot'] === null
+                ? Hydrator::hydrate($dtoClass, $data, $plan, $source)
+                : self::hydrateBodyRoot($param['bodyRoot'], $dtoClass, $data, $plan, $source);
         } finally {
             Telemetry::global()->hydrationEnded($hydrationToken);
         }
     }
 
     /**
-     * An empty body is treated as "no fields" — the same outcome a plain
-     * `{}` body already produces — rather than an error, since a route
-     * with an all-optional #[Body] DTO commonly expects exactly that. A
-     * non-empty body must decode to a JSON *object*: a #[Body] parameter
-     * is a DTO and a DTO's fields are named, so a top-level JSON array
-     * is as malformed as null, a bare string, a bare number or a bare
-     * bool, and all of them throw. This decoder is the only place that
-     * distinction exists — `Hydrator` sees a field map, in which `[]`
+     * A #[Body('root')] DTO, hydrated from the one top-level member its
+     * root names. The document around that member is still read under
+     * the request's own source: under InputSource::Json it is closed
+     * exactly as a DTO's own object is, so every other member is
+     * `unexpected_field` on its own path, after the root's own failures;
+     * a form body stays open, as it does inside a DTO.
+     *
+     * Presence and null are decided here, where the member was read. The
+     * member's shape and its nested failures are
+     * Hydrator::resolveDtoValue()'s answer, so a rooted DTO reports what
+     * a nested DTO field reports, under the root's path.
+     *
+     * @param class-string $dtoClass
+     * @param array<array-key, mixed> $data
+     * @param HydrationPlan|null $plan
+     * @throws ValidationException
+     */
+    private static function hydrateBodyRoot(string $root, string $dtoClass, array $data, ?array $plan, InputSource $source): object
+    {
+        [$value, $violations] = match (true) {
+            !array_key_exists($root, $data) => [null, [Hydrator::requiredViolation([$root])]],
+            $data[$root] === null => [null, [Hydrator::nullNotAllowedViolation([$root])]],
+            default => Hydrator::resolveDtoValue($source, [$root], $data[$root], $dtoClass, $plan),
+        };
+
+        if ($source === InputSource::Json) {
+            foreach (array_keys($data) as $member) {
+                // A numeric member name is an int key once decoded.
+                if ((string) $member !== $root) {
+                    $violations[] = Hydrator::unexpectedFieldViolation([$member]);
+                }
+            }
+        }
+
+        if ($violations !== []) {
+            throw ValidationException::fromViolations($violations);
+        }
+
+        /** @var object $value */
+        return $value;
+    }
+
+    /**
+     * An empty body is treated as a document with no members — the same
+     * outcome a plain `{}` body already produces — rather than an error:
+     * an all-optional #[Body] DTO hydrates from its own defaults, and a
+     * rooted one reports its root as required. A non-empty body must
+     * decode to a JSON *object*: a #[Body] document names its members —
+     * a DTO's fields, or the root member holding them — so a top-level
+     * JSON array is as malformed as null, a bare string, a bare number or
+     * a bare bool, and all of them throw. This decoder is the only place
+     * that distinction exists — `Hydrator` sees a field map, in which `[]`
      * and `{}` are the same value.
      *
      * Decoded with `associative: false`, not `true`, and run through
@@ -492,7 +559,7 @@ final class Dispatcher
      * sequential (`{"0":"a","1":"b"}`), which `array_is_list()` alone
      * cannot distinguish from a real array once `associative: true` has
      * already collapsed both into the identical PHP shape. The top level
-     * — a #[Body] DTO's own named fields — is always unwrapped back to a
+     * — the document's own named members — is always unwrapped back to a
      * plain array here; only values *nested* inside it stay marked.
      *
      * @return array<string, mixed>
