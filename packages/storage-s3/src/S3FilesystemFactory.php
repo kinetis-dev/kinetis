@@ -14,7 +14,6 @@ use AsyncAws\Core\Credentials\WebIdentityProvider;
 use Kinetis\Config\Config;
 use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
 use Kinetis\StorageS3\Exception\S3ConfigurationException;
-use League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter;
 use League\Flysystem\AsyncAwsS3\PortableVisibilityConverter;
 use League\Flysystem\Config as FlysystemConfig;
 use League\Flysystem\Filesystem;
@@ -22,8 +21,8 @@ use League\Flysystem\Visibility;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /**
- * Builds a League\Flysystem\Filesystem backed by AsyncAwsS3Adapter over
- * this package's own S3Client, with
+ * Builds a League\Flysystem\Filesystem backed by this package's S3Adapter
+ * over its own S3Client, with
  * Kinetis\RevoltHttpClient\AmpHttpClientFactory::create() injected as the
  * client's transport, so an S3 call suspends the calling Fiber instead of
  * blocking the worker. Credentials are not read from Kinetis\Config:
@@ -66,7 +65,7 @@ final class S3FilesystemFactory
         $configuration = self::configuration($config, $connection, $region);
 
         $client = new S3Client($configuration, self::credentialProvider($transport), $transport);
-        $adapter = new AsyncAwsS3Adapter(
+        $adapter = new S3Adapter(
             $client,
             $bucket,
             $prefix,

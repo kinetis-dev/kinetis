@@ -74,10 +74,9 @@ decision is yours to record.
 
 `FILESYSTEM_S3_TIMEOUT` (seconds, default `60`) bounds each S3 request on
 its own — connect, idle and total transfer alike. It is not one deadline
-across a Flysystem operation that issues several requests: a
-`deleteDirectory()` over a large prefix pages through listings and
-deletes in batches, and each of those requests gets the full timeout. A
-request is one wire attempt — no retry, and no redirect followed.
+across a Flysystem operation that issues several requests, such as
+`deleteDirectory()` — see Deleting a directory below. A request is one
+wire attempt — no retry, and no redirect followed.
 
 ## Visibility
 
@@ -106,6 +105,24 @@ than reporting a prefix that still holds objects as gone.
 see. The adapter reads that as "no such file", so grant `s3:ListBucket`
 on the bucket alongside `s3:GetObject` wherever an absence check has to
 be trustworthy.
+
+## Deleting a directory
+
+`deleteDirectory()` lists the prefix one page of at most 1,000 keys at a
+time and deletes that page with one `DeleteObjects` request before
+requesting the next page by its continuation token, so it holds no more
+than 1,000 key identifiers however large the prefix is. Each listing and
+each delete gets the full `FILESYSTEM_S3_TIMEOUT`; there is no deadline
+across the whole operation.
+
+The sweep follows the continuation tokens once and is not atomic. When a
+listing or a delete fails, `deleteDirectory()` raises
+`UnableToDeleteDirectory`. Batches confirmed before the failure stay
+deleted, and the failed delete itself may have been applied, because its
+response can be lost after S3 acted on it. The exception's `reason()`
+says whether at least one batch was confirmed complete; in either case
+the directory may be partially deleted. A key written under the prefix
+while the sweep runs can survive it.
 
 ## Credentials
 

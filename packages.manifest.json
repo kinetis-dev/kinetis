@@ -341,7 +341,7 @@
             "description": "S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3 — every S3 call travels on a Revolt-native HTTP transport.",
             "namespace": "Kinetis\\StorageS3\\",
             "testNamespace": "Kinetis\\StorageS3\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "requires": [
                 "framework",
                 "storage",

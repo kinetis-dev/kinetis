@@ -16,8 +16,7 @@ use Kinetis\StorageS3\Exception\S3OperationException;
 
 /**
  * AsyncAws's S3 client, corrected at the three points
- * League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter needs it to be, so the
- * adapter itself stays vendor code.
+ * League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter needs it to be.
  *
  * ACL: the adapter puts an `ACL` on every write and every copy, and its
  * default is `private`. A bucket with Object Ownership set to bucket
