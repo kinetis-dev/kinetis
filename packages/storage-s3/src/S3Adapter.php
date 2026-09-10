@@ -38,6 +38,7 @@ final class S3Adapter extends AsyncAwsS3Adapter
     private readonly PathPrefixer $prefixer;
 
     /**
+     * @param S3Client $client
      * @param list<string> $forwardedOptions
      */
     public function __construct(
