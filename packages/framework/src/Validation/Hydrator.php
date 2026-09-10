@@ -139,8 +139,10 @@ use ReflectionUnionType;
  * file, whose transport status is checked before its rules are, and it
  * is equally shared: a #[Body] DTO field, a #[ListOf] element, and an
  * UploadedFileInterface-typed controller parameter all bind through it.
- * objectExpectedViolation(), requiredViolation() and
- * unexpectedFieldViolation() stay public beside them for the three
+ * resolveDtoValue() is the DTO-typed counterpart for a caller holding one
+ * member of a larger document: a #[Body('root')] parameter via
+ * Kinetis\Http\Dispatcher. objectExpectedViolation(), requiredViolation()
+ * and unexpectedFieldViolation() stay public beside them for the three
  * failures a caller detects before it has a value to resolve at all.
  *
  * Holds exactly one piece of static state: a memoization cache of
@@ -1494,8 +1496,43 @@ final class Hydrator
     }
 
     /**
+     * One DTO-typed value at the caller's own path, resolved exactly as a
+     * nested DTO field is — see resolveClassTypedValue(). Public for
+     * Kinetis\Http\Dispatcher, which hydrates a #[Body('root')] DTO from
+     * one member of the request document: that member's shape failures
+     * (`not_a_json_object` for an array, the object type mismatch for a
+     * scalar, `not_an_instance` for another object) and its nested
+     * violations under that path are this class's answer, not a second
+     * copy. Presence and null stay with the caller, as they do for
+     * resolveScalar().
+     *
+     * Without $compiledPlan the class's plan is compiled and memoized, as
+     * hydrate() does.
+     *
+     * @param list<string|int> $path the caller's own path to this value
+     * @param class-string $class
+     * @param HydrationPlan|null $compiledPlan
+     * @return array{0: mixed, 1: list<Violation>} the hydrated DTO, and
+     *         the violations it raised — a non-empty list means the
+     *         caller must bind nothing for it
+     * @throws UnsupportedDtoDefinitionException
+     * @throws UnsupportedDefaultValueException
+     */
+    public static function resolveDtoValue(InputSource $source, array $path, mixed $value, string $class, ?array $compiledPlan = null): array
+    {
+        return self::resolveClassTypedValue(
+            $path,
+            $value,
+            $class,
+            $compiledPlan ?? self::$planCache[$class] ??= self::compilePlan($class),
+            $source,
+        );
+    }
+
+    /**
      * One class-typed value — a nested DTO field under its own field name,
-     * or one #[ListOf] element under its own ["field", index] path. Two
+     * one #[ListOf] element under its own ["field", index] path, or a
+     * rooted #[Body] member through resolveDtoValue(). Two
      * shapes are accepted and nothing else: an object-shaped value — a
      * JsonObject marker or a map-shaped PHP array — hydrated into $class
      * against $plan; or a value that is already a $class instance, taken

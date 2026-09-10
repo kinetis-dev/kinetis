@@ -143,8 +143,10 @@ final class OpenApiGenerator
         foreach ($method->getParameters() as $parameter) {
             $name = $parameter->getName();
 
-            if ($parameter->getAttributes(Body::class) !== []) {
-                $requestBody = $this->describeRequestBody($parameter);
+            $body = $parameter->getAttributes(Body::class);
+
+            if ($body !== []) {
+                $requestBody = $this->describeRequestBody($parameter, $body[0]->newInstance()->root());
                 continue;
             }
 
@@ -240,9 +242,14 @@ final class OpenApiGenerator
      * that needs its upload input documented declares the file as a field
      * of a #[Body] DTO.
      *
+     * A rooted #[Body('root')] publishes the DTO's `$ref` as the one
+     * required property of a closed object, the document Dispatcher reads
+     * the DTO out of. The content types are still chosen from the DTO
+     * itself, exactly as for an unrooted #[Body] of the same class.
+     *
      * @return array<string, mixed>|null
      */
-    private function describeRequestBody(ReflectionParameter $parameter): ?array
+    private function describeRequestBody(ReflectionParameter $parameter, ?string $root): ?array
     {
         $type = $parameter->getType();
 
@@ -252,7 +259,13 @@ final class OpenApiGenerator
 
         /** @var class-string $dtoClass */
         $dtoClass = $type->getName();
-        $schema = ['schema' => $this->schemaRefFor($dtoClass)];
+        $reference = $this->schemaRefFor($dtoClass);
+        $schema = ['schema' => $root === null ? $reference : [
+            'type' => 'object',
+            'properties' => [$root => $reference],
+            'required' => [$root],
+            'additionalProperties' => false,
+        ]];
 
         if (self::declaresUpload(Hydrator::compilePlan($dtoClass))) {
             return ['required' => true, 'content' => ['multipart/form-data' => $schema]];

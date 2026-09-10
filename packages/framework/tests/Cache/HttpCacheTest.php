@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Cache;
 
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\HttpCache;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class HttpCacheTest extends TestCase
@@ -16,9 +17,10 @@ final class HttpCacheTest extends TestCase
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::index' => [
-                    ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => true, 'defaultValue' => 1, 'allowsNull' => false, 'constraints' => []],
-                    ['name' => 'flag', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'bool', 'hasDefault' => true, 'defaultValue' => false, 'allowsNull' => false, 'constraints' => []],
-                    ['name' => 'label', 'source' => 'default', 'dtoClass' => null, 'scalarType' => 'string', 'hasDefault' => true, 'defaultValue' => null, 'allowsNull' => true, 'constraints' => []],
+                    ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'hasDefault' => true, 'defaultValue' => 1, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'flag', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'bool', 'hasDefault' => true, 'defaultValue' => false, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'label', 'source' => 'default', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'string', 'hasDefault' => true, 'defaultValue' => null, 'allowsNull' => true, 'constraints' => []],
+                    ['name' => 'user', 'source' => 'body', 'dtoClass' => 'App\\Dto', 'bodyRoot' => 'user', 'scalarType' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
                 ],
             ],
             hydrationPlans: [
@@ -57,6 +59,7 @@ final class HttpCacheTest extends TestCase
         self::assertSame(1, $reconstructed->httpBindingPlans['App\\C::index'][0]['defaultValue']);
         self::assertSame(false, $reconstructed->httpBindingPlans['App\\C::index'][1]['defaultValue']);
         self::assertNull($reconstructed->httpBindingPlans['App\\C::index'][2]['defaultValue']);
+        self::assertSame('user', $reconstructed->httpBindingPlans['App\\C::index'][3]['bodyRoot']);
         self::assertSame(['App\\RequestIdMiddleware'], $reconstructed->globalMiddleware);
         self::assertSame(['App\\OpenApiAuthMiddleware'], $reconstructed->openApiMiddleware);
         self::assertSame(
@@ -96,7 +99,7 @@ final class HttpCacheTest extends TestCase
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::m' => [
-                    ['name' => 'id', 'source' => 'query', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'id', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
                 ],
             ],
             hydrationPlans: [
@@ -164,6 +167,28 @@ final class HttpCacheTest extends TestCase
         $this->expectException(CacheArtifactExceptionInterface::class);
 
         HttpCache::fromArray($data);
+    }
+
+    #[DataProvider('malformedBodyRoots')]
+    public function test_from_array_rejects_a_binding_plan_whose_body_root_is_neither_a_string_nor_null(mixed $bodyRoot): void
+    {
+        $data = $this->validData();
+        $data['httpBindingPlans']['App\\C::m'][0]['bodyRoot'] = $bodyRoot;
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+        $this->expectExceptionMessage('bodyRoot');
+
+        HttpCache::fromArray($data);
+    }
+
+    /**
+     * @return iterable<string, array{mixed}>
+     */
+    public static function malformedBodyRoots(): iterable
+    {
+        yield 'an integer' => [42];
+        yield 'a list' => [['user']];
+        yield 'a boolean' => [false];
     }
 
     public function test_from_array_rejects_a_hydration_plan_missing_a_required_field(): void

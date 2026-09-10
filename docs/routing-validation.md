@@ -256,6 +256,49 @@ below) *before the controller method ever runs*.
 public function store(#[Body] CreateUserRequest $data): UserResponse
 ```
 
+#### Reading the DTO from one top-level member
+
+A wire contract that wraps its payload in a named member —
+`{"article": {...}}` — names that member as the attribute's root, and the
+DTO is hydrated from the member alone. `CreateArticle` and
+`ArticleResponse` stand for the application's own classes:
+
+```{code-block} php
+#[Post('/articles')]
+public function create(#[Body('article')] CreateArticle $article): ArticleResponse
+```
+
+A root is exactly one top-level member name. It is never inferred from
+the parameter name and it is not a path: `#[Body('data.article')]` names a
+member spelled `data.article`. An empty root, and a second `#[Body]`
+parameter on the same method, are refused with an
+`UnresolvableParameterException` when the route registers — a request
+carries one document, and every `#[Body]` parameter validates its outer
+object as its own.
+
+The document around the root is read exactly as an unrooted one is: the
+media type decides how it is decoded, uploaded files are merged into a
+form body first, and a malformed JSON document, or one whose outer value
+is not an object, is still a `400`. The root member then reports what a
+nested DTO field reports (see "Nested DTOs" below), under the root's
+path:
+
+| Request | Violation |
+|---|---|
+| a blank body, or no `article` member | `required` at `["article"]` |
+| `"article": null` | `null_not_allowed` at `["article"]` |
+| `"article": "text"` | `type_mismatch` at `["article"]` |
+| `"article": []` | `not_a_json_object` at `["article"]` |
+| an invalid `title` inside it | that field's own code at `["article", "title"]` |
+
+A JSON document is closed around its root as a DTO's own object is:
+every other top-level member is `unexpected_field` at its own path,
+reported after the root's own failures. A form-encoded or multipart body
+stays open, so a CSRF token or a submit button's name beside the root is
+accepted. See "Unknown members are rejected for JSON" below for both
+policies, and "Zero-config OpenAPI & Swagger UI" for the published
+document.
+
 ### `#[Query]`
 
 A parameter attributed `#[Query]` is bound to a query-string value of the
@@ -415,11 +458,11 @@ the controller is constructed, so a handler never receives bytes read
 under a header that did not describe them, and neither its constructor
 nor a factory registered for it runs. The error names the supported media
 types and never echoes the one received. A blank or whitespace-only body
-still hydrates an all-optional DTO from its own defaults whatever the
-header says: there are no bytes for a media type to describe. A route
-that has to accept arbitrary or binary bytes takes a
-`ServerRequestInterface` parameter instead of `#[Body]`, and receives
-them untouched.
+is a document with no members whatever the header says — there are no
+bytes for a media type to describe — so an all-optional unrooted DTO
+still hydrates from its own defaults. A route that has to accept
+arbitrary or binary bytes takes a `ServerRequestInterface` parameter
+instead of `#[Body]`, and receives them untouched.
 
 A `Content-Type` is matched on its type and subtype alone — everything
 before the first `;`, so a `charset` or a multipart `boundary` parameter
@@ -1050,13 +1093,13 @@ replace it wholesale — see
 
 [rfc9457]: https://www.rfc-editor.org/rfc/rfc9457.html
 
-An empty body is treated as no data at all, so a DTO with only optional
-fields hydrates from its own defaults — the same outcome a `{}` body
-produces. A non-empty body must be a JSON object: one that isn't valid
-JSON, or that decodes to anything else (a top-level JSON array, `null`,
-a bare string, a number, a boolean), is a `400` instead, before any
-field-level validation runs. That check belongs to the decoder, which is
-where the object/array distinction still exists:
+An empty body is treated as a document with no members — the same outcome
+a `{}` body produces — so an unrooted DTO with only optional fields
+hydrates from its own defaults. A non-empty body must be a JSON object:
+one that isn't valid JSON, or that decodes to anything else (a top-level
+JSON array, `null`, a bare string, a number, a boolean), is a `400`
+instead, before any field-level validation runs. That check belongs to
+the decoder, which is where the object/array distinction still exists:
 
 ```{code-block} json
 {
@@ -1402,7 +1445,8 @@ the same request has:
 ```
 
 Closure applies at every nesting level: a nested DTO's own object and a
-`#[ListOf]` DTO element's are closed under their own paths. An
+`#[ListOf]` DTO element's are closed under their own paths, and a
+`#[Body('root')]` document is closed around its root. An
 `#[ObjectMap]` property stays open inside itself — arbitrary keys are
 what it accepts — while the DTO holding it is closed like any other.
 
@@ -2085,6 +2129,13 @@ schema too — `UserResponse` (or `?UserResponse`, or a union like
 `content` entry describing it; a bare `array`/`ResponseInterface`-only
 return, with no shape reflection can recover, leaves the response
 description-only.
+
+A rooted `#[Body('article')]` publishes the document it reads — `{"type":
+"object", "properties": {"article": {"$ref": ...}}, "required":
+["article"], "additionalProperties": false}` — under the content types an
+unrooted `#[Body]` of the same DTO gets, so a DTO declaring an upload
+still advertises `multipart/form-data` alone. The DTO's own component is
+the same either way, and an unrooted `#[Body]` publishes its bare `$ref`.
 
 A [`#[ListOf]` field](#typed-collections) becomes a `{"type": "array",
 "items": ...}` schema: `items` describes the element class the same way

@@ -15,6 +15,8 @@ use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
 use Kinetis\Tests\Http\Fixtures\ConstructionCountingController;
+use Kinetis\Tests\Http\Fixtures\CreateUserRequest;
+use Kinetis\Tests\Http\Fixtures\EmptyBodyRootController;
 use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathArrayController;
 use Kinetis\Tests\Http\Fixtures\NoteController;
@@ -27,6 +29,8 @@ use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
 use Kinetis\Tests\Http\Fixtures\QueryLiteralController;
 use Kinetis\Tests\Http\Fixtures\RawRequestController;
 use Kinetis\Tests\Http\Fixtures\RequiredTagSearchController;
+use Kinetis\Tests\Http\Fixtures\RootedBodyController;
+use Kinetis\Tests\Http\Fixtures\SecondBodyParameterController;
 use Kinetis\Tests\Http\Fixtures\TagSearchController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedPathTypeController;
 use Kinetis\Tests\Http\Fixtures\PresenceUnionQueryController;
@@ -42,6 +46,7 @@ use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Kinetis\Validation\Exception\ValidationException;
+use Kinetis\Validation\Hydrator;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -811,7 +816,7 @@ final class DispatcherTest extends TestCase
 
         $plan = [
             'Kinetis\Tests\Http\Fixtures\UserController::show' => [
-                ['name' => 'id', 'source' => 'path', 'dtoClass' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
+                ['name' => 'id', 'source' => 'path', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
             ],
         ];
 
@@ -1613,5 +1618,165 @@ final class DispatcherTest extends TestCase
 
         self::assertTrue($plan[0]['hasDefault']);
         self::assertSame(SortDirection::Descending, $plan[0]['defaultValue']);
+    }
+
+    private function rootedRouter(): Router
+    {
+        $router = new Router();
+        $router->register(RootedBodyController::class);
+
+        return $router;
+    }
+
+    public function test_a_rooted_body_hydrates_its_dto_from_the_named_top_level_member(): void
+    {
+        $match = $this->rootedRouter()->match('POST', '/rooted/users');
+        $request = new ServerRequest('POST', '/rooted/users', self::JSON_HEADERS, body: json_encode([
+            'user' => ['name' => 'Alon', 'email' => 'alon@example.com'],
+        ]));
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(['name' => 'Alon', 'email' => 'alon@example.com'], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * The derived plan carries the attribute's root. Dispatching the same
+     * route through a plan naming a different root is what proves the
+     * compiled entry, and not live reflection, chooses the member.
+     */
+    public function test_a_compiled_plan_selects_the_root_it_carries(): void
+    {
+        $match = $this->rootedRouter()->match('POST', '/rooted/users');
+        $plan = Dispatcher::derivePlan(new \ReflectionMethod(RootedBodyController::class, 'store'), $match->route);
+
+        self::assertSame(
+            [['name' => 'user', 'source' => 'body', 'dtoClass' => CreateUserRequest::class, 'bodyRoot' => 'user', 'scalarType' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []]],
+            $plan,
+        );
+
+        $app = new AppScope();
+        $app->boot();
+        $key = RootedBodyController::class . '::store';
+        $hydrationPlans = [CreateUserRequest::class => Hydrator::compilePlan(CreateUserRequest::class)];
+        $user = ['name' => 'Alon', 'email' => 'alon@example.com'];
+
+        $compiled = new Dispatcher($app, [$key => $plan], $hydrationPlans)->dispatch(
+            $match,
+            new ServerRequest('POST', '/rooted/users', self::JSON_HEADERS, body: json_encode(['user' => $user])),
+        );
+
+        self::assertSame($user, json_decode((string) $compiled->getBody(), true));
+
+        $plan[0]['bodyRoot'] = 'account';
+        $renamed = new Dispatcher($app, [$key => $plan], $hydrationPlans)->dispatch(
+            $match,
+            new ServerRequest('POST', '/rooted/users', self::JSON_HEADERS, body: json_encode(['account' => $user])),
+        );
+
+        self::assertSame($user, json_decode((string) $renamed->getBody(), true));
+    }
+
+    /**
+     * @param list<array{list<string|int>, string}> $expected
+     */
+    #[DataProvider('rootedJsonFailures')]
+    public function test_a_rooted_json_body_reports_each_failure_at_its_own_path(string $body, array $expected): void
+    {
+        $match = $this->rootedRouter()->match('POST', '/rooted/users');
+        $request = new ServerRequest('POST', '/rooted/users', self::JSON_HEADERS, body: $body);
+
+        $failure = $this->failedDispatch(fn (): ResponseInterface => $this->dispatcher()->dispatch($match, $request));
+
+        self::assertSame(
+            $expected,
+            array_map(static fn ($violation): array => [$violation->path, $violation->code], $failure->violations),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string, list<array{list<string|int>, string}>}>
+     */
+    public static function rootedJsonFailures(): iterable
+    {
+        $user = '{"name": "Alon", "email": "alon@example.com"}';
+
+        yield 'a blank body' => ['', [[['user'], 'required']]];
+        yield 'an absent root beside another member' => ['{"account": ' . $user . '}', [[['user'], 'required'], [['account'], 'unexpected_field']]];
+        yield 'an explicit null' => ['{"user": null}', [[['user'], 'null_not_allowed']]];
+        yield 'a JSON scalar' => ['{"user": "Alon"}', [[['user'], 'type_mismatch']]];
+        yield 'a JSON list' => ['{"user": []}', [[['user'], 'not_a_json_object']]];
+        yield 'a nested invalid field' => ['{"user": {"name": "Alon"}}', [[['user', 'email'], 'required']]];
+        yield 'a nested unknown member' => ['{"user": {"name": "Alon", "email": "alon@example.com", "nmae": 1}}', [[['user', 'nmae'], 'unexpected_field']]];
+        yield 'an outer sibling' => ['{"user": ' . $user . ', "meta": 1}', [[['meta'], 'unexpected_field']]];
+        yield 'an outer sibling sent before a failing root' => ['{"meta": 1, "user": {"name": "Alon"}}', [[['user', 'email'], 'required'], [['meta'], 'unexpected_field']]];
+    }
+
+    #[DataProvider('malformedRootedDocuments')]
+    public function test_a_rooted_body_still_refuses_a_malformed_or_non_object_document_with_400(string $body): void
+    {
+        $match = $this->rootedRouter()->match('POST', '/rooted/users');
+        $request = new ServerRequest('POST', '/rooted/users', self::JSON_HEADERS, body: $body);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function malformedRootedDocuments(): iterable
+    {
+        yield 'malformed JSON' => ['{"user": '];
+        yield 'a top-level list' => ['[{"user": {"name": "Alon", "email": "alon@example.com"}}]'];
+    }
+
+    /**
+     * A form body stays open around its root, as it does inside a DTO: a
+     * CSRF token beside the root is not a member of the DTO.
+     */
+    public function test_a_rooted_form_body_hydrates_and_allows_an_unrelated_top_level_member(): void
+    {
+        $match = $this->rootedRouter()->match('POST', '/rooted/users');
+        $request = (new ServerRequest('POST', '/rooted/users'))
+            ->withHeader('Content-Type', 'application/x-www-form-urlencoded')
+            ->withParsedBody(['_token' => 'csrf', 'user' => ['name' => 'Alon', 'email' => 'alon@example.com']]);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(['name' => 'Alon', 'email' => 'alon@example.com'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_rooted_multipart_body_selects_its_root_after_uploads_are_merged(): void
+    {
+        $match = $this->rootedRouter()->match('POST', '/rooted/avatars');
+        $avatar = new UploadedFile(Stream::create('x'), 1, UPLOAD_ERR_OK, 'avatar.png', 'image/png');
+        $request = (new ServerRequest('POST', '/rooted/avatars'))
+            ->withHeader('Content-Type', 'multipart/form-data; boundary=----WebKitFormBoundary')
+            ->withParsedBody(['profile' => ['name' => 'Alon']])
+            ->withUploadedFiles(['profile' => ['avatar' => $avatar]]);
+
+        $response = $this->dispatcher()->dispatch($match, $request);
+
+        self::assertSame(['name' => 'Alon', 'filename' => 'avatar.png'], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_second_body_parameter_is_rejected_at_registration(): void
+    {
+        $this->expectException(UnresolvableParameterException::class);
+        $this->expectExceptionMessage('Controller parameter "$author" is a second #[Body] parameter: "$article" already binds the request body');
+
+        (new Router())->register(SecondBodyParameterController::class);
+    }
+
+    public function test_an_empty_body_root_is_rejected_at_registration(): void
+    {
+        $this->expectException(UnresolvableParameterException::class);
+        $this->expectExceptionMessage('Controller parameter "$article" declares #[Body] with an empty root.');
+
+        (new Router())->register(EmptyBodyRootController::class);
     }
 }
