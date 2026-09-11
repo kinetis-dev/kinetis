@@ -79,7 +79,7 @@ $api->withTimeout(30)->get('/reports/large'); // just this call
 | `withHeaders(array)` | adds headers, overriding a same-named one already set |
 | `withQuery(array)` | query parameters added to every request |
 | `withTimeout(float)` | the total budget for one operation, in seconds |
-| `withRetries(int $times = 3)` | extra attempts for a failure worth repeating |
+| `withRetries(int $times = 3)` | extra attempts of an idempotent request for a failure worth repeating |
 | `withMaxResponseBytes(int)` | the ceiling a response body may reach |
 | `asForm()` | sends array bodies as `application/x-www-form-urlencoded` |
 
@@ -250,9 +250,11 @@ the client's own policy.
 inspect: a **stream** resource or a `Closure`. Those are sent as they
 are — and that is the limit of what `send()` can promise. It cannot make
 a stream replayable: a stream is consumed as it is read, so a client
-with retries configured refuses one outright rather than sending a
-second request with a body that is already gone. Send it from a client
-without retries.
+with retries configured refuses one outright on a method it retries
+rather than sending a second request with a body that is already gone.
+A method it never retries, such as the `POST` above, is sent once and
+takes one on any client; a streamed `PUT` is sent from a client without
+retries.
 
 ## Timeouts and retries
 
@@ -273,9 +275,11 @@ the budget and then answers gets a `Timeout`, not a late success. What
 cannot be done from here is interrupting it mid-block; nothing in PHP
 does that.
 
-`withRetries()` is the only retry layer there is. It sends the request
-again, up to `$times` more times (at most 10), with backoff doubling
-from 100 ms, for:
+`withRetries()` is the only retry layer there is, and it retries only a
+request whose method is exactly `GET`, `HEAD`, `OPTIONS`, `TRACE`,
+`PUT`, or `DELETE` — the methods RFC 9110 defines as idempotent. It
+sends such a request again, up to `$times` more times (at most 10), with
+backoff doubling from 100 ms, for:
 
 - a transport failure — DNS, a refused connection, a dropped socket;
 - a status the server itself marks as worth repeating: 429, 500, 502,
@@ -296,15 +300,22 @@ budget; with no response in hand, the transport failure propagates.
 $resilient = $http->withBaseUrl('https://api.example.com')->withRetries(3)->withTimeout(10);
 ```
 
-Two things follow from owning the retry layer here:
+**Every other method is sent once**, `POST` and `PATCH` included, even
+by a client with retries configured. Neither a transport failure nor a
+retryable status proves such a request was not applied: the first leaves
+its outcome unknown (see [Failures](#failures)), and a 503 can follow
+work the server already did, so a retryable status does not make a
+`POST` safe to repeat. The method is matched exactly, and nothing else
+about the request — an idempotency-key header included — changes the
+decision.
 
-- A retrying client waits for the response status inside `send()`, since
-  that status is what the decision is made on. Without retries, `send()`
-  returns as soon as the request is issued and every read stays
-  deferred — the path that lets `concurrently()` overlap requests.
-- Retrying a request that is not idempotent is your call to make.
-  Neither a 5xx nor a dropped connection proves the server did not
-  already act on it.
+A client with retries waits for the response status inside `send()` on
+a method it retries, since that status is what the decision is made on.
+Every other request — any method on a client without retries, and a
+method this client never retries on one with them — returns from
+`send()` as soon as it is issued, and every read stays deferred: the
+path that lets `concurrently()` overlap requests, and the one where a
+`POST`'s transport failure raises from the read that meets it.
 
 Every response an attempt abandons is released as the loop abandons it,
 so a retried request costs one connection rather than one per attempt.
@@ -352,9 +363,10 @@ rather than left holding a connection nothing will read.
 The refusal surfaces from whichever read reaches it. Usually that is
 `body()`, `json()`, or `jsonPath()`. It can also be `status()` — a
 transport delivers body bytes while it answers a status wait, and a
-retrying client always waits for the status inside `send()`. What the
-ceiling never does is fetch a body nobody asked for: a `HEAD` request,
-or a status that arrives before any body does, costs nothing.
+client with retries waits for the status inside `send()` on every method
+it retries. What the ceiling never does is fetch a body nobody asked
+for: a `HEAD` request, or a status that arrives before any body does,
+costs nothing.
 
 The ceiling owns the transport's progress hook, which is why
 `on_progress` is not a per-call option: a hook of your own would replace
@@ -475,7 +487,7 @@ try {
 } catch (HttpRequestException $e) {
     // $e->category is an HttpFailure: InvalidRequest, Conversion, Transport,
     // Timeout, ResponseTooLarge, ErrorStatus, or Discarded.
-    // $e->status is the HTTP status, or 0 when nothing answered at all.
+    // $e->status is the HTTP status for ErrorStatus and Conversion, and 0 otherwise.
     $recoverable = $e->category === HttpFailure::Timeout;
 }
 ```
@@ -485,6 +497,14 @@ fixed list. `getMessage()` is prose. `InvalidRequest` covers everything
 this client or the transport refused to send — a misconfigured client, a
 per-call option, a body value — and always means the same thing: nothing
 reached the network, and a repeat would be refused the same way.
+
+`Transport` means only that no complete response arrived. A connection
+can close after the server received and applied the request but before
+its status line arrived, so a `Transport` failure is
+**acknowledgement-unknown**: the request may have taken effect. Before
+repeating a request that is not idempotent, find out whether the first
+one did. [Timeouts and retries](#timeouts-and-retries) covers what this
+client repeats on its own.
 
 ```{warning}
 An exception from this package carries the request method, the origin

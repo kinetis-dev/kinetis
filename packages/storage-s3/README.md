@@ -33,7 +33,9 @@ Objects are private and writes and copies carry no ACL, so a bucket with
 Object Ownership set to bucket owner enforced works unchanged; grant
 public read through a bucket policy. The failures S3 reports under HTTP 200 — a
 broken copy, a batch delete that refused keys — are read rather than
-taken as success.
+taken as success. `deleteDirectory()` lists and deletes one page of at
+most 1,000 keys at a time, so a failure part-way leaves earlier pages
+deleted.
 
 ```php
 use Kinetis\Storage\FilesystemFactory;

@@ -11,9 +11,11 @@ composer require kinetis/telemetry
 OpenTelemetry tracing for a Kinetis application: a span per request, per
 SQL query, per queue job, and per outgoing HTTP call, exported over OTLP
 to any tracing backend — Jaeger, Grafana Tempo, Datadog, Honeycomb, or
-anything else that speaks the protocol. Export goes through
-`kinetis/revolt-http-client`'s Fiber-suspending transport, so flushing a
-span batch never blocks the worker.
+anything else that speaks the protocol. Each export request goes through
+`kinetis/revolt-http-client`'s Fiber-suspending transport. The delay
+between OpenTelemetry's exporter retries is a blocking sleep — a backoff
+doubling from 100 ms, or a longer `Retry-After` the collector sends — so
+a retried export blocks the worker for each delay.
 
 The distinctive trace this produces: spans that *overlap in time*. A
 request that runs two queries and an HTTP call through `concurrently()`
@@ -37,6 +39,12 @@ Spans batch in memory and export when the batch fills or at shutdown —
 which is request end under PHP-FPM and worker exit under a persistent
 worker (FrankenPHP or RoadRunner), so every shape flushes with no
 further configuration.
+
+An export request, with its `OTEL_EXPORTER_OTLP_HEADERS`, goes only to
+the configured endpoint: a redirect is never followed. OpenTelemetry's
+exporter retries a redirect response against that same endpoint under
+its own retry policy and reports an export failure once the retry limit
+is reached.
 
 ## Request spans
 

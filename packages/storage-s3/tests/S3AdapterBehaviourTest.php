@@ -6,6 +6,7 @@ namespace Kinetis\StorageS3\Tests;
 
 use AsyncAws\Core\AbstractApi;
 use AsyncAws\Core\Credentials\NullProvider;
+use DOMDocument;
 use Kinetis\Config\Config;
 use Kinetis\StorageS3\S3FilesystemFactory;
 use League\Flysystem\AsyncAwsS3\AsyncAwsS3Adapter;
@@ -21,11 +22,12 @@ use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
 /**
- * What reaches the wire, proved through the vendor adapter the factory
- * really builds rather than a stand-in for it: the ACL header, the
- * request an operation does not issue, and the HTTP 200 responses S3
- * uses to report failure. Only the transport and the credential provider
- * are substituted, so the visibility converter, forwarded options and
+ * What reaches the wire, proved through the adapter the factory really
+ * builds rather than a stand-in for it: the ACL header, the request an
+ * operation does not issue, the order and content of a directory
+ * delete's requests, and the HTTP 200 responses S3 uses to report
+ * failure. Only the transport and the credential provider are
+ * substituted, so the visibility converter, forwarded options and
  * `retain_visibility` under test are the ones production gets.
  */
 final class S3AdapterBehaviourTest extends TestCase
@@ -33,11 +35,17 @@ final class S3AdapterBehaviourTest extends TestCase
     private const OK = '';
     private const COPIED = '<CopyObjectResult><ETag>"5d41402abc4b2a76b9719d911017c592"</ETag></CopyObjectResult>';
     private const COPY_FAILED = '<Error><Code>InternalError</Code><Message>We encountered an internal error.</Message></Error>';
+    private const NO_KEYS = '<ListBucketResult><KeyCount>0</KeyCount></ListBucketResult>';
     private const ONE_KEY = '<ListBucketResult><KeyCount>1</KeyCount><Contents><Key>logs/app.log</Key><Size>12</Size></Contents></ListBucketResult>';
+    private const FIRST_PAGE = '<ListBucketResult><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>second-page</NextContinuationToken><Contents><Key>logs/first.log</Key><Size>12</Size></Contents></ListBucketResult>';
+    private const LAST_PAGE = '<ListBucketResult><KeyCount>1</KeyCount><IsTruncated>false</IsTruncated><Contents><Key>logs/last.log</Key><Size>12</Size></Contents></ListBucketResult>';
+    private const DELETED = '<DeleteResult></DeleteResult>';
     private const DELETE_REFUSED = '<DeleteResult><Error><Key>logs/app.log</Key><Code>AccessDenied</Code><Message>Access Denied</Message></Error></DeleteResult>';
+    private const NO_BATCH_CONFIRMED = 'No delete batch was confirmed complete; the directory may be partially deleted.';
+    private const BATCH_CONFIRMED = 'At least one delete batch was confirmed complete; the directory may be partially deleted.';
 
     /**
-     * @var list<array{method: string, headers: array<string, string>}>
+     * @var list<array{method: string, url: string, headers: array<string, string>, body: string}>
      */
     private array $sent = [];
 
@@ -112,6 +120,42 @@ final class S3AdapterBehaviourTest extends TestCase
         self::assertSame(['PUT'], $this->methods());
     }
 
+    public function test_a_directory_delete_deletes_each_page_before_listing_the_next(): void
+    {
+        $this->filesystem(self::FIRST_PAGE, self::DELETED, self::LAST_PAGE, self::DELETED)->deleteDirectory('logs');
+
+        self::assertSame(['GET', 'POST', 'GET', 'POST'], $this->methods());
+
+        $firstListing = self::query($this->sent[0]['url']);
+        self::assertSame('logs/', $firstListing['prefix'] ?? null);
+        self::assertSame('1000', $firstListing['max-keys'] ?? null);
+        self::assertArrayNotHasKey('continuation-token', $firstListing);
+        self::assertSame(['logs/first.log'], self::deletedKeys($this->sent[1]['body']));
+
+        $secondListing = self::query($this->sent[2]['url']);
+        self::assertSame('second-page', $secondListing['continuation-token'] ?? null);
+        self::assertSame('1000', $secondListing['max-keys'] ?? null);
+        self::assertSame(['logs/last.log'], self::deletedKeys($this->sent[3]['body']));
+    }
+
+    public function test_a_directory_delete_sends_keys_holding_xml_markup_intact(): void
+    {
+        $key = 'logs/a&b<c>"d\'.log';
+        $page = '<ListBucketResult><KeyCount>1</KeyCount><Contents><Key>' . htmlspecialchars($key, ENT_XML1 | ENT_QUOTES) . '</Key></Contents></ListBucketResult>';
+
+        $this->filesystem($page, self::DELETED)->deleteDirectory('logs');
+
+        self::assertSame(['GET', 'POST'], $this->methods());
+        self::assertSame([$key], self::deletedKeys($this->sent[1]['body']));
+    }
+
+    public function test_deleting_an_empty_directory_issues_no_delete(): void
+    {
+        $this->filesystem(self::NO_KEYS)->deleteDirectory('logs');
+
+        self::assertSame(['GET'], $this->methods());
+    }
+
     public function test_a_batch_delete_reporting_per_key_errors_fails_the_directory_delete(): void
     {
         $filesystem = $this->filesystem(self::ONE_KEY, self::DELETE_REFUSED);
@@ -120,24 +164,60 @@ final class S3AdapterBehaviourTest extends TestCase
             $filesystem->deleteDirectory('logs');
             self::fail('A directory delete must not report success when a key survived.');
         } catch (UnableToDeleteDirectory $exception) {
-            self::assertStringContainsString('per-key errors', $exception->getMessage());
+            self::assertSame(self::NO_BATCH_CONFIRMED, $exception->reason());
+            self::assertStringContainsString('per-key errors', $exception->getPrevious()?->getMessage() ?? '');
         }
 
         self::assertSame(['GET', 'POST'], $this->methods());
     }
 
-    /**
-     * The bodies are answered in order, each with HTTP 200 — the status
-     * S3 returns for the failures under test.
-     */
-    private function filesystem(string ...$bodies): Filesystem
+    public function test_a_delete_whose_response_was_lost_confirms_no_batch(): void
     {
-        $transport = new MockHttpClient(function (string $method, string $url, array $options) use (&$bodies): MockResponse {
+        $filesystem = $this->filesystem(self::ONE_KEY, new MockResponse('', ['error' => 'Connection reset by peer.']));
+
+        try {
+            $filesystem->deleteDirectory('logs');
+            self::fail('A directory delete must not report success when a delete response was lost.');
+        } catch (UnableToDeleteDirectory $exception) {
+            self::assertSame(self::NO_BATCH_CONFIRMED, $exception->reason());
+        }
+
+        self::assertSame(['GET', 'POST'], $this->methods());
+    }
+
+    public function test_a_failure_after_a_confirmed_batch_reports_the_confirmation(): void
+    {
+        $filesystem = $this->filesystem(self::FIRST_PAGE, self::DELETED, self::LAST_PAGE, self::DELETE_REFUSED);
+
+        try {
+            $filesystem->deleteDirectory('logs');
+            self::fail('A directory delete must not report success when a later batch failed.');
+        } catch (UnableToDeleteDirectory $exception) {
+            self::assertSame(self::BATCH_CONFIRMED, $exception->reason());
+            self::assertStringContainsString('per-key errors', $exception->getPrevious()?->getMessage() ?? '');
+        }
+
+        self::assertSame(['GET', 'POST', 'GET', 'POST'], $this->methods());
+    }
+
+    /**
+     * Responses are returned in order. A string body is answered with
+     * HTTP 200 — the status S3 returns for the failures under test; a
+     * MockResponse is returned as given, such as one whose connection
+     * fails after the request was sent.
+     */
+    private function filesystem(string|MockResponse ...$responses): Filesystem
+    {
+        $transport = new MockHttpClient(function (string $method, string $url, array $options) use (&$responses): MockResponse {
             /** @var list<string> $headers */
             $headers = $options['headers'];
-            $this->sent[] = ['method' => $method, 'headers' => self::headers($headers)];
+            $body = $options['body'] ?? '';
+            self::assertIsString($body);
+            $this->sent[] = ['method' => $method, 'url' => $url, 'headers' => self::headers($headers), 'body' => $body];
 
-            return new MockResponse((string) array_shift($bodies), ['http_code' => 200]);
+            $response = array_shift($responses) ?? '';
+
+            return $response instanceof MockResponse ? $response : new MockResponse($response, ['http_code' => 200]);
         });
 
         $filesystem = S3FilesystemFactory::fromConfig(new Config([
@@ -176,6 +256,37 @@ final class S3AdapterBehaviourTest extends TestCase
         }
 
         return $headers;
+    }
+
+    /**
+     * @return array<array-key, mixed>
+     */
+    private static function query(string $url): array
+    {
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        return $query;
+    }
+
+    /**
+     * The keys a DeleteObjects body names, as S3 reads them back out of
+     * the XML.
+     *
+     * @return list<string>
+     */
+    private static function deletedKeys(string $body): array
+    {
+        $document = new DOMDocument();
+
+        self::assertTrue($document->loadXML($body), 'The DeleteObjects body is not well-formed XML.');
+
+        $keys = [];
+
+        foreach ($document->getElementsByTagName('Key') as $key) {
+            $keys[] = $key->textContent;
+        }
+
+        return $keys;
     }
 
     /**
