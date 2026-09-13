@@ -316,7 +316,7 @@ final class Query
      */
     public function selectRaw(string $sql, array $params = []): static
     {
-        $this->selectExpressions[] = ['sql' => $sql, 'params' => array_values($params)];
+        $this->selectExpressions[] = ['sql' => $sql, 'params' => $params];
         $this->hasRawFragment = true;
 
         return $this;
@@ -566,7 +566,7 @@ final class Query
      */
     public function groupByRaw(string $sql, array $params = []): static
     {
-        $this->groups[] = ['sql' => $sql, 'params' => array_values($params)];
+        $this->groups[] = ['sql' => $sql, 'params' => $params];
         $this->hasRawFragment = true;
 
         return $this;
@@ -622,7 +622,7 @@ final class Query
      */
     public function orderByRaw(string $sql, array $params = []): static
     {
-        $this->orders[] = ['sql' => $sql, 'params' => array_values($params)];
+        $this->orders[] = ['sql' => $sql, 'params' => $params];
         $this->hasRawFragment = true;
 
         return $this;
@@ -1089,7 +1089,7 @@ final class Query
      */
     public function insertGetId(array $values, string $primaryKey = 'id'): int|string|null
     {
-        if ($values !== [] && array_is_list($values)) {
+        if (self::isBatch($values)) {
             throw new InvalidArgumentException(
                 'insertGetId() inserts one row: pass a single column => value map, and insert() for a batch.',
             );
@@ -1164,11 +1164,15 @@ final class Query
     {
         [$columns, $rows] = $this->rowsFor('upsert()', $values);
 
-        foreach (['$uniqueBy' => $uniqueBy, '$update' => $update] as $argument => $names) {
-            if ($names === []) {
-                throw new InvalidArgumentException("upsert() needs at least one column in {$argument}.");
-            }
+        if ($uniqueBy === []) {
+            throw new InvalidArgumentException('upsert() needs at least one column in $uniqueBy.');
+        }
 
+        if ($update === []) {
+            throw new InvalidArgumentException('upsert() needs at least one column in $update.');
+        }
+
+        foreach (['$uniqueBy' => $uniqueBy, '$update' => $update] as $argument => $names) {
             foreach ($names as $name) {
                 if (!in_array($name, $columns, true)) {
                     throw new InvalidArgumentException(
@@ -1296,6 +1300,18 @@ final class Query
             . ' WHERE ' . $where->sql,
             [...$params, ...$where->params],
         );
+    }
+
+    /**
+     * Whether $values is shaped as a batch (a non-empty list of rows)
+     * rather than one column => value map. Typed for any array, since a
+     * caller can pass a batch where a single row is documented.
+     *
+     * @param array<array-key, mixed> $values
+     */
+    private static function isBatch(array $values): bool
+    {
+        return $values !== [] && array_is_list($values);
     }
 
     /**

@@ -182,7 +182,7 @@ final class Conditions
 
         $this->hasRawFragment = true;
 
-        return $this->add($normalizedBoolean, $sql, array_values($params));
+        return $this->add($normalizedBoolean, $sql, $params);
     }
 
     /**
@@ -298,7 +298,7 @@ final class Conditions
 
         $placeholders = implode(', ', array_fill(0, count($values), '?'));
 
-        return $this->add($normalizedBoolean, "{$quoted} {$keyword} ({$placeholders})", array_values($values));
+        return $this->add($normalizedBoolean, "{$quoted} {$keyword} ({$placeholders})", $values);
     }
 
     /**
