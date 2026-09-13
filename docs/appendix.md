@@ -214,6 +214,7 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 ## `Kinetis\Linting`
 
 - `NoStaticPropertiesRule` — a PHPStan rule flagging `static` property declarations, shipped under the main autoload for consumer projects to add to their own `phpstan.neon`.
+- `NoBlockingIoRule` — a PHPStan rule, identifier `kinetis.blockingCall`, flagging blocking sleep, socket, curl-wait, database-connection and child-process calls, and HTTP client construction or discovery that is not guaranteed a Revolt-backed transport. Registered by `kinetis/skeleton`'s `phpstan.neon`; categories, replacements and limitations in {doc}`concurrency`.
 
 ## `Kinetis\Testing`
 
@@ -222,6 +223,7 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 - `TestApplication` — boots a real application from a project root: live discovery (routes, middleware, listeners), the package-then-app bootstrap chain, a booted `AppScope`, a real `Kernel`. `boot(string $projectRoot, array $configOverrides = [], ?callable $beforeBoot = null)` merges overrides over the environment — including `APP_ENV`, registered as the container's `AppEnvironment` from the merged config, since `AppScope::boot()`'s own default reads `getenv()` and would never see the override. Delegates to `BootSequence::run()` (below) for the plugin/listener bind and the bootstrap chain, the same seam every other framework-managed entry point uses, so a test can never see different precedence than production does. `$beforeBoot` runs after that — after the application's own `bootstrap.php` and before `boot()` locks the container — the only window in which a test double replaces a binding the application made, `EventListenerRegistry` included. `withRouter()` builds from an explicit route table instead of discovery. No PHPUnit dependency.
 - `ApplicationTestCase` — the PHPUnit base class over `TestApplication`: boots per test via `#[Before]` (so it runs ahead of any trait-declared hook in the concrete class, `kinetis/persistence`'s isolation traits included), exposing `$client`/`$app`/`$application`. Override `projectRoot()` (required), `configOverrides()`, and `registerTestDoubles(AppScope $app, Config $config)` for services a test should not reach — see {doc}`testing`.
 - `FreePort::reserve()` — a TCP port nothing is listening on, from the kernel (bind to 0, read back, release), for a test that spawns its own fixture server instead of hard-coding a port two suites can collide on.
+- `LoopLiveness::turnedDuring(callable $operation, float $sentinelSeconds = 0.02): bool` — whether a `Timer::delay()` sentinel run beside `$operation` in `concurrently()` resumed while the operation was in flight; throws `Exception\LoopLivenessInconclusiveException` when the operation finished inside the interval. Semantics in {doc}`testing`.
 
 ## `Kinetis\Testing\Runtime`
 

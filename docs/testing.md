@@ -324,6 +324,129 @@ $router->register(OrderController::class);
 $client = TestApplication::withRouter($router)->client();
 ```
 
+(loop-liveness)=
+## Proving a path keeps the loop responsive
+
+Static analysis reports the blocking calls it can name (see
+{ref}`non-blocking-application-io`). A test observes whether one operation
+lets the event loop turn: `Kinetis\Testing\LoopLiveness::turnedDuring()`
+runs the operation next to a `Timer::delay()` sentinel, as two
+`concurrently()` tasks, and reports whether the sentinel resumed while the
+operation was still in flight.
+
+Give the operation something slow to wait on. A local upstream served by
+`php -S` that answers after 200 ms is enough:
+
+```{code-block} php
+:caption: tests/Fixtures/slow-upstream.php
+
+<?php
+
+usleep(200_000);
+
+header('Content-Type: application/json');
+echo '{"status":"in_transit"}';
+```
+
+```{code-block} php
+:caption: tests/CarrierLivenessTest.php
+
+use Kinetis\RevoltHttpClient\Http;
+use Kinetis\Testing\FreePort;
+use Kinetis\Testing\LoopLiveness;
+use PHPUnit\Framework\TestCase;
+
+final class CarrierLivenessTest extends TestCase
+{
+    public function test_tracking_a_shipment_keeps_the_loop_responsive(): void
+    {
+        $port = FreePort::reserve();
+        $server = proc_open(
+            [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__ . '/Fixtures/slow-upstream.php'],
+            [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+            $pipes,
+        );
+
+        if ($server === false) {
+            self::fail('Could not start the upstream.');
+        }
+
+        try {
+            for ($attempt = 0; ($probe = @fsockopen('127.0.0.1', $port)) === false; $attempt++) {
+                self::assertLessThan(500, $attempt, 'The upstream did not start.');
+                usleep(10_000);
+            }
+
+            fclose($probe);
+
+            $http = new Http()->withBaseUrl("http://127.0.0.1:{$port}");
+
+            self::assertTrue(LoopLiveness::turnedDuring(
+                static fn () => $http->get('/shipments/1Z999')->throw()->json(),
+            ));
+        } finally {
+            proc_terminate($server);
+            proc_close($server);
+        }
+    }
+}
+```
+
+Replace the `Http` call with the application path under test, pointed at
+the slow upstream — in an `ApplicationTestCase`, a service from
+`$this->app` or a route through `$this->client`.
+
+The test body's `proc_open()`, `fsockopen()` and `usleep()` block only
+the test controller while it sets up the upstream, before and outside the
+operation `turnedDuring()` observes: only the closure handed to it runs
+beside the sentinel. The upstream's own `usleep()` runs in the separate
+`php -S` process. When the project's PHPStan `paths` include `tests/`,
+exempt both files with a standard ignore:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+parameters:
+    ignoreErrors:
+        # Liveness-test setup and its fixture server, outside the observed operation.
+        -
+            identifier: kinetis.blockingCall
+            paths:
+                - tests/CarrierLivenessTest.php
+                - tests/Fixtures/slow-upstream.php
+```
+
+The answer has three outcomes:
+
+- **`true`** — the sentinel resumed while the operation was in flight, so
+  the loop turned during it. One suspension anywhere in the operation is
+  enough; this does not show that every wait inside it yields.
+- **`false`** — the operation ran for at least the sentinel interval
+  (20 ms by default) and finished before the sentinel could resume, so
+  nothing let the loop turn. A blocking call is the usual cause;
+  CPU-bound work monopolizes the loop the same way and gives the same
+  answer.
+- **`Kinetis\Testing\Exception\LoopLivenessInconclusiveException`** — the
+  operation finished inside the sentinel interval, before there was
+  anything to observe. Make the upstream slower than the sentinel by
+  several intervals, so scheduling jitter cannot decide the result.
+
+An exception from the operation is rethrown unchanged, and an interval
+that is zero, negative, or not finite throws `InvalidArgumentException`.
+`turnedDuring()` works from a plain test and from inside a
+`concurrently()` task, and leaves no watcher behind.
+
+It is a diagnostic, not a timeout: an operation that never returns keeps
+`turnedDuring()` from returning too, so run the suite under an outer
+timeout, such as the CI job's own. Nor is a `true` proof that the whole
+application is non-blocking — it covers the one operation the test drives.
+
+A database path needs the native driver to be observable. Outside a
+persistent worker, PHPUnit included, `DB_DRIVER=auto` selects a blocking
+PDO connection, and the test would report the driver rather than the
+query: return `'DB_DRIVER' => 'native'` from `configOverrides()` (see
+{doc}`persistence`).
+
 ## Conformance-testing a runtime adapter
 
 A runtime adapter turns whatever its environment delivers — superglobals
