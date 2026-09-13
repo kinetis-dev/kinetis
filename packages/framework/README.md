@@ -131,40 +131,44 @@ in its own README; the full reference across every package is at
 
 ## Packages
 
-Kinetis core (`kinetis/framework`) ships as a single package. A few optional pieces live as separate packages, each with its own
-dependencies and its own repository — every one links to its own
-documentation from its own README:
+Kinetis core ships as `kinetis/framework`. The project's other libraries
+and runtime adapters are listed below. Each has its own dependencies,
+repository, and README:
 
 | Package | What it adds |
 |---|---|
-| [`kinetis/persistence`](https://github.com/kinetis-dev/persistence) | Request-scoped SQL transaction safety net (`TransactionGuard`) and connection-pool factory for MySQL/Postgres |
-| [`kinetis/redis`](https://github.com/kinetis-dev/redis) | A Revolt-native Redis transport — non-replaying, one deadline per operation, Cluster slot routing; no dependency on `kinetis/framework` |
-| [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) | Redis-backed PSR-16 `CacheInterface` — single-node, Cluster, and TLS |
 | [`kinetis/auth`](https://github.com/kinetis-dev/auth) | Opaque Bearer-token authentication middleware |
 | [`kinetis/auth-jwt`](https://github.com/kinetis-dev/auth-jwt) | Stateless JWT authentication (HS256/RS256), with optional per-token revocation |
 | [`kinetis/authorization`](https://github.com/kinetis-dev/authorization) | Unopinionated ability-based authorization — `Gate` wraps any callable Policy check |
+| [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone |
+| [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda runtime adapter for Bref and API Gateway v2 payloads |
+| [`kinetis/broadcasting`](https://github.com/kinetis-dev/broadcasting) | Real-time broadcasting over the Pusher Channels protocol, with private and presence channel authorization |
+| [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) | Redis-backed PSR-16 cache for single-node, Cluster, and TLS deployments |
+| [`kinetis/mailer`](https://github.com/kinetis-dev/mailer) | Mail sending through Symfony Mailer, with non-blocking API transports |
+| [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | Native Model Context Protocol servers over stdio and Streamable HTTP |
+| [`kinetis/mcp-docs`](https://github.com/kinetis-dev/mcp-docs) | Standalone MCP server exposing the Kinetis documentation — no Kinetis dependency |
 | [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
+| [`kinetis/persistence`](https://github.com/kinetis-dev/persistence) | Request-scoped SQL transaction safety and runtime-matched MySQL/Postgres drivers |
 | [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |
 | [`kinetis/queue`](https://github.com/kinetis-dev/queue) | A backend-agnostic background job queue — every backend lives in its own separate package |
+| [`kinetis/queue-rabbitmq`](https://github.com/kinetis-dev/queue-rabbitmq) | A RabbitMQ backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) |
 | [`kinetis/queue-redis`](https://github.com/kinetis-dev/queue-redis) | A Redis backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) |
 | [`kinetis/queue-sql`](https://github.com/kinetis-dev/queue-sql) | A MySQL/Postgres backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) |
 | [`kinetis/queue-sqs`](https://github.com/kinetis-dev/queue-sqs) | An Amazon SQS backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) — non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
-| [`kinetis/queue-rabbitmq`](https://github.com/kinetis-dev/queue-rabbitmq) | A RabbitMQ backend for [`kinetis/queue`](https://github.com/kinetis-dev/queue) |
-| [`kinetis/session`](https://github.com/kinetis-dev/session) | Cookie-backed sessions and CSRF protection — file, cache, or SQL storage |
-| [`kinetis/storage`](https://github.com/kinetis-dev/storage) | File storage on `League\Flysystem` — an `Amp\File`-backed local adapter whose driver calls suspend the Fiber; the resource methods read with PHP's own stream functions and block the thread at a disk |
-| [`kinetis/storage-s3`](https://github.com/kinetis-dev/storage-s3) | S3 (and S3-compatible) storage for [`kinetis/storage`](https://github.com/kinetis-dev/storage)'s `FILESYSTEM_DRIVER=s3` — non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
-| [`kinetis/mailer`](https://github.com/kinetis-dev/mailer) | Mail sending via `Symfony\Component\Mailer` — API-based transports non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
-| [`kinetis/broadcasting`](https://github.com/kinetis-dev/broadcasting) | Real-time broadcasting over the Pusher Channels protocol — private/presence channel authorization, non-blocking via [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) |
+| [`kinetis/redis`](https://github.com/kinetis-dev/redis) | Revolt-native Redis transport with non-replaying operations, deadlines, TLS, and Cluster routing — usable standalone |
+| [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) | Revolt-native Symfony HTTP client transport — usable standalone |
+| [`kinetis/roadrunner-adapter`](https://github.com/kinetis-dev/roadrunner-adapter) | Persistent-worker runtime adapter for RoadRunner's Goridge/`PSR7Worker` protocol |
 | [`kinetis/search`](https://github.com/kinetis-dev/search) | The search transport both engine packages build on, and one engine-neutral client interface over either |
-| [`kinetis/search-opensearch`](https://github.com/kinetis-dev/search-opensearch) | Non-blocking OpenSearch client construction, on [`kinetis/search`](https://github.com/kinetis-dev/search) |
 | [`kinetis/search-elasticsearch`](https://github.com/kinetis-dev/search-elasticsearch) | Non-blocking Elasticsearch client construction, on [`kinetis/search`](https://github.com/kinetis-dev/search) |
+| [`kinetis/search-opensearch`](https://github.com/kinetis-dev/search-opensearch) | Non-blocking OpenSearch client construction, on [`kinetis/search`](https://github.com/kinetis-dev/search) |
+| [`kinetis/session`](https://github.com/kinetis-dev/session) | Cookie-backed sessions and CSRF protection with file, Redis, or SQL storage |
+| [`kinetis/storage`](https://github.com/kinetis-dev/storage) | File storage on League Flysystem with an Amp File-backed local adapter |
+| [`kinetis/storage-s3`](https://github.com/kinetis-dev/storage-s3) | Non-blocking S3 and S3-compatible backend for [`kinetis/storage`](https://github.com/kinetis-dev/storage) |
 | [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry) | OpenTelemetry tracing — request spans, SQL/queue instrumentation |
-| [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client) | A Revolt-native Symfony `HttpClientInterface` — usable standalone, no Kinetis required |
-| [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4) | A PSR-18 decorator signing requests with AWS Signature V4 — usable standalone, no Kinetis required |
-| [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | The native Model Context Protocol server — stdio and Streamable HTTP |
-| [`kinetis/mcp-docs`](https://github.com/kinetis-dev/mcp-docs) | A standalone MCP server serving the Kinetis documentation pages as resources — depends on no Kinetis package |
-| [`kinetis/bref-adapter`](https://github.com/kinetis-dev/bref-adapter) | AWS Lambda (Bref) runtime adapter — polls the Lambda Runtime API and converts API Gateway v2 payloads to and from PSR-7 |
-| [`kinetis/roadrunner-adapter`](https://github.com/kinetis-dev/roadrunner-adapter) | RoadRunner runtime adapter — a persistent worker over RoadRunner's own Goridge/`PSR7Worker` protocol |
+| [`kinetis/views`](https://github.com/kinetis-dev/views) | Engine-neutral view rendering, safe logical names, HTML responses, and asset URLs |
+| [`kinetis/views-latte`](https://github.com/kinetis-dev/views-latte) | Latte templates for [`kinetis/views`](https://github.com/kinetis-dev/views) |
+| [`kinetis/views-php`](https://github.com/kinetis-dev/views-php) | Pure PHP templates for [`kinetis/views`](https://github.com/kinetis-dev/views) |
+| [`kinetis/views-twig`](https://github.com/kinetis-dev/views-twig) | Twig templates for [`kinetis/views`](https://github.com/kinetis-dev/views) |
 
 ## Documentation
 
