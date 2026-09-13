@@ -93,7 +93,7 @@ jobs:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1
 
-      - name: Cursor-pagination integration tests
+      - name: Env-gated PHPUnit integration suite
         # tests/Integration/ lives in the normal phpunit suite,
         # environment-gated the same way persistence's does: it skips
         # without MYSQL_HOST/POSTGRES_HOST, so plain unit runs elsewhere

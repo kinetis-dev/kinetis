@@ -1425,6 +1425,9 @@ default, and there is no member to be missing. Create and update stay
 separate DTO classes: the HTTP method never selects behavior, and one
 class never changes shape per verb.
 
+To write such a DTO to a table, {ref}`RowValues::fromObject() <query-builder-row-values>`
+leaves out every `Absent::Value` field and keeps an explicit `null`.
+
 ### Unknown members are rejected for JSON
 
 A JSON request body, and an MCP tool call's arguments, describe an object
