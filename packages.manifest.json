@@ -237,7 +237,7 @@
             "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],
