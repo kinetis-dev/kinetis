@@ -156,8 +156,8 @@ $rows = new Query($db)
 ```
 
 `selectRaw()` appends an expression, binding its `?` placeholders from
-`$params`. Once `selectRaw()` or `selectSub()` is used without
-`select()`, the default `*` is dropped.
+`$params`. Once `selectRaw()`, `selectSub()` or `selectExists()` is
+used without `select()`, the default `*` is dropped.
 
 ## Filtering
 
@@ -348,6 +348,22 @@ $busyAuthors = new Query($db)
     ->select('p.author_id')
     ->distinct()
     ->get();
+```
+
+`selectExists()` selects whether a subquery returns a row, as `1` or
+`0` on every server, so a `bool` DTO property hydrates from it:
+
+```{code-block} php
+$following = new Query($db)
+    ->table('follows')
+    ->whereColumn('follows.followee_id', '=', 'articles.author_id')
+    ->where('follows.follower_id', '=', $viewerId);
+
+$cards = new Query($db)
+    ->table('articles')
+    ->select('articles.id', 'articles.title')
+    ->selectExists($following, 'following')
+    ->get(ArticleCardRow::class); // application-owned DTO with a `bool $following` parameter
 ```
 
 ## Ordering, limits and pagination
@@ -688,14 +704,18 @@ whole-table or joined mutation as raw SQL.
 
 ## Transactions and row locks
 
-Pass the transaction to `Query` to run statements inside it:
+Pass the transaction to `Query` to run statements inside it. The
+callback receives the link's own transaction type — a
+`MysqlTransaction` for a `MysqlLink` — which `Query` accepts as it is
+(see {doc}`persistence`'s "Transactions"):
 
 ```{code-block} php
+use Kinetis\Persistence\Contract\MysqlTransaction;
 use Kinetis\Persistence\TransactionGuard;
 use Kinetis\QueryBuilder\LockWait;
 
-// $transactions is the injected TransactionGuard.
-$transactions->transaction($db, function ($tx) use ($accountId, $amount): void {
+// $transactions is the injected TransactionGuard, $db the injected MysqlLink.
+$transactions->transaction($db, function (MysqlTransaction $tx) use ($accountId, $amount): void {
     $balance = new Query($tx)
         ->table('accounts')
         ->where('id', '=', $accountId)
@@ -801,7 +821,7 @@ Writes return counts and ids, not rows. When the caller needs the
 stored row, read it in the same transaction:
 
 ```{code-block} php
-$article = $transactions->transaction($db, function ($tx) use ($create): ArticleRow {
+$article = $transactions->transaction($db, function (MysqlTransaction $tx) use ($create): ArticleRow {
     $id = new Query($tx)->table('articles')->insertGetId(RowValues::fromObject($create));
 
     $row = new Query($tx)->table('articles')->where('id', '=', $id)->first(ArticleRow::class);
@@ -843,6 +863,111 @@ A raw fragment is inserted as written. Pass every value through
 `$params`; concatenating user input into the fragment reopens SQL
 injection.
 ```
+
+(query-builder-cookbook)=
+## Repository cookbook
+
+One repository combining the pieces above: an injected connection and
+`TransactionGuard`, a transaction callback typed for the dialect, a
+unique-key conflict handled without a race, a relationship flag, and a
+walk over a large table.
+
+```{code-block} php
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\MysqlTransaction;
+use Kinetis\Persistence\Exception\QueryException;
+use Kinetis\Persistence\TransactionGuard;
+use Kinetis\QueryBuilder\Query;
+use RuntimeException;
+
+// Application-owned: the row DTO and the conflict exception.
+final readonly class UserCardRow
+{
+    public function __construct(
+        public int $id,
+        public string $username,
+        public bool $following,
+    ) {}
+}
+
+final class AccountExists extends RuntimeException
+{
+}
+
+final readonly class UserRepository
+{
+    public function __construct(
+        private MysqlLink $db,
+        private TransactionGuard $transactions,
+    ) {}
+
+    public function register(string $username, string $email): int
+    {
+        try {
+            return $this->transactions->transaction(
+                $this->db,
+                static function (MysqlTransaction $tx) use ($username, $email): int {
+                    $id = (int) new Query($tx)->table('users')->insertGetId(['username' => $username, 'email' => $email]);
+                    new Query($tx)->table('user_settings')->insert(['user_id' => $id, 'newsletter' => false]);
+
+                    return $id;
+                },
+            );
+        } catch (QueryException $e) {
+            if (!$e->isUniqueViolation()) {
+                throw $e;
+            }
+
+            throw new AccountExists('An account with that username or email already exists.', previous: $e);
+        }
+    }
+
+    public function find(string $username, int $viewerId): ?UserCardRow
+    {
+        $follows = new Query($this->db)->table('follows', as: 'f')
+            ->whereColumn('f.followed_id', '=', 'u.id')
+            ->where('f.follower_id', '=', $viewerId);
+
+        return new Query($this->db)->table('users', as: 'u')
+            ->select('u.id', 'u.username')
+            ->selectExists($follows, 'following')
+            ->where('u.username', '=', $username)
+            ->first(UserCardRow::class);
+    }
+
+    /** @param callable(list<array<string, mixed>>): void $handle */
+    public function eachBatch(callable $handle, int $batchSize = 500): void
+    {
+        $cursor = null;
+
+        do {
+            $page = new Query($this->db)->table('users')
+                ->select('id', 'email')
+                ->cursorPaginate(perPage: $batchSize, cursor: $cursor);
+
+            $handle($page->data);
+            $cursor = $page->nextCursor;
+        } while ($page->hasMore);
+    }
+}
+```
+
+- **Wiring.** `MysqlLink` is the connection {doc}`persistence` binds
+  from `DB_CONNECTION`, and `TransactionGuard` is request-scoped, so
+  every request gets its own. On PostgreSQL, inject `PostgresLink` and
+  type the callback `PostgresTransaction`.
+- **Conflicts.** `register()` does not read for an existing username
+  first: another request can insert the same one between that read and
+  this write. The unique keys decide, `isUniqueViolation()` recognizes
+  the answer on every driver, and the guard has already rolled the
+  transaction back when the catch runs — see {doc}`persistence`'s
+  "Unique violations".
+- **Flags.** `selectExists()` selects `1` or `0`, which
+  `UserCardRow::$following` hydrates as a `bool`.
+- **Large tables.** A result is buffered whole, so `eachBatch()` reads
+  bounded pages with `cursorPaginate()` rather than selecting the table
+  at once. Each page is its own statement: a row inserted meanwhile
+  appears on a later page, and no row is delivered twice.
 
 ## Portability and behavior reference
 
@@ -908,7 +1033,7 @@ transaction (see {doc}`persistence`).
 
 | Write | Refuses |
 | --- | --- |
-| `update()`, `increment()`, `decrement()`, `delete()` | no where predicate; `with()`, a table alias, `fromSub()`, `distinct()`, `select()`/`selectRaw()`/`selectSub()`, any join, grouping, `having`, set operations, ordering, `limit()`, `offset()`, a lock |
+| `update()`, `increment()`, `decrement()`, `delete()` | no where predicate; `with()`, a table alias, `fromSub()`, `distinct()`, `select()`/`selectRaw()`/`selectSub()`/`selectExists()`, any join, grouping, `having`, set operations, ordering, `limit()`, `offset()`, a lock |
 | `insert()`, `insertGetId()`, `insertUsing()`, `insertOrIgnore()`, `upsert()` | all of the above, and any where predicate |
 
 `increment()` also refuses assigning its own column through `$extra`.
@@ -932,9 +1057,10 @@ value is an `int` or `bool` is sent with those values written as
 literals; any `string`, `float` or `null` makes the whole statement
 bind. On the PDO drivers, which carry
 `Kinetis\Persistence\Contract\PrefersPreparedStatements`, every value
-binds. Any raw fragment — including one inside a subquery, CTE, operand
-or join — makes the whole statement bind, since raw text may contain a
-`?` that is not a placeholder.
+binds. A raw fragment whose text contains a `?` — including one inside
+a subquery, CTE, operand or join — makes the whole statement bind,
+since that `?` may not be a placeholder. Raw text without a `?` leaves
+the literals in place.
 
 ### Allow-listed keywords
 
