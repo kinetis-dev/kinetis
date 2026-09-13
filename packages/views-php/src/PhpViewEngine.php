@@ -73,7 +73,9 @@ final readonly class PhpViewEngine implements ViewEngineInterface
             extract((array) func_get_arg(1), EXTR_OVERWRITE);
             /** @var AssetUrl $asset */
             $asset = func_get_arg(2);
-            require (string) func_get_arg(0);
+            // require, not require_once: persistent workers must execute the
+            // template for every render instead of only the first request.
+            require (string) func_get_arg(0); // NOSONAR
         })($path, $data, $asset);
     }
 }
