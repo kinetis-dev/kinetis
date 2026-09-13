@@ -721,11 +721,18 @@ it starts.
 
 ### The recommended pattern
 
+Type the callback against the generic `Contract\SqlTransaction` when it
+only needs the shared execution surface, as below. A `MysqlLink` still
+supplies a `MysqlTransaction` at runtime, and {doc}`query-builder`'s
+`Query` detects the dialect from that concrete object rather than the
+callback's declared parameter type. The guard's generic retains the
+concrete marker type for code that explicitly requires it.
+
 ```{code-block} php
 use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Persistence\Contract\MysqlLink;
-use Kinetis\Persistence\Contract\MysqlTransaction;
+use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\Persistence\TransactionGuard;
 
 final readonly class OrderController
@@ -738,7 +745,7 @@ final readonly class OrderController
     #[Post('/orders')]
     public function store(#[Body] CreateOrderRequest $data): array
     {
-        return $this->transactions->transaction($this->db, function (MysqlTransaction $tx) use ($data) {
+        return $this->transactions->transaction($this->db, function (SqlTransaction $tx) use ($data) {
             $tx->execute('INSERT INTO orders (...) VALUES (...)', [/* ... */]);
             $tx->execute('UPDATE inventory SET stock = stock - 1 WHERE sku = ?', [$data->sku]);
 
