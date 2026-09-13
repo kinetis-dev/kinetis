@@ -191,7 +191,7 @@ jobs:
             if [ "$pkg" = "roadrunner-adapter" ]; then COMPOSER_FLAGS=(--ignore-platform-req=ext-sockets); fi
             {
               docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "$RUNNER_TEMP/composer-cache":/tmp/cache -w "/app/packages/$pkg" composer:2 install --no-interaction --prefer-dist "${COMPOSER_FLAGS[@]}" &&
-              docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 "${REDIS_ENV[@]}" -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php vendor/bin/phpunit --coverage-clover=coverage.xml
+              docker run --rm --network "$NETWORK" -e MYSQL_HOST=127.0.0.1 -e POSTGRES_HOST=127.0.0.1 "${REDIS_ENV[@]}" -e REDIS_CLUSTER_SEEDS -v "$PWD":/app -w "/app/packages/$pkg" kinetis-coverage php -d memory_limit=256M vendor/bin/phpunit --coverage-clover=coverage.xml
             } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
             echo "$pkg done"
           }
