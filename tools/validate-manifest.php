@@ -75,7 +75,7 @@ const MANIFEST_DEFAULTS_KEYS = [
 
 const MANIFEST_PACKAGE_KEYS = [
     'name', 'description', 'namespace', 'version', 'type', 'requires', 'requiresDev',
-    'require', 'requireDevExtra', 'requireDevOverride', 'suggest', 'autoloadFiles',
+    'require', 'requireDevExtra', 'requireDevOverride', 'conflict', 'suggest', 'autoloadFiles',
     'testNamespace', 'bin', 'kinetis',
 ];
 
@@ -160,7 +160,7 @@ function packageSchemaProblems(string $key, mixed $pkg, array $packages, ?string
         }
     }
 
-    foreach (['require', 'requireDevExtra', 'requireDevOverride', 'suggest'] as $field) {
+    foreach (['require', 'requireDevExtra', 'requireDevOverride', 'conflict', 'suggest'] as $field) {
         if (array_key_exists($field, $pkg) && !isConstraintMap($pkg[$field])) {
             $problems[] = "{$key}: '{$field}' must be an object of package name => string";
         }

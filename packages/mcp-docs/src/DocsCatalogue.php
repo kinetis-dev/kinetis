@@ -55,6 +55,7 @@ final class DocsCatalogue
             new DocsPage('runtime-adapters', 'Runtime Adapters', 'FrankenPHP, PHP-FPM, RoadRunner, and AWS Lambda adapters, and how RuntimeDetector picks one'),
             new DocsPage('concurrency', 'Concurrency', 'Fiber-based concurrency over Revolt: concurrently(), Async\\Socket, and Async\\Timer'),
             new DocsPage('caching', 'Caching & AOT Compilation', 'Production-only AOT caching of routes, commands, event listeners, and validation plans, plus APP_ENV'),
+            new DocsPage('views', 'Views', 'Engine-neutral rendering with pure PHP, Latte, or Twig, including asset URLs and compiled-template cache lifecycle'),
             new DocsPage('performance-tuning', 'Performance tuning', 'Capacity tuning: the worker-threads x maxConnections budget, what to observe under load, and tuning by workload shape'),
             new DocsPage('benchmarks', 'Benchmarks', 'Benchmark results against other PHP frameworks: what was tested and what came out'),
             new DocsPage('logging', 'Logging', 'PSR-3 logging: the default NullLogger, and where Kinetis logs on its own'),

@@ -30,6 +30,8 @@ x-monorepo-siblings: &monorepo-siblings
   - ../queue-redis:/queue-redis
   - ../broadcasting:/broadcasting
   - ../revolt-http-client:/revolt-http-client
+  - ../views:/views
+  - ../views-php:/views-php
 
 services:
   app:

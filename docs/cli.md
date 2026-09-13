@@ -14,6 +14,8 @@ Usage: kinetis <command>
 Available commands:
   routes:list            Displays every discovered route and the full global middleware pipeline
   build                  Compiles routes, MCP tools/resources, commands, and event listeners ahead of time
+  views:warm             Rebuilds the selected view engine cache from the configured view directory
+  views:clear            Empties the selected view engine cache directory
   mcp:serve              Starts the MCP server over stdio
   app:cleanup-sessions   Deletes sessions older than 30 days
 ```
@@ -281,6 +283,8 @@ vendor/bin/kinetis queue:work --queue=high,default
 vendor/bin/kinetis queue:stats --queue=high,default
 vendor/bin/kinetis queue:clear --queue=default --force
 vendor/bin/kinetis session:gc                     # delete expired sessions
+vendor/bin/kinetis views:warm                      # compile every configured view
+vendor/bin/kinetis views:clear                     # empty the selected view cache
 ```
 
 The `migrate*` commands connect through the same `DB_*` keys as
@@ -291,7 +295,9 @@ backend `QUEUE_CONNECTION` selects, checking queues in the given
 priority order. `queue:clear` needs a backend that can clear, which
 `QUEUE_CONNECTION=sqs` is not — it names the backend and exits 1 there
 instead. Full docs in {doc}`migrations`, {doc}`queue`, and
-{doc}`session`.
+{doc}`session`. The view commands come from `kinetis/views`, run the normal
+application bootstrap to resolve its configured adapter, and delegate the
+vendor-specific work to that adapter; see {doc}`views`.
 
 ## Development vs. production
 

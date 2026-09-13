@@ -21,7 +21,8 @@
         "kinetis/queue-redis": "dev-main",
         "kinetis/broadcasting": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
-        "league/plates": "^3.6.0",
+        "kinetis/views": "dev-main",
+        "kinetis/views-php": "dev-main",
         "monolog/monolog": "^3.10.0",
         "psr/http-message": "^2.0"
     },
@@ -84,6 +85,14 @@
         {
             "type": "path",
             "url": "../revolt-http-client"
+        },
+        {
+            "type": "path",
+            "url": "../views"
+        },
+        {
+            "type": "path",
+            "url": "../views-php"
         }
     ],
     "config": {

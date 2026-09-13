@@ -146,6 +146,7 @@ middleware
 events
 cli
 testing
+views
 ```
 
 ```{toctree}

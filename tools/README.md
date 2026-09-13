@@ -93,7 +93,9 @@ it in the manifest instead.
 Step by step, from the manifest edit to the commit:
 
 1. Edit `packages.manifest.json` — change whatever `require`/
-   `requires`/`requiresDev`/etc. entry needs to change.
+   `requires`/`requiresDev`/`conflict`/etc. entry needs to change.
+   `conflict` is the ordinary Composer package-name => constraint map
+   and is copied unchanged into development and release metadata.
 2. **Bump that package's `version` field in the same edit.** Required
    whenever any other field in its manifest entry changes — enforced
    by `validate-manifest.php`'s version-bump-completeness check, which

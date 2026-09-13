@@ -644,6 +644,42 @@ both middlewares are explicit per-route opt-ins.
 - `Kinetis\Session\PackageBootstrap` — with `SESSION_DRIVER` set, binds `SessionStoreInterface` as a lazy factory (resolved on first use, after `boot()` and every sibling bootstrap have run — which is what lets the `redis` driver consume `boot()`'s own `CacheInterface` binding and the `sql` driver persistence's link binding regardless of bootstrap order). `redis` takes that bound cache and requires it to be a `RedisSimpleCache`, so an application keeps one Redis client and its own binding wins. Unknown driver throws naming the valid set; `redis` without kinetis/cache-redis installed or with no Redis cache bound (`REDIS_URL`, `REDIS_HOST`, or `REDIS_CLUSTER` with `REDIS_CLUSTER_SEEDS`), and `sql` without kinetis/persistence installed or with no link bound, throw naming the fix.
 - Depends on `kinetis/framework`, `psr/http-message`, `psr/http-server-middleware`; `kinetis/persistence`/`kinetis/cache-redis` only in `require-dev` — store classes load lazily. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
+## `packages/views` and view adapters
+
+Four separate Composer packages make view rendering optional and keep template
+vendor dependencies out of core.
+
+- `kinetis/views` owns `Views`, `ViewEngineInterface`, logical `ViewName`
+  validation, `ViewDirectory` containment and deterministic recursive template
+  discovery, the deterministic `AssetUrl`, and the common
+  `ViewNotFoundException`/`ViewRenderException` vocabulary. `ViewRuntime` maps
+  the application project root and `AppEnvironment` to isolated
+  `.kinetis-cache/views/<engine>` storage; `ViewCacheDirectory` creates and
+  empties only that derived directory without following links.
+  `Console\WarmCommand` / `ClearCommand` expose `views:warm` / `views:clear`
+  through this package's scan root and delegate to the bound engine.
+  `Views::response()` returns core's UTF-8 `HtmlResponse`; `render()` returns
+  the same complete body as a string. Data is supplied anew on every call and
+  the `asset` key is reserved.
+- `kinetis/views-php` owns `PhpViewEngine`. It extracts one call's data into a
+  private include scope, exposes `$asset`, captures output, and restores every
+  buffer opened above the caller's level when a template throws. Cache warm and
+  clear are successful zero-work operations.
+- `kinetis/views-latte` owns `LatteViewEngine`, appends `.latte`, registers the
+  `asset()` function, and exposes the underlying Latte engine for bootstrap-time
+  extensions. In production it clears and warms every canonical `.latte`
+  template through Latte's `warmupCache()` into
+  `.kinetis-cache/views/latte`; development writes no cache.
+- `kinetis/views-twig` owns `TwigViewEngine`, a `FilesystemLoader` whose path
+  and cache-key root are both the configured directory, the `asset()` function,
+  Twig environment options, and bootstrap-time access to that environment. In
+  production it clears and loads every logical `.twig` template into
+  `.kinetis-cache/views/twig`; development writes no cache.
+- The three adapters conflict pairwise in Composer, so an application selects
+  exactly one. Each depends on `kinetis/views`; only the Latte/Twig adapters add
+  their corresponding vendor engine. See {doc}`views` for wiring, escaping,
+  persistent-worker state, and local-filesystem constraints.
+
 ## See also
 
 - {doc}`appendix` — the same reference map for core (`kinetis/framework`).

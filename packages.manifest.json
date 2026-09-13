@@ -237,7 +237,7 @@
             "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],
@@ -497,12 +497,85 @@
             },
             "kinetis": []
         },
+        "views": {
+            "name": "kinetis/views",
+            "description": "Engine-neutral view rendering for Kinetis controllers, with safe logical view names, HTML responses, and asset URLs.",
+            "namespace": "Kinetis\\Views\\",
+            "testNamespace": "Kinetis\\Views\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework"
+            ],
+            "kinetis": {
+                "scan": "Kinetis\\Views\\Console\\"
+            }
+        },
+        "views-php": {
+            "name": "kinetis/views-php",
+            "description": "Pure PHP templates for kinetis/views.",
+            "namespace": "Kinetis\\ViewsPhp\\",
+            "testNamespace": "Kinetis\\ViewsPhp\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "views"
+            ],
+            "requiresDev": [
+                "framework"
+            ],
+            "conflict": {
+                "kinetis/views-latte": "*",
+                "kinetis/views-twig": "*"
+            },
+            "kinetis": []
+        },
+        "views-latte": {
+            "name": "kinetis/views-latte",
+            "description": "Latte templates for kinetis/views.",
+            "namespace": "Kinetis\\ViewsLatte\\",
+            "testNamespace": "Kinetis\\ViewsLatte\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "views"
+            ],
+            "requiresDev": [
+                "framework"
+            ],
+            "require": {
+                "latte/latte": "^3.1.6"
+            },
+            "conflict": {
+                "kinetis/views-php": "*",
+                "kinetis/views-twig": "*"
+            },
+            "kinetis": []
+        },
+        "views-twig": {
+            "name": "kinetis/views-twig",
+            "description": "Twig templates for kinetis/views.",
+            "namespace": "Kinetis\\ViewsTwig\\",
+            "testNamespace": "Kinetis\\ViewsTwig\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "views"
+            ],
+            "requiresDev": [
+                "framework"
+            ],
+            "require": {
+                "twig/twig": "^3.28.0"
+            },
+            "conflict": {
+                "kinetis/views-latte": "*",
+                "kinetis/views-php": "*"
+            },
+            "kinetis": []
+        },
         "pingpong": {
             "name": "kinetis/pingpong",
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.3.2",
+            "version": "1.3.3",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -520,10 +593,11 @@
                 "mcp",
                 "queue-redis",
                 "broadcasting",
-                "revolt-http-client"
+                "revolt-http-client",
+                "views",
+                "views-php"
             ],
             "require": {
-                "league/plates": "^3.6.0",
                 "monolog/monolog": "^3.10.0",
                 "psr/http-message": "^2.0"
             }

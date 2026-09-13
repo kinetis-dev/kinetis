@@ -314,6 +314,10 @@ above the number here by design:
 | `storage` | 90% |
 | `storage-s3` | 15% |
 | `telemetry` | 70% |
+| `views` | 60% |
+| `views-latte` | 60% |
+| `views-php` | 60% |
+| `views-twig` | 60% |
 
 `queue-sqs` and `storage-s3` carry the lowest floors. Neither
 `infection.json5` excludes anything, so both mutate all of `src` and

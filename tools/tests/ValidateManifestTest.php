@@ -104,6 +104,17 @@ final class ValidateManifestTest extends TestCase
         );
     }
 
+    public function test_a_conflict_block_that_is_not_a_constraint_map_is_rejected(): void
+    {
+        $manifest = self::manifest();
+        $manifest['packages']['demo']['conflict'] = ['kinetis/other-adapter'];
+
+        self::assertContains(
+            "demo: 'conflict' must be an object of package name => string",
+            checkManifestSchema($manifest, self::root()),
+        );
+    }
+
     public function test_the_repository_manifest_is_acyclic(): void
     {
         self::assertNull(checkCycles(loadManifest()));

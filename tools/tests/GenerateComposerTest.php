@@ -107,6 +107,21 @@ final class GenerateComposerTest extends TestCase
         self::assertSame('{"kinetis":{}}', json_encode($out['extra']));
     }
 
+    public function test_conflicts_are_copied_to_dev_and_release_metadata(): void
+    {
+        $manifest = self::manifest();
+        $manifest['packages']['persistence']['conflict'] = ['kinetis/other-adapter' => '*'];
+
+        self::assertSame(
+            ['kinetis/other-adapter' => '*'],
+            assembleComposerJson($manifest['packages']['persistence'], $manifest, release: false)['conflict'],
+        );
+        self::assertSame(
+            ['kinetis/other-adapter' => '*'],
+            assembleComposerJson($manifest['packages']['persistence'], $manifest, release: true)['conflict'],
+        );
+    }
+
     public function test_generated_json_ends_with_one_newline(): void
     {
         self::assertStringEndsWith("}\n", encodeComposerJson(['a' => 1]));
