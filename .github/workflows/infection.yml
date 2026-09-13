@@ -195,6 +195,13 @@ jobs:
             if [ -n '${{ matrix.package.needsSockets }}' ]; then
               apk add --no-cache \$PHPIZE_DEPS linux-headers >/dev/null && docker-php-ext-install sockets >/dev/null
             fi
+            # Infection otherwise injects random ordering into its initial
+            # PHPUnit run. Keep the package's explicit choice when present;
+            # default order also avoids Infection 0.35.0 combining disabled
+            # run history with the defects order that PHPUnit 13.3 rejects.
+            if ! grep -q 'executionOrder=' phpunit.xml; then
+              sed -i 's/<phpunit /<phpunit executionOrder=\"default\" /' phpunit.xml
+            fi
             curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar
             chmod +x /usr/local/bin/pie.phar
             php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
