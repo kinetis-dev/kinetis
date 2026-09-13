@@ -29,7 +29,8 @@ Redis-backed [`kinetis/queue`](https://github.com/kinetis-dev/queue), `Kinetis\E
 [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) tool an AI agent can
 call for the per-scenario ping breakdown, and real-time browser
 updates over [Soketi](https://soketi.app) — behind a monochrome-amber,
-old-CRT-styled dashboard rendered with [`league/plates`](https://platesphp.com/).
+old-CRT-styled dashboard rendered with
+[`kinetis/views-php`](https://github.com/kinetis-dev/views-php).
 
 A ping can be answered three ways: `POST /pong/direct` replies in the
 same request; `POST /pong/queued` replies a few seconds later, from a
@@ -76,12 +77,12 @@ Start editing what you just created — every
 piece (`bootstrap.php`, the migration, the repository, the job, the
 scheduled command, the events, the broadcaster and its private-channel
 authorizer, the MCP tool controller, `resources/views/dashboard.php`) is
-a small, plain file meant to be read end to end. Kinetis itself has no
-opinion on HTML
-templating — `HtmlResponse::create()` just takes a string — so
-`PingController::index()` shows one reasonable way to wire in a small
-templating library ([`league/plates`](https://platesphp.com/)) instead
-of building the page as one large string. The logo (`public/logo.svg`),
+a small, plain file meant to be read end to end. Kinetis deliberately
+reuses existing template engines instead of inventing another language.
+`PingController::index()` injects the engine-neutral `Views` service,
+while `bootstrap.php` selects the small pure-PHP adapter. The controller
+would be unchanged if the application selected Latte or Twig instead.
+The logo (`public/logo.svg`),
 stylesheet (`public/dashboard.css`), and browser script
 (`public/dashboard.js`) are plain static files served directly, not
 template data — only the Soketi connection details are actually

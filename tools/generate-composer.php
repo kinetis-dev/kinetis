@@ -189,6 +189,10 @@ function assembleComposerJson(array $pkg, array $manifest, bool $release = false
         $out['suggest'] = $pkg['suggest'];
     }
 
+    if (!empty($pkg['conflict'])) {
+        $out['conflict'] = $pkg['conflict'];
+    }
+
     $autoload = ['psr-4' => [$pkg['namespace'] => 'src/']];
 
     if (!empty($pkg['autoloadFiles'])) {

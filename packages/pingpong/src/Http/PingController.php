@@ -14,9 +14,8 @@ use Kinetis\Events\EventDispatcher;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Hidden;
 use Kinetis\Http\Attributes\Post;
-use Kinetis\Http\Responses\HtmlResponse;
 use Kinetis\Queue\QueueInterface;
-use League\Plates\Engine;
+use Kinetis\Views\Views;
 use Psr\Http\Message\ResponseInterface;
 
 final readonly class PingController
@@ -26,6 +25,7 @@ final readonly class PingController
         private QueueInterface $queue,
         private EventDispatcher $events,
         private Config $config,
+        private Views $views,
     ) {}
 
     /**
@@ -39,15 +39,13 @@ final readonly class PingController
     #[Hidden]
     public function index(): ResponseInterface
     {
-        $engine = new Engine(dirname(__DIR__, 2) . '/resources/views');
-
-        return HtmlResponse::create($engine->render('dashboard', [
+        return $this->views->response('dashboard', [
             'broadcastConfig' => [
                 'key' => $this->config->string('BROADCAST_KEY', 'app-key'),
                 'host' => $this->config->string('BROADCAST_BROWSER_HOST', 'localhost'),
                 'port' => self::browserPort($this->config),
             ],
-        ]));
+        ]);
     }
 
     /**

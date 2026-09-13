@@ -1,0 +1,48 @@
+{
+    "name": "kinetis/views",
+    "description": "Engine-neutral view rendering for Kinetis controllers, with safe logical view names, HTML responses, and asset URLs.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/framework": "dev-main"
+    },
+    "require-dev": {
+        "infection/infection": "^0.35.0",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^13.3.3",
+        "vimeo/psalm": "^6.17"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\Views\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\Views\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "kinetis": {}
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../framework"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

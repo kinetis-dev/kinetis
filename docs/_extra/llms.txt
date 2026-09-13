@@ -28,6 +28,7 @@ tutorial, then read whichever section you have reached.
 - [Events](https://kinetis.dev/docs/events.html): A PSR-14 event dispatcher with attribute-driven listener registration, plus ShouldQueue for deferring a listener to a queue.
 - [CLI](https://kinetis.dev/docs/cli.html): The kinetis CLI: built-in commands, application commands via #[Command], commands from installed packages, and restricting discovery.
 - [Testing](https://kinetis.dev/docs/testing.html): TestClient, for exercising a Kernel end-to-end in a consumer's own test suite.
+- [Views](https://kinetis.dev/docs/views.html): One controller-facing view API with mutually exclusive pure PHP, Latte, and Twig adapters, plus the asset() helper.
 
 ## Working with data
 

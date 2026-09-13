@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <title>Kinetis :: ping-pong</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/dashboard.css">
+<link rel="icon" type="image/svg+xml" href="<?= $asset('favicon.svg') ?>">
+<link rel="stylesheet" href="<?= $asset('dashboard.css') ?>">
 </head>
 <body>
 <div class="crt">
@@ -62,6 +62,6 @@
 
 <script id="broadcast-config" type="application/json"><?= json_encode($broadcastConfig, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP) ?></script>
 <script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
-<script src="/dashboard.js"></script>
+<script src="<?= $asset('dashboard.js') ?>"></script>
 </body>
 </html>

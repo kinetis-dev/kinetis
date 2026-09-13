@@ -1,0 +1,57 @@
+{
+    "name": "kinetis/views-php",
+    "description": "Pure PHP templates for kinetis/views.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/views": "dev-main"
+    },
+    "require-dev": {
+        "infection/infection": "^0.35.0",
+        "kinetis/framework": "dev-main",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^13.3.3",
+        "vimeo/psalm": "^6.17"
+    },
+    "conflict": {
+        "kinetis/views-latte": "*",
+        "kinetis/views-twig": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\ViewsPhp\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\ViewsPhp\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "kinetis": {}
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../framework"
+        },
+        {
+            "type": "path",
+            "url": "../views"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -107,6 +107,10 @@ jobs:
           # it skips itself cleanly here with neither present.
           - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, phpunit: true, composerFlags: "--ignore-platform-req=ext-sockets" }
           - { name: query-builder, dir: packages/query-builder, phpunit: true }
+          - { name: views, dir: packages/views, phpunit: true }
+          - { name: views-php, dir: packages/views-php, phpunit: true }
+          - { name: views-latte, dir: packages/views-latte, phpunit: true }
+          - { name: views-twig, dir: packages/views-twig, phpunit: true }
           - { name: auth, dir: packages/auth, phpunit: true }
           - { name: auth-jwt, dir: packages/auth-jwt, phpunit: true }
           - { name: migrations, dir: packages/migrations, phpunit: true }
@@ -135,19 +139,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ~95 composer installs run across this pipeline per push, each
+      # More than 100 Composer installs run across this pipeline per push, each
       # resolving about a hundred packages, and their dependency sets
-      # overlap almost entirely — the whole universe is 22 MB. Without a
-      # cache that is ~9,500 unauthenticated zip downloads from
+      # overlap almost entirely. Without a cache that is well over 10,000
+      # unauthenticated zip downloads from
       # codeload.github.com per push, concurrent, from one address, which
       # is how a run failed on "HTTP/2 429" while fetching php-fig/log. A
       # warm cache installs the same hundred packages with the network
       # switched off entirely.
       #
       # One key across every lock file rather than one per package: the
-      # sharing between packages is what makes this work, and 22 MB is
-      # small enough that a single lock change re-downloading everything
-      # costs seconds.
+      # sharing between packages is what makes this work, and the shared
+      # universe is small enough that one lock change can replace the cache.
       - name: Cache Composer downloads
         uses: actions/cache@v6
         with:

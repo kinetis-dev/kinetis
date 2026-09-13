@@ -6,6 +6,9 @@ use App\Broadcasting\DemoVisitor;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\CurrentUserInterface;
+use Kinetis\Views\AssetUrl;
+use Kinetis\Views\Views;
+use Kinetis\ViewsPhp\PhpViewEngine;
 use Monolog\Handler\StreamHandler;
 use Monolog\Level;
 use Monolog\Logger;
@@ -25,6 +28,10 @@ return static function (AppScope $app, Config $config): void {
     // single, fixed identity (its own explicit-registration rule) rather
     // than a real auth middleware resolving a distinct user per request.
     $app->instance(CurrentUserInterface::class, new DemoVisitor());
+    $app->instance(
+        Views::class,
+        new Views(new PhpViewEngine(__DIR__ . '/resources/views', new AssetUrl('/'))),
+    );
 
     $logger = new Logger('ping-pong');
     $logger->pushHandler(new StreamHandler('php://stderr', Level::Debug));
