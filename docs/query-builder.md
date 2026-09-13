@@ -9,131 +9,379 @@ composer require kinetis/query-builder
 ````
 
 A thin, parameterized SQL query builder over {doc}`persistence`'s
-MySQL/Postgres drivers — not an ORM. No relationships, no migrations, no change-tracking, no
-`save()`-on-a-model. It builds parameterized SQL and maps result rows into
-typed DTOs via {doc}`routing-validation`'s `Hydrator` — the same mechanism
-that hydrates a `#[Body]` request DTO.
+drivers. It compiles the SQL that MySQL 8.4, MariaDB 11.4 and
+PostgreSQL 16 share, runs it on the connection or transaction you pass
+in, and maps result rows into typed DTOs through
+{doc}`routing-validation`'s `Hydrator`. Anything outside that shared
+surface stays available as raw SQL on the same connection.
 
-How a query waits is the {doc}`persistence` driver's property, not this
-package's. On the native MySQL and Postgres drivers, query I/O suspends
-the calling Fiber; on the PDO drivers it blocks the worker. So several
-independent queries run side by side through {doc}`concurrency`'s
-`concurrently()` only under a native driver — under PDO the same fan-out
-returns the same rows, one query after another.
+It is not an ORM: no relationships, no identity map, no change tracking,
+no `save()` on a model, no schema builder.
+
+## Quick start
 
 ```{code-block} php
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\QueryBuilder\Query;
 
-$orders = new Query($db)
-    ->table('orders')
-    ->where('customer_id', '=', $customerId)
-    ->where('status', '!=', 'cancelled')
-    ->orderBy('created_at', 'desc')
-    ->limit(20)
-    ->get(OrderRow::class);
+// Application-owned row DTO: one constructor parameter per selected column.
+final readonly class ArticleRow
+{
+    public function __construct(
+        public int $id,
+        public string $title,
+        public string $slug,
+    ) {}
+}
+
+final readonly class ArticleRepository
+{
+    public function __construct(private MysqlLink $db) {}
+
+    /** @return list<ArticleRow> */
+    public function latest(int $authorId): array
+    {
+        return new Query($this->db)
+            ->table('articles')
+            ->select('id', 'title', 'slug')
+            ->where('author_id', '=', $authorId)
+            ->where('status', '=', 'published')
+            ->orderBy('published_at', 'desc')
+            ->limit(20)
+            ->get(ArticleRow::class);
+    }
+}
 ```
 
-## MySQL and Postgres
-
-`Query` works with either backend through the same shared `Kinetis\Persistence\Contract\SqlLink`
-family both drivers implement, auto-detected from the concrete connection
-you pass in:
-
-```{code-block} php
-new Query($mysqlDb);    // MySqlDialect
-new Query($postgresDb); // PostgresDialect
+```{warning}
+Values are always bound as parameters. Identifiers (table and column
+names) are quoted but not validated, and raw SQL fragments are inserted
+as written — never build either from user input.
 ```
 
-The link's own type is the only dialect authority — there is no override
-argument. To build for the other backend, pass a connection to it.
+## Creating a query
 
-## A different database: named connections
-
-`Query` takes whatever connection you hand it — including one built for a
-named connection via `Kinetis\Persistence\SqlConnectionFactory` (see
-{doc}`persistence`, {doc}`config`):
+`new Query($link)` takes a connection or an open transaction. The link's
+type picks the SQL spelling: a `MysqlLink` compiles for MySQL and
+MariaDB, a `PostgresLink` for PostgreSQL.
 
 ```{code-block} php
+new Query($db);  // the registered connection, see persistence
+new Query($tx);  // an open transaction, see "Transactions and row locks"
+
 use Kinetis\Persistence\SqlConnectionFactory;
 
-$reporting = SqlConnectionFactory::fromConfig($config, 'db2');
-$orders = new Query($reporting)->table('orders')->get(OrderRow::class);
+$reporting = SqlConnectionFactory::fromConfig($config, 'reporting');
+$totals = new Query($reporting)->table('daily_totals')->get();
 ```
 
-Identifier quoting (backtick vs double-quote) and retrieving a generated
-primary key after an `INSERT` (MySQL exposes it on the result; Postgres
-needs `RETURNING`) are isolated in a small `Dialect` interface. Everything
-else — parameterized `?` placeholders, `LIMIT n OFFSET m`, affected-row
-counts — is identical between the two.
+Builder methods (`table()`, `where()`, `join()`, ...) add to the query
+and return the same instance. Terminal methods (`get()`, `count()`,
+`insert()`, `update()`, ...) run SQL.
 
-A qualified column name is quoted per segment: `orders.total` becomes
-`` `orders`.`total` `` (or `"orders"."total"` on Postgres), not one literal
-identifier containing a dot. The one exception is a qualified wildcard —
-`select('orders.*')` produces `` `orders`.* `` with the `*` segment left
-unquoted, since quoting it (`` `orders`.`*` ``) asks the server for a real
-column literally named `*` and it rejects that outright, rather than
-expanding to every column the way an unqualified `*` does.
-
-## Works inside `TransactionGuard`
-
-`Query` accepts a plain connection pool or an in-flight
-`Kinetis\Persistence\Contract\SqlTransaction` — both satisfy the same interface:
-
-```{code-block} php
-$transactions->transaction($db, function ($db) use ($data) {
-    new Query($db)->table('orders')->insert([...]);
-    new Query($db)->table('inventory')
-        ->where('sku', '=', $data->sku)
-        ->update(['stock' => $newStock]);
-});
+```{warning}
+One `Query` is one statement: nothing resets between calls. Create a
+fresh `new Query($link)` for every statement. The read terminals that
+add a limit, order or projection (`first()`, `value()`, `paginate()`,
+`cursorPaginate()`) apply it to a copy, so the builder you hold is
+unchanged afterwards.
 ```
 
-See {doc}`persistence` for `TransactionGuard`'s commit/rollback behavior.
+## Fetching rows
 
-## Reading: `get()`, `first()`, `count()`
+### `get()` and `first()`
 
 ```{code-block} php
-$rows = new Query($db)->table('users')->where('active', '=', true)->get();       // list<array<string, mixed>>
-$rows = new Query($db)->table('users')->where('active', '=', true)->get(UserRow::class); // list<UserRow>
-$user = new Query($db)->table('users')->where('id', '=', $id)->first(UserRow::class);    // UserRow|null
-$total = new Query($db)->table('orders')->where('status', '=', 'paid')->count();          // int
+$rows = new Query($db)->table('articles')->where('status', '=', 'published')->get();
+// list<array<string, mixed>>
+
+$articles = new Query($db)->table('articles')->where('status', '=', 'published')->get(ArticleRow::class);
+// list<ArticleRow>
+
+$article = new Query($db)->table('articles')->where('slug', '=', $slug)->first(ArticleRow::class);
+// ArticleRow|null
 ```
 
-Pass a DTO class and each row is hydrated through `Hydrator::hydrate()`,
-constraints included (`#[Email]`, `#[MinLength]`, ...); omit it and you get
-plain arrays. Rows are read under `InputSource::Native`, `hydrate()`'s own
-default — a driver decides for itself whether a column arrives as an `int`
-or as its decimal string, and a `TINYINT(1)` as `1` or `"1"`, so both
-spellings bind. See {doc}`routing-validation`'s "Scalar type checking".
+Pass a DTO class and each row is hydrated with `Hydrator::hydrate()`
+under `InputSource::Native`, constraints included. Columns the DTO does
+not declare are ignored, and a driver may return an integer as an `int`
+or as its decimal string — both bind. See {doc}`routing-validation`'s
+"Scalar type checking".
 
-`count()` counts the rows your `where()`/`whereIn()`/`whereRaw()`
-predicates and `join()`s select, as `COUNT(*)`. Order, limit and offset
-play no part in it, and a `selectRaw()` projection is not reinterpreted —
-`selectRaw('SUM(total) AS revenue')` does not turn `count()` into a sum.
-
-`first()` reads one row through a copy of the query, so the `limit(1)` it
-needs is not left behind on the builder you still hold. `paginate()` and
-`cursorPaginate()` do the same with everything they add.
-
-## Pagination: `paginate()`, `cursorPaginate()`
-
-Two ways to page through a result set, returning a plain value object a
-controller can hand straight back — it encodes to JSON exactly like any
-other `readonly` DTO, with no extra step:
+### `value()`, `pluck()` and `exists()`
 
 ```{code-block} php
-#[Get('/orders')]
-public function index(#[Query] int $page = 1, #[Query] int $perPage = 20): Paginator
+$title = new Query($db)->table('articles')->where('id', '=', $id)->value('title');
+// mixed: the column of the first row, or null when there is no row
+
+$slugs = new Query($db)->table('articles')->select('slug')->orderBy('slug')->pluck('slug');
+// list<mixed>
+
+$taken = new Query($db)->table('articles')->where('slug', '=', $slug)->exists();
+// bool
+```
+
+`value()` and `pluck()` read the column from each row by its result
+name and leave the projection as you built it. A qualified column
+(`articles.slug`) arrives under its last segment, so pass `'slug'`. A
+name missing from the row throws `QueryBuilderException`.
+
+## Selecting columns
+
+```{code-block} php
+$rows = new Query($db)
+    ->table('articles', as: 'a')
+    ->join('users', 'u.id', '=', 'a.author_id', as: 'u')
+    ->select('a.id', 'a.title', 'u.username', 'a.*')
+    ->get();
+```
+
+- `select()` replaces the column list; the default is `*`. Each
+  dot-separated segment is quoted, and a trailing `.*` stays a wildcard.
+- `table()`'s and `join()`'s `as:` quote a table alias.
+- `select()` takes column names only. Name a computed or renamed column
+  with `selectRaw()`.
+- `distinct()` compiles `SELECT DISTINCT`.
+
+```{code-block} php
+$rows = new Query($db)
+    ->table('articles')
+    ->select('id')
+    ->selectRaw('LENGTH(body) > ? AS is_long', [2000])
+    ->get();
+```
+
+`selectRaw()` appends an expression, binding its `?` placeholders from
+`$params`. Once `selectRaw()` or `selectSub()` is used without
+`select()`, the default `*` is dropped.
+
+## Filtering
+
+### Comparisons
+
+```{code-block} php
+$rows = new Query($db)
+    ->table('articles')
+    ->where('status', '=', 'published')
+    ->where('views', '>=', 100)
+    ->orWhere('featured', '=', true)
+    ->get();
+// WHERE `status` = ? AND `views` >= ? OR `featured` = ?
+```
+
+The operator is one of `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`,
+`NOT LIKE`, case-insensitive. Predicates join with `AND` unless you use
+the `or...` form; use a group for any mix of the two.
+
+### Null
+
+```{code-block} php
+->where('deleted_at', '=', null)   // `deleted_at` IS NULL
+->where('deleted_at', '!=', null)  // `deleted_at` IS NOT NULL
+->where('score', '>', null)        // throws InvalidArgumentException
+```
+
+`column = NULL` is never true in SQL, so a null compiles to `IS NULL` or
+`IS NOT NULL`. Every other operator against null is refused. Inserted
+and updated null values bind normally.
+
+### `IN` and `BETWEEN`
+
+```{code-block} php
+->whereIn('status', ['draft', 'review'])
+->whereNotIn('author_id', $blockedIds)
+->whereBetween('published_at', '2026-01-01', '2026-06-30')
+->orWhereNotBetween('views', 10, 20)
+```
+
+An empty `whereIn()` list matches no row (`1 = 0`), and an empty
+`whereNotIn()` list matches every row (`1 = 1`). A null inside a list,
+or as a `BETWEEN` bound, is refused. Both `IN` forms also take a
+subquery — see [Subqueries](#subqueries).
+
+### Grouping `AND` and `OR`
+
+```{code-block} php
+use Kinetis\QueryBuilder\Conditions;
+
+$rows = new Query($db)
+    ->table('articles')
+    ->where('status', '=', 'published')
+    ->whereGroup(fn (Conditions $group) => $group
+        ->where('author_id', '=', $authorId)
+        ->orWhere('featured', '=', true))
+    ->get();
+// WHERE `status` = ? AND (`author_id` = ? OR `featured` = ?)
+```
+
+`whereGroup()` and `orWhereGroup()` parenthesize what the callback adds.
+The callback receives a `Conditions` object with the filtering methods
+on this page and nothing else, and groups nest. A group that adds
+nothing compiles to nothing.
+
+### Comparing columns
+
+```{code-block} php
+->whereColumn('updated_at', '>', 'published_at')
+->orWhereColumn('author_id', '=', 'editor_id')
+```
+
+### Raw predicates
+
+```{code-block} php
+->whereRaw('LOWER(title) LIKE ?', ['%' . strtolower($term) . '%'])
+->whereRaw('YEAR(published_at) = ?', [2026], 'OR')
+```
+
+`whereRaw()` refuses an empty fragment. See [Raw SQL](#raw-sql).
+
+## Joins
+
+```{code-block} php
+$rows = new Query($db)
+    ->table('articles')
+    ->join('users', 'users.id', '=', 'articles.author_id')
+    ->leftJoin('images', 'images.article_id', '=', 'articles.id')
+    ->select('articles.title', 'users.username', 'images.url')
+    ->get();
+```
+
+`join()` takes a type of `INNER` (the default), `LEFT` or `RIGHT`.
+
+A compound `ON` clause uses the same `Conditions` methods as a group,
+bound values included:
+
+```{code-block} php
+$rows = new Query($db)
+    ->table('articles')
+    ->joinOn('follows', fn (Conditions $on) => $on
+        ->whereColumn('follows.followee_id', '=', 'articles.author_id')
+        ->where('follows.follower_id', '=', $viewerId), 'LEFT')
+    ->select('articles.id', 'follows.follower_id')
+    ->get();
+```
+
+`crossJoin('sizes')` joins every row with every row. `joinSub()` joins a
+subquery under an alias:
+
+```{code-block} php
+$counts = new Query($db)
+    ->table('comments')
+    ->select('article_id')
+    ->selectRaw('COUNT(*) AS total')
+    ->groupBy('article_id');
+
+$rows = new Query($db)
+    ->table('articles')
+    ->joinSub($counts, 'c', fn (Conditions $on) => $on->whereColumn('c.article_id', '=', 'articles.id'))
+    ->select('articles.title', 'c.total')
+    ->get();
+```
+
+## Subqueries
+
+Pass a `Query` wherever a subquery is accepted. It is compiled at the
+moment you pass it, so changing it afterwards does not change the outer
+query. It must be built on the same kind of connection, and it cannot
+carry `with()` or a row lock.
+
+### `EXISTS`
+
+```{code-block} php
+$favorited = new Query($db)
+    ->table('favorites')
+    ->whereColumn('favorites.article_id', '=', 'articles.id')
+    ->where('favorites.user_id', '=', $userId);
+
+$rows = new Query($db)->table('articles')->whereExists($favorited)->get();
+```
+
+`whereExists()`, `orWhereExists()`, `whereNotExists()` and
+`orWhereNotExists()` take a subquery that may refer to the outer
+query's tables. The same predicates work in `update()` and `delete()`.
+
+### `IN`
+
+```{code-block} php
+$followed = new Query($db)
+    ->table('follows')
+    ->select('followee_id')
+    ->where('follower_id', '=', $userId);
+
+$feed = new Query($db)->table('articles')->whereIn('author_id', $followed)->get();
+```
+
+On MySQL and MariaDB, an `IN` subquery carrying `limit()` or `offset()`
+throws `QueryBuilderException`: both servers reject that statement.
+Select from the limited query with `fromSub()` instead, which all three
+servers accept:
+
+```{code-block} php
+$latest = new Query($db)->table('articles')->select('id')->orderBy('id', 'desc')->limit(10);
+
+$comments = new Query($db)
+    ->table('comments')
+    ->whereIn('article_id', new Query($db)->fromSub($latest, 'latest')->select('latest.id'))
+    ->get();
+```
+
+### In the select list and the `FROM` clause
+
+```{code-block} php
+$favoriteCount = new Query($db)
+    ->table('favorites')
+    ->selectRaw('COUNT(*)')
+    ->whereColumn('favorites.article_id', '=', 'articles.id');
+
+$rows = new Query($db)
+    ->table('articles')
+    ->select('articles.id', 'articles.title')
+    ->selectSub($favoriteCount, 'favorites_count')
+    ->get();
+
+$busyAuthors = new Query($db)
+    ->fromSub(new Query($db)->table('articles')->select('author_id')->where('status', '=', 'published'), 'p')
+    ->select('p.author_id')
+    ->distinct()
+    ->get();
+```
+
+## Ordering, limits and pagination
+
+```{code-block} php
+->orderBy('published_at', 'desc')
+->orderByRaw('FIELD(status, ?, ?)', ['pinned', 'published'])
+->limit(20)
+->offset(40)
+```
+
+The direction is `ASC` or `DESC`, case-insensitive. `limit()` and
+`offset()` take integers of 0 or more; `offset()` works without
+`limit()`.
+
+### Page numbers: `paginate()`
+
+```{code-block} php
+use Kinetis\Http\Attributes\Get;
+use Kinetis\Http\Attributes\Query as QueryParameter;
+use Kinetis\Http\Pagination\Paginator;
+
+#[Get('/articles')]
+public function index(#[QueryParameter] int $page = 1, #[QueryParameter] int $perPage = 20): Paginator
 {
-    return new Query($this->db)->table('orders')->orderBy('id')->paginate($perPage, $page);
+    return new Query($this->db)
+        ->table('articles')
+        ->where('status', '=', 'published')
+        ->orderBy('id')
+        ->paginate($perPage, $page, ArticleRow::class);
 }
 ```
 
 ```{code-block} json
-:caption: GET /orders?page=2&perPage=20
+:caption: GET /articles?page=2&perPage=20
 
 {
-    "data": [{"id": 21, "...": "..."}, {"...": "..."}],
+    "data": [{"id": 21, "...": "..."}],
     "currentPage": 2,
     "perPage": 20,
     "total": 145,
@@ -141,380 +389,555 @@ public function index(#[Query] int $page = 1, #[Query] int $perPage = 20): Pagin
 }
 ```
 
-`paginate(int $perPage, int $page = 1, ?string $dtoClass = null)` runs a
-`count()` for `total` and a `limit()`/`offset()`-based `get()` for the
-page itself. A page past the last one returns an empty `data` array with
-the real `total`/`lastPage` still reported, not an error.
+`paginate(int $perPage, int $page = 1, ?string $dtoClass = null)` runs
+`count()` for `total` and a limited `get()` for the page. A page past
+the last one returns empty `data` with the real `total`.
 
 ```{warning}
-`paginate()` requires an `orderBy()`/`orderByRaw()` on the query and
-throws `Kinetis\QueryBuilder\Exception\QueryBuilderException` without
-one. An unordered query lets the server return rows in whatever order it
-finds them, so page 2 can repeat or skip rows from page 1. That is a
-mistake in how the query was built, not a bad request, so it reaches the
-client as an ordinary `500`.
-
-Order by a key that is **unique across the result set** — a primary key,
-or your sort column plus one. Ordering by a column rows can share leaves
-the order inside each run of equal values up to the server, and a page
-boundary landing inside one can still repeat or skip. Kinetis takes the
-order you give it; it does not inspect the table to judge whether that
-order is unique.
+`paginate()` requires an `orderBy()`/`orderByRaw()` and throws
+`QueryBuilderException` without one. Order by a key unique across the
+result — a primary key, or your sort column plus one. With ties, a page
+boundary inside a run of equal values can repeat or skip rows.
 ```
 
-Cursor-based pagination advances by the last row's own column value
-instead of a page number, so rows inserted or deleted between requests
-can't shift results the way an offset-based page number can — a better
-fit for a large or fast-changing table:
+### Cursors: `cursorPaginate()`
 
 ```{code-block} php
-#[Get('/orders')]
-public function index(#[Query] ?string $cursor = null): CursorPaginator
+use Kinetis\Http\Pagination\CursorPaginator;
+
+#[Get('/articles')]
+public function index(#[QueryParameter] ?string $cursor = null): CursorPaginator
 {
-    return new Query($this->db)->table('orders')->cursorPaginate(perPage: 20, cursor: $cursor);
+    return new Query($this->db)->table('articles')->cursorPaginate(perPage: 20, cursor: $cursor);
 }
 ```
 
 ```{code-block} json
-:caption: GET /orders, then GET /orders?cursor=145
+:caption: GET /articles, then GET /articles?cursor=145
 
 {"data": ["...", "..."], "nextCursor": "165", "hasMore": true}
 ```
 
 `cursorPaginate(int $perPage, ?string $cursor, string $cursorColumn = 'id', ?string $dtoClass = null, ?string $cursorAlias = null)`
-orders the query by `$cursorColumn` itself and filters
-`WHERE $cursorColumn > $cursor` once a cursor is given — `null` (the first
-call) fetches from the start. The cursor is the column's own raw value,
-not an encoded token; nothing here is sensitive, so there's no reason to
-obscure it. There's no total count and no page number — that's the actual
-tradeoff for avoiding `COUNT(*)` on a table where that query would be
-expensive, and it means a client can't jump to an arbitrary page, only
-"give me the next one."
+orders by `$cursorColumn`, filters `$cursorColumn > $cursor` once a
+cursor is given, and reads `nextCursor` from the last delivered row in
+the same query. There is no total and no page number, so rows inserted
+between requests cannot shift a page.
 
 ```{warning}
-`$cursorColumn` must be unique and strictly monotonic — a primary key or
-an auto-incrementing/serial column, not e.g. `created_at`, which two rows
-can share. A page boundary landing inside a run of equal values silently
-skips whatever's left of that run: `WHERE $cursorColumn > ?` only
-excludes rows up to and including the value already seen, not "rows
-already seen."
-
-`cursorPaginate()` owns the query's ordering, limit and offset: it
-orders by `$cursorColumn`, derives its limit from `perPage`, and tracks
-position by the cursor alone — on a copy of your query, so none of that
-is left behind on the builder you still hold. An
-`orderBy()`/`orderByRaw()`, `limit()`, or `offset()` greater than zero
-already set on the `Query` throws `InvalidPaginationException` instead of
-being silently kept or dropped —
-each one leaves `WHERE $cursorColumn > ?` describing something other than
-the rows actually delivered. `offset(0)` skips nothing and is accepted.
-Pagination by a different or composite ordering needs its own cursor
-design, which this method doesn't provide.
+`$cursorColumn` must be unique and strictly increasing — a primary key,
+not `created_at`. `cursorPaginate()` owns the ordering, limit and offset:
+an existing `orderBy()`, `limit()` or `offset()` above zero throws
+`InvalidPaginationException`.
 ```
 
-The cursor filter combines with the `where()` calls already on the query
-as `(existing predicate) AND $cursorColumn > ?`. The parentheses are what
-make an `OR` in your own filter safe: appended flat, SQL precedence would
-bind the cursor to the last `OR` arm alone, and a row matching an earlier
-arm would come back on every page.
+The cursor filter wraps your own predicates as
+`(existing predicate) AND id > ?`, so an `orWhere()` cannot escape it. A
+projection that omits the cursor column still works: the column is
+selected, read, and removed from every row before hydration.
 
-`nextCursor` always comes out of the same result as the rows you were
-handed — never a second query. Two reads of a live table are not one
-snapshot, and a cursor pointing at a row you were never given would
-silently skip everything between the two.
-
-Computing it needs `$cursorColumn` in every row regardless of what your
-own `select()` call asked to see, so a projection that omits it
-(`->select('name')->cursorPaginate(...)`) still works correctly —
-`$cursorColumn` is added to the query automatically and stripped back
-out of every returned row (and never reaches `$dtoClass` hydration
-either) before the method returns, so the projection you actually get
-back is exactly the one you asked for. Selecting it yourself, or using
-the default `*`, leaves it in the result as normal.
-
-### Paginating a joined query: `cursorAlias`
-
-On a `join()`ed query you generally want a *qualified* cursor column
-(`orders.id`) to say which table's `id` you mean. That needs one more
-argument, because MySQL and Postgres both report an unaliased qualified
-column under its plain name — `id`, not `orders.id` — which the joined
-table's own `id` collides with. A PHP row is an associative array, so
-two columns arriving under one key silently become one.
-
-Kinetis won't guess a name that's safe against your projection, because
-none is: pick one yourself with `cursorAlias`.
+On a joined query, pass a qualified cursor column and name an alias for
+it. Both servers return `orders.id` under the bare key `id`, which a
+joined table's `id` would overwrite:
 
 ```{code-block} php
-:caption: The column is selected under your alias, read from it, then removed
-return new Query($this->db)->table('orders')
+return new Query($this->db)
+    ->table('orders')
     ->join('customers', 'orders.customer_id', '=', 'customers.id')
     ->select('orders.total', 'customers.name')
     ->cursorPaginate(perPage: 20, cursor: $cursor, cursorColumn: 'orders.id', cursorAlias: 'order_cursor');
 ```
 
-The alias is appended to your projection, read back, and stripped from
-every returned row before you see them — so the rows still contain
-exactly `total` and `name`. A pre-existing `orderBy()`/`orderByRaw()`,
-`limit()`, or `offset()` beyond zero is rejected instead, per the warning
-above.
+A qualified column without an alias, or an alias equal to a column you
+listed in `select()`, throws `InvalidPaginationException`. An alias
+that a wildcard's columns already use cannot be detected: that column
+is replaced in the returned rows, so pick a name nothing in the
+projection uses.
 
-Pass a qualified `$cursorColumn` without an alias and you get an
-`InvalidPaginationException` naming the parameter, not a silently wrong
-cursor. `cursorAlias` works for an unqualified column too, which is how
-you disambiguate a projection that already has a *different* column of
-that name.
+Both methods refuse a `perPage` (and `paginate()` a `page`) below 1 with
+`InvalidPaginationException`, which reaches the client as a `400`.
+Neither caps `perPage`; clamp request values in your controller.
 
-```{warning}
-Choosing an alias nothing else in the projection uses is yours to get
-right, exactly as it is for any `AS` you write by hand. Pick a name a
-column already answers to and the cursor **replaces** that column: it
-takes the key in the returned row, and the cleanup that removes the
-alias removes your field with it. The cursor itself stays correct; the
-row just comes back one field short.
+### Describing the page item in OpenAPI
 
-Kinetis rejects the half of this it can see. An alias matching a column
-you listed yourself — `select('row_cursor')`, or `select('t.row_cursor')`,
-which resolves to the same key — throws `InvalidPaginationException`
-before any SQL runs. A column that only a wildcard brings in can't be
-checked the same way: knowing what `*` expands to needs column metadata
-the result doesn't carry, and the one available check — counting
-distinct keys against the server's column count — also fires on the
-duplicate `id` every `SELECT *` across a join produces, which is the
-most common reason to want a cursor alias in the first place. So with a
-wildcard, the name is yours to keep clear.
-```
-
-`perPage`/`page` (for `paginate()`) and `perPage` (for `cursorPaginate()`)
-must be at least 1 — either method throws
-`Kinetis\QueryBuilder\Exception\InvalidPaginationException` otherwise,
-rather than compiling a nonsensical `LIMIT 0`/negative `OFFSET`. Every
-pagination exception this page mentions is one — it implements
-`Kinetis\Http\Exception\HttpStatusExceptionInterface`, so an uncaught one
-reaches your client as a `400` naming the actual problem, not the plain
-`500` an ordinary uncaught exception from a controller gets. Neither
-method caps how *large* `$perPage` can be — a request
-for `?perPage=1000000` is passed straight through. Capping it, if your
-application needs one, is a normal application-level concern (clamp it in
-the controller before calling either method), the same way `Query`
-doesn't validate a `where()` value either.
-
-### Describing the item shape in OpenAPI
-
-`Paginator`/`CursorPaginator` are the same two classes for every paginated
-route, regardless of what each one actually holds, so the generated
-OpenAPI document describes `data` as a bare object by default —
-reflecting the return type alone can't recover what's inside it.
-`#[PaginatedItem]` names it explicitly:
+`Paginator` and `CursorPaginator` hold any item type, so the generated
+schema describes `data` as bare objects unless the route names the item:
 
 ```{code-block} php
 use Kinetis\Http\Attributes\PaginatedItem;
 
-#[Get('/orders')]
-#[PaginatedItem(OrderResponse::class)]
-public function index(#[Query] int $page = 1, #[Query] int $perPage = 20): Paginator
+#[Get('/articles')]
+#[PaginatedItem(ArticleRow::class)]
+public function index(#[QueryParameter] int $page = 1): Paginator
 {
-    return new Query($this->db)->table('orders')->orderBy('id')->paginate($perPage, $page);
+    return new Query($this->db)->table('articles')->orderBy('id')->paginate(20, $page, ArticleRow::class);
 }
 ```
 
-`data` now describes as an array of `OrderResponse`'s own schema,
-deduplicated into `components/schemas` the same way a nested DTO already
-is. Purely descriptive — nothing checks that the route actually returns
-that item type at runtime, the same trust already placed in
-`#[Response(status, description)]`'s own status code.
+The attribute is descriptive only; nothing checks the returned items
+against it.
 
-## Writing: `insert()`, `insertGetId()`, `update()`, `delete()`
+## Grouping and aggregates
 
 ```{code-block} php
-new Query($db)->table('users')->insert(['email' => $email, 'name' => $name]);
-
-$id = new Query($db)->table('users')->insertGetId(['email' => $email], primaryKey: 'id');
-
-$affected = new Query($db)->table('users')->where('id', '=', $id)->update(['name' => $newName]);
-
-$deleted = new Query($db)->table('users')->where('id', '=', $id)->delete();
+$authors = new Query($db)
+    ->table('articles')
+    ->select('author_id')
+    ->selectRaw('COUNT(*) AS articles')
+    ->where('status', '=', 'published')
+    ->groupBy('author_id')
+    ->havingRaw('COUNT(*) >= ?', [5])
+    ->get();
 ```
 
-`update()`/`delete()` return the affected-row count. `insert()`/
-`insertGetId()`/`update()` all reject an empty `$data` array with
-`InvalidArgumentException` — an empty array compiles to invalid SQL
-(`INSERT INTO t () VALUES ()`, `UPDATE t SET  WHERE ...`) rather than
-anything meaningful, and this class has no `DEFAULT VALUES` shorthand for
-the (rare) case that is actually intended.
+- `groupBy(string ...$columns)` and `groupByRaw($sql, $params)`.
+- `having()`/`orHaving()` compare a grouped column with the same
+  operators and null handling as `where()`.
+- `havingRaw($sql, $params)` compares an aggregate.
+
+### Counting and aggregate values
+
+```{code-block} php
+$total = new Query($db)->table('articles')->where('status', '=', 'published')->count();  // int
+$views = new Query($db)->table('articles')->where('author_id', '=', $id)->sum('views');   // int|float|string|null
+$first = new Query($db)->table('articles')->min('published_at');                          // int|float|string|null
+```
+
+`count()`, `sum()`, `min()`, `max()` and `avg()` ignore the order, limit
+and offset. `sum()`, `min()`, `max()` and `avg()` return the value as
+the driver delivers it, where a decimal can arrive as a string, or
+`null` when there are no rows.
+
+On a query with `distinct()`, `groupBy()`, a `having` clause or a set
+operation, they aggregate the rows the query returns: `count()` on the
+grouped query above counts authors, not articles. On any other query
+they aggregate the filtered and joined rows directly, and the select
+list plays no part.
+
+## Set operations and CTEs
+
+### `union()`, `intersect()` and `except()`
+
+```{code-block} php
+$pinned = new Query($db)->table('articles')->select('id', 'title')->where('pinned', '=', true);
+$recent = new Query($db)->table('articles')->select('id', 'title')->orderBy('published_at', 'desc')->limit(5);
+
+$front = $pinned
+    ->union($recent)
+    ->orderBy('title')
+    ->limit(10)
+    ->get();
+// (SELECT ... WHERE `pinned` = ?) UNION (SELECT ... ORDER BY `published_at` DESC LIMIT 5) ORDER BY `title` ASC LIMIT 10
+```
+
+Each method takes `bool $all = false` for `UNION ALL`, `INTERSECT ALL`
+and `EXCEPT ALL`. On the query you call them on, `orderBy()`, `limit()`
+and `offset()` apply to the combined result; an operand's own ordering
+and limit stay inside its parentheses. Operations apply in call order:
+`$a->union($b)->intersect($c)` is `(a ∪ b) ∩ c`. A combined query can
+itself be an operand.
+
+### `with()`
+
+```{code-block} php
+$popular = new Query($db)->table('favorites')->select('article_id')->groupBy('article_id')->havingRaw('COUNT(*) > ?', [100]);
+
+$rows = new Query($db)
+    ->with('popular', $popular)
+    ->table('articles')
+    ->whereIn('id', new Query($db)->table('popular')->select('article_id'))
+    ->get();
+// WITH `popular` AS (SELECT ...) SELECT * FROM `articles` WHERE `id` IN (SELECT `article_id` FROM `popular`)
+```
+
+`with(string $name, Query $query, array $columns = [])` defines a common
+table expression that the query, and its subqueries, select from by
+name. `$columns` names its result columns.
+
+### `withRecursive()`
+
+```{code-block} php
+$root = new Query($db)->table('categories')->select('id', 'parent_id')->where('id', '=', $categoryId);
+$children = new Query($db)
+    ->table('categories')
+    ->select('categories.id', 'categories.parent_id')
+    ->join('tree', 'tree.id', '=', 'categories.parent_id');
+
+$descendantIds = new Query($db)
+    ->withRecursive('tree', $root->union($children, all: true), ['id', 'parent_id'])
+    ->table('tree')
+    ->pluck('id');
+```
+
+The recursive query is a `union()` of a starting query and a query that
+joins the CTE's own name. One recursive CTE makes the whole clause
+`WITH RECURSIVE`.
+
+## Inserts
+
+### `insert()`
+
+```{code-block} php
+new Query($db)->table('tags')->insert(['name' => 'PHP', 'slug' => 'php']);
+
+new Query($db)->table('tags')->insert([
+    ['name' => 'PHP', 'slug' => 'php'],
+    ['name' => 'SQL', 'slug' => 'sql'],
+]);
+```
+
+`insert()` takes one `column => value` row or a list of rows and runs one
+statement. Every row of a batch must name the same columns in the same
+order. A batch binding more than 65,535 values throws
+`InvalidArgumentException`; split it yourself, knowing each call is its
+own statement.
+
+### `insertGetId()`
+
+```{code-block} php
+$id = new Query($db)->table('articles')->insertGetId(['title' => $title, 'slug' => $slug]);
+// int|string|null — a string for a MySQL id beyond PHP_INT_MAX
+```
+
+`insertGetId(array $values, string $primaryKey = 'id')` inserts one row
+and returns its generated key.
+
+### `insertUsing()`
+
+```{code-block} php
+$inserted = new Query($db)->table('notifications')->insertUsing(
+    ['user_id', 'article_id'],
+    new Query($db)->table('follows')
+        ->join('articles', 'articles.author_id', '=', 'follows.followee_id')
+        ->select('follows.follower_id', 'articles.id')
+        ->where('articles.id', '=', $articleId),
+);
+// int: rows inserted
+```
+
+The select may carry its own `with()`.
+
+### `insertOrIgnore()`
+
+```{code-block} php
+$inserted = new Query($db)->table('favorites')->insertOrIgnore(['user_id' => $userId, 'article_id' => $articleId]);
+// int: 1 when the row was written, 0 when a unique key already held it
+```
+
+Takes a row or a batch. A row that conflicts with a unique key is
+skipped; every other error, such as a `NOT NULL` violation, still fails
+the statement.
+
+### `upsert()`
+
+```{code-block} php
+new Query($db)->table('article_stats')->upsert(
+    ['article_id' => $id, 'views' => $views, 'updated_at' => $now],
+    uniqueBy: ['article_id'],
+    update: ['views', 'updated_at'],
+);
+// int: the server's affected-row count
+```
+
+`upsert(array $values, array $uniqueBy, array $update)` inserts each row;
+a row that conflicts instead sets the `$update` columns of the existing
+row to the values it tried to insert. MySQL and MariaDB resolve a
+conflict on any unique key and count rows differently — see
+[Upsert on MySQL and MariaDB](#upsert-on-mysql-and-mariadb).
+
+Writes do not return rows or DTOs. Fetching what you wrote is a second
+statement — see [Writing objects](#query-builder-row-values).
+
+## Updates, counters and deletes
+
+```{code-block} php
+$updated = new Query($db)->table('articles')->where('id', '=', $id)->update(['title' => $title]);  // int
+$counted = new Query($db)->table('articles')->where('id', '=', $id)->increment('views');           // int
+$sold = new Query($db)->table('products')->where('id', '=', $id)->decrement('stock', 2, ['sold_at' => $now]);
+$deleted = new Query($db)->table('articles')->where('status', '=', 'spam')->delete();              // int
+```
+
+Each returns the affected-row count. `increment()` and `decrement()`
+take an `int|float` amount (1 by default) and an optional map of further
+`column => value` assignments. Correlated predicates work as in a
+select:
+
+```{code-block} php
+new Query($db)
+    ->table('articles')
+    ->whereNotExists(new Query($db)->table('comments')->whereColumn('comments.article_id', '=', 'articles.id'))
+    ->where('published_at', '<', $cutoff)
+    ->delete();
+```
 
 ```{warning}
-`update()` and `delete()` compile the table and the `WHERE` clause, and
-nothing else. Both throw
-`Kinetis\QueryBuilder\Exception\QueryBuilderException` before any SQL
-runs when the `Query` carries no predicate at all, and when it carries a
-`select()`/`selectRaw()`, `join()`/`leftJoin()`, `orderBy()`/
-`orderByRaw()`, `limit()` or `offset()`. Either way the statement would
-affect every row the `WHERE` clause alone matches — every row in the
-table, in the first case.
-
-There is no flag to allow it. A deliberate whole-table `UPDATE`/`DELETE`,
-like a joined, ordered or limited one, runs as raw SQL through the
-connection itself.
+`update()`, `increment()`, `decrement()` and `delete()` need at least one
+where predicate, and compile only the table and the `WHERE` clause. A
+query with no predicate, only empty groups, or any other clause — a
+join, an order, a limit, an alias, a lock — throws
+`QueryBuilderException` before running, since the statement would
+otherwise reach more rows than you narrowed it to. Run a deliberate
+whole-table or joined mutation as raw SQL.
 ```
+
+## Transactions and row locks
+
+Pass the transaction to `Query` to run statements inside it:
+
+```{code-block} php
+use Kinetis\Persistence\TransactionGuard;
+use Kinetis\QueryBuilder\LockWait;
+
+// $transactions is the injected TransactionGuard.
+$transactions->transaction($db, function ($tx) use ($accountId, $amount): void {
+    $balance = new Query($tx)
+        ->table('accounts')
+        ->where('id', '=', $accountId)
+        ->lockForUpdate()
+        ->value('balance');
+
+    if ($balance < $amount) {
+        throw new InsufficientFunds();
+    }
+
+    new Query($tx)->table('accounts')->where('id', '=', $accountId)->decrement('balance', $amount);
+});
+```
+
+`lockForUpdate()` locks the selected rows until the transaction ends.
+Its wait mode decides what happens when another transaction holds one:
+
+```{code-block} php
+->lockForUpdate()                      // wait, up to the server's lock timeout
+->lockForUpdate(LockWait::NoWait)      // fail immediately
+->lockForUpdate(LockWait::SkipLocked)  // leave locked rows out of the result
+```
+
+`SkipLocked` suits a work queue: each worker claims the rows no other
+worker holds.
+
+```{code-block} php
+$jobs = new Query($tx)
+    ->table('jobs')
+    ->where('state', '=', 'queued')
+    ->orderBy('id')
+    ->limit(10)
+    ->lockForUpdate(LockWait::SkipLocked)
+    ->get();
+```
+
+`lockForShare()` lets other transactions read and share-lock the rows
+but not change them; it always waits.
+
+```{warning}
+A lock needs a `Query` built on an active transaction, and throws
+`QueryBuilderException` otherwise. It is admitted on `get()`, `first()`,
+`value()` and `pluck()` over one table or inner joins, with predicates,
+ordering, limit and offset. Every other combination is refused before
+running — see [Locks](#locks).
+```
+
+See {doc}`persistence` for `TransactionGuard`'s commit and rollback
+behavior.
+
+(query-builder-row-values)=
+## Writing objects: `RowValues`
+
+`RowValues::fromObject()` turns an object's public properties into the
+`column => value` map every write takes:
+
+```{code-block} php
+use Kinetis\QueryBuilder\RowValues;
+use Kinetis\Validation\Absent;
+
+enum ArticleStatus: string
+{
+    case Draft = 'draft';
+    case Published = 'published';
+}
+
+final readonly class UpdateArticle
+{
+    public function __construct(
+        public string|Absent $title = Absent::Value,
+        public ArticleStatus|Absent $status = Absent::Value,
+        public string|null|Absent $summary = Absent::Value,
+        public int|Absent $editorId = Absent::Value,
+    ) {}
+}
+
+$values = RowValues::fromObject(new UpdateArticle(status: ArticleStatus::Published, summary: null), columns: ['editorId' => 'editor_id']);
+// ['status' => 'published', 'summary' => null]
+
+new Query($db)->table('articles')->where('id', '=', $id)->update($values);
+```
+
+`fromObject(object $object, array $columns = [], array $except = [])`
+reads the initialized public properties, readonly and
+asymmetric-visibility ones included:
+
+- `Absent::Value` is left out, so a partial update writes only what was
+  sent; `null` is kept and writes `NULL`.
+- A backed enum becomes its value. Every other value must already be
+  `null`, a `bool`, an `int`, a finite `float` or a `string`; anything
+  else throws `InvalidArgumentException` naming the property.
+- `$columns` renames properties; `$except` leaves them out. An unknown
+  name, a property both renamed and excluded, and two properties
+  mapping to one column all throw.
+
+It does no case conversion, date formatting or nesting. Hash a password
+or format a timestamp before extracting. An object with nothing to write
+yields `[]`, which the writes refuse.
+
+### Writing and then reading back
+
+Writes return counts and ids, not rows. When the caller needs the
+stored row, read it in the same transaction:
+
+```{code-block} php
+$article = $transactions->transaction($db, function ($tx) use ($create): ArticleRow {
+    $id = new Query($tx)->table('articles')->insertGetId(RowValues::fromObject($create));
+
+    $row = new Query($tx)->table('articles')->where('id', '=', $id)->first(ArticleRow::class);
+
+    if ($row === null) {
+        throw new RuntimeException('The inserted article was not found.');
+    }
+
+    return $row;
+});
+```
+
+For an update, select by a stable key such as the id, not by a
+predicate the update itself can make false. To return several updated
+or deleted rows, lock them and read their keys before writing.
 
 ## Raw SQL
 
-A plain `SqlLink`/`SqlTransaction` and `$db->execute(...)` — see
-{doc}`persistence` — bypasses the builder entirely with no special support
-needed.
-
-For raw fragments inside an otherwise-fluent query:
+For SQL beyond the shared surface, call the connection directly:
 
 ```{code-block} php
-new Query($db)->table('orders')
-    ->selectRaw('COUNT(*) as total, DATE(created_at) as day')
-    ->whereRaw('YEAR(created_at) = ?', [2026])
-    ->orderByRaw('RAND()')
-    ->get();
+$result = $db->execute('SELECT id FROM articles WHERE MATCH(title) AGAINST (?)', [$term]);
 ```
+
+Inside a query, `selectRaw()`, `whereRaw()`, `groupByRaw()`,
+`havingRaw()` and `orderByRaw()` take a fragment and its parameters:
+
+```{code-block} php
+->selectRaw('COUNT(*) AS total')
+->whereRaw('YEAR(published_at) = ?', [2026])
+->orderByRaw('FIELD(status, ?, ?)', ['pinned', 'published'])
+```
+
+Parameters bind where their fragment appears in the SQL, whatever order
+you called the methods in.
 
 ```{danger}
-`whereRaw()`'s `$params` are bound as real parameters, in the exact
-position their `?` appears in `$sql` — never string-interpolated. Building
-`$sql` by concatenating a user-controlled value instead of passing it
-through `$params` reintroduces exactly the injection risk parameterized
-queries exist to prevent.
+A raw fragment is inserted as written. Pass every value through
+`$params`; concatenating user input into the fragment reopens SQL
+injection.
 ```
 
-`whereRaw()` needs an actual fragment: an empty or whitespace-only `$sql`
-throws `InvalidArgumentException`. It reads as a predicate but compiles
-to nothing, which would satisfy `update()`/`delete()`'s predicate
-requirement while leaving the statement matching every row.
+## Portability and behavior reference
 
-## Parameter order
+### Dialect spellings
 
-Structured `where()` calls, `whereIn()`, and `whereRaw()` fragments can all
-be mixed in one query; their bound values always appear in the same order
-as the `?` placeholders in the generated SQL:
+| Feature | MySQL 8.4 and MariaDB 11.4 | PostgreSQL 16 |
+| --- | --- | --- |
+| Identifier quoting | `` `name` `` | `"name"` |
+| `offset()` without `limit()` | `LIMIT 18446744073709551615 OFFSET n` | `OFFSET n` |
+| `lockForShare()` | `LOCK IN SHARE MODE` | `FOR SHARE` |
+| `insertOrIgnore()` | `ON DUPLICATE KEY UPDATE first_column = first_column` | `ON CONFLICT DO NOTHING` |
+| `upsert()` | `ON DUPLICATE KEY UPDATE col = VALUES(col)` | `ON CONFLICT (unique columns) DO UPDATE SET col = EXCLUDED.col` |
+| `insertGetId()` | the driver's last insert id | `RETURNING` the key |
+| `IN` subquery with `limit()`/`offset()` | refused | compiled |
 
-```{code-block} php
-new Query($db)->table('orders')
-    ->where('customer_id', '=', 7)
-    ->whereRaw('YEAR(created_at) = ?', [2026])
-    ->whereIn('status', ['pending', 'paid'])
-    ->where('total', '>', 100)
-    ->get();
-// WHERE `customer_id` = ? AND YEAR(created_at) = ? AND `status` IN (?, ?) AND `total` > ?
-// params: [7, 2026, 'pending', 'paid', 100]
-```
+Everything else compiles identically. `toSelectSql()`,
+`toUpdateSql($values)` and `toDeleteSql()` return the SQL and bindings
+without running them.
 
-```{warning}
-One `Query` instance is one query. `table()`/`select()`/`where()`/...
-mutate and accumulate on the same instance — nothing resets between calls.
-Construct a fresh `new Query($link)` per query; reusing one instance
-across separate queries merges their `where()`s together.
+### Upsert on MySQL and MariaDB
 
-`first()`, `paginate()` and `cursorPaginate()` are the exception: each
-applies the limit, offset, order, cursor filter and projection it needs
-to a copy, so the builder you hold is exactly as you left it when they
-return.
-```
+- The shared spelling is `VALUES(col)`. MariaDB has no `INSERT ... AS`
+  row alias, and MySQL 8.4 runs `VALUES(col)` with deprecation warning
+  1287.
+- A conflict on any unique key of the table triggers the update;
+  `$uniqueBy` is validated but does not reach the SQL. PostgreSQL
+  updates only on a conflict with exactly `$uniqueBy`'s constraint.
+- The affected-row count is 1 per inserted row, 2 per updated row and 0
+  per row left unchanged. PostgreSQL counts 1 per row.
+- `insertOrIgnore()` assigns a column to itself instead of using
+  `INSERT IGNORE`, which also turns other errors into warnings and
+  writes the row.
 
-## How a value reaches the database: literal or bound parameter
+### Counting
 
-A `Query` binds its values as real parameters, or writes them into the
-SQL text as literals, and which one it picks depends on the driver
-underneath it. Both produce the same rows; the difference is only how the
-value physically reaches the database.
+A `distinct()`, grouped, `having` or set-operation query is counted as
+`SELECT COUNT(*) FROM (the query) AS aggregate_source`, keeping every
+binding the rows depend on. MySQL and MariaDB reject that derived table
+when two selected columns share an output name (`a.id` and `b.id`):
+select them under distinct names.
 
-**On the native MySQL and Postgres drivers, `int` and `bool` values are
-written as literals.** Neither carries
-`Kinetis\Persistence\Contract\PrefersPreparedStatements`, so a query whose
-values are all safely representable is emitted with no parameter-binding
-path at all. Nothing else is ever inlined: `string`, `null` and `float`
-always bind. (A null *predicate* has no value to bind either way — it
-compiles to `IS NULL`/`IS NOT NULL`.) A string literal would depend on connection charset and
-SQL-mode state the builder knows nothing about, and
-`(string)` on a float can produce `NAN` or `INF`, neither of which is
-valid SQL.
+### Locks
 
-**On the PDO drivers, every value binds.** They carry the marker, because
-they use native prepared statements and memoize them per connection. A
-third-party link declares the same to take that path.
+A lock is admitted on a select from one table or inner joins, with where
+predicates, ordering, limit and offset. A locked query is refused with:
 
-Two rules apply either way. A query is fully inlined or fully
-parameterized, never a mix — one value that must bind makes the whole
-query bind. And `whereRaw()`, `selectRaw()` or `orderByRaw()` anywhere in
-a query disables inlining for all of it, since raw SQL text may contain a
-`?` that was never meant as a placeholder.
+- `distinct()`, `groupBy()`, a `having` clause, a set operation, or a
+  `LEFT`/`RIGHT` join, which PostgreSQL rejects with a lock;
+- `fromSub()`, `joinSub()`, `crossJoin()` or `with()`;
+- `count()`, the aggregates, `exists()`, `paginate()` and
+  `cursorPaginate()`;
+- use as a subquery, operand or `insertUsing()` source, and on any write.
 
-## Operators, directions, join types, and boolean conjunctions are allow-listed
+Run any other locking read as raw SQL inside the transaction. A `NoWait`
+conflict throws the server's error as a `QueryException`; on MariaDB it
+is error 1205, which the MySQL-family drivers treat as ending the
+transaction (see {doc}`persistence`).
 
-`where()`'s `$operator`, `orderBy()`'s `$direction`, `join()`'s
-`$type`/`$operator`, and `where()`/`whereIn()`/`whereRaw()`'s `$boolean`
-are all checked against a fixed set — not bound as `?` like a value,
-since none of them can be (SQL doesn't allow a parameter in an
-operator/keyword position), but not passed through unchecked either. An
-unrecognized value throws `InvalidArgumentException` immediately, rather
-than reaching the generated SQL:
+### What each write refuses
 
-```{code-block} php
-->where('id', '=', 5)         // ok
-->where('id', '>=', 5)        // ok
-->where('id', $userInput, 5)  // throws unless $userInput is one of =, !=, <>, <, <=, >, >=, LIKE, NOT LIKE
+| Write | Refuses |
+| --- | --- |
+| `update()`, `increment()`, `decrement()`, `delete()` | no where predicate; `with()`, a table alias, `fromSub()`, `distinct()`, `select()`/`selectRaw()`/`selectSub()`, any join, grouping, `having`, set operations, ordering, `limit()`, `offset()`, a lock |
+| `insert()`, `insertGetId()`, `insertUsing()`, `insertOrIgnore()`, `upsert()` | all of the above, and any where predicate |
 
-->orderBy('name', 'asc')   // ok — case-insensitive
-->orderBy('name', $sort)   // throws unless $sort is ASC or DESC
+`increment()` also refuses assigning its own column through `$extra`.
+`upsert()` refuses an empty `$uniqueBy` or `$update` and a column in
+either that is not inserted.
 
-->join('customers', 'orders.customer_id', '=', 'customers.id', 'left') // ok
-->join('customers', 'orders.customer_id', '=', 'customers.id', $type)  // throws unless $type is INNER, LEFT, or RIGHT
+### Subqueries
 
-->where('active', '=', 1, 'or')            // ok — case-insensitive
-->where('active', '=', 1, $userBoolean)    // throws unless $userBoolean is AND or OR
-```
+- A subquery is compiled when passed and must come from the same kind
+  of connection. `with()` belongs on the outermost query, where
+  subqueries can select from it by name.
+- MySQL 8.4 rejects an `UPDATE` or `DELETE` whose subquery reads the
+  table being changed (error 1093); MariaDB and PostgreSQL accept it.
+- `NOT IN` against a subquery that returns a `NULL` matches no row, as
+  SQL defines it.
 
-This matters specifically because a sortable/filterable API
-(`?sort=name&dir=asc&op=gte`) is exactly the shape that passes a client
-value into one of these slots — every other value or identifier in this
-class is already safe by construction (bound as `?`, or identifier-quoted
-via `Dialect::quoteIdentifier()`), but an operator/direction/join-type/
-boolean is neither a value nor a plain identifier, so each needed its own
-check rather than inheriting safety from one of those two existing
-mechanisms. A generic filter builder that maps a request value straight
-into `$boolean` is exactly as real a risk as the operator/direction case
-above — the same check applies to it.
+### How values reach the database
 
-`INNER`, `LEFT` and `RIGHT` are the whole join list. `FULL` has no MySQL
-form at all, and `CROSS` takes no `ON` clause — which is the only join
-shape `join()` builds — so neither has a portable compilation here. A
-query that needs one runs as raw SQL through the connection.
+On the native MySQL and PostgreSQL drivers, a statement whose every
+value is an `int` or `bool` is sent with those values written as
+literals; any `string`, `float` or `null` makes the whole statement
+bind. On the PDO drivers, which carry
+`Kinetis\Persistence\Contract\PrefersPreparedStatements`, every value
+binds. Any raw fragment — including one inside a subquery, CTE, operand
+or join — makes the whole statement bind, since raw text may contain a
+`?` that is not a placeholder.
 
-`whereIn()` with an empty array compiles to a constant-false predicate
-(`1 = 0`) instead of the syntactically invalid `IN ()` both MySQL and
-Postgres reject outright — filtering by an empty result set (a user's
-post list, when that user has no matching orders) is a real, common case,
-not an edge case worth leaving broken.
+### Allow-listed keywords
 
-### Comparing against null
-
-`null` is not a value SQL compares against: `column = NULL` is never true,
-not even for a row whose column is null. So a null in a `where()` compiles
-to the form that does work, and no parameter is bound for it:
-
-```{code-block} php
-->where('deleted_at', '=', null)    // WHERE `deleted_at` IS NULL
-->where('deleted_at', '!=', null)   // WHERE `deleted_at` IS NOT NULL
-->where('deleted_at', '<>', null)   // the same
-->where('score', '>', null)         // throws InvalidArgumentException
-->whereIn('id', [1, null, 3])       // throws InvalidArgumentException
-```
-
-Every other operator against null is refused rather than compiled: it can
-only ever match nothing, so it is a mistake, not a filter. A null inside
-`whereIn()` is refused for the same reason — `IN (NULL)` never matches,
-and it would narrow the set without changing how the call reads.
-
-This is about predicates only. `insert()`, `insertGetId()` and `update()`
-bind a null value normally, which is how a column is written null.
+Operators (`=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`, `NOT LIKE`),
+order directions (`ASC`, `DESC`), join types (`INNER`, `LEFT`, `RIGHT`)
+and the `$boolean` argument (`AND`, `OR`) are checked when set and throw
+`InvalidArgumentException` for anything else. They cannot be bound as
+parameters, so a sortable or filterable API that passes request values
+into them relies on this check.
 
 ## See also
 
-- {doc}`persistence` — connecting to MySQL/Postgres, `TransactionGuard`,
-  and caching query results.
-- {doc}`routing-validation` — more on `Hydrator`, including nested-DTO
-  support.
+- {doc}`persistence` — connections, drivers, `TransactionGuard`.
+- {doc}`routing-validation` — `Hydrator`, `Absent`, and DTO rules.
+- {doc}`appendix-packages` — the package's API catalogue.
