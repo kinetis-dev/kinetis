@@ -200,7 +200,9 @@ jobs:
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/psalm --no-progress
 
       - name: Psalm (taint analysis)
-        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress --report=psalm.sarif --report-show-info=false
+        # Psalm 6.17.1 requires disabled engine assertions for first-class
+        # callables during taint analysis (vimeo/psalm#11932).
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-version }}-cli-alpine php -d zend.assertions=-1 vendor/bin/psalm --taint-analysis --no-progress --report=psalm.sarif --report-show-info=false
 
       - name: Upload Psalm SARIF to code scanning
         # Requires GitHub Code Security enabled on the repo to work while
