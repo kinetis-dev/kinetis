@@ -150,19 +150,20 @@ jobs:
 
       - name: Infection (mutation testing)
         # A pull request skips a package whose own src/ is unchanged
-        # relative to the base branch, and mutates every package it did
-        # change in full. The thresholds below are measured against a
-        # whole package's mutant set and say nothing about a subset
-        # selected from a diff, where a handful of mutants decides the
-        # score. The two-dot diff against the base tip is exact here
-        # because the PR checkout is the merge commit of the PR onto
-        # that tip. Every push to main runs the same full suite.
+        # relative to the base branch unless this workflow changed.
+        # Every selected package is mutated in full. The thresholds below
+        # are measured against a whole package's mutant set and say
+        # nothing about a subset selected from a diff, where a handful
+        # of mutants decides the score. The two-dot diff against the
+        # base tip is exact here because the PR checkout is the merge
+        # commit of the PR onto that tip. Every push to main runs the
+        # same full suite.
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           if [ -n "$BASE_REF" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_REF"
-            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- '${{ matrix.package.dir }}/src' | grep -q .; then
+            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- '${{ matrix.package.dir }}/src' '.github/workflows/infection.yml' | grep -q .; then
               echo "No changed source files under ${{ matrix.package.dir }}/src — skipping this package."
               exit 0
             fi
