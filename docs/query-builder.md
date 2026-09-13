@@ -54,9 +54,13 @@ final readonly class ArticleRepository
 ```
 
 ```{warning}
-Values are always bound as parameters. Identifiers (table and column
-names) are quoted but not validated, and raw SQL fragments are inserted
-as written — never build either from user input.
+Pass user input only through value slots — a `where()` value, an insert
+or update map, a raw fragment's `$params`. The builder sends those as
+bound parameters or as literals it writes itself (see
+[How values reach the database](#how-values-reach-the-database)).
+Identifiers (table and column names) are quoted but not validated, and
+raw SQL fragments are inserted as written — never build either from
+user input.
 ```
 
 ## Creating a query
@@ -510,7 +514,9 @@ the driver delivers it, where a decimal can arrive as a string, or
 
 On a query with `distinct()`, `groupBy()`, a `having` clause or a set
 operation, they aggregate the rows the query returns: `count()` on the
-grouped query above counts authors, not articles. On any other query
+grouped query above counts authors, not articles, and `sum()`, `min()`,
+`max()` and `avg()` take a column name its select list exposes —
+`sum('articles')` there totals the per-author counts. On any other query
 they aggregate the filtered and joined rows directly, and the select
 list plays no part.
 
@@ -870,13 +876,16 @@ without running them.
   `INSERT IGNORE`, which also turns other errors into warnings and
   writes the row.
 
-### Counting
+### Aggregates over a derived table
 
-A `distinct()`, grouped, `having` or set-operation query is counted as
-`SELECT COUNT(*) FROM (the query) AS aggregate_source`, keeping every
-binding the rows depend on. MySQL and MariaDB reject that derived table
-when two selected columns share an output name (`a.id` and `b.id`):
-select them under distinct names.
+On a `distinct()`, grouped, `having` or set-operation query, `count()`,
+`sum()`, `min()`, `max()` and `avg()` compile as
+`SELECT COUNT(*) FROM (the query) AS aggregate_source` (or `SUM(column)`,
+and so on), keeping every binding the rows depend on. The column an
+aggregate names is resolved against that derived table, so pass the
+unqualified output name the query's select list gives it. MySQL and
+MariaDB reject the derived table when two selected columns share an
+output name (`a.id` and `b.id`): select them under distinct names.
 
 ### Locks
 

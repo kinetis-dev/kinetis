@@ -307,9 +307,10 @@ final class Query
     }
 
     /**
-     * A raw SELECT expression (an aggregate, a function call) alongside
-     * whatever select()/the default "*" already contributes. Its "?"
-     * placeholders bind $params where the expression appears in the SQL.
+     * A raw SELECT expression (an aggregate, a function call). It is
+     * appended to the columns an explicit select() named, and replaces an
+     * untouched default "*". Its "?" placeholders bind $params where the
+     * expression appears in the SQL.
      *
      * @param list<mixed> $params
      */

@@ -92,17 +92,23 @@ and carries the queue, mailer, OpenSearch, LocalStack and migration
 checks. An env-gated PHPUnit suite under `tests/Integration/` is the
 other, for cases that want fixtures and per-test setup: `persistence`'s
 drivers and TLS, `redis`/`cache-redis`'s cluster routing, `session`'s
-store rules, `query-builder`'s cursor pagination. It skips itself when
-the backend variables are unset, which is what keeps an ordinary
-`ci.yml` run database-free, and the same files run again under coverage
-in `sonarqube.yml`. `query-builder` uses both forms; the conformance
+store rules, `query-builder`'s cursor pagination and server-dependent
+SQL. It skips itself when the backend variables are unset, which is what
+keeps an ordinary `ci.yml` run database-free, and the same files run
+again under coverage in `sonarqube.yml`. `query-builder` uses both forms; the conformance
 suites are the second. The entries below name what each job covers
 rather than which form it took.
 
 - **`query-builder`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `Query::get()`/`first()`/`count()`/`insertGetId()`/`update()`/
-  `delete()`/`join()`/`paginate()`/`cursorPaginate()`, and the null
-  predicate forms (`IS NULL`/`IS NOT NULL`).
+  `delete()`/`join()`/`paginate()`/`cursorPaginate()`, the null
+  predicate forms (`IS NULL`/`IS NOT NULL`), and the SQL whose acceptance
+  or result depends on the server: an offset without a limit, set
+  operations and their counts, recursive CTEs and insert-select,
+  insert-or-ignore, upsert row counts, a 65,535-parameter batch, lock
+  wait modes under contention, the MySQL-family limited `IN` refusal,
+  correlated subqueries with arithmetic writes, and a `RowValues` round
+  trip into a DTO.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two
