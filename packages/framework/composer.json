@@ -25,8 +25,8 @@
         "infection/infection": "^0.35.0",
         "nikic/php-parser": "^5.8.0",
         "phpstan/phpstan": "^2.2.8",
-        "phpunit/phpunit": "^12.5.33",
-        "vimeo/psalm": "^6.16.1"
+        "phpunit/phpunit": "^13.3.3",
+        "vimeo/psalm": "^6.17"
     },
     "suggest": {
         "ext-event": "An OS-native Revolt event-loop backend (epoll), removing select()'s 1024 fd-number ceiling. Needed when the loop watches real sockets (native Postgres driver, Redis, HTTP client) in a FrankenPHP worker process; a MySQL-only deployment does not need it. ext-uv/ext-ev work equally."

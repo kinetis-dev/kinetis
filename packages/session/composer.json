@@ -21,8 +21,8 @@
         "kinetis/persistence": "dev-main",
         "kinetis/redis": "dev-main",
         "phpstan/phpstan": "^2.2.8",
-        "phpunit/phpunit": "^12.5.33",
-        "vimeo/psalm": "^6.16.1"
+        "phpunit/phpunit": "^13.3.3",
+        "vimeo/psalm": "^6.17"
     },
     "suggest": {
         "kinetis/persistence": "Enables SqlSessionStore, sessions in a kinetis_sessions table over the SQL contracts.",
