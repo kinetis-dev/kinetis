@@ -6,12 +6,16 @@ on:
     paths:
       - 'packages/**'
       - 'sonar-project.properties'
+      - '.github/workflows/integration.yml'
+      - '.github/workflows/infection.yml'
       - '.github/workflows/sonarqube.yml'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - 'packages/**'
       - 'sonar-project.properties'
+      - '.github/workflows/integration.yml'
+      - '.github/workflows/infection.yml'
       - '.github/workflows/sonarqube.yml'
 
 # One run per branch at a time: a superseded PR push cancels the older
