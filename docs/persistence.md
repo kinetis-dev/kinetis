@@ -544,8 +544,14 @@ down for good.
 
 ## Transactions
 
-`beginTransaction()` pins one connection and returns a `SqlTransaction`
-with the same `query()`/`execute()` surface as the client. Every
+`beginTransaction()` pins one connection and returns a transaction with
+the same `query()`/`execute()` surface as the client. Its static type
+keeps the link's dialect: a `MysqlLink` begins a `MysqlTransaction`, a
+`PostgresLink` a `PostgresTransaction`, and code typed against the
+generic `SqlLink` gets a `SqlTransaction`. `TransactionGuard` keeps that
+type through its own `beginTransaction()` and the `transaction()`
+callback, so {doc}`query-builder`'s `new Query($tx)` takes the
+transaction as it is. Every
 statement belonging to the transaction goes through that object: a
 client-level call while it is open is refused rather than served, on
 every driver.
@@ -650,6 +656,25 @@ server acknowledged anything — the statement may well have run.
 Closing a PDO client does the same to the transaction holding it, since
 both run on the client's one connection.
 
+### Unique violations
+
+`Exception\QueryException::getSqlState()` returns the SQLSTATE the
+server or driver reported, or `null` where there was none, next to the
+vendor error number the exception carries as its code.
+`isUniqueViolation()` is true for PostgreSQL's SQLSTATE `23505` and the
+MySQL family's error 1062, on every driver, and false for every other
+failure. MySQL and MariaDB report SQLSTATE `23000` for a `NOT NULL` or
+foreign-key violation as well, so the error number decides there.
+
+Let the unique key settle a race instead of reading before the write,
+since two requests can both find a value free, and catch the violation
+outside `transaction()`: on Postgres the failed statement has already
+aborted the transaction, and the guard rolls it back before the
+exception reaches the caller. Classifying a failure changes nothing
+about it — the statement is not retried and the error is not
+suppressed. The {ref}`repository cookbook <query-builder-cookbook>`
+shows the pattern.
+
 ### A transaction nothing ends
 
 Calling `beginTransaction()` on a link makes ending the transaction the
@@ -700,6 +725,7 @@ it starts.
 use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\MysqlTransaction;
 use Kinetis\Persistence\TransactionGuard;
 
 final readonly class OrderController
@@ -712,9 +738,9 @@ final readonly class OrderController
     #[Post('/orders')]
     public function store(#[Body] CreateOrderRequest $data): array
     {
-        return $this->transactions->transaction($this->db, function ($db) use ($data) {
-            $db->execute('INSERT INTO orders (...) VALUES (...)', [/* ... */]);
-            $db->execute('UPDATE inventory SET stock = stock - 1 WHERE sku = ?', [$data->sku]);
+        return $this->transactions->transaction($this->db, function (MysqlTransaction $tx) use ($data) {
+            $tx->execute('INSERT INTO orders (...) VALUES (...)', [/* ... */]);
+            $tx->execute('UPDATE inventory SET stock = stock - 1 WHERE sku = ?', [$data->sku]);
 
             return ['status' => 'created'];
         });
