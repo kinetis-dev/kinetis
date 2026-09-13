@@ -36,6 +36,33 @@ final class ViewDirectoryTest extends TestCase
         new ViewDirectory(sys_get_temp_dir() . '/kinetis-views-does-not-exist');
     }
 
+    public function test_lists_nested_templates_in_stable_order_and_skips_other_extensions_and_links(): void
+    {
+        $root = $this->temporaryDirectory();
+        mkdir($root . '/nested');
+        file_put_contents($root . '/z.twig', 'z');
+        file_put_contents($root . '/nested/a.twig', 'a');
+        file_put_contents($root . '/ignored.php', 'ignored');
+        symlink($root . '/z.twig', $root . '/linked.twig');
+
+        try {
+            self::assertSame(
+                [
+                    'nested/a' => realpath($root . '/nested/a.twig'),
+                    'z' => realpath($root . '/z.twig'),
+                ],
+                (new ViewDirectory($root))->templates('twig'),
+            );
+        } finally {
+            unlink($root . '/linked.twig');
+            unlink($root . '/ignored.php');
+            unlink($root . '/nested/a.twig');
+            unlink($root . '/z.twig');
+            rmdir($root . '/nested');
+            rmdir($root);
+        }
+    }
+
     public function test_reports_a_missing_view_without_revealing_a_filesystem_path(): void
     {
         $root = $this->temporaryDirectory();

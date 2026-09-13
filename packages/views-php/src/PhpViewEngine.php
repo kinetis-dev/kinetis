@@ -52,6 +52,18 @@ final readonly class PhpViewEngine implements ViewEngineInterface
         }
     }
 
+    #[\Override]
+    public function warmCache(): int
+    {
+        return 0;
+    }
+
+    #[\Override]
+    public function clearCache(): int
+    {
+        return 0;
+    }
+
     /**
      * @param array<string, mixed> $data
      */

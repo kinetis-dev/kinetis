@@ -97,4 +97,12 @@ final class PhpViewEngineTest extends TestCase
         $this->expectException(ViewNotFoundException::class);
         (new Views(new PhpViewEngine($this->root)))->render('missing');
     }
+
+    public function test_cache_operations_are_successful_noops(): void
+    {
+        $engine = new PhpViewEngine($this->root);
+
+        self::assertSame(0, $engine->warmCache());
+        self::assertSame(0, $engine->clearCache());
+    }
 }

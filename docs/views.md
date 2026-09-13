@@ -58,6 +58,7 @@ Latte:
 
 ```php
 use Kinetis\Views\AssetUrl;
+use Kinetis\Views\ViewRuntime;
 use Kinetis\Views\Views;
 use Kinetis\ViewsLatte\LatteViewEngine;
 
@@ -65,9 +66,8 @@ $app->instance(
     Views::class,
     new Views(new LatteViewEngine(
         __DIR__ . '/resources/views',
+        ViewRuntime::fromConfig(__DIR__, $config),
         new AssetUrl('/'),
-        cacheDirectory: __DIR__ . '/var/cache/latte',
-        autoRefresh: false,
     )),
 );
 ```
@@ -76,6 +76,7 @@ Twig:
 
 ```php
 use Kinetis\Views\AssetUrl;
+use Kinetis\Views\ViewRuntime;
 use Kinetis\Views\Views;
 use Kinetis\ViewsTwig\TwigViewEngine;
 
@@ -83,14 +84,18 @@ $app->instance(
     Views::class,
     new Views(new TwigViewEngine(
         __DIR__ . '/resources/views',
+        ViewRuntime::fromConfig(__DIR__, $config),
         new AssetUrl('/'),
-        options: [
-            'cache' => __DIR__ . '/var/cache/twig',
-            'auto_reload' => false,
-        ],
     )),
 );
 ```
+
+`ViewRuntime::fromConfig()` follows Kinetis's `APP_ENV` rule. In development,
+Latte and Twig compile from source without writing a disk cache. In production
+(including an unset or unfamiliar `APP_ENV`), generated templates live beside
+the AOT artifact in `.kinetis-cache/views/latte` or
+`.kinetis-cache/views/twig`. The adapters own these directories; applications
+do not configure vendor-specific cache paths or freshness flags.
 
 This is worker-lifetime configuration: one immutable `Views` facade and one
 engine are shared safely, while every call supplies a fresh data array. Do not
@@ -178,23 +183,65 @@ The adapter does not guess the output context.
 For engine-specific filters or extensions, configure the adapter during
 bootstrap through `LatteViewEngine::engine()` or
 `TwigViewEngine::engine()`. Keep those choices out of controllers so changing
-the adapter does not change controller code.
+the adapter does not change controller code. Twig constructor options remain
+available for engine behavior such as `strict_variables`; `cache` and
+`auto_reload` are reserved for `ViewRuntime`.
+
+## Warm and clear the cache
+
+The common package contributes two commands for whichever adapter the
+application bound:
+
+```console
+php vendor/bin/kinetis views:warm
+php vendor/bin/kinetis views:clear
+```
+
+`views:warm` empties the selected adapter's cache, recursively scans the whole
+configured view root for `.latte` or `.twig` files, and compiles them in stable
+logical-name order. It does not follow symbolic links. Clearing first is
+intentional: with production freshness checks disabled, asking either vendor to
+load an existing compiled file could preserve a template from the previous
+deployment. A compile error fails the command instead of reporting a partial
+cache as ready.
+
+Pure PHP has no generated view cache, so both commands succeed with a zero
+count. In development, Latte and Twig warming is likewise a successful zero-
+work operation; `views:clear` still removes production artifacts left in the
+project cache directory.
+
+Both commands run the normal package and application bootstrap so they compile
+the exact configured engine, functions, extensions, and root that workers use.
+Run them with the application's complete deployment environment. Bootstrap
+registrations should remain lazy: binding a connection factory is appropriate,
+opening a database connection merely because bootstrap ran is not.
+
+In production, build both cache layers before starting or restarting workers:
+
+```console
+php vendor/bin/kinetis build
+php vendor/bin/kinetis views:warm
+```
+
+After first installing or updating `kinetis/views`, run `kinetis build` so the
+production AOT command registry includes the package-provided view commands.
 
 ## Local files and non-blocking I/O
 
 Template loading and compilation use local filesystem I/O in all three engines.
 That work is not an asynchronous network boundary and cannot be made
 Revolt-aware by the view facade. In production, deploy templates with the
-application, keep them on local storage, enable OPcache, and pre-create writable
-Latte/Twig cache directories.
+application, keep them on local storage, enable OPcache, and make
+`.kinetis-cache/` writable to the deploy command.
 
 In a persistent worker, Latte and Twig load a compiled template class once per
 process; neither engine performs a freshness check after that class is loaded,
-regardless of `autoRefresh`/`auto_reload`. A deployment must therefore restart
-workers. Under PHP-FPM and at a persistent worker's cold start, those flags do
-control source freshness checks. Disable them only when the deployment replaces
-the application and its compiled-template cache together; otherwise stale
-templates are possible.
+even when disk caching is disabled. Development therefore provides source
+loading, not in-process class replacement: a persistent-runtime development
+supervisor must restart workers when a template changes. A boot-per-request
+runtime such as ordinary PHP-FPM sees the new source on the next request. A
+production deployment must warm the new cache and restart workers; a CLI cache
+operation cannot unload classes from a separate serving process.
 
 Do not render templates from network filesystems or fetch templates during a
 request. Remote data belongs in non-blocking application services and should be

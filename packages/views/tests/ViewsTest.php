@@ -19,9 +19,23 @@ final class ViewsTest extends TestCase
             {
                 return $view->value . ':' . $data['name'];
             }
+
+            public function warmCache(): int
+            {
+                return 2;
+            }
+
+            public function clearCache(): int
+            {
+                return 3;
+            }
         };
 
-        self::assertSame('articles/index:Ada', (new Views($engine))->render('articles/index', ['name' => 'Ada']));
+        $views = new Views($engine);
+
+        self::assertSame('articles/index:Ada', $views->render('articles/index', ['name' => 'Ada']));
+        self::assertSame(2, $views->warmCache());
+        self::assertSame(3, $views->clearCache());
     }
 
     public function test_response_is_html_with_the_requested_status(): void
@@ -30,6 +44,16 @@ final class ViewsTest extends TestCase
             public function render(ViewName $view, array $data): string
             {
                 return '<h1>Hello</h1>';
+            }
+
+            public function warmCache(): int
+            {
+                return 0;
+            }
+
+            public function clearCache(): int
+            {
+                return 0;
             }
         };
 
@@ -68,6 +92,16 @@ final class ViewsTest extends TestCase
             public function render(ViewName $view, array $data): string
             {
                 return '';
+            }
+
+            public function warmCache(): int
+            {
+                return 0;
+            }
+
+            public function clearCache(): int
+            {
+                return 0;
             }
         });
 

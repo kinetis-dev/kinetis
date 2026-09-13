@@ -650,21 +650,31 @@ Four separate Composer packages make view rendering optional and keep template
 vendor dependencies out of core.
 
 - `kinetis/views` owns `Views`, `ViewEngineInterface`, logical `ViewName`
-  validation, `ViewDirectory` containment, the deterministic `AssetUrl`, and
-  the common `ViewNotFoundException`/`ViewRenderException` vocabulary.
+  validation, `ViewDirectory` containment and deterministic recursive template
+  discovery, the deterministic `AssetUrl`, and the common
+  `ViewNotFoundException`/`ViewRenderException` vocabulary. `ViewRuntime` maps
+  the application project root and `AppEnvironment` to isolated
+  `.kinetis-cache/views/<engine>` storage; `ViewCacheDirectory` creates and
+  empties only that derived directory without following links.
+  `Console\WarmCommand` / `ClearCommand` expose `views:warm` / `views:clear`
+  through this package's scan root and delegate to the bound engine.
   `Views::response()` returns core's UTF-8 `HtmlResponse`; `render()` returns
   the same complete body as a string. Data is supplied anew on every call and
   the `asset` key is reserved.
 - `kinetis/views-php` owns `PhpViewEngine`. It extracts one call's data into a
   private include scope, exposes `$asset`, captures output, and restores every
-  buffer opened above the caller's level when a template throws.
+  buffer opened above the caller's level when a template throws. Cache warm and
+  clear are successful zero-work operations.
 - `kinetis/views-latte` owns `LatteViewEngine`, appends `.latte`, registers the
   `asset()` function, and exposes the underlying Latte engine for bootstrap-time
-  extensions. Its constructor carries Latte's cache directory and refresh
-  controls.
-- `kinetis/views-twig` owns `TwigViewEngine`, a `FilesystemLoader` rooted at the
-  configured directory, the `asset()` function, Twig environment options, and
-  bootstrap-time access to that environment.
+  extensions. In production it clears and warms every canonical `.latte`
+  template through Latte's `warmupCache()` into
+  `.kinetis-cache/views/latte`; development writes no cache.
+- `kinetis/views-twig` owns `TwigViewEngine`, a `FilesystemLoader` whose path
+  and cache-key root are both the configured directory, the `asset()` function,
+  Twig environment options, and bootstrap-time access to that environment. In
+  production it clears and loads every logical `.twig` template into
+  `.kinetis-cache/views/twig`; development writes no cache.
 - The three adapters conflict pairwise in Composer, so an application selects
   exactly one. Each depends on `kinetis/views`; only the Latte/Twig adapters add
   their corresponding vendor engine. See {doc}`views` for wiring, escaping,

@@ -83,16 +83,21 @@ application declares. The full rule is in {doc}`appendix-packages`'s
 Environment configuration (`.env`, see {doc}`config`) is not part of this
 cache — changing it takes effect immediately, with no rebuild needed.
 
-The on-disk result is one file:
+The AOT discovery result is one file. Installed Latte or Twig view adapters
+also use their own generated directories under the same project cache root;
+they are separate cache layers and are never folded into `compiled.php`:
 
 ```{code-block} text
 .kinetis-cache/
-└── compiled.php    routes + global/openapi middleware + named middleware
-                    groups + HTTP binding plans + validation plans for
-                    DTOs reachable from HTTP routes + command definitions
-                    + event listeners grouped by event class + every
-                    installed package's own CacheableDiscoveryInterface
-                    data + the package bootstrap-class list
+├── compiled.php    routes + global/openapi middleware + named middleware
+│                   groups + HTTP binding plans + validation plans for
+│                   DTOs reachable from HTTP routes + command definitions
+│                   + event listeners grouped by event class + every
+│                   installed package's own CacheableDiscoveryInterface
+│                   data + the package bootstrap-class list
+└── views/          generated only by a compiled-template adapter
+    ├── latte/      present when kinetis/views-latte is selected
+    └── twig/       present when kinetis/views-twig is selected
 ```
 
 Plain PHP returning a literal array, so a boot `require`s it and has the
@@ -100,7 +105,7 @@ data with no decoding step, and OPcache's shared opcode cache — keyed by
 realpath, shared across every worker process on a host — skips
 re-parsing it from the second request on.
 
-One file rather than one per section, because a boot needs the same
+One AOT file rather than one per discovery section, because a boot needs the same
 compile pass throughout: an HTTP boot reconstructs routes, event
 listeners and plugin data, and the CLI reconstructs commands, event
 listeners and plugin data. Reading them from separate files makes
@@ -181,6 +186,13 @@ worker rejects and recompiles.
 Build it into the image or artifact you deploy, before any worker
 starts — see "Deploying a rebuilt artifact" below for why the shared
 path matters.
+
+If the application uses Latte or Twig, follow this with
+`php vendor/bin/kinetis views:warm`. That command runs the normal application
+bootstrap, clears only the selected adapter directory, recursively compiles the
+configured view root, and fails on a template compile error. It therefore needs
+the deployment's complete environment, unlike `kinetis build`. Pure PHP and
+development mode report zero work. See {doc}`views` for the complete contract.
 
 ### Lazy, on first request
 

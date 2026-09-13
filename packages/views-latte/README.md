@@ -29,14 +29,15 @@ pure PHP and Twig adapters so an application has one unambiguous view engine.
 ```php
 $app->instance(Views::class, new Views(new LatteViewEngine(
     __DIR__ . '/resources/views',
+    ViewRuntime::fromConfig(__DIR__, $config),
     new AssetUrl('/'),
-    cacheDirectory: __DIR__ . '/var/cache/latte',
-    autoRefresh: false,
 )));
 ```
 
-See the [views documentation](https://kinetis.dev/docs/views.html) for cache,
-extension, and persistent-worker guidance.
+Production templates compile to `.kinetis-cache/views/latte`; development does
+not write a disk cache. See the
+[views documentation](https://kinetis.dev/docs/views.html) for `views:warm`,
+`views:clear`, extension, and persistent-worker guidance.
 
 ## License
 

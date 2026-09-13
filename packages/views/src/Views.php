@@ -37,4 +37,14 @@ final readonly class Views
     {
         return HtmlResponse::create($this->render($view, $data), $status);
     }
+
+    public function warmCache(): int
+    {
+        return $this->engine->warmCache();
+    }
+
+    public function clearCache(): int
+    {
+        return $this->engine->clearCache();
+    }
 }

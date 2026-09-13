@@ -506,7 +506,9 @@
             "requires": [
                 "framework"
             ],
-            "kinetis": []
+            "kinetis": {
+                "scan": "Kinetis\\Views\\Console\\"
+            }
         },
         "views-php": {
             "name": "kinetis/views-php",

@@ -34,7 +34,8 @@ $app->instance(Views::class, new Views(
 
 Templates use ordinary PHP and receive an invokable `$asset` variable. See the
 [views documentation](https://kinetis.dev/docs/views.html) for the full
-contract and escaping guidance.
+contract and escaping guidance. Pure PHP has no generated template cache, so
+the common `views:warm` and `views:clear` commands are successful no-ops.
 
 ## License
 

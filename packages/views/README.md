@@ -31,8 +31,10 @@ name; an application chooses one of `kinetis/views-php`,
 return $this->views->response('articles/index', ['articles' => $articles]);
 ```
 
-See the [views documentation](https://kinetis.dev/docs/views.html) for setup,
-the `asset()` helper, escaping, and persistent-worker guidance.
+The package also provides engine-neutral `views:warm` and `views:clear`
+commands; the selected adapter owns the actual cache behavior. See the
+[views documentation](https://kinetis.dev/docs/views.html) for setup, the
+`asset()` helper, cache deployment, escaping, and persistent-worker guidance.
 
 ## License
 

@@ -1798,7 +1798,7 @@
             "dist": {
                 "type": "path",
                 "url": "../views",
-                "reference": "292498785b12d77f66efdfd25fae1db2f2112f2e"
+                "reference": "c5a0dfe8a74d910dfb0827a5391dc3319a569c88"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1812,7 +1812,9 @@
             },
             "type": "library",
             "extra": {
-                "kinetis": []
+                "kinetis": {
+                    "scan": "Kinetis\\Views\\Console\\"
+                }
             },
             "autoload": {
                 "psr-4": {

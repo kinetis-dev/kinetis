@@ -29,7 +29,9 @@
         }
     },
     "extra": {
-        "kinetis": {}
+        "kinetis": {
+            "scan": "Kinetis\\Views\\Console\\"
+        }
     },
     "repositories": [
         {
