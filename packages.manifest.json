@@ -17,7 +17,8 @@
             "vimeo/psalm": "^6.17"
         },
         "phpstanRules": [
-            "Kinetis\\Linting\\NoStaticPropertiesRule"
+            "Kinetis\\Linting\\NoStaticPropertiesRule",
+            "Kinetis\\Linting\\NoBlockingIoRule"
         ]
     },
     "packages": {
@@ -26,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.8.1",
+            "version": "1.9.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -532,7 +533,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.2.1",
+            "version": "1.2.2",
             "type": "project",
             "requires": [
                 "framework"

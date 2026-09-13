@@ -82,15 +82,8 @@ use function Kinetis\Async\concurrently;
 ```
 
 ```{warning}
-Wrapping a blocking call in a Fiber does not make it non-blocking: a
-blocking call has no point where it can hand control back to other work,
-so it blocks the whole worker just as hard, only less visibly. Kinetis's
-database clients (see {doc}`persistence`) are built on `ext-mysqli` and
-`ext-pgsql`, and under a persistent worker they issue statements through
-those extensions' asynchronous entry points, so a query waits on the
-event loop and suspends only its own Fiber. Under PHP-FPM, where a
-worker process handles one request at a time, the fallback is a blocking
-`PDO` connection.
+Wrapping a blocking call in a Fiber does not make it non-blocking — see
+{ref}`non-blocking-application-io`.
 ```
 
 ## `concurrently()` — running tasks side by side
@@ -200,6 +193,125 @@ loop: a `concurrently()` call can mix tasks built on any of them and
 still overlap every one — a MySQL query, a Postgres query, and a Redis
 command issued together complete in roughly the time the slowest one
 alone takes, not the sum of all three.
+
+(non-blocking-application-io)=
+## Keeping application I/O non-blocking
+
+Wrapping a blocking call in a Fiber or a `concurrently()` task does not
+make it non-blocking. A blocking call has no point where it can hand
+control back to the event loop, so it holds the worker, and every other
+Fiber and watcher on its loop, until it returns: the other tasks of a
+`concurrently()` call wait, and so does every deadline and timer the loop
+enforces meanwhile. Only calls that wait on the loop, such as `Socket`,
+`Timer`, and the clients above, let the rest make progress.
+
+### Flagging blocking calls with PHPStan
+
+`Kinetis\Linting\NoBlockingIoRule` is a PHPStan rule for application code.
+It ships under the framework's main autoload for the same reason
+`NoStaticPropertiesRule` does (see {doc}`container`) and needs nothing
+beyond PHPStan. `kinetis/skeleton`'s `phpstan.neon` registers both rules;
+an existing project adds it to its own:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+rules:
+    - Kinetis\Linting\NoBlockingIoRule
+```
+
+Every report carries the identifier `kinetis.blockingCall` and a message
+naming the replacement for its category:
+
+| Category | Reported | Use instead |
+|---|---|---|
+| Sleep | `sleep()`, `usleep()`, `time_nanosleep()`, `time_sleep_until()` | `Kinetis\Async\Timer::delay()` |
+| Sockets | `fsockopen()`, `pfsockopen()`, `stream_socket_client()` | `Kinetis\Async\Socket` or another Revolt-aware socket; {doc}`revolt-http-client` for HTTP |
+| curl waits | `curl_exec()`, `curl_multi_select()` | {doc}`revolt-http-client` |
+| Database connections | `new PDO`, `new mysqli`, `mysqli_connect()`, `pg_connect()`, `pg_pconnect()` | an injected `SqlLink`, `MysqlLink`, or `PostgresLink` — see {doc}`persistence` |
+| Child processes | `exec()`, `shell_exec()`, `system()`, `passthru()`, `proc_open()`, `popen()` | a separate short-lived or external process, or an audited short-lived console command — never a persistent worker, `queue:work` included |
+| HTTP transport selection | `find()` on `Http\Discovery\Psr18ClientDiscovery`, `HttpClientDiscovery`, and `HttpAsyncClientDiscovery`; `create()` and `createForBaseUri()` on `Symfony\Component\HttpClient\HttpClient`; `new Http\Discovery\Psr18Client`, `new Symfony\Component\HttpClient\HttplugClient`, and `new Symfony\Component\HttpClient\Psr18Client` with the client argument absent or a literal `null`; `new GuzzleHttp\Client` | an explicitly injected Revolt-backed client, below |
+
+`curl_multi_exec()` is not reported: it advances transfers without
+waiting, and `curl_multi_select()` is the wait.
+
+Names resolve the way PHP resolves them. An imported or aliased function
+or class is reported under its real name, and an unqualified `sleep()`
+inside a namespace that declares its own `sleep()` calls that function and
+is not reported.
+
+### Injecting the HTTP transport
+
+`php-http/discovery` returns the first supported client it finds
+installed — Guzzle, a curl or socket adapter, Symfony's. Symfony's
+`HttpClient::create()` prefers `CurlHttpClient` over `AmpHttpClient`
+when ext-curl supports HTTP/2, even with `amphp/http-client` installed.
+Guzzle's default handler is curl, or PHP streams without it. None of
+these is a Revolt-backed transport by guarantee, and which one a
+deployment gets can change with an unrelated `composer require` or PHP
+extension.
+
+For calls the application makes itself, inject
+`Kinetis\RevoltHttpClient\Http` (see {doc}`revolt-http-client`). For a
+library that takes a PSR-18 client, construct one around the
+Revolt-backed transport and bind it:
+
+```{code-block} php
+:caption: bootstrap.php
+
+use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
+use Psr\Http\Client\ClientInterface;
+use Symfony\Component\HttpClient\Psr18Client;
+
+$app->instance(ClientInterface::class, new Psr18Client(AmpHttpClientFactory::create()));
+```
+
+A `Psr18Client` from either package, or Symfony's `HttplugClient`, given
+a known non-null transport like the one above uses it and is not reported.
+
+### Audited exceptions
+
+Code that never runs inside a persistent worker — an audited short-lived
+console command, a build script — can block without stalling other work.
+Exempt it with PHPStan's standard ignores, by identifier and path, with
+the reason beside it:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+parameters:
+    ignoreErrors:
+        # A short-lived CLI command; never runs inside a persistent worker.
+        -
+            identifier: kinetis.blockingCall
+            path: src/Console/ImportCommand.php
+```
+
+For a single line, put
+`/** @phpstan-ignore-next-line kinetis.blockingCall */` on the line before
+it instead.
+
+### What the rule does not see
+
+- **Dynamic calls.** A function or class named by an expression —
+  `$function()`, `new $class()`, `call_user_func('sleep', 1)` — is not
+  reported.
+- **Nullable client arguments.** The rule treats the client argument of
+  these adapters as intentional injection unless it is a literal `null`. An
+  expression that evaluates to `null` at runtime still makes the client
+  pick its own transport, so guard a nullable transport before passing it.
+- **Filesystem and DNS.** `file_get_contents()` and `fopen()` on a local
+  path or a URL, `gethostbyname()`, and the name lookup inside connecting
+  to a hostname all block, and none of them is reported: there is no
+  universal non-blocking replacement for either. {doc}`storage` serves
+  local files through a Fiber-suspending adapter.
+- **Dependencies.** PHPStan analyses the project's own `paths`, so a
+  blocking call inside a vendor package is not reported.
+- **CPU-bound work.** A long computation holds the loop exactly as a
+  blocking call does.
+
+A clean analysis is therefore not proof that a path keeps the loop
+responsive. {ref}`loop-liveness` observes that directly in a test.
 
 ## See also
 

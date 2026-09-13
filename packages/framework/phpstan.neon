@@ -39,9 +39,28 @@ parameters:
         -
             identifier: kinetis.noStaticProperties
             path: src/Instrumentation/Telemetry.php
+        # Socket::connect() opens its stream with STREAM_CLIENT_ASYNC_CONNECT
+        # and a zero timeout, makes it non-blocking, and waits for the
+        # connect and every read and write on Revolt watchers: it is the
+        # suspending socket the blocking-call rule points application code
+        # toward.
+        -
+            identifier: kinetis.blockingCall
+            path: src/Async/Socket.php
+        # ResponseSpec is conformance-suite test data. Its streamed body
+        # pauses between chunks so the suite can time each chunk's arrival
+        # on the wire, inside a fixture server answering that test request;
+        # it never runs on an application's request path.
+        -
+            identifier: kinetis.blockingCall
+            path: src/Testing/Runtime/ResponseSpec.php
 
 services:
     -
         class: Kinetis\Linting\NoStaticPropertiesRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: Kinetis\Linting\NoBlockingIoRule
         tags:
             - phpstan.rules.rule
