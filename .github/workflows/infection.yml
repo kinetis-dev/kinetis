@@ -5,11 +5,15 @@ on:
     branches: [main]
     paths:
       - 'packages/**'
+      - '.github/workflows/integration.yml'
       - '.github/workflows/infection.yml'
+      - '.github/workflows/sonarqube.yml'
   pull_request:
     paths:
       - 'packages/**'
+      - '.github/workflows/integration.yml'
       - '.github/workflows/infection.yml'
+      - '.github/workflows/sonarqube.yml'
 
 # One run per branch at a time: a superseded PR push cancels the older
 # run outright; on main nothing is cancelled, but stacked pushes queue
