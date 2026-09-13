@@ -67,7 +67,10 @@ user input.
 
 `new Query($link)` takes a connection or an open transaction. The link's
 type picks the SQL spelling: a `MysqlLink` compiles for MySQL and
-MariaDB, a `PostgresLink` for PostgreSQL.
+MariaDB, a `PostgresLink` for PostgreSQL. A variable typed
+`SqlTransaction` is accepted because every built-in transaction also
+carries its link's dialect marker; a `SqlTransaction` carrying neither
+marker throws `QueryBuilderException` instead of guessing a dialect.
 
 ```{code-block} php
 new Query($db);  // the registered connection, see persistence
