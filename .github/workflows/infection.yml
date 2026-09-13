@@ -115,7 +115,10 @@ jobs:
           # the 15 the package's earlier four-test surface justified.
           - { name: revolt-http-client, dir: packages/revolt-http-client, minMsi: 75, minCoveredMsi: 75 }
           - { name: aws-sigv4, dir: packages/aws-sigv4, minMsi: 90, minCoveredMsi: 90 }
-          - { name: skeleton, dir: packages/skeleton, minMsi: 90, minCoveredMsi: 90 }
+          # PHPUnit 13 does not mark this package's sole mutable line as
+          # covered in Infection's XML report, leaving no mutant to score.
+          # Keep the 90% gate whenever a covered mutant exists.
+          - { name: skeleton, dir: packages/skeleton, minMsi: 90, minCoveredMsi: 90, infectionFlags: "--ignore-msi-with-no-mutations" }
           - { name: storage, dir: packages/storage, minMsi: 90, minCoveredMsi: 90 }
           - { name: storage-s3, dir: packages/storage-s3, minMsi: 15, minCoveredMsi: 15 }
     steps:
@@ -150,19 +153,20 @@ jobs:
 
       - name: Infection (mutation testing)
         # A pull request skips a package whose own src/ is unchanged
-        # relative to the base branch, and mutates every package it did
-        # change in full. The thresholds below are measured against a
-        # whole package's mutant set and say nothing about a subset
-        # selected from a diff, where a handful of mutants decides the
-        # score. The two-dot diff against the base tip is exact here
-        # because the PR checkout is the merge commit of the PR onto
-        # that tip. Every push to main runs the same full suite.
+        # relative to the base branch unless this workflow changed.
+        # Every selected package is mutated in full. The thresholds below
+        # are measured against a whole package's mutant set and say
+        # nothing about a subset selected from a diff, where a handful
+        # of mutants decides the score. The two-dot diff against the
+        # base tip is exact here because the PR checkout is the merge
+        # commit of the PR onto that tip. Every push to main runs the
+        # same full suite.
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           if [ -n "$BASE_REF" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_REF"
-            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- '${{ matrix.package.dir }}/src' | grep -q .; then
+            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- '${{ matrix.package.dir }}/src' '.github/workflows/infection.yml' | grep -q .; then
               echo "No changed source files under ${{ matrix.package.dir }}/src — skipping this package."
               exit 0
             fi
@@ -195,8 +199,19 @@ jobs:
             if [ -n '${{ matrix.package.needsSockets }}' ]; then
               apk add --no-cache \$PHPIZE_DEPS linux-headers >/dev/null && docker-php-ext-install sockets >/dev/null
             fi
+            # Infection otherwise injects random ordering into its initial
+            # PHPUnit run. Keep the package's explicit choice when present;
+            # default order also avoids Infection 0.35.0 combining disabled
+            # run history with the defects order that PHPUnit 13.3 rejects.
+            if ! grep -q 'executionOrder=' phpunit.xml; then
+              sed -i 's/<phpunit /<phpunit executionOrder=\"default\" /' phpunit.xml
+            fi
+            # Some tests intentionally exercise logging failures. PHPUnit 13
+            # treats that expected error_log output as a defect when Infection
+            # enables stopOnDefect, so silence only the initial coverage child;
+            # assertions and mutant executions keep their normal behavior.
             curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar
             chmod +x /usr/local/bin/pie.phar
             php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
-            php -d memory_limit=512M vendor/bin/infection --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4
+            php -d memory_limit=512M vendor/bin/infection --initial-tests-php-options='-d error_log=/dev/null' --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 ${{ matrix.package.infectionFlags }}
           "
