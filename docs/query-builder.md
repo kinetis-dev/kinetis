@@ -704,18 +704,20 @@ whole-table or joined mutation as raw SQL.
 
 ## Transactions and row locks
 
-Pass the transaction to `Query` to run statements inside it. The
-callback receives the link's own transaction type — a
-`MysqlTransaction` for a `MysqlLink` — which `Query` accepts as it is
-(see {doc}`persistence`'s "Transactions"):
+Pass the transaction to `Query` to run statements inside it. Type the
+callback against the generic `SqlTransaction` for code like this, which
+stays on the shared SQL/query-builder surface: `Query` detects the
+dialect from the concrete transaction object it receives (a
+`MysqlTransaction` for a `MysqlLink`), not from the callback's declared
+parameter type (see {doc}`persistence`'s "Transactions"):
 
 ```{code-block} php
-use Kinetis\Persistence\Contract\MysqlTransaction;
+use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\Persistence\TransactionGuard;
 use Kinetis\QueryBuilder\LockWait;
 
 // $transactions is the injected TransactionGuard, $db the injected MysqlLink.
-$transactions->transaction($db, function (MysqlTransaction $tx) use ($accountId, $amount): void {
+$transactions->transaction($db, function (SqlTransaction $tx) use ($accountId, $amount): void {
     $balance = new Query($tx)
         ->table('accounts')
         ->where('id', '=', $accountId)
@@ -821,7 +823,7 @@ Writes return counts and ids, not rows. When the caller needs the
 stored row, read it in the same transaction:
 
 ```{code-block} php
-$article = $transactions->transaction($db, function (MysqlTransaction $tx) use ($create): ArticleRow {
+$article = $transactions->transaction($db, function (SqlTransaction $tx) use ($create): ArticleRow {
     $id = new Query($tx)->table('articles')->insertGetId(RowValues::fromObject($create));
 
     $row = new Query($tx)->table('articles')->where('id', '=', $id)->first(ArticleRow::class);
@@ -868,13 +870,13 @@ injection.
 ## Repository cookbook
 
 One repository combining the pieces above: an injected connection and
-`TransactionGuard`, a transaction callback typed for the dialect, a
-unique-key conflict handled without a race, a relationship flag, and a
-walk over a large table.
+`TransactionGuard`, a transaction callback typed against the shared
+`SqlTransaction`, a unique-key conflict handled without a race, a
+relationship flag, and a walk over a large table.
 
 ```{code-block} php
 use Kinetis\Persistence\Contract\MysqlLink;
-use Kinetis\Persistence\Contract\MysqlTransaction;
+use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\Persistence\Exception\QueryException;
 use Kinetis\Persistence\TransactionGuard;
 use Kinetis\QueryBuilder\Query;
@@ -906,7 +908,7 @@ final readonly class UserRepository
         try {
             return $this->transactions->transaction(
                 $this->db,
-                static function (MysqlTransaction $tx) use ($username, $email): int {
+                static function (SqlTransaction $tx) use ($username, $email): int {
                     $id = (int) new Query($tx)->table('users')->insertGetId(['username' => $username, 'email' => $email]);
                     new Query($tx)->table('user_settings')->insert(['user_id' => $id, 'newsletter' => false]);
 
@@ -954,8 +956,9 @@ final readonly class UserRepository
 
 - **Wiring.** `MysqlLink` is the connection {doc}`persistence` binds
   from `DB_CONNECTION`, and `TransactionGuard` is request-scoped, so
-  every request gets its own. On PostgreSQL, inject `PostgresLink` and
-  type the callback `PostgresTransaction`.
+  every request gets its own. On PostgreSQL, inject `PostgresLink`
+  instead; `register()`'s callback stays typed `SqlTransaction` either
+  way (see "Transactions and row locks" above).
 - **Conflicts.** `register()` does not read for an existing username
   first: another request can insert the same one between that read and
   this write. The unique keys decide, `isUniqueViolation()` recognizes
