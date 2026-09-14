@@ -9,6 +9,7 @@ use Kinetis\Orm\Exception\ClosedEntityManagerException;
 use Kinetis\Orm\Exception\CrossFiberAccessException;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
+use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Exception\RollbackFailedException;
 use Kinetis\Orm\Exception\UnknownFlushOutcomeException;
 use Kinetis\Persistence\Contract\MysqlLink;
@@ -42,10 +43,10 @@ use WeakMap;
  *
  * @phpstan-type Values array<string, null|bool|int|float|string>
  * @phpstan-type Insert array{entity: object, plan: EntityPlan<object>, values: Values}
- * @phpstan-type Write array{entity: object, plan: EntityPlan<object>, id: int|string, values: Values|null, changes: Values}
+ * @phpstan-type Write array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, values: Values|null, changes: Values}
  * @psalm-type Values = array<string, null|bool|int|float|string>
  * @psalm-type Insert = array{entity: object, plan: EntityPlan<object>, values: Values}
- * @psalm-type Write = array{entity: object, plan: EntityPlan<object>, id: int|string, values: Values|null, changes: Values}
+ * @psalm-type Write = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, values: Values|null, changes: Values}
  */
 final class EntityManager
 {
@@ -211,6 +212,7 @@ final class EntityManager
      *
      * @throws InvalidEntityStateException
      * @throws MappingException for a property value its type does not admit
+     * @throws OptimisticLockException
      * @throws RollbackFailedException
      * @throws UnknownFlushOutcomeException
      */
@@ -391,8 +393,15 @@ final class EntityManager
                     throw InvalidEntityStateException::identifierChanged($plan->class);
                 }
 
+                /** @var int|null $version a version property is typed int */
+                $version = $plan->version === null ? null : $snapshot[$plan->version];
+
+                if ($plan->version !== null && $values[$plan->version] !== $version) {
+                    throw InvalidEntityStateException::versionChanged($plan->class);
+                }
+
                 if (isset($this->removals[$entity])) {
-                    $writes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'values' => null, 'changes' => []];
+                    $writes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'version' => $version, 'values' => null, 'changes' => []];
 
                     continue;
                 }
@@ -403,9 +412,20 @@ final class EntityManager
                     ARRAY_FILTER_USE_BOTH,
                 );
 
-                if ($changes !== []) {
-                    $writes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'values' => $values, 'changes' => $changes];
+                if ($changes === []) {
+                    continue;
                 }
+
+                // The version is unchanged, so it is not among $changes: the
+                // UPDATE sets the next one, which the snapshot takes on COMMIT.
+                if ($plan->version !== null) {
+                    /** @var int $version set above for a versioned entity */
+                    $changes[$plan->version] = $values[$plan->version] = $version !== PHP_INT_MAX
+                        ? $version + 1
+                        : throw InvalidEntityStateException::versionExhausted($plan->class);
+                }
+
+                $writes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'version' => $version, 'values' => $values, 'changes' => $changes];
             }
         }
 
@@ -420,6 +440,7 @@ final class EntityManager
     /**
      * @param list<Insert> $inserts
      * @param list<Write> $writes
+     * @throws OptimisticLockException
      * @throws RollbackFailedException
      * @throws UnknownFlushOutcomeException
      */
@@ -472,6 +493,7 @@ final class EntityManager
      * @param list<Insert> $inserts
      * @param list<Write> $writes
      * @return array<int, int>
+     * @throws OptimisticLockException
      */
     private function write(SqlTransaction $transaction, array $inserts, array $writes): array
     {
@@ -494,18 +516,29 @@ final class EntityManager
             $generated[$i] = $plan->generatedIdentifier($key);
         }
 
-        foreach ($writes as ['plan' => $plan, 'id' => $id, 'values' => $values, 'changes' => $changes]) {
+        foreach ($writes as ['plan' => $plan, 'id' => $id, 'version' => $version, 'values' => $values, 'changes' => $changes]) {
             $statement = $values === null ? 'DELETE' : 'UPDATE';
             $row = new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id);
+
+            if ($plan->version !== null) {
+                $row->where($plan->column($plan->version), '=', $version);
+            }
+
             $affected = $values === null ? $row->delete() : $row->update($plan->row($changes));
             // The MySQL family reports changed rows, not matched ones, so an
-            // UPDATE writing the values its row already holds affects none.
-            $exists = $affected === 0 && $values !== null
+            // UPDATE writing the values its row already holds affects none. A
+            // versioned UPDATE that matches always changes its version, so
+            // none means the row is stale.
+            $exists = $affected === 0 && $values !== null && $plan->version === null
                 && new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id)->exists();
             $this->assertOpen();
 
             if ($affected > 1) {
                 throw InvalidEntityStateException::ambiguousRow($plan->class, $statement, $affected);
+            }
+
+            if ($affected === 0 && $plan->version !== null) {
+                throw OptimisticLockException::stale($plan->class, $statement);
             }
 
             if ($affected === 0 && !$exists) {
@@ -518,7 +551,9 @@ final class EntityManager
 
     /**
      * Snapshots every written entity with the values the flush sent, not
-     * whatever its properties hold by now.
+     * whatever its properties hold by now, and writes each inserted or
+     * updated entity's version: the flush owns it, so a change made
+     * meanwhile is overwritten.
      *
      * @param list<Insert> $inserts
      * @param list<Write> $writes
@@ -528,9 +563,15 @@ final class EntityManager
     {
         foreach ($inserts as $i => ['entity' => $entity, 'plan' => $plan, 'values' => $values]) {
             if ($plan->generated) {
-                $plan->assignIdentifier($entity, $generated[$i]);
+                $plan->assign($entity, $plan->id, $generated[$i]);
                 $values[$plan->id] = $generated[$i];
                 $this->identities[$plan->class][$generated[$i]] = $entity;
+            }
+
+            if ($plan->version !== null) {
+                /** @var int $version a version property is typed int */
+                $version = $values[$plan->version];
+                $plan->assign($entity, $plan->version, $version);
             }
 
             unset($this->inserts[spl_object_id($entity)]);
@@ -540,9 +581,17 @@ final class EntityManager
         foreach ($writes as ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'values' => $values]) {
             if ($values === null) {
                 unset($this->identities[$plan->class][$id], $this->snapshots[$entity], $this->removals[$entity]);
-            } else {
-                $this->snapshots[$entity] = $values;
+
+                continue;
             }
+
+            if ($plan->version !== null) {
+                /** @var int $next plan() set it */
+                $next = $values[$plan->version];
+                $plan->assign($entity, $plan->version, $next);
+            }
+
+            $this->snapshots[$entity] = $values;
         }
     }
 

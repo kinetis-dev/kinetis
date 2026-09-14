@@ -10,8 +10,8 @@ composer require kinetis/orm
 `kinetis/orm` depends on `kinetis/query-builder` and
 `kinetis/persistence`, never on `kinetis/framework`. Its contract — the
 mapping rules, identifiers, the admitted row values, the identity map,
-the repository and query API, writing and flushing, and what it does not
-do — is the
+the repository and query API, writing and flushing, optimistic locking,
+and what it does not do — is the
 [package README](https://github.com/kinetis-dev/orm#readme). This page
 covers setting it up.
 ````
@@ -20,7 +20,8 @@ A data mapper over {doc}`query-builder`: classes marked `#[Entity]` load
 through typed repositories and entity queries without running their
 constructors, and each unit of work holds one object per row, tracks
 changes to it, and writes new, changed and removed entities in one
-transaction on `flush()`. It has no relationships or optimistic locking.
+transaction on `flush()`. Updates and deletes of an entity carrying
+`#[Version]` are optimistically locked. It has no relationships.
 
 ## In a Kinetis application
 
@@ -74,6 +75,11 @@ An entity the mapper refuses fails `kinetis build`, or a development boot,
 with its `MappingException`. A cached section that no longer matches the
 entity classes, or that was compiled before `kinetis/orm` was installed
 or removed, is stale: the boot compiles fresh, as for any other section.
+
+An application entity opts into optimistic locking with `#[Version]`
+under the package README's "Optimistic locking" contract; the bridge
+adds nothing to it. The attribute is part of the compiled metadata, so
+run `kinetis build` again after adding, removing or moving it.
 
 ### Lifecycle
 

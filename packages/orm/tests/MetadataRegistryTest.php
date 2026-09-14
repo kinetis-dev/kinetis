@@ -12,6 +12,8 @@ use Kinetis\Orm\Tests\Fixtures\Article;
 use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Document;
+use Kinetis\Orm\Tests\Fixtures\Edition;
+use Kinetis\Orm\Tests\Fixtures\Invoice;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\Ticket;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -31,6 +33,7 @@ final class MetadataRegistryTest extends TestCase
                 'table' => 'article_category',
                 'id' => 'id',
                 'generated' => false,
+                'version' => null,
                 'properties' => [
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null],
                     ['name' => 'displayName', 'column' => 'display_name', 'type' => 'string', 'nullable' => false, 'enum' => null],
@@ -48,6 +51,7 @@ final class MetadataRegistryTest extends TestCase
                 'table' => 'reporting.accounts',
                 'id' => 'uuid',
                 'generated' => false,
+                'version' => null,
                 'properties' => [
                     ['name' => 'uuid', 'column' => 'account_uuid', 'type' => 'string', 'nullable' => false, 'enum' => null],
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null],
@@ -66,6 +70,7 @@ final class MetadataRegistryTest extends TestCase
                 'table' => 'tickets',
                 'id' => 'id',
                 'generated' => true,
+                'version' => null,
                 'properties' => [
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null],
                     ['name' => 'subject', 'column' => 'subject', 'type' => 'string', 'nullable' => false, 'enum' => null],
@@ -73,6 +78,37 @@ final class MetadataRegistryTest extends TestCase
             ]]],
             MetadataRegistry::fromClasses([Ticket::class])->toArray(),
         );
+    }
+
+    public function test_an_explicit_version_is_recorded_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Invoice::class])->toArray();
+
+        self::assertSame(
+            ['entities' => [[
+                'class' => Invoice::class,
+                'table' => 'invoices',
+                'id' => 'id',
+                'generated' => false,
+                'version' => 'version',
+                'properties' => [
+                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null],
+                    ['name' => 'status', 'column' => 'status', 'type' => 'string', 'nullable' => false, 'enum' => null],
+                    ['name' => 'version', 'column' => 'row_version', 'type' => 'int', 'nullable' => false, 'enum' => null],
+                    ['name' => 'total', 'column' => 'total', 'type' => 'int', 'nullable' => false, 'enum' => null],
+                ],
+            ]]],
+            $data,
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_a_property_named_version_without_the_attribute_is_not_a_version(): void
+    {
+        $entity = MetadataRegistry::fromClasses([Edition::class])->toArray()['entities'][0];
+
+        self::assertNull($entity['version']);
+        self::assertSame(['id', 'version'], array_column($entity['properties'], 'name'));
     }
 
     public function test_every_visibility_type_and_trait_property_is_mapped(): void
@@ -142,6 +178,11 @@ final class MetadataRegistryTest extends TestCase
         yield 'an enum identifier' => [self::INVALID . 'EnumIdentifier', 'the identifier property "id" must be typed int or string'];
         yield 'a generated string identifier' => [self::INVALID . 'GeneratedStringIdentifier', 'the generated identifier property "id" must be typed ?int'];
         yield 'a generated non-nullable identifier' => [self::INVALID . 'GeneratedNonNullableIdentifier', 'the generated identifier property "id" must be typed ?int'];
+        yield 'a nullable version' => [self::INVALID . 'NullableVersion', 'NullableVersion has no usable version: the version property "version" must be typed int'];
+        yield 'a string version' => [self::INVALID . 'StringVersion', 'StringVersion has no usable version: the version property "version" must be typed int'];
+        yield 'an int-backed enum version' => [self::INVALID . 'EnumVersion', 'EnumVersion has no usable version: the version property "version" must be typed int'];
+        yield 'two versions' => [self::INVALID . 'TwoVersions', 'TwoVersions has no usable version: more than one property carries #[Version]: first, second'];
+        yield 'a version that is the identifier' => [self::INVALID . 'IdentifierVersion', 'IdentifierVersion has no usable version: the identifier property "id" cannot also be the version'];
         yield 'a table name with a dash' => [self::INVALID . 'InvalidTable', 'maps to the table "article-list"'];
         yield 'an empty table name' => [self::INVALID . 'EmptyTable', 'maps to the table ""'];
         yield 'a table name ending in a dot' => [self::INVALID . 'TrailingDotTable', 'maps to the table "reporting."'];
@@ -187,6 +228,13 @@ final class MetadataRegistryTest extends TestCase
         $generated['generated'] = true;
         $retabled = $category;
         $retabled['table'] = 'categories';
+        $unversioned = $category;
+        unset($unversioned['version']);
+        $versioned = $category;
+        $versioned['version'] = 'displayName';
+        $invoice = MetadataRegistry::fromClasses([Invoice::class])->toArray()['entities'][0];
+        $dropped = $invoice;
+        $dropped['version'] = null;
 
         yield 'an empty array' => [[], 'must hold exactly one "entities" list'];
         yield 'a second top-level field' => [[...$valid, 'version' => 1], 'must hold exactly one "entities" list'];
@@ -203,6 +251,9 @@ final class MetadataRegistryTest extends TestCase
         yield 'a changed identifier' => [['entities' => [$reidentified, $category]], Account::class . ' does not match'];
         yield 'a changed identifier generation' => [['entities' => [$account, $generated]], ArticleCategory::class . ' does not match'];
         yield 'a changed table' => [['entities' => [$account, $retabled]], ArticleCategory::class . ' does not match'];
+        yield 'an entry without a version field' => [['entities' => [$account, $unversioned]], ArticleCategory::class . ' does not match'];
+        yield 'a version the source does not declare' => [['entities' => [$account, $versioned]], ArticleCategory::class . ' does not match'];
+        yield 'a version the source declares left out' => [['entities' => [$dropped]], Invoice::class . ' does not match'];
         yield 'entries out of order' => [['entities' => [$category, $account]], ArticleCategory::class . ' does not match'];
     }
 

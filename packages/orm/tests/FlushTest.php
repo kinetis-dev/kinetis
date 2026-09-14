@@ -10,6 +10,7 @@ use Kinetis\Orm\EntityManager;
 use Kinetis\Orm\Exception\ClosedEntityManagerException;
 use Kinetis\Orm\Exception\CrossFiberAccessException;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
+use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Exception\RollbackFailedException;
 use Kinetis\Orm\Exception\UnknownFlushOutcomeException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
@@ -18,6 +19,8 @@ use Kinetis\Orm\Tests\Fixtures\Article;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Counted;
 use Kinetis\Orm\Tests\Fixtures\Document;
+use Kinetis\Orm\Tests\Fixtures\Edition;
+use Kinetis\Orm\Tests\Fixtures\Invoice;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\SpyMysqlLink;
 use Kinetis\Orm\Tests\Fixtures\SpyMysqlTransaction;
@@ -56,7 +59,7 @@ final class FlushTest extends TestCase
         $this->link->transaction = $this->transaction = new SpyMysqlTransaction();
         $this->factory = OrmFactory::create(
             $this->link,
-            MetadataRegistry::fromClasses([Article::class, Counted::class, Document::class, StoredArticle::class, Ticket::class]),
+            MetadataRegistry::fromClasses([Article::class, Counted::class, Document::class, Edition::class, Invoice::class, StoredArticle::class, Ticket::class]),
         );
     }
 
@@ -360,6 +363,264 @@ final class FlushTest extends TestCase
         );
     }
 
+    public function test_an_insert_writes_the_version_the_entity_holds_and_does_not_advance_it(): void
+    {
+        $manager = $this->factory->open();
+        $invoice = new Invoice();
+        [$invoice->id, $invoice->status, $invoice->version, $invoice->total] = [1, 'open', 7, 100];
+        $manager->persist($invoice);
+        $this->transaction->queue(self::affected(1));
+
+        $manager->flush();
+        $manager->flush();
+
+        self::assertSame(
+            [['sql' => 'INSERT INTO `invoices` (`id`, `status`, `row_version`, `total`) VALUES (?, ?, ?, ?)', 'params' => [1, 'open', 7, 100]]],
+            $this->transaction->calls,
+        );
+        self::assertSame(7, $invoice->version);
+        self::assertSame(1, $this->link->begins, 'a clean versioned entity writes nothing');
+
+        $this->link->transaction = $next = new SpyMysqlTransaction();
+        $next->queue(self::affected(1));
+        $invoice->status = 'paid';
+        $manager->flush();
+
+        self::assertSame(
+            [['sql' => 'UPDATE `invoices` SET `status` = ?, `row_version` = ? WHERE `id` = ? AND `row_version` = ?', 'params' => ['paid', 8, 1, 7]]],
+            $next->calls,
+        );
+    }
+
+    public function test_a_version_changed_during_the_commit_of_its_insert_is_restored(): void
+    {
+        $manager = $this->factory->open();
+        $invoice = new Invoice();
+        [$invoice->id, $invoice->status, $invoice->version, $invoice->total] = [1, 'open', 7, 100];
+        $manager->persist($invoice);
+        $this->transaction->queue(self::affected(1));
+        $this->transaction->onCommit = static function () use ($invoice): void {
+            $invoice->version = 99;
+        };
+
+        $manager->flush();
+
+        self::assertSame(7, $invoice->version, 'the version the INSERT sent');
+
+        $this->link->transaction = $next = new SpyMysqlTransaction();
+        $next->queue(self::affected(1));
+        $invoice->status = 'paid';
+        $manager->flush();
+
+        self::assertSame(
+            [['sql' => 'UPDATE `invoices` SET `status` = ?, `row_version` = ? WHERE `id` = ? AND `row_version` = ?', 'params' => ['paid', 8, 1, 7]]],
+            $next->calls,
+        );
+        self::assertSame(8, $invoice->version);
+    }
+
+    public function test_a_versioned_update_sets_the_next_version_where_the_loaded_one_still_holds(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, '3')]);
+        $invoice = $manager->repository(Invoice::class)->findOrFail(1);
+        $invoice->status = 'paid';
+        $this->transaction->queue(self::affected(1));
+        $atCommit = null;
+        $this->transaction->onCommit = static function () use ($invoice, &$atCommit): void {
+            $atCommit = $invoice->version;
+        };
+
+        $manager->flush();
+
+        self::assertSame(
+            [['sql' => 'UPDATE `invoices` SET `status` = ?, `row_version` = ? WHERE `id` = ? AND `row_version` = ?', 'params' => ['paid', 4, 1, 3]]],
+            $this->transaction->calls,
+        );
+        self::assertSame(3, $atCommit);
+        self::assertSame(4, $invoice->version);
+
+        $this->link->transaction = $next = new SpyMysqlTransaction();
+        $next->queue(self::affected(1));
+        $invoice->total = 120;
+        $manager->flush();
+
+        self::assertSame(['UPDATE `invoices` SET `total` = 120, `row_version` = 5 WHERE `id` = 1 AND `row_version` = 4'], $next->statements());
+    }
+
+    public function test_a_versioned_delete_matches_the_loaded_version(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, 3)]);
+        $invoice = $manager->repository(Invoice::class)->findOrFail(1);
+        $manager->remove($invoice);
+        $this->transaction->queue(self::affected(1));
+
+        $manager->flush();
+
+        self::assertSame(['DELETE FROM `invoices` WHERE `id` = 1 AND `row_version` = 3'], $this->transaction->statements());
+        self::assertFalse($manager->contains($invoice));
+    }
+
+    public function test_a_property_named_version_without_the_attribute_is_written_like_any_other(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([['id' => 1, 'version' => 1]]);
+        $edition = $manager->repository(Edition::class)->findOrFail(1);
+        $edition->version = 5;
+        $this->transaction->queue(self::affected(1));
+
+        $manager->flush();
+
+        self::assertSame(['UPDATE `editions` SET `version` = 5 WHERE `id` = 1'], $this->transaction->statements());
+        self::assertSame(5, $edition->version);
+    }
+
+    /**
+     * @return iterable<string, array{bool, 'UPDATE'|'DELETE'}>
+     */
+    public static function staleWrites(): iterable
+    {
+        yield 'a stale update' => [false, 'UPDATE'];
+        yield 'a stale delete' => [true, 'DELETE'];
+    }
+
+    /**
+     * @param 'UPDATE'|'DELETE' $statement
+     */
+    #[DataProvider('staleWrites')]
+    public function test_a_stale_write_rolls_back_and_keeps_the_whole_flush_pending_until_it_is_cleared(bool $remove, string $statement): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, 3), self::invoiceRow(2, 3)]);
+        [$first, $second] = $manager->repository(Invoice::class)->query()->get();
+        $remove ? $manager->remove($first) : $first->status = 'paid';
+        $second->status = 'void';
+        $ticket = new Ticket('Printer on fire');
+        $manager->persist($ticket);
+        $this->transaction->queue(self::insertId(7), self::affected(0));
+
+        self::assertConflict($manager, $statement);
+
+        self::assertCount(2, $this->transaction->calls, 'the INSERT, then the stale statement');
+        self::assertSame(['rollback'], $this->transaction->ends);
+        self::assertFalse($manager->isClosed());
+        self::assertSame([3, 3], [$first->version, $second->version]);
+        self::assertNull($ticket->id);
+        self::assertTrue($manager->contains($first));
+
+        $this->link->transaction = $retry = new SpyMysqlTransaction();
+        $retry->queue(self::insertId(8), self::affected(0));
+
+        self::assertConflict($manager, $statement);
+        self::assertSame($this->transaction->calls, $retry->calls, 'the retry sent the whole flush again');
+
+        $manager->clear();
+        $manager->flush();
+        self::assertSame(2, $this->link->begins, 'clear() abandoned the stale work');
+    }
+
+    public function test_a_versioned_update_affecting_no_row_conflicts_without_an_existence_check(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, 3)]);
+        $manager->repository(Invoice::class)->findOrFail(1)->total = 120;
+        $this->transaction->queue(self::affected(0), [['aggregate' => 1]]);
+
+        self::assertConflict($manager, 'UPDATE');
+
+        self::assertSame(['UPDATE `invoices` SET `total` = 120, `row_version` = 4 WHERE `id` = 1 AND `row_version` = 3'], $this->transaction->statements());
+        self::assertSame(['rollback'], $this->transaction->ends);
+    }
+
+    public function test_a_version_the_application_changed_is_refused_before_the_transaction_begins(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, 3)]);
+        $invoice = $manager->repository(Invoice::class)->findOrFail(1);
+        $invoice->version = 4;
+
+        try {
+            $manager->flush();
+            self::fail('The changed version was accepted.');
+        } catch (InvalidEntityStateException $e) {
+            self::assertSame(InvalidEntityStateException::versionChanged(Invoice::class)->getMessage(), $e->getMessage());
+        }
+
+        self::assertSame(0, $this->link->begins);
+    }
+
+    public function test_an_update_that_cannot_advance_the_version_is_refused_before_the_transaction_and_a_delete_is_not(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, (string) PHP_INT_MAX)]);
+        $invoice = $manager->repository(Invoice::class)->findOrFail(1);
+        $invoice->total = 120;
+
+        try {
+            $manager->flush();
+            self::fail('The exhausted version was accepted.');
+        } catch (InvalidEntityStateException $e) {
+            self::assertSame(InvalidEntityStateException::versionExhausted(Invoice::class)->getMessage(), $e->getMessage());
+        }
+
+        self::assertSame(0, $this->link->begins);
+
+        $manager->remove($invoice);
+        $this->transaction->queue(self::affected(1));
+        $manager->flush();
+
+        self::assertSame(['DELETE FROM `invoices` WHERE `id` = 1 AND `row_version` = ' . PHP_INT_MAX], $this->transaction->statements());
+        self::assertSame(['commit'], $this->transaction->ends);
+    }
+
+    public function test_a_failed_commit_leaves_the_version_unchanged_with_an_unknown_outcome(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, 3)]);
+        $invoice = $manager->repository(Invoice::class)->findOrFail(1);
+        $invoice->status = 'paid';
+        $this->transaction->queue(self::affected(1));
+        $failure = new ConnectionException('MySQL connection lost');
+        $this->transaction->onCommit = static fn (): never => throw $failure;
+
+        try {
+            $manager->flush();
+            self::fail('The flush was accepted.');
+        } catch (UnknownFlushOutcomeException $e) {
+            self::assertSame($failure, $e->getPrevious());
+        }
+
+        self::assertSame(3, $invoice->version);
+        self::assertTrue($manager->isClosed());
+    }
+
+    public function test_a_version_changed_during_commit_is_overwritten_while_a_business_change_stays_pending(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([self::invoiceRow(1, 3)]);
+        $invoice = $manager->repository(Invoice::class)->findOrFail(1);
+        $invoice->status = 'paid';
+        $this->transaction->queue(self::affected(1));
+        $this->transaction->onCommit = static function () use ($invoice): void {
+            $invoice->version = 99;
+            $invoice->status = 'void';
+        };
+
+        $manager->flush();
+
+        self::assertSame(4, $invoice->version);
+
+        $this->link->transaction = $next = new SpyMysqlTransaction();
+        $next->queue(self::affected(1));
+        $manager->flush();
+
+        self::assertSame(
+            [['sql' => 'UPDATE `invoices` SET `status` = ?, `row_version` = ? WHERE `id` = ? AND `row_version` = ?', 'params' => ['void', 5, 1, 4]]],
+            $next->calls,
+        );
+    }
+
     public function test_reentry_from_the_flushing_fiber_is_refused_before_sql_or_state_changes(): void
     {
         $manager = $this->factory->open();
@@ -541,6 +802,31 @@ final class FlushTest extends TestCase
         $document->title = $title;
 
         return $document;
+    }
+
+    /**
+     * @return array<string, int|string>
+     */
+    private static function invoiceRow(int $id, int|string $version): array
+    {
+        return ['id' => $id, 'status' => 'open', 'row_version' => $version, 'total' => 100];
+    }
+
+    /**
+     * The flush throws exactly OptimisticLockException, naming the class and
+     * statement and no value.
+     */
+    private static function assertConflict(EntityManager $manager, string $statement): void
+    {
+        try {
+            $manager->flush();
+        } catch (OptimisticLockException $e) {
+            self::assertSame(OptimisticLockException::stale(Invoice::class, $statement)->getMessage(), $e->getMessage());
+
+            return;
+        }
+
+        self::fail('The stale write was accepted.');
     }
 
     private static function affected(int $rows): SqlResult
