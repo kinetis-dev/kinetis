@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a8035cbe1796ad6c8f29f6c60a915f84",
+    "content-hash": "c57077202509367f6650dac61c33ae22",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -3215,6 +3215,99 @@
                 }
             ],
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/orm",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../orm",
+                "reference": "8c9ee8aea5b9726474ead993c3044413cfc36598"
+            },
+            "require": {
+                "kinetis/persistence": "dev-main",
+                "kinetis/query-builder": "dev-main",
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "kinetis/framework": "dev-main",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": []
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Orm\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\Orm\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "A read-side data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and an identity map per unit of work. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/query-builder",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../query-builder",
+                "reference": "a8d603ceacf94a923edf0ad0ccd27ef31d1d294d"
+            },
+            "require": {
+                "kinetis/persistence": "dev-main",
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "kinetis/framework": "dev-main",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": []
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\QueryBuilder\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\QueryBuilder\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "A thin, parameterized SQL query builder over kinetis/persistence's MySQL and Postgres drivers, with portable row-to-DTO mapping and pagination envelopes. Usable standalone. Not an ORM: no relationships, no migrations, no change-tracking.",
             "transport-options": {
                 "relative": true
             }
@@ -7463,7 +7556,9 @@
     "stability-flags": {
         "kinetis/framework": 20,
         "kinetis/mcp": 20,
+        "kinetis/orm": 20,
         "kinetis/persistence": 20,
+        "kinetis/query-builder": 20,
         "kinetis/queue": 20
     },
     "prefer-stable": true,

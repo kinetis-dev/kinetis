@@ -111,6 +111,69 @@ jobs:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1
 
+  orm:
+    name: orm (${{ matrix.mysql.name }} + Postgres, PHP ${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.4', '8.5']
+        mysql:
+          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
+    services:
+      mysql:
+        image: ${{ matrix.mysql.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="${{ matrix.mysql.healthCmd }}"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U testuser"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mysqli, pdo_mysql, pgsql, pdo_pgsql, sockets
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.composer-cache
+          key: composer-${{ hashFiles('packages/*/composer.lock', 'tools/composer.lock') }}
+          restore-keys: composer-
+      - name: Install dependencies
+        working-directory: packages/orm
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Env-gated PHPUnit integration suite
+        # tests/Integration/ skips without MYSQL_HOST/POSTGRES_HOST, so the
+        # ci.yml run of the same suite stays database-free. Each case reads
+        # through both the native and the PDO driver of its family, which
+        # is why every driver extension is loaded here.
+        working-directory: packages/orm
+        run: vendor/bin/phpunit
+        env:
+          MYSQL_HOST: 127.0.0.1
+          POSTGRES_HOST: 127.0.0.1
+
   queue-redis:
     name: queue-redis (Redis, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest

@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.11.0",
+            "version": "1.11.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -77,17 +77,19 @@
         },
         "database-bridge": {
             "name": "kinetis/database-bridge",
-            "description": "Kinetis wiring for kinetis/persistence: DB_* connection configuration and the default link binding, SQL spans through Kinetis telemetry, and a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it.",
+            "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata and a lazy request-scoped EntityManager.",
             "namespace": "Kinetis\\DatabaseBridge\\",
             "testNamespace": "Kinetis\\DatabaseBridge\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "requires": [
                 "framework",
                 "persistence"
             ],
             "requiresDev": [
                 "mcp",
-                "queue"
+                "queue",
+                "orm",
+                "query-builder"
             ],
             "require": {
                 "psr/log": "^3.0.2"
@@ -97,10 +99,12 @@
             },
             "suggest": {
                 "kinetis/migrations": "Migration runner and migrate commands, connecting through this package's connection policy.",
+                "kinetis/orm": "Attributed entities, typed repositories and a request-scoped EntityManager over the link this package binds, with entity metadata compiled into the AOT cache.",
                 "kinetis/query-builder": "Parameterized queries and row-to-DTO mapping over the MysqlLink/PostgresLink this package binds."
             },
             "kinetis": {
-                "bootstrap": "Kinetis\\DatabaseBridge\\PackageBootstrap"
+                "bootstrap": "Kinetis\\DatabaseBridge\\PackageBootstrap",
+                "discovery": "Kinetis\\DatabaseBridge\\OrmMetadata"
             }
         },
         "redis": {
@@ -161,6 +165,21 @@
             "version": "1.5.0",
             "requires": [
                 "persistence"
+            ],
+            "requiresDev": [
+                "framework"
+            ],
+            "kinetis": []
+        },
+        "orm": {
+            "name": "kinetis/orm",
+            "description": "A read-side data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and an identity map per unit of work. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "namespace": "Kinetis\\Orm\\",
+            "testNamespace": "Kinetis\\Orm\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "persistence",
+                "query-builder"
             ],
             "requiresDev": [
                 "framework"

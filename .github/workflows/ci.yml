@@ -108,6 +108,7 @@ jobs:
           # it skips itself cleanly here with neither present.
           - { name: roadrunner-adapter, dir: packages/roadrunner-adapter, phpunit: true, composerFlags: "--ignore-platform-req=ext-sockets" }
           - { name: query-builder, dir: packages/query-builder, phpunit: true }
+          - { name: orm, dir: packages/orm, phpunit: true }
           - { name: views, dir: packages/views, phpunit: true }
           - { name: views-php, dir: packages/views-php, phpunit: true }
           - { name: views-latte, dir: packages/views-latte, phpunit: true }
