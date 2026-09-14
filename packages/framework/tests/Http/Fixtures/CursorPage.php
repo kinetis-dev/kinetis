@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Http\Pagination;
+namespace Kinetis\Tests\Http\Fixtures;
 
-final readonly class CursorPaginator
+/** An application-owned cursor wrapper whose `data` holds the items. */
+final readonly class CursorPage
 {
     /**
      * @param list<mixed> $data

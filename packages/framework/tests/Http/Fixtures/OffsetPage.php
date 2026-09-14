@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Http\Pagination;
+namespace Kinetis\Tests\Http\Fixtures;
 
-final readonly class Paginator
+/** An application-owned page-number wrapper whose `data` holds the items. */
+final readonly class OffsetPage
 {
     /**
      * @param list<mixed> $data

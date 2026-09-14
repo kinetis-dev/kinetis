@@ -1133,7 +1133,7 @@ the three vocabularies, and the caller that read the bytes picks one:
 |---|---|---|
 | `Json` | a JSON `#[Body]`, an MCP tool argument | already-decoded JSON values, each with its own type |
 | `Text` | `#[Query]`, path segments, `application/x-www-form-urlencoded` and `multipart/form-data` bodies | raw strings only |
-| `Native` | a direct `Hydrator::hydrate()` call — a database row, an array a service built itself | whatever PHP values the caller already holds |
+| `Native` | a direct `Hydrator::hydrate()` call — an array a service built itself | whatever PHP values the caller already holds |
 
 All three agree on these:
 
@@ -1425,8 +1425,9 @@ default, and there is no member to be missing. Create and update stay
 separate DTO classes: the HTTP method never selects behavior, and one
 class never changes shape per verb.
 
-To write such a DTO to a table, {ref}`RowValues::fromObject() <query-builder-row-values>`
-leaves out every `Absent::Value` field and keeps an explicit `null`.
+`kinetis/query-builder` does not recognize `Absent`. To write such a DTO
+to a table, leave its omitted fields out of the row first — see
+{ref}`partial updates with RowValues <query-builder-partial-updates>`.
 
 ### Unknown members are rejected for JSON
 
@@ -1458,8 +1459,8 @@ carry members that are not fields — a CSRF token, the submit button's own
 name, a honeypot — and rejecting those would break input that is doing
 nothing wrong. A direct `Hydrator::hydrate()` call is not closed either:
 its `InputSource::Native` default exists for callers handing over PHP
-values they already hold, such as a database row wider than the DTO
-reading it.
+values they already hold, such as an array wider than the DTO reading
+it.
 
 Every generated object schema states the closed contract with
 `additionalProperties: false`, including a DTO with no fields at all.

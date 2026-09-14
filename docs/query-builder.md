@@ -11,9 +11,10 @@ composer require kinetis/query-builder
 A thin, parameterized SQL query builder over {doc}`persistence`'s
 drivers. It compiles the SQL that MySQL 8.4, MariaDB 11.4 and
 PostgreSQL 16 share, runs it on the connection or transaction you pass
-in, and maps result rows into typed DTOs through
-{doc}`routing-validation`'s `Hydrator`. Anything outside that shared
-surface stays available as raw SQL on the same connection.
+in, and maps result rows into typed DTOs with its own `RowMapper`.
+Anything outside that shared surface stays available as raw SQL on the
+same connection. In production it depends only on `kinetis/persistence`,
+so it runs inside a Kinetis application or without one.
 
 It is not an ORM: no relationships, no identity map, no change tracking,
 no `save()` on a model, no schema builder.
@@ -72,8 +73,37 @@ MariaDB, a `PostgresLink` for PostgreSQL. A variable typed
 carries its link's dialect marker; a `SqlTransaction` carrying neither
 marker throws `QueryBuilderException` instead of guessing a dialect.
 
+### Standalone
+
+Build the connection with `kinetis/persistence` and pass it in:
+
 ```{code-block} php
-new Query($db);  // the registered connection, see persistence
+use Kinetis\Persistence\ConnectionDefinition;
+use Kinetis\Persistence\SqlConnectionFactory;
+use Kinetis\QueryBuilder\Query;
+
+$db = SqlConnectionFactory::create(new ConnectionDefinition(
+    dialect: 'mysql',
+    host: 'db.internal',
+    database: 'shop',
+    user: 'shop',
+    password: $password,
+));
+
+$open = new Query($db)->table('orders')->where('status', '=', 'open')->count();
+```
+
+The application builds each client once, closes it at shutdown, and
+uses a `TransactionGuard` per unit of work — see {doc}`persistence`.
+
+### In a Kinetis application
+
+`kinetis/database-bridge` binds the default connection from `DB_*`
+configuration, so a controller or repository injects `MysqlLink` or
+`PostgresLink` with no wiring of its own:
+
+```{code-block} php
+new Query($db);  // the injected connection, see persistence
 new Query($tx);  // an open transaction, see "Transactions and row locks"
 
 use Kinetis\DatabaseBridge\ConnectionFactory;
@@ -81,6 +111,8 @@ use Kinetis\DatabaseBridge\ConnectionFactory;
 $reporting = ConnectionFactory::fromConfig($config, 'reporting');
 $totals = new Query($reporting)->table('daily_totals')->get();
 ```
+
+### Building and running
 
 Builder methods (`table()`, `where()`, `join()`, ...) add to the query
 and return the same instance. Terminal methods (`get()`, `count()`,
@@ -109,11 +141,8 @@ $article = new Query($db)->table('articles')->where('slug', '=', $slug)->first(A
 // ArticleRow|null
 ```
 
-Pass a DTO class and each row is hydrated with `Hydrator::hydrate()`
-under `InputSource::Native`, constraints included. Columns the DTO does
-not declare are ignored, and a driver may return an integer as an `int`
-or as its decimal string — both bind. See {doc}`routing-validation`'s
-"Scalar type checking".
+Pass a DTO class and each row is mapped onto it — see
+[Mapping rows to DTOs](#mapping-rows-to-dtos).
 
 ### `value()`, `pluck()` and `exists()`
 
@@ -132,6 +161,65 @@ $taken = new Query($db)->table('articles')->where('slug', '=', $slug)->exists();
 name and leave the projection as you built it. A qualified column
 (`articles.slug`) arrives under its last segment, so pass `'slug'`. A
 name missing from the row throws `QueryBuilderException`.
+
+## Mapping rows to DTOs
+
+`get()`, `first()`, `paginate()` and `cursorPaginate()` take an optional
+DTO class. `Kinetis\QueryBuilder\RowMapper` reflects that class once per
+result set and passes each constructor parameter the column of exactly
+its name, case-sensitively:
+
+- Columns no parameter names are ignored.
+- A missing column leaves its parameter to the declared default. A
+  missing column for a parameter without a default is refused, even
+  when the parameter is nullable.
+- A class without a constructor is constructed with no arguments.
+- Every value is checked before the constructor runs. An exception the
+  constructor throws is the DTO's own invariant and propagates
+  unchanged.
+
+A parameter's declared type decides which row values it admits:
+
+| Declared type | Admits | Passes |
+| --- | --- | --- |
+| none, or `mixed` | any value, `null` included | the value unchanged |
+| `string` | a `string` | the string |
+| `int` | an `int`, or its canonical decimal string: `"42"` and `"-7"`, but not `"042"`, `"+7"`, `" 7"`, `"7.0"`, `"7e0"` or a value beyond PHP's `int` range | an `int` |
+| `float` | a finite `int` or `float`, or a numeric string with a finite value | a `float` |
+| `bool` | a `bool`, `0`, `1`, `"0"` or `"1"` | a `bool` |
+| a backed enum | a case of that enum, or a value the `string` or `int` row above admits for its backing type that names a case | the case |
+
+`?T` and `T|null` also admit `null`; no other type does. Nothing else is
+converted — no arrays, nested DTOs, dates, other objects or JSON text —
+and validation attributes such as `#[NotBlank]` are not evaluated: a row
+is data from your own database, not client input. Select a scalar and
+convert it in the constructor, or read the row as an array.
+
+`RowMapper::for()` refuses, before any row is read, a class that cannot
+be instantiated and a constructor parameter that is variadic, passed by
+reference, or declared with an intersection type, a union other than
+`T|null`, or any other builtin or class type. The mapper is public for
+rows from elsewhere:
+
+```{code-block} php
+use Kinetis\QueryBuilder\RowMapper;
+
+$article = RowMapper::for(ArticleRow::class)->map(['id' => '7', 'title' => 'Hello', 'slug' => 'hello']);
+// ArticleRow with id 7
+```
+
+Every failure is a `Kinetis\QueryBuilder\Exception\RowMappingException`,
+an `InvalidArgumentException`:
+
+| Factory | Thrown when |
+| --- | --- |
+| `unsupportedDefinition()` | `for()` meets a class or parameter outside the admitted types |
+| `missingColumn()` | a row has no column for a parameter without a default |
+| `invalidValue()` | a value is not admitted by its parameter's type, including `null` for a non-nullable one |
+| `unknownEnumCase()` | an admitted backing value names no case |
+
+A message names the DTO class, the parameter and the expected shape, and
+describes the value only by its type, never by its contents.
 
 ## Selecting columns
 
@@ -354,7 +442,7 @@ $busyAuthors = new Query($db)
 ```
 
 `selectExists()` selects whether a subquery returns a row, as `1` or
-`0` on every server, so a `bool` DTO property hydrates from it:
+`0` on every server, so a `bool` DTO parameter maps from it:
 
 ```{code-block} php
 $following = new Query($db)
@@ -387,7 +475,7 @@ The direction is `ASC` or `DESC`, case-insensitive. `limit()` and
 ```{code-block} php
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Query as QueryParameter;
-use Kinetis\Http\Pagination\Paginator;
+use Kinetis\QueryBuilder\Paginator;
 
 #[Get('/articles')]
 public function index(#[QueryParameter] int $page = 1, #[QueryParameter] int $perPage = 20): Paginator
@@ -426,7 +514,7 @@ boundary inside a run of equal values can repeat or skip rows.
 ### Cursors: `cursorPaginate()`
 
 ```{code-block} php
-use Kinetis\Http\Pagination\CursorPaginator;
+use Kinetis\QueryBuilder\CursorPaginator;
 
 #[Get('/articles')]
 public function index(#[QueryParameter] ?string $cursor = null): CursorPaginator
@@ -457,7 +545,7 @@ an existing `orderBy()`, `limit()` or `offset()` above zero throws
 The cursor filter wraps your own predicates as
 `(existing predicate) AND id > ?`, so an `orWhere()` cannot escape it. A
 projection that omits the cursor column still works: the column is
-selected, read, and removed from every row before hydration.
+selected, read, and removed from every row before mapping.
 
 On a joined query, pass a qualified cursor column and name an alias for
 it. Both servers return `orders.id` under the bare key `id`, which a
@@ -478,13 +566,24 @@ is replaced in the returned rows, so pick a name nothing in the
 projection uses.
 
 Both methods refuse a `perPage` (and `paginate()` a `page`) below 1 with
-`InvalidPaginationException`, which reaches the client as a `400`.
-Neither caps `perPage`; clamp request values in your controller.
+`InvalidPaginationException`, an `InvalidArgumentException` naming the
+argument. Neither caps `perPage`. Bound request values before they reach
+the query: in a Kinetis controller, a rule such as `#[GreaterThan(0)]`
+on the `#[Query]` parameter refuses a bad value as a validation failure
+(see {doc}`routing-validation`), and clamping keeps `perPage` in range.
+
+`Kinetis\QueryBuilder\Paginator` and `CursorPaginator` are plain
+readonly envelopes: returned from a Kinetis controller, their public
+fields encode as the JSON shown above.
 
 ### Describing the page item in OpenAPI
 
-`Paginator` and `CursorPaginator` hold any item type, so the generated
-schema describes `data` as bare objects unless the route names the item:
+In a Kinetis application, `#[PaginatedItem]` names the item class of any
+response wrapper whose `data` is the item list — `Paginator`,
+`CursorPaginator`, or a wrapper of your own. The generated schema then
+describes the wrapper inline, with `data` as an array of that class's
+schema. Without the attribute, the wrapper is an ordinary schema
+component whose `data` is a bare array:
 
 ```{code-block} php
 use Kinetis\Http\Attributes\PaginatedItem;
@@ -779,7 +878,6 @@ behavior.
 
 ```{code-block} php
 use Kinetis\QueryBuilder\RowValues;
-use Kinetis\Validation\Absent;
 
 enum ArticleStatus: string
 {
@@ -787,31 +885,31 @@ enum ArticleStatus: string
     case Published = 'published';
 }
 
-final readonly class UpdateArticle
+final readonly class CreateArticle
 {
     public function __construct(
-        public string|Absent $title = Absent::Value,
-        public ArticleStatus|Absent $status = Absent::Value,
-        public string|null|Absent $summary = Absent::Value,
-        public int|Absent $editorId = Absent::Value,
+        public string $title,
+        public ArticleStatus $status,
+        public ?string $summary = null,
+        public ?int $editorId = null,
     ) {}
 }
 
-$values = RowValues::fromObject(new UpdateArticle(status: ArticleStatus::Published, summary: null), columns: ['editorId' => 'editor_id']);
-// ['status' => 'published', 'summary' => null]
+$values = RowValues::fromObject(new CreateArticle('Hello', ArticleStatus::Draft), columns: ['editorId' => 'editor_id']);
+// ['title' => 'Hello', 'status' => 'draft', 'summary' => null, 'editor_id' => null]
 
-new Query($db)->table('articles')->where('id', '=', $id)->update($values);
+$id = new Query($db)->table('articles')->insertGetId($values);
 ```
 
 `fromObject(object $object, array $columns = [], array $except = [])`
 reads the initialized public properties, readonly and
 asymmetric-visibility ones included:
 
-- `Absent::Value` is left out, so a partial update writes only what was
-  sent; `null` is kept and writes `NULL`.
+- `null` is kept and writes `NULL`.
 - A backed enum becomes its value. Every other value must already be
   `null`, a `bool`, an `int`, a finite `float` or a `string`; anything
-  else throws `InvalidArgumentException` naming the property.
+  else, a unit enum included, throws `InvalidArgumentException` naming
+  the property.
 - `$columns` renames properties; `$except` leaves them out. An unknown
   name, a property both renamed and excluded, and two properties
   mapping to one column all throw.
@@ -819,6 +917,50 @@ asymmetric-visibility ones included:
 It does no case conversion, date formatting or nesting. Hash a password
 or format a timestamp before extracting. An object with nothing to write
 yields `[]`, which the writes refuse.
+
+(query-builder-partial-updates)=
+### Partial updates
+
+`fromObject()` writes every public property it reads, so a partial
+update chooses its columns before extracting. A Kinetis request DTO
+that marks omitted members with `Kinetis\Validation\Absent` (see
+{doc}`routing-validation`) needs that step: `Absent` is a framework
+request concept the query builder does not recognize, and an
+`Absent::Value` property is a unit enum, which throws. Derive the
+omitted properties and pass them as `$except`:
+
+```{code-block} php
+use Kinetis\QueryBuilder\RowValues;
+use Kinetis\Validation\Absent;
+
+final readonly class UpdateArticle
+{
+    public function __construct(
+        public string|Absent $title = Absent::Value,
+        public ArticleStatus|Absent $status = Absent::Value,
+        public string|null|Absent $summary = Absent::Value,
+    ) {}
+}
+
+$update = new UpdateArticle(status: ArticleStatus::Published, summary: null);
+
+$omitted = array_keys(array_filter(
+    get_object_vars($update),
+    static fn (mixed $value): bool => $value === Absent::Value,
+));
+
+$values = RowValues::fromObject($update, except: $omitted);
+// ['status' => 'published', 'summary' => null]
+
+if ($values !== []) {
+    new Query($db)->table('articles')->where('id', '=', $id)->update($values);
+}
+```
+
+The explicit `null` stays in the row and clears the column. A property
+left out through `$except` cannot also be renamed through `$columns`.
+When the request sent nothing, `$values` is `[]`: skip the statement
+rather than handing `update()` a map it refuses.
 
 ### Writing and then reading back
 
@@ -970,7 +1112,7 @@ final readonly class UserRepository
   transaction back when the catch runs — see {doc}`persistence`'s
   "Unique violations".
 - **Flags.** `selectExists()` selects `1` or `0`, which
-  `UserCardRow::$following` hydrates as a `bool`.
+  `UserCardRow::$following` receives as a `bool`.
 - **Large tables.** A result is buffered whole, so `eachBatch()` reads
   bounded pages with `cursorPaginate()` rather than selecting the table
   at once. Each page is its own statement: a row inserted meanwhile
@@ -1081,5 +1223,5 @@ into them relies on this check.
 ## See also
 
 - {doc}`persistence` — connections, drivers, `TransactionGuard`.
-- {doc}`routing-validation` — `Hydrator`, `Absent`, and DTO rules.
+- {doc}`routing-validation` — request DTOs, validation, and `Absent`.
 - {doc}`appendix-packages` — the package's API catalogue.

@@ -108,10 +108,11 @@ use ReflectionUnionType;
  * Every builtin-typed parameter is type-checked before it is cast, never
  * after, and which spellings that check admits is the caller's declared
  * InputSource: a JSON body promises JSON primitives, a query string or a
- * form body carries text, and a database row carries whatever its driver
- * produced. See InputSource itself for the three vocabularies. What they
- * agree on: `string` requires an actual string, `array`/`iterable` both
- * require a real JSON array, and `mixed` accepts anything by definition.
+ * form body carries text, and a direct caller's PHP values carry whatever
+ * spelling they already have. See InputSource itself for the three
+ * vocabularies. What they agree on: `string` requires an actual string,
+ * `array`/`iterable` both require a real JSON array, and `mixed` accepts
+ * anything by definition.
  *
  * A missing or explicitly-null value is a separate concern from a
  * wrong-shaped one: a missing key on a defaultless parameter is "is
@@ -283,8 +284,7 @@ final class Hydrator
      * $source declares which wire vocabulary $data was written in, and
      * therefore which spellings of each declared scalar type bind — see
      * InputSource. It defaults to Native, the vocabulary of a caller
-     * that already holds PHP values (a database row from
-     * `Kinetis\QueryBuilder\Query`, an array a service assembled
+     * that already holds PHP values (an array a service assembled
      * itself). A transport names its own: `Kinetis\Http\Dispatcher`
      * passes Json or Text per request from the body's media type,
      * `Kinetis\Mcp\McpDispatcher` passes Json.
@@ -1120,8 +1120,8 @@ final class Hydrator
      * The other two sources stay open, and not by omission. A
      * form-encoded or multipart body legitimately carries members no DTO
      * declares — a CSRF token, the submit button's own name, a honeypot
-     * field — and Kinetis\QueryBuilder hands hydrate() whole database
-     * rows whose columns are wider than the DTO reading them. Closing
+     * field — and a direct hydrate() caller hands over PHP values it
+     * already holds, often wider than the DTO reading them. Closing
      * either would break input that is doing nothing wrong.
      *
      * Reported in the input's own order, after the declared members'

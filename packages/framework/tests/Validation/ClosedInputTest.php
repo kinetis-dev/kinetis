@@ -155,8 +155,8 @@ final class ClosedInputTest extends TestCase
     /**
      * A form body carries members that are not fields — a CSRF token, the
      * submit button's own name, a honeypot — and a Native caller hands
-     * over whole database rows. Neither is a client mistake, so neither
-     * is closed.
+     * over PHP values it already holds, often wider than the DTO. Neither
+     * is a client mistake, so neither is closed.
      */
     public function test_text_and_native_sources_keep_their_unknown_member_tolerance(): void
     {
