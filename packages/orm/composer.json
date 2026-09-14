@@ -1,6 +1,6 @@
 {
     "name": "kinetis/orm",
-    "description": "A read-side data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and an identity map per unit of work. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+    "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and a unit of work with an identity map, snapshot change tracking and a transactional flush. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
     "type": "library",
     "license": "MIT",
     "authors": [

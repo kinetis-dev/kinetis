@@ -94,7 +94,7 @@ checks. An env-gated PHPUnit suite under `tests/Integration/` is the
 other, for cases that want fixtures and per-test setup: `persistence`'s
 drivers and TLS, `redis`/`cache-redis`'s cluster routing, `session`'s
 store rules, `query-builder`'s cursor pagination and server-dependent
-SQL, `orm`'s entity reads. It skips itself when the backend variables are unset, which is what
+SQL, `orm`'s entity reads and flushes. It skips itself when the backend variables are unset, which is what
 keeps an ordinary `ci.yml` run database-free, and the same files run
 again under coverage in `sonarqube.yml`. `query-builder` uses both forms; the conformance
 suites are the second. The entries below name what each job covers
@@ -110,12 +110,14 @@ rather than which form it took.
   wait modes under contention, the MySQL-family limited `IN` refusal,
   correlated subqueries with arithmetic writes, and a `RowValues` round
   trip into a DTO.
-- **`orm`** (MySQL 8.4, MariaDB 11.4, Postgres 16) — entity reads through
-  each family's native and PDO driver: every mapped type from that
-  driver's own row spelling, converted predicates, one identity shared by
-  `find()`, `get()`, `paginate()` and `cursorPaginate()`, and a UUID
+- **`orm`** (MySQL 8.4, MariaDB 11.4, Postgres 16) — entity reads and
+  flushes through each family's native and PDO driver: every mapped type
+  from that driver's own row spelling, converted predicates, one identity
+  shared by `find()`, `get()`, `paginate()` and `cursorPaginate()`, a UUID
   identifier looked up in different letter case resolving to the object
-  already held.
+  already held, inserts with assigned and generated identifiers, updates
+  and deletes, an update writing the values its row already holds, and a
+  unique-key failure rolled back and then retried.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

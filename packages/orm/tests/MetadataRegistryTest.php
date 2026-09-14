@@ -13,6 +13,7 @@ use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Priority;
+use Kinetis\Orm\Tests\Fixtures\Ticket;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -29,6 +30,7 @@ final class MetadataRegistryTest extends TestCase
                 'class' => ArticleCategory::class,
                 'table' => 'article_category',
                 'id' => 'id',
+                'generated' => false,
                 'properties' => [
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null],
                     ['name' => 'displayName', 'column' => 'display_name', 'type' => 'string', 'nullable' => false, 'enum' => null],
@@ -45,6 +47,7 @@ final class MetadataRegistryTest extends TestCase
                 'class' => Account::class,
                 'table' => 'reporting.accounts',
                 'id' => 'uuid',
+                'generated' => false,
                 'properties' => [
                     ['name' => 'uuid', 'column' => 'account_uuid', 'type' => 'string', 'nullable' => false, 'enum' => null],
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null],
@@ -52,6 +55,23 @@ final class MetadataRegistryTest extends TestCase
                 ],
             ]]],
             MetadataRegistry::fromClasses([Account::class])->toArray(),
+        );
+    }
+
+    public function test_a_generated_identifier_is_recorded(): void
+    {
+        self::assertSame(
+            ['entities' => [[
+                'class' => Ticket::class,
+                'table' => 'tickets',
+                'id' => 'id',
+                'generated' => true,
+                'properties' => [
+                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null],
+                    ['name' => 'subject', 'column' => 'subject', 'type' => 'string', 'nullable' => false, 'enum' => null],
+                ],
+            ]]],
+            MetadataRegistry::fromClasses([Ticket::class])->toArray(),
         );
     }
 
@@ -85,7 +105,7 @@ final class MetadataRegistryTest extends TestCase
 
     public function test_from_array_accepts_the_exported_form_of_to_array(): void
     {
-        $data = MetadataRegistry::fromClasses([Article::class, Account::class, ArticleCategory::class])->toArray();
+        $data = MetadataRegistry::fromClasses([Article::class, Account::class, ArticleCategory::class, Ticket::class])->toArray();
 
         /** @var array<string, mixed> $exported */
         $exported = eval('return ' . var_export($data, true) . ';');
@@ -120,6 +140,8 @@ final class MetadataRegistryTest extends TestCase
         yield 'two identifiers' => [self::INVALID . 'TwoIdentifiers', 'more than one property carries #[Id]: first, second'];
         yield 'a float identifier' => [self::INVALID . 'FloatIdentifier', 'the identifier property "id" must be typed int or string'];
         yield 'an enum identifier' => [self::INVALID . 'EnumIdentifier', 'the identifier property "id" must be typed int or string'];
+        yield 'a generated string identifier' => [self::INVALID . 'GeneratedStringIdentifier', 'the generated identifier property "id" must be typed ?int'];
+        yield 'a generated non-nullable identifier' => [self::INVALID . 'GeneratedNonNullableIdentifier', 'the generated identifier property "id" must be typed ?int'];
         yield 'a table name with a dash' => [self::INVALID . 'InvalidTable', 'maps to the table "article-list"'];
         yield 'an empty table name' => [self::INVALID . 'EmptyTable', 'maps to the table ""'];
         yield 'a table name ending in a dot' => [self::INVALID . 'TrailingDotTable', 'maps to the table "reporting."'];
@@ -161,6 +183,8 @@ final class MetadataRegistryTest extends TestCase
         $nullable['properties'][1]['nullable'] = true;
         $reidentified = $account;
         $reidentified['id'] = 'id';
+        $generated = $category;
+        $generated['generated'] = true;
         $retabled = $category;
         $retabled['table'] = 'categories';
 
@@ -177,6 +201,7 @@ final class MetadataRegistryTest extends TestCase
         yield 'a changed type' => [['entities' => [$account, $retyped]], ArticleCategory::class . ' does not match'];
         yield 'a changed nullability' => [['entities' => [$account, $nullable]], ArticleCategory::class . ' does not match'];
         yield 'a changed identifier' => [['entities' => [$reidentified, $category]], Account::class . ' does not match'];
+        yield 'a changed identifier generation' => [['entities' => [$account, $generated]], ArticleCategory::class . ' does not match'];
         yield 'a changed table' => [['entities' => [$account, $retabled]], ArticleCategory::class . ' does not match'];
         yield 'entries out of order' => [['entities' => [$category, $account]], ArticleCategory::class . ' does not match'];
     }

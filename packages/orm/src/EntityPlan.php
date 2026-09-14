@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Orm;
 
 use BackedEnum;
+use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use ReflectionClass;
@@ -12,14 +13,19 @@ use ReflectionProperty;
 
 /**
  * @internal One entity's runtime mapping, built once by OrmFactory from its
- *           MetadataRegistry entry. It keeps the reflection that allocates
- *           and writes the entity, never an entity or request state.
+ *           MetadataRegistry entry. It keeps the reflection that allocates,
+ *           reads and writes the entity, never an entity or request state.
  *
  * Values follow the driver-value domain of Kinetis\QueryBuilder\RowMapper:
  * a string is a string; an int is an int or its canonical decimal string; a
  * float is a finite int, float or numeric string; a bool is a bool, 0, 1,
  * "0" or "1"; a backed enum is a case or a backing value under its backing
  * type's rule; null only where the property type allows it.
+ *
+ * A database value is a converted value with a backed enum replaced by its
+ * backing value. Predicate parameters, snapshots and written rows all use
+ * it, so a loaded value and the same value read back from the entity
+ * compare identical.
  *
  * @template T of object
  * @phpstan-import-type EntityMapping from MetadataRegistry
@@ -37,6 +43,9 @@ final class EntityPlan
     /** The identifier property's name. */
     public readonly string $id;
 
+    /** Whether the database generates the identifier when the entity is inserted. */
+    public readonly bool $generated;
+
     /** @var ReflectionClass<T> */
     private readonly ReflectionClass $reflection;
 
@@ -44,7 +53,7 @@ final class EntityPlan
     private readonly array $properties;
 
     /** @var array<string, ReflectionProperty> */
-    private readonly array $writers;
+    private readonly array $accessors;
 
     /**
      * @param EntityMapping $mapping
@@ -56,18 +65,19 @@ final class EntityPlan
         $this->class = $class;
         $this->table = $mapping['table'];
         $this->id = $mapping['id'];
+        $this->generated = $mapping['generated'];
         $this->reflection = new ReflectionClass($class);
 
         $properties = [];
-        $writers = [];
+        $accessors = [];
 
         foreach ($mapping['properties'] as $property) {
             $properties[$property['name']] = $property;
-            $writers[$property['name']] = $this->reflection->getProperty($property['name']);
+            $accessors[$property['name']] = $this->reflection->getProperty($property['name']);
         }
 
         $this->properties = $properties;
-        $this->writers = $writers;
+        $this->accessors = $accessors;
     }
 
     /**
@@ -86,16 +96,13 @@ final class EntityPlan
 
     /**
      * A predicate value for $property, admitted and converted like a loaded
-     * value; a backed enum is bound as its backing value.
+     * value, as a database value.
      *
      * @throws MappingException
      */
     public function parameter(string $property, mixed $value): null|bool|int|float|string
     {
-        $converted = $this->convert($this->property($property), $value);
-
-        /** @var null|bool|int|float|string|BackedEnum $converted */
-        return $converted instanceof BackedEnum ? $converted->value : $converted;
+        return self::databaseValue($this->convert($this->property($property), $value));
     }
 
     /**
@@ -148,11 +155,78 @@ final class EntityPlan
     {
         $entity = $this->reflection->newInstanceWithoutConstructor();
 
-        foreach ($this->writers as $name => $writer) {
-            $writer->setValue($entity, $values[$name]);
+        foreach ($this->accessors as $name => $accessor) {
+            $accessor->setValue($entity, $values[$name]);
         }
 
         return $entity;
+    }
+
+    /**
+     * convertRow()'s values as database values: the snapshot a managed
+     * entity's later values are compared against.
+     *
+     * @param array<string, mixed> $values
+     * @return array<string, null|bool|int|float|string>
+     */
+    public function snapshot(array $values): array
+    {
+        return array_map(self::databaseValue(...), $values);
+    }
+
+    /**
+     * The database value of every mapped property $entity holds now, each
+     * admitted like a loaded value.
+     *
+     * @return array<string, null|bool|int|float|string> property => database value
+     * @throws InvalidEntityStateException for an uninitialized property
+     * @throws MappingException for a value its property does not admit, such as a non-finite float
+     */
+    public function extract(object $entity): array
+    {
+        $values = [];
+
+        foreach ($this->accessors as $name => $accessor) {
+            if (!$accessor->isInitialized($entity)) {
+                throw InvalidEntityStateException::uninitialized($this->class, $name);
+            }
+
+            $values[$name] = self::databaseValue($this->convert($this->properties[$name], $accessor->getValue($entity)));
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param array<string, null|bool|int|float|string> $values property => database value
+     * @return array<string, null|bool|int|float|string> column => database value
+     */
+    public function row(array $values): array
+    {
+        $row = [];
+
+        foreach ($values as $name => $value) {
+            $row[$this->properties[$name]['column']] = $value;
+        }
+
+        return $row;
+    }
+
+    /**
+     * The key an insert reported for the generated identifier, admitted
+     * like a loaded int.
+     *
+     * @throws InvalidEntityStateException for null or any value an int property does not admit
+     */
+    public function generatedIdentifier(int|string|null $key): int
+    {
+        return ($key === null ? null : self::int($key))
+            ?? throw InvalidEntityStateException::invalidGeneratedIdentifier($this->class);
+    }
+
+    public function assignIdentifier(object $entity, int $id): void
+    {
+        $this->accessors[$this->id]->setValue($entity, $id);
     }
 
     /**
@@ -211,6 +285,12 @@ final class EntityPlan
         /** @var int|string $converted a backed enum's type is its backing type */
         return $enum::tryFrom($converted)
             ?? throw MappingException::unknownEnumCase($this->class, $property['name'], $enum, $value);
+    }
+
+    private static function databaseValue(mixed $converted): null|bool|int|float|string
+    {
+        /** @var null|bool|int|float|string|BackedEnum $converted */
+        return $converted instanceof BackedEnum ? $converted->value : $converted;
     }
 
     /**

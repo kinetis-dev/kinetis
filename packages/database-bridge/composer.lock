@@ -3225,7 +3225,7 @@
             "dist": {
                 "type": "path",
                 "url": "../orm",
-                "reference": "8c9ee8aea5b9726474ead993c3044413cfc36598"
+                "reference": "3b52adfd7d1219cc578a370803433c99ebbce780"
             },
             "require": {
                 "kinetis/persistence": "dev-main",
@@ -3261,7 +3261,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A read-side data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and an identity map per unit of work. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and a unit of work with an identity map, snapshot change tracking and a transactional flush. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "transport-options": {
                 "relative": true
             }

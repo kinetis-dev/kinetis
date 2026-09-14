@@ -17,8 +17,8 @@ same connection. In production it depends only on `kinetis/persistence`,
 so it runs inside a Kinetis application or without one.
 
 It is not an ORM: no relationships, no identity map, no change tracking,
-no `save()` on a model, no schema builder. {doc}`orm` loads entities
-through it, with an identity map per unit of work.
+no `save()` on a model, no schema builder. {doc}`orm` loads and writes
+entities through it, with a unit of work that tracks their changes.
 
 ## Quick start
 
