@@ -6,28 +6,33 @@ namespace Kinetis\Tests\Http\Fixtures;
 
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\PaginatedItem;
-use Kinetis\Http\Pagination\CursorPaginator;
-use Kinetis\Http\Pagination\Paginator;
 
 final readonly class PaginatedOrderController
 {
     #[Get('/orders/paginated')]
     #[PaginatedItem(OrderResponse::class)]
-    public function paginated(): Paginator
+    public function paginated(): OffsetPage
     {
-        return new Paginator(data: [], currentPage: 1, perPage: 20, total: 0, lastPage: 0);
+        return new OffsetPage(data: [], currentPage: 1, perPage: 20, total: 0, lastPage: 0);
     }
 
     #[Get('/orders/cursor')]
     #[PaginatedItem(OrderResponse::class)]
-    public function cursor(): CursorPaginator
+    public function cursor(): CursorPage
     {
-        return new CursorPaginator(data: [], nextCursor: null, hasMore: false);
+        return new CursorPage(data: [], nextCursor: null, hasMore: false);
+    }
+
+    #[Get('/orders/constructorless')]
+    #[PaginatedItem(OrderResponse::class)]
+    public function constructorless(): ConstructorlessPage
+    {
+        return new ConstructorlessPage();
     }
 
     #[Get('/orders/paginated-bare')]
-    public function paginatedBare(): Paginator
+    public function paginatedBare(): OffsetPage
     {
-        return new Paginator(data: [], currentPage: 1, perPage: 20, total: 0, lastPage: 0);
+        return new OffsetPage(data: [], currentPage: 1, perPage: 20, total: 0, lastPage: 0);
     }
 }

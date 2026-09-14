@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Tests\Http\Pagination;
+namespace Kinetis\QueryBuilder\Tests;
 
-use Kinetis\Http\Pagination\Paginator;
+use Kinetis\QueryBuilder\Paginator;
 use PHPUnit\Framework\TestCase;
 
 final class PaginatorTest extends TestCase

@@ -9,8 +9,6 @@ use Kinetis\Http\Attributes\Hidden;
 use Kinetis\Http\Attributes\PaginatedItem;
 use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Attributes\Response;
-use Kinetis\Http\Pagination\CursorPaginator;
-use Kinetis\Http\Pagination\Paginator;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Validation\Hydrator;
@@ -62,11 +60,12 @@ use ReflectionUnionType;
  * one, so it obeys the same rule as every other attribute; see
  * Kinetis\Reflection\AttributeScope.
  *
- * A route returning Paginator/CursorPaginator describes `data` as a bare
- * {type: object} by default — the same class is reused by every paginated
- * route regardless of what it actually holds, so reflecting the return
- * type alone can't recover the item shape. #[PaginatedItem(SomeClass::class)]
- * on the method names it explicitly; see paginatedResponseSchema().
+ * A route returning a wrapper class whose `data` is a list — a paginator
+ * envelope, say — describes `data` as a bare {type: array} by default: the
+ * same wrapper is reused by every route regardless of what it actually
+ * holds, so reflecting the return type alone can't recover the item shape.
+ * #[PaginatedItem(SomeClass::class)] on the method names it explicitly;
+ * see paginatedResponseSchema().
  */
 final class OpenApiGenerator
 {
@@ -391,57 +390,38 @@ final class OpenApiGenerator
             return null;
         }
 
-        if ($class === Paginator::class || $class === CursorPaginator::class) {
-            $paginatedSchema = $this->paginatedResponseSchema($class, $method);
+        /** @var class-string $class */
+        $attributes = $method->getAttributes(PaginatedItem::class);
 
-            if ($paginatedSchema !== null) {
-                return $paginatedSchema;
-            }
+        if ($attributes !== []) {
+            return $this->paginatedResponseSchema($class, $attributes[0]->newInstance()->itemClass());
         }
 
-        /** @var class-string $class */
         return $this->schemaRefFor($class);
     }
 
     /**
-     * Builds Paginator's/CursorPaginator's own shape inline — never
-     * through schemaRefFor() for the wrapper itself, since a shared
-     * "Paginator" component would incorrectly collapse two different
-     * routes' different item types into one. Only the item class goes
-     * through schemaRefFor(), so it's still deduped/$ref'd normally.
-     * Returns null when the method carries no #[PaginatedItem] at all —
-     * the caller then falls back to schemaRefFor()'s bare {type: object}
-     * behavior for `data`.
+     * Describes the wrapper's own shape inline — never through
+     * schemaRefFor() for the wrapper itself, since one shared wrapper
+     * component would collapse two different routes' different item types
+     * into one — then replaces `data` with an array of the item class.
+     * The item class and every other class the wrapper reaches still go
+     * through schemaRefFor(), so they're deduped/$ref'd normally.
      *
-     * @param class-string $paginatorClass
-     * @return array<string, mixed>|null
+     * @param class-string $wrapperClass
+     * @param class-string $itemClass
+     * @return array<string, mixed>
      */
-    private function paginatedResponseSchema(string $paginatorClass, ReflectionMethod $method): ?array
+    private function paginatedResponseSchema(string $wrapperClass, string $itemClass): array
     {
-        $attributes = $method->getAttributes(PaginatedItem::class);
+        $schema = JsonSchema::forClass($wrapperClass, $this->schemaRefFor(...));
+        // A wrapper with no constructor parameters reflects `properties` as
+        // an empty object; the cast makes it the map `data` is added to.
+        $properties = (array) $schema['properties'];
+        $properties['data'] = ['type' => 'array', 'items' => $this->schemaRefFor($itemClass)];
+        $schema['properties'] = $properties;
 
-        if ($attributes === []) {
-            return null;
-        }
-
-        $itemSchema = $this->schemaRefFor($attributes[0]->newInstance()->itemClass());
-        $data = ['type' => 'array', 'items' => $itemSchema];
-
-        $properties = $paginatorClass === Paginator::class
-            ? [
-                'data' => $data,
-                'currentPage' => ['type' => 'integer'],
-                'perPage' => ['type' => 'integer'],
-                'total' => ['type' => 'integer'],
-                'lastPage' => ['type' => 'integer'],
-            ]
-            : [
-                'data' => $data,
-                'nextCursor' => ['type' => 'string'],
-                'hasMore' => ['type' => 'boolean'],
-            ];
-
-        return ['type' => 'object', 'properties' => $properties];
+        return $schema;
     }
 
     /**

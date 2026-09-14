@@ -241,14 +241,11 @@ final class InputSourceTest extends TestCase
     }
 
     /**
-     * A driver decides for itself whether a column arrives as an int or
-     * as its decimal string, and a `TINYINT(1)` boolean arrives as `1`
-     * or `"1"` depending on the connection — so a row handed straight to
-     * hydrate() binds all of them. This is the default source, which is
-     * what keeps `Kinetis\QueryBuilder\Query`'s row hydration working
-     * with no call-site change.
+     * PHP values a caller already holds can spell a number as an int or
+     * as its decimal string, and a boolean as `1` or `"1"` — so values
+     * handed straight to hydrate(), its default source, bind all of them.
      */
-    public function test_native_binds_the_spellings_a_database_row_carries(): void
+    public function test_native_binds_both_spellings_of_numbers_and_booleans(): void
     {
         $row = ['count' => '42', 'ratio' => '1.50', 'flag' => 1, 'label' => 'x'];
         $request = Hydrator::hydrate(SourceSpellingsRequest::class, $row);

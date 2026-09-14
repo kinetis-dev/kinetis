@@ -314,7 +314,12 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertArrayNotHasKey('components', $spec);
     }
 
-    public function test_a_paginated_item_attribute_describes_data_as_an_array_of_the_named_dto(): void
+    /**
+     * The wrapper is reflected like any response class — every field
+     * required, the object closed — and only `data` is replaced, inline,
+     * so no shared wrapper component can merge two routes' item types.
+     */
+    public function test_a_paginated_item_attribute_describes_the_wrapper_inline_with_its_item_list(): void
     {
         $router = new Router();
         $router->register(PaginatedOrderController::class);
@@ -323,14 +328,24 @@ final class OpenApiGeneratorTest extends TestCase
         $schema = $spec['paths']['/orders/paginated']['get']['responses']['200']['content']['application/json']['schema'];
 
         self::assertSame(
-            ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/OrderResponse']],
-            $schema['properties']['data'],
+            [
+                'type' => 'object',
+                'properties' => [
+                    'data' => ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/OrderResponse']],
+                    'currentPage' => ['type' => 'integer'],
+                    'perPage' => ['type' => 'integer'],
+                    'total' => ['type' => 'integer'],
+                    'lastPage' => ['type' => 'integer'],
+                ],
+                'required' => ['data', 'currentPage', 'perPage', 'total', 'lastPage'],
+                'additionalProperties' => false,
+            ],
+            $schema,
         );
-        self::assertSame(['type' => 'integer'], $schema['properties']['total']);
         self::assertArrayHasKey('OrderResponse', $spec['components']['schemas']);
     }
 
-    public function test_a_paginated_item_attribute_works_for_cursor_paginator_too(): void
+    public function test_a_paginated_item_attribute_keeps_a_cursor_wrappers_own_fields(): void
     {
         $router = new Router();
         $router->register(PaginatedOrderController::class);
@@ -339,18 +354,52 @@ final class OpenApiGeneratorTest extends TestCase
         $schema = $spec['paths']['/orders/cursor']['get']['responses']['200']['content']['application/json']['schema'];
 
         self::assertSame(
-            ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/OrderResponse']],
-            $schema['properties']['data'],
+            [
+                'type' => 'object',
+                'properties' => [
+                    'data' => ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/OrderResponse']],
+                    'nextCursor' => ['type' => ['string', 'null']],
+                    'hasMore' => ['type' => 'boolean'],
+                ],
+                'required' => ['data', 'nextCursor', 'hasMore'],
+                'additionalProperties' => false,
+            ],
+            $schema,
         );
-        self::assertSame(['type' => 'boolean'], $schema['properties']['hasMore']);
-        self::assertArrayNotHasKey('total', $schema['properties']);
+        self::assertArrayNotHasKey('CursorPage', $spec['components']['schemas']);
     }
 
     /**
-     * A bare `array $data` property is described as a JSON array, the
-     * shape it actually carries on the wire.
+     * A wrapper with no constructor reflects as a closed object whose
+     * `properties` is empty; the attribute is trusted and still adds `data`.
      */
-    public function test_a_paginator_without_the_attribute_keeps_the_bare_array_fallback(): void
+    public function test_a_paginated_item_attribute_adds_data_to_a_wrapper_without_a_constructor(): void
+    {
+        $router = new Router();
+        $router->register(PaginatedOrderController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $schema = $spec['paths']['/orders/constructorless']['get']['responses']['200']['content']['application/json']['schema'];
+
+        self::assertSame(
+            [
+                'type' => 'object',
+                'properties' => [
+                    'data' => ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/OrderResponse']],
+                ],
+                'required' => [],
+                'additionalProperties' => false,
+            ],
+            $schema,
+        );
+    }
+
+    /**
+     * Without the attribute a wrapper is an ordinary response class: a
+     * component whose bare `array $data` is described as a JSON array,
+     * the shape it carries on the wire.
+     */
+    public function test_a_wrapper_without_the_attribute_stays_an_ordinary_component(): void
     {
         $router = new Router();
         $router->register(PaginatedOrderController::class);
@@ -358,8 +407,8 @@ final class OpenApiGeneratorTest extends TestCase
 
         $ref = $spec['paths']['/orders/paginated-bare']['get']['responses']['200']['content']['application/json']['schema'];
 
-        self::assertSame(['$ref' => '#/components/schemas/Paginator'], $ref);
-        self::assertSame(['type' => 'array'], $spec['components']['schemas']['Paginator']['properties']['data']);
+        self::assertSame(['$ref' => '#/components/schemas/OffsetPage'], $ref);
+        self::assertSame(['type' => 'array'], $spec['components']['schemas']['OffsetPage']['properties']['data']);
     }
 
     /**

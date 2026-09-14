@@ -53,12 +53,12 @@ enum InputSource
     case Text;
 
     /**
-     * PHP values a caller already holds — a database row handed to
-     * {@see Hydrator::hydrate()} by `Kinetis\QueryBuilder\Query`, or an
-     * array a service assembled itself. A driver decides on its own
-     * whether a column arrives as an `int` or as its decimal string, so
-     * this source admits both the JSON and the textual spelling of a
-     * number, and `bool`'s `1`/`0`/`"1"`/`"0"` alongside real booleans.
+     * PHP values a direct {@see Hydrator::hydrate()} caller already
+     * holds, such as an array a service assembled itself. Such values
+     * carry no single wire spelling — a number can be an `int` or still
+     * its decimal string — so this source admits both the JSON and the
+     * textual spelling of a number, and `bool`'s `1`/`0`/`"1"`/`"0"`
+     * alongside real booleans.
      *
      * This is a source contract, not a compatibility shim: no request
      * ever selects it, and it is the default only for the direct
