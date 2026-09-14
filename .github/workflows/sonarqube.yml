@@ -138,8 +138,8 @@ jobs:
         # pcov via Packagist/GitHub releases instead).
         #
         # The database drivers are baked in rather than added per package:
-        # persistence's and query-builder's env-gated tests/Integration
-        # suites use them, and carrying them everywhere costs nothing next
+        # persistence's, query-builder's and orm's env-gated
+        # tests/Integration suites use them, and carrying them everywhere costs nothing next
         # to a conditional install inside the loop.
         run: |
           # Its own empty directory as the build context, not /tmp:
@@ -198,7 +198,7 @@ jobs:
             } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
             echo "$pkg done"
           }
-          for pkg in framework persistence database-bridge redis cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp mcp-docs migrations pingpong query-builder views views-php views-latte views-twig queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search search-opensearch search-elasticsearch session skeleton storage storage-s3 telemetry; do
+          for pkg in framework persistence database-bridge redis cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp mcp-docs migrations pingpong query-builder orm views views-php views-latte views-twig queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search search-opensearch search-elasticsearch session skeleton storage storage-s3 telemetry; do
             run_pkg "$pkg" &
             while [ "$(jobs -rp | wc -l)" -ge 4 ]; do sleep 1; done
           done

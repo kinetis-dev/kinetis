@@ -25,8 +25,9 @@ API-first applications, developed in the
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence)
 depends on no Kinetis package. This package connects it to a Kinetis
 application: the `DB_*` configuration keys, the default connection
-binding, SQL spans through Kinetis telemetry, and a lazy request-scoped
-`TransactionGuard`.
+binding, SQL spans through Kinetis telemetry, a lazy request-scoped
+`TransactionGuard`, and, with [`kinetis/orm`](https://github.com/kinetis-dev/orm)
+installed, compiled entity metadata and a request-scoped `EntityManager`.
 
 ```sh
 composer require kinetis/database-bridge
@@ -82,6 +83,15 @@ following automatically, through the `extra.kinetis` declaration in its
   and transactions through Kinetis telemetry, so installing
   [`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry) turns
   them into spans.
+- **ORM wiring**, once [`kinetis/orm`](https://github.com/kinetis-dev/orm)
+  is installed alongside it (this package does not install it): classes
+  marked `#[Entity]` under the project's PSR-4 roots are compiled into the
+  AOT cache with the rest of discovery, `Kinetis\Orm\OrmFactory` is bound
+  for the worker, and every request scope receives a lazy
+  `Kinetis\Orm\EntityManager`, opened on first resolution and closed with
+  that scope. Without `DB_CONNECTION`, resolving either throws
+  `Kinetis\DatabaseBridge\Exception\DatabaseNotConfiguredException`. See
+  [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
 
 [`kinetis/migrations`](https://github.com/kinetis-dev/migrations)
 requires this package and registers its own `migrate*` commands, which

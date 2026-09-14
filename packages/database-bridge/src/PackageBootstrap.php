@@ -8,6 +8,9 @@ use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\PackageBootstrapInterface;
 use Kinetis\Container\RequestScope;
+use Kinetis\DatabaseBridge\Exception\DatabaseNotConfiguredException;
+use Kinetis\Orm\EntityManager;
+use Kinetis\Orm\OrmFactory;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Persistence\TransactionGuard;
@@ -30,6 +33,11 @@ use Psr\Log\LoggerInterface;
  * is a configuration, not an error. The application's bootstrap.php
  * runs after this and wins on a shared binding; named (non-default)
  * connections stay explicit application wiring.
+ *
+ * kinetis/orm is optional and detected with class_exists(). With it and
+ * DB_CONNECTION, OrmFactory and a lazy request-scoped EntityManager are
+ * bound; with it and no DB_CONNECTION, both resolve to
+ * DatabaseNotConfiguredException; without it, neither is bound.
  */
 final class PackageBootstrap implements PackageBootstrapInterface
 {
@@ -37,14 +45,24 @@ final class PackageBootstrap implements PackageBootstrapInterface
     public function register(AppScope $app, Config $config): void
     {
         $app->onRequestScopeCreated(self::bindTransactionGuard(...));
+        $orm = class_exists(OrmFactory::class);
 
         if ($config->get('DB_CONNECTION') === null) {
+            if ($orm) {
+                self::refuseOrm($app);
+            }
+
             return;
         }
 
         $link = ConnectionFactory::fromConfig($config);
+        $contract = $link instanceof MysqlLink ? MysqlLink::class : PostgresLink::class;
 
-        $app->instance($link instanceof MysqlLink ? MysqlLink::class : PostgresLink::class, $link);
+        $app->instance($contract, $link);
+
+        if ($orm) {
+            self::bindOrm($app, $contract);
+        }
     }
 
     private static function bindTransactionGuard(RequestScope $scope): void
@@ -59,5 +77,49 @@ final class PackageBootstrap implements PackageBootstrapInterface
 
             return $guard;
         });
+    }
+
+    /**
+     * One OrmFactory per worker, built on first use from whatever is bound
+     * under $contract when it is resolved — an application's own binding
+     * included — and the OrmMetadata the framework bound from the AOT
+     * cache. Each scope's EntityManager is opened on its first resolution,
+     * in the Fiber resolving it, and its close() registered on that scope
+     * then.
+     *
+     * @param class-string<MysqlLink>|class-string<PostgresLink> $contract
+     */
+    private static function bindOrm(AppScope $app, string $contract): void
+    {
+        $app->bind(OrmFactory::class, static function (AppScope $app) use ($contract): OrmFactory {
+            /** @var MysqlLink|PostgresLink $link */
+            $link = $app->get($contract);
+            /** @var OrmMetadata $metadata */
+            $metadata = $app->get(OrmMetadata::class);
+
+            return OrmFactory::create($link, $metadata->registry());
+        });
+
+        $app->onRequestScopeCreated(static function (RequestScope $scope): void {
+            $scope->bind(EntityManager::class, static function (RequestScope $scope): EntityManager {
+                /** @var OrmFactory $factory */
+                $factory = $scope->get(OrmFactory::class);
+                $manager = $factory->open();
+                $scope->onDispose($manager->close(...));
+
+                return $manager;
+            });
+        });
+    }
+
+    /**
+     * Both ORM services are bound to a named failure, so neither reaches
+     * autowiring, whose refusal of their non-public constructors would not
+     * name the missing setting.
+     */
+    private static function refuseOrm(AppScope $app): void
+    {
+        $app->bind(OrmFactory::class, static fn (): never => throw DatabaseNotConfiguredException::forOrm(OrmFactory::class));
+        $app->bind(EntityManager::class, static fn (): never => throw DatabaseNotConfiguredException::forOrm(EntityManager::class));
     }
 }

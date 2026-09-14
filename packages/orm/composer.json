@@ -1,0 +1,58 @@
+{
+    "name": "kinetis/orm",
+    "description": "A read-side data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and an identity map per unit of work. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/persistence": "dev-main",
+        "kinetis/query-builder": "dev-main"
+    },
+    "require-dev": {
+        "infection/infection": "^0.35.0",
+        "kinetis/framework": "dev-main",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^13.3.3",
+        "vimeo/psalm": "^6.17"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\Orm\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\Orm\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "kinetis": {}
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../framework"
+        },
+        {
+            "type": "path",
+            "url": "../persistence"
+        },
+        {
+            "type": "path",
+            "url": "../query-builder"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

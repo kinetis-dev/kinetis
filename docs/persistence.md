@@ -116,6 +116,9 @@ own terms:
   holds one statement, so code constructs `new Query($link)` per
   statement over the link the bridge binds; a `Query` is never
   registered as a shared or request-scoped service.
+- `kinetis/orm` receives its entity metadata through the bridge's AOT
+  discovery section, one `OrmFactory` for the worker, and a lazy
+  request-scoped `EntityManager` closed with its scope ({doc}`orm`).
 
 Request-scoped wiring a capability needs belongs in the bridge's
 request-scope initializer, as `TransactionGuard`'s does. An ordinary

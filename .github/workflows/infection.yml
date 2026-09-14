@@ -96,6 +96,9 @@ jobs:
           # every other threshold here was.
           - { name: mcp-docs, dir: packages/mcp-docs, minMsi: 60, minCoveredMsi: 60 }
           - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
+          # A provisional floor until this package's first CI mutation run
+          # provides a measured score.
+          - { name: orm, dir: packages/orm, minMsi: 60, minCoveredMsi: 60 }
           # Provisional floors until each new package's first CI mutation
           # run provides a measured score.
           - { name: views, dir: packages/views, minMsi: 60, minCoveredMsi: 60 }

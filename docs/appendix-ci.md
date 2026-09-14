@@ -94,7 +94,7 @@ checks. An env-gated PHPUnit suite under `tests/Integration/` is the
 other, for cases that want fixtures and per-test setup: `persistence`'s
 drivers and TLS, `redis`/`cache-redis`'s cluster routing, `session`'s
 store rules, `query-builder`'s cursor pagination and server-dependent
-SQL. It skips itself when the backend variables are unset, which is what
+SQL, `orm`'s entity reads. It skips itself when the backend variables are unset, which is what
 keeps an ordinary `ci.yml` run database-free, and the same files run
 again under coverage in `sonarqube.yml`. `query-builder` uses both forms; the conformance
 suites are the second. The entries below name what each job covers
@@ -110,6 +110,12 @@ rather than which form it took.
   wait modes under contention, the MySQL-family limited `IN` refusal,
   correlated subqueries with arithmetic writes, and a `RowValues` round
   trip into a DTO.
+- **`orm`** (MySQL 8.4, MariaDB 11.4, Postgres 16) — entity reads through
+  each family's native and PDO driver: every mapped type from that
+  driver's own row spelling, converted predicates, one identity shared by
+  `find()`, `get()`, `paginate()` and `cursorPaginate()`, and a UUID
+  identifier looked up in different letter case resolving to the object
+  already held.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two
@@ -232,7 +238,7 @@ rather than which form it took.
   container ponged it, and the `cron` container's own row (created and
   ponged with no HTTP request involved at all) polled the same way.
 
-`query-builder`, `queue-sql`, `persistence-and-cache-redis`, and
+`query-builder`, `orm`, `queue-sql`, `persistence-and-cache-redis`, and
 `migrations` each run twice — once against MySQL, once against
 MariaDB — via a matrix over the database image, not separate jobs or
 duplicated scripts. Only the service container's image and health-check
@@ -301,6 +307,7 @@ above the number here by design:
 | `mcp` | 75% |
 | `mcp-docs` | 60% |
 | `migrations` | 75% |
+| `orm` | 60% |
 | `persistence` | 75% |
 | `query-builder` | 80% |
 | `queue` | 60% |
