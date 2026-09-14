@@ -313,6 +313,9 @@ final class EntityManagerTest extends TestCase
         yield 'repository()' => [static fn (EntityManager $manager): mixed => $manager->repository(Article::class)];
         yield 'contains()' => [static fn (EntityManager $manager): mixed => $manager->contains(new \stdClass())];
         yield 'clear()' => [static fn (EntityManager $manager): mixed => $manager->clear()];
+        yield 'persist()' => [static fn (EntityManager $manager): mixed => $manager->persist(new Document())];
+        yield 'remove()' => [static fn (EntityManager $manager): mixed => $manager->remove(new Document())];
+        yield 'flush()' => [static fn (EntityManager $manager): mixed => $manager->flush()];
     }
 
     /**
@@ -374,6 +377,9 @@ final class EntityManagerTest extends TestCase
             static fn (): mixed => $manager->repository(Article::class),
             static fn (): mixed => $manager->contains(new \stdClass()),
             static fn (): mixed => $manager->clear(),
+            static fn (): mixed => $manager->persist(new Document()),
+            static fn (): mixed => $manager->remove(new Document()),
+            static fn (): mixed => $manager->flush(),
             static fn (): mixed => $repository->find(1),
             static fn (): mixed => $query->where('id', '=', 1),
             static fn (): mixed => $query->get(),

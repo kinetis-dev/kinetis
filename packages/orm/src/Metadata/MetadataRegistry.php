@@ -25,9 +25,9 @@ use ReflectionProperty;
  * is. Nothing is cached beyond the instance.
  *
  * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null}
- * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, properties: list<PropertyMapping>}
+ * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, properties: list<PropertyMapping>}
  * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null}
- * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, properties: list<PropertyMapping>}
+ * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, properties: list<PropertyMapping>}
  */
 final readonly class MetadataRegistry
 {
@@ -153,6 +153,7 @@ final readonly class MetadataRegistry
         $properties = [];
         $columns = [];
         $ids = [];
+        $generated = false;
 
         foreach ($class->getProperties() as $property) {
             if ($property->isStatic()) {
@@ -168,9 +169,11 @@ final readonly class MetadataRegistry
 
             $columns[$key] = $mapping['name'];
             $properties[$mapping['name']] = $mapping;
+            $marker = $property->getAttributes(Id::class)[0] ?? null;
 
-            if ($property->getAttributes(Id::class) !== []) {
+            if ($marker !== null) {
                 $ids[] = $mapping['name'];
+                $generated = $marker->newInstance()->generated;
             }
         }
 
@@ -186,7 +189,17 @@ final readonly class MetadataRegistry
             throw MappingException::identifier($name, "the identifier property \"{$id}\" must be typed int or string");
         }
 
-        return ['class' => $name, 'table' => $table, 'id' => $id, 'properties' => array_values($properties)];
+        if ($generated && ($properties[$id]['type'] !== 'int' || !$properties[$id]['nullable'])) {
+            throw MappingException::identifier($name, "the generated identifier property \"{$id}\" must be typed ?int");
+        }
+
+        return [
+            'class' => $name,
+            'table' => $table,
+            'id' => $id,
+            'generated' => $generated,
+            'properties' => array_values($properties),
+        ];
     }
 
     /**

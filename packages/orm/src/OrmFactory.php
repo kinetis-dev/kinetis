@@ -28,14 +28,16 @@ final readonly class OrmFactory
 
     /**
      * @throws InvalidArgumentException for a transaction, which also carries
-     *         a link's dialect marker: no entity read is bound to one
+     *         a link's dialect marker: an EntityManager reads through the
+     *         client and flushes in a transaction it begins there
      */
     public static function create(MysqlLink|PostgresLink $link, MetadataRegistry $metadata): self
     {
         if ($link instanceof SqlTransaction) {
             throw new InvalidArgumentException(
                 'OrmFactory::create() was given a transaction (' . $link::class . '). An EntityManager reads through '
-                . 'a client and never inside a transaction: pass the client, not a transaction it began.',
+                . 'a client and flushes in a transaction it begins on that client: pass the client, not a transaction '
+                . 'it began.',
             );
         }
 

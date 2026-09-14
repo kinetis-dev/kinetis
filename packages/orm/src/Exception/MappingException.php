@@ -7,11 +7,11 @@ namespace Kinetis\Orm\Exception;
 use RuntimeException;
 
 /**
- * An entity class, serialized metadata, a property name, a predicate value
- * or a loaded row outside the mapping contract. Every one is thrown before
- * SQL runs or before an entity is allocated. A message names the class,
- * property and column, and describes a value only by its kind: a column can
- * hold a secret.
+ * An entity class, serialized metadata, a property name, a predicate value,
+ * a loaded row or an entity's property value to write outside the mapping
+ * contract. Every one is thrown before SQL runs or before an entity is
+ * allocated. A message names the class, property and column, and describes
+ * a value only by its kind: a column can hold a secret.
  */
 final class MappingException extends RuntimeException
 {

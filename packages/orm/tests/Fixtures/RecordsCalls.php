@@ -11,9 +11,9 @@ use Kinetis\Persistence\Driver\BufferedSqlResult;
 use LogicException;
 
 /**
- * Records every statement and answers each with the next queued row list,
- * or no rows once the queue is empty. A trait so the MySQL and Postgres spies
- * stay final and differ only by their dialect marker.
+ * Records every statement and answers each with the next queued row list or
+ * result, or no rows once the queue is empty. A trait so the MySQL and
+ * Postgres spies stay final and differ only by their dialect marker.
  */
 trait RecordsCalls
 {
@@ -25,13 +25,21 @@ trait RecordsCalls
     /** Runs after a statement is recorded and before its result returns, as a driver suspends there. */
     public ?Closure $onStatement = null;
 
-    /** @var list<list<array<string, mixed>>> */
+    /** What beginTransaction() returns. */
+    public ?SqlTransaction $transaction = null;
+
+    public int $begins = 0;
+
+    /** Runs inside beginTransaction() before it returns, where a driver reports the begin to instrumentation. */
+    public ?Closure $onBegin = null;
+
+    /** @var list<list<array<string, mixed>>|SqlResult> */
     private array $results = [];
 
     /**
-     * @param list<array<string, mixed>> ...$results one row list per statement, in order
+     * @param list<array<string, mixed>>|SqlResult ...$results one row list or result per statement, in order
      */
-    public function queue(array ...$results): static
+    public function queue(array|SqlResult ...$results): static
     {
         array_push($this->results, ...$results);
 
@@ -57,7 +65,13 @@ trait RecordsCalls
 
     public function beginTransaction(): SqlTransaction
     {
-        throw new LogicException(static::class . ' does not support transactions.');
+        $this->begins++;
+
+        if ($this->onBegin !== null) {
+            ($this->onBegin)();
+        }
+
+        return $this->transaction ?? throw new LogicException(static::class . ' has no transaction to begin.');
     }
 
     public function close(): void
@@ -84,8 +98,8 @@ trait RecordsCalls
             ($this->onStatement)();
         }
 
-        $rows = array_shift($this->results) ?? [];
+        $result = array_shift($this->results) ?? [];
 
-        return new BufferedSqlResult($rows, count($rows), null);
+        return $result instanceof SqlResult ? $result : new BufferedSqlResult($result, count($result), null);
     }
 }

@@ -149,7 +149,7 @@ repository, and README:
 | [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | Native Model Context Protocol servers over stdio and Streamable HTTP |
 | [`kinetis/mcp-docs`](https://github.com/kinetis-dev/mcp-docs) | Standalone MCP server exposing the Kinetis documentation — no Kinetis dependency |
 | [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
-| [`kinetis/orm`](https://github.com/kinetis-dev/orm) | A read-side data mapper over [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder) — attributed entities, typed repositories, and an identity map per unit of work |
+| [`kinetis/orm`](https://github.com/kinetis-dev/orm) | A data mapper over [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder) — attributed entities, typed repositories, and a unit of work with change tracking and a transactional flush |
 | [`kinetis/persistence`](https://github.com/kinetis-dev/persistence) | Runtime-matched MySQL/Postgres drivers and a transaction safety net — usable standalone |
 | [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |
 | [`kinetis/queue`](https://github.com/kinetis-dev/queue) | A backend-agnostic background job queue — every backend lives in its own separate package |

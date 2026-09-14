@@ -9,16 +9,18 @@ composer require kinetis/orm
 
 `kinetis/orm` depends on `kinetis/query-builder` and
 `kinetis/persistence`, never on `kinetis/framework`. Its contract — the
-mapping rules, the admitted row values, the identity map, the repository
-and query API, and what it does not do — is the
+mapping rules, identifiers, the admitted row values, the identity map,
+the repository and query API, writing and flushing, and what it does not
+do — is the
 [package README](https://github.com/kinetis-dev/orm#readme). This page
 covers setting it up.
 ````
 
-A read-side data mapper over {doc}`query-builder`: classes marked
-`#[Entity]` load through typed repositories and entity queries, without
-running their constructors, and each unit of work holds one object per
-row. It reads only: no writes, relationships or change tracking.
+A data mapper over {doc}`query-builder`: classes marked `#[Entity]` load
+through typed repositories and entity queries without running their
+constructors, and each unit of work holds one object per row, tracks
+changes to it, and writes new, changed and removed entities in one
+transaction on `flush()`. It has no relationships or optimistic locking.
 
 ## In a Kinetis application
 
@@ -28,6 +30,7 @@ controller or service in the request scope injects `EntityManager`:
 
 ```{code-block} php
 use Kinetis\Http\Attributes\Get;
+use Kinetis\Http\Attributes\Post;
 use Kinetis\Orm\EntityManager;
 
 final readonly class ArticleController
@@ -38,6 +41,16 @@ final readonly class ArticleController
     public function show(int $id): array
     {
         $article = $this->entities->repository(Article::class)->findOrFail($id);
+
+        return ['title' => $article->title()];
+    }
+
+    #[Post('/articles/{id}/publish')]
+    public function publish(int $id): array
+    {
+        $article = $this->entities->repository(Article::class)->findOrFail($id);
+        $article->publish();
+        $this->entities->flush();
 
         return ['title' => $article->title()];
     }
@@ -74,7 +87,9 @@ or removed, is stale: the boot compiles fresh, as for any other section.
   `close()` on that scope's disposal. A scope that never resolves it opens
   none. Sequential and concurrent units of work never share a manager or
   an entity.
-- Disposal closes the manager and leaves the connection open.
+- Nothing is flushed for you. Code that changes entities calls `flush()`
+  before its unit of work ends; disposal closes the manager, abandons
+  whatever was not flushed, and leaves the connection open.
 - `EntityManager` is never an `AppScope` service. Its constructor is not
   public, so `AppScope` refuses to autowire one rather than keep a manager
   for the life of the worker. Code that holds a manager is request-scoped.
@@ -92,9 +107,12 @@ The bridge wires the default connection only. For a named connection,
 build a factory once from
 `ConnectionFactory::fromConfig($config, 'reporting')` and a
 `MetadataRegistry`, and pair each `open()` with `close()` in the unit of
-work that reads through it, as in the next section.
+work that uses it, as in the next section.
 
-An ORM read never joins a transaction: see the README's "Transactions".
+`flush()` begins its own transaction and never joins one. Do not call it
+inside a `TransactionGuard::transaction()` callback, or anywhere the Fiber
+holds a transaction on the same connection: see the README's
+"Transactions".
 
 ## Without Kinetis
 
@@ -118,7 +136,9 @@ $orm = OrmFactory::create($db, MetadataRegistry::fromClasses([Article::class]));
 $entities = $orm->open();
 
 try {
-    $published = $entities->repository(Article::class)->findBy(['status' => ArticleStatus::Published]);
+    $article = $entities->repository(Article::class)->findOrFail($id);
+    $article->publish();
+    $entities->flush();
 } finally {
     $entities->close();
 }

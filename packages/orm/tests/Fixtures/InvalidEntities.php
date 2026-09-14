@@ -173,6 +173,20 @@ final class EnumIdentifier
     public ArticleStatus $id;
 }
 
+#[Entity]
+final class GeneratedStringIdentifier
+{
+    #[Id(generated: true)]
+    public ?string $id;
+}
+
+#[Entity]
+final class GeneratedNonNullableIdentifier
+{
+    #[Id(generated: true)]
+    public int $id;
+}
+
 #[Entity(table: 'article-list')]
 final class InvalidTable
 {

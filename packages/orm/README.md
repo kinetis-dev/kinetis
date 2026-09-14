@@ -5,7 +5,7 @@
 <p align="center">
   <strong>kinetis/orm</strong>
   <br>
-  <strong>A read-side data mapper for MySQL and PostgreSQL</strong>
+  <strong>A data mapper and unit of work for MySQL and PostgreSQL</strong>
 </p>
 
 <p align="center">
@@ -26,9 +26,11 @@ Usable standalone: in production it depends only on
 and [`kinetis/persistence`](https://github.com/kinetis-dev/persistence).
 
 Plain PHP classes marked `#[Entity]` are mapped into portable metadata,
-loaded through typed repositories and entity queries, hydrated without
-their constructors, and held in one identity map per unit of work. This
-release reads only: it has no writes, relationships or change tracking.
+loaded through typed repositories and entity queries, and hydrated
+without their constructors. Each unit of work holds one object per row,
+tracks changes to the entities it holds, and writes new, changed and
+removed entities in one transaction when it is flushed. It has no
+relationships or optimistic locking.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -66,6 +68,11 @@ final class Article
     {
         return $this->title;
     }
+
+    public function publish(): void
+    {
+        $this->status = ArticleStatus::Published;
+    }
 }
 ```
 
@@ -79,11 +86,9 @@ final class Article
   name is one identifier: ASCII letters, digits and underscores, not
   starting with a digit. Two columns differing only by case are refused.
 - **Identifier.** The property carrying `#[Id]`, or else the property
-  named exactly `id`. There is exactly one, typed `int` or `string`
-  (nullable allowed, a loaded null is not). A string identifier covers
-  application-generated UUID text stored in a PostgreSQL `uuid` or a
-  MySQL/MariaDB `CHAR(36)` column; this package does not generate,
-  normalize or validate UUIDs.
+  named exactly `id`. There is exactly one, typed `int` or `string`,
+  assigned by the application unless the database generates it (see
+  "Identifiers").
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum, and the
   nullable form of each.
 - **Classes.** An entity has no parent class and is neither abstract nor
@@ -94,15 +99,52 @@ final class Article
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
 type, an intersection, any other type (`mixed`, `array`, an object,
-`DateTimeImmutable`, a unit enum), a missing or second identifier, an
-invalid name and a duplicate column.
+`DateTimeImmutable`, a unit enum), a missing or second identifier, a
+generated identifier not typed `?int`, an invalid name and a duplicate
+column.
+
+## Identifiers
+
+```php
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\Id;
+
+#[Entity(table: 'tickets')]
+final class Ticket
+{
+    #[Id(generated: true)]
+    private ?int $id = null;
+
+    public function __construct(private string $subject) {}
+
+    public function id(): ?int
+    {
+        return $this->id;
+    }
+}
+```
+
+- **Assigned**, the default. The application sets a non-null `int` or
+  `string` before `persist()`. A string identifier covers
+  application-generated UUID text stored in a PostgreSQL `uuid` or a
+  MySQL/MariaDB `CHAR(36)` column; this package does not generate,
+  normalize or validate UUIDs. The property may be nullable, but
+  `persist()` refuses null, and so does a loaded row.
+- **Generated.** `#[Id(generated: true)]` on a property typed `?int`,
+  over a column the database fills: a MySQL/MariaDB `AUTO_INCREMENT` or a
+  PostgreSQL identity column. The property holds null until the entity's
+  insert commits. The INSERT leaves the column out, and the key the
+  database reports — through `RETURNING` on PostgreSQL, as the insert id
+  on the MySQL family — must be an int within PHP's range.
+- An identifier does not change while a manager holds its entity:
+  `flush()` refuses one that did.
 
 ## Metadata
 
 ```php
 use Kinetis\Orm\Metadata\MetadataRegistry;
 
-$metadata = MetadataRegistry::fromClasses([Article::class, Author::class]);
+$metadata = MetadataRegistry::fromClasses([Article::class, Ticket::class]);
 
 // A build step can export it...
 file_put_contents('entities.php', '<?php return ' . var_export($metadata->toArray(), true) . ';');
@@ -142,6 +184,8 @@ $entities = $orm->open();
 
 try {
     $article = $entities->repository(Article::class)->findOrFail($id);
+    $article->publish();
+    $entities->flush();
 } finally {
     $entities->close();
 }
@@ -152,14 +196,16 @@ transaction (see "Transactions"), and holds no unit-of-work state, so one
 factory serves the whole process. `open()` returns a new
 `EntityManager`, which belongs to one unit of work:
 
-- **Identity map.** An identity is the entity class and the identifier
-  converted from the loaded row. While the manager holds it, every load
-  of that row returns the same object, and a later row never writes to
-  it. `contains($entity)` answers whether the manager holds an object.
-- **`clear()`** detaches every entity with no I/O; the next load of a row
-  builds a new object.
-- **`close()`** detaches every entity and refuses all later use, with
-  `ClosedEntityManagerException`. It is idempotent, flushes nothing and
+- **Identity map.** An identity is the entity class and its identifier.
+  While the manager holds it, every load of that row returns the same
+  object, and a later row writes neither its properties nor its snapshot.
+  `contains($entity)` answers whether the manager holds an object:
+  managed, awaiting insert or scheduled for deletion.
+- **`clear()`** detaches every entity and abandons every unflushed
+  insert, change and deletion, with no I/O; the next load of a row builds
+  a new object.
+- **`close()`** does the same and refuses all later use with
+  `ClosedEntityManagerException`. It is idempotent, never flushes and
   leaves the link open. `isClosed()` reports it.
 - **Fiber ownership.** A manager works only in the Fiber that opened it
   (the main context counts as one). The manager, its repositories, its
@@ -167,10 +213,12 @@ factory serves the whole process. `open()` returns a new
   `CrossFiberAccessException`, before SQL. `close()` is accepted from any
   Fiber, so whoever owns the unit of work can end it; a terminal suspended
   in its SQL at that moment throws `ClosedEntityManagerException` when it
-  resumes instead of returning or loading its result.
+  resumes instead of returning or loading its result. "Flushing" covers a
+  `close()` during `flush()`.
 
-A detached entity stays an ordinary PHP object. Open a separate manager
-for each concurrent Fiber; managers never share identities.
+A detached entity stays an ordinary PHP object, and nothing tracks its
+changes. Open a separate manager for each concurrent Fiber; managers
+never share identities.
 
 ## Loading
 
@@ -185,7 +233,8 @@ Every entity query selects all mapped columns. Loading a row:
 3. otherwise allocates the entity with
    `ReflectionClass::newInstanceWithoutConstructor()`, writes each
    declared property directly — no constructor, setter, hook or magic
-   method runs — and only then registers it.
+   method runs — and only then registers it, with a snapshot of the
+   converted values.
 
 | Property type | Admitted driver value |
 |---|---|
@@ -266,6 +315,126 @@ final readonly class PublishedArticles
 }
 ```
 
+## Writing
+
+```php
+$ticket = new Ticket('Printer on fire');
+$entities->persist($ticket);    // awaiting insert
+
+$article = $entities->repository(Article::class)->findOrFail(42);
+$article->publish();            // a change, found against the snapshot
+
+$entities->remove($entities->repository(Article::class)->findOrFail(43)); // scheduled for deletion
+
+$entities->flush();             // one transaction
+$ticket->id();                  // the key the database generated
+```
+
+For one manager, an object is in one of these states:
+
+| State | `contains()` | What `flush()` writes |
+|---|---|---|
+| Not held: new, or detached | false | nothing |
+| Awaiting insert | true | an INSERT |
+| Managed | true | an UPDATE of its changed columns, if any |
+| Scheduled for deletion | true | a DELETE |
+
+- **`persist($entity)`** validates an object the manager does not hold —
+  new, or detached from this or another manager — and schedules its
+  insert. Its class must be an entity in the factory's metadata, every
+  mapped property initialized and admitted by the table under "Loading"
+  (a non-finite float is not), an assigned identifier not null and not
+  held by another object of this manager, and a generated identifier
+  null. An assigned identity enters the identity map at once, so `find()`
+  returns the object; a generated one enters it when the insert commits.
+  `persist()` leaves an entity awaiting insert or managed as it is, and
+  cancels the deletion of one scheduled for deletion.
+- **`remove($entity)`** schedules a managed entity for deletion. Until the
+  DELETE commits it stays managed, keeps its identity and is what loads of
+  its row return, and `persist()` cancels the deletion. An entity awaiting
+  insert is detached instead and its insert dropped, without SQL. Any
+  other object is refused.
+- **Changes.** A managed entity has a snapshot: the values it was loaded
+  or last flushed with. Each `flush()` compares every mapped property with
+  it as a database value — a backed enum as its backing value — so a value
+  changed and changed back writes nothing. Loading the row again never
+  refreshes the snapshot.
+- **Ownership.** A manager sees only its own objects. It refuses a second
+  object for an identity it holds and the removal of an object it does not
+  hold, and persists an entity detached from another manager as new.
+
+A refusal changes nothing and throws `InvalidEntityStateException`, or
+`MappingException` for a property value the mapping does not admit.
+
+## Flushing
+
+`flush()` writes everything the manager has pending in one transaction it
+begins on the factory's client:
+
+1. Before the transaction, it reads and validates every entity awaiting
+   insert as `persist()` does, and every managed entity, refuses an
+   identifier that changed, and computes each managed entity's changed
+   columns. With nothing to write, it returns without a transaction or
+   any I/O.
+2. One INSERT per entity awaiting insert, in `persist()` order, of every
+   mapped column but a generated identifier.
+3. One UPDATE of the changed columns, or one DELETE, per entity, by the
+   identifier column, ordered by entity class and then identifier, so
+   concurrent flushes take row locks in one order.
+4. COMMIT.
+
+Every statement runs on that transaction. Nothing is batched, and no
+statement uses the key another insert generated.
+
+A DELETE must affect exactly one row, and an UPDATE at most one. An
+UPDATE affecting none is followed by an existence check on the same
+transaction: the MySQL family counts changed rows rather than matched
+ones, so an UPDATE writing the values its row already holds reports zero.
+A missing row, more than one affected row, or a generated key that is
+null or not an int within PHP's range throws
+`InvalidEntityStateException` before COMMIT.
+
+Only a COMMIT that returns changes the manager or its entities. Each
+inserted or updated entity is then snapshotted with the values the flush
+sent, not whatever its properties hold by then; a generated key is
+written into its property and registered as the entity's identity; and a
+deleted entity is detached.
+
+While `flush()` runs, the manager refuses every call but `close()` and
+`isClosed()` with `InvalidEntityStateException`, including a call made on
+the flushing Fiber by code the flush reaches, such as SQL instrumentation.
+
+### When a flush fails
+
+| Failure | Afterwards | Pending work | Throws |
+|---|---|---|---|
+| Validation, or `beginTransaction()` | open | kept | that exception |
+| Anything before COMMIT, with the rollback returning | open, unless `close()` ran | kept | that exception, unwrapped: a driver `QueryException` or `ConnectionException` as the driver threw it |
+| Anything before COMMIT, with the rollback throwing | closed | abandoned | `RollbackFailedException`: `getPrevious()` is the first failure, `$rollbackFailure` the rollback's |
+| COMMIT | closed | abandoned | `UnknownFlushOutcomeException`: `getPrevious()` is the COMMIT failure |
+
+A failure before COMMIT sent no COMMIT, so the database kept nothing of
+the flush, and the manager and its entities are as they were: every
+insert, change and deletion is still pending against its original
+snapshot, and no generated key was assigned. Calling `flush()` again
+after correcting the cause, such as a unique key conflict, sends the
+whole flush again in a new transaction. `flush()` never retries by
+itself. After `RollbackFailedException` the manager is closed; the work
+can be redone with a new one.
+
+`UnknownFlushOutcomeException` means COMMIT was sent and the call failed:
+the database may or may not have applied the flush, and no entity was
+changed. Establish what the database holds before doing the work again;
+replaying it as if it had failed can apply it twice.
+
+`close()` is accepted while `flush()` runs, from any Fiber. It detaches
+everything, then closes the flush's transaction — from another Fiber by
+discarding its connection rather than sending ROLLBACK — and the flush
+fails by the table above: before COMMIT with the driver's failure or
+`ClosedEntityManagerException`, once COMMIT was sent with
+`UnknownFlushOutcomeException`. A COMMIT that still returns changes
+nothing in the closed manager.
+
 ## The query builder underneath
 
 `EntityQuery::builder()` returns a copy of the underlying
@@ -277,25 +446,33 @@ DTOs that no `EntityManager` manages.
 
 ## Transactions
 
-There is no transaction-bound ORM session. `OrmFactory::create()` refuses
-a `MysqlTransaction` or `PostgresTransaction` with
-`InvalidArgumentException`, so a manager reads through its factory's
-client, never through a transaction. A Fiber holding a
-transaction it opened on that client, through `TransactionGuard` or
-`beginTransaction()`, has its ORM reads refused by the client with
-`Kinetis\Persistence\Exception\TransactionException` rather than run on a
-second connection outside the transaction. A locking read, or any read
-inside a transaction, uses `new Query($transaction)` from the query
-builder and returns arrays or DTOs rather than managed entities.
+Each `flush()` that writes begins exactly one transaction on the
+factory's client and ends it before returning. There is no
+transaction-bound ORM session: `OrmFactory::create()` refuses a
+`MysqlTransaction` or `PostgresTransaction` with
+`InvalidArgumentException`, and a manager never joins a transaction.
+
+`flush()` is not supported while the calling Fiber holds a transaction
+of its own on that client, as inside a `TransactionGuard::transaction()`
+callback: the flush's transaction takes a second connection, and waiting
+for a row lock the outer transaction holds blocks the Fiber on itself.
+Nothing detects this. ORM reads in such a Fiber are refused by the client
+with `Kinetis\Persistence\Exception\TransactionException` rather than run
+on a second connection outside the transaction. Work that shares a
+transaction with other SQL, and a locking read, use
+`new Query($transaction)` from the query builder, which returns arrays or
+DTOs rather than managed entities.
 
 ## Not in scope
 
-No `persist()`, `remove()` or `flush()`, change tracking, generated
-identifiers, optimistic locking, timestamps or `DateTimeImmutable`
-properties, relationships, eager or lazy loading, partial entities,
-custom value converters, composite identifiers, inheritance, transient
-properties, cascades, schema validation, CLI commands, streaming, or
-static model methods.
+Relationships, cascades, collections, eager or lazy loading, optimistic
+locking or version columns, a transaction-bound ORM session or joining an
+existing transaction, locking entity reads, batched or bulk writes,
+automatic retries, flushing on `close()` or destruction, timestamps or
+`DateTimeImmutable` properties, custom value converters, UUID generation,
+composite identifiers, inheritance, partial entities, transient
+properties, schema validation, CLI commands, streaming, or static model
+methods.
 
 ## Installation
 
