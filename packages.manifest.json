@@ -595,7 +595,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.3.3",
+            "version": "1.3.4",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -606,6 +606,7 @@
                 "framework",
                 "migrations",
                 "persistence",
+                "database-bridge",
                 "redis",
                 "cache-redis",
                 "query-builder",

@@ -22,6 +22,7 @@ x-monorepo-siblings: &monorepo-siblings
   - ../framework:/framework
   - ../migrations:/migrations
   - ../persistence:/persistence
+  - ../database-bridge:/database-bridge
   - ../redis:/redis
   - ../cache-redis:/cache-redis
   - ../query-builder:/query-builder

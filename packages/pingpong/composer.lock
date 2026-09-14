@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "1d9c6e65f646d6e0ac962c39ee35d92e",
+    "content-hash": "ef06c9fcdf17f220f6294213544ba014",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1321,6 +1321,62 @@
             }
         },
         {
+            "name": "kinetis/database-bridge",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../database-bridge",
+                "reference": "33d45305082ce91333b092bcadc01d842b89a9b7"
+            },
+            "require": {
+                "kinetis/framework": "dev-main",
+                "kinetis/persistence": "dev-main",
+                "php": "^8.4",
+                "psr/log": "^3.0.2"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "kinetis/mcp": "dev-main",
+                "kinetis/queue": "dev-main",
+                "nyholm/psr7": "^1.8.2",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "suggest": {
+                "kinetis/migrations": "Migration runner and migrate commands, connecting through this package's connection policy.",
+                "kinetis/query-builder": "Parameterized queries and row-to-DTO mapping over the MysqlLink/PostgresLink this package binds."
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": {
+                    "bootstrap": "Kinetis\\DatabaseBridge\\PackageBootstrap"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\DatabaseBridge\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\DatabaseBridge\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "Kinetis wiring for kinetis/persistence: DB_* connection configuration and the default link binding, SQL spans through Kinetis telemetry, and a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
             "name": "kinetis/framework",
             "version": "dev-main",
             "dist": {
@@ -1390,7 +1446,7 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp",
-                "reference": "340984883b1a89c03534aa2ab92623d7eb5e06a8"
+                "reference": "f76bcc56a7c25d963be2bcbd2bea2aed4991e9a3"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1404,7 +1460,6 @@
             "require-dev": {
                 "infection/infection": "^0.35.0",
                 "kinetis/auth": "dev-main",
-                "kinetis/persistence": "dev-main",
                 "phpstan/phpstan": "^2.2.8",
                 "phpunit/phpunit": "^13.3.3",
                 "vimeo/psalm": "^6.17"
@@ -1446,9 +1501,10 @@
             "dist": {
                 "type": "path",
                 "url": "../migrations",
-                "reference": "93f3cbd1d0e41973aaed2d8ece1548bc149d1812"
+                "reference": "aee7435123f49ea7beb752b14306c37a5fe73178"
             },
             "require": {
+                "kinetis/database-bridge": "dev-main",
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
                 "php": "^8.4"
@@ -1483,7 +1539,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+            "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "transport-options": {
                 "relative": true
             }
@@ -1494,35 +1550,28 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "39f4af7be651d5df70eaa010c3abfcae795750d9"
+                "reference": "4d6c00dfc5258293b4dc5deadb2fde4325335eca"
             },
             "require": {
-                "kinetis/framework": "dev-main",
                 "php": "^8.4",
+                "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
-                "kinetis/mcp": "dev-main",
-                "kinetis/queue": "dev-main",
-                "nyholm/psr7": "^1.8.2",
+                "kinetis/framework": "dev-main",
                 "phpstan/phpstan": "^2.2.8",
                 "phpunit/phpunit": "^13.3.3",
                 "vimeo/psalm": "^6.17"
             },
             "suggest": {
-                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
-                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
-                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the default under PHP-FPM via DB_DRIVER=auto.",
-                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the default under FrankenPHP worker mode via DB_DRIVER=auto.",
+                "ext-mysqli": "Needed by the native MySQL driver (Kinetis\\Persistence\\Driver\\MysqliAsyncClient) — the auto driver's choice under FrankenPHP worker mode and RoadRunner.",
+                "ext-pdo_mysql": "Needed by the PDO MySQL driver (Kinetis\\Persistence\\Driver\\PdoMysqlClient) — the auto driver's choice everywhere else, PHP-FPM included.",
+                "ext-pdo_pgsql": "Needed by the PDO Postgres driver (Kinetis\\Persistence\\Driver\\PdoPgsqlClient) — the auto driver's choice everywhere else, PHP-FPM included.",
+                "ext-pgsql": "Needed by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient) — the auto driver's choice under FrankenPHP worker mode and RoadRunner.",
                 "ext-sockets": "Needed alongside ext-pgsql by the native Postgres driver (Kinetis\\Persistence\\Driver\\PgsqlAsyncClient), which ends a connection's transport with socket_shutdown() to abandon a statement without blocking the event loop."
             },
             "type": "library",
-            "extra": {
-                "kinetis": {
-                    "bootstrap": "Kinetis\\Persistence\\PackageBootstrap"
-                }
-            },
             "autoload": {
                 "psr-4": {
                     "Kinetis\\Persistence\\": "src/"
@@ -1541,7 +1590,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "Request-scoped SQL transaction safety net, runtime-matched native DB drivers (mysqli async, ext-pgsql async, PDO), and the connection factory for Kinetis — MySQL and Postgres.",
+            "description": "Runtime-matched MySQL and Postgres clients (mysqli async, ext-pgsql async, PDO) built from a neutral connection definition, with a transaction safety net and injectable SQL instrumentation. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "transport-options": {
                 "relative": true
             }
@@ -7310,6 +7359,7 @@
     "stability-flags": {
         "kinetis/broadcasting": 20,
         "kinetis/cache-redis": 20,
+        "kinetis/database-bridge": 20,
         "kinetis/framework": 20,
         "kinetis/mcp": 20,
         "kinetis/migrations": 20,
