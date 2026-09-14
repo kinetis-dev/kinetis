@@ -45,8 +45,8 @@ use Throwable;
  * $db must hold one session for the whole run: a lock taken on one
  * session is not held on another. That is what
  * {@see \Kinetis\Persistence\SqlConnectionFactory::singleSession()}
- * builds, and what {@see \Kinetis\Migrations\Console\MigrationContext}
- * passes the migrate:* commands. A pooling link moves between sessions
+ * builds, and what the migrate:* commands run on.
+ * A pooling link moves between sessions
  * per operation, and a reconnecting one replaces a session it loses —
  * either would go on running migrations with the lock gone. A
  * single-session client closes instead, so the run stops where its

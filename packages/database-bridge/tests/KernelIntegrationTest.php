@@ -2,40 +2,36 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Persistence\Tests;
+namespace Kinetis\DatabaseBridge\Tests;
 
+use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
+use Kinetis\DatabaseBridge\PackageBootstrap;
+use Kinetis\DatabaseBridge\Tests\Fixtures\DanglingTransactionController;
+use Kinetis\DatabaseBridge\Tests\Fixtures\DanglingTransactionHolder;
+use Kinetis\DatabaseBridge\Tests\Fixtures\DanglingTransactionToolController;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\Router;
-use Kinetis\Config\Config;
 use Kinetis\Mcp\Http\McpController;
 use Kinetis\Mcp\McpDispatcher;
 use Kinetis\Mcp\McpRegistry;
 use Kinetis\Mcp\McpServer;
 use Kinetis\Mcp\Transport\StdioTransport;
-use Kinetis\Persistence\Tests\Fixtures\DanglingTransactionController;
-use Kinetis\Persistence\Tests\Fixtures\DanglingTransactionHolder;
-use Kinetis\Persistence\Tests\Fixtures\DanglingTransactionToolController;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The "kinetis/persistence is actually installed" half of Kernel's
- * TransactionGuard wiring — the counterpart to core's own
- * KernelTest::test_handles_a_request_normally_when_the_persistence_package_is_not_installed().
- * Only this package has both Kernel and TransactionGuard simultaneously
- * available (it depends on kinetis/framework; core never depends the other
- * way), so this is the one place the real dispose-hook wiring can be
- * proven end-to-end.
+ * The TransactionGuard wiring this package's bootstrap installs, end to
+ * end through the entry points that own a RequestScope per unit of work:
+ * an HTTP request through Kernel, and an MCP message over HTTP and over
+ * stdio. Each unit leaves a transaction open, and its scope's disposal
+ * rolls it back — nothing in those entry points names the guard.
  */
 final class KernelIntegrationTest extends TestCase
 {
     public function test_rolls_back_a_transaction_left_open_by_the_controller(): void
     {
-        self::assertTrue(class_exists('Kinetis\Persistence\TransactionGuard'));
-
-        $app = new AppScope();
-        $app->boot();
+        $app = self::app();
 
         $router = new Router();
         $router->register(DanglingTransactionController::class);
@@ -50,19 +46,18 @@ final class KernelIntegrationTest extends TestCase
     }
 
     /**
-     * The MCP transports wire the same hook per message — an HTTP POST
-     * to /mcp here, a stdio line below — so a tool leaving a
-     * transaction open gets it rolled back exactly as an HTTP
+     * An HTTP POST to /mcp is an ordinary Kernel request, so a tool
+     * leaving a transaction open gets it rolled back exactly as an HTTP
      * controller does.
      */
     public function test_rolls_back_a_transaction_left_open_by_a_tool_over_http(): void
     {
-        $app = new AppScope();
-        $app->instance(Config::class, new Config([]));
-        $registry = new McpRegistry();
-        $registry->register(DanglingTransactionToolController::class);
-        $app->instance(McpServer::class, new McpServer($registry, new McpDispatcher($app)));
-        $app->boot();
+        $app = self::app(static function (AppScope $app): void {
+            $app->instance(Config::class, new Config([]));
+            $registry = new McpRegistry();
+            $registry->register(DanglingTransactionToolController::class);
+            $app->instance(McpServer::class, new McpServer($registry, new McpDispatcher($app)));
+        });
 
         $router = new Router();
         $router->register(McpController::class);
@@ -80,18 +75,7 @@ final class KernelIntegrationTest extends TestCase
                 'Mcp-Name' => 'begin_transaction',
             ],
         );
-        $request->getBody()->write((string) \json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'begin_transaction',
-                '_meta' => [
-                    'io.modelcontextprotocol/protocolVersion' => '2026-07-28',
-                    'io.modelcontextprotocol/clientCapabilities' => (object) [],
-                ],
-            ],
-        ]));
+        $request->getBody()->write((string) \json_encode(self::toolCall()));
         $request->getBody()->rewind();
 
         $response = $kernel->handle($request);
@@ -101,8 +85,7 @@ final class KernelIntegrationTest extends TestCase
         // A 200 alone doesn't prove the tool actually ran — most, but
         // not all, preflight/validation rejections map to 400, so the
         // envelope itself has to be checked too: a genuine result, never
-        // an error, and the tool's own real return value inside it, not
-        // just "some result key is present."
+        // an error, and the tool's own real return value inside it.
         $body = \json_decode((string) $response->getBody(), true);
         self::assertArrayNotHasKey('error', $body);
         self::assertFalse($body['result']['isError']);
@@ -117,8 +100,7 @@ final class KernelIntegrationTest extends TestCase
 
     public function test_rolls_back_a_transaction_left_open_by_a_tool_over_stdio(): void
     {
-        $app = new AppScope();
-        $app->boot();
+        $app = self::app();
 
         $registry = new McpRegistry();
         $registry->register(DanglingTransactionToolController::class);
@@ -128,18 +110,7 @@ final class KernelIntegrationTest extends TestCase
 
         $input = \fopen('php://memory', 'r+');
         \assert($input !== false);
-        \fwrite($input, (string) \json_encode([
-            'jsonrpc' => '2.0',
-            'id' => 1,
-            'method' => 'tools/call',
-            'params' => [
-                'name' => 'begin_transaction',
-                '_meta' => [
-                    'io.modelcontextprotocol/protocolVersion' => '2026-07-28',
-                    'io.modelcontextprotocol/clientCapabilities' => (object) [],
-                ],
-            ],
-        ]) . "\n");
+        \fwrite($input, (string) \json_encode(self::toolCall()) . "\n");
         \rewind($input);
         $output = \fopen('php://memory', 'r+');
         \assert($output !== false);
@@ -165,5 +136,40 @@ final class KernelIntegrationTest extends TestCase
 
         self::assertNotNull(DanglingTransactionHolder::$link);
         self::assertTrue(DanglingTransactionHolder::$link->transactions[0]->rolledBack);
+    }
+
+    /**
+     * @param (callable(AppScope): void)|null $beforeBoot registrations must
+     *        happen before boot() locks the container
+     */
+    private static function app(?callable $beforeBoot = null): AppScope
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config([]));
+
+        if ($beforeBoot !== null) {
+            $beforeBoot($app);
+        }
+
+        $app->boot();
+
+        return $app;
+    }
+
+    /** @return array<string, mixed> */
+    private static function toolCall(): array
+    {
+        return [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'begin_transaction',
+                '_meta' => [
+                    'io.modelcontextprotocol/protocolVersion' => '2026-07-28',
+                    'io.modelcontextprotocol/clientCapabilities' => (object) [],
+                ],
+            ],
+        ];
     }
 }

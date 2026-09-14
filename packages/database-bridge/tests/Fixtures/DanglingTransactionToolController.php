@@ -2,15 +2,16 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Persistence\Tests\Fixtures;
+namespace Kinetis\DatabaseBridge\Tests\Fixtures;
 
 use Kinetis\Mcp\Attributes\McpTool;
 use Kinetis\Persistence\TransactionGuard;
 
 /**
  * The MCP counterpart of DanglingTransactionController: a tool that
- * begins a transaction and never closes it, proving each transport's
- * per-message TransactionGuard hook is what actually rolls it back.
+ * begins a transaction and never closes it, proving the cleanup
+ * registered on each message's own scope is what actually rolls it back,
+ * over either transport.
  */
 final readonly class DanglingTransactionToolController
 {

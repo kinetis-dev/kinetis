@@ -13,7 +13,6 @@ use Kinetis\Console\CommandDiscovery;
 use Kinetis\Console\CommandDispatcher;
 use Kinetis\Console\Events\CommandFailed;
 use Kinetis\Container\AppScope;
-use Kinetis\Container\TransactionGuardHook;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\Events\EventListenerDiscovery;
 use Kinetis\Logging\SafeLogger;
@@ -149,13 +148,6 @@ BootSequence::run(
 $app->boot();
 
 $scope = $app->createRequestScope();
-// The same shared safety net Kernel wires in for every HTTP request —
-// see TransactionGuardHook's own docblock. Skipped alongside bootstrap:
-// without the application's bindings there is no database link for the
-// guard to resolve, and nothing to guard.
-if ($definition->bootstrap) {
-    TransactionGuardHook::registerIfAvailable($scope);
-}
 
 try {
     $exitCode = (new CommandDispatcher($scope))->run($definition, array_slice($argv ?? [], 2));

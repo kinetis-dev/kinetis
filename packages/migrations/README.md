@@ -80,8 +80,12 @@ following automatically, through the `extra.kinetis` declaration in its
 - **Commands**: `migrate`, `migrate:rollback`, `migrate:status`, and
   `migrate:make` on `vendor/bin/kinetis`. All four run without the
   application's bootstrap (`bootstrap: false`) — they read `DB_*`
-  directly, so they work in bare contexts (CI, an init container) with
-  nothing but environment variables.
+  directly, through
+  [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)'s
+  connection policy, so they work in bare contexts (CI, an init
+  container) with nothing but environment variables. A run holds one PDO
+  session, whatever `DB_DRIVER` says, because its advisory lock lives in
+  that session.
 - **Events**: `Kinetis\Migrations\Events\MigrationApplied` and
   `MigrationRolledBack`, dispatched once per migration `migrate`/
   `migrate:rollback` actually runs. See
@@ -93,7 +97,8 @@ routes, middleware, event listeners it registers itself, or MCP tools.
 
 ## Configuration
 
-The `migrate*` commands read the same `DB_*` keys [`kinetis/persistence`](https://github.com/kinetis-dev/persistence)
+The `migrate*` commands read the same `DB_*` keys
+[`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)
 documents (`DB_CONNECTION`/`DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`/
 `DB_PORT`, ...) from the environment or `.env`, plus one key of this
 package's own:
@@ -112,7 +117,8 @@ composer require kinetis/migrations
 ```
 
 Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
-and [`kinetis/persistence`](https://github.com/kinetis-dev/persistence).
+[`kinetis/persistence`](https://github.com/kinetis-dev/persistence), and
+[`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge).
 Full documentation:
 [kinetis.dev/docs/migrations.html](https://kinetis.dev/docs/migrations.html).
 

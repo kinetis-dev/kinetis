@@ -24,8 +24,7 @@ use Throwable;
 /**
  * Registered unconditionally as global middleware by Kernel, second only
  * to SecurityHeadersMiddleware (see GlobalMiddlewareOrder::resolve() for
- * the exact order) — the same unconditional-dispose-hook reasoning
- * TransactionGuard::rollbackDangling() uses. An uncaught exception from
+ * the exact order). An uncaught exception from
  * anywhere in the pipeline — a controller, a route-level middleware,
  * application code in general — is caught here instead of propagating
  * out of Kernel::handle() entirely: a Kinetis\Validation\Exception\ValidationException

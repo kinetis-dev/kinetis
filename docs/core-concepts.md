@@ -130,15 +130,16 @@ Every call to `Kernel::handle()` follows the same shape:
    {doc}`middleware`.
 3. The pipeline's innermost handler creates a fresh `RequestScope` from
    the persistent `AppScope` container (see {doc}`container`).
-4. When `kinetis/persistence` is installed, a `TransactionGuard` is
-   resolved from that scope and `rollbackDangling()` is registered as a
-   dispose hook — for every request, whether or not it ever opens a
-   database transaction (a no-op when it doesn't). If a request opens a
-   transaction and something goes wrong before it's explicitly committed
-   or rolled back, this is the safety net that closes it anyway.
-   `kinetis/framework` alone has no database concept, so this step is
-   skipped entirely without the package installed. See
-   {doc}`persistence`.
+4. Creating the scope runs every initializer registered by installed
+   packages through `AppScope::onRequestScopeCreated()` (see
+   {doc}`container`). With `kinetis/database-bridge` installed, one of
+   them binds a lazy `TransactionGuard`: the first resolution in the
+   scope builds the guard and registers `rollbackDangling()` on the
+   scope's disposal. If a request opens a transaction through the guard
+   and something goes wrong before it's explicitly committed or rolled
+   back, this is the safety net that closes it anyway; a request that
+   never resolves the guard builds none. `kinetis/framework` alone has no
+   database concept. See {doc}`persistence`.
 5. The router matches the request; the matched route's own
    `#[Middleware]` pipeline runs, resolved from that `RequestScope`; a
    `Dispatcher` resolves the controller's parameters and invokes it.

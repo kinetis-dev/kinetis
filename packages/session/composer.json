@@ -26,6 +26,7 @@
     },
     "suggest": {
         "kinetis/persistence": "Enables SqlSessionStore, sessions in a kinetis_sessions table over the SQL contracts.",
+        "kinetis/database-bridge": "Binds the DB_CONNECTION link SESSION_DRIVER=sql stores sessions through.",
         "kinetis/cache-redis": "Enables RedisSessionStore, the SESSION_DRIVER=redis backend, cluster and TLS included."
     },
     "autoload": {

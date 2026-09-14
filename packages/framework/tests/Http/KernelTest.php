@@ -13,6 +13,7 @@ use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\OpenApiCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
+use Kinetis\Container\RequestScope;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
@@ -93,26 +94,31 @@ final class KernelTest extends TestCase
     }
 
     /**
-     * Kernel resolves Kinetis\Persistence\TransactionGuard from every
-     * request's RequestScope — but that class lives in the separate,
-     * optional kinetis/persistence package, never installed for this
-     * suite. This is the real, always-true "not installed" branch of the
-     * class_exists() gate in Kernel::dispatchCore() — proving a request
-     * completes normally with no dispose-hook crash, not just benefiting
-     * from it implicitly the way every other test in this file already
-     * does. The "is installed" branch is verified in kinetis/persistence's
-     * own test suite instead, which is the one place both Kernel and
-     * TransactionGuard are simultaneously available.
+     * Every request's scope comes from AppScope::createRequestScope(), so
+     * each registered initializer runs once per request, on a scope of
+     * that request's own, disposed when the request is done.
      */
-    public function test_handles_a_request_normally_when_the_persistence_package_is_not_installed(): void
+    public function test_each_request_scope_runs_every_registered_initializer_once(): void
     {
-        self::assertFalse(class_exists('Kinetis\Persistence\TransactionGuard'));
+        $initialized = [];
+        $app = new AppScope();
+        $app->onRequestScopeCreated(static function (RequestScope $scope) use (&$initialized): void {
+            $initialized[] = $scope;
+        });
+        $app->boot();
 
-        $request = new ServerRequest('POST', '/users', self::JSON_HEADERS, body: json_encode(['name' => 'Alon', 'email' => 'alon@example.com']));
+        $router = new Router();
+        $router->register(UserController::class);
+        $kernel = new Kernel($app, $router);
+        $body = json_encode(['name' => 'Alon', 'email' => 'alon@example.com']);
 
-        $response = $this->kernel()->handle($request);
+        self::assertSame(201, $kernel->handle(new ServerRequest('POST', '/users', self::JSON_HEADERS, body: $body))->getStatusCode());
+        self::assertSame(201, $kernel->handle(new ServerRequest('POST', '/users', self::JSON_HEADERS, body: $body))->getStatusCode());
 
-        self::assertSame(201, $response->getStatusCode());
+        self::assertCount(2, $initialized);
+        self::assertNotSame($initialized[0], $initialized[1]);
+        self::assertTrue($initialized[0]->isDisposed());
+        self::assertTrue($initialized[1]->isDisposed());
     }
 
     public function test_returns_a_404_json_response_for_an_unknown_route(): void

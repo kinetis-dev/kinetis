@@ -153,7 +153,7 @@ jobs:
           FROM php:8.4-cli-alpine
           RUN apk add --no-cache bash gcc g++ make autoconf pkgconf re2c postgresql-dev linux-headers curl \
            && docker-php-ext-install mysqli pdo_mysql pgsql pdo_pgsql sockets \
-           && curl -sL https://github.com/php/pie/releases/download/1.4.10/pie.phar -o /usr/local/bin/pie.phar \
+           && curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 --output /usr/local/bin/pie.phar https://github.com/php/pie/releases/download/1.4.10/pie.phar \
            && chmod +x /usr/local/bin/pie.phar \
            && php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
           DOCKERFILE
@@ -198,7 +198,7 @@ jobs:
             } > "/tmp/cov-logs/$pkg.log" 2>&1 || echo "$pkg" >> /tmp/cov-failed
             echo "$pkg done"
           }
-          for pkg in framework persistence redis cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp mcp-docs migrations pingpong query-builder views views-php views-latte views-twig queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search search-opensearch search-elasticsearch session skeleton storage storage-s3 telemetry; do
+          for pkg in framework persistence database-bridge redis cache-redis auth auth-jwt authorization bref-adapter roadrunner-adapter mailer broadcasting mcp mcp-docs migrations pingpong query-builder views views-php views-latte views-twig queue queue-redis queue-sql queue-rabbitmq queue-sqs revolt-http-client aws-sigv4 search search-opensearch search-elasticsearch session skeleton storage storage-s3 telemetry; do
             run_pkg "$pkg" &
             while [ "$(jobs -rp | wc -l)" -ge 4 ]; do sleep 1; done
           done

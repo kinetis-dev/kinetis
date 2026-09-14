@@ -389,8 +389,8 @@ final readonly class PingRepository
 ```
 
 `PingRepository` needs a real `MysqlLink` client registered before the
-container locks its bindings — and `kinetis/persistence` does that
-itself: its package bootstrap (see {doc}`cli`) reads the `DB_*` keys you
+container locks its bindings — and `kinetis/database-bridge`, which
+`kinetis/migrations` requires, does that itself: its package bootstrap (see {doc}`cli`) reads the `DB_*` keys you
 just put in `.env` and binds the connection under `MysqlLink`, with no
 wiring of your own. `public/index.php` does not change: running every
 installed package's bootstrap before the container boots is already part
@@ -567,8 +567,8 @@ final readonly class PongJob implements Job
 
 Nothing to register: `QUEUE_CONNECTION=redis` in `.env` is the whole
 wiring — `kinetis/queue`'s package bootstrap binds `QueueInterface` to a
-Redis-backed queue from it, the same way `kinetis/persistence` already
-bound `MysqlLink`.
+Redis-backed queue from it, the same way `kinetis/database-bridge`
+already bound `MysqlLink`.
 
 Add a second method that pushes a job instead of ponging inline:
 
@@ -787,7 +787,8 @@ final readonly class ActionEvent
 Installing `kinetis/broadcasting` is the entire wiring — its own package
 bootstrap reads `BROADCAST_DRIVER` and binds `BroadcasterInterface`
 before your own `bootstrap.php` ever runs, the same "nothing to
-register" shape `kinetis/persistence` and `kinetis/queue` already have.
+register" shape `kinetis/database-bridge` and `kinetis/queue` already
+have.
 There's no publisher class to write and no `bootstrap.php` needed for
 this. A listener that republishes every `ActionEvent` it sees just
 constructor-injects `Kinetis\Broadcasting\Broadcaster`:

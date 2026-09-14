@@ -6,8 +6,8 @@ namespace Kinetis\Migrations\Console;
 
 use Kinetis\Config\Config;
 use Kinetis\Console\CommandArguments;
+use Kinetis\DatabaseBridge\ConnectionFactory;
 use Kinetis\Migrations\MigrationRunner;
-use Kinetis\Persistence\SqlConnectionFactory;
 use Kinetis\Migrations\SqlMigrationRepository;
 use Kinetis\Runtime\ProjectRoot;
 
@@ -47,7 +47,7 @@ final readonly class MigrationContext
         // pooled — or that replaced a discarded session — would run
         // migrations without holding it. These commands are strictly
         // serial, and blocking on a query costs them nothing.
-        $db = SqlConnectionFactory::singleSession($this->config, $connectionName);
+        $db = ConnectionFactory::singleSession($this->config, $connectionName);
 
         return new MigrationRunner($db, new SqlMigrationRepository($db), $this->migrationsPath);
     }

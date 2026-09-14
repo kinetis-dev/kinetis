@@ -96,7 +96,7 @@ final class PackageBootstrapTest extends TestCase
         $app->boot();
 
         $this->expectException(SessionException::class);
-        $this->expectExceptionMessage('DB_CONNECTION');
+        $this->expectExceptionMessage('install kinetis/database-bridge and set DB_CONNECTION');
 
         $app->get(SessionStoreInterface::class);
     }

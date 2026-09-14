@@ -76,15 +76,17 @@ for one, see {doc}`appendix`. See `Kinetis\Logging\SafeLogger`.
 
 ### `TransactionGuard::rollbackDangling()`
 
-Registered as a `RequestScope` dispose hook on every request whenever
-`kinetis/persistence` is installed (see {doc}`persistence`), so it runs
-whether or not a request ever opened a transaction. It logs a `warning`
-only once it has actually closed an active transaction — the
-overwhelming majority of calls are a genuine no-op, and logging on every
-one of them regardless would turn a real anomaly signal into noise. If closing a transaction fails,
-that's logged as an `error` instead, one line per failure — a strictly
-more severe signal than the routine `warning`, since it means a
-transaction survived the request. See {doc}`persistence`'s "What happens
+With `kinetis/database-bridge` installed, every request scope receives a
+lazy `TransactionGuard` binding, and `rollbackDangling()` is registered
+on a scope's disposal only once that scope resolves the guard (see
+{doc}`container`'s "Request-scope initializers" and {doc}`persistence`).
+It logs a `warning` only once it has actually closed an active
+transaction, so a unit of work that ended every transaction it began
+logs nothing and the warning stays an anomaly signal. If closing a
+transaction fails, that's logged as an `error` instead, one line per
+failure — a strictly more severe signal than the routine `warning`,
+since it means a transaction survived the unit of work. See
+{doc}`persistence`'s "What happens
 when cleanup itself fails" for the full failure behavior, including that
 this is all independent of the logger itself: an exception the logger
 throws is discarded rather than allowed to affect cleanup or misreport

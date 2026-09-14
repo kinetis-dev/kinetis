@@ -113,7 +113,8 @@ than letting an unrecognized value like `"purple"` become `false`.
 `Config` validates syntax and representable range. It has no idea whether
 a key means a TCP port, a positive duration, or a ratio between 0 and 1.
 That domain knowledge belongs to whichever factory or middleware reads
-the key: `SqlConnectionFactory` rejects a `DB_PORT` outside 1–65535,
+the key: `kinetis/database-bridge`'s `ConnectionFactory` rejects a
+`DB_PORT` outside 1–65535,
 `FormLimits` rejects a non-positive `MAX_BODY_SIZE`, `TracerFactory`
 rejects an `OTEL_TRACES_SAMPLER_ARG` outside 0–1, and so on — each with
 an `InvalidArgumentException` naming the key, rather than clamping into
@@ -149,7 +150,8 @@ DB_DB2_HOST=db2.internal          # named "db2"
 
 `Config::scopedKey(string $key, string $connection = 'default'): string`
 is the shared helper every technology's connection builder — see
-{doc}`persistence` for `SqlConnectionFactory` and `RedisSimpleCache` —
+{doc}`persistence` for `kinetis/database-bridge`'s `ConnectionFactory`
+and `RedisSimpleCache` —
 uses to compute which exact variable to read:
 
 ```{code-block} php
@@ -207,7 +209,7 @@ path — `FormLimits` and `TrustedProxies`. Then the bootstrap chain runs,
 in this order:
 
 1. Every installed package's own bootstrap class, declared via
-   `extra.kinetis` (see {doc}`cli`) — how `kinetis/persistence` and
+   `extra.kinetis` (see {doc}`cli`) — how `kinetis/database-bridge` and
    `kinetis/queue` bind a configured connection and queue backend with no
    wiring of yours.
 2. An optional `bootstrap.php` at your project root.
@@ -224,12 +226,12 @@ declare(strict_types=1);
 
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
-use Kinetis\Persistence\SqlConnectionFactory;
+use Kinetis\DatabaseBridge\ConnectionFactory;
 
-// kinetis/persistence already binds the default DB_* connection under its
-// own dialect contract. A named connection is application-owned wiring.
+// kinetis/database-bridge already binds the default DB_* connection under
+// its own dialect contract. A named connection is application-owned wiring.
 return static function (AppScope $app, Config $config): void {
-    $app->instance('db.reporting', SqlConnectionFactory::fromConfig($config, 'reporting'));
+    $app->instance('db.reporting', ConnectionFactory::fromConfig($config, 'reporting'));
 };
 ```
 
@@ -327,9 +329,10 @@ These are read through `getenv()` at discovery time rather than through
 `Config`, so a `.env` value works and a `TestApplication` config override
 does not.
 
-### Database (`kinetis/persistence`) — all scoped
+### Database (`kinetis/database-bridge`) — all scoped
 
-`DB_CONNECTION` is what the package bootstrap gates on, and it gates on
+Read by `kinetis/database-bridge`'s `ConnectionFactory`.
+`DB_CONNECTION` is what the bridge's package bootstrap gates on, and it gates on
 the key being *absent*, not blank: `DB_CONNECTION=` activates the package
 and then fails on the dialect check.
 
@@ -414,7 +417,7 @@ use AWS's own default credential provider chain.
 ### Migrations (`kinetis/migrations`)
 
 Read by the `migrate*` commands, which connect through the same `DB_*`
-keys as persistence.
+keys as `kinetis/database-bridge`.
 
 | Key | Default | Purpose |
 |---|---|---|

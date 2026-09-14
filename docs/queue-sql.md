@@ -34,7 +34,7 @@ degrade quietly.
 
 ## Configuring
 
-`DB_*` are the exact keys `kinetis/persistence` already reads — nothing
+`DB_*` are the exact keys `kinetis/database-bridge` reads — nothing
 new to set up beyond a working database connection.
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` is the one key this package
 introduces itself; it defaults to 300 and is described below.

@@ -4,22 +4,22 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations\Tests\Integration;
 
-use Kinetis\Config\Config;
-use Kinetis\Console\CommandArguments;
-use Kinetis\Migrations\Console\MigrationContext;
+use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Migrations\SqlMigrationRepository;
+use Kinetis\Persistence\ConnectionDefinition;
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
 use Kinetis\Persistence\Exception\ConnectionException;
+use Kinetis\Persistence\SqlConnectionFactory;
 use PHPUnit\Framework\TestCase;
 
 /**
  * A run whose session goes, against a real MySQL. The advisory lock lives
- * in the session the migrate:* commands hold for the whole run, so a
- * client that opened a replacement would carry on marking and running
- * migrations with nothing holding a concurrent deploy off. The
- * single-session client the commands are built on closes instead, and
- * the run stops where its session did.
+ * in the session a run holds from start to finish, so a client that
+ * opened a replacement would carry on marking and running migrations with
+ * nothing holding a concurrent deploy off. The single-session client
+ * SqlConnectionFactory::singleSession() builds closes instead, and the
+ * run stops where its session did.
  *
  * The first migration abandons a transaction — begun and dropped, so its
  * destructor hands the session back with no ROLLBACK on the wire, which
@@ -105,7 +105,8 @@ final class MigrationSessionLossTest extends TestCase
 
     public function test_a_run_that_loses_its_locked_session_cannot_go_on(): void
     {
-        $runner = new MigrationContext($this->migrationsPath, self::config())->runner(new CommandArguments([], []));
+        $db = SqlConnectionFactory::singleSession(self::definition());
+        $runner = new MigrationRunner($db, new SqlMigrationRepository($db), $this->migrationsPath);
 
         try {
             $runner->migrate();
@@ -123,8 +124,8 @@ final class MigrationSessionLossTest extends TestCase
         $link->close();
     }
 
-    /** The DB_* keys MigrationContext reads, from the MYSQL_* the CI services publish. */
-    private static function config(): Config
+    /** The MySQL server the CI services publish through MYSQL_*. */
+    private static function definition(): ConnectionDefinition
     {
         $host = \getenv('MYSQL_HOST');
 
@@ -132,27 +133,27 @@ final class MigrationSessionLossTest extends TestCase
             self::markTestSkipped('MYSQL_HOST is not set — real-backend migration tests are environment-gated.');
         }
 
-        return new Config([
-            'DB_CONNECTION' => 'mysql',
-            'DB_HOST' => $host,
-            'DB_NAME' => \getenv('MYSQL_DATABASE') ?: 'testdb',
-            'DB_USER' => \getenv('MYSQL_USER') ?: 'testuser',
-            'DB_PASSWORD' => \getenv('MYSQL_PASSWORD') ?: 'testpass',
-            'DB_PORT' => \getenv('MYSQL_PORT') ?: '3306',
-        ]);
+        return new ConnectionDefinition(
+            dialect: 'mysql',
+            host: $host,
+            database: \getenv('MYSQL_DATABASE') ?: 'testdb',
+            user: \getenv('MYSQL_USER') ?: 'testuser',
+            password: \getenv('MYSQL_PASSWORD') ?: 'testpass',
+            port: (int) (\getenv('MYSQL_PORT') ?: 3306),
+        );
     }
 
     /** A plain client for the assertions, which run after the migration client is gone. */
     private static function client(): SqlLink
     {
-        $config = self::config();
+        $definition = self::definition();
 
         return new PdoMysqlClient(
-            $config->required('DB_HOST'),
-            $config->required('DB_USER'),
-            $config->required('DB_PASSWORD'),
-            $config->required('DB_NAME'),
-            (int) $config->required('DB_PORT'),
+            $definition->host,
+            $definition->user,
+            $definition->password,
+            $definition->database,
+            $definition->port,
         );
     }
 }

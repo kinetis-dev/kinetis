@@ -38,10 +38,11 @@ generated `composer.json` carries no version field:
 - `composer audit` — checks every installed dependency against the
   FriendsOfPHP security advisory database.
 - PHPUnit — every package's own existing, fake-backed unit test suite.
-  `kinetis/persistence` runs its suite in a container that compiles
-  `ext-sockets` first: its native Postgres driver refuses to construct
-  without it, and the suite constructs one. Only that step needs the
-  extension — PHPStan and Psalm read the package's own stubs.
+  `kinetis/persistence` and `kinetis/database-bridge` run their suites in
+  a container that compiles `ext-sockets` first: the native Postgres
+  driver refuses to construct without it, and each suite constructs one.
+  Only that step needs the extension — PHPStan and Psalm read each
+  package's own stubs.
 - PHPStan, level 8.
 - Psalm, `--taint-analysis` — data-flow analysis for injection-style
   bugs (SQL injection, XSS, ...), a different lens than PHPStan's
@@ -164,7 +165,9 @@ rather than which form it took.
   time here.
 - **`migrations`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
   `MigrationRunner`/`SqlMigrationRepository`: migrate/status/rollback
-  against a real fixture migration file.
+  against a real fixture migration file, and the
+  `migrate`/`migrate:status`/`migrate:rollback` commands run the way `bin/kinetis`
+  runs them — output and events — against MySQL.
 - **`localstack`** (LocalStack: SQS + S3) — `SqsQueue`: push/pop/ack/
   release/fail, `maxAttempts`, priority queues; `S3FilesystemFactory`:
   write/read/exists/list/copy/move/delete/deleteDirectory over the
@@ -267,8 +270,9 @@ tooling rather than a published package. Each job runs
 `composer install`, then Infection with PCOV as the coverage driver,
 gated on `--min-msi`/`--min-covered-msi` — a real, non-zero threshold per
 package, set with a margin below that package's own measured score.
-`kinetis/persistence` compiles `ext-sockets` into that container first,
-for the same requirement its `ci.yml` suite carries above. Runs on PHP
+`kinetis/persistence` and `kinetis/database-bridge` compile `ext-sockets`
+into that container first, for the same requirement their `ci.yml`
+suites carry above. Runs on PHP
 8.4 only, not matrixed across 8.4/8.5 like `ci.yml`/`integration.yml`.
 
 On a pull request, a package whose own `src/` is unchanged relative to
@@ -292,6 +296,7 @@ above the number here by design:
 | `broadcasting` | 75% |
 | `cache-redis` | 75% |
 | `core` | 75% |
+| `database-bridge` | 60% |
 | `mailer` | 90% |
 | `mcp` | 75% |
 | `mcp-docs` | 60% |
@@ -343,9 +348,9 @@ Without them those tests skip and that code reads as uncovered.
 `sonar.coverage.exclusions` names the classes whose behavior a real
 backend decides: `RedisQueue`, `SqlQueue`, `SqsQueue` and its
 `SqsQueueException`, `RabbitMqQueue`, `RedisSessionStore`, plus the thin
-wiring around them — `kinetis/queue`'s and `kinetis/persistence`'s
-`PackageBootstrap`, `queue:work`, and `kinetis/migrations`' console
-commands. Each still carries its own PHPUnit suite for the part pure PHP
+wiring around them — `kinetis/queue`'s and `kinetis/database-bridge`'s
+`PackageBootstrap`, `queue:work`, and `kinetis/migrations`'
+`migrate*` console commands. Each still carries its own PHPUnit suite for the part pure PHP
 can decide; what the exclusion keeps out of the metric is the rest,
 which `integration.yml` proves against a live container and no
 line-coverage number here can speak for.

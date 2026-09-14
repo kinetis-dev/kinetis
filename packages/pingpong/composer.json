@@ -13,6 +13,7 @@
         "kinetis/framework": "dev-main",
         "kinetis/migrations": "dev-main",
         "kinetis/persistence": "dev-main",
+        "kinetis/database-bridge": "dev-main",
         "kinetis/redis": "dev-main",
         "kinetis/cache-redis": "dev-main",
         "kinetis/query-builder": "dev-main",
@@ -53,6 +54,10 @@
         {
             "type": "path",
             "url": "../persistence"
+        },
+        {
+            "type": "path",
+            "url": "../database-bridge"
         },
         {
             "type": "path",

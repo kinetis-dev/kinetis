@@ -75,7 +75,9 @@ Installing this package auto-registers, via `extra.kinetis`:
   builds from your Redis configuration, so one client serves the whole
   application — needs [`kinetis/cache-redis`](https://github.com/kinetis-dev/cache-redis) and `REDIS_URL`,
   `REDIS_HOST`, or `REDIS_CLUSTER` with `REDIS_CLUSTER_SEEDS`), or `sql`
-  (a `kinetis_sessions` table over the persistence contracts, migration
+  (a `kinetis_sessions` table over the persistence contracts, on the link
+  [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)
+  binds from `DB_CONNECTION` or your own `bootstrap.php` binds; migration
   stubs shipped in `resources/migrations/`). Unset means the package
   binds nothing.
 - **One command** on `vendor/bin/kinetis`: `session:gc`, deleting

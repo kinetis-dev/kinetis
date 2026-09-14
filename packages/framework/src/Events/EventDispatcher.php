@@ -12,8 +12,7 @@ use Psr\EventDispatcher\StoppableEventInterface;
 
 /**
  * Never explicitly registered anywhere — autowired fresh per request
- * through RequestScope, the same "TransactionGuard never registered
- * explicitly" pattern. Constructor-inject the concrete EventDispatcher
+ * through RequestScope. Constructor-inject the concrete EventDispatcher
  * class, not Psr\EventDispatcher\EventDispatcherInterface: interfaces
  * can't be autowired by reflection (there's no way to know which
  * implementation to construct), and registering this class directly on

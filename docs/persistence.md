@@ -26,9 +26,10 @@ specific minimum version matters is `kinetis/queue-sql`; see
 {doc}`queue-sql`.
 
 ```{note}
-Core itself has no MySQL/Postgres/Redis dependency of its own —
-`Kinetis\Persistence\TransactionGuard`/`SqlConnectionFactory` live in the
-separate `kinetis/persistence` package, and
+Core itself has no MySQL/Postgres/Redis dependency of its own.
+`kinetis/persistence` — the drivers, `SqlConnectionFactory` and
+`TransactionGuard` — depends on no Kinetis package at all, and
+`kinetis/database-bridge` wires it into a Kinetis application.
 `Kinetis\SimpleCache\RedisSimpleCache` lives in `kinetis/cache-redis`,
 over the standalone `kinetis/redis` transport ({doc}`redis`).
 `composer require` whichever you need; each is introduced with its own
@@ -37,29 +38,95 @@ installation note below at first use.
 
 ## Connecting
 
+```{code-block} sh
+composer require kinetis/persistence
+```
+
+A client is built from a `Kinetis\Persistence\ConnectionDefinition`:
+
+```{code-block} php
+use Kinetis\Persistence\ConnectionDefinition;
+use Kinetis\Persistence\ConnectionOptions;
+use Kinetis\Persistence\SqlConnectionFactory;
+
+$db = SqlConnectionFactory::create(new ConnectionDefinition(
+    dialect: 'pgsql',   // or 'mysql'
+    host: 'db.internal',
+    database: 'shop',
+    user: 'shop',
+    password: $password,
+    port: 5432,         // the dialect's own when omitted
+    driver: 'auto',     // 'auto' (the default), 'native' or 'pdo'
+    options: new ConnectionOptions(sslMode: 'verify-full', sslCa: '/etc/ssl/certs/db-ca.pem', maxConnections: 12),
+    warmConnections: 0, // connections opened at construction
+));
+```
+
+The definition rejects an unknown dialect or driver, a port outside
+1–65535 and a negative warm count, and `ConnectionOptions` validates its
+own fields — each an `InvalidArgumentException` at construction. Build
+one client per connection and keep it for the process's lifetime: the
+async clients are connection pools. `close()` takes a client out of
+service when the process is done with it.
+
+### In a Kinetis application: `kinetis/database-bridge`
+
+```{code-block} sh
+composer require kinetis/database-bridge
+```
+
 Setting `DB_CONNECTION` (plus the other `DB_*` keys — see {doc}`config`)
-is the whole wiring: this package's bootstrap class (declared via
+is then the whole wiring: the bridge's bootstrap class (declared via
 `extra.kinetis`, see {doc}`cli`) builds the default connection and binds
 it under its dialect contract — `Contract\MysqlLink` for
 `DB_CONNECTION=mysql`, `Contract\PostgresLink` for `pgsql` — before
 `AppScope::boot()` locks bindings. The contract interface, not a
 concrete class, so the factory stays free to pick the right driver per
-runtime.
+runtime. Without `DB_CONNECTION`, no connection is built.
 
-To choose your own pool options instead, register the binding yourself
-in `bootstrap.php` — an application registration wins over the
-package's:
+`Kinetis\DatabaseBridge\ConnectionFactory::fromConfig()` reads a
+connection's `DB_*` keys into a `ConnectionDefinition` and builds the
+client through `SqlConnectionFactory`, reporting through Kinetis
+telemetry ({doc}`telemetry`). To choose your own pool options, register
+the binding yourself in `bootstrap.php` — an application registration
+wins over the package's:
 
 ```{code-block} php
 :caption: bootstrap.php
 
+use Kinetis\DatabaseBridge\ConnectionFactory;
 use Kinetis\Persistence\Contract\MysqlLink;
-use Kinetis\Persistence\SqlConnectionFactory;
 
 return static function (AppScope $app, Config $config): void {
-    $app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config, poolOptions: ['maxConnections' => 12]));
+    $app->instance(MysqlLink::class, ConnectionFactory::fromConfig($config, poolOptions: ['maxConnections' => 12]));
 };
 ```
+
+The bridge composes with each database capability on that capability's
+own terms:
+
+- `kinetis/persistence` receives the connection configuration, SQL
+  telemetry, the default link binding, and the lazy request-scoped
+  `TransactionGuard` described under "`TransactionGuard` — the
+  unit-of-work safety net" below.
+- `kinetis/migrations` requires the bridge and registers its own
+  `migrate*` commands when installed; they connect through
+  `ConnectionFactory::singleSession()` ({doc}`migrations`).
+- `kinetis/query-builder` needs no binding. A `Query` is mutable and
+  holds one statement, so code constructs `new Query($link)` per
+  statement over the link the bridge binds; a `Query` is never
+  registered as a shared or request-scoped service.
+
+Request-scoped wiring a capability needs belongs in the bridge's
+request-scope initializer, as `TransactionGuard`'s does. An ordinary
+application binding in `bootstrap.php` wins for the default link, and
+named or custom connections stay explicit
+`ConnectionFactory::fromConfig()` wiring. `TransactionGuard` is bound on
+each request scope, not on `AppScope`: replacing it means registering a
+later `onRequestScopeCreated()` initializer that binds the replacement on
+the scope and registers its own disposal callback there. A
+`TransactionGuard` bound on `AppScope` would be one worker-lifetime guard
+shared by every unit of work, never a safe override.
 
 A controller or service then gets the client by constructor injection,
 like anything else registered on `AppScope`:
@@ -122,19 +189,14 @@ onto a Postgres-only deployment or vice versa.
 
 ### Multiple databases: named connections
 
-```{code-block} sh
-composer require kinetis/persistence
-```
-
-`Kinetis\Persistence\SqlConnectionFactory` builds a driver client
-straight from `Config`, aware of {doc}`config`'s named-connection
-convention:
+`ConnectionFactory::fromConfig()` follows {doc}`config`'s
+named-connection convention:
 
 ```{code-block} php
-use Kinetis\Persistence\SqlConnectionFactory;
+use Kinetis\DatabaseBridge\ConnectionFactory;
 
-$default = SqlConnectionFactory::fromConfig($config);          // DB_*
-$reporting = SqlConnectionFactory::fromConfig($config, 'db2'); // DB_DB2_*
+$default = ConnectionFactory::fromConfig($config);          // DB_*
+$reporting = ConnectionFactory::fromConfig($config, 'db2'); // DB_DB2_*
 ```
 
 ```{code-block} text
@@ -151,8 +213,8 @@ Register each client under its own id if you want both reachable through
 the container:
 
 ```{code-block} php
-$app->instance(MysqlLink::class, SqlConnectionFactory::fromConfig($config));
-$app->instance('db.reporting', SqlConnectionFactory::fromConfig($config, 'db2'));
+$app->instance(MysqlLink::class, ConnectionFactory::fromConfig($config));
+$app->instance('db.reporting', ConnectionFactory::fromConfig($config, 'db2'));
 ```
 
 Only the first is autowireable by constructor type-hinting — a named,
@@ -161,8 +223,9 @@ non-default connection is always retrieved explicitly
 
 ### Driver selection: `DB_DRIVER`
 
-`SqlConnectionFactory::fromConfig()` picks the client implementation via
-`DB_DRIVER` (connection-scoped like every other `DB_*` key):
+A definition's `driver` picks the client implementation, and
+`ConnectionFactory::fromConfig()` reads it from `DB_DRIVER`
+(connection-scoped like every other `DB_*` key):
 
 | value | what you get |
 |---|---|
@@ -171,8 +234,7 @@ non-default connection is always retrieved explicitly
 | `pdo` | One blocking PDO connection (`Driver\PdoMysqlClient`/`PdoPgsqlClient`). `concurrently()` fan-outs still produce correct results; the queries simply run sequentially. |
 
 `fromConfig()`'s `$driver` argument overrides the key for one call.
-`SqlConnectionFactory::singleSession()`, below, is the stricter form of
-the same override.
+`singleSession()`, below, is the stricter form of the same override.
 
 `auto` reads two signals — `frankenphp_handle_request()` and
 `RR_MODE=http` — so AWS Lambda gets `pdo` even though its PHP process is
@@ -220,7 +282,7 @@ server-side `COPY` — one that reads or writes a file the server itself
 can reach — or ordinary statements.
 
 Every parameterized call passes one **pre-flight** first — before the
-driver opens a telemetry span, asks its pool for a connection, opens one,
+driver opens an instrumentation span, asks its pool for a connection, opens one,
 sets that connection's charset and collation, or prepares a statement.
 Keying, count and value kind are all settled there, so an argument list
 outside the contract costs the caller one `Exception\QueryException` and
@@ -310,13 +372,15 @@ client itself out of service, and every later call throws
 outlives one session, which under `auto` is every process that is not a
 persistent worker — a `queue:work` CLI worker included.
 
-`SqlConnectionFactory::singleSession()` builds the other policy: a PDO
-client pinned to the session it opens, closing rather than reconnecting
-if that session is discarded. It is for work that lives in the session
-itself — a session-scoped advisory lock, a temporary table — where a
-replacement is a different session holding none of it, and running on
-one quietly would be worse than stopping. `kinetis/migrations` builds
-its `migrate*` connection this way (see {doc}`migrations`).
+`SqlConnectionFactory::singleSession()` — and
+`ConnectionFactory::singleSession()` over a connection's `DB_*` keys —
+builds the other policy: a PDO client pinned to the session it opens,
+closing rather than reconnecting if that session is discarded. It is for
+work that lives in the session itself — a session-scoped advisory lock,
+a temporary table — where a replacement is a different session holding
+none of it, and running on one quietly would be worse than stopping.
+`kinetis/migrations`' commands run every migration on one (see
+{doc}`migrations`).
 
 The PDO drivers run with *native* (non-emulated) prepares, where every
 `prepare()` is its own server round trip — so `execute()` memoizes
@@ -469,11 +533,12 @@ is unset — never the server's own default, since the native driver's
 client-side escaping is charset-dependent and must run against a known
 charset.
 
-**`$poolOptions`**, an optional `fromConfig()` argument, carries the one
-pool-level knob:
+`ConnectionOptions::$maxConnections` is the one pool-level knob. Through
+the bridge it comes from `DB_MAX_CONNECTIONS` or the optional
+`$poolOptions` argument to `ConnectionFactory::fromConfig()`:
 
 ```{code-block} php
-$db = SqlConnectionFactory::fromConfig($config, poolOptions: [
+$db = ConnectionFactory::fromConfig($config, poolOptions: [
     'maxConnections' => 6,
 ]);
 ```
@@ -490,9 +555,10 @@ connection-scoped
 deployment tunes pool sizing without editing bootstrap code — with an
 explicit `$poolOptions` value winning over the key when both are set.
 
-`warmConnections` opens that many connections at construction instead
-of on first use (clamped to `maxConnections`); the connection-scoped
-`DB_WARM_CONNECTIONS` key does the same from the environment, with the
+A definition's `warmConnections` opens that many connections at
+construction instead of on first use (clamped to `maxConnections`);
+through the bridge it comes from the connection-scoped
+`DB_WARM_CONNECTIONS` key or `$poolOptions['warmConnections']`, with the
 same explicit-value-wins precedence. Every driver also exposes the
 underlying call directly — `warmUp(?int $connections = null)`, where
 `null` warms the whole pool. Warming makes a wrong database
@@ -542,6 +608,38 @@ pool instead, adding latency to that one request — a far softer failure
 mode than a rejected connection that can take the whole worker thread
 down for good.
 
+### Instrumentation
+
+Either `SqlConnectionFactory` method takes a
+`Contract\SqlInstrumentation` as its second argument. Every client it
+builds, and every transaction that client begins, reports five moments
+through it: a statement dispatched (`queryDispatched()`, with `mysql` or
+`postgresql` and the SQL text), sent to the server
+(`queryServerStarted()`, again when a pooled driver retries on a fresh
+connection), and reaped (`queryReaped()`, with the failure when there is
+one); a transaction started, and ended (`transactionEnded()`, with
+`commit`, `rollback` or `unknown` — see "Transactions" below). A started
+moment returns an opaque token that its ended moment receives.
+
+Every moment runs inline, on the Fiber issuing the statement, inside the
+driver's own call. An implementation must be synchronous — it never
+suspends the Fiber — bounded in time, and free of blocking I/O; anything
+it exports goes to separately owned, bounded infrastructure it hands the
+data to. A client keeps its instrumentation for the client's whole
+lifetime — the process's, under a persistent worker — so an
+implementation holds no mutable request or unit-of-work state.
+`queryDispatched()` receives the complete SQL text. Bound parameter
+values are never passed, but the text can carry literals and is
+sensitive: an implementation must not log or export it verbatim.
+
+The client contains whatever the instrumentation throws. A started
+moment that fails hands back `null`, the failure is reported once
+through `error_log()` naming the moment and both classes but never the
+exception's message, and the query result, transaction outcome and
+connection release are exactly what they are without instrumentation. A
+client built with none reports nothing. `kinetis/database-bridge`'s
+clients report through Kinetis telemetry ({doc}`telemetry`).
+
 ## Transactions
 
 `beginTransaction()` pins one connection and returns a transaction with
@@ -590,8 +688,8 @@ the same as a rollback the server reported.
 the span closed, which is a moment later than the last statement being
 accepted: while a `COMMIT` is on the wire the transaction refuses
 further statements but still owns its connection. That window is what
-`close()` — and so `TransactionGuard` at request disposal — has to be
-able to reach. Closing there takes the connection out from under the
+`close()` — and so `TransactionGuard` at the end of a unit of work — has
+to be able to reach. Closing there takes the connection out from under the
 finish, the owning Fiber comes back with an
 `Exception\ConnectionException`, and the outcome is recorded once, as
 `unknown`.
@@ -645,7 +743,7 @@ try {
 ```
 
 `close()` is the lifecycle escape hatch — what `TransactionGuard` runs
-at scope disposal — and is callable from any Fiber. On the owning Fiber
+at the end of a unit of work — and is callable from any Fiber. On the owning Fiber
 it is an ordinary rollback. From another it ends the transaction and
 takes the connection out of service rather than sending a `ROLLBACK`
 down one the owner may be using: the pool replaces it, and the server
@@ -700,24 +798,20 @@ goes back to the pool with the outcome the server confirmed. Use the
 guard; the discard is a safety net for a connection, not a way to end a
 transaction.
 
-## `TransactionGuard` — the request-scoped safety net
-
-`Kernel` degrades gracefully when `kinetis/persistence` isn't installed
-(no dispose hook registered, no error), so an application with no
-database at all can skip it entirely.
+## `TransactionGuard` — the unit-of-work safety net
 
 Connection pooling is the drivers' own job. What no driver can know
-about is Kinetis's `RequestScope` (see {doc}`container`): if application
-code begins a transaction and something throws before it's explicitly
-committed or rolled back, nothing commits or rolls it back, and it holds
-its connection — and the locks on it — for as long as anything still
-references it. Dropped, it ends the only way a destructor can, by
-discarding that connection.
+about is where a unit of work — a request, a job, a command — ends: if
+application code begins a transaction and something throws before it's
+explicitly committed or rolled back, nothing commits or rolls it back,
+and it holds its connection — and the locks on it — for as long as
+anything still references it. Dropped, it ends the only way a destructor
+can, by discarding that connection.
 
-`Kinetis\Persistence\TransactionGuard` is the request-scoped safety net for
-exactly this. It's autowired fresh per request, like any other class you
-haven't explicitly registered on `AppScope`, and tracks every transaction
-it starts.
+`Kinetis\Persistence\TransactionGuard` is the safety net for exactly
+this. One guard belongs to one unit of work and tracks every transaction
+it starts; `rollbackDangling()`, called when that unit ends, closes
+whatever is still open.
 
 ### The recommended pattern
 
@@ -764,39 +858,46 @@ ever find here. This is the pattern you should reach for by default.
 For the case the pattern above doesn't cover — a transaction begun
 through the guard's own `beginTransaction()` and held open across
 multiple calls, that never reaches either `commit()` or `rollback()`
-before the unit of work ends —
-`Kinetis\Container\TransactionGuardHook::registerIfAvailable()`
-registers `rollbackDangling()` as a `RequestScope` dispose hook:
+before the unit of work ends — `rollbackDangling()` closes it.
+
+In a Kinetis application, `kinetis/database-bridge` wires that with no
+code of yours. Its package bootstrap registers an
+`AppScope::onRequestScopeCreated()` initializer (see {doc}`container`)
+giving every `RequestScope` a scope-local `TransactionGuard` binding:
+the first time a scope resolves the guard, the guard is built and its
+`rollbackDangling()` is registered on that same scope's disposal. A
+scope that never resolves it builds none. Every entry point takes its
+scopes from `AppScope::createRequestScope()`, so each unit of work is
+covered:
+
+- `Kernel`, for every HTTP request, an MCP message over HTTP included.
+- `bin/kinetis`, for every CLI command that hasn't declared
+  `#[Command(bootstrap: false)]` — a bootstrap-free command runs no
+  package bootstrap, so its scope carries no initializer and there is no
+  bound connection to guard.
+- `kinetis/mcp`'s `Transport\StdioTransport`, for every MCP message over
+  stdio.
+- `kinetis/queue`'s `QueueWorker`, for every popped job, and
+  `SyncQueue`, for every `push()` — a job that begins a transaction and
+  returns or throws without closing it does not leave that transaction
+  open into whatever job the same connection serves next.
+
+Without the bridge, the host does the same by hand — one guard per unit
+of work, and `rollbackDangling()` from a `finally` when the unit ends:
 
 ```{code-block} php
-Kinetis\Container\TransactionGuardHook::registerIfAvailable($scope);
+$guard = new TransactionGuard($logger);
+
+try {
+    $handler->handle($job, $guard);
+} finally {
+    $guard->rollbackDangling();
+}
 ```
 
-This is the one shared place every entry point that owns a `RequestScope`
-for one unit of work wires this in — a plain string class-name check
-(`class_exists('Kinetis\Persistence\TransactionGuard')`), so it costs
-nothing when `kinetis/persistence` isn't installed, and it's a genuine
-no-op for a unit of work that never opens a transaction even when it is.
-Every one of these calls it **unconditionally**, not opt-in the way, say,
-MCP support is (see {doc}`mcp`):
-
-- `Kernel`, for every HTTP request.
-- `bin/kinetis`, for every CLI command that hasn't declared
-  `#[Command(bootstrap: false)]` — a bootstrap-free command has no
-  database connection to guard in the first place.
-- `kinetis/mcp`'s `Transport\StdioTransport`, for every MCP message over
-  stdio — over HTTP the message runs on the request scope `Kernel`
-  already registered the hook against.
-- `kinetis/queue`'s `QueueWorker`, for every popped job's own
-  `RequestScope`, and `SyncQueue`, for every `push()`'s own `RequestScope`
-  — a job that begins a transaction and returns or throws without closing
-  it does not leave that transaction open into whatever job the same
-  pooled/native connection serves next.
-
-When it does find something to close, it logs a warning through whatever
-logger you've registered (see {doc}`logging`) — a genuine anomaly signal,
-since it means a transaction was left open somewhere it shouldn't have
-been.
+When it does find something to close, it logs a warning through the
+guard's logger (see {doc}`logging`) — a genuine anomaly signal, since it
+means a transaction was left open somewhere it shouldn't have been.
 
 What it finds is what it started: `$guard->beginTransaction($link)` and
 `transaction()`, the two calls that put a transaction on its tracked
@@ -825,15 +926,16 @@ Tracking is cleared up front, before any transaction is touched, so a
 transaction this call already attempted — successfully or not — is never
 retried by a later call. Each failure is logged individually (`error`,
 not `warning`), and the first of them is rethrown once every tracked
-transaction has been attempted — safe to let propagate, since
-`RequestScope::dispose()` already runs every dispose callback to
-completion regardless of one throwing (see {doc}`container`), and
+transaction has been attempted. Under the bridge it propagates from
+`RequestScope::dispose()`, which runs every dispose callback to
+completion regardless of one throwing (see {doc}`container`) and
 rethrows only once all of them have finished.
 
-It closes rather than rolls back because disposal runs in the request's
-own context while the Fiber that leaked the transaction may be parked:
-`close()` from a foreign Fiber ends the transaction and discards its
-connection instead of putting a concurrent `ROLLBACK` on it.
+It closes rather than rolls back because the end-of-unit cleanup runs in
+the host's own context while the Fiber that leaked the transaction may
+be parked: `close()` from a foreign Fiber ends the transaction and
+discards its connection instead of putting a concurrent `ROLLBACK` on
+it.
 
 **`transaction()` never lets a rollback failure erase the failure that
 triggered cleanup.** If your callback (or `commit()`) throws, and the
@@ -842,8 +944,8 @@ and the original exception — the one your code actually threw — is what
 propagates, unchanged. The transaction is untracked either way, whether
 the rollback attempt succeeded or failed: `transaction()` only ever makes
 one cleanup attempt of its own, and leaving a failed one tracked would
-defer a second attempt to `rollbackDangling()` at scope disposal — inside
-a `finally` block, where a second failure there would silently replace
+defer a second attempt to `rollbackDangling()` at the end of the unit of
+work — from a `finally` block, where a second failure there would silently replace
 the exception already propagating from `transaction()`, undoing the same
 guarantee one level up.
 
@@ -1085,14 +1187,14 @@ cluster.
 - {doc}`concurrency` — `concurrently()`, and how the persistence drivers'
   Fiber-suspending calls compose with `Kinetis\Async`'s own primitives on
   the same Revolt loop.
-- {doc}`container` — how `TransactionGuard` (and any other class you
-  haven't explicitly registered) actually gets resolved per request.
+- {doc}`container` — request-scope initializers, and how the bridge's
+  per-scope `TransactionGuard` binding resolves.
 - {doc}`logging` — registering the logger `rollbackDangling()` warns
   through.
 - {doc}`redis` — the transport under the cache: its non-replay and
   deadline contract, cluster discovery, and redirect handling.
 - {doc}`config` — `$config` above, typed environment access in full, and
-  the named-connection convention `SqlConnectionFactory`/`RedisSimpleCache`
+  the named-connection convention `ConnectionFactory`/`RedisSimpleCache`
   both build on.
 - {doc}`caching` — the *other* "cache" in this codebase: build-time AOT
   compilation of routes/validation/OpenAPI, unrelated to `CacheInterface`
@@ -1103,5 +1205,6 @@ cluster.
 - {doc}`performance-tuning` — the worker-threads x connections
   budget, what to observe under load, and tuning by workload shape.
 - {doc}`telemetry` — a span per SQL query and per transaction, which
-  these drivers report through the framework's instrumentation hooks,
-  plus a span per cache operation via `TracingSimpleCache`.
+  the clients `kinetis/database-bridge` builds report through the
+  framework's instrumentation hooks, plus a span per cache operation via
+  `TracingSimpleCache`.

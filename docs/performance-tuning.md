@@ -31,7 +31,7 @@ workers × maxConnections  ≤  comfortably under the DB's max_connections
 
 Pool width comes from `DB_MAX_CONNECTIONS` (connection-scoped, like
 every `DB_*` key) or the `$poolOptions` argument to
-`SqlConnectionFactory::fromConfig()`; worker count from your runtime's
+`kinetis/database-bridge`'s `ConnectionFactory::fromConfig()`; worker count from your runtime's
 own worker setting (`worker.num` under FrankenPHP,
 `pool.num_workers` under RoadRunner).
 
