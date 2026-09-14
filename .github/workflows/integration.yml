@@ -525,6 +525,14 @@ jobs:
           MYSQL_HOST: 127.0.0.1
           POSTGRES_HOST: 127.0.0.1
 
+      - name: Run the migrate command integration tests
+        # migrate, migrate:status and migrate:rollback the way bin/kinetis
+        # runs them — output and events — against the MySQL service.
+        working-directory: packages/migrations
+        run: vendor/bin/phpunit tests/Integration/MigrationCommandsTest.php
+        env:
+          MYSQL_HOST: 127.0.0.1
+
   redis-cluster:
     name: redis + cache-redis (Redis Cluster, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest

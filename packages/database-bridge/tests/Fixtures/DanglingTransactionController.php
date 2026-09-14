@@ -2,15 +2,16 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Persistence\Tests\Fixtures;
+namespace Kinetis\DatabaseBridge\Tests\Fixtures;
 
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Persistence\TransactionGuard;
 
 /**
  * Deliberately begins a transaction and never commits or rolls it back —
- * proving Kernel's TransactionGuard::rollbackDangling() dispose hook is
- * what actually closes it, not the controller.
+ * proving the cleanup registered on the request's scope, when the
+ * controller resolves its guard, is what actually closes it, not the
+ * controller.
  */
 final readonly class DanglingTransactionController
 {

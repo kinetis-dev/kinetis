@@ -6,6 +6,7 @@ namespace Kinetis\Migrations\Tests;
 
 use Kinetis\Config\Config;
 use Kinetis\Console\CommandArguments;
+use Kinetis\DatabaseBridge\TelemetrySqlInstrumentation;
 use Kinetis\Migrations\Console\MigrationContext;
 use Kinetis\Migrations\MigrationRunner;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
@@ -37,7 +38,7 @@ final class MigrationContextTest extends TestCase
 
     /** @param class-string $expected */
     #[DataProvider('dialects')]
-    public function test_the_runner_gets_a_pdo_client_even_under_db_driver_native(string $dialect, string $expected): void
+    public function test_the_runner_gets_a_single_session_pdo_client_even_under_db_driver_native(string $dialect, string $expected): void
     {
         $context = new MigrationContext('/irrelevant', new Config([
             'DB_CONNECTION' => $dialect,
@@ -45,7 +46,29 @@ final class MigrationContextTest extends TestCase
             'DB_PASSWORD' => 'secret',
         ]));
 
-        self::assertInstanceOf($expected, self::linkOf($context->runner(new CommandArguments([], []))));
+        $link = self::linkOf($context->runner(new CommandArguments([], [])));
+
+        self::assertInstanceOf($expected, $link);
+        self::assertTrue(self::property($link, 'singleSession'));
+    }
+
+    /**
+     * The link comes from kinetis/database-bridge's connection policy,
+     * which is what reports it through Kinetis telemetry.
+     */
+    public function test_the_runner_link_is_built_by_the_bridge_connection_policy(): void
+    {
+        $context = new MigrationContext('/irrelevant', new Config([
+            'DB_CONNECTION' => 'mysql',
+            'DB_PASSWORD' => 'secret',
+        ]));
+
+        $link = self::linkOf($context->runner(new CommandArguments([], [])));
+
+        self::assertInstanceOf(
+            TelemetrySqlInstrumentation::class,
+            self::property(self::property($link, 'instrumentation'), 'instrumentation'),
+        );
     }
 
     /** The named-connection form reads its own scoped keys, and gets the same client. */
@@ -62,11 +85,51 @@ final class MigrationContextTest extends TestCase
         self::assertInstanceOf(PdoPgsqlClient::class, self::linkOf($runner));
     }
 
+    public function test_the_default_connection_runs_when_nothing_names_one(): void
+    {
+        $context = new MigrationContext('/irrelevant', self::twoConnections([]));
+
+        self::assertInstanceOf(PdoMysqlClient::class, self::linkOf($context->runner(new CommandArguments([], []))));
+    }
+
+    public function test_migrate_connection_name_selects_the_connection_without_a_flag(): void
+    {
+        $context = new MigrationContext('/irrelevant', self::twoConnections(['MIGRATE_CONNECTION_NAME' => 'reports']));
+
+        self::assertInstanceOf(PdoPgsqlClient::class, self::linkOf($context->runner(new CommandArguments([], []))));
+    }
+
+    public function test_the_connection_flag_wins_over_migrate_connection_name(): void
+    {
+        $context = new MigrationContext('/irrelevant', self::twoConnections(['MIGRATE_CONNECTION_NAME' => 'reports']));
+
+        $runner = $context->runner(new CommandArguments([], ['connection' => 'default']));
+
+        self::assertInstanceOf(PdoMysqlClient::class, self::linkOf($runner));
+    }
+
+    /** @param array<string, string> $overrides */
+    private static function twoConnections(array $overrides): Config
+    {
+        return new Config([
+            'DB_CONNECTION' => 'mysql',
+            'DB_PASSWORD' => 'secret',
+            'DB_REPORTS_CONNECTION' => 'pgsql',
+            'DB_REPORTS_PASSWORD' => 'secret',
+            ...$overrides,
+        ]);
+    }
+
     private static function linkOf(MigrationRunner $runner): object
     {
-        $link = new ReflectionProperty(MigrationRunner::class, 'db')->getValue($runner);
+        $link = self::property($runner, 'db');
         \assert(\is_object($link));
 
         return $link;
+    }
+
+    private static function property(object $object, string $name): mixed
+    {
+        return new ReflectionProperty($object, $name)->getValue($object);
     }
 }

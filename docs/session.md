@@ -45,8 +45,9 @@ The three drivers:
   `REDIS_URL`, `REDIS_HOST`, or `REDIS_CLUSTER` with
   `REDIS_CLUSTER_SEEDS` — and names both in the error otherwise. No
   garbage collection is needed here: the key's own TTL expires it.
-- **`sql`** — a `kinetis_sessions` table, using the database
-  connection `DB_CONNECTION` provides. The table is not created
+- **`sql`** — a `kinetis_sessions` table, on the link
+  `kinetis/database-bridge` binds from `DB_CONNECTION`, or one your own
+  `bootstrap.php` binds. The table is not created
   automatically; it ships as ready-to-copy {doc}`migrations` stubs:
 
   ```{code-block} text

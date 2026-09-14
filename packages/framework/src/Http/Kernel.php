@@ -8,7 +8,6 @@ use Kinetis\Cache\HttpCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
-use Kinetis\Container\TransactionGuardHook;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\Exception\UnknownMiddlewareGroupException;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
@@ -47,11 +46,9 @@ use Throwable;
  * policy, which folds $exposeOpenApi over OPENAPI_ENVIRONMENTS, and the
  * {@see \Kinetis\OpenApi\OpenApiDocumentProvider} bound to this Kernel's
  * own Router. Both reach that controller through the request scope.
- * Every request also runs {@see TransactionGuardHook::registerIfAvailable()}
- * against its RequestScope — the shared hook that registers
- * `Kinetis\Persistence\TransactionGuard::rollbackDangling()` as a dispose
- * callback whenever that optional package is installed, and costs
- * nothing when it is not.
+ * Every request's RequestScope comes from AppScope::createRequestScope(),
+ * so every initializer packages registered through
+ * AppScope::onRequestScopeCreated() has run on it.
  *
  * `$isPersistent` — set from the driving RuntimeAdapterInterface — gates
  * the `gc_collect_cycles()` call that follows every request-scope
@@ -286,8 +283,6 @@ final class Kernel
         $scope->instance(Router::class, $this->router);
         $scope->instance(OpenApiAccess::class, $this->openApiAccess);
         $scope->instance(OpenApiDocumentProvider::class, $this->openApiDocuments);
-
-        TransactionGuardHook::registerIfAvailable($scope);
 
         try {
             $response = $this->matchAndDispatch($scope, $request);

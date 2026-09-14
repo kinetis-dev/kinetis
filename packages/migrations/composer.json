@@ -1,6 +1,6 @@
 {
     "name": "kinetis/migrations",
-    "description": "A thin database migration runner for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+    "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -11,7 +11,8 @@
     "require": {
         "php": "^8.4",
         "kinetis/framework": "dev-main",
-        "kinetis/persistence": "dev-main"
+        "kinetis/persistence": "dev-main",
+        "kinetis/database-bridge": "dev-main"
     },
     "require-dev": {
         "infection/infection": "^0.35.0",
@@ -42,6 +43,10 @@
         {
             "type": "path",
             "url": "../persistence"
+        },
+        {
+            "type": "path",
+            "url": "../database-bridge"
         }
     ],
     "config": {

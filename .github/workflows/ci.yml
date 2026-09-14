@@ -86,6 +86,7 @@ jobs:
           - { name: core, dir: packages/framework, phpunit: true }
           # The native pgsql driver refuses to construct without ext-sockets.
           - { name: persistence, dir: packages/persistence, phpunit: true, needsSockets: true }
+          - { name: database-bridge, dir: packages/database-bridge, phpunit: true, needsSockets: true }
           - { name: redis, dir: packages/redis, phpunit: true }
           - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
           - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }

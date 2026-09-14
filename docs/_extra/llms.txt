@@ -32,9 +32,9 @@ tutorial, then read whichever section you have reached.
 
 ## Working with data
 
-- [Persistence](https://kinetis.dev/docs/persistence.html): kinetis/persistence: the native MySQL/Postgres drivers, connection pooling, and TransactionGuard's commit/rollback protocol.
+- [Persistence](https://kinetis.dev/docs/persistence.html): kinetis/persistence: the native MySQL/Postgres drivers, usable without Kinetis, connection pooling, and TransactionGuard's commit/rollback protocol; kinetis/database-bridge wires them into a Kinetis application.
 - [Query Builder](https://kinetis.dev/docs/query-builder.html): kinetis/query-builder: a thin, parameterized SQL query builder — not an ORM.
-- [Migrations](https://kinetis.dev/docs/migrations.html): kinetis/migrations: a thin database migration runner — raw SQL up()/down(), no schema-diffing.
+- [Migrations](https://kinetis.dev/docs/migrations.html): kinetis/migrations: a thin database migration runner — raw SQL up()/down(), no schema-diffing, with the migrate commands on vendor/bin/kinetis.
 
 ## Background work
 

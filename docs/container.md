@@ -213,6 +213,31 @@ class that needs `RequestScope` must be resolved through a real request's
 own scope (route middleware, a controller) — never registered on
 `AppScope` with a factory that also resolves `RequestScope`.
 
+### Request-scope initializers
+
+```{code-block} php
+$app->onRequestScopeCreated(static function (RequestScope $scope): void {
+    // runs on every scope createRequestScope() creates, before it is returned
+});
+```
+
+`AppScope::onRequestScopeCreated()` registers a
+`callable(RequestScope): void` that `createRequestScope()` runs on every
+scope it creates, in registration order, before returning it. Like every
+other registration it is allowed only before `boot()`, and throws
+`Kinetis\Container\Exception\ContainerException` after. It is how a
+package bootstrap installs request-scoped bindings and dispose hooks
+without any entry point knowing about them: `Kernel`, `bin/kinetis`, `kinetis/queue`'s
+`QueueWorker`/`SyncQueue`, and `kinetis/mcp`'s `StdioTransport` all take
+their scopes from `createRequestScope()`, so every initializer runs on
+each. A `#[Command(bootstrap: false)]` command runs no package bootstrap
+and gets no package initializer.
+
+Bind lazily inside an initializer, so a unit of work that never
+resolves the binding constructs nothing. If an initializer throws, the scope is
+disposed — running whatever earlier initializers registered on it — and
+that failure propagates from `createRequestScope()`.
+
 ### Dispose hooks
 
 ```{code-block} php
@@ -222,10 +247,11 @@ $scope->onDispose(function (): void {
 ```
 
 `onDispose()` is the generic mechanism the request lifecycle's cleanup
-hangs off of — `Kernel` uses it, on every request, to register
-`TransactionGuard::rollbackDangling()` (see {doc}`persistence`) whenever
-`kinetis/persistence` is installed, so a transaction opened and never
-explicitly closed still gets rolled back before the scope disappears.
+hangs off of. `kinetis/database-bridge`'s request-scope initializer uses
+it: the first time a scope resolves `TransactionGuard`, the guard's
+`rollbackDangling()` (see {doc}`persistence`) is registered on that
+scope's disposal, so a transaction opened through the guard and never
+explicitly closed is still closed before the scope disappears.
 `RequestScope` itself has no idea `TransactionGuard` or database
 transactions exist; it just runs whatever callbacks were registered, in
 registration order, when `dispose()` is called.

@@ -180,9 +180,9 @@ Being an ordinary route is what gives every message the full request
 lifecycle with nothing special wired: a fresh request scope per message,
 tool and resource controllers resolving from it — a tool
 constructor-injecting `RequestScope` receives the live scope of its own
-call — a dangling transaction rolled back through the same
-`TransactionGuardHook` mechanism every HTTP request gets (see
-{doc}`persistence`), and disposal once the response is written. State a
+call — every request-scope initializer an HTTP request gets, including
+`kinetis/database-bridge`'s lazy `TransactionGuard` binding (see
+{doc}`container`), and disposal once the response is written. State a
 tool registers on its scope does not
 survive to the next message. The stdio transport gives each line the
 same treatment. Only a hand-rolled transport that calls

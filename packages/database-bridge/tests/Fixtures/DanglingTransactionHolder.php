@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Persistence\Tests\Fixtures;
+namespace Kinetis\DatabaseBridge\Tests\Fixtures;
 
 /**
  * A static handoff so the test can inspect the transaction

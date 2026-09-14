@@ -19,12 +19,12 @@ use Psr\SimpleCache\CacheInterface;
  * Declared via `extra.kinetis`: with `SESSION_DRIVER` set, binds
  * {@see SessionStoreInterface} so {@see Middleware\SessionMiddleware}
  * autowires with nothing else to register. Unset means inert — the same
- * convention as kinetis/persistence's own bootstrap and DB_CONNECTION.
+ * convention as kinetis/database-bridge's own bootstrap and DB_CONNECTION.
  *
  * The bindings are factories, resolved on first use rather than here:
  * the `redis` driver consumes the CacheInterface binding
  * AppScope::boot() registers, and the `sql` driver the link
- * kinetis/persistence's bootstrap binds — neither of which need exist
+ * kinetis/database-bridge's bootstrap binds — neither of which need exist
  * yet at package-bootstrap time, since boot() and sibling bootstraps are
  * not guaranteed to have run first. By first *use*, they have.
  */
@@ -102,8 +102,8 @@ final readonly class PackageBootstrap implements PackageBootstrapInterface
         }
 
         throw new SessionException(
-            'SESSION_DRIVER=sql found no database binding — set DB_CONNECTION so kinetis/persistence '
-            . 'binds a connection, or bind a link in bootstrap.php.',
+            'SESSION_DRIVER=sql found no database binding — install kinetis/database-bridge and set '
+            . 'DB_CONNECTION so it binds a connection, or bind a link in bootstrap.php.',
         );
     }
 }

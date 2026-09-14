@@ -62,6 +62,11 @@ jobs:
           # run yet, so 60 is a starting point rather than a measurement.
           # Set it from the score its own first run reports, the way
           # every other threshold here was.
+          - { name: database-bridge, dir: packages/database-bridge, minMsi: 60, minCoveredMsi: 60, needsSockets: true }
+          # A provisional floor: this package's Infection job has not
+          # run yet, so 60 is a starting point rather than a measurement.
+          # Set it from the score its own first run reports, the way
+          # every other threshold here was.
           - { name: redis, dir: packages/redis, minMsi: 60, minCoveredMsi: 60 }
           - { name: cache-redis, dir: packages/cache-redis, minMsi: 75, minCoveredMsi: 75 }
           - { name: auth, dir: packages/auth, minMsi: 70, minCoveredMsi: 70 }

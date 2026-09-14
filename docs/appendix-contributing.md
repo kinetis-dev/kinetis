@@ -26,6 +26,7 @@ kinetis/
 ├── packages/
 │   ├── framework/          # kinetis/framework — the core
 │   ├── persistence/        # kinetis/persistence
+│   ├── database-bridge/    # kinetis/database-bridge
 │   ├── redis/              # kinetis/redis
 │   ├── cache-redis/        # kinetis/cache-redis
 │   ├── auth/                # kinetis/auth

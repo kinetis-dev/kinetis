@@ -76,9 +76,9 @@ marker throws `QueryBuilderException` instead of guessing a dialect.
 new Query($db);  // the registered connection, see persistence
 new Query($tx);  // an open transaction, see "Transactions and row locks"
 
-use Kinetis\Persistence\SqlConnectionFactory;
+use Kinetis\DatabaseBridge\ConnectionFactory;
 
-$reporting = SqlConnectionFactory::fromConfig($config, 'reporting');
+$reporting = ConnectionFactory::fromConfig($config, 'reporting');
 $totals = new Query($reporting)->table('daily_totals')->get();
 ```
 
@@ -957,8 +957,9 @@ final readonly class UserRepository
 }
 ```
 
-- **Wiring.** `MysqlLink` is the connection {doc}`persistence` binds
-  from `DB_CONNECTION`, and `TransactionGuard` is request-scoped, so
+- **Wiring.** `MysqlLink` is the connection `kinetis/database-bridge`
+  binds from `DB_CONNECTION` (see {doc}`persistence`), and
+  `TransactionGuard` is request-scoped, so
   every request gets its own. On PostgreSQL, inject `PostgresLink`
   instead; `register()`'s callback stays typed `SqlTransaction` either
   way (see "Transactions and row locks" above).

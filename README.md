@@ -45,7 +45,8 @@ installable Composer package with its own `README.md` and test suite:
 | Package | What it is | Version |
 |---|---|---|
 | [`kinetis/framework`](packages/framework) | The framework itself — routing, validation, DI, concurrency | [![Version](https://img.shields.io/packagist/v/kinetis/framework?label=)](https://packagist.org/packages/kinetis/framework) |
-| [`kinetis/persistence`](packages/persistence) | Native async DB drivers (mysqli, pgsql, PDO) and transaction safety nets | [![Version](https://img.shields.io/packagist/v/kinetis/persistence?label=)](https://packagist.org/packages/kinetis/persistence) |
+| [`kinetis/persistence`](packages/persistence) | Native async DB drivers (mysqli, pgsql, PDO) and transaction safety nets, usable standalone | [![Version](https://img.shields.io/packagist/v/kinetis/persistence?label=)](https://packagist.org/packages/kinetis/persistence) |
+| [`kinetis/database-bridge`](packages/database-bridge) | Kinetis wiring for kinetis/persistence — `DB_*` connections, SQL telemetry, a lazy request-scoped `TransactionGuard` | [![Version](https://img.shields.io/packagist/v/kinetis/database-bridge?label=)](https://packagist.org/packages/kinetis/database-bridge) |
 | [`kinetis/redis`](packages/redis) | Non-replaying, deadline-bounded Redis transport with Cluster routing | [![Version](https://img.shields.io/packagist/v/kinetis/redis?label=)](https://packagist.org/packages/kinetis/redis) |
 | [`kinetis/cache-redis`](packages/cache-redis) | PSR-16 cache backed by Redis, single-node or Cluster, TLS included | [![Version](https://img.shields.io/packagist/v/kinetis/cache-redis?label=)](https://packagist.org/packages/kinetis/cache-redis) |
 | [`kinetis/query-builder`](packages/query-builder) | A thin, parameterized SQL query builder | [![Version](https://img.shields.io/packagist/v/kinetis/query-builder?label=)](https://packagist.org/packages/kinetis/query-builder) |

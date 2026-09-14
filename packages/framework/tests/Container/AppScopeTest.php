@@ -486,4 +486,67 @@ final class AppScopeTest extends TestCase
 
         self::assertSame($cache, $app->get(CacheInterface::class));
     }
+
+    public function test_request_scope_initializers_run_once_each_in_order_before_the_scope_is_returned(): void
+    {
+        $app = new AppScope();
+        $calls = [];
+        $app->onRequestScopeCreated(static function (RequestScope $scope) use (&$calls): void {
+            $calls[] = ['first', $scope];
+            $scope->bind(Counter::class);
+        });
+        $app->onRequestScopeCreated(static function (RequestScope $scope) use (&$calls): void {
+            $calls[] = ['second', $scope];
+        });
+        $app->boot();
+
+        $one = $app->createRequestScope();
+        $two = $app->createRequestScope();
+
+        self::assertSame([['first', $one], ['second', $one], ['first', $two], ['second', $two]], $calls);
+        self::assertTrue($one->isRegistered(Counter::class));
+        self::assertNotSame($one->get(Counter::class), $two->get(Counter::class));
+    }
+
+    public function test_a_request_scope_initializer_cannot_be_registered_after_boot(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+
+        $this->expectException(ContainerException::class);
+        $this->expectExceptionMessage('Cannot register "request scope initializer": the application container is booted and its bindings are locked.');
+
+        $app->onRequestScopeCreated(static function (RequestScope $scope): void {});
+    }
+
+    /**
+     * The scope is never returned, so its disposal is the only way the
+     * cleanup an earlier initializer registered gets to run — and a
+     * cleanup failure there never replaces the initializer's own.
+     */
+    public function test_a_throwing_initializer_disposes_the_scope_and_its_failure_propagates(): void
+    {
+        $app = new AppScope();
+        $cleanedUp = null;
+        $app->onRequestScopeCreated(static function (RequestScope $scope) use (&$cleanedUp): void {
+            $scope->onDispose(static function () use (&$cleanedUp, $scope): void {
+                $cleanedUp = $scope;
+            });
+            $scope->onDispose(static fn () => throw new \LogicException('cleanup failed'));
+        });
+        $app->onRequestScopeCreated(static function (): void {
+            throw new RuntimeException('initializer failed');
+        });
+        $app->boot();
+
+        try {
+            $app->createRequestScope();
+            self::fail('Expected the initializer failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('initializer failed', $e->getMessage());
+        }
+
+        self::assertInstanceOf(RequestScope::class, $cleanedUp);
+        self::assertTrue($cleanedUp->isDisposed());
+    }
 }

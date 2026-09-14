@@ -117,7 +117,7 @@ final readonly class OrderController
 }
 ```
 
-`MysqlLink` is bound by `kinetis/persistence` from the `DB_*` keys.
+`MysqlLink` is bound by `kinetis/database-bridge` from the `DB_*` keys.
 `Kinetis\Redis\Client` has no boot-time binding — `bootstrap.php` builds
 it from `Client::create()` and binds it, as {doc}`redis` shows.
 

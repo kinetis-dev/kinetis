@@ -145,10 +145,10 @@ regimes want opposite corrections, and which one you're in is a property
 of your routes, not of the framework.
 
 The same "each worker thread is its own independent execution context"
-fact has a second, sharper consequence if you're using
-`kinetis/persistence`'s `SqlConnectionFactory`: `bootstrap.php` runs once
-*per worker thread*, so each one builds its own separate database
-connection pool. Oversizing `num` without correspondingly *undersizing*
+fact has a second, sharper consequence for connections built by
+`kinetis/database-bridge`'s `ConnectionFactory`: every package bootstrap
+and `bootstrap.php` run once *per worker thread*, so each one builds its
+own separate database connection pool. Oversizing `num` without correspondingly *undersizing*
 each pool's `maxConnections` can exhaust your database's own connection
 limit — see {doc}`persistence`'s "Sizing `maxConnections` under worker
 mode" section.
@@ -777,8 +777,8 @@ RoadRunner keeps running, each handling exactly one HTTP request at a
 time, start to finish. `bootstrap.php` (and every
 `extra.kinetis` package bootstrap) runs once per worker process, so
 each one builds its own separate service instances — including a
-database connection pool via `kinetis/persistence`'s
-`SqlConnectionFactory`. Oversizing `num_workers` without correspondingly
+database connection pool via `kinetis/database-bridge`'s
+`ConnectionFactory`. Oversizing `num_workers` without correspondingly
 undersizing each pool's `maxConnections` can exhaust your database's
 own connection limit exactly the same way it can under FrankenPHP — see
 {doc}`persistence`'s "Sizing `maxConnections` under worker mode"
@@ -817,9 +817,10 @@ committed unit suite) runs in its own separate, stateless container,
 none of which ever load `ext-sockets` at runtime, so compiling it from
 source repeatedly would be pure cost with nothing to show for it;
 Composer's platform check is bypassed there instead.
-`kinetis/persistence` is the package where the compile *is* worth it,
-and its PHPUnit step does exactly the above: the native Postgres driver
-refuses to construct without the extension. A real deployment image is
+`kinetis/persistence` and `kinetis/database-bridge` are the packages
+where the compile *is* worth it, and their PHPUnit steps do exactly the
+above: the native Postgres driver refuses to construct without the
+extension. A real deployment image is
 the same case — one build, reused for the worker's whole lifetime —
 where the cost is paid once.
 

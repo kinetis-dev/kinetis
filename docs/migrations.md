@@ -6,12 +6,16 @@ Not part of core. Install it separately:
 ```{code-block} sh
 composer require kinetis/migrations
 ```
+
+It requires `kinetis/framework`, `kinetis/persistence` and
+`kinetis/database-bridge`, and installing it registers the `migrate*`
+commands on `vendor/bin/kinetis` (see {doc}`cli`).
 ````
 
 A thin runner for versioned schema changes: raw SQL `up()`/`down()`
 migrations, tracked in a `kinetis_migrations` table, run through
-`migrate*` commands the package registers on `vendor/bin/kinetis` (see
-{doc}`cli`). No fluent DDL builder, no schema-diffing.
+`migrate*` commands the package registers on `vendor/bin/kinetis`. No
+fluent DDL builder, no schema-diffing.
 
 ## Writing a migration
 
@@ -84,7 +88,10 @@ DB_PORT=3306           # optional
 ```
 
 `DB_CONNECTION` has no default: guessing the wrong engine would run
-migrations against the wrong database with no warning at all.
+migrations against the wrong database with no warning at all. The
+commands read these keys through `kinetis/database-bridge`'s
+`ConnectionFactory`, so a connection is validated and defaulted exactly
+as the application's own are ({doc}`persistence`).
 
 To run migrations against a database other than the default connection
 (see {doc}`config`'s named-connection convention), pass
@@ -111,6 +118,27 @@ per migration it actually runs, in the order they ran;
 undoes one. Both are ordinary events — write a `#[Listener]` for
 whichever one you need (a deploy notification, for one). See
 {doc}`events` for the full catalog.
+
+### From your own code
+
+The commands run a `MigrationRunner`, which takes the link it runs on,
+the ledger repository, and the migrations directory:
+
+```{code-block} php
+use Kinetis\DatabaseBridge\ConnectionFactory;
+use Kinetis\Migrations\MigrationRunner;
+use Kinetis\Migrations\SqlMigrationRepository;
+
+$db = ConnectionFactory::singleSession($config, 'db2');
+$runner = new MigrationRunner($db, new SqlMigrationRepository($db), $projectRoot . '/migrations');
+
+$runner->migrate();  // runs every pending migration, in filename order; returns their names
+$runner->rollback(); // rolls back the migration applied most recently; returns its name, or null
+$runner->status();   // every migration, with whether it is applied
+```
+
+The link has to be a single-session client — see "Concurrent deploys
+are safe" below for why.
 
 ## What the ledger records, and what it checks
 
@@ -181,14 +209,14 @@ The lock is scoped to your database session, not a row in a table, so it
 releases on its own the moment the connection holding it closes —
 gracefully or not — with nothing to clean up by hand if a process is
 killed mid-migration. Session scope is also why the `migrate*` commands
-connect over PDO whatever `DB_DRIVER` says: one session, held for the
-whole run, where the pooling drivers could acquire and release the lock
-on two different ones. That client is single-session — if the session
-goes, which a migration abandoning a transaction is enough to do, it
-closes instead of opening a replacement, and the run stops there with
-`Kinetis\Persistence\Exception\ConnectionException` rather than
-carrying on unlocked. These commands are serial, so blocking on a query
-costs them nothing. Waiting longer than 10 seconds throws
+connect through `ConnectionFactory::singleSession()`, over PDO whatever
+`DB_DRIVER` says: one session, held for the whole run, where the pooling
+drivers could acquire and release the lock on two different ones. If the
+session goes — a migration abandoning a transaction is enough — that
+single-session client closes instead of opening a replacement, and the
+run stops there with `Kinetis\Persistence\Exception\ConnectionException`
+rather than carrying on unlocked. These commands are serial, so blocking
+on a query costs them nothing. Waiting longer than 10 seconds throws
 `Exception\MigrationLockTimeoutException`, most often meaning another
 `migrate`/`migrate:rollback` is already running elsewhere; retry once it
 finishes.
@@ -197,7 +225,8 @@ finishes.
 
 - {doc}`query-builder` — a fluent builder for querying the tables these
   migrations create, on the same MySQL/Postgres connections.
-- {doc}`persistence` — the drivers and connection options the `migrate*`
-  commands build on.
+- {doc}`persistence` — the drivers, the single-session client, and the
+  `kinetis/database-bridge` connection policy the `migrate*` commands
+  build on.
 - {doc}`config` — the `.env`/environment convention `migrate` reads its
   connection details from.

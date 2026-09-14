@@ -25,6 +25,7 @@ use Psr\Http\Server\MiddlewareInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Psr\SimpleCache\CacheInterface;
+use Throwable;
 
 /**
  * The persistent, worker-lifetime container. Services registered here are
@@ -55,6 +56,9 @@ final class AppScope implements ContainerInterface
 
     /** @var list<class-string<MiddlewareInterface>> */
     private array $openApiMiddleware = [];
+
+    /** @var list<callable(RequestScope): void> */
+    private array $requestScopeInitializers = [];
 
     private bool $booted = false;
 
@@ -300,6 +304,28 @@ final class AppScope implements ContainerInterface
         return $this->resolve($id);
     }
 
+    /**
+     * Registers a callback that initializes every RequestScope this
+     * scope creates, before createRequestScope() returns it — how a
+     * package installs request-scoped bindings and dispose callbacks
+     * without each entry point (Kernel, a queue worker, an MCP transport,
+     * bin/kinetis) knowing about it. Callbacks run in registration order.
+     * Locked after boot() like every other registration: the set is
+     * worker-lifetime configuration.
+     *
+     * An initializer binds lazily, so a unit of work that never resolves
+     * what it binds constructs nothing. If one throws, the scope is
+     * disposed — running what an earlier initializer registered on it —
+     * and that failure propagates from createRequestScope().
+     *
+     * @param callable(RequestScope): void $initializer
+     */
+    public function onRequestScopeCreated(callable $initializer): void
+    {
+        $this->assertNotBooted('request scope initializer');
+        $this->requestScopeInitializers[] = $initializer;
+    }
+
     public function createRequestScope(): RequestScope
     {
         if (!$this->booted) {
@@ -312,6 +338,21 @@ final class AppScope implements ContainerInterface
         // autowire a new, disconnected one.
         $scope = new RequestScope($this);
         $scope->instance(RequestScope::class, $scope);
+
+        try {
+            foreach ($this->requestScopeInitializers as $initialize) {
+                $initialize($scope);
+            }
+        } catch (Throwable $e) {
+            // Nothing else can dispose a scope that is never returned.
+            try {
+                $scope->dispose();
+            } catch (Throwable) {
+                // Secondary: the initializer's failure is the outcome.
+            }
+
+            throw $e;
+        }
 
         return $scope;
     }

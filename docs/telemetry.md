@@ -94,9 +94,9 @@ propagated context, or the trace root for a job carrying none.
 
 ## SQL query spans
 
-Nothing to wire: `kinetis/persistence`'s drivers report every statement
-they dispatch through the framework's instrumentation hooks (the
-section below), and this package's backend turns each report into a
+Nothing to wire: every client `kinetis/database-bridge` builds reports
+each statement its driver dispatches through the framework's
+instrumentation hooks (the section below), and this package's backend turns each report into a
 client span as soon as an OTLP endpoint is configured. Every driver is
 covered — PDO and native, MySQL and Postgres.
 
@@ -422,8 +422,8 @@ $app->instance(LoggerInterface::class, new TraceAwareLogger($realLogger));
 
 The decorators above wrap boundaries from outside; the hooks report
 from *inside* the framework itself, which is where the query, queue and
-request-pipeline spans above come from. Core, the persistence drivers
-and the queue packages report named moments through
+request-pipeline spans above come from. Core, the SQL clients
+`kinetis/database-bridge` builds, and the queue packages report named moments through
 `Kinetis\Instrumentation\TelemetryInterface` — a no-op until this
 package's bootstrap swaps in its OTel backend, at which point every
 report becomes a span with zero configuration beyond the same
@@ -440,7 +440,8 @@ report becomes a span with zero configuration beyond the same
   time between a request span and its query spans is attributed to
   these, not left as an unnamed gap.
 - **Queries and transactions** — the SQL spans described above,
-  reported from inside the drivers.
+  reported from inside the drivers of the clients
+  `kinetis/database-bridge` builds.
 - **`concurrently()`** — a span for the batch and one per task, so
   overlap is visible even for tasks that aren't queries or HTTP calls.
   The batch hook hands its own token to each task hook, which is what

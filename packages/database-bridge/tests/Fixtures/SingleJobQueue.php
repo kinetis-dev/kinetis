@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Kinetis\Persistence\Tests\Fixtures;
+namespace Kinetis\DatabaseBridge\Tests\Fixtures;
 
 use Kinetis\Queue\Job;
 use Kinetis\Queue\JobSerializer;
