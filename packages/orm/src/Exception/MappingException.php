@@ -52,6 +52,11 @@ final class MappingException extends RuntimeException
         return new self("{$class} has no usable identifier: {$reason}.");
     }
 
+    public static function version(string $class, string $reason): self
+    {
+        return new self("{$class} has no usable version: {$reason}.");
+    }
+
     public static function invalidTable(string $class, string $table): self
     {
         return new self(

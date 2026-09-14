@@ -15,7 +15,9 @@ use DateTimeImmutable;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\Id;
+use Kinetis\Orm\Attributes\Version;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
+use Kinetis\Orm\Tests\Fixtures\Priority;
 use Traversable;
 
 final class NotMarked
@@ -184,6 +186,53 @@ final class GeneratedStringIdentifier
 final class GeneratedNonNullableIdentifier
 {
     #[Id(generated: true)]
+    public int $id;
+}
+
+#[Entity]
+final class NullableVersion
+{
+    public int $id;
+
+    #[Version]
+    public ?int $version;
+}
+
+#[Entity]
+final class StringVersion
+{
+    public int $id;
+
+    #[Version]
+    public string $version;
+}
+
+#[Entity]
+final class EnumVersion
+{
+    public int $id;
+
+    #[Version]
+    public Priority $version;
+}
+
+#[Entity]
+final class TwoVersions
+{
+    public int $id;
+
+    #[Version]
+    public int $first;
+
+    #[Version]
+    public int $second;
+}
+
+#[Entity]
+final class IdentifierVersion
+{
+    #[Id]
+    #[Version]
     public int $id;
 }
 

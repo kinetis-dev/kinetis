@@ -8,6 +8,7 @@ use BackedEnum;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\Id;
+use Kinetis\Orm\Attributes\Version;
 use Kinetis\Orm\Exception\MappingException;
 use ReflectionClass;
 use ReflectionEnum;
@@ -25,9 +26,9 @@ use ReflectionProperty;
  * is. Nothing is cached beyond the instance.
  *
  * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null}
- * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, properties: list<PropertyMapping>}
+ * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>}
  * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null}
- * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, properties: list<PropertyMapping>}
+ * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>}
  */
 final readonly class MetadataRegistry
 {
@@ -153,6 +154,7 @@ final readonly class MetadataRegistry
         $properties = [];
         $columns = [];
         $ids = [];
+        $versions = [];
         $generated = false;
 
         foreach ($class->getProperties() as $property) {
@@ -175,6 +177,10 @@ final readonly class MetadataRegistry
                 $ids[] = $mapping['name'];
                 $generated = $marker->newInstance()->generated;
             }
+
+            if ($property->getAttributes(Version::class) !== []) {
+                $versions[] = $mapping['name'];
+            }
         }
 
         $id = match (count($ids)) {
@@ -193,11 +199,28 @@ final readonly class MetadataRegistry
             throw MappingException::identifier($name, "the generated identifier property \"{$id}\" must be typed ?int");
         }
 
+        $version = match (count($versions)) {
+            0 => null,
+            1 => $versions[0],
+            default => throw MappingException::version($name, 'more than one property carries #[Version]: ' . implode(', ', $versions)),
+        };
+
+        if ($version === $id) {
+            throw MappingException::version($name, "the identifier property \"{$id}\" cannot also be the version");
+        }
+
+        $mapping = $version === null ? null : $properties[$version];
+
+        if ($mapping !== null && ($mapping['type'] !== 'int' || $mapping['nullable'] || $mapping['enum'] !== null)) {
+            throw MappingException::version($name, "the version property \"{$version}\" must be typed int");
+        }
+
         return [
             'class' => $name,
             'table' => $table,
             'id' => $id,
             'generated' => $generated,
+            'version' => $version,
             'properties' => array_values($properties),
         ];
     }

@@ -116,8 +116,11 @@ rather than which form it took.
   shared by `find()`, `get()`, `paginate()` and `cursorPaginate()`, a UUID
   identifier looked up in different letter case resolving to the object
   already held, inserts with assigned and generated identifiers, updates
-  and deletes, an update writing the values its row already holds, and a
-  unique-key failure rolled back and then retried.
+  and deletes, an update writing the values its row already holds, a
+  unique-key failure rolled back and then retried, and two managers
+  holding one versioned row: the stale writer's update conflicting, again
+  on a repeated flush, until it clears, reloads and reapplies it, and a
+  stale delete conflicting.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

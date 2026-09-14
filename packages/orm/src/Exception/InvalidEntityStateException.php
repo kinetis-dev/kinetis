@@ -9,9 +9,10 @@ use RuntimeException;
 /**
  * An entity operation outside the unit-of-work lifecycle — an unmapped
  * class, an object the EntityManager does not hold, an incomplete entity,
- * a conflicting or changed identifier, a call while flush() runs — or a
- * flush whose rows disagree with the entities it writes. A message names
- * the class and property, never an identifier value: it can be a secret.
+ * a conflicting or changed identifier, a changed or exhausted version, a
+ * call while flush() runs — or a flush whose rows disagree with the
+ * entities it writes. A message names the class and property, never an
+ * identifier or version value: an identifier can be a secret.
  */
 final class InvalidEntityStateException extends RuntimeException
 {
@@ -65,6 +66,19 @@ final class InvalidEntityStateException extends RuntimeException
             "The identifier of a {$class} object changed while this EntityManager held it. An identifier is fixed "
             . 'once an entity is loaded or persisted; persist a new object for another row.',
         );
+    }
+
+    public static function versionChanged(string $class): self
+    {
+        return new self(
+            "The version of a {$class} object changed while this EntityManager held it. The manager advances a "
+            . 'loaded or flushed version itself; clear the manager and load the entity again to see a newer one.',
+        );
+    }
+
+    public static function versionExhausted(string $class): self
+    {
+        return new self("A {$class} entity's version is PHP_INT_MAX, so an UPDATE cannot advance it.");
     }
 
     public static function invalidGeneratedIdentifier(string $class): self

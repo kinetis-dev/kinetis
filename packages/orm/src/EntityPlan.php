@@ -46,6 +46,9 @@ final class EntityPlan
     /** Whether the database generates the identifier when the entity is inserted. */
     public readonly bool $generated;
 
+    /** The version property's name, or null when the entity is not versioned. */
+    public readonly ?string $version;
+
     /** @var ReflectionClass<T> */
     private readonly ReflectionClass $reflection;
 
@@ -66,6 +69,7 @@ final class EntityPlan
         $this->table = $mapping['table'];
         $this->id = $mapping['id'];
         $this->generated = $mapping['generated'];
+        $this->version = $mapping['version'];
         $this->reflection = new ReflectionClass($class);
 
         $properties = [];
@@ -224,9 +228,10 @@ final class EntityPlan
             ?? throw InvalidEntityStateException::invalidGeneratedIdentifier($this->class);
     }
 
-    public function assignIdentifier(object $entity, int $id): void
+    /** Writes a value the flush owns, a generated identifier or a version, into its int property. */
+    public function assign(object $entity, string $property, int $value): void
     {
-        $this->accessors[$this->id]->setValue($entity, $id);
+        $this->accessors[$property]->setValue($entity, $value);
     }
 
     /**

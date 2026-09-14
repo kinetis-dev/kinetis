@@ -29,8 +29,9 @@ Plain PHP classes marked `#[Entity]` are mapped into portable metadata,
 loaded through typed repositories and entity queries, and hydrated
 without their constructors. Each unit of work holds one object per row,
 tracks changes to the entities it holds, and writes new, changed and
-removed entities in one transaction when it is flushed. It has no
-relationships or optimistic locking.
+removed entities in one transaction when it is flushed. Updates and
+deletes of an entity carrying `#[Version]` are optimistically locked. It
+has no relationships.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -89,6 +90,10 @@ final class Article
   named exactly `id`. There is exactly one, typed `int` or `string`,
   assigned by the application unless the database generates it (see
   "Identifiers").
+- **Version.** Optional: the one property carrying `#[Version]`, typed
+  `int` and not the identifier, opts the entity into optimistic locking
+  (see "Optimistic locking"). A property merely named `version` is
+  ordinary data.
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum, and the
   nullable form of each.
 - **Classes.** An entity has no parent class and is neither abstract nor
@@ -100,8 +105,9 @@ SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
 type, an intersection, any other type (`mixed`, `array`, an object,
 `DateTimeImmutable`, a unit enum), a missing or second identifier, a
-generated identifier not typed `?int`, an invalid name and a duplicate
-column.
+generated identifier not typed `?int`, a second `#[Version]`, a version
+property that is the identifier or is not typed `int`, an invalid name
+and a duplicate column.
 
 ## Identifiers
 
@@ -336,7 +342,7 @@ For one manager, an object is in one of these states:
 |---|---|---|
 | Not held: new, or detached | false | nothing |
 | Awaiting insert | true | an INSERT |
-| Managed | true | an UPDATE of its changed columns, if any |
+| Managed | true | an UPDATE of its changed columns, and its next version when versioned, if any |
 | Scheduled for deletion | true | a DELETE |
 
 - **`persist($entity)`** validates an object the manager does not hold —
@@ -373,32 +379,35 @@ begins on the factory's client:
 
 1. Before the transaction, it reads and validates every entity awaiting
    insert as `persist()` does, and every managed entity, refuses an
-   identifier that changed, and computes each managed entity's changed
-   columns. With nothing to write, it returns without a transaction or
-   any I/O.
+   identifier or version that changed and an UPDATE whose version cannot
+   advance, and computes each managed entity's changed columns. With
+   nothing to write, it returns without a transaction or any I/O.
 2. One INSERT per entity awaiting insert, in `persist()` order, of every
    mapped column but a generated identifier.
 3. One UPDATE of the changed columns, or one DELETE, per entity, by the
-   identifier column, ordered by entity class and then identifier, so
-   concurrent flushes take row locks in one order.
+   identifier column and, for a versioned entity, the version column
+   (see "Optimistic locking"), ordered by entity class and then
+   identifier, so concurrent flushes take row locks in one order.
 4. COMMIT.
 
 Every statement runs on that transaction. Nothing is batched, and no
 statement uses the key another insert generated.
 
 A DELETE must affect exactly one row, and an UPDATE at most one. An
-UPDATE affecting none is followed by an existence check on the same
-transaction: the MySQL family counts changed rows rather than matched
-ones, so an UPDATE writing the values its row already holds reports zero.
-A missing row, more than one affected row, or a generated key that is
-null or not an int within PHP's range throws
-`InvalidEntityStateException` before COMMIT.
+unversioned UPDATE affecting none is followed by an existence check on
+the same transaction: the MySQL family counts changed rows rather than
+matched ones, so an UPDATE writing the values its row already holds
+reports zero. A versioned UPDATE or DELETE affecting none throws
+`OptimisticLockException` without that check. A missing row, more than
+one affected row, or a generated key that is null or not an int within
+PHP's range throws `InvalidEntityStateException` before COMMIT.
 
 Only a COMMIT that returns changes the manager or its entities. Each
 inserted or updated entity is then snapshotted with the values the flush
 sent, not whatever its properties hold by then; a generated key is
-written into its property and registered as the entity's identity; and a
-deleted entity is detached.
+written into its property and registered as the entity's identity; a
+versioned entity's version, as inserted or advanced by its update, is
+written into its property; and a deleted entity is detached.
 
 While `flush()` runs, the manager refuses every call but `close()` and
 `isClosed()` with `InvalidEntityStateException`, including a call made on
@@ -409,7 +418,7 @@ the flushing Fiber by code the flush reaches, such as SQL instrumentation.
 | Failure | Afterwards | Pending work | Throws |
 |---|---|---|---|
 | Validation, or `beginTransaction()` | open | kept | that exception |
-| Anything before COMMIT, with the rollback returning | open, unless `close()` ran | kept | that exception, unwrapped: a driver `QueryException` or `ConnectionException` as the driver threw it |
+| Anything before COMMIT, with the rollback returning | open, unless `close()` ran | kept | that exception, unwrapped: `OptimisticLockException`, or a driver `QueryException` or `ConnectionException` as the driver threw it |
 | Anything before COMMIT, with the rollback throwing | closed | abandoned | `RollbackFailedException`: `getPrevious()` is the first failure, `$rollbackFailure` the rollback's |
 | COMMIT | closed | abandoned | `UnknownFlushOutcomeException`: `getPrevious()` is the COMMIT failure |
 
@@ -434,6 +443,90 @@ fails by the table above: before COMMIT with the driver's failure or
 `ClosedEntityManagerException`, once COMMIT was sent with
 `UnknownFlushOutcomeException`. A COMMIT that still returns changes
 nothing in the closed manager.
+
+## Optimistic locking
+
+```php
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\Version;
+use Kinetis\Orm\Exception\OptimisticLockException;
+
+#[Entity(table: 'orders')]
+final class Order
+{
+    #[Version]
+    private int $version = 1; // a signed BIGINT NOT NULL column
+
+    public function __construct(private int $id, private string $status) {}
+
+    public function ship(): void
+    {
+        $this->status = 'shipped';
+    }
+}
+
+$entities->repository(Order::class)->findOrFail($id)->ship();
+
+try {
+    $entities->flush(); // UPDATE ... WHERE id = ? AND version = <loaded>
+} catch (OptimisticLockException) {
+    // Another writer changed or deleted the row. Nothing of the flush was written.
+    $entities->clear();
+    $entities->repository(Order::class)->findOrFail($id)->ship(); // decide again on the current row
+    $entities->flush();
+}
+```
+
+- **Mapping.** Only `#[Version]` opts in, on at most one property per
+  entity, typed `int` — not nullable, not an enum — and not the
+  identifier. `MappingException` refuses anything else when the metadata
+  is built.
+- **Column.** The version column must hold every version the application
+  reaches. Use a signed `BIGINT NOT NULL`. A narrower column, or a server
+  that clamps or truncates an out-of-range value instead of refusing it,
+  such as MySQL outside strict SQL mode, breaks the contract. Nothing
+  inspects the schema.
+- **Initial version.** A new entity holds an initialized version before
+  `flush()`: conventionally `1`, though any int is accepted so an
+  existing sequence can continue. Its INSERT writes that value like any
+  other property and does not advance it. The ORM never infers, defaults,
+  generates or reads back a version.
+- **Owned by the manager.** Once an entity is loaded or flushed, the
+  manager controls its version: `flush()` refuses one the application
+  changed with `InvalidEntityStateException`, before the transaction
+  begins.
+- **UPDATE.** A versioned entity without changes writes nothing and keeps
+  its version. With changes, `flush()` plans the next version, the
+  snapshot's plus one, and sends one UPDATE setting the changed columns
+  and the version column to that value, where the identifier column and
+  the version column both still hold the snapshot's values. A matching
+  row always changes, so the MySQL family's changed-row count reports it.
+  An UPDATE at `PHP_INT_MAX` cannot advance and is refused with
+  `InvalidEntityStateException` before the transaction begins.
+- **DELETE.** One DELETE where the identifier column and the version
+  column hold the snapshot's values, at `PHP_INT_MAX` too.
+- **Conflict.** A versioned UPDATE or DELETE that affects no row throws
+  `OptimisticLockException`: the row was deleted or its version changed,
+  which are the same stale write, so no existence check follows. The
+  message names the class and statement, never an identifier or version.
+
+A conflict fails the flush before COMMIT, as "When a flush fails" states:
+the transaction is rolled back, the exception is rethrown unwrapped, and
+the manager stays open with every version, snapshot and pending change as
+it was, the rest of the flush included. Calling `flush()` again sends the
+same stale statement and conflicts again: the manager never reloads,
+merges or retries. To recover, `clear()` the manager, which abandons all
+of its pending work, or `close()` it and open another, then load the
+entity again, reapply the operation and flush. A rollback that fails
+throws `RollbackFailedException`; a COMMIT that fails throws
+`UnknownFlushOutcomeException`, leaves the version in memory unchanged
+and must not be replayed as if it failed.
+
+An entity is a plain object that code can change while the flush waits
+on the database. Once COMMIT returns, its version property is
+overwritten with the version the database acknowledged, while a change
+to any other property stays pending against the snapshot of the values
+sent, and the next `flush()` writes it.
 
 ## The query builder underneath
 
@@ -465,8 +558,9 @@ DTOs rather than managed entities.
 
 ## Not in scope
 
-Relationships, cascades, collections, eager or lazy loading, optimistic
-locking or version columns, a transaction-bound ORM session or joining an
+Relationships, cascades, collections, eager or lazy loading, timestamp,
+string or database-generated versions, refreshing or merging an entity,
+conflict resolution, a transaction-bound ORM session or joining an
 existing transaction, locking entity reads, batched or bulk writes,
 automatic retries, flushing on `close()` or destruction, timestamps or
 `DateTimeImmutable` properties, custom value converters, UUID generation,
