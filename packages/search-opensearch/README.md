@@ -83,7 +83,7 @@ this engine's prefix:
 
 Every key is scoped — `SEARCH_OPENSEARCH_HOST` + `logs` →
 `SEARCH_LOGS_OPENSEARCH_HOST`. Full reference:
-[kinetis.dev/docs/search.html](https://kinetis.dev/docs/search.html).
+[kinetis.dev/docs/search-engines.html](https://kinetis.dev/docs/search-engines.html).
 
 `SEARCH_OPENSEARCH_HOST` is one origin and one node. Userinfo, a path, a
 query and a fragment are all refused: the official client's endpoints are

@@ -8,10 +8,9 @@ composer require kinetis/queue-sql
 ```
 ````
 
-Adds MySQL/Postgres as a backend for {doc}`queue`, riding an existing
-database instead of a separate service. Application code that already
-pushes and pops jobs through `QueueInterface` needs no changes at all to
-switch — only your configuration changes.
+Adds MySQL or Postgres as a backend for {doc}`queue`, storing jobs in a
+database you already run. Switching to it changes configuration, not
+application code.
 
 ```{code-block} text
 QUEUE_CONNECTION=sql
@@ -26,141 +25,63 @@ DB_PASSWORD=secret
 vendor/bin/kinetis queue:work --queue=high,default
 ```
 
-`pop()` relies on `SELECT ... FOR UPDATE SKIP LOCKED` to guarantee two
-workers never receive the same job — that's this backend's actual
-version floor: **MySQL 8.0+ or MariaDB 10.6+**. An older server doesn't
-support that clause at all, so `pop()` fails outright rather than
-degrade quietly.
+`pop()` reserves a job with `SELECT ... FOR UPDATE SKIP LOCKED`, so the
+server must be **MySQL 8.0+, MariaDB 10.6+ or Postgres 9.5+**. An older
+server rejects the clause, and `pop()` fails.
 
 ## Configuring
 
-`DB_*` are the exact keys `kinetis/database-bridge` reads — nothing
-new to set up beyond a working database connection.
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` is the one key this package
-introduces itself; it defaults to 300 and is described below.
+The `DB_*` keys are the ones `kinetis/database-bridge` reads (see
+{doc}`persistence`). `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, described below,
+is the one key this package adds.
 
-## The queue needs a table
+## Create the table
 
-`kinetis/queue-sql` ships two ready-to-copy {doc}`migrations` files — one
-per dialect, since the auto-incrementing primary key syntax itself isn't
-portable between MySQL and Postgres:
+`kinetis/queue-sql` ships one {doc}`migrations` stub per dialect:
 
 ```{code-block} text
 vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.mysql.php.stub
 vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.pgsql.php.stub
 ```
 
-Copy whichever matches your database into your own `migrations/`
-directory with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
+Copy the one matching your database into your `migrations/` directory
+with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
+[SQL mechanisms](appendix-queue.md#sql) describes the columns the backend
+runs on.
 
-Beyond the job's own data the table carries three columns this backend
-runs on: `metadata`, the instrumentation propagation channel (see
-{doc}`telemetry`); `reserved_at`, the reservation timestamp; and
-`reserved_token`, the random token identifying which reservation wrote
-it. In the MySQL stub `queue` and `reserved_token` are `ascii_bin`, since
-MySQL's default collation compares case-insensitively and both columns
-are matched for exact equality; Postgres compares that way already.
+## Visibility timeout
 
-## A crashed worker's job: the visibility timeout
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` (default `300`, at least `1`) is how
+long a reserved job belongs to its worker. When a worker dies before
+settling a job, the job becomes poppable again once its reservation is
+older than this, with its attempt count increased. Constructing
+`SqlQueue` directly takes the same value as its `visibilityTimeoutSeconds`
+argument.
 
-A job that's been popped but whose worker crashes before
-`ack()`/`release()` runs is reclaimed once its reservation outruns the
-visibility timeout — the standard pattern SQS's own `VisibilityTimeout`
-already uses. `SqlQueue`'s second constructor argument,
-`$visibilityTimeoutSeconds`, sets it, and defaults to 300:
+A reservation is never renewed. Set the timeout above your slowest job:
+a job still running when its reservation expires runs again beside the
+first. The first worker's late settlement is rejected rather than
+touching the new reservation, and the worker reports it as a lost
+settlement (see {doc}`queue`'s "When a settlement is lost").
 
-```{code-block} php
-use Kinetis\QueueSql\SqlQueue;
-
-$queue = new SqlQueue($db, visibilityTimeoutSeconds: 300);
-```
-
-A row reserved longer than this becomes poppable again by any worker —
-`attempts` is incremented at that point (crediting the crashed attempt,
-the same as an explicit `release()` call would). A reservation is never
-renewed: a job still running when its window expires can execute
-alongside its replacement, so set the timeout above the slowest job you
-expect and keep handlers idempotent. `maxAttempts` bounds a handler that
-throws — `QueueWorker` consults the cap only after one does — so it
-cannot bound a succession of processes that each die during execution.
-
-`reserved_at` is written and compared against the worker process's own
-`time()`, not the database's clock. Clock skew between workers therefore
-shifts when a reservation looks expired, in either direction, by however
-far the two clocks disagree.
-
-A value below `1` — `0` or negative — is rejected at construction: it
-would make `pop()`'s own query treat a row reserved an instant ago (or
-one whose reservation timestamp is in the future relative to now) as
-already stale, letting a second worker reclaim an actively-held
-reservation immediately instead of after it genuinely goes stale.
-
-`kinetis queue:work` reads this from the
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` environment variable (via
-`Config::scopedKey()`, so it respects `QUEUE_CONNECTION_NAME` the same as
-every other queue setting); absent, it is 300, the same as constructing
-`SqlQueue` directly with no second argument:
-
-```{code-block} text
-QUEUE_CONNECTION=sql
-QUEUE_VISIBILITY_TIMEOUT_SECONDS=300
-```
-
-Pick a value comfortably longer than your slowest real job takes to run —
-too short reclaims a job that's still being legitimately processed,
-producing exactly the duplicate-processing risk a visibility timeout is
-meant to bound, not eliminate outright.
-
-## A settlement is fenced to its reservation
-
-Every reservation and every reclaim writes a fresh random
-`reserved_token` while holding the row lock, and `ack()`, `release()` and
-`fail()` match on the row id *and* that token. A settlement from a
-delivery the timeout has already handed on matches no row, so it writes
-nothing and raises `Kinetis\Queue\Exception\StaleJobHandleException` —
-see {doc}`queue`'s "When a settlement is lost" for what `queue:work` does
-with that. A `release()` in particular can neither unreserve the row the
-new worker is running nor credit an attempt against it.
-
-That bounds what a late settlement does; it does not keep the job from
-running twice. Keep the timeout comfortably longer than your slowest job,
-as above.
-
-The same fence covers the malformed-row cleanup: a row reserved and then
-found to be undecodable is deleted by that same predicate, so a reclaim
-landing in between leaves the row to whichever worker now holds it and
-`pop()` raises the stale exception rather than destroying a live
-delivery.
+Reservation times are written and compared with each worker's own
+clock, not the database's, so keep worker clocks synchronized: skew makes
+a reservation expire early or late by the difference.
 
 ## Clearing a queue
 
-`SqlQueue` declares `Kinetis\Queue\ClearableQueueInterface` (see
-{doc}`queue`'s "Clearing is a separate capability"). Clearing deletes
-every row on the queue whose `reserved_at` is null, and reports how many
-rows the `DELETE` removed.
+`SqlQueue` declares `ClearableQueueInterface` (see {doc}`queue`'s
+"Clearing is a separate capability"). Clearing deletes the queue's
+unreserved rows, delayed ones included, and reports how many. A
+reservation past its timeout is left in place, since its worker may
+still be running the job.
 
-That predicate is narrower than the one `size()` and `pop()` read,
-which treats a reservation older than `QUEUE_VISIBILITY_TIMEOUT_SECONDS`
-as available again. A row that has outrun the timeout is left alone here
-— see {doc}`queue`'s "Clearing is a separate capability" for why a clear
-draws the line differently from a reclaim.
+## Delays and retries
 
-## Delayed jobs
-
-```{code-block} php
-$this->queue->push(new SendReminderEmail($userId), delaySeconds: 3600);
-```
-
-Checked on this backend's own polling cycle rather than firing at the
-exact moment the delay ends, so a delayed job can run slightly later
-than its exact target time — typically by a few seconds, not less.
-
-## Retries and giving up
-
-Everything {doc}`queue` documents about `maxAttempts`, `QUEUE_MAX_ATTEMPTS`,
-and the log entry written when a job is finally given up on works
-identically here — nothing about retry behavior changes by switching to
-this backend.
+A delayed job becomes available to the first `pop()` after its delay,
+measured with the pushing and popping hosts' clocks, so it runs late
+while every worker is busy. Retries follow {doc}`queue`: `maxAttempts`,
+`QUEUE_MAX_ATTEMPTS`, and immediate release.
 
 ## Named connections
 
@@ -170,21 +91,13 @@ DB_REPORTS_CONNECTION=mysql
 DB_REPORTS_HOST=127.0.0.1
 ```
 
-Same convention as everywhere else in Kinetis (see {doc}`config`):
-`QUEUE_CONNECTION_NAME` picks which named block of `DB_*` settings a
-worker reads, and `'default'` (or simply not setting it) reads the plain
-keys shown earlier in this page.
-
-## If the package isn't installed
-
-Setting `QUEUE_CONNECTION=sql` without having run
-`composer require kinetis/queue-sql` produces a clear error telling you
-which package to install, rather than a confusing crash.
+`QUEUE_CONNECTION_NAME` picks which scoped block of `DB_*` keys a worker
+reads, and `default`, or leaving it unset, reads the plain keys. See
+{doc}`config`.
 
 ## See also
 
-- {doc}`queue` — writing jobs, pushing and popping, and everything about
-  retries that applies to every backend equally.
-- {doc}`persistence` — connecting to MySQL and Postgres directly.
-- {doc}`migrations` — running this backend's own required migration.
-- {doc}`config` — the named-connection convention used above.
+- {doc}`queue` — jobs, workers, retries and delivery guarantees.
+- {doc}`appendix-queue` — reservation fencing and delivery contracts.
+- {doc}`persistence` — connecting to MySQL and Postgres.
+- {doc}`migrations` — running the table migration.

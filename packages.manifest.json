@@ -277,7 +277,7 @@
             "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.1.6",
+            "version": "1.2.0",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],
@@ -343,7 +343,7 @@
             "description": "File storage for Kinetis, built on League\\Flysystem — local storage through an Amp\\File-backed adapter whose driver calls suspend the Fiber; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "namespace": "Kinetis\\Storage\\",
             "testNamespace": "Kinetis\\Storage\\Tests\\",
-            "version": "1.2.2",
+            "version": "1.2.3",
             "requires": [
                 "framework"
             ],
@@ -455,7 +455,7 @@
             "description": "Engine-neutral search contracts for Kinetis: the single-origin, deadline-bounded, non-blocking HTTP transport an engine client is built on, and a narrow client interface over indexing, retrieval, deletion, search, and bulk.",
             "namespace": "Kinetis\\Search\\",
             "testNamespace": "Kinetis\\Search\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -476,7 +476,7 @@
             "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchOpenSearch\\",
             "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
-            "version": "1.2.1",
+            "version": "1.2.2",
             "requires": [
                 "framework",
                 "search"
@@ -497,7 +497,7 @@
             "description": "Fiber-native non-blocking Elasticsearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchElasticsearch\\",
             "testNamespace": "Kinetis\\SearchElasticsearch\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requires": [
                 "framework",
                 "search"

@@ -1,17 +1,68 @@
 # Testing
 
-Kinetis tests your application through the application — the real
+Kinetis tests an application through the application — the real
 container, the real discovery, the real middleware pipeline — rather than
 against a hand-assembled approximation of it. A test that passes tells
 you the request would have worked.
 
+## Set up PHPUnit
+
+`Kinetis\Testing` ships with `kinetis/framework`. PHPUnit is a
+development dependency of the application:
+
+```{code-block} bash
+composer require --dev phpunit/phpunit
+```
+
+```{code-block} json
+:caption: composer.json
+
+"autoload-dev": {
+    "psr-4": {
+        "App\\Tests\\": "tests/"
+    }
+}
+```
+
+```{code-block} xml
+:caption: phpunit.xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache">
+    <testsuites>
+        <testsuite name="App">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+</phpunit>
+```
+
+`kinetis/skeleton` ships this configuration and
+`tests/Http/WelcomeControllerTest.php`. Run the suite with
+`vendor/bin/phpunit`.
+
 ## Testing a route
 
-Extend `Kinetis\Testing\ApplicationTestCase` and point it at your project
+Extend `Kinetis\Testing\ApplicationTestCase` and point it at the project
 root. It boots the application before each test and gives you a client:
 
 ```{code-block} php
 :caption: tests/OrderControllerTest.php
+
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests;
 
 use Kinetis\Testing\ApplicationTestCase;
 
@@ -93,94 +144,49 @@ $this->client->get('/users', query: ['page' => 2, 'limit' => 10]);
 $this->client->post('/orders', body: ['sku' => 'ABC123', 'quantity' => 2]);
 $this->client->put('/users/42', body: ['name' => 'Ada']);
 $this->client->delete('/users/42', headers: ['Authorization' => 'Bearer test-token']);
-```
-
-`body` is a plain array, JSON-encoded automatically, with
-`Content-Type: application/json` set unless you pass your own — and that
-override must itself be JSON-shaped (`application/json`, or an
-`application/*+json` structured suffix for a vendor media type; a
-`; charset=...` parameter is fine, since only the bare media type is
-checked); anything else throws,
-rather than silently sending JSON bytes under a Content-Type that claims
-otherwise. The header is resolved case-insensitively (`content-type`
-works exactly like `Content-Type`): two differently-cased keys naming the
-same header with two different values throw rather than silently picking
-one, and two agreeing on the same value are collapsed into exactly one
-outgoing header rather than left as two (which a real HTTP client would
-otherwise combine into one comma-joined, invalid Content-Type value).
-This runs even on a request with no body at all — `get()`/`delete()`
-still catch a conflicting Content-Type in `headers`. Every verb method
-calls `request()`, which is available directly for anything the
-shorthands don't cover:
-
-```{code-block} php
 $this->client->request('PATCH', '/users/42', body: $payload, headers: $headers);
 ```
 
-Query parameters, wherever you pass them (`get()`'s own `query:`, or
-`request()`'s), are encoded into the request URI's actual query string —
-`getQueryParams()` is parsed back out of that same string, so the two
-always agree, the same relationship a real incoming request has.
+`body` is a plain array, JSON-encoded, with `Content-Type:
+application/json` unless you pass a JSON-shaped one of your own. A
+`Content-Type` that is not JSON, or two differently-cased `Content-Type`
+headers that disagree, throws rather than sending a request whose header
+contradicts its bytes.
 
-A `Cookie` header — passed in `headers` under any letter-case — stands
-in the same relationship to `getCookieParams()`: the header is sent
-verbatim and the cookies are parsed back out of it, so a test drives
-anything that reads cookies (`SessionMiddleware`, see {doc}`session`) the
-way a runtime adapter does:
+A `Cookie` header, under any letter-case, is sent verbatim and parsed
+into `getCookieParams()`, so a test drives anything that reads cookies
+(`SessionMiddleware`, see {doc}`session`) the way a runtime adapter does:
 
 ```{code-block} php
 $this->client->get('/dashboard', headers: ['Cookie' => 'kinetis_session=' . $id]);
 ```
 
-**A JSON array is not the only body a route needs to see.** Four more
-methods send something genuinely different, never routed through JSON
-encoding at all:
+### Forms and raw bodies
+
+`post()`, `put()` and `patch()` always send JSON. A route that reads a
+form field — the `_token` field CSRF protection checks, for one — needs a
+form-encoded request:
 
 ```{code-block} php
-// application/x-www-form-urlencoded — the raw bytes are exactly
-// http_build_query($form), and getParsedBody() is that same string
-// parsed back with parse_str() — not $form itself. A wire-format body
-// can't carry $form's original PHP types: every scalar comes back as a
-// string, a null value is omitted entirely, and a nested array is
-// re-encoded/re-parsed — the same lossy shape a real form post produces.
 $this->client->postForm('/login', ['email' => 'ada@example.com', 'password' => 'secret']);
 $this->client->putForm('/settings', ['theme' => 'dark']);
 $this->client->patchForm('/settings', ['theme' => 'dark']);
 
-// A raw string body, sent exactly as given — a webhook payload, binary
-// content, anything none of the above already cover. getParsedBody()
-// stays null.
+// A raw string body, sent exactly as given — a webhook payload or binary content.
 $this->client->raw('POST', '/webhooks/stripe', $rawPayload, ['Content-Type' => 'application/json']);
 ```
 
-`postForm()`/`putForm()`/`patchForm()` exist specifically because
-`post()`/`put()`/`patch()` always send JSON — setting
-`Content-Type: application/x-www-form-urlencoded` on an array `$body`
-handed to those would create a request whose declared Content-Type
-disagreed with its actual bytes, which is exactly what these methods
-avoid: a route reading `getParsedBody()` (a form-encoded `_token` field
-CSRF protection checks, for one) needs a request built this way to be
-reachable in a test at all. Their own Content-Type default
-(`application/x-www-form-urlencoded`) can be overridden too — a
-`; charset=...` parameter is fine — but the override must itself be
-form-urlencoded-shaped; anything else (a stray `application/json`, say)
-throws, for the identical reason `request()`'s own override validation
-does.
+A form request goes through the same encoding a browser's does, so every
+field arrives as a string. {ref}`testing-reference-client-requests` gives
+the exact encoding and `Content-Type` rules for every method.
 
-**`send()` is the direct escape hatch** — for a multipart/uploaded-file
-request, or anything else none of the methods above cover. This class
-deliberately never guesses a multipart boundary from a plain array; build
-the real PSR-7 request yourself and dispatch it through the same Kernel
-every other method here uses. It is dispatched exactly as handed over and
-nothing about it is completed for you — a request that needs cookies
-read, for one, needs `withCookieParams()` set alongside its `Cookie`
-header.
+### Uploads
 
-Send the multipart bytes, not a parsed body. `RequestBodyMiddleware` is
-global and unconditional (see {doc}`middleware`), so it stages and parses
-whatever body the request carries and replaces `getParsedBody()` with the
-result — a request that declares `multipart/form-data` and carries no
-matching bytes is refused with a `400` before the handler runs:
+`send()` dispatches a PSR-7 request you build yourself, for a multipart
+upload or anything the methods above do not cover. Send the multipart
+bytes, not a parsed body: `RequestBodyMiddleware` parses the body every
+request carries, and a request that declares `multipart/form-data`
+without matching bytes is refused with `400` before the handler runs.
 
 ```{code-block} php
 use Nyholm\Psr7\ServerRequest;
@@ -206,13 +212,10 @@ $this->client->send($request)->assertOk();
 ```
 
 Every line ending is a literal CRLF and the closing delimiter carries its
-trailing `--`, because that is the only spelling
-`Kinetis\Http\Form\MultipartEnvelope` reads as a delimiter — see
-"Request bodies: one contract under every runtime" in
-{doc}`runtime-adapters`.
-
-Every method above is, underneath, just a convenience for building one of
-these requests and calling `send()`.
+trailing `--`: that is the only spelling the multipart parser reads as a
+delimiter (see {ref}`runtime-reference-multipart`). `send()` completes
+nothing for you — a request that needs cookies read sets
+`withCookieParams()` alongside its `Cookie` header.
 
 ## Asserting on the response
 
@@ -237,14 +240,14 @@ $response->assertCreated()
 | `assertHeader(name, ?value)` | the header is present, and equals `value` when given |
 | `assertJson(array)` | the whole decoded body matches exactly |
 | `assertJsonPath(path, value)` | the value at a dot path — `order.items.0.sku` |
-| `assertJsonPathMissing(path)` | nothing is at that path |
+| `assertJsonPathMissing(path)` | nothing, or JSON `null`, is at that path |
 | `assertValidationError(...$path)` | the response is 422 and carries a violation at exactly that segmented path — `('items', 0, 'sku')`, or no arguments for a violation against the payload as a whole |
 | `assertBodyContains(string)` | the raw body contains the text |
 
-A failed assertion prints the response body alongside the mismatch, since
-an unexpected status is usually explained by what the body says. `json()`
-and `body()` are there for anything the assertions don't cover, and both
-can be called repeatedly — reading the body doesn't consume it.
+A failed status, JSON or validation assertion prints the response body
+alongside the mismatch, since an unexpected status is usually explained
+by what the body says. `json()` and `body()` are there for anything the
+assertions don't cover, and both can be called repeatedly.
 
 ## Testing against a database
 
@@ -382,10 +385,8 @@ final class PublishArticleTest extends ApplicationTestCase
 
 `Article` is the [package README](https://github.com/kinetis-dev/orm#readme)'s
 entity with a `status()` accessor added, and the route is
-`ArticleController::publish()` from {doc}`orm`. `unitOfWork()` needs only
-a factory: a test of code that uses `kinetis/orm` without Kinetis builds
-one in `setUp()` with `OrmFactory::create()`, as the README's "Opening a
-unit of work" does, and closes the client in `tearDown()`.
+`ArticleController::publish()` from {doc}`orm`. `unitOfWork()` uses the
+factory bound by `kinetis/orm`.
 
 A returned `flush()` does not always mean COMMIT was acknowledged, and a
 test's assertion has to match which one ran. A standalone `flush()` with
@@ -433,313 +434,47 @@ $client = TestApplication::withRouter($router)->client();
 (loop-liveness)=
 ## Proving a path keeps the loop responsive
 
-Static analysis reports the blocking calls it can name (see
-{ref}`non-blocking-application-io`). A test observes whether one operation
-lets the event loop turn: `Kinetis\Testing\LoopLiveness::turnedDuring()`
-runs the operation next to a `Timer::delay()` sentinel, as two
-`concurrently()` tasks, and reports whether the sentinel resumed while the
-operation was still in flight.
-
-Give the operation something slow to wait on. A local upstream served by
-`php -S` that answers after 200 ms is enough:
+`Kinetis\Testing\LoopLiveness::turnedDuring()` answers whether one
+operation lets the event loop turn while it waits — the check static
+analysis cannot make (see {ref}`non-blocking-application-io`). Use it
+when a path must not block a persistent worker: an outbound call, a
+queue push, a native database query.
 
 ```{code-block} php
-:caption: tests/Fixtures/slow-upstream.php
-
-<?php
-
-usleep(200_000);
-
-header('Content-Type: application/json');
-echo '{"status":"in_transit"}';
-```
-
-```{code-block} php
-:caption: tests/CarrierLivenessTest.php
-
-use Kinetis\RevoltHttpClient\Http;
-use Kinetis\Testing\FreePort;
 use Kinetis\Testing\LoopLiveness;
-use PHPUnit\Framework\TestCase;
 
-final class CarrierLivenessTest extends TestCase
-{
-    public function test_tracking_a_shipment_keeps_the_loop_responsive(): void
-    {
-        $port = FreePort::reserve();
-        $server = proc_open(
-            [PHP_BINARY, '-S', "127.0.0.1:{$port}", __DIR__ . '/Fixtures/slow-upstream.php'],
-            [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
-            $pipes,
-        );
-
-        if ($server === false) {
-            self::fail('Could not start the upstream.');
-        }
-
-        try {
-            for ($attempt = 0; ($probe = @fsockopen('127.0.0.1', $port)) === false; $attempt++) {
-                self::assertLessThan(500, $attempt, 'The upstream did not start.');
-                usleep(10_000);
-            }
-
-            fclose($probe);
-
-            $http = new Http()->withBaseUrl("http://127.0.0.1:{$port}");
-
-            self::assertTrue(LoopLiveness::turnedDuring(
-                static fn () => $http->get('/shipments/1Z999')->throw()->json(),
-            ));
-        } finally {
-            proc_terminate($server);
-            proc_close($server);
-        }
-    }
-}
+self::assertTrue(LoopLiveness::turnedDuring(
+    fn () => $this->app->get(CarrierClient::class)->track('1Z999'),
+));
 ```
 
-Replace the `Http` call with the application path under test, pointed at
-the slow upstream — in an `ApplicationTestCase`, a service from
-`$this->app` or a route through `$this->client`.
-
-The test body's `proc_open()`, `fsockopen()` and `usleep()` block only
-the test controller while it sets up the upstream, before and outside the
-operation `turnedDuring()` observes: only the closure handed to it runs
-beside the sentinel. The upstream's own `usleep()` runs in the separate
-`php -S` process. When the project's PHPStan `paths` include `tests/`,
-exempt both files with a standard ignore:
-
-```{code-block} yaml
-:caption: phpstan.neon
-
-parameters:
-    ignoreErrors:
-        # Liveness-test setup and its fixture server, outside the observed operation.
-        -
-            identifier: kinetis.blockingCall
-            paths:
-                - tests/CarrierLivenessTest.php
-                - tests/Fixtures/slow-upstream.php
-```
-
-The answer has three outcomes:
-
-- **`true`** — the sentinel resumed while the operation was in flight, so
-  the loop turned during it. One suspension anywhere in the operation is
-  enough; this does not show that every wait inside it yields.
-- **`false`** — the operation ran for at least the sentinel interval
-  (20 ms by default) and finished before the sentinel could resume, so
-  nothing let the loop turn. A blocking call is the usual cause;
-  CPU-bound work monopolizes the loop the same way and gives the same
-  answer.
-- **`Kinetis\Testing\Exception\LoopLivenessInconclusiveException`** — the
-  operation finished inside the sentinel interval, before there was
-  anything to observe. Make the upstream slower than the sentinel by
-  several intervals, so scheduling jitter cannot decide the result.
-
-An exception from the operation is rethrown unchanged, and an interval
-that is zero, negative, or not finite throws `InvalidArgumentException`.
-`turnedDuring()` works from a plain test and from inside a
-`concurrently()` task, and leaves no watcher behind.
-
-It is a diagnostic, not a timeout: an operation that never returns keeps
-`turnedDuring()` from returning too, so run the suite under an outer
-timeout, such as the CI job's own. Nor is a `true` proof that the whole
-application is non-blocking — it covers the one operation the test drives.
-
-A database path needs the native driver to be observable. Outside a
-persistent worker, PHPUnit included, `DB_DRIVER=auto` selects a blocking
-PDO connection, and the test would report the driver rather than the
-query: return `'DB_DRIVER' => 'native'` from `configOverrides()` (see
+The operation needs something slow to wait on, such as a local upstream
+that answers after a delay; an operation that finishes faster than the
+sentinel is inconclusive rather than a pass. A database path needs the
+native driver to be observable: PHPUnit runs outside a persistent
+worker, so `DB_DRIVER=auto` selects blocking PDO — return
+`'DB_DRIVER' => 'native'` from `configOverrides()` (see
 {doc}`persistence`).
+
+{ref}`testing-reference-loop-liveness` gives the complete procedure with
+a slow upstream fixture, the three outcomes, and the PHPStan exemption
+for the fixture's setup calls.
 
 ## Conformance-testing a runtime adapter
 
-A runtime adapter turns whatever its environment delivers — superglobals
-and `php://input`, an API Gateway event, a Goridge frame — into a PSR-7
-request, and turns the PSR-7 response back. Adapters built through
-entirely different code have to agree on what that conversion means:
-which header a repeated header becomes, where cookies end up, what the
-URI's scheme, authority and request target are and that they agree with
-the `Host` header, that a `PUT` or `PATCH` form body parses the same as
-a `POST` one (url-encoded and multipart alike), that nested and repeated
-field and file names nest identically, that the declared
-`Content-Length` and a large body both arrive intact, that a binary body
-arrives byte for byte, that two `Set-Cookie` headers leave as two
-cookies, what happens to a body the environment cannot parse and to one
-past a form-complexity ceiling. `Kinetis\Testing\Runtime` expresses each
-of those once, as a PHPUnit base class, and runs the whole list against
-any adapter that provides a driver:
-
-```{code-block} php
-use Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase;
-use Kinetis\Testing\Runtime\RuntimeAdapterDriver;
-
-final class SwooleConformanceTest extends RuntimeAdapterConformanceTestCase
-{
-    protected function driver(): RuntimeAdapterDriver
-    {
-        return new SwooleDriver();
-    }
-}
-```
-
-The driver is the only adapter-specific code. It pushes one
-`WireRequest` (method, path, query string, headers as repeatable pairs,
-cookies, raw body) through the adapter, has the handler answer with the
-given `ResponseSpec`, and reports an `Outcome`: the `ObservedRequest`
-the handler saw (`null` if the adapter never reached it) and the
-`WireResponse` the environment received — or an `AdapterRejection`, when
-the adapter refused outright.
-
-```{code-block} php
-interface RuntimeAdapterDriver
-{
-    public function dispatch(WireRequest $request, ResponseSpec $response): Outcome;
-    public function expectedClientIp(): string;
-    public function supportsStreaming(): bool;
-    public function expectedScheme(): string;
-    public function preservesNumericHeaderNames(): bool;
-    public function preservesCookieOrder(): bool;
-    public function trustsTheConnectingClient(): bool;
-    public function supportsPlaintextRequests(): bool;
-}
-```
-
-Everything after `dispatch()` is a fact the environment decides, not the
-test: the address it reports as `REMOTE_ADDR` (a real socket's peer for
-a SAPI, whatever the driver injects as `sourceIp` for Lambda), the
-scheme it serves over when nothing forwards one, whether a
-`StreamedResponse` can reach the client incrementally, whether a
-purely-numeric header name and the client's cookie order survive its own
-request decoding, whether the peer the driver connects from is a trusted
-edge whose `X-Forwarded-Proto` may decide the request's scheme, and
-whether a plaintext request can reach the environment at all.
-
-A parsed form body's raw bytes are not among them. The staged body is
-seekable and rewound, so `getBody()` after `getParsedBody()` is the
-request byte for byte under every adapter, and the suite asserts that
-rather than asking.
-
-**The suite asserts both directions of every declaration**, which is
-what keeps a declaration from becoming a skip. A streaming environment
-must deliver every chunk in order; a non-streaming one must refuse the
-response rather than buffer it. An environment that keeps a numeric
-header name must deliver its value unchanged; one that cannot must drop
-the header outright, never deliver it under another name or with another
-value. An environment that treats this client as an edge must honor a
-forwarded scheme, `http` and `https` alike; one that does not must
-ignore it completely and serve the scheme it serves itself, which on an
-environment already terminating TLS leaves the request `https`. An
-environment no plaintext request can reach —
-`supportsPlaintextRequests()` says so — has nothing to honor and nothing
-to ignore when a forwarded scheme names `http`: that names a request it
-cannot have received, and it is refused before the handler. Every method
-runs on every adapter. Nothing is skipped.
-
-Over-limit input needs no declaration: the ceilings are
-`Kinetis\Http\Form\FormLimits`' own and identical everywhere, so the
-suite builds those requests itself — one field, one file, one nesting
-level, one part past each limit, with a security-significant field
-(`csrf_token`, a signature upload) placed beyond the edge — and requires
-a `413` with the handler never reached. That is the case a truncating
-parser passes by handing on a form that looks complete with exactly that
-field missing.
-
-Three of those cases exist because they are invisible to a limit checked
-after parsing, and every runtime has to meet them the same way: a body
-repeating **one** name past the ceiling (a thousand pairs on the wire,
-one leaf in the result), a body of **unnamed** multipart parts (which
-build nothing and still cost a parser everything), and a part repeating
-**one header line** past the ceiling (one entry in any header map). The
-empty file control is the fourth: submitted by a file input the user left
-alone, and reported as `UPLOAD_ERR_NO_FILE` on every adapter, so upload
-validation written against PHP behaves identically everywhere.
-
-The multipart contract is asserted the same way, as raw wire bodies
-rather than through the suite's own part builder — what is being checked
-is exactly what a well-formed builder would never produce. A line whose
-boundary token is only a prefix stays payload, byte for byte; a root
-`Content-Type` naming the boundary twice or trailing syntax after it, a
-padded delimiter, a boundary after a bare LF, a decoding
-`Content-Transfer-Encoding`, an RFC 2047 encoded word, an RFC 5987
-extended parameter, a nested `multipart/*` part and a repeated
-`Content-Disposition` are each a `400`; and a file part declaring no
-`Content-Type` reports no client media type at all. One parse produces
-all of those, under every runtime, so running the cases on every adapter
-is what proves each one delivers its body to that parse intact rather
-than reshaping it on the way. See "Request bodies: one contract under every
-runtime" in {doc}`runtime-adapters` for the rules themselves.
-
-All four adapters run this suite themselves; how each one is driven, and
-what that does and doesn't prove, is spelled out below. Read a driver
-for a worked example — `Kinetis\Tests\Runtime\Conformance\SuperglobalsDriver`
-in the framework package, `Kinetis\BrefAdapter\Tests\Conformance\LambdaDriver`
-in kinetis/bref-adapter, `Kinetis\RoadRunnerAdapter\Tests\Conformance\RoadRunnerDriver`
-in kinetis/roadrunner-adapter.
-
-Only behavior every environment can exhibit belongs in the shared suite.
-An input one environment alone can produce — a base64-flagged event
-body, say — is that adapter's own test to write, alongside the
-conformance run; the suite's public assertion helpers
-(`assertMalformedBodyResponse()`, `assertOverLimitFormResponse()`) hold
-that input to the same contract the shared cases use, so the *outcome*
-stays unified even where the *trigger* can't be. The byte cap on a raw
-request body is not the adapter's to test — it is
-`RequestBodyMiddleware`'s, in the Kernel, identical under every adapter
-and tested there. `Kinetis\Testing\FreePort::reserve()` hands a fixture
-server a port nothing is listening on, so two suites spawning servers in
-one checkout don't collide on a hard-coded number.
-
-What each run proves, precisely, and what it doesn't.
-
-- **In-process**, with no wire and no SAPI: the Lambda conversion.
-  `LambdaDriver` calls `BrefLambdaAdapter::handleEvent()` with an event
-  built the way API Gateway builds one. That proves the conversion; it
-  cannot prove anything about the Runtime API poll and response POST
-  around it, which the bref-adapter package's own end-to-end tests cover
-  against a real fake server.
-- **Under a spawned server, over a real socket**: the committed
-  framework suite spawns `php -S -d enable_post_data_reading=0` and,
-  through `RuntimeDetector`, runs `FpmAdapter` under the CLI server's
-  superglobal population — the only way `php://input` sees a genuine
-  request. The CLI server is not a production SAPI, so what this proves
-  is the bridge's own behavior, not FPM's or FrankenPHP's. It also
-  spawns servers configured the *wrong* way, on purpose: one with
-  `enable_post_data_reading` left on, to prove the refusal; one with no
-  trusted-proxy policy, to prove a forwarded scheme from a
-  directly-reachable client is ignored; and one with `max_input_vars`
-  set below the contract, to prove a form that runtime's own
-  `parse_str()` would have shortened is refused instead.
-  `kinetis/roadrunner-adapter` runs the same suite this way against a
-  real, spawned `rr serve` process, which *is* the production path: a
-  RoadRunner request only ever exists as the real Goridge wire protocol
-  between `rr` and a real PHP worker.
-- **Under the real SAPIs**, in CI (`integration.yml`'s
-  `runtime-conformance` job): a FrankenPHP worker loop behind Caddy, and
-  PHP-FPM behind nginx, each in its own container with the same driver
-  pointed at it instead of at a spawned process. That is the only place
-  each production SAPI's own population of headers, client address and
-  body, and its own streaming path, are exercised.
-  The streaming case times the body as it arrives, so a proxy holding a
-  stream back until the end fails it — which is what nginx does with
-  `fastcgi_buffering` at its default `on`, and why the FPM fixture sets
-  it `off` (`X-Accel-Buffering: no` on the response is the other way to
-  get the same result in a real deployment).
-
-
-The RoadRunner run has its own CI job (`integration.yml`'s
-`roadrunner-conformance`), which needs `ext-sockets` and a fetched `rr`
-binary — see {doc}`runtime-adapters`. It runs the suite unfiltered: the
-two behaviors that environment cannot deliver are declared by its driver
-and asserted in both directions rather than skipped.
+A custom runtime adapter extends
+`Kinetis\Testing\Runtime\RuntimeAdapterConformanceTestCase` with a driver
+for its environment, and the shared suite holds it to the contract the
+built-in adapters meet. {ref}`testing-reference-conformance` describes
+the driver interface, what the suite asserts, and what each built-in
+adapter's run proves.
 
 ## See also
 
-- {doc}`runtime-adapters` — the adapters this suite holds to one
-  contract, and how to write your own.
 - {doc}`routing-validation` — the routes and DTOs these requests target.
 - {doc}`container` — `AppScope` and the binding rules a booted
   application follows.
 - {doc}`persistence` — driver selection, and why a test run gets the PDO
   drivers.
+- {doc}`appendix-testing` — request construction rules, the loop-liveness
+  procedure and the runtime conformance suite.

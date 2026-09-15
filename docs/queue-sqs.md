@@ -8,9 +8,8 @@ composer require kinetis/queue-sqs
 ```
 ````
 
-Adds Amazon SQS as a backend for {doc}`queue`. Application code that
-already pushes and pops jobs through `QueueInterface` needs no changes
-at all to switch — only your configuration changes.
+Adds Amazon SQS as a backend for {doc}`queue`. Switching to it changes
+configuration, not application code.
 
 ```{code-block} text
 QUEUE_CONNECTION=sqs
@@ -21,27 +20,13 @@ QUEUE_SQS_REGION=us-east-1
 vendor/bin/kinetis queue:work --queue=high,default
 ```
 
-Every SQS call this backend makes, including a worker waiting for the
-next job, suspends rather than blocking the process. A worker given
-several queue names does not watch them simultaneously: it sweeps them
-in priority order, giving each an immediate non-blocking check first,
-and only then long-polls the highest-priority one for a bounded slice —
-at most five seconds, and no longer than what is left of the deadline it
-was given — before sweeping again. Once that slice comes back empty and
-the deadline has passed, `pop()` returns rather than sweeping once more.
-So a job on a lower-priority queue is never missed while a higher one is
-quiet, and a job arriving mid-slice is picked up on the next sweep rather
-than instantly. {doc}`queue` has the full `pop()` contract, including why
-the deadline bounds when the backend stops looking rather than when
-`pop()` returns.
+Every SQS request, including a worker waiting for its next job, suspends
+the calling Fiber instead of blocking the process. Credential files are
+the exception — see [Credentials](#credentials).
 
 ## Configuring
 
-`QUEUE_SQS_REGION` is required — there's no sane default to guess.
-Credentials need nothing Kinetis-specific set up at all — see Credentials
-below.
-
-Four optional settings:
+`QUEUE_SQS_REGION` is required. Four settings are optional:
 
 ```{code-block} text
 QUEUE_SQS_QUEUE_PREFIX=myapp-
@@ -50,132 +35,95 @@ QUEUE_SQS_PLAINTEXT=true
 QUEUE_SQS_TIMEOUT=30
 ```
 
-`QUEUE_SQS_QUEUE_PREFIX` is prepended to every queue name — useful when
-staging and production share one AWS account and need to stay on separate
-queues without both trying to use a plain name like `default`.
+`QUEUE_SQS_QUEUE_PREFIX` is prepended to every queue name, so staging and
+production can share one AWS account without both using `default`.
 
-`QUEUE_SQS_ENDPOINT` points at an SQS-compatible service (LocalStack, for
-example) instead of real AWS. It is one origin — a scheme, a host and an
-optional port, with no userinfo, path, query or fragment — and anything
-else is refused when the client is built. Leave the key unset and the
-destination is AsyncAws's regional endpoint table; an `AWS_ENDPOINT_URL`
-sitting in the environment for some other tool is refused rather than
-quietly redirecting this application's signed requests, so name the
-endpoint here when you want one.
+`QUEUE_SQS_ENDPOINT` points at an SQS-compatible service such as
+LocalStack. It is one origin — a scheme, a host and an optional port,
+with no userinfo, path, query or fragment — and anything else is refused
+when the client is built. Unset, the destination is AsyncAws's regional
+endpoint table, and an `AWS_ENDPOINT_URL` set in the environment for
+another tool is refused rather than redirecting this application's
+signed requests.
 
-`QUEUE_SQS_PLAINTEXT=true` is what allows an `http://` endpoint.
-`http://localstack:4566` between containers on one Compose network is
-ordinary; a public plain-HTTP endpoint carrying credentials and job
-payloads is not, and nothing in the hostname tells those apart, so the
-decision is yours to record.
+`QUEUE_SQS_PLAINTEXT=true` allows an `http://` endpoint. Plain HTTP
+between containers on one Compose network is ordinary; a public
+plain-HTTP endpoint would carry credentials and job payloads unencrypted,
+and nothing in a hostname tells the two apart, so the decision is
+explicit.
 
-`QUEUE_SQS_TIMEOUT` (seconds, default `30`) bounds each SQS request on
-its own — idle and total transfer alike — and covers credential lookups
-too, since they travel on the same transport. It is not one deadline
-across a `pop()` that issues several requests.
-
-Any positive value is accepted. Set it above the longest long poll the
-application issues, since SQS holds such a request open on purpose and a
-shorter budget would abort an idle poll as a failure. That slice is at
-most five seconds, and shorter whenever a `pop()` deadline caps it, so
-the default of `30` leaves room for a full one. A request is one wire
-attempt — no retry, and no redirect followed.
+`QUEUE_SQS_TIMEOUT` (seconds, default `30`, any positive value) bounds
+each SQS request and each credential lookup on its own — not one deadline
+across a `pop()` that makes several requests. Keep it above five seconds:
+a worker's long poll holds a request open for up to that long, and a
+shorter budget aborts an idle poll as a failure. A request is one
+attempt, with no retry and no redirect followed.
 
 ## Credentials
 
 Credentials resolve through AsyncAws's standard chain, in its standard
 order: environment variables (including the STS assume-role that
 `AWS_ROLE_ARN` selects), web identity, the shared credentials and config
-files, ECS or EKS pod identity, then IMDS. There is nothing to
-configure.
+files, ECS or EKS pod identity, then IMDS. Nothing is configured in
+Kinetis.
 
-Every provider in that chain that calls AWS uses the same Revolt
-transport as the client itself, so an assume-role or an IMDS lookup
-suspends the calling Fiber like any other call. The shared credentials
-file, the shared config file and any web-identity or pod-identity token
-file are read with native blocking calls, on first resolution and again
-on each refresh.
+Every provider that calls AWS uses the same non-blocking transport as the
+client, so an assume-role or IMDS lookup suspends the calling Fiber. The
+shared credentials file, the shared config file and any web-identity or
+pod-identity token file are read with blocking calls, on first
+resolution and on each refresh.
 
-Resolved credentials are held until they expire, and only while they are
-unexpired: an expired answer is passed over for the next provider in the
-same lookup, and a round that resolved nothing is not remembered. A role,
-a container credential endpoint or a token file that appears after a
-worker has started is therefore picked up on the next queue operation
-rather than shadowed by an earlier miss.
+Resolved credentials are reused until they expire. An expired answer is
+skipped for the next provider, and a lookup that resolved nothing is not
+remembered, so a role, container credential endpoint or token file that
+appears after a worker starts is picked up by the next queue operation.
 
 ## Create your queues ahead of time
 
-A queue name you push to (`'default'`, `'high'`, and so on) must be a real
-SQS queue of that same name (with `QUEUE_SQS_QUEUE_PREFIX` prepended, if
-you set one) that already exists — **this package never creates a queue
-for you.** Create each one yourself first, however you normally manage AWS
-infrastructure (Terraform, CloudFormation, the AWS CLI, or the console),
-before pushing or popping against it.
+Each queue name you push to — `default`, `high` — must already exist as
+a standard SQS queue of that name, with `QUEUE_SQS_QUEUE_PREFIX`
+prepended when set. **This package never creates a queue.** Create each
+one with Terraform, CloudFormation, the AWS CLI or the console before
+pushing or popping. FIFO queues (names ending in `.fifo`) are not
+supported.
 
-Only standard SQS queues are supported — FIFO queues (queue names ending
-in `.fifo`) are not.
+Set each queue's visibility timeout above your slowest job. A message a
+worker has not settled by then is delivered again — which is also how a
+worker that died mid-job has its message redelivered.
 
-## Emptying a queue is an infrastructure operation
+## Delivery caveats
 
-`SqsQueue` implements `QueueInterface` and not
-`Kinetis\Queue\ClearableQueueInterface`, so it has no `clear()` and
-`kinetis queue:clear` names the backend and stops. Nothing SQS offers
-meets that contract:
+- SQS can deliver a message more than once on its own, even to a second
+  worker while the first still holds it within the visibility timeout,
+  so handlers must be idempotent.
+- A job's attempt count is SQS's `ApproximateReceiveCount`, which AWS
+  documents as approximate.
+- A settlement that arrives after the visibility timeout is not reported
+  as a lost delivery: if SQS rejects it, its error stops the worker, and
+  if SQS accepts it, nothing reports it.
+- A worker watching several queues checks each once, then long-polls
+  only the highest-priority queue for up to five seconds, so a job
+  arriving on a lower-priority queue can wait that long.
 
-- `PurgeQueue` deletes the messages a worker currently holds in flight
-  along with the waiting ones, and keeps deleting messages sent during
-  the up-to-60-second window it takes to finish — so it destroys both
-  work that was reserved and work pushed after the call. It reports no
-  count, and is rate-limited to once per 60 seconds per queue. This
-  backend never calls it.
-- `size()` could not stand in for that count either: it reports
-  `ApproximateNumberOfMessages` plus the delayed count, which excludes
-  in-flight work and is an estimate besides.
-- Assembling the operation out of `ReceiveMessage`/`DeleteMessage` is
-  not possible: a delayed message stays invisible until its delay
-  elapses, so nothing can receive it in order to delete it.
+[SQS mechanisms](appendix-queue.md#sqs) maps each queue operation to its
+SQS call.
 
-Empty an SQS queue the same way you created it — `aws sqs purge-queue`,
-or recreating it — accepting `PurgeQueue`'s real semantics explicitly
-rather than through a method whose name promises narrower ones. See
-{doc}`queue`'s "Clearing is a separate capability" for the cross-backend
-picture.
+## Emptying a queue
 
-## What a receipt handle can and cannot prove
+`SqsQueue` does not declare `ClearableQueueInterface`, so it has no
+`clear()`, and `kinetis queue:clear` names the backend and exits 1.
+SQS's `PurgeQueue` also deletes messages workers hold in flight and
+messages sent during the up-to-60-second purge, and reports no count, so
+this backend never calls it. Empty a queue the way you created it —
+`aws sqs purge-queue`, or recreating the queue — accepting those
+semantics explicitly.
 
-`QueuedJob::$handle` is the message's `ReceiptHandle`, which SQS scopes
-to the receive that produced it. A settlement against a handle whose
-visibility window has passed — or whose message has since been
-redelivered — is answered by SQS itself, and this backend raises no
-`Kinetis\Queue\Exception\StaleJobHandleException` of its own: it has
-no way to tell that answer apart from any other API error, so whatever
-SQS returns propagates as itself. A worker therefore learns about a lost
-delivery here only as a failure, if at all — see {doc}`queue`'s "When a
-settlement is lost", and keep handlers idempotent, since SQS can
-redeliver a message independently of anything this package does.
+## Delays and retries
 
-## Delayed jobs
-
-```{code-block} php
-$this->queue->push(new SendReminderEmail($userId), delaySeconds: 3600);
-```
-
-Works the same as on the other backends, with one difference: SQS won't
-delay a message by more than 900 seconds (15 minutes). Ask for longer than
-that and `push()` throws immediately, before anything is sent.
-
-## Retries and giving up
-
-Everything {doc}`queue` documents about `maxAttempts`, `QUEUE_MAX_ATTEMPTS`,
-and the log entry written when a job is finally given up on works
-identically here — nothing about retry behavior changes by switching to
-this backend.
-
-Instrumentation propagation metadata (see {doc}`telemetry`) travels as
-one JSON-encoded `metadata` message attribute — stored at `push()`,
-read back at `pop()` — so a worker's consumer span joins the
-producer's trace. `release()` is a visibility change, so the message
-and its metadata survive it unchanged.
+SQS delays a message by at most 900 seconds (15 minutes). A longer
+`delaySeconds` makes `push()` throw before anything is sent. Retries
+follow {doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS`, and a released
+job visible again immediately.
 
 ## Named connections
 
@@ -185,19 +133,12 @@ QUEUE_REPORTS_SQS_REGION=eu-west-1
 QUEUE_REPORTS_SQS_QUEUE_PREFIX=myapp-reports-
 ```
 
-Same convention as everywhere else in Kinetis (see {doc}`config`):
-`QUEUE_CONNECTION_NAME` picks which named block of `QUEUE_SQS_*` settings
-a worker reads, and `'default'` (or simply not setting it) reads the plain
-keys shown earlier in this page.
-
-## If the package isn't installed
-
-Setting `QUEUE_CONNECTION=sqs` without having run
-`composer require kinetis/queue-sqs` produces a clear error telling you
-which package to install, rather than a confusing crash.
+`QUEUE_CONNECTION_NAME` picks which scoped block of `QUEUE_SQS_*` keys a
+worker reads, and `default`, or leaving it unset, reads the plain keys.
+See {doc}`config`.
 
 ## See also
 
-- {doc}`queue` — writing jobs, pushing and popping, and everything about
-  retries that applies to every backend equally.
-- {doc}`config` — the named-connection convention used above.
+- {doc}`queue` — jobs, workers, retries and delivery guarantees.
+- {doc}`appendix-queue` — the SQS mechanisms and delivery contracts.
+- {doc}`config` — named connections and every `QUEUE_SQS_*` key.

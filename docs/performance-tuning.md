@@ -16,7 +16,9 @@ and shouldn't be assumed to transfer unchanged.
 
 Read {doc}`runtime-adapters`'s "Sizing FrankenPHP's worker threads"
 and {doc}`persistence`'s "Sizing `maxConnections` under worker mode"
-first. This page builds on both.
+first. This page builds on both. The fan-out figures assume the native
+drivers a persistent worker selects; {ref}`concurrency-overlap` shows
+which runtimes and clients overlap at all.
 
 ## The connection budget
 
@@ -141,12 +143,12 @@ writes" is noise.
   under FPM) is itself a measured optimum. Under a worker, a 20-query
   fan-out completes in about 1.7 ms of wall time on the native driver
   against 3.7 ms on PDO — the queries genuinely overlap, which is the
-  whole point of the driver. Under FPM there is nothing to overlap and
-  the pool is built and discarded per request, which is expensive: for
+  whole point of the driver. Under FPM the pool lives for one request,
+  so it is built and discarded on every request, which is expensive: for
   the same 20 queries, `DB_MAX_CONNECTIONS` of 1, 4, 8 and 20 costs
   3.2, 4.3, 6.3 and 13.4 ms of CPU, against 2.3 ms for PDO's single
-  connection. Forcing the async driver there pays for overlap a
-  boot-and-die lifetime cannot use, and pays again for every connection
+  connection. Forcing the async driver there pays for a pool a
+  boot-and-die lifetime discards, and pays again for every connection
   it opens.
 - **The mysqli poll window.** The native MySQL driver's 1 ms poll
   quantum looks like an obvious latency suspect against a
@@ -162,4 +164,7 @@ writes" is noise.
   fd ceiling this page's budget interacts with.
 - {doc}`persistence` — the drivers, `maxConnections`, and the
   prepared-statement cache.
-- {doc}`concurrency` — what `concurrently()` does and what it costs.
+- {doc}`concurrency` — what `concurrently()` does and when its tasks
+  overlap.
+- {doc}`appendix-runtime` — what each database and network client waits
+  on inside a task.

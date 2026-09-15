@@ -1,10 +1,8 @@
 # Middleware
 
-Kinetis's middleware is plain [PSR-15](https://www.php-fig.org/psr/psr-15/)
-— `Psr\Http\Server\MiddlewareInterface` and `RequestHandlerInterface` —
-not a Kinetis-specific contract. Any existing PSR-15 middleware package
-works against Kinetis unmodified, and middleware you write yourself isn't
-learning a framework-specific shape.
+Kinetis middleware is plain [PSR-15](https://www.php-fig.org/psr/psr-15/):
+a class implementing `Psr\Http\Server\MiddlewareInterface`. Existing PSR-15
+middleware works unmodified.
 
 ```{code-block} php
 use Psr\Http\Message\ResponseInterface;
@@ -25,57 +23,41 @@ final readonly class RequestTimingMiddleware implements MiddlewareInterface
 }
 ```
 
-`process()` decides whether to call `$handler->handle($request)` at all —
-call it and you're "before and after" middleware (like the timing example
-above); return your own response without calling it and you've
-short-circuited the pipeline before anything further down ever runs.
+`process()` either calls `$handler->handle($request)` and works with the
+response it gets back, as above, or returns its own response without
+calling it, which ends the request there.
 
-## Two pipelines, not one
+This page covers choosing and declaring middleware and configuring the
+built-in middleware. {doc}`appendix-middleware` holds the pipeline
+mechanics and the built-in middleware contracts.
 
-Middleware register in two different places, for two different reasons.
+## Global or route middleware
 
-(global-middleware-every-request-including-ones-that-never-match-a-route)=
-### Global middleware — every request, including ones that never match a route
+| | Global middleware | Route middleware |
+|---|---|---|
+| Runs for | every request, including `404`s, `405`s and CORS preflights | the routes that reference it |
+| Declared with | `#[AsGlobalMiddleware]`, or `$app->middleware()` in `bootstrap.php` | `#[Middleware]` on a controller or method |
+| Built | once per worker, from `AppScope` | per request, from that request's `RequestScope` |
+| May depend on | worker-lifetime services | anything, `RequestScope` included |
 
-```{code-block} php
-use Kinetis\Container\AppScope;
+Use global middleware for what every request needs, including requests
+that match no route: request IDs, logging, CORS, an API-wide rate limit.
+Use route middleware for what particular routes need: authentication,
+authorization, a stricter limit on a login route.
 
-$app = new AppScope();
-$app->middleware(RequestTimingMiddleware::class);
-$app->middleware(CorsMiddleware::class);
-$app->boot();
+```{warning}
+A global middleware is built once and serves every request its worker
+handles. Keep no request data in its properties, and do not
+constructor-inject `RequestScope` or a service built per request: global
+middleware exists before any request scope does, and resolving
+`RequestScope` from `AppScope` throws. Anything that needs the current
+request's scope is route middleware.
 ```
 
-Registered on `AppScope` (locked after `boot()`, the same discipline as
-`bind()`/`instance()` — see {doc}`container`), in registration order,
-outermost first — inside the three Kinetis always wires in ahead of
-them, [listed below](#built-in-exceptionhandlermiddleware). This wraps
-`Kernel::handle()`'s *entire* body — the `RequestScope`'s own creation,
-routing itself, and a `404`/`405` from a
-failed route match — not just a successfully dispatched request. That's
-why logging or CORS belongs here: you want it to see every request, not
-only the ones that happened to match something.
-
-Global middleware is resolved from `AppScope`, not a per-request scope —
-it has to wrap the request *before* any `RequestScope` exists. The scope
-is created by the pipeline's innermost handler, the one that routes and
-dispatches (see {doc}`core-concepts`), and a global middleware returning
-its own response never reaches it, so it can't depend on one at
-construction time. Practically, this makes a global middleware instance
-a worker-lifetime singleton by default — the same "singleton via the
-container" pattern {doc}`container` documents for a plain service. If
-your middleware holds no per-request state as an instance property,
-that's exactly as safe as any other `AppScope`-resolved service; if it
-needs something that varies per request, reach for route middleware
-instead.
+## Global middleware
 
 (discoverable-global-middleware)=
-### Discoverable global middleware — no `AppScope::middleware()` call needed
-
-`#[AsGlobalMiddleware]` registers a global middleware class by attribute
-instead — the opposite direction from `#[Middleware]` above, which lives
-on a *controller* referencing another class; this one lives on the
-middleware class itself:
+### Discoverable global middleware
 
 ```{code-block} php
 use Kinetis\Http\Attributes\AsGlobalMiddleware;
@@ -94,270 +76,73 @@ final readonly class RequestIdMiddleware implements MiddlewareInterface
 }
 ```
 
-Any class anywhere under one of your own PSR-4 roots carrying this
-attribute joins the global pipeline automatically, with no
-`$app->middleware(...)` call at all — and so does a class an installed
-package offers through its `extra.kinetis` scan roots (see {doc}`cli`). It runs *inward* of every explicitly
-registered middleware, as a group — explicit registration always wins.
+Any class under one of your project's PSR-4 roots that carries
+`#[AsGlobalMiddleware]` joins the global pipeline, and so does a class an
+installed package offers through its `extra.kinetis` scan roots (see
+{doc}`cli`). Nothing else registers it. `MIDDLEWARE_DISCOVERY_PATHS`
+restricts the scan in a large application, as {doc}`cli` describes for
+routes.
 
-**Ordering among multiple discovered classes** is `priority`, an integer
-from `0` to `100` defaulting to `50` — higher runs more outer (closer to
-`ExceptionHandlerMiddleware`, further from the controller). The default
-sits at the midpoint specifically so a class can be nudged either more
-outer or more inner than every unspecified default without needing to
-know the range's extremes; a value outside `0`-`100` throws
-`InvalidArgumentException` immediately, when the attribute is
-constructed:
+When discovered middleware must run in a particular order, give each a
+`priority` from `0` to `100`, such as `#[AsGlobalMiddleware(priority: 90)]`.
+The default is `50`; higher runs further out, and equal priorities run in
+class-name order.
 
-```{code-block} php
-#[AsGlobalMiddleware(priority: 90)]
-final readonly class RequestIdMiddleware implements MiddlewareInterface { /* ... */ }
+### Middleware that needs constructor arguments
 
-#[AsGlobalMiddleware(priority: 10)]
-final readonly class ResponseTimingMiddleware implements MiddlewareInterface { /* ... */ }
-```
+An attribute cannot supply constructor arguments. A global middleware
+that needs them — `CorsMiddleware`'s allowed origins, for example — is
+bound and registered on `AppScope` in your project's `bootstrap.php`, which
+runs once at startup, before `AppScope::boot()` locks the container.
+[Registering global middleware](bootstrapping.md#registering-global-middleware)
+shows the file.
 
-Two classes sharing a priority are ordered alphabetically by their own
-fully-qualified class name instead, so the result never depends on
-filesystem/scan order.
+`$app->middleware()` belongs in `bootstrap.php` and nowhere else. Called
+after boot — from a controller, a route middleware, or any other code
+running during a request — it throws `ContainerException` instead of
+registering anything.
 
-```{note}
-This priority/alphabetical-tiebreak scheme belongs to *discovered*
-middleware — this attribute, and `#[AsMiddlewareGroup]`
-[below](#naming-a-stack-middleware-groups) for ordering within a group.
-It exists because nothing else establishes a relative order between two
-independently-discovered classes. `#[Middleware]` (class/method-level
-route middleware, above) has no priority concept at all: multiple
-`#[Middleware(...)]` attributes always run in the exact order they're
-declared in your source — group references included — since a
-controller's own attribute order is already an explicit, unambiguous
-ordering with nothing left to break a tie on.
-```
-
-```{note}
-Kinetis's own built-in middleware (`CorsMiddleware`, `RateLimitMiddleware`,
-`AuthenticatedRateLimitMiddleware`) is never `#[AsGlobalMiddleware]`-attributed
-— each needs app-specific constructor config (allowed origins, a policy ID and
-its limits) no default could supply, so they stay opt-in via
-`$app->middleware(...)` only, exactly as described below. This attribute is for
-*your* middleware.
-```
-
-Restrict the scan for a large application the same way as
-{doc}`cli`'s route/command/tool discovery: `MIDDLEWARE_DISCOVERY_PATHS`,
-comma-separated sub-paths relative to each PSR-4 base directory,
-committed in `.env`. See {doc}`caching` for how this is compiled ahead of
-time in production, alongside the route table itself.
-
-### Scoping middleware to `/openapi.json`/`/openapi` or `/mcp` specifically
-
-Global middleware already wraps every route, these endpoints included.
-The narrower need — middleware that should run for *only* one of them —
-is served by two mechanisms with one underlying shape, since both
-endpoints are ordinary discovered routes on controllers a package or
-the framework ships:
-
-**`#[AsOpenApiMiddleware]`** covers `/openapi.json` and `/openapi`
-together — the same "expose the API's own shape" concern, not two
-independently protectable surfaces. Its classes are published as a
-built-in `openapi` middleware group that the framework's
-`DocumentationController` references like any other route middleware.
-It takes the same `priority` (bounded `0`-`100`, default `50`,
-alphabetical tiebreak) as `#[AsGlobalMiddleware]`, is discovered by the
-same project-wide scan, and has an explicit-registration counterpart,
-`AppScope::openApiMiddleware(SomeClass::class)`.
-
-**The `mcp` middleware group** covers `/mcp`, which `kinetis/mcp`'s own
-controller references via `#[Middleware('@mcp')]`. Join it by declaring
-membership, and register the caller as `CurrentUserInterface` — the
-portable identity a tool, and the group's own final guard, both read:
-
-```{code-block} php
-use Kinetis\Container\RequestScope;
-use Kinetis\Http\Attributes\AsMiddlewareGroup;
-use Kinetis\Http\CurrentUserInterface;
-use Kinetis\Http\Responses\ErrorResponse;
-use Psr\Http\Message\ResponseInterface;
-use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Server\MiddlewareInterface;
-use Psr\Http\Server\RequestHandlerInterface;
-
-#[AsMiddlewareGroup('mcp')]
-final readonly class McpAuthMiddleware implements MiddlewareInterface
-{
-    public function __construct(private RequestScope $scope) {}
-
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
-    {
-        if ($request->getHeaderLine('Authorization') !== 'Bearer ' . getenv('MCP_TOKEN')) {
-            return ErrorResponse::create(401, 'Unauthenticated.');
-        }
-
-        $this->scope->instance(CurrentUserInterface::class, new class implements CurrentUserInterface {
-            public function id(): string
-            {
-                return 'mcp-client';
-            }
-        });
-
-        return $handler->handle($request);
-    }
-}
-```
-
-Because a group is route middleware — resolved from each request's own
-scope — a class here can constructor-inject `RequestScope` and publish
-`CurrentUserInterface` for the tool to see, which is how the auth
-packages work on `/mcp` unchanged. `kinetis/mcp` contributes two
-permanent members around yours: `McpOriginMiddleware` at priority 100,
-so the spec-required `Origin` validation always runs first, and
-`McpIdentityGuardMiddleware` at priority 0, which closes the endpoint
-when no `CurrentUserInterface` was registered. {doc}`mcp`'s "Securing
-the HTTP transport" states that contract and the `MCP_HTTP_PUBLIC`
-opt-in.
-
-**The `broadcasting` middleware group** is the same shape for
-`POST /broadcasting/auth`, which `kinetis/broadcasting`'s own controller
-references. Joining it with `#[AsMiddlewareGroup('broadcasting')]` — a
-thin subclass of either auth package's middleware is enough — is what
-makes a channel authorizer taking `CurrentUserInterface` reachable, on
-that route alone. That package contributes one permanent member,
-`BroadcastOriginMiddleware` at priority 100. {doc}`broadcasting`'s
-"Securing the endpoint" states the group's contract and its origin
-rules.
-
-```{note}
-**Order matters**: route middleware runs *inside* the global pipeline,
-not instead of it. For a request to `/mcp`, global middleware runs
-first (outermost), then the `mcp` group, then the MCP request itself.
-```
+Explicitly registered middleware runs outside every discovered class, in
+registration order. A class that is both registered and discovered runs
+once, at its registered position.
 
 (route-middleware)=
-### Route middleware — attribute-driven, per endpoint
+## Route middleware
 
 ```{code-block} php
-use Kinetis\Http\Attributes\Get;
-use Kinetis\Http\Attributes\Middleware;
+use Kinetis\Http\Attributes\{Get, Middleware, Post};
 
 #[Middleware(AuthMiddleware::class)]
 final readonly class OrderController
 {
     #[Get('/orders')]
-    #[Middleware(OrderRateLimitMiddleware::class)]
-    public function index(): array { /* ... */ }
-}
-```
-
-`#[Middleware(SomeMiddleware::class)]` is repeatable and works at both
-levels: class-level applies to every route on the controller and runs
-outermost; method-level appends, closer to the controller. Stack as many
-as you need at either level — in the example above, a request to
-`GET /orders` runs `AuthMiddleware` first, then `OrderRateLimitMiddleware`,
-then the controller.
-
-`Router::register()` discovers these the same way it discovers
-`#[Get]`/`#[Post]`/etc. — one more `getAttributes()` call inside the
-reflection loop it already runs, not a second pass over your controllers.
-
-Unlike global middleware, route middleware is resolved from the request's
-own `RequestScope`, wrapping only `Dispatcher::dispatch()` — deliberately
-the opposite resolution source from global middleware, since this is
-exactly the kind likely to need a per-request dependency.
-
-A middleware referenced this way — or discovered globally — can also own
-a `#[RoutePrefix]`, which every controller referencing it (or, for a
-global one, every route in the project) then composes into its own path.
-See {ref}`A middleware can own a prefix too
-<a-middleware-can-own-a-prefix-too>` for how that composes with a
-controller's own `#[RoutePrefix]`.
-
-(naming-a-stack-middleware-groups)=
-### Naming a stack: middleware groups
-
-When several routes need the same few middleware in the same order,
-`#[AsMiddlewareGroup]` names that stack once, on the middleware classes
-themselves:
-
-```{code-block} php
-use Kinetis\Http\Attributes\AsMiddlewareGroup;
-
-#[AsMiddlewareGroup('auth')]
-#[AsMiddlewareGroup('admin', priority: 90)]
-final class AuthMiddleware implements MiddlewareInterface { /* ... */ }
-```
-
-```{code-block} php
-#[AsMiddlewareGroup('admin', priority: 50)]
-final class RequireAdminMiddleware implements MiddlewareInterface { /* ... */ }
-```
-
-A route or controller then references the whole group with a `@`-prefixed
-name instead of listing every class:
-
-```{code-block} php
-final readonly class OrderController
-{
-    #[Get('/orders')]
-    #[Middleware('@auth')]
     public function index(): array { /* ... */ }
 
-    #[Get('/orders/{id}/refund')]
-    #[Middleware('@admin')]
+    #[Post('/orders/{id}/refund')]
+    #[Middleware(RequireAdminMiddleware::class)]
     public function refund(int $id): array { /* ... */ }
 }
 ```
 
-`GET /orders/{id}/refund` runs `AuthMiddleware` then
-`RequireAdminMiddleware` — the `admin` group's own order, from the
-priorities declared above: higher runs more outer, `0`-`100`, defaulting
-to `50`, with members sharing a priority ordered alphabetically by class
-name. The attribute is repeatable, so one class can belong to several
-groups and hold a different position in each.
+`#[Middleware]` is repeatable on a controller class and on its methods.
+Class-level middleware applies to every route of the controller and runs
+first; method-level middleware runs next, closer to the controller; each
+level runs in declaration order. `POST /orders/{id}/refund` runs
+`AuthMiddleware`, then `RequireAdminMiddleware`, then the controller.
 
-Nothing needs registering. Any class anywhere under one of your own PSR-4
-roots carrying `#[AsMiddlewareGroup]` is found automatically, the same
-scan that finds `#[AsGlobalMiddleware]` classes (see
-[above](#discoverable-global-middleware),
-including how to restrict it on a large application).
+Route middleware runs inside the global pipeline, only once a route has
+matched. It is built per request from that request's `RequestScope`, so
+it can depend on per-request services and on the scope itself.
 
-A group expands where its reference sits, so declaration order still
-governs the whole list — mix group references and plain class-strings
-freely:
+### Registering a value the controller reads later
 
-```{code-block} php
-#[Get('/orders/export')]
-#[Middleware(OrderRateLimitMiddleware::class)]
-#[Middleware('@admin')]
-public function export(): array { /* ... */ }
-```
-
-That runs `OrderRateLimitMiddleware`, then the `admin` group's two members, then
-the controller.
-
-Group membership alone never makes a middleware run anywhere — a group
-only runs where a route or controller references it. Referencing a group
-no class declares fails when the application starts, naming the group and
-the route that referenced it, rather than at the moment someone hits that
-endpoint.
-
-`kinetis routes:list` prints each route's group references already
-expanded into the classes that actually run, annotated with the group they
-came from — see {doc}`cli`.
-
-## Registering a value the controller reads later
-
-`RequestScope` registers itself on itself, so a middleware can
-constructor-inject the exact scope the current request is using — not a
-disconnected new one — and write something onto it for a controller to
-read afterward. This is exactly what makes constructor-injecting
-`RequestScope` route-middleware-only: registered globally instead, it
-would be resolved through `AppScope`, which throws rather than silently
-building a disconnected scope (see {doc}`container`'s "Resolving
-`RequestScope` itself, from the wrong scope"):
+A route middleware can constructor-inject the current `RequestScope` and
+register a value on it for the controller:
 
 ```{code-block} php
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\CurrentUserInterface;
+use Kinetis\Http\Responses\ErrorResponse;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -375,7 +160,7 @@ final readonly class AuthMiddleware implements MiddlewareInterface
         $user = $this->users->resolve($request);
 
         if ($user === null) {
-            return new \Nyholm\Psr7\Response(401, ['Content-Type' => 'application/json'], json_encode(['error' => 'Unauthenticated.']));
+            return ErrorResponse::create(401, 'Unauthenticated.');
         }
 
         $this->scope->instance(CurrentUserInterface::class, $user);
@@ -386,9 +171,10 @@ final readonly class AuthMiddleware implements MiddlewareInterface
 ```
 
 ```{code-block} php
-use Kinetis\Http\Attributes\Get;
+use Kinetis\Http\Attributes\{Get, Middleware};
 use Kinetis\Http\CurrentUserInterface;
 
+#[Middleware(AuthMiddleware::class)]
 final readonly class OrderController
 {
     public function __construct(
@@ -403,71 +189,108 @@ final readonly class OrderController
 }
 ```
 
-`CurrentUserInterface` (`Kinetis\Http\CurrentUserInterface`) is one method
-— `id(): string|int` — deliberately minimal so any auth strategy can
-implement it. Nothing implements or registers it by default: a controller
-constructor-injecting it without an auth middleware having run first gets
-a plain `NotFoundException`, not a null to check.
+`CurrentUserResolver` stands for your own lookup. `CurrentUserInterface`
+has one method, `id(): string|int`, and nothing registers it by default:
+a controller that asks for it on a route without an authentication
+middleware fails instead of receiving `null`. {doc}`auth` ships a
+bearer-token implementation of this pattern.
 
-The controller above can constructor-inject what the middleware
-registered because a controller is resolved *after* every middleware in
-front of it has run. A middleware cannot do the same for something an
-earlier middleware registers: **all of a route's middleware are
-constructed before the first one runs**, so at construction time none of
-them has executed yet. A middleware that depends on an earlier one's
-work resolves it inside `process()` instead, from an injected
-`RequestScope`:
+A controller can inject what a middleware registered because the
+controller is built after the middleware runs. Middleware cannot inject
+each other's values this way: all of a route's middleware are built
+before the first one runs, so a middleware that needs an earlier one's
+value reads it from an injected `RequestScope` inside `process()`.
+
+## Middleware groups
+
+When several routes need the same middleware in the same order, name the
+stack once, on the middleware classes:
 
 ```{code-block} php
-final readonly class RequireVerifiedEmailMiddleware implements MiddlewareInterface
-{
-    // Injecting CurrentUserInterface here would fail: the auth
-    // middleware in front of this one has not run yet.
-    public function __construct(private RequestScope $scope) {}
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
 
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
-    {
-        $user = $this->scope->get(CurrentUserInterface::class);
+#[AsMiddlewareGroup('admin', priority: 90)]
+final class AuthMiddleware implements MiddlewareInterface { /* ... */ }
 
-        // ...
-    }
-}
+#[AsMiddlewareGroup('admin')]
+final class RequireAdminMiddleware implements MiddlewareInterface { /* ... */ }
 ```
 
-## Built in: `ExceptionHandlerMiddleware`
+A route or controller references the group with an `@` prefix:
 
-Registered automatically on every `Kernel`, immediately inside
-`SecurityHeadersMiddleware` — not something you opt into:
+```{code-block} php
+#[Post('/orders/{id}/refund')]
+#[Middleware('@admin')]
+public function refund(int $id): array { /* ... */ }
+```
+
+Members run by priority, highest first — `AuthMiddleware` at `90`, then
+`RequireAdminMiddleware` at the default `50` — with equal priorities in
+class-name order. The attribute is repeatable, so a class can belong to
+several groups at a different priority in each. A group reference expands
+where it is declared, so it mixes freely with plain class references.
+
+Groups are discovered by the same scan as `#[AsGlobalMiddleware]`. A group
+runs only where a route references it, and a reference to a group no class
+declares stops the application at startup. `kinetis routes:list` prints
+each route's groups expanded into the classes that run (see {doc}`cli`).
+
+### Groups for framework and package endpoints
+
+Endpoints that Kinetis and its packages ship reference named groups, so
+middleware can be added to them alone:
+
+- **`/openapi.json` and `/openapi`**: mark a middleware
+  `#[AsOpenApiMiddleware]`, or register it with
+  `$app->openApiMiddleware()` in `bootstrap.php`.
+- **`/mcp`**: join the `mcp` group with `#[AsMiddlewareGroup('mcp')]`, and
+  register the caller as `CurrentUserInterface`. `kinetis/mcp` validates
+  `Origin` before your middleware and closes the endpoint when no
+  `CurrentUserInterface` was registered; see {doc}`mcp`'s "Securing the
+  HTTP transport".
+- **`POST /broadcasting/auth`**: join the `broadcasting` group; see
+  {doc}`broadcasting`'s "Securing the endpoint".
+
+Global middleware still runs first for these endpoints. An example `mcp`
+member is in [Endpoint groups](appendix-middleware.md#endpoint-groups).
+
+## Built-in middleware
+
+Every request passes through this pipeline:
 
 ```{code-block} text
-Kernel's global pipeline, outermost to innermost:
-  SecurityHeadersMiddleware    ← always first, unconditionally
-  ExceptionHandlerMiddleware   ← always second, unconditionally
-  RequestBodyMiddleware        ← always third, unconditionally
-  ...your own $app->middleware() registrations, in order...
-  (routing, then a matched route's own middleware, then the controller)
+SecurityHeadersMiddleware          always
+ExceptionHandlerMiddleware         always
+RequestBodyMiddleware              always
+$app->middleware() registrations   in registration order
+#[AsGlobalMiddleware] classes      by priority
+  routing
+    route middleware               class-level, then method-level
+      controller
 ```
 
-Without it, an uncaught exception from anywhere in the pipeline — a
-controller, a route middleware, application code in general — would
-propagate all the way out of `Kernel::handle()` with nothing converting
-it into a response. For a persistent worker, that's a materially worse
-failure mode than one request degrading to a `500`, which is why it's
-always on rather than something you opt into.
+`CorsMiddleware`, `RateLimitMiddleware` and
+`AuthenticatedRateLimitMiddleware` are opt-in, each configured with your
+own policy.
+
+## Error responses
+
+`ExceptionHandlerMiddleware` turns an uncaught exception from routing, a
+route middleware or a controller into a response, so one failure costs
+one request a `500` instead of escaping the worker's request handling:
 
 ```{code-block} json
-:caption: What a controller throwing an uncaught exception produces
+:caption: A controller throwing an uncaught exception
 {
     "error": "Internal server error."
 }
 ```
 
-In development (`APP_ENV=development`), the same `500` carries the
-exception's class, message, and location, so a mistake is diagnosable
-straight from the response:
+With `APP_ENV=development`, the same `500` also carries the exception's
+class, message and location:
 
 ```{code-block} json
-:caption: The same failure, in development
+:caption: The same failure in development
 {
     "error": "Internal server error.",
     "exception": "RuntimeException",
@@ -476,80 +299,12 @@ straight from the response:
 }
 ```
 
-```{note}
-Either way, the exception is also logged through whatever
-`Psr\Log\LoggerInterface` is bound — in development that's an
-`error_log()`-backed logger by default, so the trail exists even where
-the response body isn't visible. See {doc}`logging`. That logging
-attempt is best-effort: a registered logger that itself throws cannot
-prevent the `500` this middleware exists to guarantee, and an exception
-message that is not valid UTF-8 still produces a valid JSON body rather
-than an uncaught encoding error — observability can never defeat this
-boundary.
-```
-
-Middleware registration is a flat class-string list at both levels — a
-middleware needing a threshold or a config value takes it through the
-container via constructor injection, like anything else.
-
-### Rendering validation failures
-
-A `Kinetis\Validation\Exception\ValidationException` is recognized here
-before anything else, and handed to whichever
-`Kinetis\Http\ValidationExceptionRendererInterface` the container can
-supply:
-
-```{code-block} php
-interface ValidationExceptionRendererInterface
-{
-    public function render(
-        ValidationException $exception,
-        ServerRequestInterface $request,
-    ): ResponseInterface;
-}
-```
-
-The default is `Kinetis\Http\ProblemDetailsValidationExceptionRenderer`,
-an [RFC 9457][rfc9457] problem details document at `422` — see
-{doc}`routing-validation` for its exact body. It is an ordinary
-constructor default, so nothing is registered for it and binding your
-own implementation before `AppScope::boot()` is all it takes to replace
-it everywhere:
-
-```{code-block} php
-$app->bind(ValidationExceptionRendererInterface::class, FormRedirectRenderer::class);
-```
-
-Your renderer decides the whole response. No status range is imposed: a
-`303` back to the form, a re-rendered `200` page, and a problem document
-of your own design are all legitimate. It reads `$exception->violations`
-— each a `Kinetis\Validation\Violation` with a segmented `path`, a
-stable `code`, a `message` and its `parameters` — or
-`$exception->grouped()`, a lossy convenience projecting those paths onto
-dotted keys with their messages, which is the shape an HTML form
-usually wants.
-
-The renderer is resolved from `AppScope` and shared by every request, so
-it must be worker-safe: constructor dependencies only, and neither the
-request nor the exception kept past `render()`. By the time it runs the
-request scope is already disposed, so a request-scoped service is gone.
-A workflow that needs one — storing flash errors in the session before
-redirecting, most of all — catches `ValidationException` in route or
-application middleware instead, closer to the controller, where the
-session is still open and its cookie can still reach the response.
-
-A renderer that throws cannot defeat this boundary: the original
-validation failure is logged with the rendering failure as context, and
-the request gets the same generic `500` as any other uncaught exception.
-A validation failure rendered normally is not logged — it reports a
-client mistake, not a framework fault.
-
-[rfc9457]: https://www.rfc-editor.org/rfc/rfc9457.html
+Either way the exception is logged through the bound
+`Psr\Log\LoggerInterface`; see {doc}`logging`.
 
 ### Mapping your own exceptions to a status
 
-An exception thrown from a controller (or anything further inside the
-pipeline) can declare its own HTTP status by implementing
+An exception declares its own status by implementing
 `Kinetis\Http\Exception\HttpStatusExceptionInterface`:
 
 ```{code-block} php
@@ -565,65 +320,48 @@ final class OutOfStockException extends RuntimeException implements HttpStatusEx
 }
 ```
 
-`ExceptionHandlerMiddleware` returns the declared status with the
-exception's own `getMessage()` as the body, unlogged — a well-formed
-declared HTTP error, not a framework bug. This applies equally to a
-declared `4xx` (the caller did something wrong) and a declared `5xx`
-(the application chose to report a real server-side failure this way):
-both are returned exactly as declared with no framework error logging;
-only a malformed or throwing mapping — see below — is logged and falls
-back to a generic `500`.
+The response carries that status and `{"error": "<message>"}`, and is not
+logged as a failure. The exception message goes to the client, so write it
+for the client. `httpStatus()` must return a value from 400 to 599 and must
+not throw; an implementation that breaks either rule is logged and answered
+with the generic `500`.
 
-```{warning}
-**`httpStatus()` must return a value from 400 to 599 inclusive, and must
-not throw.** Both are enforced, not just documented: a status outside
-that range, or `httpStatus()` itself throwing, is treated as a broken
-implementation of this interface — logged and mapped to a generic `500`
-the same as any other uncaught exception, never a `1xx`/`2xx`/`3xx`
-response and never an exception escaping this middleware.
+### Rendering validation failures
+
+A failed validation reaches `ExceptionHandlerMiddleware` as a
+`ValidationException` and is rendered as the `422` problem document shown
+in {doc}`routing-validation`. To answer differently — a `303` back to an
+HTML form, a re-rendered page — implement
+`Kinetis\Http\ValidationExceptionRendererInterface` and bind it in
+`bootstrap.php`, as [Binding an application
+service](bootstrapping.md#binding-an-application-service) shows:
+
+```{code-block} php
+:caption: bootstrap.php
+
+$app->bind(ValidationExceptionRendererInterface::class, FormRedirectRenderer::class);
 ```
 
-### A disposal failure never masks the real outcome
+`render(ValidationException $exception, ServerRequestInterface $request):
+ResponseInterface` decides the whole response, any status included. It
+reads `$exception->violations` — each a `Kinetis\Validation\Violation`
+with `path`, `code`, `message` and `parameters` — or
+`$exception->grouped()`, which maps dotted field names to messages for an
+HTML form.
 
-`Kernel` disposes each request's `RequestScope` after `ExceptionHandlerMiddleware`'s
-own boundary has already decided the outcome — a route/controller
-`Throwable` already propagating, or a response that hasn't left the
-process yet — with an explicit precedence for what happens if that
-disposal itself then fails (see {doc}`container`'s own general
-explanation of why this matters):
+```{warning}
+The renderer is built once from `AppScope` and shared by every request.
+Give it constructor dependencies only, and keep neither the request nor
+the exception after `render()` returns. The request scope is already
+disposed when it runs, so a request-scoped service such as the session is
+gone: to store flash errors before redirecting, catch
+`ValidationException` in a route middleware instead.
+```
 
-- **A route or controller failure was already in flight** — a declared
-  `HttpStatusExceptionInterface`, or any other uncaught exception — its
-  exact status, message, and identity are unaffected by a disposal
-  failure on top of it. The disposal failure is logged separately,
-  through `AppScope`'s own logger (the request's own scope is already
-  disposed, so it can't safely resolve one), and never appears as a
-  second response.
-- **The handler succeeded, and nothing has been returned to the client
-  yet** — a disposal failure here has nothing else to compete with, so it
-  legitimately becomes the ordinary generic `500` `ExceptionHandlerMiddleware`
-  produces for any other uncaught exception, logged exactly once, with
-  the same development-vs-production detail rules as any other failure.
-- **The response streams its own body** — its scope is disposed after the
-  last byte instead of before `handle()` returns (see {doc}`container`),
-  by which point the status, the headers and part of the body are already
-  on the wire. A disposal failure there is logged through `AppScope`'s own
-  logger and goes no further; a failure raised by the emitter itself is
-  the one that propagates.
+## Security headers
 
-Either way, `RequestScope::dispose()`'s own contract still holds
-underneath this: every registered dispose callback runs, even if an
-earlier one throws.
-
-## Built in: `SecurityHeadersMiddleware`
-
-Registered unconditionally as the **outermost** global middleware —
-outside `ExceptionHandlerMiddleware`, so its headers reach the `500`
-that handler produces as well as every ordinary response. It cannot
-throw at request time: configuration is read once at construction, so
-`process()` does nothing but set headers.
-
-Three headers are sent by default, with no configuration at all:
+`SecurityHeadersMiddleware` runs outermost, so its headers reach every
+response, the `500` included. With no configuration it sends:
 
 ```{code-block} text
 X-Content-Type-Options: nosniff
@@ -631,25 +369,11 @@ X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
 ```
 
-Nothing legitimate depends on content sniffing, on being framed, or on
-leaking a full referrer to another origin, so these cost a working
-application nothing and protect one that never thought about them.
-`X-Frame-Options` and `Referrer-Policy` take any value, or `off` to
-send nothing; `X-Content-Type-Options` is not configurable, because
-there is no reason to turn sniffing back on.
+`SECURITY_FRAME_OPTIONS` and `SECURITY_REFERRER_POLICY` replace the last
+two, or send nothing when set to `off`. `X-Content-Type-Options` is not
+configurable.
 
-```{code-block} text
-:caption: .env
-SECURITY_FRAME_OPTIONS=SAMEORIGIN
-SECURITY_REFERRER_POLICY=no-referrer
-```
-
-A Content-Security-Policy, a Permissions-Policy, HSTS, and the three
-cross-origin policies are sent **only when you configure them**. Each
-breaks a working application when it is wrong — a policy that omits a
-real dependency blocks it, and HSTS on the wrong host is not quickly
-reversible — so a guessed default would do more harm than sending
-nothing:
+The remaining policies are sent only when you configure them:
 
 ```{code-block} text
 :caption: .env
@@ -663,334 +387,134 @@ SECURITY_CORP=same-origin
 SECURITY_COEP=require-corp
 ```
 
-HSTS is sent whenever a max-age is configured, without checking the
-request's own scheme: a browser is required to ignore it when it did
-not arrive over a secure transport, and a scheme check would suppress
-it behind a proxy that terminates TLS — where it is exactly what you
-want.
+Each of these breaks a working application when it is wrong, so none has
+a default:
 
-Leaving `SECURITY_HSTS_MAX_AGE` unset sends no header, so a policy a
-browser already cached stays as it is. Setting it to `0` sends
-`Strict-Transport-Security: max-age=0` — RFC 6797's withdrawal, and the
-way to tell a browser to drop that cached policy. A withdrawal is sent
-on its own; `includeSubDomains` and `preload` qualify a positive
-max-age. A negative value throws at construction.
-
-The three cross-origin policies each sever something the web allows by
-default, which is the point of them and the reason to reach for one
-deliberately:
-
-`SECURITY_COOP` cuts the `window.opener` link between your pages and
-the windows around them. `same-origin-allow-popups` keeps popups your
-own pages open — which is how an OAuth or payment popup reports back —
-while `same-origin` also severs the link when one of your pages *is*
-the popup, so choose it only if you are not the one being opened.
-
-`SECURITY_CORP` set to `same-origin` stops other origins embedding your
-responses, including images and fonts they embed today. It does not
-apply to a CORS request, so an API consumed through `CorsMiddleware` is
-unaffected either way.
-
-`SECURITY_COEP` set to `require-corp` demands that every cross-origin
-subresource opt in, and blocks each one that has not. It is what
-`crossOriginIsolated` needs, and the most disruptive of the three —
-introduce it last, after the other two are in place.
-
-```{note}
-Your policy does not have to accommodate the Swagger UI page Kinetis
-serves at `/openapi`. That page loads `swagger-ui-dist` from a CDN, which a
-`script-src` of `'self'` would block, so it sends its own policy —
-narrower than a typical application-wide one, with a per-response nonce
-for its inline script and `connect-src 'self'` so it can fetch its own
-document and nothing else. Because a header already on the response is
-never replaced, yours still governs every other route.
-```
+- **CSP and Permissions-Policy** block every source or feature they do
+  not list. List everything the application loads.
+- **HSTS** is sent whenever `SECURITY_HSTS_MAX_AGE` is set, including
+  behind a proxy that terminates TLS, and browsers keep it for that long.
+  `includeSubDomains` is added unless `SECURITY_HSTS_INCLUDE_SUBDOMAINS=false`,
+  so set that to `false` unless every subdomain serves HTTPS.
+  `SECURITY_HSTS_MAX_AGE=0` tells browsers to drop a cached policy.
+- **COOP** `same-origin-allow-popups` keeps OAuth and payment popups
+  working; `same-origin` also cuts the link when one of your pages is the
+  popup.
+- **CORP** `same-origin` stops other origins embedding your responses,
+  images and fonts included. CORS requests are unaffected.
+- **COEP** `require-corp` blocks every cross-origin subresource that has
+  not opted in. Introduce it last.
 
 A header the response already carries is never replaced, so one route
-can set its own policy and keep it:
+can set its own value:
 
 ```{code-block} php
 #[Get('/embed/widget')]
 public function widget(): ResponseInterface
 {
-    // Kept as-is; the global DENY does not overwrite it.
     return HtmlResponse::create($markup)
         ->withHeader('X-Frame-Options', 'SAMEORIGIN');
 }
 ```
 
-## Built in: `RequestBodyMiddleware`
+The Swagger UI page at `/openapi` sends its own Content-Security-Policy,
+so your policy does not need to allow its CDN. The appendix's
+{doc}`security headers section <appendix-middleware>` covers HSTS
+withdrawal and each cross-origin policy.
 
-Registered unconditionally, right after `ExceptionHandlerMiddleware` —
-also not something you opt into. It is the one place a request body
-becomes something a handler can use, whichever runtime delivered it: an
-adapter turns its transport into a raw PSR-7 request and stops there.
+## Request body limits
+
+`RequestBodyMiddleware` reads each request body once, into memory, before
+routing, and parses form bodies. `MAX_BODY_SIZE` caps the body in bytes:
 
 ```{code-block} text
 :caption: .env
 MAX_BODY_SIZE=2097152
 ```
 
-Bytes, not a `"2M"`-style string. Defaults to `2097152` (2 MiB) when
-unset.
-
-Three things happen, in order.
-
-**The declared `Content-Length` is checked first**, so a request that
-honestly labels itself oversized is refused without being read.
-
-**Then the body is staged** — read once, incrementally, counted, into a
-seekable `php://memory` stream, and rewound. This is what bounds a
-request with no `Content-Length` at all, or one that under-reports its
-real size. It happens for every request, not only for forms, and it is what
-lets everything downstream see one body and one length. The staged
-stream is complete, seekable and replayable: staging and size
-enforcement are finished before the handler runs, so no later read
-re-runs either. `read()` and `getContents()` answer from wherever
-the cursor stands, so code that needs the whole body — after another
-middleware may already have read it — uses a plain `(string)` cast,
-which rewinds first, or rewinds explicitly. A raw or binary body reaches the handler
-untouched apart from being staged.
-
-```{note}
-The staged copy is held in memory, so `MAX_BODY_SIZE` bounds what one
-concurrent request's body occupies there. Parsing a form builds further
-values from that copy, so a form request holds more than the ceiling at
-its peak. Choose `MAX_BODY_SIZE` and PHP's `memory_limit` together,
-leaving room above the ceiling for the parse.
-```
-
-**Then a form is parsed.** For `application/x-www-form-urlencoded` and
-`multipart/form-data` on a method that carries a body, the staged bytes
-are read into `getParsedBody()`/`getUploadedFiles()` under
-`Kinetis\Http\Form\FormLimits` — the byte ceiling above plus six
-ceilings a byte count cannot express (input variables, file parts,
-nesting depth, multipart parts, header lines per part, and bytes per
-header line). The body stays readable afterwards, rewound and complete.
-Nothing is truncated: a form past any ceiling is refused whole.
-
-Two answers to a bad body, and only two.
+The default is `2097152` (2 MiB). A larger body, or a form past one of
+the `FormLimits` ceilings, is refused before routing:
 
 ```{code-block} json
-:caption: What an oversized or over-complicated request produces (413)
+:caption: 413
 {
     "error": "Request body exceeds the maximum allowed size of 2097152 bytes."
 }
 ```
 
-```{code-block} json
-:caption: What a body that cannot be parsed produces (400)
-{
-    "error": "The request body could not be parsed."
-}
+A form body that cannot be parsed is a `400` with the fixed message
+`The request body could not be parsed.`
+
+```{warning}
+Every request in progress holds its body in memory, and parsing a form
+holds more than the body at its peak. Choose `MAX_BODY_SIZE` together
+with PHP's `memory_limit` and the number of requests a worker serves at
+once.
 ```
 
-The `400` message is fixed and never carries the parser's own text,
-which is assembled from the input that failed.
+Some runtimes enforce their own ceiling before PHP receives the body —
+RoadRunner's `http.max_request_size`, Lambda's payload limit — and the
+SAPI adapters require `enable_post_data_reading=0`. See
+{doc}`runtime-adapters`.
 
-```{note}
-One further ceiling sits outside PHP entirely and is not
-`MAX_BODY_SIZE`'s to enforce, because it applies before Kinetis has the
-bytes at all: under `kinetis/roadrunner-adapter`, the required
-`http.max_request_size` setting is what bounds a body whose length was
-never declared, since RoadRunner reads the whole thing into memory
-before the PHP worker runs. Under `kinetis/bref-adapter`, API Gateway
-has already accepted and materialized the body, up to Lambda's own 6 MB
-invocation payload limit. Under FrankenPHP and PHP-FPM,
-`enable_post_data_reading=0` is what makes the body Kinetis's to bound
-in the first place — PHP's own `post_max_size`/`max_input_vars` never
-see it. See {doc}`runtime-adapters` for the numbers and the reasoning.
-```
+The body stays readable after parsing: `(string) $request->getBody()`
+returns all of it, even after another middleware has read it.
 
-## Built in: `CorsMiddleware`
+## CORS
 
-`Kinetis\Http\Middleware\CorsMiddleware` — Cross-Origin Resource Sharing.
-**Global only** — it's the one built-in middleware that can't be used as
-route middleware at all:
-
-```{code-block} php
-use Kinetis\Http\Middleware\CorsMiddleware;
-
-$app->middleware(CorsMiddleware::class);
-```
-
-A CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) to a
-path with no registered `OPTIONS` route would never reach route
-middleware at all, since that only runs after a route has already
-matched successfully. Registering `CorsMiddleware` globally is what lets
-it see and answer the preflight before routing even runs.
-
-```{note}
-**Every response `CorsMiddleware` produces is marked for a shared
-cache.** See {ref}`cors-caching` below — this includes a wildcard
-`allowedOrigins: ['*']` configuration, which is not cache-static despite
-always answering with the literal `*` value: a request with no `Origin`
-header takes a different branch (no `Access-Control-Allow-Origin` at
-all) than one carrying any `Origin` at all does.
-```
+`CorsMiddleware` must be global middleware: a preflight `OPTIONS` request
+usually matches no route, and route middleware runs only after a match.
+Bind it with your configuration and register it in `bootstrap.php`, as
+[Registering global middleware](bootstrapping.md#registering-global-middleware)
+shows. Its constructor, with every default:
 
 ```{code-block} php
 new CorsMiddleware(
-    allowedOrigins: ['https://app.example.com'],
+    allowedOrigins: [],
     allowedMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: [],
     allowCredentials: false,
     maxAge: 86400,
+    allowedOriginPatterns: [],
 );
 ```
 
-Defaults to `allowedOrigins: []` — deny by default. Nothing is
-cross-origin-accessible until you explicitly list allowed origins (or
-opt into `allowedOrigins: ['*']` yourself, with `allowCredentials: false`).
-A request with no `Origin` header, or an `Origin` not on the allow list,
-passes through completely untouched — no CORS headers added, no error
-status returned. That's deliberate: it's the browser's own same-origin
-policy that blocks a disallowed cross-origin response once it doesn't see
-an `Access-Control-Allow-Origin` header naming it; nothing server-side
-needs to reject the request itself.
-
-`allowedHeaders: ['*']` reflects whatever the preflight actually requested
-(`Access-Control-Request-Headers`) instead of checking against a fixed
-list — maintaining an exhaustive static allow-list is brittle against a
-client sending one custom header more than expected.
-
-```{warning}
-**Wildcard origins and credentials never combine, per spec.** Browsers
-reject `Access-Control-Allow-Origin: *` outright when credentials are
-involved, so `CorsMiddleware` refuses to construct at all with
-`allowedOrigins: ['*']` and `allowCredentials: true` together — that
-combination has no safe fallback to silently apply, it's a
-misconfiguration to catch before it ships. Use a real allow-list (or
-`allowedOriginPatterns`) instead if you need credentialed cross-origin
-requests; with one configured, a credentialed response always echoes
-back the specific requesting origin rather than a static value.
-```
-
-(cors-caching)=
-
-### Response caching and `Vary`
-
-`CorsMiddleware` marks every response it produces with the `Vary`
-tokens a shared cache needs to key on, since the same method and URI
-can legitimately answer with several different representations
-depending on the request's CORS-relevant headers.
-
-`Vary: Origin` is added whenever the middleware is configured to allow
-anything at all (`allowedOrigins` or `allowedOriginPatterns`
-non-empty) — including the disallowed/absent-`Origin` pass-through
-response, and including a literal `allowedOrigins: ['*']` allow-list.
-A wildcard allow-list always answers with the literal `*` value once an
-`Origin` is present, but a request with no `Origin` header takes a
-different branch entirely (no `Access-Control-Allow-Origin` header at
-all) — two different response shapes a cache keyed only on method and
-URI cannot otherwise tell apart. Only a completely unconfigured
-`CorsMiddleware` (the deny-by-default `allowedOrigins: []` with no
-patterns either), where every request takes the same pass-through
-branch regardless of `Origin`, adds no `Vary` token at all.
-
-An `OPTIONS` request to an allowed origin adds `Vary:
-Access-Control-Request-Method` on both sides of the preflight boundary:
-a preflight (`Access-Control-Request-Method` present) is answered
-directly by `CorsMiddleware`, without routing ever running, while an
-ordinary `OPTIONS` request (the header absent) falls through to routing
-itself — most commonly a `405` if the path has other methods
-registered, or whatever an application's own `OPTIONS` route returns.
-Same method, same URI, same allowed `Origin`, genuinely different
-responses.
-
-`Vary: Access-Control-Request-Headers` is added on a preflight only
-when `allowedHeaders: ['*']`, since that's the only configuration where
-`Access-Control-Allow-Headers` actually reflects what was requested —
-a fixed `allowedHeaders` list answers identically no matter what
-`Access-Control-Request-Headers` asked for, so there is nothing for a
-cache to get wrong there.
-
-Every `Vary` token `CorsMiddleware` adds goes through one canonical
-merge: existing tokens (across one comma-separated value or several
-header lines) are parsed, compared case-insensitively, and deduplicated
-against both themselves and whatever `CorsMiddleware` is adding, folded
-into a single header line. An application response that already carries
-its own `Vary` dimension (`Vary: Accept-Encoding`, for one) keeps it
-alongside CORS's own tokens rather than having it overwritten or
-duplicated; an existing `Vary: *` is left untouched, since "varies on
-everything" already covers anything CORS could add.
-
-### Matching a pattern of origins, not just a fixed list
-
-`allowedOriginPatterns` checks the `Origin` header against full, delimited
-PCRE patterns when it matches none of `allowedOrigins` exactly — for "any
-subdomain of `example.com`", not expressible as a fixed list:
-
-```{code-block} php
-new CorsMiddleware(
-    allowedOrigins: [],
-    allowedOriginPatterns: ['#^https://[a-z0-9-]+\.example\.com$#'],
-);
-```
-
-A pattern has to match the `Origin` in full. A partial match is not
-enough, so an unanchored `example\.com` does not allow
-`https://evil-example.com.attacker.net` — the recurring class of CORS
-misconfiguration this parameter would otherwise invite. Anchors are
-still worth writing for clarity, but leaving them out cannot widen what
-a pattern allows.
-
-The whole-`Origin` rule is what enforces this, rather than a check that
-the pattern carries `^` and `$`. Such a check cannot be trusted: an
-alternation like `#^https://good\.com$|evil\.com$#` carries both
-anchors and is still unanchored on its second branch, so it would pass
-inspection while allowing any origin ending in `evil.com`.
+- **Nothing is allowed by default.** A request without an `Origin`, or
+  from an origin not allowed, passes through without CORS headers, and
+  the browser withholds the response from the calling page.
+- **`allowedOrigins: ['*']` cannot be combined with
+  `allowCredentials: true`**; construction fails. For credentialed
+  requests list the origins, and the response names the requesting origin.
+- **`allowedHeaders: ['*']`** allows whatever headers the preflight asks
+  for.
+- **`allowedOriginPatterns`** matches origins against PCRE patterns, such
+  as `['#^https://[a-z0-9-]+\.example\.com$#']` for every subdomain. A
+  pattern must match the whole `Origin`, and one that does not compile
+  fails construction.
 
 ```{danger}
-**Escaping literal dots is still yours to get right.** `.+example\.com`
-matches `https://evilexample.com` in full, and nothing generic can tell
-that from an intended pattern. Write `\.` for a literal dot.
+**Escape literal dots in origin patterns.** `.+example\.com` matches
+`https://evilexample.com` in full. Write `\.` for every dot.
 ```
 
-Patterns are compiled when the middleware is constructed, and one that
-cannot compile raises `InvalidArgumentException` there — it would
-otherwise match nothing and quietly deny every origin it was written to
-allow.
+Every CORS response carries the `Vary` tokens a shared cache needs; see
+{ref}`Response caching and Vary <cors-caching>`.
 
-For anything beyond pattern matching against the `Origin` header itself —
-a per-tenant allow-list, for example — write your own middleware using
-`CorsMiddleware` as a starting point.
+## Rate limiting
 
-## Built in: `RateLimitMiddleware`
+`RateLimitMiddleware` counts requests per client in fixed windows. It
+needs a cache that counts atomically — `RedisSimpleCache`, bound when
+`REDIS_URL` or `REDIS_HOST` is configured (see {doc}`redis`) — and throws
+at construction otherwise, rather than running without enforcing a limit.
 
-`Kinetis\Http\Middleware\RateLimitMiddleware` — a fixed-window request
-counter backed by `Psr\SimpleCache\CacheInterface`. It needs a real
-cache: configure Redis (`REDIS_URL` or `REDIS_HOST` — see
-{doc}`persistence`) so `AppScope::boot()` binds `RedisSimpleCache`, or
-pass any other real PSR-16 implementation. Construction over
-`NullSimpleCache` — the default binding when no Redis is configured —
-throws, since a counter that never stores anything enforces no limit at
-all while still emitting healthy-looking `X-RateLimit-*` headers.
-
-Every policy is constructed with a **policy ID**: a non-empty string
-naming which policy owns the counter. That ID is the whole identity —
-two instances built with the same ID count one client against one
-budget, and two policies that must not share a budget are given
-different IDs. Nothing else takes part: raising a limit, adding a
-trusted proxy, or moving the policy into a subclass leaves the counters
-a running deployment already holds exactly where they are.
-
-Nothing is registered by default. `#[Middleware(...)]` carries a
-class-string and no arguments, so the policy an application actually
-registers is a thin subclass supplying its own ID and limits:
+A policy is a subclass that fixes a **policy ID** and its limits. The ID
+alone identifies the counter: two policies share a budget only when they
+share an ID.
 
 ```{code-block} php
 use Kinetis\Http\Middleware\RateLimitMiddleware;
 use Psr\SimpleCache\CacheInterface;
-
-final class ApiRateLimitMiddleware extends RateLimitMiddleware
-{
-    public function __construct(CacheInterface $cache)
-    {
-        parent::__construct($cache, 'api', maxAttempts: 60, windowSeconds: 60);
-    }
-}
 
 final class LoginRateLimitMiddleware extends RateLimitMiddleware
 {
@@ -1001,189 +525,87 @@ final class LoginRateLimitMiddleware extends RateLimitMiddleware
 }
 ```
 
-`CacheInterface` autowires from whatever `AppScope::boot()` registered, so
-each of those resolves with no binding at all — global or route,
-whichever fits:
-
 ```{code-block} php
-$app->middleware(ApiRateLimitMiddleware::class); // every request
-```
-
-```{code-block} php
-use Kinetis\Http\Attributes\Middleware;
-use Kinetis\Http\Attributes\Post;
+use Kinetis\Http\Attributes\{Middleware, Post};
 
 final readonly class LoginController
 {
     #[Post('/login')]
-    #[Middleware(LoginRateLimitMiddleware::class)] // just this route
+    #[Middleware(LoginRateLimitMiddleware::class)]
     public function attempt(): array { /* ... */ }
 }
 ```
 
-An `AppScope::bind()` closure is the alternative wherever the policy
-needs something the constructor cannot autowire — a value read from
-`Config`, for instance:
-
-```{code-block} php
-$app->bind(RateLimitMiddleware::class, fn ($c) => new RateLimitMiddleware(
-    $c->get(Psr\SimpleCache\CacheInterface::class),
-    'api',
-    maxAttempts: 100,
-    windowSeconds: 60,
-));
-$app->middleware(RateLimitMiddleware::class);
-```
-
-It's safe as global middleware specifically because it holds no
-per-request state as instance properties, the same criterion
-[above](#global-middleware-every-request-including-ones-that-never-match-a-route)
-already establishes for any global middleware.
-
-Limits default to 60 attempts per 60-second window, keyed by client IP
-(`REMOTE_ADDR`). Both the policy ID and the client identifier are
-sha256-hashed before they reach the cache — not for concealment, but
-because PSR-16 forbids `{}()/\@:` in a key, and a bare IPv6 address is
-full of colons. A request past the limit gets:
+The same subclass works as global middleware, registered with
+`$app->middleware()` in `bootstrap.php`. Limits default to 60 requests per
+60 seconds, keyed by the connecting IP address. A request over the limit
+receives:
 
 ```{code-block} json
-:caption: 429, once the limit is reached
+:caption: 429
 {
     "error": "Too many requests."
 }
 ```
 
-with `Retry-After` (seconds until the current window resets) and
-`X-RateLimit-Limit`/`X-RateLimit-Remaining` headers — the latter two are
-also set on every successful response, not just the rejection, so a client
-can see its remaining quota before actually hitting it.
+with `Retry-After`, plus `X-RateLimit-Limit` and `X-RateLimit-Remaining`,
+which also appear on every allowed response.
 
 ### Behind a reverse proxy or load balancer
 
-`REMOTE_ADDR` is the address of whatever connected directly — behind a
-real reverse proxy or load balancer, that's the proxy's own address on
-every request, not the real client's, so every distinct client collapses
-into one shared bucket. `trustedProxies` opts into reading
-`X-Forwarded-For` instead, but only for a request that actually came
-through one of the given CIDR ranges — never unconditionally, since a
-client can set that header to anything it likes:
+```{warning}
+Behind a proxy or load balancer, the connecting address is the proxy's,
+so every client shares one counter until you pass `trustedProxies`. The
+middleware then reads `X-Forwarded-For` only from requests that arrived
+through one of those ranges; a client can set that header to anything.
+```
+
+The middleware does not read `TRUSTED_PROXIES` itself. A policy passes
+the ranges through its constructor:
 
 ```{code-block} php
-new RateLimitMiddleware($cache, 'api', trustedProxies: ['10.0.0.0/8']);
+use Kinetis\Config\Config;
+use Kinetis\Http\Middleware\RateLimitMiddleware;
+use Psr\SimpleCache\CacheInterface;
+
+final class ApiRateLimitMiddleware extends RateLimitMiddleware
+{
+    public function __construct(CacheInterface $cache, Config $config)
+    {
+        $ranges = array_map(trim(...), explode(',', $config->string('TRUSTED_PROXIES', '')));
+
+        parent::__construct(
+            $cache,
+            'api',
+            maxAttempts: 100,
+            windowSeconds: 60,
+            trustedProxies: array_values(array_filter($ranges, static fn (string $range): bool => $range !== '')),
+        );
+    }
+}
 ```
 
-```{code-block} text
-:caption: .env
-TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
-```
+A range that does not parse fails construction. How the forwarded chain is
+walked is in [Forwarded client
+identity](appendix-middleware.md#forwarded-client-identity).
 
-Read this yourself in your own bootstrap code and pass it through — the
-middleware doesn't read `Config` itself, the same convention
-`allowedOrigins` on `CorsMiddleware` already follows:
+### Composing policies
 
-```{code-block} php
-$app->bind(RateLimitMiddleware::class, function ($c) {
-    $trustedProxies = $c->get(Config::class)->string('TRUSTED_PROXIES', '');
-
-    return new RateLimitMiddleware(
-        $c->get(CacheInterface::class),
-        'api',
-        // Trimmed, so a space after a comma in .env is not read as
-        // part of the next range.
-        trustedProxies: $trustedProxies === '' ? [] : array_map(trim(...), explode(',', $trustedProxies)),
-    );
-});
-```
-
-When a request comes through more than one trusted hop, the
-`X-Forwarded-For` chain is walked from the end backward, skipping every
-entry that's itself a trusted proxy — the first untrusted entry is the
-real client. That walk is `Kinetis\Http\TrustedProxies`' own: the same
-implementation, and the same range grammar, the runtime adapters apply
-before letting a forwarded header decide a request's scheme (see
-{doc}`runtime-adapters`), so "who is this request's client" is answered
-one way everywhere it is asked. The *policy* it walks is this
-middleware's own, built from the list given to its constructor. It is a
-separate instance from the one the adapters were handed, and it may name
-a narrower set of edges — a rate limiter can be told to believe fewer
-hops than the application trusts for a request's scheme, and where the
-two lists differ that is the difference you configured. `REMOTE_ADDR`
-itself is never rewritten: the transport peer stays what actually
-connected, and the client behind an edge is derived from it when a bucket
-is keyed.
-
-Each range is parsed when the middleware is constructed. One that cannot
-be — a prefix length outside 0-32 for IPv4 or 0-128 for IPv6, or an
-address that isn't one — raises
-`Exception\InvalidRateLimitConfigException` there rather than on the
-first request to reach it, since the list decides who is allowed to set
-`X-Forwarded-For`. A blank policy ID raises the same exception, and
-`maxAttempts` and `windowSeconds` are checked the same way and must both
-be at least 1: a window of zero has no length to divide the clock into,
-and a negative one stores the counter already expired, so nothing is ever
-counted while the `X-RateLimit-*` headers keep looking healthy.
-
-```{note}
-**The cache must count atomically, and construction enforces it.**
-`RateLimitMiddleware` requires the given cache to implement
-`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` does
-— and throws
-`Exception\RateLimitUnavailableException` at construction for any
-cache that doesn't, `NullSimpleCache` included.
-
-Without it, the only way PSR-16 alone allows counting is reading the
-value and writing it back, which is not safe across processes: every
-request in flight reads the same number before any of them writes, so
-each believes it is the first. Measured against a real Redis, that
-fallback let a limit of 5 admit **all 40** requests that arrived
-together — a limiter that stops applying under the exact concurrency
-it exists to resist, so this fails at boot rather than behind a flag
-the application has to remember to check.
-```
-
-Implementing the interface yourself is two methods, `increment()` and
-`count()`, and worth it for any backend with a native atomic increment.
-
-### Composing more than one policy
-
-A global limiter and a route limiter can both be active for the same
-request — a generous whole-API limit plus a stricter one on a specific
-route. Give each its own policy ID and each keeps its own counter,
-whatever their limits happen to be. Two policies guarding different
-things with identical limits, a login endpoint and a 2FA endpoint for
-instance, are told apart the same way: by their IDs and nothing else.
-
-The same policy accidentally registered twice for one request — globally
-and, redundantly, on the matched route — still counts as exactly one
-check, not two: `process()` records its decision as a request attribute,
-and the second occurrence of that policy ID reads it back instead of
-incrementing again. `X-RateLimit-Limit`/`X-RateLimit-Remaining` follow
-the same rule from the other direction — whichever policy actually ran
-closest to the controller is the one whose real numbers reach the
-client, success or `429` alike; an outer policy that's itself within
-budget never overwrites them with its own, unrelated ones.
+A generous global policy and a strict route policy can guard the same
+request, each with its own ID and counter. The same policy registered
+twice for one request — globally and on the route — counts once.
 
 ```{warning}
-**Changing a policy's ID changes its cache key.** Deploying that change
-resets the counter for every subject already partway through a window —
-harmless for most policies, but during a rolling deploy, old and new
-worker processes briefly disagree about which key a given request counts
-against, effectively splitting one policy's quota across two keys until
-the older workers finish rolling off and the old key's own TTL expires.
-Changing limits, trusted proxies, or the class the policy lives in does
-not have that effect: the ID alone decides the key.
+Changing a policy's ID starts new counters. During a rolling deploy, old
+and new workers count the same clients under different keys until the
+old workers are gone. Changing limits, trusted proxies or the subclass
+leaves the counters alone.
 ```
 
 ### Keying by the authenticated user instead of IP
 
-`Kinetis\Http\Middleware\AuthenticatedRateLimitMiddleware` extends
-`RateLimitMiddleware`: it keys by `CurrentUserInterface::id()` when one has
-already been resolved onto the current request (see
-["Registering a value the controller reads later"](#registering-a-value-the-controller-reads-later)
-above), falling back to the same IP-based identifier otherwise.
-
-It takes the same policy ID as the base class, so the subclass an
-application registers looks the same, one constructor argument longer:
+`AuthenticatedRateLimitMiddleware` keys by `CurrentUserInterface::id()`
+when the request has a current user, and by IP address otherwise:
 
 ```{code-block} php
 use Kinetis\Container\RequestScope;
@@ -1200,46 +622,30 @@ final class OrderRateLimitMiddleware extends AuthenticatedRateLimitMiddleware
 ```
 
 ```{code-block} php
-use Kinetis\Http\Attributes\Get;
-use Kinetis\Http\Attributes\Middleware;
-
-final readonly class OrderController
-{
-    #[Get('/orders')]
-    #[Middleware(AuthMiddleware::class)]                // resolves CurrentUserInterface first
-    #[Middleware(OrderRateLimitMiddleware::class)]      // then keys by it
-    public function index(): array { /* ... */ }
-}
+#[Get('/orders')]
+#[Middleware(AuthMiddleware::class)]           // registers CurrentUserInterface
+#[Middleware(OrderRateLimitMiddleware::class)] // then keys by it
+public function index(): array { /* ... */ }
 ```
 
-Ordering matters — the middleware that resolves `CurrentUserInterface`
-must run first, so it's already registered on the scope by the time this
-one reads it.
+The middleware that registers `CurrentUserInterface` must run first.
 
 ```{warning}
-Route middleware only — never register this globally, and never bind
-one of these on `AppScope` with a factory that also resolves
-`RequestScope`. A factory calling `$c->get(RequestScope::class)` where
-`$c` is `AppScope` throws `DisconnectedRequestScopeException` rather than
-reaching the real per-request one (see {doc}`container`'s "Resolving
-`RequestScope` itself, from the wrong scope"). The subclass above is
-always safe as route middleware, resolved fresh per request the normal
-way — no binding needed at all, the same as any other constructor with
-only class-typed parameters.
+Use this only as route middleware. It needs the request's `RequestScope`,
+which global middleware cannot have, and an `AppScope` factory that
+resolves `RequestScope` throws `DisconnectedRequestScopeException`. The
+subclass above needs no binding.
 ```
-
-It counts through the same atomic primitive as the base class.
 
 ## See also
 
-- {doc}`container` — `AppScope`/`RequestScope`, and the "singleton via the
-  container" pattern global middleware relies on.
-- {doc}`logging` — registering your own logger, and the other two places
-  Kinetis logs on its own.
-- {doc}`core-concepts` — the request lifecycle both pipelines sit inside.
-- {doc}`auth` — a ready-made bearer-token implementation of the
-  `AuthMiddleware` pattern shown above.
-- {doc}`caching` — how route middleware, and `#[AsGlobalMiddleware]`-discovered
-  classes, are stored in the production cache.
-- {doc}`cli` — restricting namespace-based discovery for a large application,
-  the same mechanism `MIDDLEWARE_DISCOVERY_PATHS` follows.
+- {doc}`bootstrapping` — where global middleware and application
+  services are registered.
+- {doc}`appendix-middleware` — pipeline mechanics and the built-in
+  middleware contracts.
+- {doc}`routing-validation` — the routes and validation this pipeline
+  wraps.
+- {doc}`auth` — ready-made authentication middleware.
+- {doc}`container` — `AppScope`, `RequestScope` and worker-lifetime
+  services.
+- {doc}`logging` — the logger `ExceptionHandlerMiddleware` writes to.

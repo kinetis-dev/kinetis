@@ -6,10 +6,9 @@
 > request-scoped container; Fiber-based concurrency over Revolt; a native
 > Model Context Protocol server.
 
-Kinetis core ships as a single package, `kinetis/framework`, requiring PHP
-8.4 or later. Narrower and optional pieces ship as separate packages;
-every section below except Start here and Building an application
-documents one or more of them.
+Kinetis core ships as `kinetis/framework`, requiring PHP 8.4 or later.
+Optional capabilities ship as separate packages. Reference pages hold
+exact contracts and internal workings behind the guides.
 
 The pages are ordered the way an application is built: start with the
 tutorial, then read whichever section you have reached.
@@ -21,8 +20,8 @@ tutorial, then read whichever section you have reached.
 
 ## Building an application
 
-- [Container](https://kinetis.dev/docs/container.html): AppScope and RequestScope, and why Kinetis bans static properties.
-- [Configuration](https://kinetis.dev/docs/config.html): .env loading and typed Config access.
+- [Configuration](https://kinetis.dev/docs/config.html): Set environment keys and inject typed Config values.
+- [Bootstrapping](https://kinetis.dev/docs/bootstrapping.html): Register application services and global middleware before the container locks.
 - [Routing & Validation](https://kinetis.dev/docs/routing-validation.html): Attribute-based routes, typed DTOs, constraint validation, and zero-config OpenAPI.
 - [Middleware](https://kinetis.dev/docs/middleware.html): The PSR-15 middleware pipeline: global vs. route, plus the built-in ExceptionHandlerMiddleware/CorsMiddleware/RateLimitMiddleware.
 - [Events](https://kinetis.dev/docs/events.html): A PSR-14 event dispatcher with attribute-driven listener registration, plus ShouldQueue for deferring a listener to a queue.
@@ -32,15 +31,15 @@ tutorial, then read whichever section you have reached.
 
 ## Working with data
 
-- [Persistence](https://kinetis.dev/docs/persistence.html): kinetis/persistence: the native MySQL/Postgres drivers, usable without Kinetis, connection pooling, and TransactionGuard's commit/rollback protocol; kinetis/database-bridge wires them into a Kinetis application.
+- [Database](https://kinetis.dev/docs/persistence.html): Install kinetis/database-bridge, configure MySQL or PostgreSQL, inject a link and run transactions.
 - [Query Builder](https://kinetis.dev/docs/query-builder.html): kinetis/query-builder: a thin, parameterized SQL query builder — not an ORM.
 - [ORM](https://kinetis.dev/docs/orm.html): kinetis/orm: a data mapper over the query builder — attributed entities, typed repositories, and a unit of work with an identity map, change tracking and a transactional flush, wired into Kinetis by kinetis/database-bridge.
 - [Migrations](https://kinetis.dev/docs/migrations.html): kinetis/migrations: a thin database migration runner — raw SQL up()/down(), no schema-diffing, with the migrate commands on vendor/bin/kinetis.
 
 ## Background work
 
-- [Queue](https://kinetis.dev/docs/queue.html): kinetis/queue: a backend-agnostic background job queue — every backend lives in its own separate package.
-- [Queue (Redis)](https://kinetis.dev/docs/queue-redis.html): kinetis/queue-redis: a Redis backend for kinetis/queue's QueueInterface.
+- [Queue](https://kinetis.dev/docs/queue.html): Choose a backend, write and push a job, run workers and handle duplicate delivery.
+- [Queue (Redis)](https://kinetis.dev/docs/queue-redis.html): Run a single-node Redis queue over kinetis/redis; Redis Cluster is available for application cache use.
 - [Queue (SQL)](https://kinetis.dev/docs/queue-sql.html): kinetis/queue-sql: a MySQL/Postgres backend for kinetis/queue's QueueInterface.
 - [Queue (SQS)](https://kinetis.dev/docs/queue-sqs.html): kinetis/queue-sqs: an Amazon SQS backend for kinetis/queue's QueueInterface.
 - [Queue (RabbitMQ)](https://kinetis.dev/docs/queue-rabbitmq.html): kinetis/queue-rabbitmq: a RabbitMQ backend for kinetis/queue's QueueInterface.
@@ -49,7 +48,7 @@ tutorial, then read whichever section you have reached.
 
 - [Authentication](https://kinetis.dev/docs/auth.html): kinetis/auth: opaque Bearer-token authentication middleware.
 - [JWT Authentication](https://kinetis.dev/docs/auth-jwt.html): kinetis/auth-jwt: stateless JWT authentication (HS256/RS256), with optional per-token revocation.
-- [Sessions & CSRF](https://kinetis.dev/docs/session.html): kinetis/session: cookie-backed sessions and CSRF protection — file, Redis, and SQL storage behind one store interface.
+- [Sessions & CSRF](https://kinetis.dev/docs/session.html): Choose a session store, pass a CSRF token to a view and submit it through a form or request header.
 - [Authorization](https://kinetis.dev/docs/authorization.html): kinetis/authorization: ability-based authorization — Gate wraps any callable Policy check, with no attribute, registry, or type-based dispatch.
 
 ## Runtime and performance
@@ -67,13 +66,15 @@ tutorial, then read whichever section you have reached.
 
 ## Integrations
 
-- [Storage](https://kinetis.dev/docs/storage.html): kinetis/storage: file storage on League\Flysystem — an Amp\File-backed local adapter whose driver calls suspend the Fiber.
-- [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, over the Revolt-native transport in kinetis/revolt-http-client.
+- [Storage](https://kinetis.dev/docs/storage.html): Configure file storage, write and read files, validate uploads and choose local disk or S3.
+- [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): Configure an S3 bucket, credentials, visibility and permissions.
 - [Mailer](https://kinetis.dev/docs/mailer.html): kinetis/mailer: mail sending via Symfony\Component\Mailer, non-blocking via kinetis/revolt-http-client for API-based transports.
 - [Broadcasting](https://kinetis.dev/docs/broadcasting.html): kinetis/broadcasting: real-time broadcasting over the Pusher Channels protocol, with private/presence channel authorization.
 - [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
-- [Redis Transport](https://kinetis.dev/docs/redis.html): kinetis/redis: a non-replaying, deadline-bounded Redis transport with Cluster slot routing — usable standalone, no Kinetis required.
+- [Redis](https://kinetis.dev/docs/redis.html): Configure a PSR-16 cache over Redis, TLS and Redis Cluster in a Kinetis application.
+- [Search engines](https://kinetis.dev/docs/search-engines.html): Install OpenSearch or Elasticsearch, configure a connection, index documents and search them.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.
+- [Search (Elasticsearch)](https://kinetis.dev/docs/search-elasticsearch.html): Configure the Elasticsearch client, client major version and API-key authentication.
 - [AWS request signing (SigV4)](https://kinetis.dev/docs/aws-sigv4.html): kinetis/aws-sigv4: a PSR-18 client signing requests with AWS Signature Version 4 for one configured origin, non-blocking via kinetis/revolt-http-client — usable standalone.
 
 ## AI agents
@@ -83,6 +84,26 @@ tutorial, then read whichever section you have reached.
 
 ## Reference
 
+- [Reference](https://kinetis.dev/docs/reference.html): Topic references for exact contracts, failure behavior and advanced wiring.
+- [Appendix: Container Lifecycle](https://kinetis.dev/docs/container.html): AppScope, RequestScope, binding resolution and disposal.
+- [Appendix: Configuration Reference](https://kinetis.dev/docs/appendix-configuration.html): Configuration resolution, scoped keys and the full key catalogue.
+- [Appendix: Runtime](https://kinetis.dev/docs/appendix-runtime.html): Request bodies, forwarded headers, adapters, Fibers and compiled artifacts.
+- [Appendix: Testing](https://kinetis.dev/docs/appendix-testing.html): Test-client request construction, loop liveness and runtime conformance.
+- [Appendix: Observability](https://kinetis.dev/docs/appendix-observability.html): Trace export, Fiber scope ownership and fingerprints.
+- [Appendix: Routing and Validation](https://kinetis.dev/docs/appendix-routing-validation.html): Route matching, request binding, validation and OpenAPI schema rules.
+- [Appendix: Middleware](https://kinetis.dev/docs/appendix-middleware.html): Pipeline order and built-in middleware contracts.
+- [Appendix: Databases](https://kinetis.dev/docs/appendix-database.html): Driver, transaction, pool and connection-registration contracts.
+- [Appendix: Query Builder](https://kinetis.dev/docs/appendix-query-builder.html): Advanced SQL composition and dialect behavior.
+- [Appendix: Redis](https://kinetis.dev/docs/appendix-redis.html): Redis transport, Cluster routing and cache mechanisms.
+- [Appendix: Queue Contracts](https://kinetis.dev/docs/appendix-queue.html): Delivery semantics, worker lifecycle and backend mechanisms.
+- [Appendix: Sessions Reference](https://kinetis.dev/docs/appendix-sessions.html): Cookie, CSRF, expiry and store lifecycle.
+- [Appendix: Authentication Reference](https://kinetis.dev/docs/appendix-authentication.html): Bearer header grammar, JWT keys, validation and failure contracts.
+- [Appendix: Storage Reference](https://kinetis.dev/docs/appendix-storage.html): Local publication, path confinement and S3 failure behavior.
+- [Appendix: Search contracts](https://kinetis.dev/docs/appendix-search.html): Search configuration, client result and transport contracts.
+- [Appendix: HTTP client contracts](https://kinetis.dev/docs/appendix-http-client.html): URL, header, deadline, response and transport contracts.
+- [Appendix: AWS SigV4 contracts](https://kinetis.dev/docs/appendix-aws-sigv4.html): Signed-origin, credential, canonical request and failure contracts.
+- [Appendix: MCP Reference](https://kinetis.dev/docs/appendix-mcp.html): Protocol, HTTP headers, errors and request lifecycle for application tools and resources.
+- [Appendix: MCP Documentation Server Reference](https://kinetis.dev/docs/appendix-mcp-docs.html): Installer, update, protocol and page-fetch contracts.
 - [Appendix: System Layout](https://kinetis.dev/docs/appendix.html): A dense, file-by-file reference across every namespace in core.
 - [Appendix: Satellite Packages](https://kinetis.dev/docs/appendix-packages.html): A dense, file-by-file reference across every satellite package.
 - [Appendix: Continuous Integration](https://kinetis.dev/docs/appendix-ci.html): What CI actually tests, how, and what is deliberately not covered.

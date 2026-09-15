@@ -180,6 +180,14 @@ PHP's own rules: escape untrusted text with `htmlspecialchars()` and use
 context-appropriate encoding for attributes, URLs, JavaScript, and JSON.
 The adapter does not guess the output context.
 
+```php
+<h1><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?></h1>
+```
+
+Request-bound values such as a CSRF token reach a template the same way as any
+other data: the controller passes them in the data array. {doc}`session` shows
+a controller passing the token and a form rendering it.
+
 For engine-specific filters or extensions, configure the adapter during
 bootstrap through `LatteViewEngine::engine()` or
 `TwigViewEngine::engine()`. Keep those choices out of controllers so changing

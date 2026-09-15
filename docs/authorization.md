@@ -8,16 +8,17 @@ composer require kinetis/authorization
 ```
 ````
 
-Kinetis is deliberately unopinionated about how an application organizes
-authorization checks. There's no required Policy convention, no
-ability-name registry, and nothing here inspects an object's runtime
-class to decide which code answers a check — that kind of implicit,
-type-based dispatch is exactly what this package avoids. `Gate` is a
-small, generic wrapper: hand it any callable and it normalizes the
-result into an allow/deny decision.
+Use `Gate` to check a user against your own policy before changing a
+resource. It accepts a callable that returns an allow/deny decision.
+
+The route below must first run authentication middleware that registers
+`CurrentUserInterface` for this request. See {doc}`auth` or
+{doc}`auth-jwt` for a guarded route; this example assumes that guard
+has already run.
 
 ```{code-block} php
 use Kinetis\Authorization\Gate;
+use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Patch;
 use Kinetis\Http\CurrentUserInterface;
 
@@ -51,6 +52,9 @@ concept; "Policy" is a naming convention a developer chooses, not
 something this package enforces or discovers.
 
 ```{code-block} php
+use Kinetis\Authorization\AuthorizationResponse;
+use Kinetis\Http\CurrentUserInterface;
+
 final readonly class PostPolicy
 {
     public function update(CurrentUserInterface $user, Post $post): bool|AuthorizationResponse
@@ -63,6 +67,10 @@ final readonly class PostPolicy
     }
 }
 ```
+
+Only `true` or `AuthorizationResponse::allow()` allows. `false` and
+`deny()` deny, and a check that throws or returns anything else raises an
+error rather than allowing.
 
 `CurrentUserInterface` is core's own minimal identity contract — `Gate`
 works identically regardless of which package resolved it: `kinetis/auth`,
@@ -100,6 +108,8 @@ not allowed, bail" — and matters most when a denial shouldn't produce the
 generic `403` body, say a redirect on a web-flavored route instead:
 
 ```{code-block} php
+use Nyholm\Psr7\Response;
+
 if ($this->gate->denies($user, $this->postPolicy->update(...), $post)) {
     return new Response(302, ['Location' => '/posts/' . $post->id]);
 }
@@ -125,32 +135,28 @@ check that needs a specific reason has to build one.
 
 ## How a denial reaches the client
 
-The controller never sees an `AuthorizationResponse` and never returns
-one — the flow is exception propagation, not a return value:
+`AuthorizationException` implements core's
+`Kinetis\Http\Exception\HttpStatusExceptionInterface` with status `403`.
+It propagates out of the controller, whose own `return` is never reached,
+and `ExceptionHandlerMiddleware`, always part of the global pipeline,
+turns it into the response, with the denial message as the error text:
 
-1. `authorize()` calls the given callable, gets back `bool|AuthorizationResponse`.
-2. On denial, it **throws** `AuthorizationException` right there, inside
-   `Gate` — several stack frames below the controller.
-3. That throw unwinds everything above it: `Gate::authorize()`, the
-   controller method (its own `return` is never reached), `Dispatcher::dispatch()`,
-   any route middleware — all the way out to the **global** middleware
-   pipeline, since nothing in between catches it.
-4. `AuthorizationException` implements core's
-   `Kinetis\Http\Exception\HttpStatusExceptionInterface`, declaring
-   `403`. `Kinetis\Http\Middleware\ExceptionHandlerMiddleware` —
-   included unconditionally, whatever else is registered — reads that
-   status off the exception and returns
-   `ErrorResponse::create(403, $e->getMessage())`, the exception's own
-   message as the body's error text.
+```{code-block} json
+{"error": "This post is locked and cannot be edited."}
+```
 
-This package registers nothing to make that work: the interface is the
-seam core provides for exactly this, so there's no middleware to install,
-order, or forget. Only a *denied* check becomes this exception — anything
-the check itself throws propagates unchanged, and
-`ExceptionHandlerMiddleware` treats it by the same rule it applies to
-everything else: the status it declares if it implements
-`HttpStatusExceptionInterface` with a valid one, a generic `500` only
-when no such status contract applies.
+Nothing needs registering or ordering for this.
+
+```{warning}
+The denial message is sent to the client. Write it for the caller, and
+never put internal detail or another user's data in it.
+```
+
+Only a denied check becomes this exception. Anything the check itself
+throws propagates unchanged, and `ExceptionHandlerMiddleware` answers it
+by the rule it applies to every exception: the status it declares
+through `HttpStatusExceptionInterface`, otherwise a generic `500` (see
+{doc}`middleware`'s "Mapping your own exceptions to a status").
 
 ## Reading claims or roles without a query
 
@@ -165,8 +171,8 @@ every claim the token carried (`claim(string): mixed`, `claims(): stdClass`)
 with nothing to look up, since a verified JWT's claims are decoded once,
 in memory, at the moment the token is verified. `roles` here isn't a
 claim `kinetis/auth-jwt` defines or expects — it's plain data your own
-login endpoint chose to put there; see {doc}`auth-jwt`'s "Issuing
-tokens" section for setting it in the first place:
+login endpoint chose to put there; see {doc}`auth-jwt`'s "Issue tokens"
+section for setting it in the first place:
 
 ```{code-block} php
 use Kinetis\AuthJwt\JwtUser;
@@ -184,13 +190,14 @@ final readonly class ArticlePolicy
 $this->gate->authorize($user, $this->articlePolicy->publish(...));
 ```
 
+A token without a `roles` claim is denied.
+
 This works because `Gate` never inspects `$check`'s own parameter type —
 it only forwards whatever `CurrentUserInterface` instance it was given.
 `allows()`/`denies()`/`authorize()` are generic over the concrete user
 type (`@template TUser of CurrentUserInterface`), so PHPStan accepts a
 check typed narrower than the interface as long as the object actually
-passed at that call site really is that type. Without the generic, the
-same check is a contravariance violation.
+passed at that call site really is that type.
 
 The same pattern works for `kinetis/auth`'s opaque Bearer tokens, just
 with the richer type coming from your own application instead of a
@@ -214,16 +221,23 @@ the point `Gate` calls the check, not a caught, reported denial.
 A role/claim check that needs nothing beyond `CurrentUserInterface` — no
 specific resolved object, unlike `Gate`'s own case — is better expressed
 declaratively than as the first line of every controller method. This
-package doesn't ship a class for it; core's existing `#[Middleware]`
-attribute already does the job, resolved before the controller runs and
-captured into the AOT route cache automatically, since `Route::toArray()`
-already carries the middleware list `#[Middleware]` produces.
+package doesn't ship a class for it: core's `#[Middleware]` attribute
+already does the job, running before the controller and compiled into the
+route cache like any other route middleware.
 
 The one thing `#[Middleware(class-string)]` can't carry is an argument —
 so a role check is a thin, per-role subclass, the same pattern
 `Kinetis\Http\Middleware\RateLimitMiddleware` is left non-`final` for:
 
 ```{code-block} php
+use Kinetis\Container\RequestScope;
+use Kinetis\Http\CurrentUserInterface;
+use Kinetis\Http\Responses\ErrorResponse;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+
 class RequireRoleMiddleware implements MiddlewareInterface
 {
     public function __construct(
@@ -250,10 +264,18 @@ final class RequireEditorMiddleware extends RequireRoleMiddleware
 ```
 
 ```{code-block} php
+use Kinetis\AuthJwt\JwtAuthMiddleware;
+
 #[Patch('/posts/{id}')]
+#[Middleware(JwtAuthMiddleware::class)]
 #[Middleware(RequireEditorMiddleware::class)]
 public function update(int $id): array { ... }
 ```
+
+Declare the role middleware after the authentication middleware: route
+middleware runs in declaration order. Placed first, it finds no
+`CurrentUserInterface` on the request, so `$this->scope->get()` throws
+and the controller never runs.
 
 `$user->hasRole()` above is a stand-in — the actual line depends on which
 auth mechanism resolved `CurrentUserInterface` for this route (`JwtUser`'s
@@ -274,18 +296,17 @@ Nothing. This package declares no `extra.kinetis` bootstrap, registers no
 middleware, and discovers no attribute — the `403` comes from the
 exception's own declared status, described above.
 
-`Gate` needs no explicit binding either: it has no constructor
-dependencies, so plain autowiring resolves it wherever a controller
+`Gate` needs no binding either: it has no constructor dependencies and
+holds no state, so autowiring builds it wherever a controller
 constructor-injects it.
 
 ## See also
 
-- {doc}`container` — why `Gate` (holding no per-request state) is safe as
-  a worker-lifetime autowired instance, the same criterion
-  `Kinetis\Http\Middleware\RateLimitMiddleware`'s own docblock establishes.
 - {doc}`auth` / {doc}`auth-jwt` / {doc}`session` — where `CurrentUserInterface`
   actually comes from; this package has no dependency on any of them.
 - {doc}`middleware` — `ExceptionHandlerMiddleware` and the
   `HttpStatusExceptionInterface` mapping `AuthorizationException`'s `403`
   travels through, and the `#[Middleware]`/thin-subclass pattern "Gating a
   whole route by role" above builds on.
+- {doc}`container` — how autowiring resolves an unregistered class such
+  as `Gate`.

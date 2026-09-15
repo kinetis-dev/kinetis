@@ -139,8 +139,8 @@ core-concepts
 :caption: Building an application
 :hidden:
 
-container
 config
+bootstrapping
 routing-validation
 middleware
 events
@@ -215,7 +215,7 @@ mailer
 broadcasting
 revolt-http-client
 redis
-search
+search-engines
 search-opensearch
 search-elasticsearch
 aws-sigv4
@@ -235,6 +235,26 @@ mcp-docs
 :caption: Reference
 :hidden:
 
+reference
+container
+appendix-configuration
+appendix-runtime
+appendix-testing
+appendix-observability
+appendix-routing-validation
+appendix-middleware
+appendix-database
+appendix-query-builder
+appendix-redis
+appendix-queue
+appendix-sessions
+appendix-authentication
+appendix-storage
+appendix-search
+appendix-http-client
+appendix-aws-sigv4
+appendix-mcp
+appendix-mcp-docs
 appendix
 appendix-packages
 appendix-ci

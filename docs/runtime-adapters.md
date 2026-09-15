@@ -1,64 +1,59 @@
 # Runtime Adapters
 
-Kinetis runs unmodified on four different kinds of PHP hosting, and picks
-the right one automatically — you don't configure this yourself:
+One `public/index.php` serves a Kinetis application under FrankenPHP,
+PHP-FPM, RoadRunner and AWS Lambda:
 
 ```{code-block} php
-$adapter = Kinetis\Runtime\RuntimeDetector::detect(
-    Kinetis\Http\TrustedProxies::fromConfig($config),
-);
+:caption: public/index.php
+
+use Kinetis\Runtime\HttpStartup;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+HttpStartup::run(__DIR__);
 ```
 
-The argument is the application's own policy, built once from its
-`Config`: whose forwarded headers may decide a request's scheme and
-client address. It is required because an adapter settles that before the
-Kernel or its container exist, so it cannot resolve the policy and must
-not invent one. `Kinetis\Runtime\HttpStartup` registers it on `AppScope`
-before the bootstrap chain runs, so `bootstrap.php` or a package
-bootstrap can replace it, and reads it back out after `boot()` to hand
-here — whatever the container settled on is what the adapter uses.
+`HttpStartup` detects the runtime once per boot and drives it through
+its adapter. Application code does not change between runtimes; the
+deployment chooses the runtime and sets the few server settings this page
+lists.
 
-The request body needs no such argument. An adapter hands it on as raw
-PSR-7 bytes, and `RequestBodyMiddleware` bounds and parses it inside the
-Kernel under the `FormLimits` the container holds.
+## Choose a runtime
 
-| Deployment | What Kinetis does |
-|---|---|
-| FrankenPHP (worker mode) | One long-running process serves request after request — Kinetis's primary target. |
-| Plain PHP-FPM | The classic model: one request in, one response out, then the script ends. |
-| AWS Lambda (via Bref) | A separate install, `kinetis/bref-adapter` — see below. |
-| RoadRunner | A separate install, `kinetis/roadrunner-adapter` — see below. |
+| Runtime | Process model | Package | Choose it for |
+|---|---|---|---|
+| FrankenPHP worker mode | Each worker thread boots once and serves request after request | core | Production on a container or VM — Kinetis's primary target |
+| PHP-FPM | Every request runs `public/index.php` from the start | core | Development with edit-and-reload, or an existing FPM platform |
+| RoadRunner | Persistent PHP worker processes behind RoadRunner's Go server | `kinetis/roadrunner-adapter` | A persistent worker on a RoadRunner platform |
+| AWS Lambda | A warm execution environment serves one invocation at a time | `kinetis/bref-adapter` | An API Gateway HTTP API or a Lambda Function URL |
 
-Startup calls `RuntimeDetector::detect()` once per boot, and the exact
-same `public/index.php` works correctly under all four — nothing in your
-application code needs to know or care which one is running it.
+Detection checks `frankenphp_handle_request()`, then `RR_MODE=http`, then
+`AWS_LAMBDA_RUNTIME_API`, and falls back to PHP-FPM. A RoadRunner or
+Lambda signal without its package installed fails at startup with a
+message naming the package to install.
+
+The choice changes four things an application acts on:
+
+- **Code changes.** A persistent worker (FrankenPHP, RoadRunner) keeps
+  loaded classes in memory, so an edited controller takes effect after a
+  restart. PHP-FPM under `APP_ENV=development` picks it up on the next
+  request.
+- **Request isolation.** Under a persistent worker, application-scoped
+  services outlive the request. Request data belongs in the request
+  scope, never in a static or a shared service — see {doc}`container`.
+- **Database I/O.** `DB_DRIVER=auto` selects the native non-blocking
+  drivers under FrankenPHP and RoadRunner, and one blocking PDO
+  connection under PHP-FPM and Lambda. {ref}`concurrency-overlap` shows
+  what that means for `concurrently()`.
+- **Streaming.** FrankenPHP and PHP-FPM stream a `StreamedResponse`.
+  RoadRunner answers one with `501`, and Lambda fails the invocation.
+
+Every runtime also needs the settings under "Request bodies: one contract
+under every runtime" and, behind a proxy, `TRUSTED_PROXIES`.
 
 ## Running under FrankenPHP
 
-This is the deployment Kinetis is built around: a single PHP process that
-boots once and serves thousands of requests, keeping everything warm
-between them. A complete `Caddyfile`:
-
-```{code-block}
-:caption: Caddyfile
-
-{
-    admin off
-}
-
-:8080 {
-    root * public
-    php_server {
-        worker public/index.php
-    }
-}
-```
-
-```{code-block} bash
-docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
-    -v "$PWD/docker/kinetis.ini":/usr/local/etc/php/conf.d/zz-kinetis.ini:ro \
-    dunglas/frankenphp:latest frankenphp run --config Caddyfile
-```
+Worker mode needs one PHP setting and the worker script:
 
 ```{code-block} ini
 :caption: docker/kinetis.ini
@@ -66,598 +61,137 @@ docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
 enable_post_data_reading=0
 ```
 
-That one setting is required, not tuning — see "Request bodies: one contract
-under every runtime" below for what it does and why the bridge refuses to
-run without it. `kinetis/skeleton` and `kinetis/pingpong` ship exactly
-this file, copied into their images.
-
-```{note}
-Worker mode keeps `public/index.php` — including route discovery —
-loaded in memory across every request it serves, so editing a controller
-while the container runs has no effect until you restart it: PHP cannot
-redeclare a loaded class with new content. While you are editing code
-constantly, PHP-FPM's boot-and-die model rebuilds this on every request
-instead, and Kinetis falls back to it automatically with no code change.
+```{code-block} bash
+docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
+    -v "$PWD/docker/kinetis.ini":/usr/local/etc/php/conf.d/zz-kinetis.ini:ro \
+    dunglas/frankenphp:latest \
+    frankenphp php-server --listen :8080 --root /app/public --worker /app/public/index.php
 ```
+
+`enable_post_data_reading=0` is required: without it PHP consumes and
+truncates the body before Kinetis runs, and the adapter refuses to serve.
+`kinetis/pingpong`'s image uses this command and ships the same file.
 
 ```{warning}
-**A deployment gotcha worth knowing about:** Caddy's `php_server`
-directive falls back to classically re-executing `index.php` for any
-request path that doesn't match a real static file, *before* it ever
-routes to a configured worker. The `worker` directive in your `Caddyfile`
-must point at that **same** `index.php` — pointing it at a different
-script means every request silently keeps falling through to the classic
-fallback, never once reaching your worker, with no error to indicate why.
+FrankenPHP serves a request that matches no static file by running the
+front controller classically unless a worker handles that same script.
+`--worker` (or a Caddyfile `worker` directive) must name the same
+`public/index.php` as the front controller. A different script leaves
+every request on the classic path, with no error to say so.
 ```
+
+A worker keeps `public/index.php`, including route discovery, loaded
+across requests, so a code change needs a container restart. Use PHP-FPM
+while editing code constantly.
 
 ### Sizing FrankenPHP's worker threads
 
-FrankenPHP's `worker` directive accepts an explicit thread count:
+Each worker thread processes one HTTP request at a time, start to
+finish. `concurrently()` overlaps work *inside* one request; a thread
+suspended on a database response is still not free to take a second
+request. Cross-request concurrency is the thread count. Set it with a
+Caddyfile `worker` block:
 
 ```{code-block}
 :caption: Caddyfile
 
 worker {
     file public/index.php
-    num 64
+    num 20
 }
 ```
 
-or the shorthand form, `worker public/index.php 64`. Left unset, it
-defaults to roughly **2x your available CPU cores** — a number tuned for
-CPU-bound work, not for the kind of I/O-bound workload (database calls,
-outbound HTTP requests) most real applications actually spend most of
-their time on.
+or the shorthand `worker public/index.php 20`. Left unset, FrankenPHP
+starts roughly 2× the CPU cores.
 
-This number is easy to mistune in both directions. Each worker thread
-processes exactly one HTTP request at a time, start to finish —
-`frankenphp_handle_request()` is a blocking call that returns once that
-request's response has been fully sent, then picks up the next one.
-Kinetis's own `Kinetis\Async`/`concurrently()` layer (see
-{doc}`concurrency`) provides concurrency *within* one request's own work,
-which does not change this: a thread that is mid-request, even one
-suspended on a Fiber waiting for a database response, is not available to
-pick up a second, unrelated incoming request. Cross-request concurrency
-is bounded by thread count here, the same way it's bounded by PHP-FPM's
-own worker-process count under that adapter — not something Kinetis's
-async layer can substitute for.
+- **Requests dominated by waiting** — slow queries, remote APIs — want
+  `num` well above the core count, closer to the expected number of
+  concurrent requests. Undersizing produces queueing that looks like a
+  slow application.
+- **Requests mixing CPU with fast queries** — the common case with the
+  native drivers — want `num` around 2–3× the core count. On an 8-vCPU
+  host against a sub-millisecond database, 20 threads outperform 8 on
+  every database-touching route (a 20-query fan-out by ~10%, single-query
+  routes by ~9%) with no loss on CPU-pure routes.
 
-Which direction to tune depends on what your requests actually wait on:
+Every thread runs `bootstrap.php` and the package bootstraps, so each
+builds its own database pool. Keep threads × `DB_MAX_CONNECTIONS` under
+the database's connection limit — see {doc}`persistence`'s "Sizing
+`maxConnections` under worker mode" and {doc}`performance-tuning`.
+Measure under realistic load: the two regimes want opposite corrections.
 
-- **Requests dominated by genuine waiting** — slow queries, remote APIs,
-  anything where the thread sits idle for tens of milliseconds — want
-  `num` well above the core count, closer to expected concurrent request
-  volume. Undersizing here doesn't produce errors; it produces queueing
-  that looks, from the outside, exactly like the application being slow.
-- **Requests mixing CPU with fast queries** — the common case with
-  `kinetis/persistence`'s native drivers, where each query is
-  sub-millisecond but a request still spends real wall time suspended
-  across its fan-out — want `num` **moderately above the core count**,
-  around 2–3×. On an 8-vCPU host against a sub-millisecond database,
-  20 threads outperform 8 on every database-touching route (a
-  20-query fan-out by ~10%, single-query routes by ~9%) with no loss
-  on CPU-pure routes. Go far beyond that and two costs take over:
-  context-switch overhead, and — usually first — the per-thread
-  database pool budget below.
+### Install `ext-event`
 
-Either way: measure under realistic load rather than guessing — the two
-regimes want opposite corrections, and which one you're in is a property
-of your routes, not of the framework.
+Without a loop extension, Revolt uses a `select()`-based driver that
+cannot watch a file descriptor numbered above 1024. The native Postgres
+driver, the Redis client and the HTTP client register socket watchers,
+and under FrankenPHP the Go server's client sockets share the process's
+descriptor table, so descriptor numbers pass 1024 under load. Install
+`ext-event` (`pecl install event`) in any image that uses those clients;
+Revolt selects it automatically. This is a correctness requirement, not
+tuning. `ext-ev` and `ext-uv` also work; `ext-uv`'s only release is a
+beta that must be pinned (`pecl install uv-0.3.0`).
 
-The same "each worker thread is its own independent execution context"
-fact has a second, sharper consequence for connections built by
-`kinetis/database-bridge`'s `ConnectionFactory`: every package bootstrap
-and `bootstrap.php` run once *per worker thread*, so each one builds its
-own separate database connection pool. Oversizing `num` without correspondingly *undersizing*
-each pool's `maxConnections` can exhaust your database's own connection
-limit — see {doc}`persistence`'s "Sizing `maxConnections` under worker
-mode" section.
-
-### The default event-loop driver's file descriptor limit
-
-Kinetis's concurrency primitives (see {doc}`concurrency`) run on
-Revolt's event loop. Without a driver extension installed, Revolt falls
-back to a driver backed by the C `select()` system call, which can only
-track file descriptors *numbered* up to 1024 — a fixed ceiling, not
-something raised by configuration.
-
-Whether that ceiling can bite depends on what the loop actually
-watches. The native MySQL driver watches no file descriptors at all
-(mysqli exposes none; it bridges via polling), so a MySQL-only
-deployment never hits *this* ceiling — though mysqli's own polling
-carries a separate select()-based limit that no loop extension lifts;
-see {doc}`performance-tuning`'s "mysqli's poll limit" for the
-constraint and the boot-time pool warming that addresses it. The native Postgres driver, the Redis
-client, and the HTTP client all register real socket watchers — and
-under FrankenPHP the embedded Go server's client sockets share the same
-process-wide fd table, pushing fd *numbers* past 1024 under load even
-with few PHP worker threads. Any deployment in that second group should
-install one of Revolt's supported extensions — `ext-event`, `ext-ev`, or
-`ext-uv` — each backed by an OS-native mechanism (epoll on Linux) with
-no fd-number ceiling. Revolt selects whichever is available
-automatically, with no application code to change.
-
-This is a correctness concern, not a performance one: what the
-extensions buy is a loop that keeps watching a descriptor whatever
-number the kernel hands it. `ext-event` is the one to reach for —
-actively maintained, and `pecl install event` on current PECL. `ext-uv`
-works, but its only release is a beta that must be pinned explicitly
-(`pecl install uv-0.3.0`, since PECL refuses non-stable packages by
-default).
+The native MySQL driver registers no socket watcher, but mysqli's own
+poll has a separate descriptor ceiling that no loop extension lifts — see
+{doc}`performance-tuning`'s "mysqli's poll limit".
 
 ## Running under PHP-FPM
 
-Nothing to configure — Kinetis detects a plain PHP-FPM environment
-automatically and falls back to it whenever none of the other three
-runtimes' own signals (FrankenPHP, RoadRunner, Lambda) are present.
-Every request reruns the whole `public/index.php` script from scratch,
-since PHP-FPM doesn't keep anything in memory between requests. See
-{doc}`caching` for what changes about that in production, and why it
-matters more here than under a persistent worker (FrankenPHP or
-RoadRunner).
+PHP-FPM needs the same PHP setting, and the web server in front of it
+needs a body limit at least as large as `MAX_BODY_SIZE`:
 
-One setting matters for a streamed response (an MCP progress stream,
-any `StreamedResponse`): nginx buffers a FastCGI response by default and
-delivers it whole once the script ends, which turns a stream into a
-delayed lump. Set `fastcgi_buffering off;` in the location that proxies
-to PHP-FPM — or have the response carry `X-Accel-Buffering: no`. The
-conformance suite's FPM run (see {doc}`testing`) fails without it, on
-purpose.
+```{code-block} dockerfile
+:caption: docker/Dockerfile
 
-The server in front of PHP-FPM reads and bounds the body before PHP
-runs, so its cap has to be at least `MAX_BODY_SIZE`: a request over the
-server's own limit is answered there, with the server's `413`, and never
-reaches Kinetis. nginx's `client_max_body_size` defaults to 1 MiB, under
-the 2 MiB `MAX_BODY_SIZE` default, so `kinetis/skeleton` sets it to `2m`
-to match — an application that raises one raises both. See "Request
-bodies: one contract under every runtime" below for what Kinetis
-enforces once it holds the bytes.
-
-Both this adapter and the FrankenPHP one run the shared runtime
-conformance suite against their real SAPI in CI — a FrankenPHP worker
-behind Caddy, PHP-FPM behind nginx — not only against the `php -S`
-stand-in the committed unit suite uses.
-
-## Request bodies: one contract under every runtime
-
-An adapter normalizes its transport into a raw PSR-7 request and stops
-there. Everything a body means is settled once, inside the Kernel, by
-`Kinetis\Http\Middleware\RequestBodyMiddleware` — staging, the byte
-ceiling, and the `multipart/form-data` and
-`application/x-www-form-urlencoded` parse under `Kinetis\Http\Form`. All
-four adapters deliver the same bytes to the same middleware, so the same
-form is accepted by all four or refused by all four with the same
-status.
-
-```{important}
-The two SAPI adapters require **`enable_post_data_reading=0`**.
-`Kinetis\Runtime\SuperglobalsBridge` refuses to serve a request without
-it, with a message naming the setting, rather than running on a body PHP
-already consumed.
-
-Left at its default, PHP reads and parses the body before any Kinetis
-code exists: it populates `$_POST`/`$_FILES` for a POST form, empties
-`php://input` doing so, drops everything past `max_input_vars` with only
-a warning, and answers a body over `post_max_size` with an empty `$_POST`
-and no error at all. None of that is observable afterwards — a form
-truncated to its first 1000 fields is indistinguishable from a form that
-had 1000 fields. With the setting off, `php://input` carries the whole
-body for every method including POST, and Kinetis bounds and parses it
-inside the Kernel.
-
-Set it in the container's `php.ini`, an `.htaccess`, or the FPM pool
-config; it is `PHP_INI_PERDIR`, so it cannot be set from application
-code. `request_parse_body()` is not used and cannot be: it reads the same
-input stream, so it would leave nothing for the middleware that owns the
-body.
+FROM php:8.4-fpm-alpine
+WORKDIR /app
+COPY docker/kinetis.ini /usr/local/etc/php/conf.d/zz-kinetis.ini
+CMD ["php-fpm", "-F"]
 ```
 
-```{important}
-Every adapter, SAPI or not, requires **`arg_separator.input=&`** — its
-default, and the only value `Kinetis\Http\Form\FormPairs` will parse a
-body under.
+```{code-block} nginx
+:caption: docker/nginx.conf
 
-`parse_str()` splits a body on whatever that setting names, which is a
-set of characters rather than a single one. Every count, name and depth
-taken here is read by splitting on `&`, so any other value parses a
-different form from the one that was measured. Set to `;`, a body of
-`a=1&b=2&…` becomes one field whose value is the rest of the request.
-Set to `&;`, a body of `a=1;b=2;…` is one pair to the count and as many
-as the client likes to the parser — past the ceilings, then cut back to
-this runtime's own `max_input_vars` in silence. Anything but exactly `&`
-is refused before `parse_str()` consumes a pair and before a handler is
-handed a form — for a multipart body, after its envelope has been split
-into parts and expanded. The setting is `PHP_INI_PERDIR` too, so nothing
-at request time can move it.
+server {
+    listen 8080;
+
+    root /app/public;
+    index index.php;
+
+    # nginx reads the body before PHP does, so this must be at least
+    # Kinetis's MAX_BODY_SIZE; raise both together.
+    client_max_body_size 2m;
+
+    location / {
+        try_files $uri /index.php$is_args$args;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass app:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME /app/public/index.php;
+        include fastcgi_params;
+    }
+}
 ```
 
-| Limit | Default | What it counts |
-|---|---|---|
-| `MAX_INPUT_VARS` | 512 | pairs in a raw url-encoded body, and leaf values in the parsed form |
-| `MAX_FILE_PARTS` | 16 | leaf entries in `getUploadedFiles()` |
-| `MAX_NESTING_DEPTH` | 8 | array levels a name builds — `a[b][c]=1` is 3 |
-| `MAX_MULTIPART_PARTS` | 512 | parts in a raw multipart envelope, unnamed ones included |
-| `MAX_PART_HEADERS` | 16 | header *lines* on any one multipart part, repeats included |
-| `MAX_PART_HEADER_BYTES` | 8 KiB | bytes on one multipart header line |
-| `MAX_BODY_SIZE` | 2 MiB | bytes in the request body, whatever its content type |
+`docker/kinetis.ini` is the file shown under FrankenPHP. `kinetis/skeleton`
+ships this setup with a `docker-compose.yml` that mounts the project at
+`/app` in both containers and names the PHP-FPM service `app`.
 
-The six structural ceilings are constants — they describe the shape this
-framework will hydrate at all. The byte ceiling is per-application, so
-`FormLimits` is a value object built once from `Config` at the entry
-point, bound on `AppScope`, and read by the one middleware that enforces
-every ceiling above. Nothing reads the environment on its own, so nothing
-can disagree about where the edge is.
+nginx answers a body over `client_max_body_size` with its own `413`
+before PHP runs. Its default is 1 MiB, under the 2 MiB `MAX_BODY_SIZE`
+default, which is why the configuration sets `2m`.
 
-**A runtime configured below the contract is refused, not obeyed.** The
-counts above sit under PHP's own defaults (`max_input_vars` 1000,
-`max_input_nesting_level` 64), but a deployment is free to set either
-lower — and `parse_str()` answers a list past `max_input_vars` with a
-shorter array, and a name nested past `max_input_nesting_level` by
-dropping that variable in complete silence. So the names a parse is about
-to be handed are checked against both the contract and this runtime's own
-settings first: past the contract is the usual `413`, and past a local
-setting while still inside the contract is a `413` naming the setting an
-operator can fix. Either way the form is refused before it is parsed
-rather than handed on shortened.
+nginx buffers a FastCGI response and delivers it once the script ends,
+which turns a streamed response — an MCP progress stream, any
+`StreamedResponse` — into one delayed lump. Add `fastcgi_buffering off;`
+to the PHP location, or send `X-Accel-Buffering: no` on the streamed
+response.
 
-**Every count is taken from the raw body, before anything parses it** —
-the only place the real numbers exist:
-
-- `a=1` repeated a thousand times is a thousand pairs on the wire and
-  **one leaf** in the parsed form. A limit checked on the parsed result
-  reads that body as a one-field form.
-- A multipart part carrying no `Content-Disposition` name builds neither
-  a field nor a file, so it appears nowhere in the result — while still
-  costing a parser a part.
-- A part repeating one header a thousand times has **one entry** in any
-  parser's header map and a thousand lines on the wire.
-
-`MultipartEnvelope` is the bounded scan that sees all three. A parser
-expands the whole body and reports its shape afterwards, so a ceiling
-checked on that result is checked after the cost it exists to bound has
-been paid. The scan allocates nothing per part beyond its own offsets and
-refuses at the first part or header line past a ceiling; the parts it
-returns are the ones the parse then builds from.
-
-### What a `multipart/form-data` body may say
-
-The same scan enforces what the body *means*, which is the other half of
-"one contract". `multipart/form-data` is not one language: parsers
-disagree about where a part ends, whether its bytes are decoded on the
-way out, and what its `Content-Disposition` says. Kinetis accepts one
-reading — the byte-literal RFC 7578 subset — and refuses, on every
-runtime, everything a second reading exists for.
-
-- **The root `Content-Type` names exactly one boundary.** Its parameter
-  section is read whole, under the same grammar a part's own headers
-  meet, and a section that is not a complete list of distinct parameters
-  is a `400`: `boundary=A; boundary=B` is the first boundary to one
-  parser and the second to another, and `boundary="A"junk` is `A` to one
-  and `Ajunk` or a failure to the next. A header naming no boundary at
-  all is the separate, ordinary case — nothing to split the body at
-  rather than two ways to split it.
-- **A delimiter is `CRLF--boundary`, followed by CRLF, or by `--` and
-  then CRLF or the end of the body.** Nothing else is one. A line whose
-  boundary token is only a prefix (`--boundaryX`) or that carries
-  transport padding before its CRLF is payload — kept byte for byte, not
-  a split point and not an error. A line a parser splitting on `\n` would
-  take as a delimiter while this one does not — a boundary after a bare
-  LF, a stray CR before the CRLF — is a `400`: two readings of one body
-  are two different forms.
-- **A part's bytes are the bytes on the wire.**
-  `Content-Transfer-Encoding` may only be `7bit` or `binary`, the two
-  spellings that decode to themselves. `base64`, `quoted-printable` and
-  `8bit` each send a parser that implements them down a decoding or
-  charset-conversion path a parser that doesn't will never take; RFC 7578
-  §4.7 does not use the header at all.
-- **A part's metadata is the text on the wire.** No RFC 2047 encoded
-  words, no RFC 5987 `name*=`/`filename*=` extended parameters, no
-  escapes, surrounding spaces or semicolons inside a quoted value, and
-  each parameter named once, in lowercase. A plain
-  `form-data; name="user[address][city]"; filename="café.txt"` — what a
-  browser sends — is unaffected.
-- **A part is not itself a multipart body.** A nested envelope is a whole
-  further form to a parser that recurses into it, one part's bytes to one
-  that does not, and counted by no ceiling either way. RFC 7578 §4.3
-  settles multiple files as repeated parts under one name.
-- **A part's header lines are ordinary, complete header lines.** No
-  obs-fold continuation, no line without a name, no control characters,
-  and at most one each of `Content-Disposition`, `Content-Type` and
-  `Content-Transfer-Encoding`.
-- **A file part that declares no `Content-Type` has no client media
-  type** — `getClientMediaType()` is `null`, not the
-  `application/octet-stream` a parser's own default would invent.
-
-Each rule is a place two real parsers disagree, so each is a `400` rather
-than a normalization: whichever reading this framework picked would be
-the other parser's answer to the same bytes. The shared runtime
-conformance suite sends every one of them at every adapter and requires
-the identical answer.
-
-**Two answers, and only two.** A body that cannot be parsed is a `400`
-carrying the fixed `RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE`. A
-body past any ceiling above is a `413` naming the limit and its
-configured number, which is safe to return because it contains nothing
-from the request. Both happen before the handler runs, and nothing is
-ever truncated: a form that meets a ceiling is refused whole, never
-handed on missing exactly the fields an attacker chose to push past the
-edge.
-
-**What is logged for a `400` is a fixed category** — `no-boundary`,
-`ambiguous-boundary`, `no-parts`, `unreadable-multipart`,
-`undecodable-part`, `nested-multipart`, `ambiguous-delimiter` — and never
-a parser's own message. A parser
-message is assembled from the input that failed, so it quotes header
-names, part names, charset labels and body fragments a client chose; a
-log is read, searched, shipped and rendered somewhere. What is lost is
-which byte offset upset which parser, which no operator can act on; what
-is kept is the category, which is what an operator triages on.
-
-**An empty file control keeps PHP's semantics.** A file input the user
-left alone is still submitted — an empty part with `filename=""` — and
-PHP reports it in `$_FILES` as present with `UPLOAD_ERR_NO_FILE`, no
-name, no type and no bytes. Every adapter reports the same, so upload
-validation written against PHP reads "nothing was chosen" under all four
-rather than accepting a successful zero-byte upload under two of them.
-
-The byte ceiling is checked against the bytes actually in hand as well as
-the declared `Content-Length`: a request that understates its length, or
-declares none, is bounded only by the first.
-
-## Every body is staged before the handler runs
-
-Staging happens for every request, form or not. The declared
-`Content-Length` is checked first, so an honestly-labeled oversized
-request is refused without being read; then the body is read once,
-incrementally, counted, into a replayable temporary stream, and the
-request the handler receives carries that stream, rewound and complete.
-Over the ceiling is a `413` and the handler never runs. A body that is
-not a form goes no further than this — nothing parses it, and nothing
-invents a `getParsedBody()` for it.
-
-Everything downstream therefore sees one body and one length, and no way
-of reading it can fail — by then there is no cap left to enforce.
-`read()` and `getContents()` answer from wherever the cursor stands, so
-code that needs the whole body, after another middleware may already
-have read it, uses a plain `(string)` cast — which rewinds first — or
-rewinds explicitly.
-
-Settling it in front of the handler is the only way to get that. The
-alternative — a stream wrapper that counts as the handler reads — cannot
-be made safe. `Stringable` forbids
-`__toString()` from throwing, so such a wrapper has to answer a cast with
-something, and the only things available are a lie or an empty string. An
-empty string is the dangerous one: a handler, or any vendor middleware
-between the wrapper and it, reads an oversized request as an absent
-optional body and carries on. The ceiling has to be settled before the
-handler is called.
-
-A temporary stream that will not open, a read that stalls, or a write
-that stops short is this worker's failure rather than the client's, so it
-is a `FormStagingException` and a server error — never a `400` or a
-`413`, and never a body that reaches a handler shorter than it was sent.
-
-## Forwarded headers are read only from a trusted edge
-
-`X-Forwarded-Proto` and `X-Forwarded-For` are ordinary request headers:
-any client that can reach the listener can send them. A client that can
-choose the scheme its own request appears to have arrived over can choose
-whether a `Secure` cookie is set, what every absolute URL the application
-generates points at, and whether an OAuth redirect target validates.
-
-So **the default is to read neither**. `TRUSTED_PROXIES` — a
-comma-separated list of addresses and CIDR ranges — names the edge, and
-only when the peer that actually connected matches one of them is a
-forwarded header consulted:
-
-```{code-block} bash
-TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
-```
-
-An entry that is not an address or a CIDR range is refused at startup
-rather than silently matching nothing, since a range that never matches
-looks exactly like a correct one that is never reached.
-
-The rule is the same under FrankenPHP, PHP-FPM and RoadRunner. A
-forwarded scheme from an untrusted peer is ignored completely — it can
-neither promote a request to `https` nor downgrade one — and a trusted
-proxy that sends something other than exactly `http` or `https`,
-including two schemes folded into one header, is a fixed `400` before the
-handler: there is no rule that picks the right answer out of two, and the
-peer that could have gotten it right is the one that got it wrong.
-
-Lambda is the one runtime this policy does not reach, and
-`BrefLambdaAdapter` is the one adapter that takes no `TrustedProxies` at
-all. An invocation arrives over the Runtime API with no connecting client
-to weigh: `x-forwarded-proto` is API Gateway's own field on an event it
-built, so the gateway is the edge by construction. What replaces the
-policy there is a platform fact — an HTTP API and a Function URL are
-TLS-only, so the scheme is `https` and a forwarded header cannot move it.
-An event claiming `http` describes an invocation the platform cannot have
-delivered, and is refused as malformed rather than honored or ignored;
-see the identity rules below.
-
-## Running on AWS Lambda
-
-````{note}
-Not part of core. Install it separately:
-
-```{code-block} sh
-composer require kinetis/bref-adapter
-```
-````
-
-Once installed, detection picks it up automatically — nothing else to
-configure. It's a separate install because Lambda is one deployment
-target among several; it needs nothing beyond what core already ships
-with.
-
-Databases are the one place Lambda differs from the other adapters by
-default: `DB_DRIVER=auto` selects a PDO client here, not the native
-async drivers. See {doc}`persistence`'s "Driver selection" section for
-the reasons and for what a deployment needs before selecting
-`DB_DRIVER=native` on Lambda.
-
-`Kinetis\BrefAdapter\BrefLambdaAdapter` speaks the Lambda Runtime API
-directly (poll `.../invocation/next`, run the request, post the response
-to `.../invocation/{id}/response`) and converts to/from API Gateway's
-**HTTP API payload format 2.0** event shape — the format a Function URL
-or an HTTP API (as opposed to the older REST API) integration sends.
-ALB and the older REST API's payload format 1.0 aren't handled.
-
-Every field this depends on is validated before an event is ever routed
-— a direct Lambda invocation (not just API Gateway) can carry arbitrary
-JSON, so this is checked, not assumed. `"version": "2.0"` is required
-and checked explicitly, specifically because it's the one field that
-tells a genuine payload-v2 event apart from anything else that happens
-to be shaped similarly — a payload-format-1 event carrying a
-coincidentally (or deliberately) v2-shaped `requestContext.http` would
-otherwise pass a check that only looked at that nested shape.
-`rawPath` and `requestContext.http.method` are required as non-empty
-strings; every other field this adapter reads (`rawQueryString`,
-`headers`, `queryStringParameters`, `body`, `isBase64Encoded`,
-`requestContext.http.sourceIp`, `cookies`) is optional but, when
-present, is checked for the right type — including the exact
-collection shape, not just "is this an array": `headers` and
-`queryStringParameters` must each be a genuine JSON *object* with
-string values (an array-valued entry, or the field being a JSON list
-instead of an object, is rejected), and `cookies` must be a genuine
-JSON *list* of strings (a JSON object — `{"session": "abc"}` rather
-than `["session=abc"]` — is rejected, not silently accepted as a
-one-entry list). This distinction only exists at the raw JSON level:
-`json_decode(..., associative: true)` collapses `{}` and `[]`, and an
-object-valued and a string-valued map entry, into the identical shape
-of plain PHP array — so validation runs against a separate,
-non-associative decode of the same body first, which is the only
-decode mode where a JSON object and a JSON list actually stay
-distinguishable. Anything that fails any of these checks is rejected
-outright, reported to the Runtime API's invocation error endpoint —
-never silently degraded into a plausible-looking request built from
-whichever fields happen to be missing or malformed.
-
-### Request identity comes from one authoritative field each
-
-A payload-v2 event describes where the request was addressed in five
-places that can disagree: `requestContext.domainName`, the `host`
-header, `x-forwarded-proto`, `x-forwarded-port`, and
-`requestContext.http.protocol`. Reading each one wherever it happens to
-be needed produces a request whose URI, `Host` header and request target
-are three different answers to the same question — and an application
-generating an absolute URL, signing a canonical request, or comparing an
-origin then behaves differently under Lambda than under any other
-runtime, for no reason it can see.
-
-So one field decides each part, every other field must agree with it,
-and an event where they don't is rejected before anything is dispatched:
-
-- **Host** — `requestContext.domainName`, the one field a client cannot
-  write. A `host` header is accepted only if it names that same domain,
-  with or without a port; one naming a different domain is refused. The
-  `Host` header the application reads is rebuilt from the domain, so it
-  cannot disagree with the URI.
-- **Port** — `x-forwarded-port`, or the port in the `host` header, and
-  they must match when both are present. A port that is the scheme's
-  default is not part of the authority, exactly as PSR-7's own URI
-  treats it.
-- **Scheme** — `https`, decided by the platform rather than by the
-  event: an HTTP API and a Function URL have no plaintext mode at all,
-  so there is no listener a plaintext request could have arrived on.
-  `x-forwarded-proto` is checked against that instead of deciding it —
-  absent or `https` is what API Gateway sends, and any other value,
-  `http` included, is refused with everything else that contradicts
-  itself.
-- **Protocol version** — `requestContext.http.protocol`.
-- **Request target** — `rawPath` and `rawQueryString`, byte for byte,
-  set as the request target rather than rebuilt from a parsed path and
-  a re-encoded query.
-
-Every string that ends up in the URI must be valid UTF-8 with no control
-characters or spaces, and `rawPath` must be an absolute path carrying no
-query or fragment of its own. Invalid UTF-8 in a path would otherwise
-travel as far as encoding the response payload and fail there, turning a
-bad request into a failed invocation; a control character in a request
-target is request smuggling looking for somewhere to land.
-
-### What's mapped, and how
-
-- **Method, path, query string, and headers** — straight from the
-  event's own `requestContext.http.method`/`rawPath`/`rawQueryString`/
-  `headers`. A purely-numeric header name (`"123"`, valid per RFC 9110 —
-  digits are ordinary token characters) is mapped correctly: PHP's own
-  `json_decode(..., associative: true)` coerces a canonical-integer JSON
-  object key into a real PHP int array key, so it's cast back to a
-  string before reaching PSR-7's `withHeader()`, which requires one.
-- **Query parameters** — `parse_str()` over `rawQueryString`, the same
-  bytes with the same function every other runtime uses. The event's own
-  `queryStringParameters` is API Gateway's lossy summary of that query:
-  it comma-joins a repeated parameter into one value, which PHP would
-  then read as a single parameter whose value contains a comma. It is
-  validated as part of the event's shape and read nowhere. A
-  purely-numeric parameter name ends up as an int array key here as it
-  does on every adapter — PHP always coerces a canonical-integer string
-  used as an array *key*, regardless of any cast applied first — but
-  PHP's own array-lookup semantics coerce a numeric-string *read* the
-  identical way, so `$request->getQueryParams()['123']` still finds the
-  value.
-- **Cookies** — payload format 2.0 carries these as their own top-level
-  `cookies: string[]` list, never folded into `headers`. Reconstructed
-  into a real `Cookie` header and into `getCookieParams()`, so cookie-
-  and session-based authentication (see {doc}`session`) works the same
-  as it does under FrankenPHP or FPM.
-- **The client's IP address** — `requestContext.http.sourceIp` is
-  mapped to the request's `REMOTE_ADDR` server parameter. Nothing else
-  here has one: every invocation arrives over the Runtime API, not a
-  socket PHP itself accepted, so without this every request would look
-  identical to code reading `REMOTE_ADDR` (`RateLimitMiddleware`'s
-  identifier for one — see {doc}`middleware` — and any per-client
-  logging).
-- **The request body** — a base64-encoded body (`isBase64Encoded: true`)
-  is decoded strictly: invalid base64 is answered with a `400` rather
-  than silently becoming an empty body. The decoded bytes are handed on
-  raw, and the Kernel's `RequestBodyMiddleware` stages, bounds and parses
-  them exactly as it does under every other runtime — see "Request
-  bodies: one contract under every runtime" above. Those ceilings apply
-  after delivery: API Gateway has already accepted the request and
-  materialized its whole body in memory, up to Lambda's own 6 MB
-  invocation payload limit, before this adapter runs. Kinetis refuses an
-  oversized body; it cannot stop AWS from having received one.
-- **The response body** — checked for valid UTF-8 before being handed
-  to the Runtime API, which receives the whole response as one JSON
-  document. A body that isn't valid UTF-8 (an image, a PDF, any binary
-  payload) is base64-encoded and `isBase64Encoded: true` is set on the
-  payload — API Gateway decodes it again on the way out. A body that's
-  already valid UTF-8 is sent as-is.
-- **Response cookies** — every `Set-Cookie` header value is emitted as
-  its own entry in the payload's `cookies` array, never comma-joined
-  with any other `Set-Cookie` value into one header. This matters
-  because a cookie's own attributes (`Expires`, in particular) already
-  contain a comma, so folding two cookies together the way ordinary
-  repeated headers are folded here would produce a value no client
-  could parse back into distinct cookies.
-
-### What isn't supported
-
-- **Response streaming.** The Runtime API's poll/respond contract is
-  strictly one invocation → one response payload; a controller
-  returning a `Kinetis\Runtime\StreamableResponseInterface` throws
-  immediately rather than silently buffering or dropping the stream.
-  The response is abandoned first, so the request scope behind it is
-  released on the invocation that created it rather than surviving the
-  container's freeze. Real Lambda response streaming needs a Function
-  URL configured with `InvokeMode: RESPONSE_STREAM`, a different
-  invocation model this adapter doesn't implement.
-- **ALB and REST API (payload format 1.0) events.** Only the HTTP API's
-  format 2.0 shape is understood — see the event-validation paragraph
-  above for exactly what's checked and how an unsupported or malformed
-  event is reported. An event whose request identity doesn't cohere is
-  rejected the same way: reported to the invocation error endpoint,
-  never dispatched.
-- **A Runtime API the adapter can't reach.** A poll or a response POST
-  that fails outright (connection refused, a non-2xx status) throws
-  instead of being treated as an empty response — there is no
-  invocation to serve and nothing meaningful to fall back to, so
-  surfacing the failure (visible in CloudWatch as the function
-  erroring) is the correct outcome rather than continuing silently.
+Every request reruns `public/index.php`, so production PHP-FPM depends on
+the prebuilt artifact {doc}`caching` describes.
 
 ## Running under RoadRunner
 
@@ -669,21 +203,13 @@ composer require kinetis/roadrunner-adapter
 ```
 ````
 
-Once installed, detection picks it up automatically from `RR_MODE`, the
-environment variable RoadRunner's own `rr serve` sets when it spawns
-the worker — nothing else to configure to be found. It needs two extra
-dependencies beyond what core ships with — RoadRunner's own
-`spiral/roadrunner-worker` and `spiral/roadrunner-http` libraries — which
-is why it's a separate install rather than bundled by default.
-
-`Kinetis\RoadRunnerAdapter\RoadRunnerAdapter` speaks RoadRunner's own
-Goridge/`PSR7Worker` protocol — a persistent worker loop, structurally
-the closest of the four to FrankenPHP's, but built on RoadRunner's own
-PHP library rather than a raw request-handling function.
-
-**Two RoadRunner configuration settings are required**, not optional:
+The package brings `spiral/roadrunner-worker` and `spiral/roadrunner-http`.
+`rr serve` sets `RR_MODE=http` for the worker it spawns, which selects
+the adapter. Two settings in `.rr.yaml` are required:
 
 ```{code-block} yaml
+:caption: .rr.yaml
+
 version: "3"
 
 server:
@@ -695,115 +221,32 @@ http:
   max_request_size: 10
 ```
 
-`http.raw_body: true`, which RoadRunner's own Go source spells out:
-without it, RoadRunner parses
-`multipart/form-data`/`application/x-www-form-urlencoded` bodies itself,
-in Go, before the PHP worker is ever invoked, and a body it can't parse
-never reaches PHP at all — the client gets RoadRunner's own error
-response instead of this framework's `400`/JSON shape. Setting it
-disables that Go-side parsing entirely, so every body — well-formed or
-not — reaches the Kernel as the bytes the client sent, which is what lets
-one middleware own the body contract for every runtime.
+```{code-block} bash
+rr serve -c .rr.yaml
+```
 
-A misconfigured `raw_body` doesn't fail silently: `RoadRunnerAdapter`
-detects the resulting Go-side pre-parsed body (a real attribute
-RoadRunner's own `PSR7Worker` stamps on every request) and reports it as
-a clear configuration error naming `http.raw_body: true`, rather than
-re-parsing an already-parsed body and silently producing wrong fields.
-
-Both halves of that detection are checked, on every request rather than
-only on a form one. A request whose attribute says RoadRunner parsed the
-body is the misconfiguration above. A request that doesn't carry the
-attribute at all — a worker library that doesn't set it — doesn't mean
-`raw_body` is on; it means nothing here can tell, and that is refused
-too rather than assumed good, since assuming it good is exactly how the
-first case would go undetected.
+- **`http.raw_body: true`** hands PHP the bytes the client sent. Without
+  it RoadRunner parses form bodies in Go and answers a body it cannot
+  parse itself. The adapter checks this on every request and refuses to
+  serve with an error naming the setting.
+- **`http.max_request_size`**, in megabytes, bounds the body before PHP.
 
 ### `http.max_request_size` is the real defense against an oversized body
 
-`MAX_BODY_SIZE` bounds a body Kinetis is already holding; it cannot
-bound the read that produced it. There is no SAPI here to enforce
-`upload_max_filesize`/`post_max_size` either, and RoadRunner has read the
-whole body into memory as one string before any PHP runs. Left unset,
-RoadRunner's own default is 1000 MB, which is a real bound but not a sane
-production limit on its own.
-
-**Set `http.max_request_size` explicitly** (real megabytes, RoadRunner's
-own unit — `10` above is 10 MB, matching a typical small-upload API; size
-it to what your application actually needs). This is enforced in Go,
-wrapping the request in a real `http.MaxBytesReader` before your PHP
-worker is ever invoked — the only place a body with no declared
-`Content-Length` at all (a genuinely chunked request) can be bounded,
-since by the time this adapter's own code runs, RoadRunner has already
-handed it the whole body as one in-memory string with nothing left to
-read incrementally.
-
-This is a separate ceiling from `MAX_BODY_SIZE`, and the two don't
-automatically agree: the example's `max_request_size: 10` allows up to
-10 MB through to PHP, but `MAX_BODY_SIZE` still defaults to 2 MiB, so a
-body between those two sizes reaches PHP and is then rejected there
-instead of at the Go layer. Either is a real rejection — nothing gets
-silently accepted — but if you want one consistent limit, set both to
-match (`MAX_BODY_SIZE=10485760` alongside `max_request_size: 10`).
-
-Everything above the transport is the shared contract under "Request
-bodies: one contract under every runtime": the Kernel's own
-`RequestBodyMiddleware` stages the delivered bytes, applies
-`MAX_BODY_SIZE` and every structural ceiling, and parses a form. That is
-Kinetis validating what it received, which is a different thing from
-stopping RoadRunner from receiving it — `http.max_request_size` is the
-only setting that does the second, which is why it is required rather
-than optional.
-
-### `X-Forwarded-Proto` decides the URI scheme, from a trusted edge
-
-RoadRunner's own listener is plaintext whenever TLS is terminated in
-front of it, which is the ordinary deployment — so without this an
-application behind a load balancer generates `http://` URLs for an
-`https://` site. `RoadRunnerAdapter` applies `X-Forwarded-Proto` to the
-request URI under the same `TRUSTED_PROXIES` policy core's superglobals
-bridge uses; see "Forwarded headers are read only from a trusted edge"
-above for the whole rule. A directly reachable `rr serve` with no policy
-configured reads the header from nobody, which is the safe default for
-exactly that deployment.
-
-### Sizing RoadRunner's worker processes
-
-The same underlying shape
-[Sizing FrankenPHP's worker threads](#sizing-frankenphps-worker-threads)
-above describes applies here, just with a process in place of a thread:
-`.rr.yaml`'s `http.pool.num_workers` sets how many PHP worker processes
-RoadRunner keeps running, each handling exactly one HTTP request at a
-time, start to finish. `bootstrap.php` (and every
-`extra.kinetis` package bootstrap) runs once per worker process, so
-each one builds its own separate service instances — including a
-database connection pool via `kinetis/database-bridge`'s
-`ConnectionFactory`. Oversizing `num_workers` without correspondingly
-undersizing each pool's `maxConnections` can exhaust your database's
-own connection limit exactly the same way it can under FrankenPHP — see
-{doc}`persistence`'s "Sizing `maxConnections` under worker mode"
-section.
-
-Where this genuinely differs from FrankenPHP, not just in name: each
-RoadRunner worker is a separate OS process rather than a thread sharing
-one process, so there's no cross-worker contention on that process's
-own resources (the kernel `mm` lock contention `Kinetis\Async\FiberPool`
-exists to avoid under FrankenPHP's threaded model doesn't arise here in
-the same way, since nothing is shared to contend over) — but process
-creation itself has its own, different overhead. FrankenPHP's own
-measured thread-sizing ratios (2–3× vCPUs for a mixed CPU/fast-query
-workload) come from load testing threads specifically and haven't been
-separately re-measured against RoadRunner's process model; see
-{doc}`performance-tuning`'s own note on this before assuming they
-transfer unchanged. Measure under realistic load either way.
+```{warning}
+RoadRunner reads the whole body into memory before any PHP runs, and its
+default `max_request_size` is 1000 MB. `MAX_BODY_SIZE` refuses a body
+Kinetis already holds; it cannot bound RoadRunner's read, and a chunked
+body with no declared length has no other bound. Set `max_request_size`
+explicitly to what the application accepts, and set `MAX_BODY_SIZE` to
+match (`MAX_BODY_SIZE=10485760` alongside `max_request_size: 10`), or a
+body between the two limits reaches PHP and is refused there.
+```
 
 ### `ext-sockets` under an Alpine-based image
 
-`spiral/roadrunner-worker` hard-requires PHP's `sockets` extension.
-Alpine's own `$PHPIZE_DEPS` build-tools set is not enough on its own —
-`docker-php-ext-install sockets` fails there with a missing
-`linux/sock_diag.h` — but adding `apk add linux-headers` alongside it
-closes the gap:
+`spiral/roadrunner-worker` requires `ext-sockets`. On an Alpine image,
+`docker-php-ext-install sockets` also needs `linux-headers`:
 
 ```{code-block} dockerfile
 FROM php:8.4-cli-alpine
@@ -811,152 +254,177 @@ RUN apk add --no-cache $PHPIZE_DEPS linux-headers \
  && docker-php-ext-install sockets
 ```
 
-`kinetis/roadrunner-adapter`'s own CI does *not* do this —
-every step of its Alpine-based checks (install, PHPStan, Psalm, the
-committed unit suite) runs in its own separate, stateless container,
-none of which ever load `ext-sockets` at runtime, so compiling it from
-source repeatedly would be pure cost with nothing to show for it;
-Composer's platform check is bypassed there instead.
-`kinetis/persistence` and `kinetis/database-bridge` are the packages
-where the compile *is* worth it, and their PHPUnit steps do exactly the
-above: the native Postgres driver refuses to construct without the
-extension. A real deployment image is
-the same case — one build, reused for the worker's whole lifetime —
-where the cost is paid once.
+### Sizing RoadRunner's worker processes
+
+`http.pool.num_workers` sets the number of PHP worker processes, each
+serving one request at a time. Size it the way
+[Sizing FrankenPHP's worker threads](#sizing-frankenphps-worker-threads)
+describes: each process builds its own database pool, and the thread
+ratios measured for FrankenPHP have not been re-measured for processes.
 
 ### A crash in one request doesn't take the worker down
 
-Unlike `FrankenPhpAdapter`, which lets an uncaught exception propagate
-and end the worker process, `RoadRunnerAdapter::run()` catches it,
-reports it to RoadRunner via `Worker::error()` (a clean error response
-to that one client), and keeps serving requests on the same worker.
-Letting an exception propagate here would kill the whole persistent
-worker over one bad request, a materially worse failure than any other
-adapter risks, since it costs `AppScope`'s warm state until RoadRunner's
-own supervisor respawns the worker. If you configure a short
-`pool.supervisor.exec_ttl` for other reasons, know that it bounds a
-worker's *total* lifetime regardless of this — RoadRunner's own default
-is `0s` (unlimited).
-
-FrankenPHP contains exactly one throwable, and it is much narrower: a
-streamed response's failing emitter, caught at the SAPI emission
-boundary because the status, the headers and part of the body have
-already left the process. See "Writing your own adapter" below.
+An exception a handler throws is reported to RoadRunner with
+`Worker::error()`, which answers that one client with an error, and the
+worker keeps serving. A short `pool.supervisor.exec_ttl` still bounds a
+worker's total lifetime; RoadRunner's default is `0s`, unlimited.
 
 ### What isn't supported
 
-- **Response streaming.** `Worker::create()`'s default
-  `interceptSideEffects: true` installs a global output-buffer redirect
-  (`StdoutHandler::register()`) sending every stray `echo`/`header()`
-  call to RoadRunner's own log stream instead of the client — required
-  to keep the Goridge binary protocol on STDOUT uncorrupted, and the
-  reason `Kinetis\Http\StreamedResponse`'s emitter closures can't be
-  used here: their output would be silently redirected the same way,
-  with nothing erroring anywhere. A controller returning a
-  `Kinetis\Runtime\StreamableResponseInterface` gets a real `501`
-  instead, after the handler runs — never buffered or dropped silently,
-  and abandoned before the refusal goes back, so the request scope
-  behind it is released on that request.
-  RoadRunner's own `HttpWorker::respondStream()` is a genuinely
-  different, lower-level generator-based API than `PSR7Worker::respond()`,
-  and bridging one onto the other needs its own design pass.
-- **A purely-numeric header name.** `"123"` is a valid RFC 9110 header
-  name (digits are ordinary token characters), and every other adapter
-  here maps it correctly, but `spiral/roadrunner-http`'s own request
-  decoding drops it before this adapter ever sees the request: PHP
-  coerces a numeric string array key to an `int`, and that library's
-  `is_string($key)` filter then deletes it. Recovering it would mean
-  reimplementing that library's own JSON/protobuf request decoding in
-  this package instead of using `PSR7Worker`. The shared conformance
-  suite asserts this rather than skipping it: this adapter's driver
-  declares that the header does not survive, and the suite then requires
-  it to be *absent*, never present under some other name or carrying
-  some other value.
-- **Cookie order.** Every other adapter here preserves the exact order a
-  client sent its cookies in. RoadRunner represents cookies as a Go
-  `map[string]string` on the way to PHP, and Go randomizes map iteration
-  order by design, so a request's cookies can arrive re-ordered.
-  Declared and asserted the same way as the header above: the names and
-  values are checked on every run, the order only where the environment
-  can keep it.
+- **Response streaming.** A `StreamableResponseInterface` is answered
+  with `501`, never buffered or dropped silently.
+- **A purely-numeric header name** such as `123`. RoadRunner's PHP
+  library drops it before the adapter sees the request.
+- **Cookie order.** Names and values arrive intact; their order may not.
 
-## Writing your own adapter
+{ref}`runtime-reference-forwarded-headers` and the RoadRunner section of
+{doc}`appendix-runtime` give the detection and delivery details.
 
-If you need to target something else entirely, implement this interface
-and Kinetis will drive it the same way it drives the four adapters above:
+## Running on AWS Lambda
 
-```{code-block} php
-namespace Kinetis\Runtime;
+````{note}
+Not part of core. Install it separately:
 
-use Psr\Http\Message\ResponseInterface;
-use Psr\Http\Message\ServerRequestInterface;
+```{code-block} sh
+composer require kinetis/bref-adapter
+```
+````
 
-interface RuntimeAdapterInterface
-{
-    /**
-     * @param callable(ServerRequestInterface): ResponseInterface $handler
-     */
-    public function run(callable $handler): void;
+The adapter polls the Lambda Runtime API itself, with no `bref/bref`
+handler. Deploy the application with a PHP 8.4 runtime or container image
+whose process runs `php public/index.php`; Lambda sets
+`AWS_LAMBDA_RUNTIME_API` for that process, which selects the adapter.
+Kinetis does not ship the runtime layer or the deployment template.
 
-    public function isPersistent(): bool;
-}
+- **Invoke it through an HTTP API or a Function URL.** The adapter reads
+  payload format 2.0 only. ALB events, REST API (payload format 1.0)
+  events, and any event that fails validation are reported to Lambda as
+  invocation errors and never reach a route.
+- **Databases use PDO.** `DB_DRIVER=auto` selects a blocking PDO
+  connection. {doc}`persistence`'s "Driver selection" covers when to
+  select `DB_DRIVER=native` on Lambda.
+- **The body limit is the platform's first.** API Gateway accepts and
+  holds the whole body, up to Lambda's 6 MB invocation payload, before the
+  adapter runs. `MAX_BODY_SIZE` refuses a larger body after delivery.
+- **The scheme is always `https`.** An HTTP API and a Function URL are
+  TLS-only; an event whose `x-forwarded-proto` claims `http` is refused.
+  `TRUSTED_PROXIES` does not apply.
+- **Binary responses and cookies need no code.** A response body that is
+  not valid UTF-8 is base64-encoded for API Gateway, and every
+  `Set-Cookie` becomes its own cookie entry.
+
+What Lambda does not support:
+
+- **Response streaming.** A `StreamableResponseInterface` fails the
+  invocation rather than being buffered. Lambda response streaming is a
+  different invocation model this adapter does not implement.
+- **An unreachable Runtime API.** A failed poll or response post throws,
+  and the function reports an error in CloudWatch.
+
+{ref}`runtime-reference-lambda` lists every validated event field, how
+the request's host, port and target are derived, and how each field maps
+to PSR-7.
+
+## Request bodies: one contract under every runtime
+
+An adapter hands the body on as raw bytes. `RequestBodyMiddleware`, which
+runs on every request, stages it, applies `MAX_BODY_SIZE` and the form
+limits below, and parses a form, so the same body is accepted or refused
+the same way under every runtime.
+
+```{important}
+**`enable_post_data_reading=0`** — FrankenPHP and PHP-FPM. PHP otherwise
+reads and parses the body before Kinetis exists, silently truncating a
+form at `max_input_vars` or emptying it past `post_max_size`.
+`SuperglobalsBridge` refuses to serve without it. The setting is
+`PHP_INI_PERDIR`: set it in `php.ini`, a `conf.d` file, `.htaccess` or the
+FPM pool configuration, never in application code.
+
+**`arg_separator.input=&`** — every runtime. `&` is PHP's default and the
+only value the form parser accepts; any other value fails the first form
+parse with a server error naming the setting.
 ```
 
-`isPersistent()` tells Kinetis whether to force a memory cleanup pass at
-the end of every request — worth doing in a worker that keeps serving,
-pure waste under a boot-per-request SAPI, where request shutdown releases
-that memory anyway.
+### Set the edge limit with `MAX_BODY_SIZE`
 
-Then hold it to the same contract as the built-in ones: implement a
-`Kinetis\Testing\Runtime\RuntimeAdapterDriver` for it and extend
-`RuntimeAdapterConformanceTestCase` — see {doc}`testing`. Every behavior
-the core adapters agree on (how a repeated header folds, where cookies
-land, the URI's scheme, authority and request target, form and binary
-bodies, the form-complexity ceilings, response cookies, streaming, the
-`400` for a body the environment can't parse — whose fixed message is
-`RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE`) runs against yours
-with no further test code.
+`MAX_BODY_SIZE` (default 2 MiB) is the byte ceiling Kinetis enforces. The
+server in front of PHP may read and bound the body first:
 
-An adapter handed a `Kinetis\Runtime\StreamableResponseInterface` sends
-the status and headers from the response itself, then invokes
-`getEmitter()` — that closure writes body bytes and nothing else. The
-request's `RequestScope` is still alive while it runs, so a controller's
-streaming code resolves from its own container, and the scope is released
-as soon as the emitter returns. An adapter that can't stream calls
-`abandon()` on the response and answers with its own instead: that
-releases the same scope, on the same request, without writing a byte of
-the body. Settling one of those two ways is the whole contract — the
-Kernel's own release at the start of the next request is the defensive
-path for a response that reached neither, and it logs a warning naming
-the method and path when it fires.
+| Runtime | Limit before PHP | Action |
+|---|---|---|
+| FrankenPHP | none set by Kinetis | `MAX_BODY_SIZE` stops the read once the body passes it |
+| PHP-FPM behind nginx | `client_max_body_size`, default 1 MiB | Set it to at least `MAX_BODY_SIZE` |
+| RoadRunner | `http.max_request_size`, default 1000 MB | Set it explicitly and match `MAX_BODY_SIZE` |
+| AWS Lambda | 6 MB invocation payload | Fixed by the platform |
 
-An emitter that throws is the one failure an adapter contains rather than
-lets propagate. By then the status, the headers and some number of body
-bytes have left the process, so there is no replacement response to send
-— and under a persistent worker an escaping throwable ends the worker
-itself, taking the warm state every later request on that thread would
-have used down with one client's broken stream. The SAPI adapters catch
-it at `SuperglobalsBridge::emit()`, write the exception class, message
-and `file:line` to the SAPI error log, and return to the loop; the client
-sees the truncated body a half-sent response can only end as. Nothing
-else moves: the Kernel's own wrapper still releases the request scope and
-re-raises the emitter's failure to whoever invoked it, and a request that
-fails before emission begins is still a `500` from
-`ExceptionHandlerMiddleware`.
+Every request in progress holds its body in memory — see
+{doc}`middleware`'s "Request body limits" for choosing `MAX_BODY_SIZE`
+with `memory_limit`.
 
-An adapter never parses a form body itself. It delivers the raw bytes,
-and `RequestBodyMiddleware` applies `Kinetis\Http\Form` to them inside
-the Kernel — which is what keeps the accepted spellings, the nesting, and
-the point at which a client is refused identical under every runtime; see
-{ref}`multipart-form-data-file-uploads`.
+### Form limits
 
-A deployment that wants one specific adapter rather than automatic
-detection passes a factory to `HttpStartup::assemble()` and serves from
-what it returns, in place of the `HttpStartup::run()` an entry point
-normally calls. The two SAPI adapters and RoadRunner's take the same
-`TrustedProxies` policy `RuntimeDetector::detect()` would have handed
-them, for the same reason — they settle a request's identity before the
-Kernel or its container exist:
+| Limit | Default | What it counts |
+|---|---|---|
+| `MAX_INPUT_VARS` | 512 | pairs in a raw url-encoded body, and leaf values in the parsed form |
+| `MAX_FILE_PARTS` | 16 | leaf entries in `getUploadedFiles()` |
+| `MAX_NESTING_DEPTH` | 8 | array levels a name builds — `a[b][c]=1` is 3 |
+| `MAX_MULTIPART_PARTS` | 512 | parts in a raw multipart envelope, unnamed ones included |
+| `MAX_PART_HEADERS` | 16 | header *lines* on any one multipart part, repeats included |
+| `MAX_PART_HEADER_BYTES` | 8 KiB | bytes on one multipart header line |
+| `MAX_BODY_SIZE` | 2 MiB | bytes in the request body, whatever its content type |
+
+`MAX_BODY_SIZE` is configuration. The other six are
+`Kinetis\Http\Form\FormLimits` constants, counted from the raw body
+before anything parses it.
+
+- A body past any limit is refused whole with `413`, naming the limit. A
+  form is never handed on with the fields past the limit missing.
+- A runtime whose `max_input_vars` or `max_input_nesting_level` is set
+  below these limits is `413` naming that setting, rather than a form PHP
+  would have shortened.
+- A body that cannot be parsed is `400` with the fixed message
+  `The request body could not be parsed.` Multipart bodies follow the
+  byte-literal RFC 7578 subset browsers send; transfer encodings, encoded
+  words, extended parameters and nested multipart parts are refused.
+
+Both refusals happen before the handler runs.
+{ref}`runtime-reference-body-staging` and
+{ref}`runtime-reference-multipart` give the staging mechanism, the exact
+multipart grammar and the logged failure categories.
+
+## Forwarded headers: trust only your edge
+
+A client can send `X-Forwarded-Proto` itself. By default Kinetis reads it
+from no one, and a request's scheme is the one its listener serves.
+Behind a proxy or load balancer that terminates TLS, name that edge so
+absolute URLs, `Secure` cookies and OAuth redirects use `https`:
+
+```{code-block} bash
+:caption: .env
+
+TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+```
+
+- `TRUSTED_PROXIES` is a comma-separated list of addresses and CIDR
+  ranges. An entry that is neither is refused at startup.
+- Only a request whose connecting peer matches the list may set the
+  scheme, under FrankenPHP, PHP-FPM and RoadRunner. From any other peer
+  the header is ignored.
+- A trusted proxy sending anything other than one `http` or `https` is
+  answered with `400` before the handler.
+- The request's client address stays the peer that connected.
+  `RateLimitMiddleware` reads `X-Forwarded-For` under its own policy —
+  see {doc}`middleware`'s "Behind a reverse proxy or load balancer".
+- Lambda takes no policy: its scheme is always `https`.
+
+{ref}`runtime-reference-forwarded-headers` describes how each adapter
+applies the policy.
+
+## Choose an adapter explicitly
+
+A deployment that wants one adapter rather than detection passes a
+factory to `HttpStartup::assemble()` and serves what it returns. The
+factory receives the `TrustedProxies` policy the container settled on:
 
 ```{code-block} php
 :caption: public/index.php
@@ -973,9 +441,7 @@ HttpStartup::assemble(
 )->serve();
 ```
 
-`BrefLambdaAdapter` takes the Runtime API endpoint instead, and no proxy
-policy: there is no connecting peer to weigh, and the event's own scheme
-is settled against the platform fact described above.
+`BrefLambdaAdapter` takes the Runtime API endpoint instead:
 
 ```{code-block} php
 $adapter = new Kinetis\BrefAdapter\BrefLambdaAdapter(
@@ -983,14 +449,19 @@ $adapter = new Kinetis\BrefAdapter\BrefLambdaAdapter(
 );
 ```
 
+To target another environment, implement `RuntimeAdapterInterface` and
+hold it to the shared conformance suite — see
+{ref}`runtime-reference-custom-adapter`.
+
 ## See also
 
-- {doc}`core-concepts` — why your application code never needs to know
-  which adapter is running it.
-- {doc}`concurrency` — what `Kinetis\Async`/`concurrently()` actually
-  provides, and what it doesn't.
+- {doc}`core-concepts` — why application code never needs to know which
+  adapter is running it.
+- {doc}`concurrency` — what `concurrently()` overlaps under each runtime.
 - {doc}`caching` — the production build step, and why it matters most
   under PHP-FPM.
-- {doc}`appendix` — the exact internals of each built-in adapter.
-- {doc}`performance-tuning` — the worker-threads x connections
-  budget, what to observe under load, and tuning by workload shape.
+- {doc}`performance-tuning` — the worker × connection budget and tuning
+  by workload shape.
+- {doc}`appendix-runtime` — request-body staging, forwarded-header
+  handling, Lambda event mapping and the custom adapter contract.
+- {doc}`appendix` — the framework's runtime namespace.

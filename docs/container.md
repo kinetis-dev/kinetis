@@ -1,11 +1,13 @@
-# Container
+# Appendix: Container Lifecycle
 
 Kinetis splits dependency injection across two containers with different
 lifetimes. `AppScope` lives for as long as the execution context that
 booted it, and holds what every request shares. `RequestScope` lives for
 one request, and holds what must not outlive it. PHP does not separate
 one request's memory from the next inside a persistent worker; this split
-is what does.
+is what does. For the newcomer's first decision between the two — and
+when to write `bootstrap.php` at all — see {doc}`bootstrapping`; this
+page is the complete contract behind that decision.
 
 ## `AppScope` — the persistent container
 
@@ -316,12 +318,12 @@ final class Metrics
 Metrics::instance()->increment('requests');
 ```
 
-Under PHP-FPM this is completely safe — the process dies after the request,
-so `self::$instance` never survives to see a second one. Under a
-persistent worker, `self::$instance` is now shared, mutable state visible
-to *every* request the worker ever handles, reachable from anywhere in the
-codebase with zero indication at the call site that it's touching shared
-state at all.
+Under PHP-FPM this is safe, for the reason {doc}`core-concepts` covers in
+full: the process dies after the request, so `self::$instance` never
+survives to see a second one. Under a persistent worker, `self::$instance`
+is now shared, mutable state visible to *every* request the worker ever
+handles, reachable from anywhere in the codebase with zero indication at
+the call site that it's touching shared state at all.
 
 The Kinetis-idiomatic rewrite keeps the *same* one-instance-per-worker
 lifetime, but makes it reachable only through the container:
@@ -448,8 +450,11 @@ blanket exemption.
 
 ## See also
 
-- {doc}`config` — `Config` and `bootstrap.php`, the usual reason to
-  register something on `AppScope` in the first place.
+- {doc}`bootstrapping` — the task-first guide: what boots automatically,
+  when to write `bootstrap.php`, and the `AppScope`/`RequestScope` choice
+  a newcomer has to make.
+- {doc}`config` — `Config`, resolved from `AppScope` the same as any
+  other service you never explicitly registered on `RequestScope`.
 - {doc}`core-concepts` — why a persistent worker makes scope a
   correctness question rather than a style one.
 - {doc}`routing-validation` — where controllers get resolved from, and

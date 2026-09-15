@@ -86,8 +86,7 @@ logs nothing and the warning stays an anomaly signal. If closing a
 transaction fails, that's logged as an `error` instead, one line per
 failure — a strictly more severe signal than the routine `warning`,
 since it means a transaction survived the unit of work. See
-{doc}`persistence`'s "What happens
-when cleanup itself fails" for the full failure behavior, including that
+{doc}`appendix-database`'s "What happens when cleanup itself fails" for the full failure behavior, including that
 this is all independent of the logger itself: an exception the logger
 throws is discarded rather than allowed to affect cleanup or misreport
 what actually happened.

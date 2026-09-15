@@ -19,7 +19,14 @@ fluent DDL builder, no schema-diffing.
 
 ## Writing a migration
 
-Each file in a `migrations/` directory at your project root returns an
+Scaffold a migration:
+
+```{code-block} sh
+vendor/bin/kinetis migrate:make "create orders table"
+# Created migrations/20260810143000_create_orders_table.php
+```
+
+Each file in the `migrations/` directory at your project root returns an
 anonymous class implementing `Migration`:
 
 ```{code-block} php
@@ -56,15 +63,8 @@ return new class implements Migration
 
 The timestamp prefix (`YmdHis`) keeps migrations in chronological order
 regardless of which branch created the file, and doubles as the name
-`kinetis_migrations` tracks it by. A multi-statement migration is multiple
-`$db->execute()` calls, not one string with semicolons.
-
-Scaffold one instead of writing the boilerplate by hand:
-
-```{code-block} sh
-vendor/bin/kinetis migrate:make "create orders table"
-# Created migrations/20260810143000_create_orders_table.php
-```
+`kinetis_migrations` tracks it by. A multi-statement migration is
+multiple `$db->execute()` calls, not one string with semicolons.
 
 ## Running migrations
 
@@ -74,9 +74,8 @@ vendor/bin/kinetis migrate:rollback  # rolls back the migration applied most rec
 vendor/bin/kinetis migrate:status    # lists every migration with its applied/pending state
 ```
 
-`migrate`/`migrate:rollback`/`migrate:status` connect using the same `.env`/environment
-convention {doc}`config` describes, plus two variables specific to this
-package:
+The commands read the same `DB_*` keys as the application
+({doc}`persistence`) from the environment or `.env`:
 
 ```{code-block} text
 DB_CONNECTION=mysql   # or "pgsql" — no default
@@ -84,19 +83,18 @@ DB_HOST=127.0.0.1
 DB_NAME=app
 DB_USER=app
 DB_PASSWORD=secret
-DB_PORT=3306           # optional
 ```
 
-`DB_CONNECTION` has no default: guessing the wrong engine would run
-migrations against the wrong database with no warning at all. The
-commands read these keys through `kinetis/database-bridge`'s
-`ConnectionFactory`, so a connection is validated and defaulted exactly
-as the application's own are ({doc}`persistence`).
+They run without the application's bootstrap, so they work in CI or an
+init container with nothing but environment variables, and a connection
+registered in `bootstrap.php` does not apply to them. `DB_CONNECTION` is
+required: guessing the wrong engine would run migrations against the
+wrong database with no warning at all.
 
-To run migrations against a database other than the default connection
-(see {doc}`config`'s named-connection convention), pass
-`--connection=<name>` to any command, or set `MIGRATE_CONNECTION_NAME`
-in the environment — the explicit flag wins when both are given:
+To migrate a database other than the default connection (see
+{doc}`config`'s named-connection convention), pass `--connection=<name>`
+to any command, or set `MIGRATE_CONNECTION_NAME` in the environment — the
+explicit flag wins when both are given:
 
 ```{code-block} sh
 vendor/bin/kinetis migrate --connection=db2
@@ -110,14 +108,12 @@ DB_DB2_HOST=reporting.internal
 DB_DB2_PASSWORD=secret
 ```
 
-Omit it and the commands read the plain `DB_*` keys, exactly as above.
-
 `migrate` dispatches `Kinetis\Migrations\Events\MigrationApplied` once
 per migration it actually runs, in the order they ran;
-`migrate:rollback` dispatches `Events\MigrationRolledBack` when it
-undoes one. Both are ordinary events — write a `#[Listener]` for
-whichever one you need (a deploy notification, for one). See
-{doc}`events` for the full catalog.
+`migrate:rollback` dispatches `Events\MigrationRolledBack` when it undoes
+one. Both are ordinary events — write a `#[Listener]` for whichever one
+you need (a deploy notification, for one). See {doc}`events` for the full
+catalog.
 
 ### From your own code
 
@@ -137,13 +133,13 @@ $runner->rollback(); // rolls back the migration applied most recently; returns 
 $runner->status();   // every migration, with whether it is applied
 ```
 
-The link has to be a single-session client — see "Concurrent deploys
-are safe" below for why.
+The link has to be a single-session client, since the run's lock lives
+in that session (see "Concurrent deploys are safe" below).
 
 ## What the ledger records, and what it checks
 
-`kinetis_migrations` holds one row per applied migration: the `migration`
-name, the `checksum` (SHA-256) of the file that ran, and the
+`kinetis_migrations` holds one row per applied migration: the
+`migration` name, the `checksum` (SHA-256) of the file that ran, and the
 `application_order` this database applied it in.
 
 `migrate`, `migrate:rollback` and `migrate:status` all verify that ledger
@@ -151,12 +147,11 @@ against the `migrations/` directory before doing anything else. Every
 applied migration must still have a file, and that file must still hash
 to the checksum recorded when it ran. The first one that fails either
 check throws `Exception\MigrationIntegrityException`, naming the
-migration and the reason, before any `up()`, `down()` or ledger write —
-so a database whose applied SQL is no longer the SQL on disk gets no
-further migrations run against it. Restore the migration file that was
-deployed and the commands run again; nothing here rewrites the ledger to
-match a file that changed, because only the file that ran describes what
-the database actually holds.
+migration and the reason, before any `up()`, `down()` or ledger write.
+Never edit a migration that has been deployed: restore the deployed file
+and the commands run again, and write a new migration for the change.
+Nothing rewrites the ledger to match a changed file, because only the
+file that ran describes what the database holds.
 
 `migrate:rollback` undoes the migration with the highest
 `application_order` — the one this database applied most recently, which
@@ -168,11 +163,11 @@ newest one from then on.
 ## Transactions are not automatic
 
 A migration's `up()`/`down()` runs exactly as written — the runner never
-wraps it in a transaction. Postgres supports transactional DDL; MySQL's
+wraps it in a transaction. PostgreSQL supports transactional DDL; MySQL's
 DDL statements auto-commit regardless of any surrounding transaction, so
 a runner-imposed transaction would be real atomicity on one backend and a
 false sense of it on the other. A migration that wants atomicity on
-Postgres opens one itself, inside its own `up()`:
+PostgreSQL opens one itself, inside its own `up()`:
 
 ```{code-block} php
 public function up(MysqlLink|PostgresLink $db): void
@@ -195,38 +190,39 @@ migration before it in that run is already recorded as applied, and the
 failing one is not. The exception propagates, so the run stops there
 instead of continuing past a failure.
 
+```{warning}
+Statements a failing `up()` already ran stay applied unless the migration
+wrapped them in its own transaction, which on MySQL DDL cannot do. The
+migration stays pending, so running `migrate` again re-runs its first
+statements against a schema that already has them. Repair the schema by
+hand, or make each statement safe to repeat, before running it again.
+```
+
 ## Concurrent deploys are safe
 
-`migrate`/`migrate:rollback` hold a cross-process advisory lock (MySQL's
-`GET_LOCK()`; Postgres has no equivalent blocking-with-timeout primitive,
-so it's `pg_try_advisory_lock()` instead, polled with a short sleep
-between attempts) for the whole run, so two deploy instances starting at
-the same time can't both compute the same pending set and run it twice —
-the second one waits for the first to finish before it even looks at
-what's pending.
+`migrate` and `migrate:rollback` hold a cross-process advisory lock for
+the whole run, so two deploy instances starting at the same time cannot
+both compute the same pending set and run it twice: the second waits for
+the first to finish before it looks at what is pending. Waiting longer
+than 10 seconds throws `Exception\MigrationLockTimeoutException`, most
+often meaning another `migrate` or `migrate:rollback` is still running
+elsewhere; retry once it finishes.
 
-The lock is scoped to your database session, not a row in a table, so it
-releases on its own the moment the connection holding it closes —
-gracefully or not — with nothing to clean up by hand if a process is
-killed mid-migration. Session scope is also why the `migrate*` commands
+The lock belongs to the database session, so it releases on its own when
+the connection holding it closes — gracefully or not — with nothing to
+clean up if a process is killed mid-migration. That is why the commands
 connect through `ConnectionFactory::singleSession()`, over PDO whatever
-`DB_DRIVER` says: one session, held for the whole run, where the pooling
-drivers could acquire and release the lock on two different ones. If the
-session goes — a migration abandoning a transaction is enough — that
-single-session client closes instead of opening a replacement, and the
-run stops there with `Kinetis\Persistence\Exception\ConnectionException`
-rather than carrying on unlocked. These commands are serial, so blocking
-on a query costs them nothing. Waiting longer than 10 seconds throws
-`Exception\MigrationLockTimeoutException`, most often meaning another
-`migrate`/`migrate:rollback` is already running elsewhere; retry once it
-finishes.
+`DB_DRIVER` says. If that session is lost mid-run, a migration
+abandoning a transaction being enough, the run stops with
+`Kinetis\Persistence\Exception\ConnectionException` rather than carrying
+on unlocked. {ref}`database-reference-single-session` describes the
+client.
 
 ## See also
 
-- {doc}`query-builder` — a fluent builder for querying the tables these
-  migrations create, on the same MySQL/Postgres connections.
-- {doc}`persistence` — the drivers, the single-session client, and the
-  `kinetis/database-bridge` connection policy the `migrate*` commands
-  build on.
-- {doc}`config` — the `.env`/environment convention `migrate` reads its
-  connection details from.
+- {doc}`query-builder` — querying the tables these migrations create, on
+  the same MySQL/PostgreSQL connections.
+- {doc}`persistence` — the `DB_*` connection the `migrate*` commands
+  read.
+- {doc}`config` — the `.env`/environment convention and named
+  connections.

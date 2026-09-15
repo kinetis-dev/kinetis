@@ -1,41 +1,14 @@
-# Search
+# Appendix: Search contracts
 
-````{note}
-Not part of core. Install the package for the engine you run:
-
-```{code-block} sh
-composer require kinetis/search-opensearch
-composer require kinetis/search-elasticsearch
-```
-
-Each one brings `kinetis/search`, which this page describes.
-````
-
-Kinetis talks to two search engines, OpenSearch and Elasticsearch, and
-`kinetis/search` is what they have in common: the HTTP transport their
-clients are built on, the configuration keys that transport reads, and a
-narrow client interface an application can hold instead of an engine's
-own. Every request either engine makes runs without blocking the rest of
-your application.
-
-Install one engine package. It binds that engine's real client —
-`OpenSearch\Client` or `Elastic\Elasticsearch\Client` — and
-`Kinetis\Search\SearchClient` over it, so a controller, command, or
-queued job constructor-injects whichever of the two it wants.
-
-## Choosing an engine
-
-{doc}`search-opensearch` builds a real `OpenSearch\Client`, and is what
-Amazon OpenSearch Service and self-hosted OpenSearch clusters speak.
-{doc}`search-elasticsearch` builds a real `Elastic\Elasticsearch\Client`,
-and is what Elastic Cloud and self-hosted Elasticsearch clusters speak.
-A cluster answers one of the two; the engine you already run decides the
-package.
+The configuration, client and transport contracts behind {doc}`search-engines`.
+Start with the guide to install an engine, index a document and search it.
 
 Installing both is possible — two named connections against two
 clusters, or a migration in progress — but then both bootstraps bind
 `SearchClient`, and the last one registered wins. Bind it yourself in
 `bootstrap.php` to say which engine owns it.
+
+(search-reference-config)=
 
 ## Configuring
 
@@ -89,6 +62,8 @@ cluster frequently needs this.
 Each engine adds what only it has: Elasticsearch's API-key keys are on
 {doc}`search-elasticsearch`.
 
+(search-reference-named)=
+
 ### Named connections
 
 ```{code-block} php
@@ -104,6 +79,8 @@ Same convention as everywhere else in Kinetis (see {doc}`config`):
 right after the first segment of the key instead. A package bootstrap
 binds the default connection only; a named one is explicit application
 wiring.
+
+(search-reference-client)=
 
 ## One client for either engine
 
@@ -201,6 +178,8 @@ a generator: both engines refuse an empty `_bulk` body, and the request
 is built as one string either way, so nothing here streams. A caller with
 nothing to write skips the call.
 
+(search-reference-failures)=
+
 ## Failures
 
 Four exceptions belong to `kinetis/search`.
@@ -262,12 +241,108 @@ reason {ref}`why-the-client-is-short-lived` gives; {doc}`telemetry`
 decorates the transport and binds a client per resolution over it
 instead.
 
+
+## Elasticsearch client internals
+
+### What this package pins on the official client
+
+Three of `ClientBuilder`'s own settings are not used, and
+one default is replaced. Each is a guarantee the rest of Kinetis makes.
+
+**No retry.** `Elastic\Transport\Transport` catches PSR-18's
+`NetworkExceptionInterface` and re-sends the request, and `ClientBuilder`
+otherwise leaves one retry armed. A deadline or a dropped connection
+part-way through an `index` or `bulk` request has an unknown dispatch
+outcome, and re-sending it can write the document twice, so retries are
+pinned to zero on the built transport. A request that never completed
+therefore surfaces as
+`Elastic\Transport\Exception\NoNodeAvailableException` with this
+project's own `SearchNetworkException` as its previous, where the reason
+and the request are.
+
+**One node, always in service.** The node pool is this package's
+`SingleNode` rather than Elasticsearch's `SimpleNodePool`. That default
+marks the node it failed on dead and never revives it, which for a
+one-node client would mean one dropped connection ends searching for as
+long as that client lives.
+
+**Credentials outside the URL.**
+`ClientBuilder::setBasicAuthentication()` is never called: it reaches
+`Transport::setUserInfo()`, which puts the credentials into the request
+URI's userinfo, where a transport error message can quote them. Basic
+credentials stay in the HTTP client's own option — which is also why
+`SEARCH_ELASTICSEARCH_HOST` refuses a host carrying userinfo.
+
+**TLS on the transport.** No `setSSLVerification()`, `setCABundle()` or
+`setSSLKey()` call is made; `ClientBuilder` routes those through an
+adapter chosen by the HTTP client's class name and rejects one it does
+not recognize. TLS is configured by `SEARCH_ELASTICSEARCH_VERIFY_PEER`.
+
+(why-the-client-is-short-lived)=
+
+### Why the client is short-lived
+
+`Elastic\Transport\Transport` keeps the last request and the last
+response it saw, for `getLastRequest()` and `getLastResponse()`, and
+`Client::setAsync()` is a mode any holder can flip. A single client for
+the whole worker would therefore hold one request's documents and its
+search results — up to `SEARCH_ELASTICSEARCH_MAX_RESPONSE_BYTES` of
+them — until the next search displaced them, which is request-owned state
+outliving its request.
+
+So the binding is not shared: the transport, which owns the connection
+pool and keeps nothing per call, is built once for the worker, and each
+resolution builds its own client over it. A client holds no connection,
+so this costs a few objects and no I/O.
+`ElasticsearchClientFactory::over()` is that seam if you wire the client
+yourself.
+
+A client then lives exactly as long as whatever resolved it. A controller
+or queued job, resolved per request, lets its client go with the request.
+A service that is itself worker-lifetime and injects the client once
+keeps that one alive — and with it the last request it made — so such a
+service should resolve a client per operation instead.
+
+{doc}`search-opensearch` binds one shared client instead: OpenSearch's
+`HttpTransport` keeps nothing between calls, and its endpoint factory
+builds a fresh endpoint per call.
+
+### The product check
+
+Elasticsearch's client verifies an `X-Elastic-Product: Elasticsearch`
+response header on every successful response and raises
+`Elastic\Elasticsearch\Exception\ProductCheckException` without it. That
+check is the library's own and reaches it intact, so pointing this
+package at an OpenSearch cluster fails loudly rather than half-working.
+Use {doc}`search-opensearch` for OpenSearch.
+
+## OpenSearch client internals
+
+### How the client is built
+
+`OpenSearchClientFactory::fromConfig()` goes through OpenSearch's own
+`TransportFactory`/`HttpTransport` path, whose
+`setHttpClient()` takes a PSR-18 client — the non-deprecated
+construction path, unlike the older `ClientBuilder`/`Transport`/
+`ConnectionPool` stack, which has no such injection point. The endpoint
+factory, serializer, request building and response mapping all stay the
+official client's, and every status OpenSearch answers with —
+`NotFoundHttpException`, `ConflictHttpException`,
+`UnauthorizedHttpException` and the rest — is raised by `opensearch-php`,
+unchanged.
+
+One detail is this package's: OpenSearch's own request building never
+sets a `Content-Type`, relying on the HTTP client to default a string
+body to JSON, while Symfony's clients default an unmarked string body to
+`application/x-www-form-urlencoded`, which a node answers with `406`. The
+transport sets `application/json` on every request, and no OpenSearch
+request replaces it: a `_bulk` body travels as NDJSON lines under that
+JSON header, which the engine's bulk handler accepts and this package's
+real-cluster checks exercise.
+
 ## See also
 
-- {doc}`search-opensearch` — the OpenSearch engine package.
-- {doc}`search-elasticsearch` — the Elasticsearch engine package.
-- {doc}`revolt-http-client` — the non-blocking HTTP client every search
-  request is built on.
-- {doc}`config` — the named-connection convention used above.
-- {doc}`telemetry` — OpenTelemetry spans over the `transportDecorator`
-  seam above.
+- {doc}`search-engines` — install, configure, index and query.
+- {doc}`search-opensearch` and {doc}`search-elasticsearch` — engine setup.
+- {doc}`revolt-http-client` — the non-blocking HTTP client behind each engine request.
+- {doc}`config` — all search configuration keys.
