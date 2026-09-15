@@ -35,25 +35,18 @@ final readonly class OrderController
 }
 ```
 
-## The accepted `Authorization` header
-
-`Kinetis\Http\Auth\AuthorizationToken68Parser` (core) parses the header,
-called with the `Bearer` scheme — the same class {doc}`auth-jwt`'s
-`JwtAuthMiddleware` uses, so both packages accept identical input rather
-than risking two independently-drifting parsers. The scheme is matched
-case-insensitively; the separator between scheme and credential must be
-one or more literal space characters (a tab or other whitespace doesn't
-count); the credential itself must consist only of the RFC 6750
-`b64token` characters (`A-Za-z0-9-._~+/`) with `=` padding allowed only
-as a trailing run. A request with anything other than exactly one
-`Authorization` header line is rejected too — two lines are ambiguous,
-not a value to comma-join and hope. Any of this failing is
-indistinguishable from an unknown token: the same generic `401`.
-
 ## `UserProviderInterface`
 
 The one thing your app implements — resolving a raw token to a user, or
 `null` if it doesn't match anything:
+
+The database example below also needs `kinetis/database-bridge` and
+`kinetis/query-builder`. Install them and configure `DB_CONNECTION=mysql`
+and its credentials as shown in {doc}`persistence`.
+
+```{code-block} sh
+composer require kinetis/database-bridge kinetis/query-builder
+```
 
 ```{code-block} php
 use Kinetis\Auth\UserProviderInterface;
@@ -97,11 +90,23 @@ final readonly class DatabaseUserProvider implements UserProviderInterface
 }
 ```
 
-Register it once, against the interface:
+Bind it once, against the interface, in `bootstrap.php`:
 
 ```{code-block} php
-$app->instance(UserProviderInterface::class, new DatabaseUserProvider($db));
+:caption: bootstrap.php
+
+use Kinetis\Auth\UserProviderInterface;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+
+return static function (AppScope $app, Config $config): void {
+    $app->bind(UserProviderInterface::class, DatabaseUserProvider::class);
+};
 ```
+
+`DatabaseUserProvider` holds only the database connection, which is
+request-neutral, so one instance serves every request a worker handles.
+{doc}`bootstrapping` covers choosing that lifetime.
 
 ```{tip}
 Store `hash('sha256', $token)`, not the raw token, and look up by that
@@ -120,13 +125,17 @@ token, and route middleware only runs after a route has already matched,
 so there's no way for it to block an unmatched request the way global
 middleware could.
 
-On a missing, malformed, or unrecognized token it returns `401` directly,
-with a `WWW-Authenticate: Bearer` header, before your controller ever
-runs:
+On a missing token, a malformed header, or an unrecognized token it
+returns `401` directly, with a `WWW-Authenticate: Bearer` header, before
+your controller ever runs:
 
 ```{code-block} json
 {"error": "Unauthenticated."}
 ```
+
+The request must carry exactly one `Authorization` header in the
+`Bearer <token>` form; {ref}`auth-reference-authorization-header` has the
+exact grammar, shared with {doc}`auth-jwt`.
 
 On success it does the same thing a hand-written auth middleware would
 (see {doc}`middleware`'s "Registering a value the controller reads later"
@@ -236,6 +245,14 @@ burst of attempts spend every worker's CPU on hashing.
 `Kinetis\Security\AttemptThrottle` locks an identifier out after too many
 failures, backed by `Psr\SimpleCache\CacheInterface`:
 
+Install `kinetis/cache-redis` and configure `REDIS_HOST` or `REDIS_URL`
+as shown in {doc}`redis` before using the example. The throttle needs
+its atomic counter; a default `NullSimpleCache` cannot provide one.
+
+```{code-block} sh
+composer require kinetis/cache-redis
+```
+
 ```{code-block} php
 use Kinetis\Auth\TokenGenerator;
 use Kinetis\Http\Attributes\Body;
@@ -327,30 +344,27 @@ but worth knowing if you're relying on an active lockout surviving a
 deploy.
 ```
 
-````{note}
+```{note}
 **The cache must count atomically, and construction enforces it.**
-`AttemptThrottle` requires the given cache to implement
-`Kinetis\SimpleCache\AtomicCounterInterface` — `RedisSimpleCache` does,
-see {doc}`middleware`'s rate-limiting section for the
-`REDIS_URL`/`REDIS_HOST` configuration it reads — and
-throws `Exception\AttemptThrottleUnavailableException` at construction
-for any cache that doesn't, `NullSimpleCache` included.
+`AttemptThrottle` requires a cache implementing
+`Kinetis\SimpleCache\AtomicCounterInterface`. `RedisSimpleCache` does,
+once Redis is configured (see {doc}`redis`); any other cache,
+`NullSimpleCache` included, throws
+`Exception\AttemptThrottleUnavailableException` at construction.
 
-Without it, failures arriving together cannot be counted — every
-attempt reads the same value before any of them writes, so they
-register as one and the lockout never arms. That is the normal shape
-of the attack this class exists to stop: someone working through a
-password list sends attempts in parallel by default. Measured against
-a real Redis, 40 parallel wrong passwords recorded a **single**
-failure without this guard.
-````
+Without atomic counting, failures arriving together each read the same
+count before any of them writes, so they register as one and the lockout
+never arms. Parallel attempts are the normal shape of the attack this
+class exists to stop.
+```
 
 ## See also
 
 - {doc}`middleware` — `CurrentUserInterface`, the global-vs-route
   middleware distinction, and `RequestScope` self-injection.
-- {doc}`persistence` — `Query`/`TransactionGuard` for a database-backed
-  `UserProviderInterface`.
+- {doc}`persistence` and {doc}`query-builder` — the database connection
+  and `Query` behind a database-backed `UserProviderInterface`.
 - {doc}`auth-jwt` — stateless JWT verification instead, with no user
   storage of your own to implement: the signed claims carry the
   identity, and only optional per-token revocation touches a store.
+- {doc}`appendix-authentication` — the accepted `Authorization` header.

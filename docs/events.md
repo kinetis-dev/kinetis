@@ -215,7 +215,7 @@ exception stops the worker. A listener
 throwing is a best-effort observer failure, logged and otherwise
 ignored: it can never retroactively change what already happened to the
 job, and it can never stop the worker from processing the next one. See
-{doc}`queue`'s "Observers never decide or rewrite the outcome" for the
+{doc}`appendix-queue`'s "Observers never decide or rewrite the outcome" for the
 full contract, which applies to telemetry instrumentation the same way.
 
 ## See also

@@ -84,7 +84,7 @@ engine client itself.
 ## Configuration
 
 Every key is spelled with the engine's own prefix. Full reference:
-[kinetis.dev/docs/search.html](https://kinetis.dev/docs/search.html).
+[kinetis.dev/docs/search-engines.html](https://kinetis.dev/docs/search-engines.html).
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -118,7 +118,7 @@ composer require kinetis/search-elasticsearch  # Elasticsearch
 Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
 and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
-[kinetis.dev/docs/search.html](https://kinetis.dev/docs/search.html).
+[kinetis.dev/docs/search-engines.html](https://kinetis.dev/docs/search-engines.html).
 
 ## License
 

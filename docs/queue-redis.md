@@ -8,9 +8,8 @@ composer require kinetis/queue-redis
 ```
 ````
 
-Adds Redis as a backend for {doc}`queue`. Application code that already
-pushes and pops jobs through `QueueInterface` needs no changes at all to
-switch — only your configuration changes.
+Adds Redis as a backend for {doc}`queue`. Switching to it changes
+configuration, not application code.
 
 ```{code-block} text
 QUEUE_CONNECTION=redis
@@ -22,128 +21,88 @@ QUEUE_VISIBILITY_TIMEOUT_SECONDS=300
 vendor/bin/kinetis queue:work --queue=high,default
 ```
 
+## Redis transport and Cluster
+
+`kinetis/queue-redis` sends every command through `kinetis/redis`
+({doc}`redis`), which Composer installs with it: a transport that never
+re-sends a command whose reply it did not receive.
+
+`kinetis/redis` supports Redis Cluster for application use: its
+`ClusterClient` routes commands by slot (see
+[Redis Cluster](redis.md#redis-cluster)), and `kinetis/cache-redis`
+uses it under `REDIS_CLUSTER=true` (see {doc}`appendix-packages`).
+**This queue backend's supported connection is a
+single Redis node.** It does not read `REDIS_CLUSTER` or
+`REDIS_CLUSTER_SEEDS`, it requires `REDIS_URL` or `REDIS_HOST`, and it
+follows no cluster redirect, so point it at a standalone Redis server,
+not at a cluster. An application whose cache uses a cluster gives the
+queue its own server through a named connection:
+
+```{code-block} text
+REDIS_CLUSTER=true
+REDIS_CLUSTER_SEEDS=10.0.0.1:6379,10.0.0.2:6379,10.0.0.3:6379
+
+QUEUE_CONNECTION=redis
+QUEUE_CONNECTION_NAME=jobs
+REDIS_JOBS_HOST=queue-redis.internal
+```
+
 ## Configuring
 
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` is the one key this package
-introduces: how many seconds a reservation is leased before any worker
-may reclaim it. It defaults to 300 and must be a positive integer.
+Besides `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, the backend reads the `REDIS_*`
+keys the cache reads, scoped by `QUEUE_CONNECTION_NAME`: `REDIS_URL`, or
+`REDIS_HOST` with `REDIS_PORT` and `REDIS_DATABASE`; `REDIS_PASSWORD`;
+`REDIS_TIMEOUT`; and `REDIS_TLS`, `REDIS_TLS_VERIFY_PEER` and
+`REDIS_TLS_CA_FILE`. {doc}`config` lists their defaults. The queue opens
+its own connection rather than sharing the cache's, so `REDIS_TIMEOUT` is
+its own per-command budget.
 
-Every other setting this backend reads is a `REDIS_*` one
-`RedisSimpleCache` ({doc}`persistence`) already reads, `REDIS_TLS*`
-included, scoped by `QUEUE_CONNECTION_NAME` the same way as everywhere
-else in Kinetis. `REDIS_CLUSTER` is not among them: this backend is
-single-node. The queue opens its own connection over {doc}`redis`'s
-transport rather than sharing the cache's, so its operation budget is
-`REDIS_TIMEOUT` and its connection lifetime is its own.
+## Lease timeout
 
-## A crashed worker's job comes back
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` (default `300`, at least `1`) is how
+long a popped job stays leased to its worker. When a worker dies before
+settling a job, any worker's next `pop()` on that queue takes the job
+back once the lease expires, with its attempt count increased. No
+separate reaper process runs.
 
-A naive Redis list `pop()` removes the item at pop time — if a worker
-crashed mid-job, it would just be gone, with no way to detect or retry
-it. This backend reserves under a finite lease instead. Each queue has
-three keys: a `pending` list, a `delayed` sorted set scored by ready-at
-time, and a `leased` sorted set scored by lease expiry. `pop()` adds the
-exact envelope it is about to hand out to `leased` with an expiry of
-`QUEUE_VISIBILITY_TIMEOUT_SECONDS` from now, and only then removes it
-from `pending` — that order is what makes a failure on the leased key
-leave the sole pending copy intact.
+A lease is never renewed. Set the timeout above your slowest job: a job
+still running when its lease expires runs again beside the first.
+[Redis mechanisms](appendix-queue.md#redis) describes the lease
+algorithm.
 
-Expiries are compared against Redis's own `TIME`, so every worker shares
-one lease clock regardless of its own. Any worker's `pop()` reclaims
-expired leases for the queues it is asked for, so a job whose worker died
-before `ack()`/`release()`/`fail()` is redelivered with `attempts`
-incremented. There is no reaper process.
+## When a Redis command fails
 
-Every state transition that could otherwise lose or duplicate a job —
-reservation, `release()`, reclaim, and delayed-job promotion — runs as a
-single Lua script, which Redis executes as one indivisible unit, so a
-process crash can never land between the halves of a move. Reclaim and
-`release()` are conditional as well as indivisible: each checks that the
-exact old member is still leased before writing its replacement, so two
-sweepers racing, or a sweep racing a settlement, produce one winner
-rather than a duplicate.
-
-The leased member is the exact envelope string handed back as
-`QueuedJob::$handle`, and a reclaim rewrites it with the incremented
-attempt count. That makes the handle a fence: `ack()`, `release()` and
-`fail()` act only on that exact member, so a settlement for a delivery
-that has already been settled or reclaimed — a duplicate call, or a retry
-after a connection failure whose server-side outcome wasn't known —
-throws `Kinetis\Queue\Exception\StaleJobHandleException` and writes
-nothing. `QueueWorker` keeps running and reports the lost delivery — see
-{doc}`queue`'s "When a settlement is lost".
-
-Expired leases are swept in bounded batches
-(`RedisQueue::LEASE_RECLAIM_BATCH_SIZE`, currently 100) for the same
-reason promotion is. An abandoned lease whose envelope no longer decodes
-is settled as poison data through
-`Kinetis\Queue\QueueContract::settleIfMalformed()`, so it is removed
-rather than reclaimed forever.
-
-A lease is never renewed. A job still running when its lease expires can
-execute alongside its replacement, so set the timeout above the slowest
-job you expect and keep handlers idempotent. `maxAttempts` bounds a
-handler that throws; it cannot bound a succession of processes that each
-die during execution.
-
-Delayed-job promotion also bounds how much it moves in one call
-(`RedisQueue::DELAYED_PROMOTION_BATCH_SIZE`, currently 100) — a large
-ready backlog is promoted in batches across successive polls rather than
-inside one Lua script, since Redis executes one command at a time and an
-unbounded promotion would stall every other client sharing that Redis
-for its full duration.
+A command whose reply never arrives raises
+`Kinetis\Redis\Exception\OutcomeUnknown`, and the transport never sends
+it again. From `push()`, the job may be queued. From `pop()`, a job may
+stay leased to no worker until its lease expires. From `ack()`,
+`release()` or `fail()`, the settlement may or may not have happened and
+the job may run again. `Kinetis\Redis\Exception\ConnectionFailed` means
+the command never reached Redis. Raised inside `queue:work`, either
+exception stops the worker.
 
 ## Clearing a queue
 
-`RedisQueue` declares `Kinetis\Queue\ClearableQueueInterface` (see
-{doc}`queue`'s "Clearing is a separate capability"). Clearing counts and
-removes the queue's pending and delayed entries in one Lua script, so
-the number it reports is what it removed rather than a count a
-concurrent push could have moved underneath it. Live leases are
-untouched — they are work a running worker still owns. `size()` counts
-pending, delayed and expired leases, and not live ones.
+`RedisQueue` declares `ClearableQueueInterface` (see {doc}`queue`'s
+"Clearing is a separate capability"). Clearing removes a queue's pending
+and delayed jobs and reports how many; jobs leased to a running worker
+are untouched. `queue:stats` counts pending jobs, delayed jobs and
+expired leases.
 
-## Delayed jobs
+## Delays and retries
 
-```{code-block} php
-$this->queue->push(new SendReminderEmail($userId), delaySeconds: 3600);
-```
-
-Checked on this backend's own polling cycle rather than firing at the
-exact moment the delay ends, so a delayed job can run slightly later
-than its exact target time — typically by a few seconds, not less.
-
-## Retries and giving up
-
-Everything {doc}`queue` documents about `maxAttempts`, `QUEUE_MAX_ATTEMPTS`,
-and the log entry written when a job is finally given up on works
-identically here — nothing about retry behavior changes by switching to
-this backend.
-
-## Named connections
-
-```{code-block} text
-QUEUE_CONNECTION_NAME=reports
-REDIS_REPORTS_HOST=127.0.0.1
-```
-
-Same convention as everywhere else in Kinetis (see {doc}`config`):
-`QUEUE_CONNECTION_NAME` picks which named block of `REDIS_*` settings a
-worker reads, and `'default'` (or simply not setting it) reads the plain
-keys shown earlier in this page.
-
-## If the package isn't installed
-
-Setting `QUEUE_CONNECTION=redis` without having run
-`composer require kinetis/queue-redis` produces a clear error telling you
-which package to install, rather than a confusing crash.
+A delayed job becomes available on the first `pop()` sweep after its
+delay elapses, so it runs late while every worker is busy. The delay is
+measured with the clocks of the pushing and popping hosts, so keep them
+synchronized; lease expiry uses the Redis server's clock. Retries follow
+{doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS`, and immediate release.
 
 ## See also
 
-- {doc}`queue` — writing jobs, pushing and popping, and everything about
-  retries that applies to every backend equally.
-- {doc}`persistence` — the `REDIS_*` configuration convention this
-  backend reuses.
-- {doc}`redis` — the transport underneath: what a failed command's
-  outcome means, and why one is never re-sent.
-- {doc}`config` — the named-connection convention used above.
+- {doc}`queue` — jobs, workers, retries and delivery guarantees.
+- {doc}`appendix-queue` — the lease algorithm and delivery contracts.
+- {doc}`redis` — the transport, Redis Cluster, and what a failed
+  command's outcome means.
+- {doc}`appendix-packages` — `kinetis/cache-redis`, the cluster-capable
+  cache that reads the same `REDIS_*` keys.
+- {doc}`config` — named connections and every `REDIS_*` key.

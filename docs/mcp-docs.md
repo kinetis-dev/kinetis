@@ -1,144 +1,100 @@
 # MCP Documentation Server
 
-````{note}
-A standalone package, and not part of core. It depends on no Kinetis
-package at all — including {doc}`kinetis/mcp <mcp>`.
+`kinetis/mcp-docs` is an MCP server that serves every page of this
+documentation as a resource, so a coding agent reads Kinetis's current
+documentation instead of answering from training data. It runs beside
+your MCP client, not inside your application: it depends on no Kinetis
+package, including {doc}`kinetis/mcp <mcp>`, exposes no tools, and
+knows nothing about your code. To let an agent call your own
+application, see {doc}`mcp`.
 
-```{code-block} sh
-composer require kinetis/mcp-docs
-```
-````
+## Set up for Claude Code or Codex
 
-`kinetis/mcp-docs` serves every page of this documentation site as an
-MCP resource, so an agent working in any codebase can read Kinetis's own
-documentation rather than answering from training data. It is the
-counterpart to {doc}`mcp`, which exposes *your* application's tools and
-resources: this package exposes only these pages, and installing it in a
-Kinetis project is neither required nor useful.
-
-## Setup
-
-One command installs the server into its own directory and registers it
-with Claude Code:
+For Claude Code:
 
 ```{code-block} sh
 curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/packages/mcp-docs/setup.sh | bash
 ```
 
-Pass `codex` to register it with Codex instead:
+For Codex:
 
 ```{code-block} sh
 curl -fsSL https://raw.githubusercontent.com/kinetis-dev/kinetis/main/packages/mcp-docs/setup.sh | bash -s codex
 ```
 
-The script needs a running Docker daemon and the chosen client's CLI on
-your `PATH` — no PHP or Composer of your own, and no `sudo`. It installs
-`kinetis/mcp-docs` from Packagist into `~/.kinetis-mcp-docs` (override
-with `KINETIS_MCP_DOCS_DIR`), verifies the server over a real handshake
-run through the same command it registers, and registers that command
-with the one client you named. Every Docker step runs as your own user
-id and group id, so nothing it writes is owned by root.
+The script needs:
 
-The target directory must be empty, or already carry the marker file
-the script writes into the installs it owns: a regular file holding
-exactly the one line it writes there. The name alone proves nothing, so
-a symlink, a directory or different content under that name is refused
-rather than reused — a mistyped `KINETIS_MCP_DOCS_DIR` never has a
-`composer.json` written over it.
+- a running Docker daemon;
+- the `claude` or `codex` CLI on your `PATH`;
+- network access to Docker Hub, Packagist and GitHub.
 
-The registered command is the package's own `start.sh`: it looks for a
-newer release, at most once a day, and then hands stdin and stdout to
-the server. A spawn inside that window starts immediately, a failed
-check still starts the installed server, and only a successful update
-moves the timestamp, so the next spawn retries rather than waiting out
-the rest of the window. The check and any update it runs hold an
-exclusive lock on the install directory, so a spawn arriving while
-another one is updating waits for it and starts from the finished tree.
+It needs no PHP, Composer or `sudo`: the install and the server both run
+in the `composer:2` image as your own user.
 
-The setup script holds that same lock across its install, from the first
-write to `composer.json` through the end of `composer install`, and an
-install that succeeded stamps the timestamp. A session spawned while a
-setup is running waits for a finished tree, and the first one after it
-starts without a check of its own.
+The script installs the package into `~/.kinetis-mcp-docs`, checks that
+the server answers through the exact command it registers, and
+registers that command as `kinetis-docs` — at user scope in Claude Code.
+Start a new session to use it. Set `KINETIS_MCP_DOCS_DIR` to install
+elsewhere; the directory must be empty or an earlier install made by
+this script. Running the script again reinstalls in place.
+
+Each session start checks for a newer `1.x` release at most once a day,
+and a failed check still starts the installed server.
+{doc}`appendix-mcp-docs` covers the directory marker, locking and the
+update lifecycle.
 
 ## Running it directly
 
-The package ships one binary, which speaks JSON-RPC over stdin and
-stdout:
+Install the package with Composer, on PHP 8.4 or later:
 
 ```{code-block} sh
+composer require kinetis/mcp-docs
 php vendor/bin/kinetis-mcp-docs
 ```
 
-Register that command with any MCP client that launches a server as a
-subprocess. It reads one message per line, writes one response per line,
-and ends when its input closes. Diagnostics go to stderr; stdout carries
-nothing but protocol frames.
-
-## What it implements
-
-Protocol revisions `2024-11-05`, `2025-03-26`, `2025-06-18` and
-`2025-11-25`. `initialize` answers with the client's own version when it
-is one of those, and with `2025-11-25` when it is not.
-
-| Method | Behavior |
-| --- | --- |
-| `initialize` | Declares the `resources` capability and names the server. |
-| `notifications/initialized` | Accepted, and answered with nothing, as a notification is. |
-| `ping` | An empty result. |
-| `resources/list` | The whole catalogue in one response; no cursor is ever issued. |
-| `resources/read` | The named page's markdown as `text/markdown`. |
-
-Anything else is `-32601`. A batch — a JSON array at the top level — is
-`-32600`: it is not implemented, and it carries no id to answer under.
-A malformed line is `-32700`, a malformed envelope or parameter is
-`-32600`/`-32602`, a URI outside the catalogue is `-32002`, and a page
-that could not be read is `-32603`, with the URL and the real reason
-going to stderr rather than into the response.
-
-`params` must be an object whenever it is present. A JSON array is a
-params shape JSON-RPC itself allows, but every method here takes named
-parameters, so an array, a scalar or an explicit `null` is `-32602`.
-
-Every code above answers a *request*. A notification — `jsonrpc`, a
-string `method`, and no `id` at all — draws no line back under any of
-them, including for an unknown method or a `params` shape a request
-would be refused for: JSON-RPC 2.0 leaves its sender no response to
-read an error from, and a frame a client has no outstanding request to
-match is one a strict client can desynchronize on. A message that fails
-the envelope check is not a notification — a missing `id` says nothing
-in an envelope that could not be read — and still answers with its
-`-32600` or `-32700` under a null id.
+Register `vendor/bin/kinetis-mcp-docs` with any MCP client that launches
+a stdio server as a subprocess. It speaks protocol revisions
+`2024-11-05` through `2025-11-25`, reads one JSON-RPC message per line on
+stdin, writes one response per line on stdout, and exits when its input
+closes. Diagnostics go to stderr.
 
 ## Resources
 
-Each page is one resource, at `kinetis://docs/<slug>`, where the slug is
-the page's own file name — `kinetis://docs/routing-validation` for
-{doc}`routing-validation`, `kinetis://docs/queue-sql` for
-{doc}`queue-sql`, and so on for every page in the sidebar.
+Each page is one resource at `kinetis://docs/<slug>`, where the slug is
+the page's file name: `kinetis://docs/routing-validation` is
+{doc}`routing-validation`, and `kinetis://docs/queue-sql` is
+{doc}`queue-sql`. `resources/list` returns every page, and
+`resources/read` returns one:
 
-The catalogue is a fixed list in the package, since the package ships no
-copy of the documentation. A repository test pairs that list against
-this site's own pages, so a page added here without an entry — or an
-entry naming a page that no longer exists — fails the suite.
+```{code-block} sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"kinetis://docs/routing-validation"}}' \
+    | php vendor/bin/kinetis-mcp-docs
+```
+
+The response is one line whose `result.contents[0].text` is the page's
+markdown, with `mimeType` `text/markdown`.
+
+The list of pages is fixed in each release of the package; the server
+does not discover pages. A page added to the site after your installed
+release is not listed until the package is updated, and a URI outside
+the list is refused.
 
 ## How a page is read
 
-`resources/read` fetches the page's published markdown from the
-`kinetis-dev/kinetis` monorepo's `main` branch over HTTPS, and returns
-it as-is: real MyST source, not rendered HTML or a summary. There is no
-origin, ref or path to configure, no local copy to prefer, and nothing
-cached between calls, so a read always returns what `main` carries at
-that moment. The one consequence worth knowing: the server describes
-`main`, which can be slightly newer than an older pinned install of the
-framework.
+Every `resources/read` fetches the page from the `main` branch of the
+`kinetis-dev/kinetis` repository over HTTPS and returns its MyST
+markdown source as published — not rendered HTML, not a summary. There
+is no source, branch or path to configure, no local copy, and no cache,
+so a read returns what `main` holds at that moment. That can describe
+behavior newer than the Kinetis release your project pins.
 
-The request verifies TLS, follows no redirect, is bounded by both an
-idle timeout and a total deadline, and streams the body so a response
-past 4 MB is abandoned rather than accumulated.
+A page that cannot be fetched answers a JSON-RPC error, and the URL and
+reason go to stderr. The fetch's TLS, redirect, timeout and size limits
+are in {doc}`appendix-mcp-docs`.
 
 ## See also
 
 - {doc}`mcp` — the MCP server for your own application's tools and
-  resources, over stdio and HTTP.
-- {doc}`cli` — `kinetis mcp:serve`, that server's own stdio transport.
+  resources.
+- {doc}`appendix-mcp-docs` — installer, update, protocol and fetch
+  mechanics.

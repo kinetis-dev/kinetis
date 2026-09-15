@@ -8,171 +8,94 @@ composer require kinetis/storage-s3
 ```
 ````
 
-Adds Amazon S3 (and S3-compatible services) as a second storage option
-for {doc}`storage`, alongside local disk — installing `kinetis/storage-s3`
-brings `kinetis/storage` in with it as a real dependency, so
-`Kinetis\Storage\FilesystemFactory` (below) is available with nothing
-else to install.
+Adds Amazon S3 and S3-compatible services as a backend for
+{doc}`storage`. The package brings `kinetis/storage` with it, and
+application code keeps injecting the same `FilesystemOperator`; only
+configuration changes. Every S3 call travels on the Revolt-native
+transport from {doc}`revolt-http-client`, so it suspends the calling
+Fiber instead of blocking the worker.
 
-```{code-block} php
-use Kinetis\Storage\FilesystemFactory;
-
-$storage = FilesystemFactory::fromConfig($config); // FILESYSTEM_DRIVER=s3
-
-$storage->write('avatars/user-42.png', $imageContents);
-$contents = $storage->read('avatars/user-42.png');
-$storage->delete('avatars/user-42.png');
-```
-
-Application code that already uses `$storage` needs no changes at all to
-switch from local disk to S3 — only your configuration changes. Every S3
-call travels on the Revolt-native transport from
-{doc}`revolt-http-client`, so it suspends the calling Fiber rather than
-blocking the worker.
-
-## Configuring
+## Configure
 
 ```{code-block} text
+:caption: .env
 FILESYSTEM_DRIVER=s3
 FILESYSTEM_S3_BUCKET=my-app-bucket
 FILESYSTEM_S3_REGION=us-east-1
 ```
 
-`FILESYSTEM_S3_BUCKET` and `FILESYSTEM_S3_REGION` are required — there's
-no sane default to guess for either. Credentials need nothing
-Kinetis-specific set up at all — see Credentials below.
+`FILESYSTEM_S3_BUCKET` and `FILESYSTEM_S3_REGION` are required. The
+optional keys:
 
-Four optional settings:
+| Key | Default | Purpose |
+|---|---|---|
+| `FILESYSTEM_S3_PREFIX` | — | Key prefix for every object, so a shared bucket keeps one application's files together. |
+| `FILESYSTEM_S3_ENDPOINT` | — | An S3-compatible service such as MinIO. One origin — scheme, host and optional port — addressed path-style. |
+| `FILESYSTEM_S3_PLAINTEXT` | `false` | Allows an `http://` endpoint. |
+| `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds for each S3 request. |
+
+With `FILESYSTEM_S3_ENDPOINT` unset, requests go to AWS's regional
+endpoint, and an `AWS_ENDPOINT_URL` set in the environment for another
+tool is refused rather than followed. Name a non-AWS endpoint here.
+
+Plain HTTP carries credentials and object data unencrypted, so enable
+`FILESYSTEM_S3_PLAINTEXT` only on a private network, such as MinIO
+beside the application on one Compose network:
 
 ```{code-block} text
-FILESYSTEM_S3_PREFIX=app-data
-FILESYSTEM_S3_ENDPOINT=https://s3.example-compatible.com
-FILESYSTEM_S3_PLAINTEXT=false
-FILESYSTEM_S3_TIMEOUT=60
+:caption: .env
+FILESYSTEM_DRIVER=s3
+FILESYSTEM_S3_BUCKET=app
+FILESYSTEM_S3_REGION=us-east-1
+FILESYSTEM_S3_ENDPOINT=http://minio:9000
+FILESYSTEM_S3_PLAINTEXT=true
+AWS_ACCESS_KEY_ID=minio-user
+AWS_SECRET_ACCESS_KEY=minio-password
 ```
 
-`FILESYSTEM_S3_PREFIX` puts everything under a key prefix within the
-bucket, so a shared bucket can still keep an app's files together.
-
-`FILESYSTEM_S3_ENDPOINT` points at an S3-compatible service instead of
-AWS S3 (MinIO, for example). It is one origin — a scheme, a host and an
-optional port, with no userinfo, path, query or fragment — and anything
-else is refused when the filesystem is built. An explicit endpoint is
-addressed path-style (`https://endpoint/bucket/key`), because a service
-on a fixed hostname cannot offer the bucket as a DNS label the way AWS's
-own virtual-hosted style needs. Leave the key unset and the destination
-is AsyncAws's regional endpoint table; an `AWS_ENDPOINT_URL` sitting in
-the environment for some other tool is refused rather than quietly
-redirecting this application's objects, so name the endpoint here when
-you want one.
-
-`FILESYSTEM_S3_PLAINTEXT=true` is what allows an `http://` endpoint.
-`http://minio:9000` between containers on one Compose network is
-ordinary; a public plain-HTTP endpoint carrying credentials and object
-data is not, and nothing in the hostname tells those apart, so the
-decision is yours to record.
-
-`FILESYSTEM_S3_TIMEOUT` (seconds, default `60`) bounds each S3 request on
-its own — connect, idle and total transfer alike. It is not one deadline
-across a Flysystem operation that issues several requests, such as
-`deleteDirectory()` — see Deleting a directory below. A request is one
-wire attempt — no retry, and no redirect followed.
-
-## Visibility
-
-Objects are private. Writes and copies carry no ACL at all, not even the
-`private` one Flysystem's S3 adapter defaults to, so a bucket with Object
-Ownership set to bucket owner enforced — where any request carrying an
-ACL is rejected outright — works unchanged. A `['visibility' => 'public']`
-write is refused before it leaves the process, and `copy()` and `move()`
-read no ACL from the source object.
-
-`setVisibility()` reaches S3's `PutObjectAcl` as the vendor adapter
-writes it, so a bucket with ACLs disabled rejects it. Grant public read
-through a bucket policy instead.
-
-## Failure reporting
-
-S3 answers some failures with HTTP 200 and an error document: a copy that
-broke partway through, and a batch delete where individual keys were
-refused. Kinetis reads both, so `copy()` raises `UnableToCopyFile`, a
-`move()` whose copy failed raises `UnableToMoveFile` without deleting the
-source, and `deleteDirectory()` raises `UnableToDeleteDirectory` rather
-than reporting a prefix that still holds objects as gone.
-
-`fileExists()` reports absence from a `HeadObject`, which S3 answers with
-`403 Forbidden` instead of `404 Not Found` for a key the caller cannot
-see. The adapter reads that as "no such file", so grant `s3:ListBucket`
-on the bucket alongside `s3:GetObject` wherever an absence check has to
-be trustworthy.
-
-## Deleting a directory
-
-`deleteDirectory()` lists the prefix one page of at most 1,000 keys at a
-time and deletes that page with one `DeleteObjects` request before
-requesting the next page by its continuation token, so it holds no more
-than 1,000 key identifiers however large the prefix is. Each listing and
-each delete gets the full `FILESYSTEM_S3_TIMEOUT`; there is no deadline
-across the whole operation.
-
-The sweep follows the continuation tokens once and is not atomic. When a
-listing or a delete fails, `deleteDirectory()` raises
-`UnableToDeleteDirectory`. Batches confirmed before the failure stay
-deleted, and the failed delete itself may have been applied, because its
-response can be lost after S3 acted on it. The exception's `reason()`
-says whether at least one batch was confirmed complete; in either case
-the directory may be partially deleted. A key written under the prefix
-while the sweep runs can survive it.
+A second connection, S3 or local, uses the scoped `FILESYSTEM_{NAME}_*`
+keys described in {doc}`storage`.
 
 ## Credentials
 
-Credentials resolve through AsyncAws's standard providers, in its
-standard order: environment variables (including the STS assume-role that
-`AWS_ROLE_ARN` selects), web identity, the shared credentials and config
-files, ECS or EKS pod identity, then IMDS. The first that answers with
-unexpired credentials wins; an expired answer is passed over like an
-absent one. There is nothing to configure.
+Kinetis reads no credential keys of its own. Credentials come from AWS's
+standard chain: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (or an
+`AWS_ROLE_ARN` role), web identity, the shared credentials and config
+files, ECS or EKS pod identity, then the instance role. In production,
+prefer the role your platform attaches over static keys.
+{doc}`appendix-storage` states the resolution order, what is cached, and
+which lookups block.
 
-Every provider in that chain that calls AWS uses the same Revolt
-transport as the client itself, so an assume-role or an IMDS lookup
-suspends the calling Fiber like any other call. The shared credentials
-file, the shared config file and any web-identity or pod-identity token
-file are read with native blocking calls, on first resolution and again
-on each refresh.
+## Visibility
 
-Resolved credentials are held for reuse while they remain unexpired.
-Nothing else is: a round that resolved nothing usable leaves no record of
-having failed, so the next call runs every provider again — an instance
-role, a container credential endpoint or a token file can appear after
-a worker has started.
+Objects are private. Writes and copies send no ACL at all, so a bucket
+with Object Ownership set to bucket owner enforced works unchanged. A
+write asking for `public` visibility is refused before any request is
+sent. Grant public read through a bucket policy instead;
+`setVisibility()` sends an object ACL, which a bucket with ACLs disabled
+rejects.
 
-## Named connections
+## Permissions and uncertain outcomes
 
-```{code-block} php
-$backups = FilesystemFactory::fromConfig($config, 'backups');
-```
+- `fileExists()` reads `403 Forbidden` as absence, because S3 answers
+  `403` rather than `404` for a key the caller cannot see. Grant
+  `s3:ListBucket` on the bucket alongside `s3:GetObject` wherever an
+  absence check must be trustworthy.
+- Each request is one attempt within `FILESYSTEM_S3_TIMEOUT`, with no
+  retry. A request that times out or loses its response may still have
+  been applied, so retry a write or delete only where that is safe for
+  your data.
+- `deleteDirectory()` deletes a prefix page by page and is not atomic. A
+  failure can leave some objects deleted, and an object written under the
+  prefix while it runs can survive.
 
-```{code-block} text
-FILESYSTEM_BACKUPS_DRIVER=s3
-FILESYSTEM_BACKUPS_S3_BUCKET=my-app-backups
-FILESYSTEM_BACKUPS_S3_REGION=eu-west-1
-```
-
-Same convention as everywhere else in Kinetis (see {doc}`config`):
-`'default'` reads the plain `FILESYSTEM_S3_*` keys above, and any other
-name reads `FILESYSTEM_{NAME}_S3_*` instead. A local connection and an S3
-connection can happily coexist side by side, each chosen by its own
-`FILESYSTEM_{NAME}_DRIVER`.
-
-## If the package isn't installed
-
-Setting `FILESYSTEM_DRIVER=s3` without having run
-`composer require kinetis/storage-s3` produces a clear error telling you
-which package to install, rather than a confusing crash.
+{doc}`appendix-storage` states the failure reporting and directory
+deletion contracts in full.
 
 ## See also
 
-- {doc}`storage` — the local driver, and everything about reading,
-  writing, and listing files that works the same way regardless of
-  backend.
-- {doc}`config` — the named-connection convention used above.
+- {doc}`storage` — using the filesystem, uploads, named connections and
+  common errors.
+- {doc}`appendix-storage` — S3 failure, deletion and credential
+  semantics.
+- {doc}`appendix-configuration` — every `FILESYSTEM_S3_*` key.

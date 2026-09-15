@@ -1,92 +1,50 @@
 # Search (OpenSearch)
 
-````{note}
-Not part of core. Install it separately:
+Install the OpenSearch engine package:
 
 ```{code-block} sh
 composer require kinetis/search-opensearch
 ```
-````
 
-Builds a real `OpenSearch\Client` (from
-`opensearch-project/opensearch-php`) for searching and indexing
-documents. Every request it makes runs without blocking the rest of your
-application.
+```{code-block} text
+:caption: .env
 
-With `SEARCH_OPENSEARCH_HOST` set, installing the package binds
-`OpenSearch\Client` and the engine-neutral `Kinetis\Search\SearchClient`
-over it, so a controller, command, or queued job constructor-injects
-either with nothing to register. The client is built while the package
-registers and opens no connection, so a host that isn't one usable
-origin, or an unusable deadline or response bound, fails at boot rather
-than inside the first search. Your own `bootstrap.php` runs after that
-and can bind a different client. Build one directly with
-`OpenSearchClientFactory::fromConfig($config)` for a second, named
-connection, or outside the container.
-
-```{code-block} php
-use OpenSearch\Client;
-
-$client->index([
-    'index' => 'articles',
-    'id' => '1',
-    'body' => ['title' => 'Kinetis', 'category' => 'framework'],
-]);
-
-$results = $client->search([
-    'index' => 'articles',
-    'body' => ['query' => ['match' => ['category' => 'framework']]],
-]);
+SEARCH_OPENSEARCH_HOST=https://search.internal:9200
+SEARCH_OPENSEARCH_USERNAME=app
+SEARCH_OPENSEARCH_PASSWORD=secret
 ```
 
-The returned `$client` is the real, unmodified `OpenSearch\Client` —
-every method it documents (`search()`, `index()`, `get()`, `delete()`,
-`indices()`, `cluster()`, and the rest) works exactly as the library's
-own documentation describes, answering plain arrays.
+With `SEARCH_OPENSEARCH_HOST` set, Kinetis binds both the engine-neutral
+`Kinetis\Search\SearchClient` and the real `OpenSearch\Client`. Inject
+`SearchClient` for indexing and queries shared with Elasticsearch; see
+{doc}`search-engines` for a first index and search. Inject
+`OpenSearch\Client` for mappings, aliases and other engine APIs. The
+client is built at boot, so invalid configuration fails before a route
+or worker job runs; no connection is opened until the first request.
 
-{doc}`search` covers what this package shares with
-{doc}`search-elasticsearch`: the configuration keys, named connections,
-the `SearchClient` contract, the failure types, and the
-transport-decorator seam. This page is what belongs to OpenSearch alone.
+For Amazon OpenSearch Service with IAM credentials, Basic auth is not
+enough. Build a signed OpenSearch client using `kinetis/aws-sigv4` as
+shown in {doc}`aws-sigv4` and bind it in `bootstrap.php` if application
+code injects it. Your `bootstrap.php` binding wins over the
+package default ({doc}`bootstrapping`).
 
-## How the client is built
+One `SEARCH_OPENSEARCH_HOST` points at one node or load balancer. An
+`http://` origin requires `SEARCH_OPENSEARCH_PLAINTEXT=true`; TLS peer
+verification is on by default. Configure a second connection with
+`OpenSearchClientFactory::fromConfig($config, 'name')` and scoped keys
+({ref}`search-reference-named`).
 
-`OpenSearchClientFactory::fromConfig()` goes through OpenSearch's own
-`TransportFactory`/`HttpTransport` path, whose
-`setHttpClient()` takes a PSR-18 client — the non-deprecated
-construction path, unlike the older `ClientBuilder`/`Transport`/
-`ConnectionPool` stack, which has no such injection point. The endpoint
-factory, serializer, request building and response mapping all stay the
-official client's, and every status OpenSearch answers with —
-`NotFoundHttpException`, `ConflictHttpException`,
-`UnauthorizedHttpException` and the rest — is raised by `opensearch-php`,
-unchanged.
-
-One detail is this package's: OpenSearch's own request building never
-sets a `Content-Type`, relying on the HTTP client to default a string
-body to JSON, while Symfony's clients default an unmarked string body to
-`application/x-www-form-urlencoded`, which a node answers with `406`. The
-transport sets `application/json` on every request, and no OpenSearch
-request replaces it: a `_bulk` body travels as NDJSON lines under that
-JSON header, which the engine's bulk handler accepts and this package's
-real-cluster checks exercise.
-
-## Amazon OpenSearch Service (IAM authentication)
-
-`OpenSearchClientFactory::fromConfig()` only ever builds the Basic-auth
-path {doc}`search` describes. For IAM/SigV4 authentication instead —
-Amazon OpenSearch Service's own common case — construct the client
-directly using `kinetis/aws-sigv4`; see {doc}`aws-sigv4` for the full
-example.
+An OpenSearch error status raises the engine client's own exception when
+you call `OpenSearch\Client` directly. `SearchClient` presents
+`SearchRequestException` instead. A request with no complete response
+may already have indexed a document; check it before repeating a
+non-idempotent write. {ref}`search-reference-failures` describes the
+failure vocabulary and {doc}`appendix-search` records the transport
+details.
 
 ## See also
 
-- {doc}`search` — configuration, the engine-neutral `SearchClient`,
-  failures, and the transport seam, all shared with
-  {doc}`search-elasticsearch`.
-- {doc}`revolt-http-client` — the non-blocking HTTP client this package
-  builds every request on.
-- {doc}`aws-sigv4` — IAM/SigV4 authentication against Amazon OpenSearch
-  Service, as an alternative to Basic auth.
-- {doc}`telemetry` — a span per search call over the
-  `transportDecorator` seam.
+- {doc}`search-engines` — common setup and indexing.
+- {doc}`appendix-search` — configuration, client and transport contracts.
+- {doc}`aws-sigv4` — IAM authentication for Amazon OpenSearch Service.
+- {doc}`telemetry` — tracing search calls.
