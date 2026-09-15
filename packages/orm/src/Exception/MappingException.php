@@ -7,11 +7,13 @@ namespace Kinetis\Orm\Exception;
 use RuntimeException;
 
 /**
- * An entity class, serialized metadata, a property name, a predicate value,
- * a loaded row or an entity's property value to write outside the mapping
- * contract. Every one is thrown before SQL runs or before an entity is
- * allocated. A message names the class, property and column, and describes
- * a value only by its kind: a column can hold a secret.
+ * An entity class, serialized metadata, a property name, a relationship
+ * path, a predicate value, a loaded row, a missing relationship target or an
+ * entity's property value to write outside the mapping contract. Every one
+ * is thrown before SQL runs or before an entity is allocated, but a missing
+ * relationship target, which is thrown after its select and before the
+ * relationship is assigned. A message names the class, property and column,
+ * and describes a value only by its kind: a column can hold a secret.
  */
 final class MappingException extends RuntimeException
 {
@@ -57,6 +59,11 @@ final class MappingException extends RuntimeException
         return new self("{$class} has no usable version: {$reason}.");
     }
 
+    public static function relationship(string $class, string $property, string $reason): self
+    {
+        return new self("{$class}::\${$property} is not a usable #[BelongsTo] relationship: {$reason}.");
+    }
+
     public static function invalidTable(string $class, string $table): self
     {
         return new self(
@@ -69,7 +76,8 @@ final class MappingException extends RuntimeException
     {
         return new self(
             "{$class}::\${$property} maps to the column \"{$column}\", which is not an identifier: ASCII letters, "
-            . 'digits and underscores, not starting with a digit. Name it with #[Column].',
+            . 'digits and underscores, not starting with a digit. Name it with #[Column], or with '
+            . '#[BelongsTo(column: ...)] for a relationship.',
         );
     }
 
@@ -102,6 +110,27 @@ final class MappingException extends RuntimeException
     public static function unknownProperty(string $class, string $property): self
     {
         return new self("{$class} has no mapped property \"{$property}\".");
+    }
+
+    public static function notARelation(string $class, string $property): self
+    {
+        return new self("{$class}::\${$property} is not a #[BelongsTo] relationship, so with() cannot load it.");
+    }
+
+    public static function invalidRelationPath(string $class, string $path): self
+    {
+        return new self(
+            "\"{$path}\" is not a relationship path of {$class}: name #[BelongsTo] properties separated by dots, such "
+            . 'as "author.organization".',
+        );
+    }
+
+    /** @param class-string $target */
+    public static function missingRelationTarget(string $class, string $property, string $column, string $target): self
+    {
+        return new self(
+            "{$class}::\${$property} references a missing {$target} row: no row matches its \"{$column}\" foreign key.",
+        );
     }
 
     public static function missingColumn(string $class, string $property, string $column): self

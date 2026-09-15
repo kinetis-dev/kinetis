@@ -12,8 +12,11 @@ use Kinetis\Orm\OrmFactory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\StoredArticle;
+use Kinetis\Orm\Tests\Fixtures\StoredAuthor;
 use Kinetis\Orm\Tests\Fixtures\StoredDocument;
 use Kinetis\Orm\Tests\Fixtures\StoredInvoice;
+use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
+use Kinetis\Orm\Tests\Fixtures\StoredPost;
 use Kinetis\Orm\Tests\Fixtures\StoredTicket;
 use Kinetis\Persistence\ConnectionDefinition;
 use Kinetis\Persistence\Contract\MysqlLink;
@@ -26,10 +29,10 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Entity reads, flushes and transaction sessions against real servers,
- * through both the native and the PDO driver of each family: every row
- * spelling those drivers produce for ints, floats, booleans, nulls and UUID
- * text passes the conversion domain, and every write, generated key,
+ * Entity reads, relationships, flushes and transaction sessions against real
+ * servers, through both the native and the PDO driver of each family: every
+ * row spelling those drivers produce for ints, floats, booleans, nulls and
+ * UUID text passes the conversion domain, and every write, generated key,
  * affected-row count, constraint failure and row lock is the server's own.
  *
  * Environment-gated: each case skips unless MYSQL_HOST or POSTGRES_HOST is
@@ -316,12 +319,12 @@ final class RealBackendTest extends TestCase
         $invoice = $factory->transaction(static function (EntityManager $entities) use ($other, &$held, &$versionBeforeCommit): StoredInvoice {
             $invoice = $entities->repository(StoredInvoice::class)->query()->where('id', '=', 1)->lockForUpdate()->first();
             self::assertNotNull($invoice);
-            $held[] = self::lockedElsewhere($other);
+            $held[] = self::lockedElsewhere($other, 'kin_orm_invoices', 1);
 
             $invoice->status = 'paid';
             $entities->builder()->table('kin_orm_tickets')->insert(['subject' => 'Paid']);
             $entities->flush();
-            $held[] = self::lockedElsewhere($other);
+            $held[] = self::lockedElsewhere($other, 'kin_orm_invoices', 1);
             $versionBeforeCommit = $invoice->version;
 
             return $invoice;
@@ -330,9 +333,102 @@ final class RealBackendTest extends TestCase
         self::assertSame([true, true], $held, 'locked after the read and after the flush');
         self::assertSame(1, $versionBeforeCommit);
         self::assertSame(2, $invoice->version);
-        self::assertFalse(self::lockedElsewhere($other), 'COMMIT released the lock');
+        self::assertFalse(self::lockedElsewhere($other, 'kin_orm_invoices', 1), 'COMMIT released the lock');
         self::assertSame(['paid', 2], self::invoice($factory));
         self::assertSame(2, new Query($other)->table('kin_orm_tickets')->count());
+    }
+
+    /**
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_nested_and_nullable_relationships_load_into_one_identity_map(string $dialect, string $driver): void
+    {
+        $entities = $this->factory($dialect, $driver)->open();
+        $posts = $entities->repository(StoredPost::class);
+
+        $loaded = $posts->query()->with('author.organization')->orderBy('id')->get();
+
+        self::assertSame([1, 2, 3], array_map(static fn (StoredPost $post): int => $post->id, $loaded));
+        self::assertSame($loaded[0]->author, $loaded[2]->author);
+        self::assertSame($loaded[0]->author, $entities->repository(StoredAuthor::class)->find(7));
+        self::assertSame('Acme', $loaded[0]->author->organization?->name);
+        self::assertNull($loaded[1]->author->organization);
+        self::assertSame([$loaded[1]], $posts->query()->where('author', '=', '8')->with('author')->get());
+    }
+
+    /**
+     * The session's locking read locks the post it selects. The author it
+     * loads is selected without a lock, so a second client's NOWAIT lock on
+     * that row succeeds.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_locking_read_locks_its_root_rows_and_not_the_relationships_it_loads(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $other = $this->other = $this->connect($dialect, $driver);
+
+        $held = $factory->transaction(static function (EntityManager $entities) use ($other): array {
+            $post = $entities->repository(StoredPost::class)->query()->where('id', '=', 1)->lockForUpdate()->with('author')->first();
+            self::assertSame('Ada', $post?->author->name);
+
+            return [self::lockedElsewhere($other, 'kin_orm_posts', 1), self::lockedElsewhere($other, 'kin_orm_authors', 7)];
+        });
+
+        self::assertSame([true, false], $held);
+    }
+
+    /**
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_committed_reassignment_is_what_a_new_manager_loads(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $post = $entities->repository(StoredPost::class)->findOrFail(1);
+        $post->author = $entities->repository(StoredAuthor::class)->findOrFail(8);
+
+        $entities->flush();
+
+        $reloaded = $factory->open()->repository(StoredPost::class)->query()->where('id', '=', 1)->with('author')->first();
+        self::assertNotSame($post, $reloaded);
+        self::assertSame('Grace', $reloaded?->author->name);
+    }
+
+    /**
+     * The flush inserts an organization and then deletes an author a post
+     * still references. The database's foreign key refuses the DELETE, and
+     * the rollback removes the insert.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_removing_a_referenced_target_fails_on_its_foreign_key_and_rolls_the_flush_back(string $dialect, string $driver): void
+    {
+        $entities = $this->factory($dialect, $driver)->open();
+        $organization = new StoredOrganization();
+        [$organization->id, $organization->name] = [2, 'Initech'];
+        $entities->persist($organization);
+        $ada = $entities->repository(StoredAuthor::class)->findOrFail(7);
+        $entities->remove($ada);
+
+        try {
+            $entities->flush();
+            self::fail('A referenced author was deleted.');
+        } catch (QueryException) {
+        }
+
+        self::assertFalse($entities->isClosed());
+        self::assertTrue($entities->contains($ada));
+        self::assertSame(0, new Query($this->link())->table('kin_orm_organizations')->where('id', '=', 2)->count());
+        self::assertSame(1, new Query($this->link())->table('kin_orm_authors')->where('id', '=', 7)->count());
     }
 
     /**
@@ -347,7 +443,15 @@ final class RealBackendTest extends TestCase
 
         return OrmFactory::create(
             $link,
-            MetadataRegistry::fromClasses([StoredArticle::class, StoredDocument::class, StoredInvoice::class, StoredTicket::class]),
+            MetadataRegistry::fromClasses([
+                StoredArticle::class,
+                StoredAuthor::class,
+                StoredDocument::class,
+                StoredInvoice::class,
+                StoredOrganization::class,
+                StoredPost::class,
+                StoredTicket::class,
+            ]),
         );
     }
 
@@ -392,15 +496,15 @@ final class RealBackendTest extends TestCase
     }
 
     /**
-     * Whether $other's NOWAIT lock on invoice 1 fails, in a transaction of
-     * its own that is rolled back either way.
+     * Whether $other's NOWAIT lock on the row of $table with identifier $id
+     * fails, in a transaction of its own that is rolled back either way.
      */
-    private static function lockedElsewhere(MysqlLink|PostgresLink $other): bool
+    private static function lockedElsewhere(MysqlLink|PostgresLink $other, string $table, int $id): bool
     {
         $probe = $other->beginTransaction();
 
         try {
-            new Query($probe)->table('kin_orm_invoices')->where('id', '=', 1)->lockForUpdate(LockWait::NoWait)->get();
+            new Query($probe)->table($table)->where('id', '=', $id)->lockForUpdate(LockWait::NoWait)->get();
             $locked = false;
         } catch (QueryException) {
             $locked = true;
@@ -413,6 +517,9 @@ final class RealBackendTest extends TestCase
 
     private static function seed(MysqlLink|PostgresLink $link, string $dialect): void
     {
+        $link->execute('DROP TABLE IF EXISTS kin_orm_posts');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_authors');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_organizations');
         $link->execute('DROP TABLE IF EXISTS kin_orm_articles');
         $link->execute('DROP TABLE IF EXISTS kin_orm_documents');
         $link->execute('DROP TABLE IF EXISTS kin_orm_tickets');
@@ -431,6 +538,15 @@ final class RealBackendTest extends TestCase
             . ' PRIMARY KEY, subject VARCHAR(100) NOT NULL UNIQUE)',
         );
         $link->execute('CREATE TABLE kin_orm_invoices (id INT PRIMARY KEY, status VARCHAR(20) NOT NULL, version BIGINT NOT NULL)');
+        $link->execute('CREATE TABLE kin_orm_organizations (id INT PRIMARY KEY, name VARCHAR(100) NOT NULL)');
+        $link->execute(
+            'CREATE TABLE kin_orm_authors (id INT PRIMARY KEY, name VARCHAR(100) NOT NULL, organization_id INT NULL, '
+            . 'FOREIGN KEY (organization_id) REFERENCES kin_orm_organizations (id))',
+        );
+        $link->execute(
+            'CREATE TABLE kin_orm_posts (id INT PRIMARY KEY, title VARCHAR(100) NOT NULL, written_by INT NOT NULL, '
+            . 'FOREIGN KEY (written_by) REFERENCES kin_orm_authors (id))',
+        );
 
         new Query($link)->table('kin_orm_articles')->insert([
             ['id' => 1, 'title' => 'First', 'summary' => null, 'status' => 'published', 'priority' => null, 'featured' => true, 'rating' => 4.5, 'author_id' => 7],
@@ -440,6 +556,16 @@ final class RealBackendTest extends TestCase
         new Query($link)->table('kin_orm_documents')->insert(['id' => self::UUID, 'title' => 'Spec']);
         new Query($link)->table('kin_orm_tickets')->insert(['subject' => 'Seeded']);
         new Query($link)->table('kin_orm_invoices')->insert(['id' => 1, 'status' => 'open', 'version' => 1]);
+        new Query($link)->table('kin_orm_organizations')->insert(['id' => 1, 'name' => 'Acme']);
+        new Query($link)->table('kin_orm_authors')->insert([
+            ['id' => 7, 'name' => 'Ada', 'organization_id' => 1],
+            ['id' => 8, 'name' => 'Grace', 'organization_id' => null],
+        ]);
+        new Query($link)->table('kin_orm_posts')->insert([
+            ['id' => 1, 'title' => 'First', 'written_by' => 7],
+            ['id' => 2, 'title' => 'Second', 'written_by' => 8],
+            ['id' => 3, 'title' => 'Third', 'written_by' => 7],
+        ]);
     }
 
     /**

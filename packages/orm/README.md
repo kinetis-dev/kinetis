@@ -32,7 +32,9 @@ tracks changes to the entities it holds, and writes new, changed and
 removed entities in one transaction when it is flushed. Updates and
 deletes of an entity carrying `#[Version]` are optimistically locked. A
 transaction session locks entity rows and writes entities and
-query-builder SQL in one transaction. It has no relationships.
+query-builder SQL in one transaction. An entity references another
+through an explicit `#[BelongsTo]` relationship, which an entity query
+loads when asked.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -96,7 +98,8 @@ final class Article
   (see "Optimistic locking"). A property merely named `version` is
   ordinary data.
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum, and the
-  nullable form of each.
+  nullable form of each; on a `#[BelongsTo]` property, an entity class
+  (see "Relationships").
 - **Classes.** An entity has no parent class and is neither abstract nor
   readonly; it may be final. Its constructor's signature and visibility
   do not matter.
@@ -104,11 +107,12 @@ final class Article
 `MappingException` refuses, when the metadata is built and before any
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
-type, an intersection, any other type (`mixed`, `array`, an object,
-`DateTimeImmutable`, a unit enum), a missing or second identifier, a
-generated identifier not typed `?int`, a second `#[Version]`, a version
-property that is the identifier or is not typed `int`, an invalid name
-and a duplicate column.
+type, an intersection, any other type (`mixed`, `array`, an object
+without `#[BelongsTo]`, `DateTimeImmutable`, a unit enum), a missing or
+second identifier, a generated identifier not typed `?int`, a second
+`#[Version]`, a version property that is the identifier or is not typed
+`int`, an invalid name, a duplicate column, and each relationship
+refusal under "Relationships".
 
 ## Identifiers
 
@@ -161,9 +165,10 @@ $metadata = MetadataRegistry::fromArray(require 'entities.php');
 ```
 
 `fromClasses()` maps exactly the classes it is given and refuses one that
-is not an entity. `toArray()` holds only class names, table and column
-names, type names and flags, ordered by class, so the same classes always
-produce the same array. `fromArray()` accepts only what `toArray()` writes
+is not an entity, or a relationship whose target is not one of them.
+`toArray()` holds only class names, table and column names, type names
+and flags, ordered by class, so the same classes always produce the same
+array. `fromArray()` accepts only what `toArray()` writes
 for those classes as they are declared now: a missing or extra field, a
 wrong type, an unknown class or a mapping the source no longer produces
 throws `MappingException`. It reflects the classes it names and nothing
@@ -239,9 +244,10 @@ Every entity query selects all mapped columns. Loading a row:
 2. returns the object already held for the identifier, untouched;
 3. otherwise allocates the entity with
    `ReflectionClass::newInstanceWithoutConstructor()`, writes each
-   declared property directly — no constructor, setter, hook or magic
-   method runs — and only then registers it, with a snapshot of the
-   converted values.
+   declared property but a relationship directly — no constructor,
+   setter, hook or magic method runs — and only then registers it, with a
+   snapshot of the converted values, a relationship's foreign key
+   included.
 
 | Property type | Admitted driver value |
 |---|---|
@@ -290,6 +296,8 @@ spelling and the database returns the stored identifier.
   `offset()`;
 - `lockForUpdate(LockWait $wait = LockWait::Wait)` and `lockForShare()`,
   inside a transaction session only (see "Transaction sessions");
+- `with(string ...$relations)`, the relationships `get()`, `first()`,
+  `paginate()` and `cursorPaginate()` load (see "Relationships");
 - `get()`, `first()`, `exists()`, `count()`;
 - `paginate(int $perPage, int $page = 1)` — a
   `Kinetis\QueryBuilder\Paginator` whose `data` holds managed entities;
@@ -324,6 +332,131 @@ final readonly class PublishedArticles
 }
 ```
 
+## Relationships
+
+```php
+use Kinetis\Orm\Attributes\BelongsTo;
+use Kinetis\Orm\Attributes\Entity;
+
+#[Entity(table: 'authors')]
+final class Author
+{
+    public int $id;
+
+    public string $name;
+
+    #[BelongsTo]
+    public ?Organization $organization; // organization_id, nullable
+}
+
+#[Entity(table: 'posts')]
+final class Post
+{
+    public int $id;
+
+    public string $title;
+
+    #[BelongsTo(column: 'written_by')]
+    public Author $author;
+}
+
+$posts = $entities->repository(Post::class)
+    ->query()
+    ->where('author', '=', 7) // written_by = 7
+    ->with('author.organization')
+    ->get();
+
+$posts[0]->author->organization?->name;
+```
+
+`Organization` is an application entity with a `name` property.
+
+- **Mapping.** `#[BelongsTo]` marks a property typed with one entity
+  class — nullable or not, `self` included — mapped in the same
+  `MetadataRegistry`. The property maps one foreign-key column: the
+  property name in snake case followed by `_id`, unless `column` names
+  it, under the rules of any column name. The column holds the target's
+  identifier, so the relationship's type in the metadata is that
+  identifier's type. Only the side holding the foreign key is mapped.
+- **Refusals.** `MappingException` refuses, when the metadata is built, a
+  type that is not a class, `#[Column]`, `#[Id]` or `#[Version]` on the
+  same property, a default value, and a target the registry does not map.
+- **Loaded or not.** Loading a row leaves a relationship uninitialized,
+  and reading it throws PHP's `Error` as for any uninitialized typed
+  property. Only `with()` or the application initializes it: there is no
+  proxy, no lazy loading and no loaded-state API. The manager's snapshot
+  holds the foreign key either way.
+
+### Loading relationships
+
+`with(string ...$relations)` names relationship paths: `author`, and
+`author.organization` through the target's own relationship. Repeated
+calls add to one set. An empty segment, an unknown property or a property
+that is not a relationship throws `MappingException` before SQL.
+
+`get()`, `first()`, `paginate()` and `cursorPaginate()` load the paths
+after their own statements. `find()`, `findBy()`, `count()` and
+`exists()` load nothing and send only their usual statements, so
+`with(...)->count()` counts what `with(...)->get()` returns. Each
+relationship loads one level at a time:
+
+1. The distinct non-null foreign keys of the level's entities whose
+   relationship is uninitialized are read from their snapshots.
+2. One `SELECT` of the target's mapped columns where its identifier
+   column is `IN` those keys, for at most 1,000 keys per statement, on
+   the manager's link. There is no join. Every key is selected, the key
+   of a target the manager already holds included, and a level without
+   keys sends nothing.
+3. Every row loads under "Loading", so a held target is returned as it
+   is. A null key sets a nullable relationship to null; a key no row
+   matches throws `MappingException`, naming the class, property and
+   column.
+4. The targets are the next level's entities.
+
+A relationship the application already initialized is never overwritten
+or compared with its foreign key. Its target joins the next level and
+must be an entity this manager manages: otherwise
+`InvalidEntityStateException` is thrown before that level's statements.
+
+Every statement of the load runs inside its terminal, and the manager is
+checked after each one before anything is assigned, so a `close()`
+meanwhile throws `ClosedEntityManagerException`. A failure keeps what
+earlier statements assigned. In a transaction session every statement
+runs on the session's transaction, and a failure fails the session as any
+terminal failure does. `lockForUpdate()` and `lockForShare()` lock the
+root statement only: a relationship's statements carry no lock clause.
+
+### Relationship predicates
+
+A relationship property is also its foreign key: `where()`, `whereIn()`,
+`orderBy()`, `findBy()` and a `cursorPaginate()` property compile to its
+column, and a value converts like the target's identifier, so `'7'`
+matches an `int` identifier and an entity object throws
+`MappingException`. No predicate reaches a target's own properties; a
+join belongs to `builder()`.
+
+### Writing relationships
+
+- **Targets.** A relationship holds null, where its type allows it, or an
+  entity this manager manages: loaded, or inserted by a flush whose
+  COMMIT returned. The foreign key is the identifier in the manager's
+  snapshot of that entity. `persist()`, and `flush()` for every entity it
+  writes before its transaction begins, refuse anything else with
+  `InvalidEntityStateException`: an entity awaiting insert, one the same
+  flush would insert included, a detached entity, and one another manager
+  holds. A new entity needs every relationship initialized.
+- **Never loaded.** A managed entity whose relationship is uninitialized
+  writes the foreign key its snapshot holds, so changing another property
+  never writes that column.
+- **Reassignment.** Assigning another managed target, or null, changes
+  the foreign key: the UPDATE sets the column, under the version predicate
+  of a versioned entity, and the snapshot takes the new key once COMMIT
+  returns.
+- **Removal.** Nothing cascades. Removing an entity another row still
+  references sends its DELETE, and the database's foreign key decides: a
+  refusal fails the flush before COMMIT (see "When a flush fails"). No
+  object holding the removed entity changes.
+
 ## Writing
 
 ```php
@@ -352,9 +485,10 @@ For one manager, an object is in one of these states:
   new, or detached from this or another manager — and schedules its
   insert. Its class must be an entity in the factory's metadata, every
   mapped property initialized and admitted by the table under "Loading"
-  (a non-finite float is not), an assigned identifier not null and not
-  held by another object of this manager, and a generated identifier
-  null. An assigned identity enters the identity map at once, so `find()`
+  (a non-finite float is not), every relationship's target one this
+  manager manages (see "Writing relationships"), an assigned identifier
+  not null and not held by another object of this manager, and a
+  generated identifier null. An assigned identity enters the identity map at once, so `find()`
   returns the object; a generated one enters it when the insert commits.
   `persist()` leaves an entity awaiting insert or managed as it is, and
   cancels the deletion of one scheduled for deletion.
@@ -365,8 +499,9 @@ For one manager, an object is in one of these states:
   other object is refused.
 - **Changes.** A managed entity has a snapshot: the values it was loaded
   or last flushed with. Each `flush()` compares every mapped property with
-  it as a database value — a backed enum as its backing value — so a value
-  changed and changed back writes nothing. Loading the row again never
+  it as a database value — a backed enum as its backing value, a
+  relationship as its foreign key — so a value changed and changed back
+  writes nothing. Loading the row again never
   refreshes the snapshot.
 - **Ownership.** A manager sees only its own objects. It refuses a second
   object for an identity it holds and the removal of an object it does not
@@ -608,7 +743,9 @@ returns the callback's result.
   clauses and wait modes combine with a lock, and each dialect's SQL. A
   manager from `open()` refuses both with `InvalidEntityStateException`
   before SQL. `find()` answers an identity the manager holds without SQL,
-  so it takes no lock: lock through `query()`.
+  so it takes no lock: lock through `query()`. The relationships the query
+  loads are read on the transaction without a lock (see "Loading
+  relationships").
 - **Raw SQL.** A raw write is not reconciled with the manager: it changes
   no snapshot or version the manager holds, so the flush can overwrite it
   or conflict with it, and keeping the two consistent is the caller's
@@ -619,9 +756,9 @@ returns the callback's result.
   call is refused with `InvalidEntityStateException`, whose `getPrevious()`
   is that failure, and the session rolls back instead of committing and
   rethrows that failure as primary (see "When a session fails"). A
-  `MappingException` from `where()`, `whereIn()`, `orderBy()`, a `find()`
-  identifier or a cursor property is thrown before the terminal reaches
-  the query builder and does not fail the session.
+  `MappingException` from `where()`, `whereIn()`, `orderBy()`, `with()`, a
+  `find()` identifier or a cursor property is thrown before the terminal
+  reaches the query builder and does not fail the session.
 - **Raw failures.** The manager cannot see a raw `Query` fail. When the
   callback catches one, COMMIT decides: MySQL and MariaDB keep the
   transaction open after an ordinary statement error and commit the rest
@@ -688,7 +825,10 @@ instead.
 
 ## Not in scope
 
-Relationships, cascades, collections, eager or lazy loading, timestamp,
+Relationships other than `#[BelongsTo]` (one-to-one or one-to-many from
+the referenced side, many-to-many, inverse sides), cascades, orphan
+removal, collections, lazy loading or proxies, joined eager loading,
+predicates on a target's properties, timestamp,
 string or database-generated versions, refreshing or merging an entity,
 conflict resolution, joining a transaction the application began, nested
 sessions or savepoints, more than one writing flush per session,

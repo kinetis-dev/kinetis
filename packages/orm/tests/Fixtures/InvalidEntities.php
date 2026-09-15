@@ -12,11 +12,14 @@ namespace Kinetis\Orm\Tests\Fixtures\Invalid;
 
 use Countable;
 use DateTimeImmutable;
+use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\Id;
 use Kinetis\Orm\Attributes\Version;
+use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
+use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Traversable;
 
@@ -279,6 +282,90 @@ final class DuplicateColumn
 
     #[Column(name: 'ID')]
     public int $legacyId;
+}
+
+#[Entity]
+final class RelationshipScalar
+{
+    public int $id;
+
+    #[BelongsTo]
+    public int $categoryId;
+}
+
+#[Entity]
+final class RelationshipWithColumn
+{
+    public int $id;
+
+    #[BelongsTo]
+    #[Column(name: 'category')]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class RelationshipIdentifier
+{
+    public int $id;
+
+    #[Id]
+    #[BelongsTo]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class RelationshipVersion
+{
+    public int $id;
+
+    #[Version]
+    #[BelongsTo]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class RelationshipDefault
+{
+    public int $id;
+
+    #[BelongsTo]
+    public ?ArticleCategory $category = null;
+}
+
+#[Entity]
+final class RelationshipInvalidColumn
+{
+    public int $id;
+
+    #[BelongsTo(column: 'category id')]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class RelationshipDuplicateColumn
+{
+    public int $id;
+
+    public int $categoryId;
+
+    #[BelongsTo]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class RelationshipUnknownTarget
+{
+    public int $id;
+
+    #[BelongsTo]
+    public Document $document;
+}
+
+#[Entity]
+final class RelationshipIdentifierByName
+{
+    #[BelongsTo]
+    public ArticleCategory $id;
 }
 
 interface EntityInterface

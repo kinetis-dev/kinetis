@@ -39,6 +39,11 @@ use WeakMap;
  * identity returns that object and writes neither its properties nor its
  * snapshot.
  *
+ * A relationship is loaded only on request, by the entity query terminal
+ * that selected its source entities and on the same link, and its targets
+ * resolve through the same identity map. A relationship written by flush()
+ * holds an entity this manager already manages, or null.
+ *
  * flush() writes from a plan local to the call, and nothing in this
  * manager or its entities changes until COMMIT returns: flush()'s own, or
  * for a bound manager the factory's. A flush that fails before COMMIT
@@ -60,6 +65,9 @@ use WeakMap;
  */
 final class EntityManager
 {
+    /** The most foreign keys one relationship select binds. */
+    private const int RELATIONSHIP_BATCH = 1000;
+
     /** @var Fiber<mixed, mixed, mixed, mixed>|null null is the main context */
     private readonly ?Fiber $owner;
 
@@ -192,7 +200,7 @@ final class EntityManager
         }
 
         /** @var int|string|null $id an identifier property is typed int or string */
-        $id = $plan->extract($entity)[$plan->id];
+        $id = $plan->extract($entity, null, $this->heldIdentifier(...))[$plan->id];
 
         if ($plan->generated) {
             if ($id !== null) {
@@ -442,18 +450,64 @@ final class EntityManager
     }
 
     /**
-     * @internal Converts every row before allocating anything, so a row
-     *           that fails leaves no entity allocated or registered. Each
-     *           converted identity then resolves to the object this manager
-     *           already holds, untouched, or to a new one registered with
-     *           its snapshot only after all of its properties are written.
+     * @internal The entities of $rows, as register() resolves them, with
+     *           every relationship $relations names loaded into them.
      *
      * @template T of object
      * @param EntityPlan<T> $plan
      * @param list<array<string, mixed>> $rows
+     * @param array<string, array<array-key, mixed>> $relations property => the relationships to load below it
      * @return list<T>
      */
-    public function load(EntityPlan $plan, array $rows): array
+    public function load(EntityPlan $plan, array $rows, array $relations = []): array
+    {
+        /** @var list<T> $entities */
+        $entities = array_map(static fn (array $row): object => $row[1], $this->register($plan, $rows));
+        $this->eager($plan, $entities, $relations);
+
+        return $entities;
+    }
+
+    /**
+     * @internal $relations with the relationship path $path merged in: every
+     *           dot-separated segment a relationship of the entity the
+     *           segment before it references.
+     *
+     * @param EntityPlan<object> $plan
+     * @param array<string, array<array-key, mixed>> $relations
+     * @return array<string, array<array-key, mixed>>
+     * @throws MappingException
+     */
+    public function mergeRelation(EntityPlan $plan, array $relations, string $path): array
+    {
+        $segments = explode('.', $path);
+
+        if (in_array('', $segments, true)) {
+            throw MappingException::invalidRelationPath($plan->class, $path);
+        }
+
+        $property = array_shift($segments);
+        $target = $this->plans[$plan->target($property)];
+        /** @var array<string, array<array-key, mixed>> $below */
+        $below = $relations[$property] ?? [];
+        $relations[$property] = $segments === [] ? $below : $this->mergeRelation($target, $below, implode('.', $segments));
+
+        return $relations;
+    }
+
+    /**
+     * Converts every row before allocating anything, so a row that fails
+     * leaves no entity allocated or registered. Each converted identity then
+     * resolves to the object this manager already holds, untouched, or to a
+     * new one registered with its snapshot only after all of its properties
+     * are written.
+     *
+     * @template T of object
+     * @param EntityPlan<T> $plan
+     * @param list<array<string, mixed>> $rows
+     * @return list<array{int|string, T}> each row's identifier and entity
+     */
+    private function register(EntityPlan $plan, array $rows): array
     {
         // Checked again after the SQL that produced $rows: the Fiber may
         // have suspended there while the unit of work was closed.
@@ -471,11 +525,99 @@ final class EntityManager
                 $this->snapshots[$entity] = $plan->snapshot($values);
             }
 
-            $entities[] = $entity;
+            $entities[] = [$id, $entity];
         }
 
-        /** @var list<T> $entities */
+        /** @var list<array{int|string, T}> $entities */
         return $entities;
+    }
+
+    /**
+     * Loads each relationship $relations names into $entities, then the
+     * relationships below it into the targets, one level at a time.
+     *
+     * An uninitialized relationship takes the foreign key of its entity's
+     * snapshot. Every distinct non-null key is selected from the target
+     * table, RELATIONSHIP_BATCH keys per statement, whether or not its
+     * target is already held, and each row goes through register(), which
+     * refuses a manager closed during that statement before anything is
+     * assigned. A null key assigns null, and a key no row matches throws.
+     * A relationship already initialized is never overwritten: its target
+     * only joins the next level, and must be managed by this manager.
+     *
+     * @param EntityPlan<object> $plan
+     * @param list<object> $entities
+     * @param array<string, array<array-key, mixed>> $relations
+     * @throws InvalidEntityStateException
+     * @throws MappingException
+     */
+    private function eager(EntityPlan $plan, array $entities, array $relations): void
+    {
+        foreach ($relations as $property => $below) {
+            $target = $this->plans[$plan->target($property)];
+            $unloaded = [];
+            $keys = [];
+            $next = [];
+
+            foreach ($entities as $entity) {
+                if ($plan->initialized($entity, $property)) {
+                    $related = $plan->related($entity, $property);
+
+                    if ($related !== null) {
+                        $next[spl_object_id($related)] = isset($this->snapshots[$related])
+                            ? $related
+                            : throw InvalidEntityStateException::relationTargetNotHeld($plan->class, $property);
+                    }
+
+                    continue;
+                }
+
+                $snapshot = $this->snapshots[$entity] ?? throw InvalidEntityStateException::uninitialized($plan->class, $property);
+                /** @var int|string|null $key a relationship's database value is its target's identifier */
+                $key = $snapshot[$property];
+                $unloaded[] = [$entity, $key];
+
+                if ($key !== null) {
+                    $keys[] = $key;
+                }
+            }
+
+            $found = [];
+
+            foreach (array_chunk(array_unique($keys), self::RELATIONSHIP_BATCH) as $batch) {
+                $rows = $this->select($target)->whereIn($target->column($target->id), $batch)->get();
+
+                foreach ($this->register($target, $rows) as [$id, $loaded]) {
+                    $found[$id] = $loaded;
+                }
+            }
+
+            foreach ($unloaded as [$entity, $key]) {
+                $related = $key === null ? null : $found[$key] ?? throw MappingException::missingRelationTarget(
+                    $plan->class,
+                    $property,
+                    $plan->column($property),
+                    $target->class,
+                );
+                $plan->assign($entity, $property, $related);
+
+                if ($related !== null) {
+                    $next[spl_object_id($related)] = $related;
+                }
+            }
+
+            /** @var array<string, array<array-key, mixed>> $below */
+            $this->eager($target, array_values($next), $below);
+        }
+    }
+
+    /** A relationship target's identifier in this manager's snapshot, or null when it does not manage the target. */
+    private function heldIdentifier(object $target): int|string|null
+    {
+        $snapshot = $this->snapshots[$target] ?? null;
+
+        /** @var int|string|null an identifier's database value is an int or a string */
+        return $snapshot === null ? null : $snapshot[$this->plans[$target::class]->id];
     }
 
     /**
@@ -488,11 +630,12 @@ final class EntityManager
      */
     private function plan(): array
     {
+        $identify = $this->heldIdentifier(...);
         $inserts = [];
 
         foreach ($this->inserts as [$entity, $id]) {
             $plan = $this->plans[$entity::class];
-            $values = $plan->extract($entity);
+            $values = $plan->extract($entity, null, $identify);
 
             if ($values[$plan->id] !== $id) {
                 throw InvalidEntityStateException::identifierChanged($plan->class);
@@ -515,7 +658,7 @@ final class EntityManager
 
                 /** @var int|string $id */
                 $id = $snapshot[$plan->id];
-                $values = $plan->extract($entity);
+                $values = $plan->extract($entity, $snapshot, $identify);
 
                 if ($values[$plan->id] !== $id) {
                     throw InvalidEntityStateException::identifierChanged($plan->class);
