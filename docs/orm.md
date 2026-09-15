@@ -171,3 +171,5 @@ export the metadata so a worker loads it without reflecting a directory.
   what `EntityQuery::builder()` returns.
 - {doc}`persistence` — the connection, pooling and `TransactionGuard`.
 - {doc}`caching` — the AOT artifact the entity metadata is compiled into.
+- {ref}`testing-orm` — a new manager for each test unit and request that resolves the ORM, and
+  what a test may assert after each COMMIT outcome.

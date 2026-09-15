@@ -300,6 +300,112 @@ Schema creation belongs outside the trait — in a migration run once
 before the suite, not in a test.
 ```
 
+(testing-orm)=
+### Testing ORM code
+
+A test runs `kinetis/orm` code under the same unit-of-work lifecycle the
+application does (see {doc}`orm`):
+
+- **Each unit of work gets its own manager.** `PackageBootstrap::bindOrm()`
+  binds `EntityManager` lazily to each request scope, so a request through
+  `$this->client` that resolves it gets its own manager, and that manager
+  closes when the request's scope disposes at request end. Setup and
+  assertions in the test body open their own from `OrmFactory` and close
+  it. A manager kept across steps answers later loads from its identity
+  map instead of the database.
+- **Only `flush()` persists.** A change still unflushed when its manager
+  closes — at `close()`, or when its request ends — is discarded without
+  a write.
+- **Assertions read through a new manager**, so they see what the
+  database holds.
+
+```{code-block} php
+:caption: tests/PublishArticleTest.php
+
+use Kinetis\Orm\EntityManager;
+use Kinetis\Orm\OrmFactory;
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\SqlLink;
+use Kinetis\Persistence\Testing\DatabaseTruncation;
+use Kinetis\Testing\ApplicationTestCase;
+
+final class PublishArticleTest extends ApplicationTestCase
+{
+    use DatabaseTruncation;
+
+    protected function projectRoot(): string
+    {
+        return dirname(__DIR__);
+    }
+
+    protected function databaseLink(): SqlLink
+    {
+        return $this->app->get(MysqlLink::class);
+    }
+
+    /** @return list<string> */
+    protected function tablesToTruncate(): array
+    {
+        return ['articles'];
+    }
+
+    public function test_publishing_stores_the_published_article(): void
+    {
+        $this->unitOfWork(static function (EntityManager $entities): void {
+            $entities->persist(new Article(42, 'Launch', 7));
+            $entities->flush();
+        });
+
+        $this->client->post('/articles/42/publish')->assertOk();
+
+        $this->unitOfWork(static function (EntityManager $entities): void {
+            self::assertSame(
+                ArticleStatus::Published,
+                $entities->repository(Article::class)->findOrFail(42)->status(),
+            );
+        });
+    }
+
+    /** @param callable(EntityManager): void $work */
+    private function unitOfWork(callable $work): void
+    {
+        $entities = $this->app->get(OrmFactory::class)->open();
+
+        try {
+            $work($entities);
+        } finally {
+            $entities->close();
+        }
+    }
+}
+```
+
+`Article` is the [package README](https://github.com/kinetis-dev/orm#readme)'s
+entity with a `status()` accessor added, and the route is
+`ArticleController::publish()` from {doc}`orm`. `unitOfWork()` needs only
+a factory: a test of code that uses `kinetis/orm` without Kinetis builds
+one in `setUp()` with `OrmFactory::create()`, as the README's "Opening a
+unit of work" does, and closes the client in `tearDown()`.
+
+A returned `flush()` does not always mean COMMIT was acknowledged, and a
+test's assertion has to match which one ran. A standalone `flush()` with
+writes commits on return, so a test may assert its work through a new
+manager once it returns. A no-op `flush()` — nothing pending — sends no
+transaction at all. A `flush()` on a manager bound to an enclosing
+`OrmFactory::transaction()` writes provisionally: only the transaction's
+own return acknowledges COMMIT, so a test asserting mid-transaction work
+has to wait for that return, not the inner `flush()`.
+`UnknownFlushOutcomeException` and `CommitNotAcknowledgedException` leave
+the outcome unknown: neither the code under test nor the test assumes the
+work failed and replays it; each establishes what the database holds
+through a new manager or on the link. The README's "When a flush fails"
+and "When a session fails" define both outcomes.
+
+Under PHPUnit every request runs in the test process, not in a persistent
+worker. The integration workflow's `orm-runtime` job sends a request
+sequence through a FrankenPHP worker and through PHP-FPM (see
+{doc}`appendix-ci`).
+
 ## Without the base class
 
 `ApplicationTestCase` is thin wiring over `Kinetis\Testing\TestApplication`,
