@@ -8,12 +8,13 @@ use RuntimeException;
 
 /**
  * An entity class, serialized metadata, a property name, a relationship
- * path, a predicate value, a loaded row, a missing relationship target or an
- * entity's property value to write outside the mapping contract. Every one
- * is thrown before SQL runs or before an entity is allocated, but a missing
- * relationship target, which is thrown after its select and before the
- * relationship is assigned. A message names the class, property and column,
- * and describes a value only by its kind: a column can hold a secret.
+ * path, a predicate value, a loaded row, a missing or ambiguous relationship
+ * target or an entity's property value to write outside the mapping
+ * contract. Every one is thrown before SQL runs or before an entity is
+ * allocated, but a missing or ambiguous relationship target, which is thrown
+ * after its select and before the relationship is assigned. A message names
+ * the class, property and column, and describes a value only by its kind: a
+ * column can hold a secret.
  */
 final class MappingException extends RuntimeException
 {
@@ -64,6 +65,11 @@ final class MappingException extends RuntimeException
         return new self("{$class}::\${$property} is not a usable #[BelongsTo] relationship: {$reason}.");
     }
 
+    public static function inverse(string $class, string $property, string $reason): self
+    {
+        return new self("{$class}::\${$property} is not a usable #[HasOne] or #[HasMany] relationship: {$reason}.");
+    }
+
     public static function invalidTable(string $class, string $table): self
     {
         return new self(
@@ -112,15 +118,26 @@ final class MappingException extends RuntimeException
         return new self("{$class} has no mapped property \"{$property}\".");
     }
 
+    public static function notAColumn(string $class, string $property): self
+    {
+        return new self(
+            "{$class}::\${$property} is an inverse relationship and maps no column, so no predicate, order or cursor "
+            . "can name it. Query its target's repository by the target's #[BelongsTo] property instead.",
+        );
+    }
+
     public static function notARelation(string $class, string $property): self
     {
-        return new self("{$class}::\${$property} is not a #[BelongsTo] relationship, so with() cannot load it.");
+        return new self(
+            "{$class}::\${$property} is not a #[BelongsTo], #[HasOne] or #[HasMany] relationship, so with() cannot "
+            . 'load it.',
+        );
     }
 
     public static function invalidRelationPath(string $class, string $path): self
     {
         return new self(
-            "\"{$path}\" is not a relationship path of {$class}: name #[BelongsTo] properties separated by dots, such "
+            "\"{$path}\" is not a relationship path of {$class}: name relationship properties separated by dots, such "
             . 'as "author.organization".',
         );
     }
@@ -130,6 +147,24 @@ final class MappingException extends RuntimeException
     {
         return new self(
             "{$class}::\${$property} references a missing {$target} row: no row matches its \"{$column}\" foreign key.",
+        );
+    }
+
+    /** @param class-string $target */
+    public static function missingInverseTarget(string $class, string $property, string $target, string $column): self
+    {
+        return new self(
+            "{$class}::\${$property} is not nullable, and no {$target} row references its entity through the "
+            . "\"{$column}\" foreign key.",
+        );
+    }
+
+    /** @param class-string $target */
+    public static function ambiguousInverseTarget(string $class, string $property, string $target, string $column): self
+    {
+        return new self(
+            "{$class}::\${$property} is a #[HasOne], and more than one {$target} row references its entity through the "
+            . "\"{$column}\" foreign key. A #[HasOne] foreign-key column needs a unique constraint.",
         );
     }
 

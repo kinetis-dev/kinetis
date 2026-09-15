@@ -84,9 +84,9 @@ final class InvalidEntityStateException extends RuntimeException
     public static function relationTargetNotHeld(string $class, string $property): self
     {
         return new self(
-            "{$class}::\${$property} holds an entity this EntityManager does not manage. A non-null relationship "
-            . 'target must already be managed by this EntityManager: load it, or persist and flush it, through this '
-            . 'manager first.',
+            "{$class}::\${$property} holds a value other than an entity of its target class that this EntityManager "
+            . 'manages. A related entity must already be managed by this EntityManager: load it, or persist and flush '
+            . 'it, through this manager first.',
         );
     }
 
