@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Orm\Metadata;
 
 use BackedEnum;
+use DateTimeImmutable;
 use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
@@ -20,7 +21,7 @@ use ReflectionProperty;
 
 /**
  * The mapping of an explicit set of entity classes, held as plain data:
- * class names, table and column names, scalar type names and flags.
+ * class names, table and column names, type names and flags.
  * toArray() is exactly what fromArray() accepts, so a build step can export
  * the mapping and a worker can load it without scanning a directory.
  *
@@ -34,10 +35,14 @@ use ReflectionProperty;
  * among the inverses instead: its target is an entity of the same registry
  * whose #[BelongsTo] property mappedBy references the declaring class.
  *
- * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
+ * A property declared exactly DateTimeImmutable, nullable or not, has the
+ * type timestamp; DateTime, DateTimeInterface and subclasses of
+ * DateTimeImmutable are refused as declared types.
+ *
+ * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool}
  * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
- * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
+ * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool}
  * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
  */
@@ -343,6 +348,8 @@ final readonly class MetadataRegistry
 
         if (in_array($typeName, self::SCALAR_TYPES, true)) {
             $scalar = $typeName;
+        } elseif ($typeName === DateTimeImmutable::class) {
+            $scalar = 'timestamp';
         } elseif (!$type->isBuiltin() && is_subclass_of($typeName, BackedEnum::class)) {
             $enum = $typeName;
             $scalar = new ReflectionEnum($typeName)->getBackingType()?->getName() === 'int' ? 'int' : 'string';
@@ -350,7 +357,7 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedProperty(
                 $class,
                 $name,
-                "declares {$typeName}, which is not string, int, float, bool or a backed enum",
+                "declares {$typeName}, which is not string, int, float, bool, DateTimeImmutable or a backed enum",
             );
         }
 
@@ -360,7 +367,7 @@ final readonly class MetadataRegistry
             throw MappingException::invalidColumn($class, $name, $column);
         }
 
-        /** @var 'string'|'int'|'float'|'bool' $scalar */
+        /** @var 'string'|'int'|'float'|'bool'|'timestamp' $scalar */
         return ['name' => $name, 'column' => $column, 'type' => $scalar, 'nullable' => $type->allowsNull(), 'enum' => $enum, 'target' => null];
     }
 

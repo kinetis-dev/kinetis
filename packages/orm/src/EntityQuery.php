@@ -258,7 +258,9 @@ final class EntityQuery
     /**
      * Query::cursorPaginate() over the column $property maps to, with its
      * data loaded as managed entities. The property must be unique and
-     * strictly increasing, as Query requires of the cursor column.
+     * strictly increasing, as Query requires of the cursor column. A cursor
+     * on a timestamp property is admitted and bound as its UTC database
+     * value; any other cursor is bound as given.
      *
      * @throws MappingException
      */
@@ -266,6 +268,7 @@ final class EntityQuery
     {
         $this->manager->assertUsable();
         $column = $this->plan->column($property);
+        $cursor = $this->plan->cursor($property, $cursor);
 
         return $this->manager->terminal(function () use ($perPage, $cursor, $column): CursorPaginator {
             $page = $this->query->cursorPaginate($perPage, $cursor, $column);

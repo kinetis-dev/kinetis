@@ -11,7 +11,9 @@ declare(strict_types=1);
 namespace Kinetis\Orm\Tests\Fixtures\Invalid;
 
 use Countable;
+use DateTime;
 use DateTimeImmutable;
+use DateTimeInterface;
 use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
@@ -124,10 +126,54 @@ final class ArrayProperty
 }
 
 #[Entity]
-final class DateProperty
+final class MutableDateProperty
 {
     public int $id;
 
+    public DateTime $publishedAt;
+}
+
+#[Entity]
+final class DateInterfaceProperty
+{
+    public int $id;
+
+    public DateTimeInterface $publishedAt;
+}
+
+final class LocalDate extends DateTimeImmutable
+{
+}
+
+#[Entity]
+final class DateSubclassProperty
+{
+    public int $id;
+
+    public ?LocalDate $publishedAt;
+}
+
+#[Entity]
+final class TimestampIdentifier
+{
+    public DateTimeImmutable $id;
+}
+
+#[Entity]
+final class TimestampVersion
+{
+    public int $id;
+
+    #[Version]
+    public DateTimeImmutable $version;
+}
+
+#[Entity]
+final class TimestampRelationship
+{
+    public int $id;
+
+    #[BelongsTo]
     public DateTimeImmutable $publishedAt;
 }
 
