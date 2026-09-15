@@ -1004,6 +1004,95 @@ jobs:
         working-directory: packages/roadrunner-adapter
         run: php vendor/bin/phpunit tests/RoadRunnerConformanceTest.php
 
+  orm-runtime:
+    name: orm request sequence (${{ matrix.sapi }})
+    runs-on: ubuntu-latest
+    # kinetis/database-bridge's OrmWorkerSequenceTest against a real SAPI:
+    # two requests through tests/Fixtures/OrmWorker/index.php, each with
+    # its own request-scoped EntityManager. The FrankenPHP leg is the
+    # persistent worker, held to one worker thread so both requests reach
+    # one interpreter, on the native driver; the FPM leg runs the script
+    # again for every request, on PDO. The SAPI containers join the MySQL
+    # service's network, and the test runs inside the PHP container, which
+    # is the one with the MySQL extensions.
+    strategy:
+      fail-fast: false
+      matrix:
+        sapi: [frankenphp, fpm]
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install database-bridge dependencies
+        run: docker run --rm -v "$PWD":/app -w /app/packages/database-bridge composer:2 install --no-interaction --prefer-dist
+
+      - name: Start the SAPI serving the fixture
+        # The ini and the nginx template are runtime-conformance's own:
+        # enable_post_data_reading=0, which every Kinetis SAPI adapter
+        # requires, and nginx in front of PHP-FPM with the fixture as the
+        # one script.
+        run: |
+          FIXTURE=/app/packages/database-bridge/tests/Fixtures/OrmWorker
+          CONFORMANCE="$PWD/packages/framework/tests/Runtime/Conformance/Fixtures"
+          PHP_ARGS=(--network "${{ job.services.mysql.network }}" -v "$PWD":/app
+            -v "$CONFORMANCE/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro
+            -e DB_CONNECTION=mysql -e DB_HOST=mysql -e DB_NAME=testdb -e DB_USER=testuser -e DB_PASSWORD=testpass)
+          case "${{ matrix.sapi }}" in
+            frankenphp)
+              docker run -d --name php --network-alias sapi "${PHP_ARGS[@]}" \
+                --entrypoint sh dunglas/frankenphp:latest \
+                -c "install-php-extensions mysqli pdo_mysql && exec frankenphp php-server --listen :8080 --root $FIXTURE --worker $FIXTURE/index.php,1"
+              ;;
+            fpm)
+              docker run -d --name php "${PHP_ARGS[@]}" \
+                php:8.4-fpm-alpine sh -c "apk add --no-cache \$PHPIZE_DEPS >/dev/null && docker-php-ext-install mysqli pdo_mysql >/dev/null && exec php-fpm"
+              docker run -d --name sapi --network "${{ job.services.mysql.network }}" -v "$PWD":/app:ro \
+                -v "$CONFORMANCE/nginx.conf.template":/etc/nginx/templates/default.conf.template:ro \
+                -e NGINX_PORT=8080 -e FPM_UPSTREAM=php:9000 -e FIXTURE_PATH="$FIXTURE/index.php" \
+                nginx:alpine
+              ;;
+          esac
+
+      - name: Wait for the fixture to answer through the SAPI
+        # Each server starts only once its extensions are built, and only
+        # the fixture's own response carries X-Worker: nginx answers 502
+        # until PHP-FPM is up.
+        run: |
+          docker run --rm --network "${{ job.services.mysql.network }}" php:8.4-cli-alpine php -r '
+            $deadline = microtime(true) + 240; $last = "no response";
+            while (microtime(true) < $deadline) {
+              @file_get_contents("http://sapi:8080/", false, stream_context_create(["http" => ["ignore_errors" => true, "timeout" => 2]]));
+              $head = http_get_last_response_headers() ?? [];
+              if (preg_grep("/^X-Worker:/i", $head) !== []) { exit(0); }
+              $last = $head[0] ?? "no response";
+              usleep(500000);
+            }
+            fwrite(STDERR, "the fixture never answered through the SAPI (last seen: $last)\n");
+            exit(1);
+          '
+
+      - name: Run the request sequence against it
+        run: |
+          docker exec -w /app/packages/database-bridge \
+            -e KINETIS_ORM_WORKER_HOST=sapi:8080 -e KINETIS_ORM_WORKER_SAPI=${{ matrix.sapi }} -e MYSQL_HOST=mysql \
+            php php vendor/bin/phpunit --filter OrmWorkerSequenceTest
+
+      - name: SAPI logs
+        if: failure()
+        run: |
+          docker logs php 2>&1 | tail -100
+          docker logs sapi 2>&1 | tail -50 || true
+
   search-elasticsearch:
     name: search-elasticsearch (Elasticsearch ${{ matrix.elasticsearch }}, PHP ${{ matrix.php-version }})
     runs-on: ubuntu-latest

@@ -242,6 +242,21 @@ rather than which form it took.
   directions by the shared suite, so they are covered here rather than
   skipped. Both are disclosed in `RoadRunnerAdapter`'s own docblock and
   {doc}`runtime-adapters`.
+- **`orm-runtime`** (matrix: a `dunglas/frankenphp` worker; `php:8.4-fpm-alpine`
+  behind `nginx:alpine`; MySQL 8.4 as a service) — `kinetis/database-bridge`'s
+  `OrmWorkerSequenceTest` against `tests/Fixtures/OrmWorker/index.php`,
+  which puts the bridge's `PackageBootstrap` behind a `Kernel` under the
+  detected adapter. The first request loads a row through its
+  request-scoped `EntityManager`, changes it without flushing and waits on
+  `SELECT SLEEP(0.2)` beside a `LoopLiveness` sentinel; the test reads the
+  row on its own connection; the second request loads it through its own
+  manager. Both reads must find the stored value. The FrankenPHP leg runs
+  one worker thread and requires one interpreter to answer both requests,
+  the native `MysqliAsyncClient`, a sentinel that turned, and the first
+  request's manager gone by the second request; the FPM leg requires a
+  fresh script per request, the PDO client and a sentinel that did not
+  turn. Each PHP container installs `mysqli` and `pdo_mysql` before its
+  server starts, and the test runs inside it.
 - **`pingpong`** — not a package's own real-backend script like every
   job above; the real `docker compose up --build` stack (`app`, `mysql`,
   `redis`, `soketi`, `migrate`, `queue-worker`, `cron`) brought up from
@@ -263,8 +278,8 @@ duplicated scripts. Only the service container's image and health-check
 command (`mysqladmin` vs. `mariadb-admin`) differ between the two matrix
 entries.
 
-Every job above except `pingpong`, `runtime-conformance`, and
-`roadrunner-conformance` (each exercises a real multi-container stack,
+Every job above except `pingpong`, `runtime-conformance`, `orm-runtime`,
+and `roadrunner-conformance` (each exercises a real multi-container stack,
 or in `roadrunner-conformance`'s case a fixed PHP version chosen to
 match the `ext-sockets` requirement — not a bare per-package PHP
 matrix) also runs across PHP 8.4 and 8.5, the same matrix `ci.yml`
