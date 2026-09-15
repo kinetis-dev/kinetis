@@ -100,8 +100,9 @@ final class Article
   `int` and not the identifier, opts the entity into optimistic locking
   (see "Optimistic locking"). A property merely named `version` is
   ordinary data.
-- **Types.** `string`, `int`, `float`, `bool`, a backed enum, and the
-  nullable form of each; on a `#[BelongsTo]` or `#[HasOne]` property, an
+- **Types.** `string`, `int`, `float`, `bool`, a backed enum,
+  `DateTimeImmutable` (see "Timestamps"), and the nullable form of each;
+  on a `#[BelongsTo]` or `#[HasOne]` property, an
   entity class, and on a `#[HasMany]` property, `array` (see
   "Relationships").
 - **Classes.** An entity has no parent class and is neither abstract nor
@@ -112,8 +113,9 @@ final class Article
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
 type, an intersection, any other type (`mixed`, `array` without
-`#[HasMany]`, an object without `#[BelongsTo]` or `#[HasOne]`,
-`DateTimeImmutable`, a unit enum), a missing or
+`#[HasMany]`, an object without `#[BelongsTo]` or `#[HasOne]`, such as
+`DateTime`, `DateTimeInterface` or a subclass of `DateTimeImmutable`, a
+unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
 `int`, an invalid name, a duplicate column, and each relationship
@@ -262,6 +264,7 @@ Every entity query selects all mapped columns. Loading a row:
 | `float` | a finite int, float or numeric string |
 | `bool` | a bool, `0`, `1`, `"0"` or `"1"` |
 | backed enum | a case, or a backing value admitted under its backing type's rule |
+| `DateTimeImmutable` | a `DateTimeImmutable`, or a UTC string `YYYY-MM-DD HH:MM:SS` with an optional `.` and one to six fraction digits, loaded in UTC (see "Timestamps") |
 | `?T` | also `null` |
 
 A message names the class, property and column, and describes a value by
@@ -310,7 +313,8 @@ spelling and the database returns the stored identifier.
   it requires an `orderBy()`;
 - `cursorPaginate(int $perPage, ?string $cursor, string $property = 'id')`
   — a `Kinetis\QueryBuilder\CursorPaginator` over the column the property
-  maps to, which must be unique and increasing.
+  maps to, which must be unique and increasing; a timestamp cursor is
+  admitted as "Timestamps" describes.
 
 A property name resolves to its column and a value converts through the
 property's type before either reaches the query builder, so an unknown
@@ -810,6 +814,81 @@ overwritten with the version the database acknowledged, while a change
 to any other property stays pending against the snapshot of the values
 sent, and the next `flush()` writes it.
 
+## Timestamps
+
+```php
+use DateTimeImmutable;
+use DateTimeZone;
+use Kinetis\Orm\Attributes\Entity;
+
+#[Entity(table: 'shipments')]
+final class Shipment
+{
+    public ?DateTimeImmutable $deliveredAt = null; // delivered_at DATETIME(6) NULL
+
+    public function __construct(
+        private int $id,
+        private DateTimeImmutable $shippedAt, // shipped_at DATETIME(6) NOT NULL
+    ) {}
+}
+
+$entities->repository(Shipment::class)
+    ->query()
+    ->where('shippedAt', '>=', new DateTimeImmutable('2026-03-04 00:00', new DateTimeZone('Europe/Paris')))
+    ->get(); // shipped_at >= ?, bound as '2026-03-03 23:00:00.000000'
+```
+
+- **Mapping.** A property declared exactly `DateTimeImmutable` or
+  `?DateTimeImmutable` maps a timestamp column, recorded in the metadata
+  with the type `timestamp`. It is never the identifier or the version.
+  `DateTime`, `DateTimeInterface` and a subclass of `DateTimeImmutable`
+  are refused as declared types; a subclass instance held by a
+  `DateTimeImmutable` property is written by its instant like any other
+  value.
+- **Column.** A timestamp column holds a UTC value without a time zone,
+  to the microsecond: `DATETIME(6)` on MySQL and MariaDB, and
+  `timestamp(6) without time zone` on PostgreSQL, whose `DateStyle` must
+  be `ISO`, the server default. Nothing inspects the schema, sets a
+  session time zone or `DateStyle`, or generates a timestamp.
+- **Narrower columns.** A column with fewer than six fraction digits
+  rounds (MySQL, PostgreSQL) or truncates (MariaDB) the instant written,
+  so the stored row differs from the entity and an equality predicate on
+  the written value matches no row. The manager keeps the value it sent,
+  so the difference shows when a later unit of work loads the row.
+- **Unsupported columns.** PostgreSQL's `timestamptz` and a non-ISO
+  `DateStyle` return spellings with an offset or in another format, and
+  loading one throws `MappingException`. MySQL's `TIMESTAMP` converts
+  every value through the session `time_zone` and returns the spelling
+  `DATETIME` does, so nothing can detect it: it is not supported.
+- **Writing.** The database value is the instant in UTC, formatted
+  `Y-m-d H:i:s.u` (`2026-03-04 05:06:07.123456`) and bound as a string.
+  Its UTC year must be 0001 to 9999; any other throws `MappingException`
+  before SQL, from `persist()`, `flush()` or a predicate. A six-digit column on MySQL 8.4, MariaDB
+  11.4 and PostgreSQL 16 stores, returns and compares that whole range
+  exactly, though the MySQL family's date arithmetic functions are
+  unreliable below year 1000.
+- **Changes.** The snapshot holds that string, so assigning the same
+  instant in another zone is not a change, and one a microsecond apart
+  is.
+- **Loading.** A driver value is `YYYY-MM-DD HH:MM:SS`, optionally
+  followed by `.` and one to six fraction digits, and is read as UTC;
+  PostgreSQL omits trailing fraction zeros, and the MySQL family prints
+  the column's precision. A date or time that does not exist, such as
+  February 30 or 24:00:00, year 0000, an offset, a `BC` suffix,
+  surrounding whitespace or any other text throws `MappingException`.
+  The property receives a `DateTimeImmutable` in UTC, whatever the
+  process's default time zone.
+- **Predicates.** `where()`, `whereIn()` and `findBy()` take a
+  `DateTimeImmutable` in any zone, or a string the loading rule admits,
+  and bind its database value; anything else, such as a string with an
+  offset, throws `MappingException` before SQL.
+- **Cursors.** A `cursorPaginate()` cursor on a timestamp property is
+  admitted and bound the same way, so the driver spelling a page returns
+  as `nextCursor` binds as its six-digit UTC string, and a malformed
+  cursor, an offset, a year outside 0001 to 9999 or a date that does not
+  exist throws `MappingException` before SQL. A null cursor starts at
+  the first page. A cursor on any other property is bound as given.
+
 ## The query builder underneath
 
 `EntityQuery::builder()` returns a copy of the underlying
@@ -973,8 +1052,10 @@ string or database-generated versions, refreshing or merging an entity,
 conflict resolution, joining a transaction the application began, nested
 sessions or savepoints, more than one writing flush per session,
 provisional identifiers or versions, batched or bulk writes,
-automatic retries, flushing on `close()` or destruction, timestamps or
-`DateTimeImmutable` properties, custom value converters, UUID generation,
+automatic retries, flushing on `close()` or destruction, automatic
+timestamps, `DateTime` properties, `timestamptz` or MySQL `TIMESTAMP`
+columns, date-only or time-only values, time zone or precision options,
+custom value converters, UUID generation,
 composite identifiers, inheritance, partial entities, transient
 properties, schema validation, CLI commands, streaming, or static model
 methods.

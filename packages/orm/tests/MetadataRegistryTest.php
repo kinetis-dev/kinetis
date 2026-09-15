@@ -16,6 +16,7 @@ use Kinetis\Orm\Tests\Fixtures\Charter;
 use Kinetis\Orm\Tests\Fixtures\Comment;
 use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Edition;
+use Kinetis\Orm\Tests\Fixtures\Event;
 use Kinetis\Orm\Tests\Fixtures\Invoice;
 use Kinetis\Orm\Tests\Fixtures\Organization;
 use Kinetis\Orm\Tests\Fixtures\Post;
@@ -110,6 +111,21 @@ final class MetadataRegistryTest extends TestCase
                 'inverses' => [],
             ]]],
             $data,
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_a_date_time_immutable_property_is_recorded_as_a_timestamp_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Event::class])->toArray();
+
+        self::assertSame(
+            [
+                ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'occurredAt', 'column' => 'occurred_at', 'type' => 'timestamp', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'archivedAt', 'column' => 'archived_at', 'type' => 'timestamp', 'nullable' => true, 'enum' => null, 'target' => null],
+            ],
+            $data['entities'][0]['properties'],
         );
         self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
     }
@@ -223,7 +239,12 @@ final class MetadataRegistryTest extends TestCase
         yield 'a union type' => [self::INVALID . 'UnionProperty', 'UnionProperty::$code cannot be mapped: it declares the composite type'];
         yield 'an intersection type' => [self::INVALID . 'IntersectionProperty', 'IntersectionProperty::$items cannot be mapped: it declares the composite type'];
         yield 'an array' => [self::INVALID . 'ArrayProperty', 'ArrayProperty::$tags cannot be mapped: it declares array'];
-        yield 'a DateTimeImmutable' => [self::INVALID . 'DateProperty', 'DateProperty::$publishedAt cannot be mapped: it declares DateTimeImmutable'];
+        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, DateTimeImmutable or a backed enum'];
+        yield 'a DateTimeInterface' => [self::INVALID . 'DateInterfaceProperty', 'DateInterfaceProperty::$publishedAt cannot be mapped: it declares DateTimeInterface, which'];
+        yield 'a DateTimeImmutable subclass' => [self::INVALID . 'DateSubclassProperty', 'DateSubclassProperty::$publishedAt cannot be mapped: it declares ' . self::INVALID . 'LocalDate, which'];
+        yield 'a timestamp identifier' => [self::INVALID . 'TimestampIdentifier', 'TimestampIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
+        yield 'a timestamp version' => [self::INVALID . 'TimestampVersion', 'TimestampVersion has no usable version: the version property "version" must be typed int'];
+        yield 'a relationship typed DateTimeImmutable' => [self::INVALID . 'TimestampRelationship', 'TimestampRelationship::$publishedAt is not a usable #[BelongsTo] relationship: DateTimeImmutable is not an entity in this MetadataRegistry'];
         yield 'mixed' => [self::INVALID . 'MixedProperty', 'MixedProperty::$data cannot be mapped: it declares mixed'];
         yield 'a unit enum' => [self::INVALID . 'UnitEnumProperty', 'UnitEnumProperty::$suit cannot be mapped: it declares ' . self::INVALID . 'Suit'];
         yield 'no identifier' => [self::INVALID . 'MissingIdentifier', 'no property carries #[Id] and none is named "id"'];
@@ -316,6 +337,10 @@ final class MetadataRegistryTest extends TestCase
         $retyped['properties'][0]['type'] = 'string';
         $nullable = $category;
         $nullable['properties'][1]['nullable'] = true;
+        $timed = $category;
+        $timed['properties'][1]['type'] = 'timestamp';
+        $untimed = MetadataRegistry::fromClasses([Event::class])->toArray()['entities'][0];
+        $untimed['properties'][1]['type'] = 'string';
         $reidentified = $account;
         $reidentified['id'] = 'id';
         $generated = $category;
@@ -371,6 +396,8 @@ final class MetadataRegistryTest extends TestCase
         yield 'an entry with an extra field' => [['entities' => [[...$account, 'schema' => 'x'], $category]], Account::class . ' does not match'];
         yield 'a renamed column' => [['entities' => [$account, $renamed]], ArticleCategory::class . ' does not match'];
         yield 'a changed type' => [['entities' => [$account, $retyped]], ArticleCategory::class . ' does not match'];
+        yield 'a string recorded as a timestamp' => [['entities' => [$account, $timed]], ArticleCategory::class . ' does not match'];
+        yield 'a timestamp recorded as a string' => [['entities' => [$untimed]], Event::class . ' does not match'];
         yield 'a changed nullability' => [['entities' => [$account, $nullable]], ArticleCategory::class . ' does not match'];
         yield 'a changed identifier' => [['entities' => [$reidentified, $category]], Account::class . ' does not match'];
         yield 'a changed identifier generation' => [['entities' => [$account, $generated]], ArticleCategory::class . ' does not match'];

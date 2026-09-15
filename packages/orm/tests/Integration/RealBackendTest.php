@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Orm\Tests\Integration;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use Kinetis\Orm\EntityManager;
 use Kinetis\Orm\EntityRepository;
 use Kinetis\Orm\Exception\MappingException;
@@ -15,6 +17,7 @@ use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\StoredArticle;
 use Kinetis\Orm\Tests\Fixtures\StoredAuthor;
 use Kinetis\Orm\Tests\Fixtures\StoredDocument;
+use Kinetis\Orm\Tests\Fixtures\StoredEvent;
 use Kinetis\Orm\Tests\Fixtures\StoredInvoice;
 use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
 use Kinetis\Orm\Tests\Fixtures\StoredPost;
@@ -33,9 +36,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * Entity reads, relationships, flushes and transaction sessions against real
  * servers, through both the native and the PDO driver of each family: every
- * row spelling those drivers produce for ints, floats, booleans, nulls and
- * UUID text passes the conversion domain, and every write, generated key,
- * affected-row count, constraint failure and row lock is the server's own.
+ * row spelling those drivers produce for ints, floats, booleans, nulls, UUID
+ * text and timestamps passes the conversion domain, and every write,
+ * generated key, affected-row count, constraint failure and row lock is the
+ * server's own.
  *
  * Environment-gated: each case skips unless MYSQL_HOST or POSTGRES_HOST is
  * set and its driver's extension is loaded. CI's integration workflow runs
@@ -515,6 +519,70 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * Instants written from another zone and read back through each driver's
+     * spelling of a six-digit column: the MySQL family prints six fraction
+     * digits, PostgreSQL trims trailing zeros, and a page's next cursor in
+     * that spelling selects the following page. A timestamptz column's
+     * offset spelling is refused.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_timestamps_round_trip_through_six_digit_columns_and_compare_as_instants(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $utc = new DateTimeZone('UTC');
+        $instants = ['2026-03-04 05:06:07.123456', '2026-03-04 05:06:07.500000', '2026-03-04 05:06:07.000000', '0001-01-01 00:00:00.000000', '9999-12-31 23:59:59.999999'];
+
+        foreach ($instants as $i => $instant) {
+            $event = new StoredEvent();
+            $event->id = $i + 1;
+            $event->occurredAt = new DateTimeImmutable($instant, $utc)->setTimezone(new DateTimeZone('+02:00'));
+            $event->archivedAt = $i === 0 ? new DateTimeImmutable($instant, $utc) : null;
+            $entities->persist($event);
+        }
+
+        $entities->flush();
+
+        self::assertSame(
+            $dialect === 'mysql'
+                ? $instants
+                : ['2026-03-04 05:06:07.123456', '2026-03-04 05:06:07.5', '2026-03-04 05:06:07', '0001-01-01 00:00:00', '9999-12-31 23:59:59.999999'],
+            new Query($this->link())->table('kin_orm_events')->orderBy('id')->pluck('occurred_at'),
+        );
+
+        $events = $factory->open()->repository(StoredEvent::class);
+        self::assertSame(
+            array_map(static fn (string $instant): string => "{$instant} UTC", $instants),
+            array_map(static fn (StoredEvent $event): string => $event->occurredAt->format('Y-m-d H:i:s.u e'), $events->query()->orderBy('id')->get()),
+        );
+        self::assertSame([2], array_column($events->query()->where('occurredAt', '=', new DateTimeImmutable('2026-03-04 07:06:07.5', new DateTimeZone('+02:00')))->get(), 'id'));
+        self::assertSame([1, 3, 4], array_column($events->query()->where('occurredAt', '<', '2026-03-04 05:06:07.5')->orderBy('id')->get(), 'id'));
+        self::assertSame([1], array_column($events->findBy(['archivedAt' => '2026-03-04 05:06:07.123456']), 'id'));
+
+        $first = $events->query()->cursorPaginate(2, null, 'occurredAt');
+        $second = $events->query()->cursorPaginate(2, $first->nextCursor, 'occurredAt');
+        self::assertSame([[4, 3], [1, 2]], [array_column($first->data, 'id'), array_column($second->data, 'id')]);
+        self::assertSame(
+            $dialect === 'mysql' ? ['2026-03-04 05:06:07.000000', '2026-03-04 05:06:07.500000'] : ['2026-03-04 05:06:07', '2026-03-04 05:06:07.5'],
+            [$first->nextCursor, $second->nextCursor],
+        );
+
+        if ($dialect === 'pgsql') {
+            $this->link()->execute('ALTER TABLE kin_orm_events ALTER COLUMN occurred_at TYPE TIMESTAMP(6) WITH TIME ZONE');
+
+            try {
+                $factory->open()->repository(StoredEvent::class)->find(1);
+                self::fail('A timestamptz value was loaded.');
+            } catch (MappingException $e) {
+                self::assertStringStartsWith(StoredEvent::class . '::$occurredAt takes a DateTimeImmutable, or a UTC', $e->getMessage());
+            }
+        }
+    }
+
+    /**
      * @param 'mysql'|'pgsql' $dialect
      * @param 'native'|'pdo' $driver
      */
@@ -530,6 +598,7 @@ final class RealBackendTest extends TestCase
                 StoredArticle::class,
                 StoredAuthor::class,
                 StoredDocument::class,
+                StoredEvent::class,
                 StoredInvoice::class,
                 StoredOrganization::class,
                 StoredPost::class,
@@ -609,6 +678,9 @@ final class RealBackendTest extends TestCase
         $link->execute('DROP TABLE IF EXISTS kin_orm_documents');
         $link->execute('DROP TABLE IF EXISTS kin_orm_tickets');
         $link->execute('DROP TABLE IF EXISTS kin_orm_invoices');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_events');
+        $timestamp = $dialect === 'mysql' ? 'DATETIME(6)' : 'TIMESTAMP(6) WITHOUT TIME ZONE';
+        $link->execute("CREATE TABLE kin_orm_events (id INT PRIMARY KEY, occurred_at {$timestamp} NOT NULL, archived_at {$timestamp} NULL)");
         $link->execute(
             'CREATE TABLE kin_orm_articles (id INT PRIMARY KEY, title VARCHAR(100) NOT NULL, summary VARCHAR(200) NULL, '
             . 'status VARCHAR(20) NOT NULL, priority INT NULL, featured BOOLEAN NOT NULL, rating DOUBLE PRECISION NOT NULL, '

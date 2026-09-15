@@ -6,6 +6,8 @@ namespace Kinetis\Orm;
 
 use BackedEnum;
 use Closure;
+use DateTimeImmutable;
+use DateTimeZone;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
@@ -21,12 +23,16 @@ use ReflectionProperty;
  * a string is a string; an int is an int or its canonical decimal string; a
  * float is a finite int, float or numeric string; a bool is a bool, 0, 1,
  * "0" or "1"; a backed enum is a case or a backing value under its backing
- * type's rule; null only where the property type allows it.
+ * type's rule; a timestamp is a DateTimeImmutable in any zone or a UTC
+ * "Y-m-d H:i:s" string with up to six fraction digits, in UTC years 0001 to
+ * 9999, and a string loads as a DateTimeImmutable in UTC; null only where
+ * the property type allows it.
  *
  * A database value is a converted value with a backed enum replaced by its
- * backing value. Predicate parameters, snapshots and written rows all use
- * it, so a loaded value and the same value read back from the entity
- * compare identical.
+ * backing value and a DateTimeImmutable by its UTC "Y-m-d H:i:s.u" string.
+ * Predicate parameters, snapshots and written rows all use it, so a loaded
+ * value and the same value read back from the entity compare identical, and
+ * one instant has one database value in every zone.
  *
  * A #[BelongsTo] property is one of the mapped properties, over its
  * foreign-key column. Its converted and database value is the target's
@@ -46,6 +52,13 @@ use ReflectionProperty;
  */
 final class EntityPlan
 {
+    /**
+     * A timestamp's UTC string: the pattern fixes the shape and the parse
+     * checks the calendar. PHP parses year 0000 without a warning, so the
+     * pattern refuses it.
+     */
+    private const string TIMESTAMP = '/^(?!0000)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D';
+
     /** @var class-string<T> */
     public readonly string $class;
 
@@ -155,6 +168,24 @@ final class EntityPlan
     public function parameter(string $property, mixed $value): null|bool|int|float|string
     {
         return self::databaseValue($this->convert($this->property($property), $value));
+    }
+
+    /**
+     * A page cursor for $property. A timestamp cursor is admitted like a
+     * predicate value and becomes its UTC database value, so an offset never
+     * reaches a server that would shift it through its session time zone.
+     * Any other cursor, and null, pass as given.
+     *
+     * @throws MappingException
+     */
+    public function cursor(string $property, ?string $cursor): ?string
+    {
+        if ($cursor === null || $this->property($property)['type'] !== 'timestamp') {
+            return $cursor;
+        }
+
+        /** @var string a non-null timestamp's database value */
+        return $this->parameter($property, $cursor);
     }
 
     /**
@@ -377,6 +408,7 @@ final class EntityPlan
             'int' => self::int($value),
             'float' => self::float($value),
             'bool' => self::bool($value),
+            'timestamp' => self::timestamp($value),
         };
 
         if ($converted === null) {
@@ -394,8 +426,12 @@ final class EntityPlan
 
     private static function databaseValue(mixed $converted): null|bool|int|float|string
     {
-        /** @var null|bool|int|float|string|BackedEnum $converted */
-        return $converted instanceof BackedEnum ? $converted->value : $converted;
+        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable $converted */
+        return match (true) {
+            $converted instanceof BackedEnum => $converted->value,
+            $converted instanceof DateTimeImmutable => self::utc($converted),
+            default => $converted,
+        };
     }
 
     /**
@@ -430,6 +466,37 @@ final class EntityPlan
     }
 
     /**
+     * An instance is admitted when its UTC value is inside the string domain,
+     * which bounds the year to 0001-9999. A string is parsed as UTC with a
+     * zero-padded fraction, since PostgreSQL omits a zero fraction and PHP's
+     * "u" needs one digit or more; any parse warning, such as for a day,
+     * hour or second that does not exist, refuses it.
+     */
+    private static function timestamp(mixed $value): ?DateTimeImmutable
+    {
+        if ($value instanceof DateTimeImmutable) {
+            return preg_match(self::TIMESTAMP, self::utc($value)) === 1 ? $value : null;
+        }
+
+        if (!is_string($value) || preg_match(self::TIMESTAMP, $value) !== 1) {
+            return null;
+        }
+
+        $timestamp = DateTimeImmutable::createFromFormat(
+            '!Y-m-d H:i:s.u',
+            str_pad(strlen($value) === 19 ? "{$value}." : $value, 26, '0'),
+            new DateTimeZone('UTC'),
+        );
+
+        return $timestamp !== false && DateTimeImmutable::getLastErrors() === false ? $timestamp : null;
+    }
+
+    private static function utc(DateTimeImmutable $value): string
+    {
+        return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
+    }
+
+    /**
      * @param PropertyMapping $property
      */
     private static function expected(array $property): string
@@ -439,6 +506,7 @@ final class EntityPlan
             'int' => 'an int or its canonical decimal string',
             'float' => 'a finite int, float or numeric string',
             'bool' => 'a bool, 0, 1, "0" or "1"',
+            'timestamp' => 'a DateTimeImmutable, or a UTC "Y-m-d H:i:s" string with up to six fraction digits and no offset, in UTC years 0001 to 9999',
         };
 
         if ($property['enum'] !== null) {
