@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Orm\Tests\Integration;
 
+use Kinetis\Orm\EntityManager;
 use Kinetis\Orm\EntityRepository;
 use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
@@ -19,16 +20,17 @@ use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Persistence\Exception\QueryException;
 use Kinetis\Persistence\SqlConnectionFactory;
+use Kinetis\QueryBuilder\LockWait;
 use Kinetis\QueryBuilder\Query;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Entity reads and flushes against real servers, through both the native
- * and the PDO driver of each family: every row spelling those drivers
- * produce for ints, floats, booleans, nulls and UUID text passes the
- * conversion domain, and every write, generated key, affected-row count
- * and constraint failure is the server's own.
+ * Entity reads, flushes and transaction sessions against real servers,
+ * through both the native and the PDO driver of each family: every row
+ * spelling those drivers produce for ints, floats, booleans, nulls and UUID
+ * text passes the conversion domain, and every write, generated key,
+ * affected-row count, constraint failure and row lock is the server's own.
  *
  * Environment-gated: each case skips unless MYSQL_HOST or POSTGRES_HOST is
  * set and its driver's extension is loaded. CI's integration workflow runs
@@ -42,10 +44,15 @@ final class RealBackendTest extends TestCase
 
     private null|MysqlLink|PostgresLink $link = null;
 
+    /** A second client, for contention the factory's client cannot observe on itself. */
+    private null|MysqlLink|PostgresLink $other = null;
+
     protected function tearDown(): void
     {
         $this->link?->close();
         $this->link = null;
+        $this->other?->close();
+        $this->other = null;
     }
 
     /**
@@ -290,10 +297,65 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * A row an entity query locks inside OrmFactory::transaction() stays
+     * locked through the session's flush and until its COMMIT. A second
+     * client probes with NOWAIT, which never waits, so contention fails the
+     * probe at once instead of blocking the test.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_locking_entity_read_holds_its_row_through_the_bound_flush_until_commit(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $other = $this->other = $this->connect($dialect, $driver);
+        $held = [];
+        $versionBeforeCommit = null;
+
+        $invoice = $factory->transaction(static function (EntityManager $entities) use ($other, &$held, &$versionBeforeCommit): StoredInvoice {
+            $invoice = $entities->repository(StoredInvoice::class)->query()->where('id', '=', 1)->lockForUpdate()->first();
+            self::assertNotNull($invoice);
+            $held[] = self::lockedElsewhere($other);
+
+            $invoice->status = 'paid';
+            $entities->builder()->table('kin_orm_tickets')->insert(['subject' => 'Paid']);
+            $entities->flush();
+            $held[] = self::lockedElsewhere($other);
+            $versionBeforeCommit = $invoice->version;
+
+            return $invoice;
+        });
+
+        self::assertSame([true, true], $held, 'locked after the read and after the flush');
+        self::assertSame(1, $versionBeforeCommit);
+        self::assertSame(2, $invoice->version);
+        self::assertFalse(self::lockedElsewhere($other), 'COMMIT released the lock');
+        self::assertSame(['paid', 2], self::invoice($factory));
+        self::assertSame(2, new Query($other)->table('kin_orm_tickets')->count());
+    }
+
+    /**
      * @param 'mysql'|'pgsql' $dialect
      * @param 'native'|'pdo' $driver
      */
     private function factory(string $dialect, string $driver): OrmFactory
+    {
+        $link = $this->connect($dialect, $driver);
+        $this->link = $link;
+        self::seed($link, $dialect);
+
+        return OrmFactory::create(
+            $link,
+            MetadataRegistry::fromClasses([StoredArticle::class, StoredDocument::class, StoredInvoice::class, StoredTicket::class]),
+        );
+    }
+
+    /**
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    private function connect(string $dialect, string $driver): MysqlLink|PostgresLink
     {
         $prefix = $dialect === 'mysql' ? 'MYSQL' : 'POSTGRES';
         $host = getenv("{$prefix}_HOST");
@@ -313,7 +375,7 @@ final class RealBackendTest extends TestCase
             self::markTestSkipped("ext-{$extension} is not loaded.");
         }
 
-        $link = SqlConnectionFactory::create(new ConnectionDefinition(
+        return SqlConnectionFactory::create(new ConnectionDefinition(
             dialect: $dialect,
             host: $host,
             database: getenv("{$prefix}_DATABASE") ?: 'testdb',
@@ -322,18 +384,31 @@ final class RealBackendTest extends TestCase
             port: (int) (getenv("{$prefix}_PORT") ?: ($dialect === 'mysql' ? 3306 : 5432)),
             driver: $driver,
         ));
-        $this->link = $link;
-        self::seed($link, $dialect);
-
-        return OrmFactory::create(
-            $link,
-            MetadataRegistry::fromClasses([StoredArticle::class, StoredDocument::class, StoredInvoice::class, StoredTicket::class]),
-        );
     }
 
     private function link(): MysqlLink|PostgresLink
     {
         return $this->link ?? throw new \LogicException('No link: factory() opens it.');
+    }
+
+    /**
+     * Whether $other's NOWAIT lock on invoice 1 fails, in a transaction of
+     * its own that is rolled back either way.
+     */
+    private static function lockedElsewhere(MysqlLink|PostgresLink $other): bool
+    {
+        $probe = $other->beginTransaction();
+
+        try {
+            new Query($probe)->table('kin_orm_invoices')->where('id', '=', 1)->lockForUpdate(LockWait::NoWait)->get();
+            $locked = false;
+        } catch (QueryException) {
+            $locked = true;
+        }
+
+        $probe->rollback();
+
+        return $locked;
     }
 
     private static function seed(MysqlLink|PostgresLink $link, string $dialect): void

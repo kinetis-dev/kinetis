@@ -30,8 +30,9 @@ loaded through typed repositories and entity queries, and hydrated
 without their constructors. Each unit of work holds one object per row,
 tracks changes to the entities it holds, and writes new, changed and
 removed entities in one transaction when it is flushed. Updates and
-deletes of an entity carrying `#[Version]` are optimistically locked. It
-has no relationships.
+deletes of an entity carrying `#[Version]` are optimistically locked. A
+transaction session locks entity rows and writes entities and
+query-builder SQL in one transaction. It has no relationships.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -198,8 +199,8 @@ try {
 ```
 
 `OrmFactory` takes a `MysqlLink` or `PostgresLink` client, never a
-transaction (see "Transactions"), and holds no unit-of-work state, so one
-factory serves the whole process. `open()` returns a new
+transaction (see "Transaction sessions"), and holds no unit-of-work
+state, so one factory serves the whole process. `open()` returns a new
 `EntityManager`, which belongs to one unit of work:
 
 - **Identity map.** An identity is the entity class and its identifier.
@@ -287,6 +288,8 @@ spelling and the database returns the stored identifier.
 - `whereIn(string $property, array $values)`;
 - `orderBy(string $property, string $direction = 'ASC')`, `limit()`,
   `offset()`;
+- `lockForUpdate(LockWait $wait = LockWait::Wait)` and `lockForShare()`,
+  inside a transaction session only (see "Transaction sessions");
 - `get()`, `first()`, `exists()`, `count()`;
 - `paginate(int $perPage, int $page = 1)` — a
   `Kinetis\QueryBuilder\Paginator` whose `data` holds managed entities;
@@ -374,8 +377,10 @@ A refusal changes nothing and throws `InvalidEntityStateException`, or
 
 ## Flushing
 
-`flush()` writes everything the manager has pending in one transaction it
-begins on the factory's client:
+`flush()` writes everything the manager has pending in one transaction.
+A manager from `open()` begins it on the factory's client; inside a
+transaction session, `flush()` writes on the session's transaction and
+leaves COMMIT to the factory (see "Transaction sessions"):
 
 1. Before the transaction, it reads and validates every entity awaiting
    insert as `persist()` does, and every managed entity, refuses an
@@ -414,6 +419,9 @@ While `flush()` runs, the manager refuses every call but `close()` and
 the flushing Fiber by code the flush reaches, such as SQL instrumentation.
 
 ### When a flush fails
+
+This table covers a manager from `open()`. A flush inside a transaction
+session fails the session instead: see "When a session fails".
 
 | Failure | Afterwards | Pending work | Throws |
 |---|---|---|---|
@@ -533,35 +541,158 @@ sent, and the next `flush()` writes it.
 `EntityQuery::builder()` returns a copy of the underlying
 `Kinetis\QueryBuilder\Query`, carrying the table, every mapped column and
 the predicates added so far, for SQL the entity query does not express:
-joins, projections, raw fragments, aggregates, locks. Changing the copy
-leaves the entity query unchanged, and its terminals return arrays or
-DTOs that no `EntityManager` manages.
+joins, projections, raw fragments, aggregates. Changing the copy leaves
+the entity query unchanged, and its terminals return arrays or DTOs that
+no `EntityManager` manages.
 
-## Transactions
+`EntityManager::builder()` returns a fresh `Query` on the manager's link:
+the factory's client for a manager from `open()`, the session's
+transaction inside `OrmFactory::transaction()`. Its results are unmanaged
+too.
 
-Each `flush()` that writes begins exactly one transaction on the
-factory's client and ends it before returning. There is no
-transaction-bound ORM session: `OrmFactory::create()` refuses a
-`MysqlTransaction` or `PostgresTransaction` with
-`InvalidArgumentException`, and a manager never joins a transaction.
+## Transaction sessions
 
-`flush()` is not supported while the calling Fiber holds a transaction
-of its own on that client, as inside a `TransactionGuard::transaction()`
-callback: the flush's transaction takes a second connection, and waiting
-for a row lock the outer transaction holds blocks the Fiber on itself.
-Nothing detects this. ORM reads in such a Fiber are refused by the client
-with `Kinetis\Persistence\Exception\TransactionException` rather than run
-on a second connection outside the transaction. Work that shares a
-transaction with other SQL, and a locking read, use
-`new Query($transaction)` from the query builder, which returns arrays or
-DTOs rather than managed entities.
+```php
+use Kinetis\Orm\EntityManager;
+
+$shipped = $orm->transaction(function (EntityManager $entities) use ($id): bool {
+    $order = $entities->repository(Order::class)
+        ->query()
+        ->where('id', '=', $id)
+        ->lockForUpdate()
+        ->first();
+
+    if ($order === null) {
+        return false;
+    }
+
+    $order->ship();
+    $entities->builder()->table('order_events')->insert(['order_id' => $id, 'event' => 'shipped']);
+    $entities->flush(); // the final ORM operation: COMMIT follows the callback's return
+
+    return true;
+});
+```
+
+`Order` is the entity under "Optimistic locking", and `order_events` an
+application table. `OrmFactory::transaction(callable $callback): mixed`
+begins one transaction on the factory's client, passes the callback an
+`EntityManager` bound to it, commits once the callback returns, and
+returns the callback's result.
+
+- **One transaction.** Every read, identity-map miss, locking read and
+  flush statement of the bound manager, and every statement of its
+  `builder()`, runs on that transaction; the client runs none of them.
+  The transaction and its connection stay pinned for as long as the
+  callback runs, whatever else the callback waits on.
+- **Explicit flush.** Nothing is flushed for you. A callback that returns
+  without `flush()` commits no ORM change, as closing a manager from
+  `open()` abandons unflushed work. A `flush()` with nothing to write
+  sends nothing and changes nothing.
+- **One writing flush, last.** A `flush()` that writes sends every
+  statement "Flushing" lists but COMMIT. It then seals the manager: until
+  the callback returns, the manager, its repositories, its entity queries
+  and their terminals refuse every call but `close()` and `isClosed()`
+  with `InvalidEntityStateException`, a second flush and `builder()`
+  included, so that flush is the callback's final ORM operation. A `Query`
+  the callback already holds from a `builder()` is the caller's own and
+  still runs on the transaction.
+- **State after COMMIT.** Only once COMMIT returns are the flushed work's
+  generated keys, versions and snapshots applied and its deleted entities
+  detached, as "Flushing" describes. Then, and on every failure, the
+  manager is closed and every entity detached: an entity the callback
+  returns is a plain detached object.
+- **Locking reads.** `EntityQuery::lockForUpdate(LockWait $wait = LockWait::Wait)`
+  and `lockForShare()` lock the rows the query reads until the session's
+  transaction ends. `Kinetis\QueryBuilder\Query` decides which terminals,
+  clauses and wait modes combine with a lock, and each dialect's SQL. A
+  manager from `open()` refuses both with `InvalidEntityStateException`
+  before SQL. `find()` answers an identity the manager holds without SQL,
+  so it takes no lock: lock through `query()`.
+- **Raw SQL.** A raw write is not reconciled with the manager: it changes
+  no snapshot or version the manager holds, so the flush can overwrite it
+  or conflict with it, and keeping the two consistent is the caller's
+  responsibility.
+- **ORM failures.** A failure an entity query terminal throws — including
+  a refusal the query builder raises before sending SQL — or `flush()`
+  throws fails the session. If the callback catches it, every later ORM
+  call is refused with `InvalidEntityStateException`, whose `getPrevious()`
+  is that failure, and the session rolls back instead of committing and
+  rethrows that failure as primary (see "When a session fails"). A
+  `MappingException` from `where()`, `whereIn()`, `orderBy()`, a `find()`
+  identifier or a cursor property is thrown before the terminal reaches
+  the query builder and does not fail the session.
+- **Raw failures.** The manager cannot see a raw `Query` fail. When the
+  callback catches one, COMMIT decides: MySQL and MariaDB keep the
+  transaction open after an ordinary statement error and commit the rest
+  of its work, while PostgreSQL aborts the transaction, and a lost
+  connection, a deadlock or a MySQL lock-wait timeout end it. An ended or
+  aborted transaction fails COMMIT with `CommitNotAcknowledgedException`.
+- **No nesting.** Calling `transaction()` on a factory from a Fiber already
+  inside one of its sessions throws `InvalidEntityStateException` before
+  anything begins. Concurrent Fibers each run their own session on one
+  factory, as far as the client serves concurrent transactions; separate
+  factory objects do not see each other's sessions, so keep one factory
+  per link. A session never joins a transaction the application began:
+  `OrmFactory::create()` refuses a `MysqlTransaction` or
+  `PostgresTransaction` with `InvalidArgumentException`.
+- **Fiber ownership.** The bound manager works only in the Fiber that
+  called `transaction()`. `close()` is accepted from any Fiber and ends
+  the session's transaction — from that Fiber by rolling it back, from
+  another by discarding its connection — so nothing of it commits.
+
+### When a session fails
+
+| Way out | COMMIT | Entity state | Throws |
+|---|---|---|---|
+| `beginTransaction()` fails | not sent | untouched; no manager exists | that exception |
+| A nested call | not sent | the running session is unaffected | `InvalidEntityStateException` |
+| An ORM failure was recorded, whether the callback then returned or threw, and the rollback returns | not sent | not applied | that first ORM failure |
+| The callback throws with no ORM failure recorded, and the rollback returns | not sent | not applied | the callback's exception |
+| Either of the two above, with the rollback throwing | not sent | not applied | `RollbackFailedException`: `getPrevious()` is the primary failure, `$rollbackFailure` the rollback's |
+| The callback returns with the manager closed and no ORM failure recorded | not sent | not applied | `ClosedEntityManagerException` |
+| COMMIT throws | unacknowledged | not applied | `CommitNotAcknowledgedException`: `getPrevious()` is the driver failure |
+| COMMIT returns | acknowledged | applied | nothing: the callback's result is returned |
+
+The primary failure is the first failure an entity query terminal or
+`flush()` threw, once one is recorded, even when the callback caught it
+and then threw an exception of its own; only a callback that throws with
+no ORM failure recorded makes its own exception primary. A rollback that
+returns rethrows the primary failure, and a rollback that throws makes it
+`RollbackFailedException::getPrevious()`.
+
+In every row but the first two the manager is closed and its entities
+detached. `CommitNotAcknowledgedException` means the ORM received no
+acknowledged COMMIT. The database may already have rolled the transaction
+back before COMMIT — PostgreSQL does for a transaction a failed statement
+aborted — or a COMMIT that was sent may have an unknown outcome. Do not
+assume the work failed and do not replay it; establish what the database
+holds first. A `flush()` on a manager from `open()` keeps its own contract
+and `UnknownFlushOutcomeException`.
+
+A Fiber destroyed while suspended inside the callback sends neither
+COMMIT nor ROLLBACK: the transaction is dropped, its connection discarded
+so the server rolls the work back, and `kinetis/persistence` records the
+outcome as unknown.
+
+A manager from `open()` never joins a transaction. Its `flush()` is not
+supported while the calling Fiber holds a transaction on the same client,
+as inside a `TransactionGuard::transaction()` or `OrmFactory::transaction()`
+callback: the flush's transaction needs a second connection, and waiting
+for a row lock the first transaction holds blocks the Fiber on itself.
+Its reads are refused there with
+`Kinetis\Persistence\Exception\TransactionException` rather than run
+outside the transaction — by a native client for the Fiber holding the
+transaction, by a PDO client for every Fiber. Use the session's manager
+instead.
 
 ## Not in scope
 
 Relationships, cascades, collections, eager or lazy loading, timestamp,
 string or database-generated versions, refreshing or merging an entity,
-conflict resolution, a transaction-bound ORM session or joining an
-existing transaction, locking entity reads, batched or bulk writes,
+conflict resolution, joining a transaction the application began, nested
+sessions or savepoints, more than one writing flush per session,
+provisional identifiers or versions, batched or bulk writes,
 automatic retries, flushing on `close()` or destruction, timestamps or
 `DateTimeImmutable` properties, custom value converters, UUID generation,
 composite identifiers, inheritance, partial entities, transient

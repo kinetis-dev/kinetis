@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Orm;
 
+use Closure;
 use Fiber;
 use Kinetis\Orm\Exception\ClosedEntityManagerException;
 use Kinetis\Orm\Exception\CrossFiberAccessException;
@@ -13,7 +14,9 @@ use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Exception\RollbackFailedException;
 use Kinetis\Orm\Exception\UnknownFlushOutcomeException;
 use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\MysqlTransaction;
 use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Persistence\Contract\PostgresTransaction;
 use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\QueryBuilder\Query;
 use Throwable;
@@ -23,8 +26,13 @@ use WeakMap;
  * One unit of work, owned by the Fiber that opened it: the identity map of
  * the entities it holds, the snapshot each managed entity is compared
  * against, and the inserts and deletes scheduled for the next flush().
- * OrmFactory::open() creates every instance, and none is ever shared
- * between requests, jobs or concurrent Fibers.
+ * OrmFactory::open() and OrmFactory::transaction() create every instance,
+ * and none is ever shared between requests, jobs or concurrent Fibers.
+ *
+ * A manager from open() reads through the factory's client, and each
+ * flush() writes in a transaction it begins there. A manager from
+ * transaction() is bound to the transaction the factory began: every read,
+ * lock and flush statement runs on it, and the factory ends it.
  *
  * An identity is the entity class and its identifier, so one row is one
  * object for as long as this manager holds it. A later row for a held
@@ -32,14 +40,16 @@ use WeakMap;
  * snapshot.
  *
  * flush() writes from a plan local to the call, and nothing in this
- * manager or its entities changes until COMMIT returns. A flush that fails
- * before COMMIT therefore leaves every change pending as it was.
+ * manager or its entities changes until COMMIT returns: flush()'s own, or
+ * for a bound manager the factory's. A flush that fails before COMMIT
+ * therefore leaves every change pending as it was.
  *
  * Every method but close() and isClosed(), and every repository, query and
  * terminal created through this manager, refuses a closed manager, a Fiber
- * other than the one that opened it, and a call while flush() runs, before
- * SQL runs or state changes. close() accepts any caller at any moment, so
- * whoever owns the unit of work can end it.
+ * other than the one that opened it, a call while flush() runs, and on a
+ * bound manager a call after its flush wrote or a terminal or flush failed,
+ * before SQL runs or state changes. close() accepts any caller at any
+ * moment, so whoever owns the unit of work can end it.
  *
  * @phpstan-type Values array<string, null|bool|int|float|string>
  * @phpstan-type Insert array{entity: object, plan: EntityPlan<object>, values: Values}
@@ -85,8 +95,19 @@ final class EntityManager
 
     private bool $flushing = false;
 
-    /** The transaction a running flush() began, for close() to end. */
+    /** The transaction a running flush() began, or a bound manager's, for close() to end. */
     private ?SqlTransaction $transaction = null;
+
+    /** A bound manager's first failed terminal or flush(). */
+    private ?Throwable $failure = null;
+
+    /**
+     * A bound manager's written flush with the identifiers it generated, for
+     * finish() to apply once the factory's COMMIT returns.
+     *
+     * @var array{list<Insert>, list<Write>, array<int, int>}|null
+     */
+    private ?array $flushed = null;
 
     /**
      * @param array<class-string, EntityPlan<object>> $plans
@@ -108,6 +129,20 @@ final class EntityManager
     public static function open(MysqlLink|PostgresLink $link, array $plans): self
     {
         return new self($link, $plans);
+    }
+
+    /**
+     * @internal OrmFactory::transaction() binds a manager to the transaction
+     *           it began, which is then this manager's only link.
+     *
+     * @param array<class-string, EntityPlan<object>> $plans
+     */
+    public static function bind(MysqlTransaction|PostgresTransaction $transaction, array $plans): self
+    {
+        $manager = new self($transaction, $plans);
+        $manager->transaction = $transaction;
+
+        return $manager;
     }
 
     /**
@@ -204,11 +239,13 @@ final class EntityManager
 
     /**
      * Writes every scheduled insert, every change to a managed entity and
-     * every scheduled deletion in one transaction on the factory's client.
-     * Every entity is read and validated, and every change computed, before
-     * the transaction begins; with nothing to write, nothing runs. The
-     * package README's "Flushing" states the statements, the row checks and
-     * the failure contract.
+     * every scheduled deletion in one transaction. Every entity is read and
+     * validated, and every change computed, before any statement; with
+     * nothing to write, nothing runs. A manager from open() begins the
+     * transaction on the factory's client and commits it. A bound manager
+     * writes on its transaction and leaves COMMIT to the factory. The package
+     * README's "Flushing" and "Transaction sessions" state the statements,
+     * the row checks and the failure contract.
      *
      * @throws InvalidEntityStateException
      * @throws MappingException for a property value its type does not admit
@@ -226,12 +263,35 @@ final class EntityManager
         try {
             [$inserts, $writes] = $this->plan();
 
-            if ($inserts !== [] || $writes !== []) {
+            if ($inserts === [] && $writes === []) {
+                return;
+            }
+
+            if ($this->link instanceof SqlTransaction) {
+                $this->flushed = [$inserts, $writes, $this->write($this->link, $inserts, $writes)];
+            } else {
                 $this->commit($inserts, $writes);
             }
+        } catch (Throwable $failure) {
+            $this->record($failure);
+
+            throw $failure;
         } finally {
             $this->flushing = false;
         }
+    }
+
+    /**
+     * A fresh Kinetis\QueryBuilder\Query on this manager's link: the
+     * factory's client, or a bound manager's transaction. Its terminals
+     * return arrays or DTOs this manager never manages, and nothing it
+     * writes reaches a snapshot or version this manager holds.
+     */
+    public function builder(): Query
+    {
+        $this->assertUsable();
+
+        return new Query($this->link);
     }
 
     /**
@@ -248,7 +308,8 @@ final class EntityManager
      * Detaches every entity, abandons every unflushed change and refuses
      * every later use. Idempotent, never flushes, and leaves the link open:
      * the link belongs to whoever built the factory. A running flush()'s
-     * transaction is closed, after this manager's state is already gone.
+     * transaction, or a bound manager's, is closed after this manager's
+     * state is already gone, so a bound manager's work is never committed.
      */
     public function close(): void
     {
@@ -269,7 +330,8 @@ final class EntityManager
      *
      * @throws ClosedEntityManagerException
      * @throws CrossFiberAccessException
-     * @throws InvalidEntityStateException while flush() runs
+     * @throws InvalidEntityStateException while flush() runs, and on a bound
+     *         manager after its flush wrote or a terminal or flush failed
      */
     public function assertUsable(): void
     {
@@ -284,6 +346,72 @@ final class EntityManager
         if ($this->flushing) {
             throw InvalidEntityStateException::flushInProgress();
         }
+
+        if ($this->failure !== null) {
+            throw InvalidEntityStateException::sessionFailed($this->failure);
+        }
+
+        if ($this->flushed !== null) {
+            throw InvalidEntityStateException::sessionFlushed();
+        }
+    }
+
+    /**
+     * @internal A lock outlives its statement only inside a transaction.
+     *
+     * @throws InvalidEntityStateException for a manager not bound to one
+     */
+    public function assertLockable(): void
+    {
+        $this->assertUsable();
+
+        if (!$this->link instanceof SqlTransaction) {
+            throw InvalidEntityStateException::lockOutsideTransaction();
+        }
+    }
+
+    /**
+     * @internal Runs a terminal from its Query call onward. A bound manager
+     *           records the first failure, which refuses every later use
+     *           and makes the factory roll back.
+     *
+     * @template TResult
+     * @param Closure(): TResult $terminal
+     * @return TResult
+     */
+    public function terminal(Closure $terminal): mixed
+    {
+        try {
+            return $terminal();
+        } catch (Throwable $failure) {
+            $this->record($failure);
+
+            throw $failure;
+        }
+    }
+
+    /** @internal The first failure a bound manager recorded. */
+    public function failure(): ?Throwable
+    {
+        return $this->failure;
+    }
+
+    /**
+     * @internal OrmFactory::transaction() calls this once its transaction
+     *           has ended, $committed only when COMMIT returned. The flushed
+     *           work is applied then, unless close() ran meanwhile, and the
+     *           manager is closed without touching the transaction again.
+     */
+    public function finish(bool $committed): void
+    {
+        $this->transaction = null;
+
+        if ($committed && !$this->closed && $this->flushed !== null) {
+            [$inserts, $writes, $generated] = $this->flushed;
+            $this->apply($inserts, $writes, $generated);
+        }
+
+        $this->close();
     }
 
     /**
@@ -608,11 +736,20 @@ final class EntityManager
         }
     }
 
+    /** A bound manager's failure fails its whole session; an open() manager's flush keeps its own contract. */
+    private function record(Throwable $failure): void
+    {
+        if ($this->link instanceof SqlTransaction) {
+            $this->failure ??= $failure;
+        }
+    }
+
     private function detach(): void
     {
         $this->identities = [];
         $this->snapshots = new WeakMap();
         $this->inserts = [];
         $this->removals = new WeakMap();
+        $this->flushed = null;
     }
 }
