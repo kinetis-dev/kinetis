@@ -42,7 +42,7 @@ final class DocsCatalogue
             new DocsPage('testing', 'Testing', 'TestClient, for exercising a Kernel end-to-end in a consumer\'s own test suite'),
             new DocsPage('persistence', 'Persistence', 'The native MySQL/Postgres drivers, the Redis client, and TransactionGuard\'s commit/rollback protocol'),
             new DocsPage('query-builder', 'Query Builder', 'kinetis/query-builder: a thin, parameterized SQL query builder — not an ORM'),
-            new DocsPage('orm', 'ORM', 'kinetis/orm: a data mapper over the query builder — typed repositories and entity queries, and a unit of work with change tracking and a transactional flush; no relationships'),
+            new DocsPage('orm', 'ORM', 'kinetis/orm: a data mapper over the query builder — typed repositories and entity queries with eagerly loaded belongs-to relationships, and a unit of work with change tracking and a transactional flush'),
             new DocsPage('migrations', 'Migrations', 'kinetis/migrations: a thin database migration runner — raw SQL up()/down(), no schema-diffing'),
             new DocsPage('queue', 'Queue', 'kinetis/queue: a backend-agnostic background job queue — every backend lives in its own separate package'),
             new DocsPage('queue-redis', 'Queue (Redis)', 'kinetis/queue-redis: a Redis backend for kinetis/queue\'s QueueInterface'),

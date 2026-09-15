@@ -19,6 +19,11 @@ use Kinetis\QueryBuilder\Query;
  * unknown property or an inadmissible value throws MappingException before
  * SQL runs. The terminals return managed entities.
  *
+ * with() names the relationships get(), first(), paginate() and
+ * cursorPaginate() load into those entities after the root select, each
+ * through its own selects on the same link. A lock applies to the root
+ * select only. exists() and count() load nothing.
+ *
  * Every terminal checks its EntityManager again once its SQL returns, so a
  * manager closed while the Fiber was suspended in that SQL is refused
  * rather than answered. In a manager OrmFactory::transaction() bound, what
@@ -32,6 +37,9 @@ use Kinetis\QueryBuilder\Query;
 final class EntityQuery
 {
     private readonly Query $query;
+
+    /** @var array<string, array<array-key, mixed>> property => the relationships to load below it */
+    private array $relations = [];
 
     /**
      * @internal EntityRepository::query() creates every instance.
@@ -142,6 +150,29 @@ final class EntityQuery
     }
 
     /**
+     * Relationship paths to load, such as `author` or
+     * `author.organization`: dot-separated #[BelongsTo] properties, each of
+     * the entity the one before it references. Repeated calls add to the
+     * same set, and every path is checked before this returns.
+     *
+     * @return $this
+     * @throws MappingException for an empty segment, an unknown property or a property that is not a relationship
+     */
+    public function with(string ...$relations): self
+    {
+        $this->manager->assertUsable();
+        $merged = $this->relations;
+
+        foreach ($relations as $path) {
+            $merged = $this->manager->mergeRelation($this->plan, $merged, $path);
+        }
+
+        $this->relations = $merged;
+
+        return $this;
+    }
+
+    /**
      * Every matching entity, buffered in full.
      *
      * @return list<T>
@@ -150,7 +181,7 @@ final class EntityQuery
     {
         $this->manager->assertUsable();
 
-        return $this->manager->terminal(fn (): array => $this->manager->load($this->plan, $this->query->get()));
+        return $this->manager->terminal(fn (): array => $this->manager->load($this->plan, $this->query->get(), $this->relations));
     }
 
     /**
@@ -169,10 +200,11 @@ final class EntityQuery
                 return null;
             }
 
-            return $this->manager->load($this->plan, [$row])[0];
+            return $this->manager->load($this->plan, [$row], $this->relations)[0];
         });
     }
 
+    /** One statement: with() does not apply. */
     public function exists(): bool
     {
         $this->manager->assertUsable();
@@ -185,6 +217,7 @@ final class EntityQuery
         });
     }
 
+    /** One statement: with() does not apply. */
     public function count(): int
     {
         $this->manager->assertUsable();
@@ -212,7 +245,7 @@ final class EntityQuery
             $rows = $window->data;
 
             return new Paginator(
-                data: $this->manager->load($this->plan, $rows),
+                data: $this->manager->load($this->plan, $rows, $this->relations),
                 currentPage: $window->currentPage,
                 perPage: $window->perPage,
                 total: $window->total,
@@ -239,7 +272,7 @@ final class EntityQuery
             /** @var list<array<string, mixed>> $rows */
             $rows = $page->data;
 
-            return new CursorPaginator($this->manager->load($this->plan, $rows), $page->nextCursor, $page->hasMore);
+            return new CursorPaginator($this->manager->load($this->plan, $rows, $this->relations), $page->nextCursor, $page->hasMore);
         });
     }
 

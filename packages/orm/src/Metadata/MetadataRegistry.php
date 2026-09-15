@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Orm\Metadata;
 
 use BackedEnum;
+use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\Id;
@@ -25,9 +26,13 @@ use ReflectionProperty;
  * current source, so a registry never describes a class as it no longer
  * is. Nothing is cached beyond the instance.
  *
- * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null}
+ * A #[BelongsTo] property maps its foreign-key column: its target is an
+ * entity of the same registry, and its type is that target's identifier
+ * type.
+ *
+ * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>}
- * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null}
+ * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>}
  */
 final readonly class MetadataRegistry
@@ -67,6 +72,28 @@ final readonly class MetadataRegistry
         }
 
         ksort($entities, SORT_STRING);
+
+        // A relationship's target and type resolve once every class is mapped.
+        foreach ($entities as $class => $mapping) {
+            foreach ($mapping['properties'] as $i => $property) {
+                if ($property['target'] === null) {
+                    continue;
+                }
+
+                $target = $entities[$property['target']] ?? throw MappingException::relationship(
+                    $class,
+                    $property['name'],
+                    "{$property['target']} is not an entity in this MetadataRegistry",
+                );
+
+                /** @var 'int'|'string' $type an identifier is typed int or string */
+                $type = array_column($target['properties'], 'type', 'name')[$target['id']];
+                $property['type'] = $type;
+                $mapping['properties'][$i] = $property;
+            }
+
+            $entities[$class] = $mapping;
+        }
 
         return new self(array_values($entities));
     }
@@ -191,7 +218,11 @@ final readonly class MetadataRegistry
             default => throw MappingException::identifier($name, 'more than one property carries #[Id]: ' . implode(', ', $ids)),
         };
 
-        if ($properties[$id]['enum'] !== null || !in_array($properties[$id]['type'], ['int', 'string'], true)) {
+        if (
+            $properties[$id]['enum'] !== null
+            || $properties[$id]['target'] !== null
+            || !in_array($properties[$id]['type'], ['int', 'string'], true)
+        ) {
             throw MappingException::identifier($name, "the identifier property \"{$id}\" must be typed int or string");
         }
 
@@ -253,6 +284,12 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedProperty($class, $name, "declares the composite type {$type}");
         }
 
+        $relationship = ($property->getAttributes(BelongsTo::class)[0] ?? null)?->newInstance();
+
+        if ($relationship !== null) {
+            return self::relationship($class, $property, $type, $relationship);
+        }
+
         $typeName = $type->getName();
         $enum = null;
 
@@ -276,7 +313,46 @@ final readonly class MetadataRegistry
         }
 
         /** @var 'string'|'int'|'float'|'bool' $scalar */
-        return ['name' => $name, 'column' => $column, 'type' => $scalar, 'nullable' => $type->allowsNull(), 'enum' => $enum];
+        return ['name' => $name, 'column' => $column, 'type' => $scalar, 'nullable' => $type->allowsNull(), 'enum' => $enum, 'target' => null];
+    }
+
+    /**
+     * An unloaded relationship is an uninitialized property, so it has no
+     * default value. Its type is resolved by fromClasses() once the target
+     * is mapped.
+     *
+     * @return PropertyMapping
+     */
+    private static function relationship(
+        string $class,
+        ReflectionProperty $property,
+        ReflectionNamedType $type,
+        BelongsTo $relationship,
+    ): array {
+        $name = $property->getName();
+        $reason = match (true) {
+            $type->isBuiltin() => "it declares {$type->getName()}, which is not an entity class",
+            $property->getAttributes(Column::class) !== [] => 'it also carries #[Column]; name its foreign-key column with #[BelongsTo(column: ...)]',
+            $property->getAttributes(Id::class) !== [] => 'it also carries #[Id]',
+            $property->getAttributes(Version::class) !== [] => 'it also carries #[Version]',
+            $property->hasDefaultValue() => 'it declares a default value, and an unloaded relationship is uninitialized',
+            default => null,
+        };
+
+        if ($reason !== null) {
+            throw MappingException::relationship($class, $name, $reason);
+        }
+
+        $column = $relationship->column ?? self::snakeCase($name) . '_id';
+
+        if (preg_match('/^' . self::IDENTIFIER . '$/D', $column) !== 1) {
+            throw MappingException::invalidColumn($class, $name, $column);
+        }
+
+        /** @var class-string $target */
+        $target = $type->getName() === 'self' ? $class : $type->getName();
+
+        return ['name' => $name, 'column' => $column, 'type' => 'int', 'nullable' => $type->allowsNull(), 'enum' => null, 'target' => $target];
     }
 
     /**

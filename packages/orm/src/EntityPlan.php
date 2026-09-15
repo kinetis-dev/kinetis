@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Orm;
 
 use BackedEnum;
+use Closure;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
@@ -26,6 +27,10 @@ use ReflectionProperty;
  * backing value. Predicate parameters, snapshots and written rows all use
  * it, so a loaded value and the same value read back from the entity
  * compare identical.
+ *
+ * A relationship property is one of the mapped properties, over its
+ * foreign-key column. Its converted and database value is the target's
+ * identifier, and instantiate() leaves the property uninitialized.
  *
  * @template T of object
  * @phpstan-import-type EntityMapping from MetadataRegistry
@@ -99,8 +104,18 @@ final class EntityPlan
     }
 
     /**
+     * @return class-string the entity the relationship $property references
+     * @throws MappingException for a property this entity does not map, or one that is not a relationship
+     */
+    public function target(string $property): string
+    {
+        return $this->property($property)['target'] ?? throw MappingException::notARelation($this->class, $property);
+    }
+
+    /**
      * A predicate value for $property, admitted and converted like a loaded
-     * value, as a database value.
+     * value, as a database value. A relationship admits its target's
+     * identifier, not an entity.
      *
      * @throws MappingException
      */
@@ -149,8 +164,9 @@ final class EntityPlan
 
     /**
      * Allocates the entity without its constructor and writes every
-     * declared property directly. No hook, setter or magic method runs:
-     * hooked properties are refused when the metadata is built.
+     * declared property directly but a relationship, which stays
+     * uninitialized until it is eagerly loaded. No hook, setter or magic
+     * method runs: hooked properties are refused when the metadata is built.
      *
      * @param array<string, mixed> $values convertRow()'s values
      * @return T
@@ -160,7 +176,9 @@ final class EntityPlan
         $entity = $this->reflection->newInstanceWithoutConstructor();
 
         foreach ($this->accessors as $name => $accessor) {
-            $accessor->setValue($entity, $values[$name]);
+            if ($this->properties[$name]['target'] === null) {
+                $accessor->setValue($entity, $values[$name]);
+            }
         }
 
         return $entity;
@@ -180,25 +198,54 @@ final class EntityPlan
 
     /**
      * The database value of every mapped property $entity holds now, each
-     * admitted like a loaded value.
+     * admitted like a loaded value. A relationship holding an entity takes
+     * that entity's identifier from $identify. An uninitialized relationship
+     * of a managed entity keeps the foreign key of its $snapshot, so a
+     * relationship that was never loaded is never written.
      *
+     * @param array<string, null|bool|int|float|string>|null $snapshot the managed entity's snapshot, or null
+     * @param Closure(object): (int|string|null) $identify a target's identifier, or null when the manager does not manage it
      * @return array<string, null|bool|int|float|string> property => database value
-     * @throws InvalidEntityStateException for an uninitialized property
+     * @throws InvalidEntityStateException for an uninitialized property or a relationship target the manager does not manage
      * @throws MappingException for a value its property does not admit, such as a non-finite float
      */
-    public function extract(object $entity): array
+    public function extract(object $entity, ?array $snapshot, Closure $identify): array
     {
         $values = [];
 
         foreach ($this->accessors as $name => $accessor) {
+            $property = $this->properties[$name];
+
             if (!$accessor->isInitialized($entity)) {
-                throw InvalidEntityStateException::uninitialized($this->class, $name);
+                $values[$name] = $property['target'] !== null && $snapshot !== null
+                    ? $snapshot[$name]
+                    : throw InvalidEntityStateException::uninitialized($this->class, $name);
+
+                continue;
             }
 
-            $values[$name] = self::databaseValue($this->convert($this->properties[$name], $accessor->getValue($entity)));
+            $value = $accessor->getValue($entity);
+
+            if ($property['target'] !== null && is_object($value)) {
+                $value = $identify($value) ?? throw InvalidEntityStateException::relationTargetNotHeld($this->class, $name);
+            }
+
+            $values[$name] = self::databaseValue($this->convert($property, $value));
         }
 
         return $values;
+    }
+
+    public function initialized(object $entity, string $property): bool
+    {
+        return $this->accessors[$property]->isInitialized($entity);
+    }
+
+    /** The target an initialized relationship holds, or null. */
+    public function related(object $entity, string $property): ?object
+    {
+        /** @var object|null a relationship property is typed with its target class */
+        return $this->accessors[$property]->getValue($entity);
     }
 
     /**
@@ -228,8 +275,12 @@ final class EntityPlan
             ?? throw InvalidEntityStateException::invalidGeneratedIdentifier($this->class);
     }
 
-    /** Writes a value the flush owns, a generated identifier or a version, into its int property. */
-    public function assign(object $entity, string $property, int $value): void
+    /**
+     * Writes a value the manager owns into its property: a generated
+     * identifier or a version the flush wrote, or an eagerly loaded
+     * relationship's target or null.
+     */
+    public function assign(object $entity, string $property, int|object|null $value): void
     {
         $this->accessors[$property]->setValue($entity, $value);
     }

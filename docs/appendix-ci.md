@@ -122,7 +122,12 @@ rather than which form it took.
   on a repeated flush, until it clears, reloads and reapplies it, and a
   stale delete conflicting; and a transaction session whose locking entity
   read holds its row through the session's flush until COMMIT, probed from
-  a second client with `NOWAIT` so contention never waits.
+  a second client with `NOWAIT` so contention never waits; and
+  relationships: nested and nullable targets loaded into one identity
+  map, a locking read that locks its root row and not the author it loads,
+  a committed reassignment loaded by a new manager, and a flush whose
+  DELETE of a referenced author fails on the database's foreign key and
+  rolls back the insert before it.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

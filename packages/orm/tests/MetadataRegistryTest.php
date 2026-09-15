@@ -11,11 +11,15 @@ use Kinetis\Orm\Tests\Fixtures\Account;
 use Kinetis\Orm\Tests\Fixtures\Article;
 use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
+use Kinetis\Orm\Tests\Fixtures\Author;
 use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Edition;
 use Kinetis\Orm\Tests\Fixtures\Invoice;
+use Kinetis\Orm\Tests\Fixtures\Organization;
+use Kinetis\Orm\Tests\Fixtures\Post;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\Ticket;
+use Kinetis\Orm\Tests\Fixtures\Topic;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -35,8 +39,8 @@ final class MetadataRegistryTest extends TestCase
                 'generated' => false,
                 'version' => null,
                 'properties' => [
-                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null],
-                    ['name' => 'displayName', 'column' => 'display_name', 'type' => 'string', 'nullable' => false, 'enum' => null],
+                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                    ['name' => 'displayName', 'column' => 'display_name', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
             ]]],
             MetadataRegistry::fromClasses([ArticleCategory::class])->toArray(),
@@ -53,9 +57,9 @@ final class MetadataRegistryTest extends TestCase
                 'generated' => false,
                 'version' => null,
                 'properties' => [
-                    ['name' => 'uuid', 'column' => 'account_uuid', 'type' => 'string', 'nullable' => false, 'enum' => null],
-                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null],
-                    ['name' => 'email', 'column' => 'email_address', 'type' => 'string', 'nullable' => false, 'enum' => null],
+                    ['name' => 'uuid', 'column' => 'account_uuid', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
+                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => null],
+                    ['name' => 'email', 'column' => 'email_address', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
             ]]],
             MetadataRegistry::fromClasses([Account::class])->toArray(),
@@ -72,8 +76,8 @@ final class MetadataRegistryTest extends TestCase
                 'generated' => true,
                 'version' => null,
                 'properties' => [
-                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null],
-                    ['name' => 'subject', 'column' => 'subject', 'type' => 'string', 'nullable' => false, 'enum' => null],
+                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => null],
+                    ['name' => 'subject', 'column' => 'subject', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
             ]]],
             MetadataRegistry::fromClasses([Ticket::class])->toArray(),
@@ -92,13 +96,33 @@ final class MetadataRegistryTest extends TestCase
                 'generated' => false,
                 'version' => 'version',
                 'properties' => [
-                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null],
-                    ['name' => 'status', 'column' => 'status', 'type' => 'string', 'nullable' => false, 'enum' => null],
-                    ['name' => 'version', 'column' => 'row_version', 'type' => 'int', 'nullable' => false, 'enum' => null],
-                    ['name' => 'total', 'column' => 'total', 'type' => 'int', 'nullable' => false, 'enum' => null],
+                    ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                    ['name' => 'status', 'column' => 'status', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
+                    ['name' => 'version', 'column' => 'row_version', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                    ['name' => 'total', 'column' => 'total', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
             ]]],
             $data,
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_a_relationship_maps_its_foreign_key_as_the_target_identifier_type_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Post::class, Topic::class, Organization::class, Author::class])->toArray();
+        $entities = array_column($data['entities'], 'properties', 'class');
+
+        self::assertSame(
+            ['name' => 'author', 'column' => 'written_by', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => Author::class],
+            $entities[Post::class][2],
+        );
+        self::assertSame(
+            ['name' => 'organization', 'column' => 'organization_id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => Organization::class],
+            $entities[Author::class][2],
+        );
+        self::assertSame(
+            ['name' => 'parent', 'column' => 'parent_id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => Topic::class],
+            $entities[Topic::class][1],
         );
         self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
     }
@@ -121,11 +145,11 @@ final class MetadataRegistryTest extends TestCase
             ['id', 'title', 'summary', 'status', 'priority', 'featured', 'rating', 'authorId', 'slug'],
             array_keys($properties),
         );
-        self::assertSame(['name' => 'summary', 'column' => 'summary', 'type' => 'string', 'nullable' => true, 'enum' => null], $properties['summary']);
-        self::assertSame(['name' => 'status', 'column' => 'status', 'type' => 'string', 'nullable' => false, 'enum' => ArticleStatus::class], $properties['status']);
-        self::assertSame(['name' => 'priority', 'column' => 'priority', 'type' => 'int', 'nullable' => true, 'enum' => Priority::class], $properties['priority']);
-        self::assertSame(['name' => 'featured', 'column' => 'featured', 'type' => 'bool', 'nullable' => false, 'enum' => null], $properties['featured']);
-        self::assertSame(['name' => 'rating', 'column' => 'rating', 'type' => 'float', 'nullable' => false, 'enum' => null], $properties['rating']);
+        self::assertSame(['name' => 'summary', 'column' => 'summary', 'type' => 'string', 'nullable' => true, 'enum' => null, 'target' => null], $properties['summary']);
+        self::assertSame(['name' => 'status', 'column' => 'status', 'type' => 'string', 'nullable' => false, 'enum' => ArticleStatus::class, 'target' => null], $properties['status']);
+        self::assertSame(['name' => 'priority', 'column' => 'priority', 'type' => 'int', 'nullable' => true, 'enum' => Priority::class, 'target' => null], $properties['priority']);
+        self::assertSame(['name' => 'featured', 'column' => 'featured', 'type' => 'bool', 'nullable' => false, 'enum' => null, 'target' => null], $properties['featured']);
+        self::assertSame(['name' => 'rating', 'column' => 'rating', 'type' => 'float', 'nullable' => false, 'enum' => null, 'target' => null], $properties['rating']);
         self::assertSame('author', $properties['authorId']['column']);
         self::assertSame('slug', $properties['slug']['column']);
     }
@@ -189,6 +213,15 @@ final class MetadataRegistryTest extends TestCase
         yield 'a column name with a space' => [self::INVALID . 'InvalidColumn', 'InvalidColumn::$name maps to the column "first name"'];
         yield 'an empty column name' => [self::INVALID . 'EmptyColumn', 'EmptyColumn::$name maps to the column ""'];
         yield 'columns differing only by case' => [self::INVALID . 'DuplicateColumn', 'DuplicateColumn::$id and ' . self::INVALID . 'DuplicateColumn::$legacyId both map to the column "ID"'];
+        yield 'a relationship typed with a scalar' => [self::INVALID . 'RelationshipScalar', 'RelationshipScalar::$categoryId is not a usable #[BelongsTo] relationship: it declares int, which is not an entity class'];
+        yield 'a relationship carrying #[Column]' => [self::INVALID . 'RelationshipWithColumn', 'RelationshipWithColumn::$category is not a usable #[BelongsTo] relationship: it also carries #[Column]'];
+        yield 'a relationship carrying #[Id]' => [self::INVALID . 'RelationshipIdentifier', 'RelationshipIdentifier::$category is not a usable #[BelongsTo] relationship: it also carries #[Id]'];
+        yield 'a relationship carrying #[Version]' => [self::INVALID . 'RelationshipVersion', 'RelationshipVersion::$category is not a usable #[BelongsTo] relationship: it also carries #[Version]'];
+        yield 'a relationship with a default value' => [self::INVALID . 'RelationshipDefault', 'RelationshipDefault::$category is not a usable #[BelongsTo] relationship: it declares a default value'];
+        yield 'a relationship column with a space' => [self::INVALID . 'RelationshipInvalidColumn', 'RelationshipInvalidColumn::$category maps to the column "category id"'];
+        yield 'a relationship column another property maps' => [self::INVALID . 'RelationshipDuplicateColumn', 'RelationshipDuplicateColumn::$categoryId and ' . self::INVALID . 'RelationshipDuplicateColumn::$category both map to the column "category_id"'];
+        yield 'a relationship to a class outside the registry' => [self::INVALID . 'RelationshipUnknownTarget', 'RelationshipUnknownTarget::$document is not a usable #[BelongsTo] relationship: ' . Document::class . ' is not an entity in this MetadataRegistry'];
+        yield 'a relationship named id' => [self::INVALID . 'RelationshipIdentifierByName', 'the identifier property "id" must be typed int or string'];
     }
 
     #[DataProvider('unmappableClasses')]
@@ -235,6 +268,13 @@ final class MetadataRegistryTest extends TestCase
         $invoice = MetadataRegistry::fromClasses([Invoice::class])->toArray()['entities'][0];
         $dropped = $invoice;
         $dropped['version'] = null;
+        [$author, $organization] = MetadataRegistry::fromClasses([Author::class, Organization::class])->toArray()['entities'];
+        $retargeted = $author;
+        $retargeted['properties'][2]['target'] = Account::class;
+        $untargeted = $author;
+        unset($untargeted['properties'][2]['target']);
+        $scalar = $author;
+        $scalar['properties'][2]['target'] = null;
 
         yield 'an empty array' => [[], 'must hold exactly one "entities" list'];
         yield 'a second top-level field' => [[...$valid, 'version' => 1], 'must hold exactly one "entities" list'];
@@ -255,6 +295,10 @@ final class MetadataRegistryTest extends TestCase
         yield 'a version the source does not declare' => [['entities' => [$account, $versioned]], ArticleCategory::class . ' does not match'];
         yield 'a version the source declares left out' => [['entities' => [$dropped]], Invoice::class . ' does not match'];
         yield 'entries out of order' => [['entities' => [$category, $account]], ArticleCategory::class . ' does not match'];
+        yield 'a changed relationship target' => [['entities' => [$retargeted, $organization]], Author::class . ' does not match'];
+        yield 'a property without a target field' => [['entities' => [$untargeted, $organization]], Author::class . ' does not match'];
+        yield 'a relationship recorded as a scalar' => [['entities' => [$scalar, $organization]], Author::class . ' does not match'];
+        yield 'a relationship whose target has no entry' => [['entities' => [$author]], Author::class . '::$organization is not a usable #[BelongsTo] relationship: ' . Organization::class . ' is not an entity'];
     }
 
     /**

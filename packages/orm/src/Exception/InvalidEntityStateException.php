@@ -10,7 +10,8 @@ use Throwable;
 /**
  * An entity operation outside the unit-of-work lifecycle — an unmapped
  * class, an object the EntityManager does not hold, an incomplete entity,
- * a conflicting or changed identifier, a changed or exhausted version, a
+ * a relationship target the EntityManager does not manage, a conflicting or
+ * changed identifier, a changed or exhausted version, a
  * call while flush() runs, a locking read outside a transaction session, a
  * nested session, a call after a session's flush or failure — or a flush
  * whose rows disagree with the entities it writes. A message names the
@@ -78,6 +79,15 @@ final class InvalidEntityStateException extends RuntimeException
     public static function uninitialized(string $class, string $property): self
     {
         return new self("{$class}::\${$property} is not initialized. Every mapped property needs a value to be written.");
+    }
+
+    public static function relationTargetNotHeld(string $class, string $property): self
+    {
+        return new self(
+            "{$class}::\${$property} holds an entity this EntityManager does not manage. A non-null relationship "
+            . 'target must already be managed by this EntityManager: load it, or persist and flush it, through this '
+            . 'manager first.',
+        );
     }
 
     public static function nullIdentifier(string $class): self
