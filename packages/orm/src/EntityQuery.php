@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Kinetis\Orm;
 
+use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\QueryBuilder\CursorPaginator;
+use Kinetis\QueryBuilder\LockWait;
 use Kinetis\QueryBuilder\Paginator;
 use Kinetis\QueryBuilder\Query;
 
@@ -19,7 +21,9 @@ use Kinetis\QueryBuilder\Query;
  *
  * Every terminal checks its EntityManager again once its SQL returns, so a
  * manager closed while the Fiber was suspended in that SQL is refused
- * rather than answered.
+ * rather than answered. In a manager OrmFactory::transaction() bound, what
+ * a terminal throws from Query onward — a refusal Query raises before SQL
+ * included — fails the whole session.
  *
  * Like Query, one instance accumulates one query.
  *
@@ -108,6 +112,36 @@ final class EntityQuery
     }
 
     /**
+     * Query::lockForUpdate(): the selected rows stay locked until the
+     * transaction ends. Query decides which terminals, clauses and wait
+     * modes a lock admits when a terminal runs.
+     *
+     * @return $this
+     * @throws InvalidEntityStateException for a manager not bound by OrmFactory::transaction()
+     */
+    public function lockForUpdate(LockWait $wait = LockWait::Wait): self
+    {
+        $this->manager->assertLockable();
+        $this->query->lockForUpdate($wait);
+
+        return $this;
+    }
+
+    /**
+     * Query::lockForShare(), admitted as lockForUpdate() is.
+     *
+     * @return $this
+     * @throws InvalidEntityStateException for a manager not bound by OrmFactory::transaction()
+     */
+    public function lockForShare(): self
+    {
+        $this->manager->assertLockable();
+        $this->query->lockForShare();
+
+        return $this;
+    }
+
+    /**
      * Every matching entity, buffered in full.
      *
      * @return list<T>
@@ -116,7 +150,7 @@ final class EntityQuery
     {
         $this->manager->assertUsable();
 
-        return $this->manager->load($this->plan, $this->query->get());
+        return $this->manager->terminal(fn (): array => $this->manager->load($this->plan, $this->query->get()));
     }
 
     /**
@@ -125,33 +159,42 @@ final class EntityQuery
     public function first(): ?object
     {
         $this->manager->assertUsable();
-        $row = $this->query->first();
 
-        if ($row === null) {
-            $this->manager->assertUsable();
+        return $this->manager->terminal(function (): ?object {
+            $row = $this->query->first();
 
-            return null;
-        }
+            if ($row === null) {
+                $this->manager->assertUsable();
 
-        return $this->manager->load($this->plan, [$row])[0];
+                return null;
+            }
+
+            return $this->manager->load($this->plan, [$row])[0];
+        });
     }
 
     public function exists(): bool
     {
         $this->manager->assertUsable();
-        $exists = $this->query->exists();
-        $this->manager->assertUsable();
 
-        return $exists;
+        return $this->manager->terminal(function (): bool {
+            $exists = $this->query->exists();
+            $this->manager->assertUsable();
+
+            return $exists;
+        });
     }
 
     public function count(): int
     {
         $this->manager->assertUsable();
-        $count = $this->query->count();
-        $this->manager->assertUsable();
 
-        return $count;
+        return $this->manager->terminal(function (): int {
+            $count = $this->query->count();
+            $this->manager->assertUsable();
+
+            return $count;
+        });
     }
 
     /**
@@ -161,18 +204,21 @@ final class EntityQuery
     public function paginate(int $perPage, int $page = 1): Paginator
     {
         $this->manager->assertUsable();
-        $window = $this->query->paginate($perPage, $page);
 
-        /** @var list<array<string, mixed>> $rows */
-        $rows = $window->data;
+        return $this->manager->terminal(function () use ($perPage, $page): Paginator {
+            $window = $this->query->paginate($perPage, $page);
 
-        return new Paginator(
-            data: $this->manager->load($this->plan, $rows),
-            currentPage: $window->currentPage,
-            perPage: $window->perPage,
-            total: $window->total,
-            lastPage: $window->lastPage,
-        );
+            /** @var list<array<string, mixed>> $rows */
+            $rows = $window->data;
+
+            return new Paginator(
+                data: $this->manager->load($this->plan, $rows),
+                currentPage: $window->currentPage,
+                perPage: $window->perPage,
+                total: $window->total,
+                lastPage: $window->lastPage,
+            );
+        });
     }
 
     /**
@@ -185,12 +231,16 @@ final class EntityQuery
     public function cursorPaginate(int $perPage, ?string $cursor, string $property = 'id'): CursorPaginator
     {
         $this->manager->assertUsable();
-        $page = $this->query->cursorPaginate($perPage, $cursor, $this->plan->column($property));
+        $column = $this->plan->column($property);
 
-        /** @var list<array<string, mixed>> $rows */
-        $rows = $page->data;
+        return $this->manager->terminal(function () use ($perPage, $cursor, $column): CursorPaginator {
+            $page = $this->query->cursorPaginate($perPage, $cursor, $column);
 
-        return new CursorPaginator($this->manager->load($this->plan, $rows), $page->nextCursor, $page->hasMore);
+            /** @var list<array<string, mixed>> $rows */
+            $rows = $page->data;
+
+            return new CursorPaginator($this->manager->load($this->plan, $rows), $page->nextCursor, $page->hasMore);
+        });
     }
 
     /**

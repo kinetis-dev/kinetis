@@ -5,17 +5,55 @@ declare(strict_types=1);
 namespace Kinetis\Orm\Exception;
 
 use RuntimeException;
+use Throwable;
 
 /**
  * An entity operation outside the unit-of-work lifecycle — an unmapped
  * class, an object the EntityManager does not hold, an incomplete entity,
  * a conflicting or changed identifier, a changed or exhausted version, a
- * call while flush() runs — or a flush whose rows disagree with the
- * entities it writes. A message names the class and property, never an
- * identifier or version value: an identifier can be a secret.
+ * call while flush() runs, a locking read outside a transaction session, a
+ * nested session, a call after a session's flush or failure — or a flush
+ * whose rows disagree with the entities it writes. A message names the
+ * class and property, never an identifier or version value: an identifier
+ * can be a secret.
  */
 final class InvalidEntityStateException extends RuntimeException
 {
+    public static function lockOutsideTransaction(): self
+    {
+        return new self(
+            'lockForUpdate() and lockForShare() need an EntityManager bound to a transaction: outside one the lock '
+            . 'ends with its statement. Read the entity inside OrmFactory::transaction().',
+        );
+    }
+
+    public static function nestedTransaction(): self
+    {
+        return new self(
+            'This Fiber is already inside OrmFactory::transaction() on this factory, and sessions do not nest. Use '
+            . 'the EntityManager the running callback received.',
+        );
+    }
+
+    public static function sessionFlushed(): self
+    {
+        return new self(
+            "This EntityManager flushed its work inside OrmFactory::transaction(), and that flush is the callback's "
+            . 'final ORM operation. Until the callback returns it accepts only close() and isClosed().',
+        );
+    }
+
+    public static function sessionFailed(Throwable $failure): self
+    {
+        return new self(
+            'An ORM operation inside this OrmFactory::transaction() callback failed, so the transaction rolls back '
+            . 'once the callback returns and this EntityManager accepts only close() and isClosed(). getPrevious() '
+            . 'is that failure.',
+            0,
+            $failure,
+        );
+    }
+
     public static function unmapped(string $class): self
     {
         return new self("{$class} is not an entity in this OrmFactory's MetadataRegistry, so it cannot be persisted.");

@@ -11,7 +11,7 @@ composer require kinetis/orm
 `kinetis/persistence`, never on `kinetis/framework`. Its contract — the
 mapping rules, identifiers, the admitted row values, the identity map,
 the repository and query API, writing and flushing, optimistic locking,
-and what it does not do — is the
+transaction sessions, and what it does not do — is the
 [package README](https://github.com/kinetis-dev/orm#readme). This page
 covers setting it up.
 ````
@@ -21,7 +21,9 @@ through typed repositories and entity queries without running their
 constructors, and each unit of work holds one object per row, tracks
 changes to it, and writes new, changed and removed entities in one
 transaction on `flush()`. Updates and deletes of an entity carrying
-`#[Version]` are optimistically locked. It has no relationships.
+`#[Version]` are optimistically locked, and a transaction session locks
+entity rows and shares one transaction with query-builder SQL. It has no
+relationships.
 
 ## In a Kinetis application
 
@@ -115,10 +117,13 @@ build a factory once from
 `MetadataRegistry`, and pair each `open()` with `close()` in the unit of
 work that uses it, as in the next section.
 
-`flush()` begins its own transaction and never joins one. Do not call it
-inside a `TransactionGuard::transaction()` callback, or anywhere the Fiber
-holds a transaction on the same connection: see the README's
-"Transactions".
+The request-scoped manager's `flush()` begins its own transaction and
+never joins one. Do not call it inside a `TransactionGuard::transaction()`
+callback, or anywhere the Fiber holds a transaction on the same
+connection. Work that locks entity rows, or writes entities and
+query-builder SQL in one transaction, injects `OrmFactory` and runs in
+`transaction()`, using the manager its callback receives rather than the
+request-scoped one: see the README's "Transaction sessions".
 
 ## Without Kinetis
 

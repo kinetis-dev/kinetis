@@ -8,6 +8,7 @@ use Closure;
 use InvalidArgumentException;
 use Kinetis\Orm\EntityQuery;
 use Kinetis\Orm\EntityRepository;
+use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Orm\OrmFactory;
@@ -123,6 +124,26 @@ final class EntityQueryTest extends TestCase
         }
 
         self::assertSame([], $this->link->calls);
+    }
+
+    public function test_a_manager_from_open_refuses_a_locking_read_before_sql_and_stays_usable(): void
+    {
+        foreach ([
+            fn (): mixed => $this->articles->query()->lockForUpdate(),
+            fn (): mixed => $this->articles->query()->lockForShare(),
+        ] as $lock) {
+            try {
+                $lock();
+                self::fail('The lock was accepted.');
+            } catch (InvalidEntityStateException $e) {
+                self::assertSame(InvalidEntityStateException::lockOutsideTransaction()->getMessage(), $e->getMessage());
+            }
+        }
+
+        self::assertSame([], $this->link->calls);
+
+        $this->link->queue([Article::row()]);
+        self::assertNotNull($this->articles->find(1));
     }
 
     public function test_builder_returns_a_copy_whose_changes_and_rows_bypass_the_entity_query(): void

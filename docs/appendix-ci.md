@@ -120,7 +120,9 @@ rather than which form it took.
   unique-key failure rolled back and then retried, and two managers
   holding one versioned row: the stale writer's update conflicting, again
   on a repeated flush, until it clears, reloads and reapplies it, and a
-  stale delete conflicting.
+  stale delete conflicting; and a transaction session whose locking entity
+  read holds its row through the session's flush until COMMIT, probed from
+  a second client with `NOWAIT` so contention never waits.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two
