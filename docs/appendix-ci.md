@@ -127,7 +127,13 @@ rather than which form it took.
   map, a locking read that locks its root row and not the author it loads,
   a committed reassignment loaded by a new manager, and a flush whose
   DELETE of a referenced author fails on the database's foreign key and
-  rolls back the insert before it.
+  rolls back the insert before it; and inverse relationships: a nullable
+  `#[HasOne]` without a row, a non-nullable one refusing a missing and a
+  duplicate row, empty and multiple `#[HasMany]` lists in identifier
+  order from rows inserted out of order, a mixed nested path resolving
+  into one identity map, a locking read that locks its root author and
+  not the posts it loads, and a committed reassignment observed by a new
+  manager's `#[HasMany]`.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

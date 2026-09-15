@@ -13,6 +13,7 @@ use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Exception\RollbackFailedException;
 use Kinetis\Orm\Exception\UnknownFlushOutcomeException;
+use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\MysqlTransaction;
 use Kinetis\Persistence\Contract\PostgresLink;
@@ -41,8 +42,9 @@ use WeakMap;
  *
  * A relationship is loaded only on request, by the entity query terminal
  * that selected its source entities and on the same link, and its targets
- * resolve through the same identity map. A relationship written by flush()
- * holds an entity this manager already manages, or null.
+ * resolve through the same identity map. flush() writes only a #[BelongsTo]
+ * relationship, which holds an entity this manager already manages, or
+ * null, and never reads an inverse relationship.
  *
  * flush() writes from a plan local to the call, and nothing in this
  * manager or its entities changes until COMMIT returns: flush()'s own, or
@@ -62,6 +64,8 @@ use WeakMap;
  * @psalm-type Values = array<string, null|bool|int|float|string>
  * @psalm-type Insert = array{entity: object, plan: EntityPlan<object>, values: Values}
  * @psalm-type Write = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, values: Values|null, changes: Values}
+ * @phpstan-import-type InverseMapping from MetadataRegistry
+ * @psalm-import-type InverseMapping from MetadataRegistry
  */
 final class EntityManager
 {
@@ -471,7 +475,7 @@ final class EntityManager
     /**
      * @internal $relations with the relationship path $path merged in: every
      *           dot-separated segment a relationship of the entity the
-     *           segment before it references.
+     *           segment before it loads.
      *
      * @param EntityPlan<object> $plan
      * @param array<string, array<array-key, mixed>> $relations
@@ -505,7 +509,7 @@ final class EntityManager
      * @template T of object
      * @param EntityPlan<T> $plan
      * @param list<array<string, mixed>> $rows
-     * @return list<array{int|string, T}> each row's identifier and entity
+     * @return list<array{int|string, T, array<string, mixed>}> each row's identifier, entity and converted values
      */
     private function register(EntityPlan $plan, array $rows): array
     {
@@ -525,10 +529,10 @@ final class EntityManager
                 $this->snapshots[$entity] = $plan->snapshot($values);
             }
 
-            $entities[] = [$id, $entity];
+            $entities[] = [$id, $entity, $values];
         }
 
-        /** @var list<array{int|string, T}> $entities */
+        /** @var list<array{int|string, T, array<string, mixed>}> $entities */
         return $entities;
     }
 
@@ -543,7 +547,8 @@ final class EntityManager
      * refuses a manager closed during that statement before anything is
      * assigned. A null key assigns null, and a key no row matches throws.
      * A relationship already initialized is never overwritten: its target
-     * only joins the next level, and must be managed by this manager.
+     * only joins the next level, and must be managed by this manager. An
+     * inverse relationship loads as loadInverse() states.
      *
      * @param EntityPlan<object> $plan
      * @param list<object> $entities
@@ -555,12 +560,22 @@ final class EntityManager
     {
         foreach ($relations as $property => $below) {
             $target = $this->plans[$plan->target($property)];
+            $inverse = $plan->inverse($property);
+
+            if ($inverse !== null) {
+                /** @var array<string, array<array-key, mixed>> $below */
+                $this->eager($target, $this->loadInverse($plan, $target, $entities, $inverse), $below);
+
+                continue;
+            }
+
             $unloaded = [];
             $keys = [];
             $next = [];
 
             foreach ($entities as $entity) {
                 if ($plan->initialized($entity, $property)) {
+                    /** @var object|null $related a #[BelongsTo] property is typed with its target class */
                     $related = $plan->related($entity, $property);
 
                     if ($related !== null) {
@@ -609,6 +624,93 @@ final class EntityManager
             /** @var array<string, array<array-key, mixed>> $below */
             $this->eager($target, array_values($next), $below);
         }
+    }
+
+    /**
+     * Loads the inverse relationship $inverse into $entities and returns the
+     * next level: every target assigned, or held by an initialized one.
+     *
+     * An initialized relationship is never overwritten, and every value it
+     * holds must be a target this manager manages, or a nullable #[HasOne]'s
+     * null. Every other entity takes its identifier from its snapshot. The
+     * distinct identifiers are selected against the target's mappedBy
+     * foreign-key column, RELATIONSHIP_BATCH per statement and ordered by the
+     * target's identifier, and each row goes through register(), which
+     * refuses a manager closed during that statement before anything is
+     * assigned. A row joins the entity its own foreign-key value names,
+     * whatever a held target's snapshot or property holds.
+     *
+     * @param EntityPlan<object> $plan
+     * @param EntityPlan<object> $target
+     * @param list<object> $entities
+     * @param InverseMapping $inverse
+     * @return list<object>
+     * @throws InvalidEntityStateException
+     * @throws MappingException
+     */
+    private function loadInverse(EntityPlan $plan, EntityPlan $target, array $entities, array $inverse): array
+    {
+        $property = $inverse['name'];
+        $unloaded = [];
+        $keys = [];
+        $next = [];
+
+        foreach ($entities as $entity) {
+            if (!$plan->initialized($entity, $property)) {
+                $snapshot = $this->snapshots[$entity] ?? throw InvalidEntityStateException::uninitialized($plan->class, $property);
+                /** @var int|string $key an identifier's database value is an int or a string */
+                $key = $snapshot[$plan->id];
+                $unloaded[] = [$entity, $key];
+                $keys[] = $key;
+
+                continue;
+            }
+
+            $related = $plan->related($entity, $property);
+
+            foreach (is_array($related) ? $related : [$related] as $held) {
+                if ($held === null && $inverse['kind'] === 'hasOne') {
+                    continue;
+                }
+
+                if (!$held instanceof $target->class || !isset($this->snapshots[$held])) {
+                    throw InvalidEntityStateException::relationTargetNotHeld($plan->class, $property);
+                }
+
+                $next[spl_object_id($held)] = $held;
+            }
+        }
+
+        $column = $target->column($inverse['mappedBy']);
+        $found = [];
+
+        foreach (array_chunk(array_unique($keys), self::RELATIONSHIP_BATCH) as $batch) {
+            $rows = $this->select($target)->whereIn($column, $batch)->orderBy($target->column($target->id))->get();
+
+            foreach ($this->register($target, $rows) as [, $loaded, $values]) {
+                /** @var int|string $owner the foreign key the statement matched */
+                $owner = $values[$inverse['mappedBy']];
+                $found[$owner][] = $loaded;
+            }
+        }
+
+        foreach ($unloaded as [$entity, $key]) {
+            $loaded = $found[$key] ?? [];
+            $related = match (true) {
+                $inverse['kind'] === 'hasMany' => $loaded,
+                count($loaded) > 1 => throw MappingException::ambiguousInverseTarget($plan->class, $property, $target->class, $column),
+                $loaded !== [] => $loaded[0],
+                $inverse['nullable'] => null,
+                default => throw MappingException::missingInverseTarget($plan->class, $property, $target->class, $column),
+            };
+            $plan->assign($entity, $property, $related);
+
+            foreach ($loaded as $held) {
+                $next[spl_object_id($held)] = $held;
+            }
+        }
+
+        return array_values($next);
     }
 
     /** A relationship target's identifier in this manager's snapshot, or null when it does not manage the target. */

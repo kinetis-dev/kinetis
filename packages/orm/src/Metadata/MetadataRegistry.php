@@ -8,6 +8,8 @@ use BackedEnum;
 use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\HasMany;
+use Kinetis\Orm\Attributes\HasOne;
 use Kinetis\Orm\Attributes\Id;
 use Kinetis\Orm\Attributes\Version;
 use Kinetis\Orm\Exception\MappingException;
@@ -28,12 +30,16 @@ use ReflectionProperty;
  *
  * A #[BelongsTo] property maps its foreign-key column: its target is an
  * entity of the same registry, and its type is that target's identifier
- * type.
+ * type. A #[HasOne] or #[HasMany] property maps no column and is listed
+ * among the inverses instead: its target is an entity of the same registry
+ * whose #[BelongsTo] property mappedBy references the declaring class.
  *
  * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
- * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>}
+ * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool}
+ * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
  * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
- * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>}
+ * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool}
+ * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
  */
 final readonly class MetadataRegistry
 {
@@ -73,7 +79,8 @@ final readonly class MetadataRegistry
 
         ksort($entities, SORT_STRING);
 
-        // A relationship's target and type resolve once every class is mapped.
+        // A relationship's target and type, and an inverse relationship's
+        // mappedBy property, resolve once every class is mapped.
         foreach ($entities as $class => $mapping) {
             foreach ($mapping['properties'] as $i => $property) {
                 if ($property['target'] === null) {
@@ -90,6 +97,26 @@ final readonly class MetadataRegistry
                 $type = array_column($target['properties'], 'type', 'name')[$target['id']];
                 $property['type'] = $type;
                 $mapping['properties'][$i] = $property;
+            }
+
+            foreach ($mapping['inverses'] as $inverse) {
+                $target = $entities[$inverse['target']] ?? throw MappingException::inverse(
+                    $class,
+                    $inverse['name'],
+                    "{$inverse['target']} is not an entity in this MetadataRegistry",
+                );
+                $mappedBy = $inverse['mappedBy'];
+                $owning = array_column($target['properties'], null, 'name')[$mappedBy] ?? null;
+                $reason = match (true) {
+                    $owning === null => "mappedBy names \"{$mappedBy}\", which is not a mapped property of {$target['class']}",
+                    $owning['target'] === null => "mappedBy names {$target['class']}::\${$mappedBy}, which is not a #[BelongsTo] relationship",
+                    $owning['target'] !== $class => "mappedBy names {$target['class']}::\${$mappedBy}, which references {$owning['target']}, not {$class}",
+                    default => null,
+                };
+
+                if ($reason !== null) {
+                    throw MappingException::inverse($class, $inverse['name'], $reason);
+                }
             }
 
             $entities[$class] = $mapping;
@@ -179,6 +206,7 @@ final readonly class MetadataRegistry
 
         /** @var array<string, PropertyMapping> $properties */
         $properties = [];
+        $inverses = [];
         $columns = [];
         $ids = [];
         $versions = [];
@@ -189,7 +217,16 @@ final readonly class MetadataRegistry
                 continue;
             }
 
-            $mapping = self::property($name, $property);
+            $type = self::type($name, $property);
+            $inverse = self::inverse($name, $property, $type);
+
+            if ($inverse !== null) {
+                $inverses[] = $inverse;
+
+                continue;
+            }
+
+            $mapping = self::property($name, $property, $type);
             $key = strtolower($mapping['column']);
 
             if (isset($columns[$key])) {
@@ -253,13 +290,15 @@ final readonly class MetadataRegistry
             'generated' => $generated,
             'version' => $version,
             'properties' => array_values($properties),
+            'inverses' => $inverses,
         ];
     }
 
     /**
-     * @return PropertyMapping
+     * The refusals every non-static property shares, column or inverse
+     * relationship.
      */
-    private static function property(string $class, ReflectionProperty $property): array
+    private static function type(string $class, ReflectionProperty $property): ReflectionNamedType
     {
         $name = $property->getName();
         $type = $property->getType();
@@ -284,6 +323,15 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedProperty($class, $name, "declares the composite type {$type}");
         }
 
+        return $type;
+    }
+
+    /**
+     * @return PropertyMapping
+     */
+    private static function property(string $class, ReflectionProperty $property, ReflectionNamedType $type): array
+    {
+        $name = $property->getName();
         $relationship = ($property->getAttributes(BelongsTo::class)[0] ?? null)?->newInstance();
 
         if ($relationship !== null) {
@@ -353,6 +401,52 @@ final readonly class MetadataRegistry
         $target = $type->getName() === 'self' ? $class : $type->getName();
 
         return ['name' => $name, 'column' => $column, 'type' => 'int', 'nullable' => $type->allowsNull(), 'enum' => null, 'target' => $target];
+    }
+
+    /**
+     * An unloaded inverse relationship is an uninitialized property, so it
+     * has no default value: an initialized one is never loaded. Its mappedBy
+     * property is resolved by fromClasses() once the target is mapped.
+     *
+     * @return InverseMapping|null null for a property carrying neither #[HasOne] nor #[HasMany]
+     */
+    private static function inverse(string $class, ReflectionProperty $property, ReflectionNamedType $type): ?array
+    {
+        $hasOne = ($property->getAttributes(HasOne::class)[0] ?? null)?->newInstance();
+        $hasMany = ($property->getAttributes(HasMany::class)[0] ?? null)?->newInstance();
+
+        if ($hasOne === null && $hasMany === null) {
+            return null;
+        }
+
+        $name = $property->getName();
+        $reason = match (true) {
+            $hasOne !== null && $hasMany !== null => 'it carries both #[HasOne] and #[HasMany]',
+            $property->getAttributes(BelongsTo::class) !== [] => 'it also carries #[BelongsTo]',
+            $property->getAttributes(Column::class) !== [] => 'it also carries #[Column]',
+            $property->getAttributes(Id::class) !== [] => 'it also carries #[Id]',
+            $property->getAttributes(Version::class) !== [] => 'it also carries #[Version]',
+            $hasMany === null && $type->isBuiltin() => "#[HasOne] needs a type naming one entity class, and it declares {$type}",
+            $hasMany !== null && ($type->getName() !== 'array' || $type->allowsNull()) => "#[HasMany] needs the type array, and it declares {$type}",
+            $property->hasDefaultValue() => 'it declares a default value, and an unloaded inverse relationship is uninitialized',
+            default => null,
+        };
+
+        if ($reason !== null) {
+            throw MappingException::inverse($class, $name, $reason);
+        }
+
+        if ($hasMany !== null) {
+            return ['name' => $name, 'kind' => 'hasMany', 'target' => $hasMany->target, 'mappedBy' => $hasMany->mappedBy, 'nullable' => false];
+        }
+
+        /**
+         * @var HasOne $hasOne the property carries exactly one of the two
+         * @var class-string $target
+         */
+        $target = $type->getName() === 'self' ? $class : $type->getName();
+
+        return ['name' => $name, 'kind' => 'hasOne', 'target' => $target, 'mappedBy' => $hasOne->mappedBy, 'nullable' => $type->allowsNull()];
     }
 
     /**

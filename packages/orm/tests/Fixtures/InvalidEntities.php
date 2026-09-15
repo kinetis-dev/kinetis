@@ -15,6 +15,8 @@ use DateTimeImmutable;
 use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Column;
 use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\HasMany;
+use Kinetis\Orm\Attributes\HasOne;
 use Kinetis\Orm\Attributes\Id;
 use Kinetis\Orm\Attributes\Version;
 use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
@@ -366,6 +368,205 @@ final class RelationshipIdentifierByName
 {
     #[BelongsTo]
     public ArticleCategory $id;
+}
+
+#[Entity]
+final class InverseDefaultList
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public array $children = [];
+}
+
+#[Entity]
+final class InverseDefaultNull
+{
+    public int $id;
+
+    #[HasOne(mappedBy: 'parent')]
+    public ?self $child = null;
+}
+
+#[Entity]
+final class HasOneScalar
+{
+    public int $id;
+
+    #[HasOne(mappedBy: 'parent')]
+    public ?int $childId;
+}
+
+#[Entity]
+final class HasOneArray
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[HasOne(mappedBy: 'parent')]
+    public array $children;
+}
+
+#[Entity]
+final class HasManyNullable
+{
+    public int $id;
+
+    /** @var list<self>|null */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public ?array $children;
+}
+
+#[Entity]
+final class HasManyObject
+{
+    public int $id;
+
+    #[HasMany(target: ArticleCategory::class, mappedBy: 'parent')]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class InverseBoth
+{
+    public int $id;
+
+    #[HasOne(mappedBy: 'parent')]
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public ?self $child;
+}
+
+#[Entity]
+final class InverseBelongsTo
+{
+    public int $id;
+
+    #[BelongsTo]
+    #[HasOne(mappedBy: 'parent')]
+    public ?self $child;
+}
+
+#[Entity]
+final class InverseWithColumn
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    #[Column(name: 'children')]
+    public array $children;
+}
+
+#[Entity]
+final class InverseIdentifier
+{
+    #[Id]
+    #[HasOne(mappedBy: 'parent')]
+    public ?self $twin;
+}
+
+#[Entity]
+final class InverseVersion
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[Version]
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public array $children;
+}
+
+#[Entity]
+final class InverseReadonly
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public readonly array $children;
+}
+
+#[Entity]
+final class HasManyUnknownTarget
+{
+    public int $id;
+
+    /** @var list<Document> */
+    #[HasMany(target: Document::class, mappedBy: 'owner')]
+    public array $documents;
+}
+
+#[Entity]
+final class HasOneUnknownTarget
+{
+    public int $id;
+
+    #[HasOne(mappedBy: 'owner')]
+    public ?Document $document;
+}
+
+#[Entity]
+final class InverseUnknownMappedBy
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public array $children;
+}
+
+#[Entity]
+final class InverseMappedByInverse
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[HasMany(target: self::class, mappedBy: 'children')]
+    public array $children;
+}
+
+#[Entity]
+final class InverseScalarMappedBy
+{
+    public int $id;
+
+    public ?int $parent;
+
+    /** @var list<self> */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public array $children;
+}
+
+#[Entity]
+final class InverseChild
+{
+    public int $id;
+
+    #[BelongsTo]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class InverseWrongDirection
+{
+    public int $id;
+
+    /** @var list<InverseChild> */
+    #[HasMany(target: InverseChild::class, mappedBy: 'category')]
+    public array $children;
+}
+
+#[Entity]
+final class InverseWrongSelf
+{
+    public int $id;
+
+    #[BelongsTo]
+    public ArticleCategory $category;
+
+    #[HasOne(mappedBy: 'category')]
+    public ?self $twin;
 }
 
 interface EntityInterface

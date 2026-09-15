@@ -12,12 +12,15 @@ use Kinetis\Orm\Tests\Fixtures\Article;
 use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Author;
+use Kinetis\Orm\Tests\Fixtures\Charter;
+use Kinetis\Orm\Tests\Fixtures\Comment;
 use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Edition;
 use Kinetis\Orm\Tests\Fixtures\Invoice;
 use Kinetis\Orm\Tests\Fixtures\Organization;
 use Kinetis\Orm\Tests\Fixtures\Post;
 use Kinetis\Orm\Tests\Fixtures\Priority;
+use Kinetis\Orm\Tests\Fixtures\Profile;
 use Kinetis\Orm\Tests\Fixtures\Ticket;
 use Kinetis\Orm\Tests\Fixtures\Topic;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -42,6 +45,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                     ['name' => 'displayName', 'column' => 'display_name', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
+                'inverses' => [],
             ]]],
             MetadataRegistry::fromClasses([ArticleCategory::class])->toArray(),
         );
@@ -61,6 +65,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => null],
                     ['name' => 'email', 'column' => 'email_address', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
+                'inverses' => [],
             ]]],
             MetadataRegistry::fromClasses([Account::class])->toArray(),
         );
@@ -79,6 +84,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => null],
                     ['name' => 'subject', 'column' => 'subject', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
+                'inverses' => [],
             ]]],
             MetadataRegistry::fromClasses([Ticket::class])->toArray(),
         );
@@ -101,6 +107,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'version', 'column' => 'row_version', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                     ['name' => 'total', 'column' => 'total', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
+                'inverses' => [],
             ]]],
             $data,
         );
@@ -109,7 +116,7 @@ final class MetadataRegistryTest extends TestCase
 
     public function test_a_relationship_maps_its_foreign_key_as_the_target_identifier_type_and_round_trips(): void
     {
-        $data = MetadataRegistry::fromClasses([Post::class, Topic::class, Organization::class, Author::class])->toArray();
+        $data = MetadataRegistry::fromClasses([Post::class, Topic::class, Organization::class, Author::class, Charter::class, Comment::class, Profile::class])->toArray();
         $entities = array_column($data['entities'], 'properties', 'class');
 
         self::assertSame(
@@ -124,6 +131,29 @@ final class MetadataRegistryTest extends TestCase
             ['name' => 'parent', 'column' => 'parent_id', 'type' => 'int', 'nullable' => true, 'enum' => null, 'target' => Topic::class],
             $entities[Topic::class][1],
         );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_an_inverse_relationship_maps_no_column_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Topic::class, Profile::class, Post::class, Organization::class, Comment::class, Charter::class, Author::class])->toArray();
+        $entities = array_column($data['entities'], null, 'class');
+
+        self::assertSame(['id', 'name', 'organization'], array_column($entities[Author::class]['properties'], 'name'));
+        self::assertSame([
+            ['name' => 'profile', 'kind' => 'hasOne', 'target' => Profile::class, 'mappedBy' => 'author', 'nullable' => true],
+            ['name' => 'posts', 'kind' => 'hasMany', 'target' => Post::class, 'mappedBy' => 'author', 'nullable' => false],
+        ], $entities[Author::class]['inverses']);
+        self::assertSame(
+            [['name' => 'charter', 'kind' => 'hasOne', 'target' => Charter::class, 'mappedBy' => 'organization', 'nullable' => false]],
+            $entities[Organization::class]['inverses'],
+        );
+        self::assertSame(['id', 'parent', 'supersedes'], array_column($entities[Topic::class]['properties'], 'name'));
+        self::assertSame([
+            ['name' => 'children', 'kind' => 'hasMany', 'target' => Topic::class, 'mappedBy' => 'parent', 'nullable' => false],
+            ['name' => 'supersededBy', 'kind' => 'hasOne', 'target' => Topic::class, 'mappedBy' => 'supersedes', 'nullable' => true],
+        ], $entities[Topic::class]['inverses']);
+        self::assertSame([], $entities[Profile::class]['inverses']);
         self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
     }
 
@@ -222,15 +252,46 @@ final class MetadataRegistryTest extends TestCase
         yield 'a relationship column another property maps' => [self::INVALID . 'RelationshipDuplicateColumn', 'RelationshipDuplicateColumn::$categoryId and ' . self::INVALID . 'RelationshipDuplicateColumn::$category both map to the column "category_id"'];
         yield 'a relationship to a class outside the registry' => [self::INVALID . 'RelationshipUnknownTarget', 'RelationshipUnknownTarget::$document is not a usable #[BelongsTo] relationship: ' . Document::class . ' is not an entity in this MetadataRegistry'];
         yield 'a relationship named id' => [self::INVALID . 'RelationshipIdentifierByName', 'the identifier property "id" must be typed int or string'];
+
+        $inverse = ' is not a usable #[HasOne] or #[HasMany] relationship: ';
+
+        yield 'a #[HasMany] with a default value' => [self::INVALID . 'InverseDefaultList', 'InverseDefaultList::$children' . $inverse . 'it declares a default value'];
+        yield 'a #[HasOne] with a default value' => [self::INVALID . 'InverseDefaultNull', 'InverseDefaultNull::$child' . $inverse . 'it declares a default value'];
+        yield 'a #[HasOne] typed with a scalar' => [self::INVALID . 'HasOneScalar', 'HasOneScalar::$childId' . $inverse . '#[HasOne] needs a type naming one entity class, and it declares ?int'];
+        yield 'a #[HasOne] typed array' => [self::INVALID . 'HasOneArray', 'HasOneArray::$children' . $inverse . '#[HasOne] needs a type naming one entity class, and it declares array'];
+        yield 'a nullable #[HasMany]' => [self::INVALID . 'HasManyNullable', 'HasManyNullable::$children' . $inverse . '#[HasMany] needs the type array, and it declares ?array'];
+        yield 'a #[HasMany] typed with an entity class' => [self::INVALID . 'HasManyObject', 'HasManyObject::$category' . $inverse . '#[HasMany] needs the type array, and it declares ' . ArticleCategory::class];
+        yield 'both inverse attributes' => [self::INVALID . 'InverseBoth', 'InverseBoth::$child' . $inverse . 'it carries both #[HasOne] and #[HasMany]'];
+        yield 'an inverse relationship carrying #[BelongsTo]' => [self::INVALID . 'InverseBelongsTo', 'InverseBelongsTo::$child' . $inverse . 'it also carries #[BelongsTo]'];
+        yield 'an inverse relationship carrying #[Column]' => [self::INVALID . 'InverseWithColumn', 'InverseWithColumn::$children' . $inverse . 'it also carries #[Column]'];
+        yield 'an inverse relationship carrying #[Id]' => [self::INVALID . 'InverseIdentifier', 'InverseIdentifier::$twin' . $inverse . 'it also carries #[Id]'];
+        yield 'an inverse relationship carrying #[Version]' => [self::INVALID . 'InverseVersion', 'InverseVersion::$children' . $inverse . 'it also carries #[Version]'];
+        yield 'a readonly inverse relationship' => [self::INVALID . 'InverseReadonly', 'InverseReadonly::$children cannot be mapped: it is readonly'];
+        yield 'a #[HasMany] target outside the registry' => [self::INVALID . 'HasManyUnknownTarget', 'HasManyUnknownTarget::$documents' . $inverse . Document::class . ' is not an entity in this MetadataRegistry'];
+        yield 'a #[HasOne] target outside the registry' => [self::INVALID . 'HasOneUnknownTarget', 'HasOneUnknownTarget::$document' . $inverse . Document::class . ' is not an entity in this MetadataRegistry'];
+        yield 'an unknown mappedBy' => [self::INVALID . 'InverseUnknownMappedBy', 'InverseUnknownMappedBy::$children' . $inverse . 'mappedBy names "parent", which is not a mapped property of ' . self::INVALID . 'InverseUnknownMappedBy'];
+        yield 'a mappedBy naming an inverse relationship' => [self::INVALID . 'InverseMappedByInverse', 'InverseMappedByInverse::$children' . $inverse . 'mappedBy names "children", which is not a mapped property'];
+        yield 'a mappedBy naming a scalar property' => [self::INVALID . 'InverseScalarMappedBy', 'InverseScalarMappedBy::$children' . $inverse . 'mappedBy names ' . self::INVALID . 'InverseScalarMappedBy::$parent, which is not a #[BelongsTo] relationship'];
+        yield 'a mappedBy referencing another class' => [
+            [self::INVALID . 'InverseWrongDirection', self::INVALID . 'InverseChild'],
+            'InverseWrongDirection::$children' . $inverse . 'mappedBy names ' . self::INVALID . 'InverseChild::$category, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'InverseWrongDirection',
+        ];
+        yield 'a mappedBy of its own class referencing another class' => [
+            self::INVALID . 'InverseWrongSelf',
+            'InverseWrongSelf::$twin' . $inverse . 'mappedBy names ' . self::INVALID . 'InverseWrongSelf::$category, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'InverseWrongSelf',
+        ];
     }
 
+    /**
+     * @param mixed $class one class or a list of classes mapped with ArticleCategory
+     */
     #[DataProvider('unmappableClasses')]
     public function test_an_unmappable_class_is_refused(mixed $class, string $message): void
     {
         $this->expectException(MappingException::class);
         $this->expectExceptionMessage($message);
 
-        MetadataRegistry::fromClasses([ArticleCategory::class, $class]);
+        MetadataRegistry::fromClasses([ArticleCategory::class, ...(is_array($class) ? $class : [$class])]);
     }
 
     public function test_a_class_listed_twice_is_refused(): void
@@ -268,13 +329,36 @@ final class MetadataRegistryTest extends TestCase
         $invoice = MetadataRegistry::fromClasses([Invoice::class])->toArray()['entities'][0];
         $dropped = $invoice;
         $dropped['version'] = null;
-        [$author, $organization] = MetadataRegistry::fromClasses([Author::class, Organization::class])->toArray()['entities'];
+        $uninversed = $category;
+        unset($uninversed['inverses']);
+        $invented = $category;
+        $invented['inverses'] = [['name' => 'displayName', 'kind' => 'hasOne', 'target' => ArticleCategory::class, 'mappedBy' => 'id', 'nullable' => false]];
+        [$author, $charter, $comment, $organization, $post, $profile] = MetadataRegistry::fromClasses(
+            [Author::class, Charter::class, Comment::class, Organization::class, Post::class, Profile::class],
+        )->toArray()['entities'];
+        $graph = static fn (array $author): array => ['entities' => [$author, $charter, $comment, $organization, $post, $profile]];
         $retargeted = $author;
         $retargeted['properties'][2]['target'] = Account::class;
         $untargeted = $author;
         unset($untargeted['properties'][2]['target']);
         $scalar = $author;
         $scalar['properties'][2]['target'] = null;
+        $unlisted = $author;
+        $unlisted['inverses'] = [$author['inverses'][0]];
+        $reordered = $author;
+        $reordered['inverses'] = array_reverse($author['inverses']);
+        $rekinded = $author;
+        $rekinded['inverses'][1]['kind'] = 'hasOne';
+        $reinversed = $author;
+        $reinversed['inverses'][0]['target'] = Organization::class;
+        $remapped = $author;
+        $remapped['inverses'][1]['mappedBy'] = 'title';
+        $renulled = $author;
+        $renulled['inverses'][0]['nullable'] = false;
+        $unnulled = $author;
+        unset($unnulled['inverses'][0]['nullable']);
+        $extended = $author;
+        $extended['inverses'][0]['column'] = 'author_id';
 
         yield 'an empty array' => [[], 'must hold exactly one "entities" list'];
         yield 'a second top-level field' => [[...$valid, 'version' => 1], 'must hold exactly one "entities" list'];
@@ -295,10 +379,24 @@ final class MetadataRegistryTest extends TestCase
         yield 'a version the source does not declare' => [['entities' => [$account, $versioned]], ArticleCategory::class . ' does not match'];
         yield 'a version the source declares left out' => [['entities' => [$dropped]], Invoice::class . ' does not match'];
         yield 'entries out of order' => [['entities' => [$category, $account]], ArticleCategory::class . ' does not match'];
-        yield 'a changed relationship target' => [['entities' => [$retargeted, $organization]], Author::class . ' does not match'];
-        yield 'a property without a target field' => [['entities' => [$untargeted, $organization]], Author::class . ' does not match'];
-        yield 'a relationship recorded as a scalar' => [['entities' => [$scalar, $organization]], Author::class . ' does not match'];
+        yield 'a changed relationship target' => [$graph($retargeted), Author::class . ' does not match'];
+        yield 'a property without a target field' => [$graph($untargeted), Author::class . ' does not match'];
+        yield 'a relationship recorded as a scalar' => [$graph($scalar), Author::class . ' does not match'];
         yield 'a relationship whose target has no entry' => [['entities' => [$author]], Author::class . '::$organization is not a usable #[BelongsTo] relationship: ' . Organization::class . ' is not an entity'];
+        yield 'an entry without an inverses field' => [['entities' => [$account, $uninversed]], ArticleCategory::class . ' does not match'];
+        yield 'an inverse relationship the source does not declare' => [['entities' => [$account, $invented]], ArticleCategory::class . ' does not match'];
+        yield 'an inverse relationship the source declares left out' => [$graph($unlisted), Author::class . ' does not match'];
+        yield 'inverse relationships out of order' => [$graph($reordered), Author::class . ' does not match'];
+        yield 'a changed inverse kind' => [$graph($rekinded), Author::class . ' does not match'];
+        yield 'a changed inverse target' => [$graph($reinversed), Author::class . ' does not match'];
+        yield 'a changed mappedBy' => [$graph($remapped), Author::class . ' does not match'];
+        yield 'a changed inverse nullability' => [$graph($renulled), Author::class . ' does not match'];
+        yield 'an inverse relationship without a nullable field' => [$graph($unnulled), Author::class . ' does not match'];
+        yield 'an inverse relationship with an extra field' => [$graph($extended), Author::class . ' does not match'];
+        yield 'an inverse relationship whose target has no entry' => [
+            ['entities' => [$author, $charter, $comment, $organization, $post]],
+            Author::class . '::$profile is not a usable #[HasOne] or #[HasMany] relationship: ' . Profile::class . ' is not an entity',
+        ];
     }
 
     /**

@@ -33,8 +33,9 @@ removed entities in one transaction when it is flushed. Updates and
 deletes of an entity carrying `#[Version]` are optimistically locked. A
 transaction session locks entity rows and writes entities and
 query-builder SQL in one transaction. An entity references another
-through an explicit `#[BelongsTo]` relationship, which an entity query
-loads when asked.
+through an explicit `#[BelongsTo]` relationship, and reaches the entities
+referencing it through explicit `#[HasOne]` and `#[HasMany]` inverse
+relationships; an entity query loads either side when asked.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -85,8 +86,10 @@ final class Article
   `article_category`, so a plural table is named as above. A table name
   is one or more identifiers separated by dots (`reporting.articles`).
 - **Columns.** Every non-static property is mapped, trait properties
-  included. A column is the property name in snake case (`publishedAt`
-  maps to `published_at`) unless `#[Column(name: ...)]` names it. A column
+  included, and every one but an inverse relationship maps a column (see
+  "Relationships"). A column is the property name in snake case
+  (`publishedAt` maps to `published_at`) unless `#[Column(name: ...)]`
+  names it. A column
   name is one identifier: ASCII letters, digits and underscores, not
   starting with a digit. Two columns differing only by case are refused.
 - **Identifier.** The property carrying `#[Id]`, or else the property
@@ -98,8 +101,9 @@ final class Article
   (see "Optimistic locking"). A property merely named `version` is
   ordinary data.
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum, and the
-  nullable form of each; on a `#[BelongsTo]` property, an entity class
-  (see "Relationships").
+  nullable form of each; on a `#[BelongsTo]` or `#[HasOne]` property, an
+  entity class, and on a `#[HasMany]` property, `array` (see
+  "Relationships").
 - **Classes.** An entity has no parent class and is neither abstract nor
   readonly; it may be final. Its constructor's signature and visibility
   do not matter.
@@ -107,8 +111,9 @@ final class Article
 `MappingException` refuses, when the metadata is built and before any
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
-type, an intersection, any other type (`mixed`, `array`, an object
-without `#[BelongsTo]`, `DateTimeImmutable`, a unit enum), a missing or
+type, an intersection, any other type (`mixed`, `array` without
+`#[HasMany]`, an object without `#[BelongsTo]` or `#[HasOne]`,
+`DateTimeImmutable`, a unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
 `int`, an invalid name, a duplicate column, and each relationship
@@ -168,8 +173,9 @@ $metadata = MetadataRegistry::fromArray(require 'entities.php');
 is not an entity, or a relationship whose target is not one of them.
 `toArray()` holds only class names, table and column names, type names
 and flags, ordered by class, so the same classes always produce the same
-array. `fromArray()` accepts only what `toArray()` writes
-for those classes as they are declared now: a missing or extra field, a
+array. Each entity lists its column-mapped `properties` and, apart from
+them, its inverse relationships as `inverses`. `fromArray()` accepts only
+what `toArray()` writes for those classes as they are declared now: a missing or extra field, a
 wrong type, an unknown class or a mapping the source no longer produces
 throws `MappingException`. It reflects the classes it names and nothing
 else. Nothing is cached outside the instance.
@@ -244,10 +250,10 @@ Every entity query selects all mapped columns. Loading a row:
 2. returns the object already held for the identifier, untouched;
 3. otherwise allocates the entity with
    `ReflectionClass::newInstanceWithoutConstructor()`, writes each
-   declared property but a relationship directly — no constructor,
+   column-mapped property but a `#[BelongsTo]` directly — no constructor,
    setter, hook or magic method runs — and only then registers it, with a
-   snapshot of the converted values, a relationship's foreign key
-   included.
+   snapshot of the converted values, a `#[BelongsTo]`'s foreign key
+   included. Every relationship, of either side, stays uninitialized.
 
 | Property type | Admitted driver value |
 |---|---|
@@ -309,7 +315,9 @@ spelling and the database returns the stored identifier.
 A property name resolves to its column and a value converts through the
 property's type before either reaches the query builder, so an unknown
 property or an inadmissible value throws `MappingException` before SQL.
-A backed enum binds as its backing value.
+A backed enum binds as its backing value. An inverse relationship maps
+no column, so naming one there throws `MappingException` before SQL too
+(see "Relationship predicates").
 
 `get()` and `findBy()` buffer every matching row, however many there are.
 Page through a result that can grow with `cursorPaginate()`.
@@ -337,6 +345,8 @@ final readonly class PublishedArticles
 ```php
 use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\HasMany;
+use Kinetis\Orm\Attributes\HasOne;
 
 #[Entity(table: 'authors')]
 final class Author
@@ -347,6 +357,13 @@ final class Author
 
     #[BelongsTo]
     public ?Organization $organization; // organization_id, nullable
+
+    #[HasOne(mappedBy: 'author')]
+    public ?Profile $profile;
+
+    /** @var list<Post> */
+    #[HasMany(target: Post::class, mappedBy: 'author')]
+    public array $posts;
 }
 
 #[Entity(table: 'posts')]
@@ -358,47 +375,110 @@ final class Post
 
     #[BelongsTo(column: 'written_by')]
     public Author $author;
+
+    /** @var list<Comment> */
+    #[HasMany(target: Comment::class, mappedBy: 'post')]
+    public array $comments;
+}
+
+#[Entity(table: 'comments')]
+final class Comment
+{
+    public int $id;
+
+    #[BelongsTo]
+    public Post $post; // post_id
+
+    #[BelongsTo]
+    public Author $author; // author_id
+
+    public string $body;
+}
+
+#[Entity(table: 'profiles')]
+final class Profile
+{
+    public int $id;
+
+    #[BelongsTo]
+    public Author $author; // author_id, with a unique constraint
+
+    public string $bio;
 }
 
 $posts = $entities->repository(Post::class)
     ->query()
     ->where('author', '=', 7) // written_by = 7
-    ->with('author.organization')
+    ->with('author.organization', 'comments.author')
     ->get();
 
 $posts[0]->author->organization?->name;
+$posts[0]->comments[0]->author->name;
+
+$authors = $entities->repository(Author::class)
+    ->query()
+    ->with('profile', 'posts')
+    ->cursorPaginate(25, $cursor);
+
+$authors->data[0]->profile?->bio;
 ```
 
-`Organization` is an application entity with a `name` property.
+`Organization` is an application entity with a `name` property, and
+`$cursor` the cursor of the page the client asked for.
 
-- **Mapping.** `#[BelongsTo]` marks a property typed with one entity
+- **Owning side.** `#[BelongsTo]` marks a property typed with one entity
   class — nullable or not, `self` included — mapped in the same
   `MetadataRegistry`. The property maps one foreign-key column: the
   property name in snake case followed by `_id`, unless `column` names
   it, under the rules of any column name. The column holds the target's
   identifier, so the relationship's type in the metadata is that
-  identifier's type. Only the side holding the foreign key is mapped.
-- **Refusals.** `MappingException` refuses, when the metadata is built, a
-  type that is not a class, `#[Column]`, `#[Id]` or `#[Version]` on the
-  same property, a default value, and a target the registry does not map.
-- **Loaded or not.** Loading a row leaves a relationship uninitialized,
-  and reading it throws PHP's `Error` as for any uninitialized typed
-  property. Only `with()` or the application initializes it: there is no
-  proxy, no lazy loading and no loaded-state API. The manager's snapshot
-  holds the foreign key either way.
+  identifier's type. It is the only side that maps or writes a foreign
+  key.
+- **Inverse side.** `#[HasOne(mappedBy: ...)]` and
+  `#[HasMany(target: ..., mappedBy: ...)]` mark a property holding the
+  entities whose `#[BelongsTo]` property `mappedBy` references this
+  entity. `mappedBy` names a `#[BelongsTo]` property of the target whose
+  target is exactly the declaring class, and that property's column is
+  the one the relationship reads; there is no join-column option. A
+  `#[HasOne]` property is typed with one entity class, its target —
+  nullable or not, `self` included. A `#[HasMany]` property is typed
+  exactly `array`, not nullable, and `target` names its element class,
+  `self::class` included; PHP cannot declare an element type, so a
+  `list<Target>` PHPDoc documents it. The target is mapped in the same
+  `MetadataRegistry`. An inverse relationship maps no column of its own
+  table.
+- **Refusals.** `MappingException` refuses, when the metadata is built,
+  for `#[BelongsTo]`: a type that is not a class, `#[Column]`, `#[Id]` or
+  `#[Version]` on the same property, a default value, and a target the
+  registry does not map. For `#[HasOne]` and `#[HasMany]`: a `#[HasOne]`
+  type that is not a class, a `#[HasMany]` type other than `array`,
+  `#[Column]`, `#[Id]`, `#[Version]`, `#[BelongsTo]` or both inverse
+  attributes on the same property, a default value, a target the registry
+  does not map, and a `mappedBy` naming no `#[BelongsTo]` property of the
+  target or one that references another class. A default value is
+  refused on either side because an initialized relationship is never
+  loaded.
+- **Loaded or not.** Loading a row leaves every relationship, of either
+  side, uninitialized, and reading one throws PHP's `Error` as for any
+  uninitialized typed property. Only `with()` or the application
+  initializes it: there is no proxy, no lazy loading and no loaded-state
+  API. The manager's snapshot holds a `#[BelongsTo]`'s foreign key either
+  way, and nothing of an inverse relationship.
 
 ### Loading relationships
 
-`with(string ...$relations)` names relationship paths: `author`, and
-`author.organization` through the target's own relationship. Repeated
-calls add to one set. An empty segment, an unknown property or a property
-that is not a relationship throws `MappingException` before SQL.
+`with(string ...$relations)` names relationship paths: each segment is a
+`#[BelongsTo]`, `#[HasOne]` or `#[HasMany]` property of the entity the
+segment before it loads, as in `author.organization`, `comments.author`
+or `author.posts`. Repeated calls add to one set. An empty segment, an
+unknown property or a property that is not a relationship throws
+`MappingException` before SQL.
 
 `get()`, `first()`, `paginate()` and `cursorPaginate()` load the paths
 after their own statements. `find()`, `findBy()`, `count()` and
 `exists()` load nothing and send only their usual statements, so
 `with(...)->count()` counts what `with(...)->get()` returns. Each
-relationship loads one level at a time:
+relationship loads one level at a time. A `#[BelongsTo]`:
 
 1. The distinct non-null foreign keys of the level's entities whose
    relationship is uninitialized are read from their snapshots.
@@ -413,10 +493,35 @@ relationship loads one level at a time:
    column.
 4. The targets are the next level's entities.
 
-A relationship the application already initialized is never overwritten
-or compared with its foreign key. Its target joins the next level and
-must be an entity this manager manages: otherwise
-`InvalidEntityStateException` is thrown before that level's statements.
+An inverse relationship:
+
+1. The distinct identifiers of the level's entities whose relationship is
+   uninitialized are read from their snapshots.
+2. One `SELECT` of the target's mapped columns where the column of its
+   `mappedBy` property is `IN` those identifiers, for at most 1,000
+   identifiers per statement, ordered by the target's identifier column
+   ascending, on the manager's link. There is no join, and a level
+   without identifiers sends nothing.
+3. Every row loads under "Loading", so a held target is returned as it
+   is, and joins the entity its foreign-key value in that row names — not
+   the one a held target's snapshot or its unflushed `#[BelongsTo]`
+   property names. A target scheduled for removal still loads until its
+   DELETE commits.
+4. A `#[HasMany]` is set to the list of its rows' targets, in that order,
+   and to an empty list without rows. A `#[HasOne]` is set to the target
+   of its one row. Without a row it is set to null when nullable and
+   otherwise throws `MappingException`; more than one row throws
+   `MappingException`. Both messages name the class, property, target and
+   column.
+5. The targets are the next level's entities.
+
+A relationship the application already initialized, on either side, is
+never overwritten or compared with the database. What it holds joins the
+next level and must be an entity of its target class that this manager
+manages — for a `#[HasMany]`, every value of the array, whatever its
+keys — or null where the type allows it. Anything else throws
+`InvalidEntityStateException` before that level's statements, on the last
+segment of a path too.
 
 Every statement of the load runs inside its terminal, and the manager is
 checked after each one before anything is assigned, so a `close()`
@@ -426,17 +531,51 @@ runs on the session's transaction, and a failure fails the session as any
 terminal failure does. `lockForUpdate()` and `lockForShare()` lock the
 root statement only: a relationship's statements carry no lock clause.
 
+#### Cardinality and buffering
+
+The database is the authority on cardinality. Give the foreign-key column
+a `#[HasOne]` reads a unique constraint: the ORM refuses duplicate rows
+rather than choosing one, and never inspects the schema.
+
+A `#[HasMany]` loads every matching row into one array, buffered in full
+like `get()` and `findBy()`. A root `cursorPaginate()` bounds how many
+entities a page holds, not how many targets each of them loads. Do not
+eager-load a collection that can grow without bound; page through the
+target's repository by its `#[BelongsTo]` property instead:
+
+```php
+$comments = $entities->repository(Comment::class)
+    ->query()
+    ->where('post', '=', $postId) // post_id = $postId
+    ->cursorPaginate(50, $cursor);
+```
+
 ### Relationship predicates
 
-A relationship property is also its foreign key: `where()`, `whereIn()`,
+A `#[BelongsTo]` property is also its foreign key: `where()`, `whereIn()`,
 `orderBy()`, `findBy()` and a `cursorPaginate()` property compile to its
 column, and a value converts like the target's identifier, so `'7'`
 matches an `int` identifier and an entity object throws
 `MappingException`. No predicate reaches a target's own properties; a
 join belongs to `builder()`.
 
+An inverse relationship maps no column: `where()`, `whereIn()`,
+`orderBy()`, `findBy()` and a `cursorPaginate()` property naming one throw
+`MappingException` before SQL. Filter, order and page the targets through
+their own repository by their `#[BelongsTo]` property, as above.
+
 ### Writing relationships
 
+- **Owning side only.** Only a `#[BelongsTo]` property writes a foreign
+  key. `persist()` and `flush()` never read an inverse relationship: a
+  new entity may leave one uninitialized, and assigning `$post->comments`
+  or `$author->profile` writes nothing, cascades nothing and persists
+  nothing. To move a comment to another post, set its `post` property to
+  that managed post and flush.
+- **No fixup.** Nothing reconciles the two sides in memory. After that
+  flush, a `comments` array already loaded or assigned still holds what
+  it held, and a later `with()` keeps it because it is initialized.
+  `clear()` the manager, or open another, to load the committed rows.
 - **Targets.** A relationship holds null, where its type allows it, or an
   entity this manager manages: loaded, or inserted by a flush whose
   COMMIT returned. The foreign key is the identifier in the manager's
@@ -444,7 +583,7 @@ join belongs to `builder()`.
   writes before its transaction begins, refuse anything else with
   `InvalidEntityStateException`: an entity awaiting insert, one the same
   flush would insert included, a detached entity, and one another manager
-  holds. A new entity needs every relationship initialized.
+  holds. A new entity needs every `#[BelongsTo]` initialized.
 - **Never loaded.** A managed entity whose relationship is uninitialized
   writes the foreign key its snapshot holds, so changing another property
   never writes that column.
@@ -484,9 +623,9 @@ For one manager, an object is in one of these states:
 - **`persist($entity)`** validates an object the manager does not hold —
   new, or detached from this or another manager — and schedules its
   insert. Its class must be an entity in the factory's metadata, every
-  mapped property initialized and admitted by the table under "Loading"
-  (a non-finite float is not), every relationship's target one this
-  manager manages (see "Writing relationships"), an assigned identifier
+  property mapping a column initialized and admitted by the table under
+  "Loading" (a non-finite float is not), every `#[BelongsTo]` target one
+  this manager manages (see "Writing relationships"), an assigned identifier
   not null and not held by another object of this manager, and a
   generated identifier null. An assigned identity enters the identity map at once, so `find()`
   returns the object; a generated one enters it when the insert commits.
@@ -498,9 +637,9 @@ For one manager, an object is in one of these states:
   insert is detached instead and its insert dropped, without SQL. Any
   other object is refused.
 - **Changes.** A managed entity has a snapshot: the values it was loaded
-  or last flushed with. Each `flush()` compares every mapped property with
-  it as a database value — a backed enum as its backing value, a
-  relationship as its foreign key — so a value changed and changed back
+  or last flushed with. Each `flush()` compares every property mapping a
+  column with it as a database value — a backed enum as its backing
+  value, a `#[BelongsTo]` as its foreign key — so a value changed and changed back
   writes nothing. Loading the row again never
   refreshes the snapshot.
 - **Ownership.** A manager sees only its own objects. It refuses a second
@@ -825,10 +964,11 @@ instead.
 
 ## Not in scope
 
-Relationships other than `#[BelongsTo]` (one-to-one or one-to-many from
-the referenced side, many-to-many, inverse sides), cascades, orphan
-removal, collections, lazy loading or proxies, joined eager loading,
-predicates on a target's properties, timestamp,
+Many-to-many relationships and pivot tables, writes through an inverse
+relationship or fixup of either side, cascades, orphan removal,
+collection objects or mutation APIs, lazy loading or proxies, joined
+eager loading, streamed, capped or partial collections, predicates on a
+target's properties, timestamp,
 string or database-generated versions, refreshing or merging an entity,
 conflict resolution, joining a transaction the application began, nested
 sessions or savepoints, more than one writing flush per session,

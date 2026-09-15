@@ -14,8 +14,11 @@ use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Orm\OrmFactory;
 use Kinetis\Orm\Tests\Fixtures\Author;
+use Kinetis\Orm\Tests\Fixtures\Charter;
+use Kinetis\Orm\Tests\Fixtures\Comment;
 use Kinetis\Orm\Tests\Fixtures\Organization;
 use Kinetis\Orm\Tests\Fixtures\Post;
+use Kinetis\Orm\Tests\Fixtures\Profile;
 use Kinetis\Orm\Tests\Fixtures\SpyMysqlLink;
 use Kinetis\Orm\Tests\Fixtures\SpyMysqlTransaction;
 use Kinetis\Persistence\Contract\SqlResult;
@@ -52,7 +55,14 @@ final class RelationshipTest extends TestCase
     {
         $this->link = new SpyMysqlLink();
         $this->link->transaction = $this->transaction = new SpyMysqlTransaction();
-        $this->factory = OrmFactory::create($this->link, MetadataRegistry::fromClasses([Author::class, Organization::class, Post::class]));
+        $this->factory = OrmFactory::create($this->link, MetadataRegistry::fromClasses([
+            Author::class,
+            Charter::class,
+            Comment::class,
+            Organization::class,
+            Post::class,
+            Profile::class,
+        ]));
         $this->entities = $this->factory->open();
     }
 

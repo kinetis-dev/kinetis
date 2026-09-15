@@ -28,14 +28,20 @@ use ReflectionProperty;
  * it, so a loaded value and the same value read back from the entity
  * compare identical.
  *
- * A relationship property is one of the mapped properties, over its
+ * A #[BelongsTo] property is one of the mapped properties, over its
  * foreign-key column. Its converted and database value is the target's
  * identifier, and instantiate() leaves the property uninitialized.
  *
+ * An inverse relationship maps no column, so it is kept apart from the
+ * mapped properties: conversion, instantiate(), extract() and every column
+ * operation leave it out, and only the relationship methods reach it.
+ *
  * @template T of object
  * @phpstan-import-type EntityMapping from MetadataRegistry
+ * @phpstan-import-type InverseMapping from MetadataRegistry
  * @phpstan-import-type PropertyMapping from MetadataRegistry
  * @psalm-import-type EntityMapping from MetadataRegistry
+ * @psalm-import-type InverseMapping from MetadataRegistry
  * @psalm-import-type PropertyMapping from MetadataRegistry
  */
 final class EntityPlan
@@ -63,6 +69,12 @@ final class EntityPlan
     /** @var array<string, ReflectionProperty> */
     private readonly array $accessors;
 
+    /** @var array<string, InverseMapping> */
+    private readonly array $inverses;
+
+    /** @var array<string, ReflectionProperty> */
+    private readonly array $inverseAccessors;
+
     /**
      * @param EntityMapping $mapping
      */
@@ -87,6 +99,17 @@ final class EntityPlan
 
         $this->properties = $properties;
         $this->accessors = $accessors;
+
+        $inverses = [];
+        $inverseAccessors = [];
+
+        foreach ($mapping['inverses'] as $inverse) {
+            $inverses[$inverse['name']] = $inverse;
+            $inverseAccessors[$inverse['name']] = $this->reflection->getProperty($inverse['name']);
+        }
+
+        $this->inverses = $inverses;
+        $this->inverseAccessors = $inverseAccessors;
     }
 
     /**
@@ -97,19 +120,29 @@ final class EntityPlan
         return array_column($this->properties, 'column');
     }
 
-    /** @throws MappingException for a property this entity does not map */
+    /** @throws MappingException for a property this entity does not map, or an inverse relationship, which maps no column */
     public function column(string $property): string
     {
         return $this->property($property)['column'];
     }
 
     /**
-     * @return class-string the entity the relationship $property references
+     * @return class-string the entity the relationship $property references, or the entity an inverse relationship holds
      * @throws MappingException for a property this entity does not map, or one that is not a relationship
      */
     public function target(string $property): string
     {
-        return $this->property($property)['target'] ?? throw MappingException::notARelation($this->class, $property);
+        return $this->inverses[$property]['target']
+            ?? $this->property($property)['target']
+            ?? throw MappingException::notARelation($this->class, $property);
+    }
+
+    /**
+     * @return InverseMapping|null the inverse relationship named $property, or null for any other name
+     */
+    public function inverse(string $property): ?array
+    {
+        return $this->inverses[$property] ?? null;
     }
 
     /**
@@ -164,9 +197,10 @@ final class EntityPlan
 
     /**
      * Allocates the entity without its constructor and writes every
-     * declared property directly but a relationship, which stays
-     * uninitialized until it is eagerly loaded. No hook, setter or magic
-     * method runs: hooked properties are refused when the metadata is built.
+     * column-mapped property directly but a relationship, which stays
+     * uninitialized until it is eagerly loaded, as every inverse
+     * relationship does. No hook, setter or magic method runs: hooked
+     * properties are refused when the metadata is built.
      *
      * @param array<string, mixed> $values convertRow()'s values
      * @return T
@@ -236,16 +270,22 @@ final class EntityPlan
         return $values;
     }
 
+    /** Whether $property, a mapped property or an inverse relationship, holds a value. */
     public function initialized(object $entity, string $property): bool
     {
-        return $this->accessors[$property]->isInitialized($entity);
+        return $this->accessor($property)->isInitialized($entity);
     }
 
-    /** The target an initialized relationship holds, or null. */
-    public function related(object $entity, string $property): ?object
+    /**
+     * What an initialized relationship holds: a target or null, or the array
+     * of a #[HasMany].
+     *
+     * @return object|array<array-key, mixed>|null
+     */
+    public function related(object $entity, string $property): object|array|null
     {
-        /** @var object|null a relationship property is typed with its target class */
-        return $this->accessors[$property]->getValue($entity);
+        /** @var object|array<array-key, mixed>|null a relationship property is typed with its target class, or array */
+        return $this->accessor($property)->getValue($entity);
     }
 
     /**
@@ -278,11 +318,18 @@ final class EntityPlan
     /**
      * Writes a value the manager owns into its property: a generated
      * identifier or a version the flush wrote, or an eagerly loaded
-     * relationship's target or null.
+     * relationship's target, null or list of targets.
+     *
+     * @param int|object|list<object>|null $value
      */
-    public function assign(object $entity, string $property, int|object|null $value): void
+    public function assign(object $entity, string $property, int|object|array|null $value): void
     {
-        $this->accessors[$property]->setValue($entity, $value);
+        $this->accessor($property)->setValue($entity, $value);
+    }
+
+    private function accessor(string $property): ReflectionProperty
+    {
+        return $this->accessors[$property] ?? $this->inverseAccessors[$property];
     }
 
     /**
@@ -290,7 +337,9 @@ final class EntityPlan
      */
     private function property(string $property): array
     {
-        return $this->properties[$property] ?? throw MappingException::unknownProperty($this->class, $property);
+        return $this->properties[$property] ?? throw (isset($this->inverses[$property])
+            ? MappingException::notAColumn($this->class, $property)
+            : MappingException::unknownProperty($this->class, $property));
     }
 
     /**

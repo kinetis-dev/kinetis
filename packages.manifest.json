@@ -173,10 +173,10 @@
         },
         "orm": {
             "name": "kinetis/orm",
-            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to relationships loaded eagerly through batched secondary queries, a unit of work with an identity map, snapshot change tracking and a transactional flush, and factory-owned transaction sessions with locking entity reads. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one and has-many relationships loaded eagerly through batched secondary queries, a unit of work with an identity map, snapshot change tracking and a transactional flush, and factory-owned transaction sessions with locking entity reads. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "namespace": "Kinetis\\Orm\\",
             "testNamespace": "Kinetis\\Orm\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.5.0",
             "requires": [
                 "persistence",
                 "query-builder"
@@ -277,7 +277,7 @@
             "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.1.5",
+            "version": "1.1.6",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],

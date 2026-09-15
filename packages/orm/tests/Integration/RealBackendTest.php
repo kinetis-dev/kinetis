@@ -6,6 +6,7 @@ namespace Kinetis\Orm\Tests\Integration;
 
 use Kinetis\Orm\EntityManager;
 use Kinetis\Orm\EntityRepository;
+use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Orm\OrmFactory;
@@ -17,6 +18,7 @@ use Kinetis\Orm\Tests\Fixtures\StoredDocument;
 use Kinetis\Orm\Tests\Fixtures\StoredInvoice;
 use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
 use Kinetis\Orm\Tests\Fixtures\StoredPost;
+use Kinetis\Orm\Tests\Fixtures\StoredProfile;
 use Kinetis\Orm\Tests\Fixtures\StoredTicket;
 use Kinetis\Persistence\ConnectionDefinition;
 use Kinetis\Persistence\Contract\MysqlLink;
@@ -359,9 +361,80 @@ final class RealBackendTest extends TestCase
     }
 
     /**
-     * The session's locking read locks the post it selects. The author it
-     * loads is selected without a lock, so a second client's NOWAIT lock on
-     * that row succeeds.
+     * The posts are inserted out of identifier order, so only the inverse
+     * select's ORDER BY puts each author's posts in order.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_inverse_relationships_load_ordered_nested_and_into_one_identity_map(string $dialect, string $driver): void
+    {
+        $entities = $this->factory($dialect, $driver)->open();
+        $held = $entities->repository(StoredPost::class)->findOrFail(2);
+
+        [$ada, $grace, $lin] = $entities->repository(StoredAuthor::class)
+            ->query()
+            ->with('profile', 'posts.author.organization')
+            ->orderBy('id')
+            ->get();
+
+        self::assertSame('Mathematician', $ada->profile?->bio);
+        self::assertNull($grace->profile);
+        self::assertNull($lin->profile);
+        self::assertSame([1, 3], array_column($ada->posts, 'id'));
+        self::assertSame([$held], $grace->posts);
+        self::assertSame([], $lin->posts);
+        self::assertSame($ada, $ada->posts[1]->author);
+        self::assertSame('Acme', $ada->organization?->name);
+        self::assertNull($grace->organization);
+    }
+
+    /**
+     * StoredOrganization's #[HasOne] runs over a foreign key with no unique
+     * constraint, so the database holds what the ORM refuses.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_non_nullable_has_one_refuses_a_missing_and_a_duplicate_row(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        new Query($this->link())->table('kin_orm_organizations')->insert(['id' => 2, 'name' => 'Initech']);
+
+        try {
+            $factory->open()->repository(StoredOrganization::class)->query()->with('soleMember')->get();
+            self::fail('An organization without a member was loaded.');
+        } catch (MappingException $e) {
+            self::assertSame(
+                MappingException::missingInverseTarget(StoredOrganization::class, 'soleMember', StoredAuthor::class, 'organization_id')->getMessage(),
+                $e->getMessage(),
+            );
+        }
+
+        new Query($this->link())->table('kin_orm_authors')->where('id', '=', 9)->update(['organization_id' => 2]);
+        $organizations = $factory->open()->repository(StoredOrganization::class)->query()->with('soleMember')->orderBy('id')->get();
+        self::assertSame(['Ada', 'Lin'], array_map(static fn (StoredOrganization $organization): string => $organization->soleMember->name, $organizations));
+
+        new Query($this->link())->table('kin_orm_authors')->where('id', '=', 8)->update(['organization_id' => 1]);
+
+        try {
+            $factory->open()->repository(StoredOrganization::class)->query()->with('soleMember')->get();
+            self::fail('An organization with two members was loaded.');
+        } catch (MappingException $e) {
+            self::assertSame(
+                MappingException::ambiguousInverseTarget(StoredOrganization::class, 'soleMember', StoredAuthor::class, 'organization_id')->getMessage(),
+                $e->getMessage(),
+            );
+        }
+    }
+
+    /**
+     * Each of the session's locking reads locks the row it selects. What it
+     * loads — an author through #[BelongsTo], posts through #[HasMany] — is
+     * selected without a lock, so a second client's NOWAIT lock on those rows
+     * succeeds.
      *
      * @param 'mysql'|'pgsql' $dialect
      * @param 'native'|'pdo' $driver
@@ -375,11 +448,18 @@ final class RealBackendTest extends TestCase
         $held = $factory->transaction(static function (EntityManager $entities) use ($other): array {
             $post = $entities->repository(StoredPost::class)->query()->where('id', '=', 1)->lockForUpdate()->with('author')->first();
             self::assertSame('Ada', $post?->author->name);
+            $grace = $entities->repository(StoredAuthor::class)->query()->where('id', '=', 8)->lockForUpdate()->with('posts')->first();
+            self::assertSame([2], array_column($grace->posts ?? [], 'id'));
 
-            return [self::lockedElsewhere($other, 'kin_orm_posts', 1), self::lockedElsewhere($other, 'kin_orm_authors', 7)];
+            return [
+                self::lockedElsewhere($other, 'kin_orm_posts', 1),
+                self::lockedElsewhere($other, 'kin_orm_authors', 7),
+                self::lockedElsewhere($other, 'kin_orm_authors', 8),
+                self::lockedElsewhere($other, 'kin_orm_posts', 2),
+            ];
         });
 
-        self::assertSame([true, false], $held);
+        self::assertSame([true, false, true, false], $held);
     }
 
     /**
@@ -399,6 +479,9 @@ final class RealBackendTest extends TestCase
         $reloaded = $factory->open()->repository(StoredPost::class)->query()->where('id', '=', 1)->with('author')->first();
         self::assertNotSame($post, $reloaded);
         self::assertSame('Grace', $reloaded?->author->name);
+
+        $authors = $factory->open()->repository(StoredAuthor::class)->query()->where('id', '<', 9)->with('posts')->orderBy('id')->get();
+        self::assertSame([[3], [1, 2]], array_map(static fn (StoredAuthor $author): array => array_column($author->posts, 'id'), $authors));
     }
 
     /**
@@ -450,6 +533,7 @@ final class RealBackendTest extends TestCase
                 StoredInvoice::class,
                 StoredOrganization::class,
                 StoredPost::class,
+                StoredProfile::class,
                 StoredTicket::class,
             ]),
         );
@@ -518,6 +602,7 @@ final class RealBackendTest extends TestCase
     private static function seed(MysqlLink|PostgresLink $link, string $dialect): void
     {
         $link->execute('DROP TABLE IF EXISTS kin_orm_posts');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_profiles');
         $link->execute('DROP TABLE IF EXISTS kin_orm_authors');
         $link->execute('DROP TABLE IF EXISTS kin_orm_organizations');
         $link->execute('DROP TABLE IF EXISTS kin_orm_articles');
@@ -547,6 +632,10 @@ final class RealBackendTest extends TestCase
             'CREATE TABLE kin_orm_posts (id INT PRIMARY KEY, title VARCHAR(100) NOT NULL, written_by INT NOT NULL, '
             . 'FOREIGN KEY (written_by) REFERENCES kin_orm_authors (id))',
         );
+        $link->execute(
+            'CREATE TABLE kin_orm_profiles (id INT PRIMARY KEY, author_id INT NOT NULL UNIQUE, bio VARCHAR(100) NOT NULL, '
+            . 'FOREIGN KEY (author_id) REFERENCES kin_orm_authors (id))',
+        );
 
         new Query($link)->table('kin_orm_articles')->insert([
             ['id' => 1, 'title' => 'First', 'summary' => null, 'status' => 'published', 'priority' => null, 'featured' => true, 'rating' => 4.5, 'author_id' => 7],
@@ -560,12 +649,14 @@ final class RealBackendTest extends TestCase
         new Query($link)->table('kin_orm_authors')->insert([
             ['id' => 7, 'name' => 'Ada', 'organization_id' => 1],
             ['id' => 8, 'name' => 'Grace', 'organization_id' => null],
+            ['id' => 9, 'name' => 'Lin', 'organization_id' => null],
         ]);
         new Query($link)->table('kin_orm_posts')->insert([
-            ['id' => 1, 'title' => 'First', 'written_by' => 7],
-            ['id' => 2, 'title' => 'Second', 'written_by' => 8],
             ['id' => 3, 'title' => 'Third', 'written_by' => 7],
+            ['id' => 2, 'title' => 'Second', 'written_by' => 8],
+            ['id' => 1, 'title' => 'First', 'written_by' => 7],
         ]);
+        new Query($link)->table('kin_orm_profiles')->insert(['id' => 1, 'author_id' => 7, 'bio' => 'Mathematician']);
     }
 
     /**
