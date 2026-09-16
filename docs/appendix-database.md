@@ -217,6 +217,17 @@ one); a transaction started, and ended (`transactionEnded()`, with
 {ref}`database-reference-transactions`). A started moment returns an
 opaque token that its ended moment receives.
 
+A transaction reports the three query moments for each statement run
+through it, against the SQL the caller wrote rather than the text a
+driver put on the wire, and reports them around the driver call alone —
+so a statement its pre-flight refuses reports none of them, and one the
+server answered is reaped before the transaction settles or hands its
+connection back. `queryServerStarted()` follows `queryDispatched()`
+immediately there, since a transaction's connection is already pinned
+and nothing waits between the two. The `BEGIN`, `COMMIT` and `ROLLBACK`
+a transaction sends are not query moments at all: the started/ended pair
+is what reports the transaction's boundary.
+
 Every moment runs inline, on the Fiber issuing the statement, inside the
 driver's own call. An implementation must be synchronous — it never
 suspends the Fiber — bounded in time, and free of blocking I/O; anything
@@ -328,12 +339,19 @@ than the driver's.
 Which `?` is a placeholder is decided by one dialect-aware scan of the
 SQL text, shared by every driver — the native drivers substitute each
 one they find, the PDO drivers count them for the argument check above.
-It recognizes `'...'`/`"..."`/`` `...` `` quoting, `--`/`#`/`/* */`
-comments, and PostgreSQL's `$$...$$`/`$tag$...$tag$` dollar-quoted
-strings, so a `?` inside any of those is data, never a slot. PostgreSQL's
-own jsonb containment/existence operators (`?`, `?|`, `?&`) are
-lexically identical to a placeholder at the position they appear — write
-`??`, `??|`, `??&` to mean the literal operator rather than a bind slot.
+That scan is `execute()`'s: `query()` takes complete SQL and Kinetis
+reads none of it. The scan recognizes `'...'`/`"..."`/`` `...` ``
+quoting, `--`/`#`/`/* */` comments, and PostgreSQL's
+`$$...$$`/`$tag$...$tag$` dollar-quoted strings, so a `?` inside any of
+those is data, never a slot. PostgreSQL's own jsonb
+containment/existence operators (`?`, `?|`, `?&`) are lexically
+identical to a placeholder at the position they appear — write
+`??`, `??|`, `??&` in an `execute()` string to mean the literal operator
+rather than a bind slot. The doubling is that scanner's escape rather
+than SQL, and the scan is what removes it again. `query()` runs no scan,
+so nothing removes a doubling there — and PDO runs a placeholder parser
+of its own over whatever string it is handed. A literal `?` operator
+belongs in an `execute()` call, where the rule holds on every driver.
 A `$` that continues the identifier to its left opens nothing: `col$tag$`
 is one PostgreSQL identifier, and a dollar-quoted literal following an
 identifier or a keyword has to be separated from it (`col $tag$`), the

@@ -18,9 +18,12 @@ use Closure;
  * comments, dollar-quoted strings — that which "?" is a placeholder is
  * a dialect question. Placeholders are recognized only *outside* quoted
  * regions, comments and dollar-quoted strings; a "?" inside any of them
- * is data. "??" is the published escape for a literal, non-placeholder
- * "?", which Postgres's own jsonb "?"/"?|"/"?&" operators need, being
- * lexically identical to a bind placeholder where they appear.
+ * is data. "??" is execute()'s published escape for a literal,
+ * non-placeholder "?", which Postgres's own jsonb "?"/"?|"/"?&"
+ * operators need, being lexically identical to a bind placeholder where
+ * they appear. It is this scanner's escape and nothing wider: query()
+ * takes complete SQL and never reaches here, so a "?" in a query()
+ * string is never doubled.
  *
  * Two rules are MySQL's rather than a generic reading of the syntax. A
  * "--" only opens a comment when the second dash is followed by
@@ -69,6 +72,47 @@ final class SqlParamInterpolator
         }
 
         return $out;
+    }
+
+    /**
+     * The one float encoding every driver puts on the wire: numeric text
+     * that reads back as the exact binary float it was given, on
+     * MySQL/MariaDB and PostgreSQL alike.
+     *
+     * A `(string)` cast cannot do that. PHP's float-to-string cast is
+     * governed by the `precision` INI setting — 14 significant digits by
+     * default — so `0.1 + 0.2` casts to `0.3` and the microsecond
+     * timestamp `1726480000.123456` to `1726480000.1235`: the value the
+     * caller bound and the value the server stores are different
+     * numbers. `json_encode()`, `var_export()` and `serialize()` only
+     * move the same truncation onto `serialize_precision`. Neither
+     * setting is this package's to change: it runs in persistent
+     * workers, where an `ini_set()` outlives the request that made it
+     * and changes how every other library in the process formats a
+     * float.
+     *
+     * 17 significant digits is what makes any binary64 round-trip
+     * exactly, and `%G` drops the trailing zeros that leaves on the
+     * values needing fewer — `1.0` stays `1`, `1726480000.123456` stays
+     * itself. What printf gives up in exchange is locale independence:
+     * it spells the decimal separator the way `LC_NUMERIC` does, and a
+     * comma would turn one bound value into two SQL expressions. The
+     * separator is read from the locale and normalized back to `.`
+     * here; the locale itself is never touched, for the same reason the
+     * INI settings are not.
+     *
+     * Only a finite float reaches this. INF and NAN have no literal
+     * either dialect accepts and are refused by
+     * {@see assertBindableValues()}, ahead of every driver.
+     */
+    public static function encodeFloat(float $value): string
+    {
+        $text = \sprintf('%.17G', $value);
+        // printf and localeconv() read the same LC_NUMERIC decimal
+        // point, so this is exactly what $text carries in place of ".".
+        $point = \localeconv()['decimal_point'];
+
+        return $point === '.' ? $text : \str_replace($point, '.', $text);
     }
 
     /**
