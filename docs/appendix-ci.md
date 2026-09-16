@@ -143,9 +143,11 @@ rather than which form it took.
   the keys the inserts at both of its ends generated, a loaded diff
   writing only the pairs that changed, the join table's foreign keys
   refusing a linked target's DELETE and an owner's until its join rows
-  go first, and a duplicate pair failing on the unique key, rolling the
+  go first, a duplicate pair failing on the unique key, rolling the
   flush back with its join work still pending, and committing once the
-  conflicting row is gone.
+  conflicting row is gone, and two writers replacing one versioned
+  owner's membership, where the second conflicts on that owner's version
+  rather than merging into the first's.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

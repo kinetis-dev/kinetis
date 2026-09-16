@@ -22,6 +22,7 @@ use Kinetis\Orm\Tests\Fixtures\StoredDocument;
 use Kinetis\Orm\Tests\Fixtures\StoredEvent;
 use Kinetis\Orm\Tests\Fixtures\StoredInvoice;
 use Kinetis\Orm\Tests\Fixtures\StoredItem;
+use Kinetis\Orm\Tests\Fixtures\StoredManifest;
 use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
 use Kinetis\Orm\Tests\Fixtures\StoredParcel;
 use Kinetis\Orm\Tests\Fixtures\StoredPost;
@@ -846,6 +847,71 @@ final class RealBackendTest extends TestCase
         self::assertSame([$parcel->ribbons[0]->id, $linen->id], self::ribbons($this->parcel($factory->open(), 'seeded-parcel')));
     }
 
+    /**
+     * Two writers replace one versioned manifest's membership from the same
+     * loaded state. The first commits its replacement and the manifest's next
+     * version; the second's UPDATE matches no row at the version it loaded, so
+     * its own replacement is refused whole rather than merged into the first's.
+     *
+     * The exception class is the evidence: the losing flush sends its owner
+     * UPDATE before any link INSERT, so the conflict arrives as an
+     * OptimisticLockException and not as the join table's duplicate key or a
+     * deadlock, which would both be QueryException.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_concurrent_membership_replacements_conflict_on_the_owner_version(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $winner = $factory->open();
+        $loser = $factory->open();
+        $current = $this->manifest($winner, 'seeded-manifest');
+        $outdated = $this->manifest($loser, 'seeded-manifest');
+        self::assertSame(1, $current->version);
+
+        // The winner revokes silk and grants satin.
+        $current->ribbons = [$this->ribbon($winner, 'satin')];
+        $winner->flush();
+
+        self::assertSame(2, $current->version);
+
+        // The loser keeps silk and grants linen, against the membership it read.
+        $outdated->ribbons = [...$outdated->ribbons, $this->ribbon($loser, 'linen')];
+
+        try {
+            $loser->flush();
+            self::fail('The stale membership was merged into the committed one.');
+        } catch (OptimisticLockException $e) {
+            self::assertStringContainsString(StoredManifest::class, $e->getMessage());
+        }
+
+        self::assertFalse($loser->isClosed());
+        self::assertSame(1, $outdated->version, 'nothing of the losing flush was applied');
+
+        $stored = $this->manifest($factory->open(), 'seeded-manifest');
+
+        self::assertSame(2, $stored->version);
+        self::assertSame(['satin'], array_map(static fn (StoredRibbon $ribbon): string => $ribbon->name, $stored->ribbons));
+    }
+
+    /** The manifest with $code, read through $manager with its ribbons loaded. */
+    private function manifest(EntityManager $manager, string $code): StoredManifest
+    {
+        $manifest = $manager->repository(StoredManifest::class)->query()->where('code', '=', $code)->with('ribbons')->first();
+
+        return $manifest ?? self::fail("No manifest is coded {$code}.");
+    }
+
+    /** The ribbon named $name, read through $manager. */
+    private function ribbon(EntityManager $manager, string $name): StoredRibbon
+    {
+        $ribbon = $manager->repository(StoredRibbon::class)->query()->where('name', '=', $name)->first();
+
+        return $ribbon ?? self::fail("No ribbon is named {$name}.");
+    }
+
     /** The parcel with $code, read through $manager with its ribbons loaded. */
     private function parcel(EntityManager $manager, string $code): StoredParcel
     {
@@ -894,6 +960,7 @@ final class RealBackendTest extends TestCase
                 StoredEvent::class,
                 StoredInvoice::class,
                 StoredItem::class,
+                StoredManifest::class,
                 StoredOrganization::class,
                 StoredParcel::class,
                 StoredPost::class,
@@ -967,6 +1034,8 @@ final class RealBackendTest extends TestCase
 
     private static function seed(MysqlLink|PostgresLink $link, string $dialect): void
     {
+        $link->execute('DROP TABLE IF EXISTS kin_orm_manifest_ribbon');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_manifests');
         $link->execute('DROP TABLE IF EXISTS kin_orm_parcel_ribbon');
         $link->execute('DROP TABLE IF EXISTS kin_orm_parcels');
         $link->execute('DROP TABLE IF EXISTS kin_orm_ribbons');
@@ -1035,6 +1104,15 @@ final class RealBackendTest extends TestCase
             . 'FOREIGN KEY (parcel_id) REFERENCES kin_orm_parcels (id), '
             . 'FOREIGN KEY (ribbon_id) REFERENCES kin_orm_ribbons (id))',
         );
+        $link->execute(
+            "CREATE TABLE kin_orm_manifests (id BIGINT {$key} PRIMARY KEY, code VARCHAR(50) NOT NULL, version BIGINT NOT NULL)",
+        );
+        $link->execute(
+            'CREATE TABLE kin_orm_manifest_ribbon (manifest_id BIGINT NOT NULL, ribbon_id BIGINT NOT NULL, '
+            . 'PRIMARY KEY (manifest_id, ribbon_id), '
+            . 'FOREIGN KEY (manifest_id) REFERENCES kin_orm_manifests (id), '
+            . 'FOREIGN KEY (ribbon_id) REFERENCES kin_orm_ribbons (id))',
+        );
 
         new Query($link)->table('kin_orm_articles')->insert([
             ['id' => 1, 'title' => 'First', 'summary' => null, 'status' => 'published', 'priority' => null, 'featured' => true, 'rating' => 4.5, 'author_id' => 7],
@@ -1075,6 +1153,9 @@ final class RealBackendTest extends TestCase
             ['parcel_id' => $parcel, 'ribbon_id' => $silk],
             ['parcel_id' => $parcel, 'ribbon_id' => $satin],
         ]);
+        $manifest = new Query($link)->table('kin_orm_manifests')
+            ->insertGetId(['code' => 'seeded-manifest', 'version' => 1], 'id');
+        new Query($link)->table('kin_orm_manifest_ribbon')->insert(['manifest_id' => $manifest, 'ribbon_id' => $silk]);
     }
 
     /**

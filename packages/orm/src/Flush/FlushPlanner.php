@@ -27,7 +27,9 @@ use SplMinHeap;
  * A #[ManyToMany] link statement writes a join table rather than an entity
  * table: the DELETE of a link runs before the delete of its owning entity,
  * both endpoint inserts run before the INSERT of a link, and a link naming a
- * row this flush removes is refused here too.
+ * row this flush removes is refused here too. An owner whose update carries
+ * its membership into its version orders that membership around it: its link
+ * deletes run before the update, and its link inserts after it.
  *
  * Where no dependency decides, the order is link deletes, entity deletes,
  * entity inserts, link inserts, then updates; entity statements by class and
@@ -49,7 +51,7 @@ use SplMinHeap;
  * @phpstan-type Value null|bool|int|float|string
  * @phpstan-type PlanValues array<string, null|bool|int|float|string|Reference>
  * @phpstan-type InsertAction array{entity: object, plan: EntityPlan<object>, values: PlanValues}
- * @phpstan-type UpdateAction array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>, values: PlanValues, changes: PlanValues}
+ * @phpstan-type UpdateAction array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>, values: PlanValues, changes: PlanValues, joins: bool}
  * @phpstan-type DeleteAction array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>}
  * @phpstan-type LinkAction array{plan: EntityPlan<object>, property: string, table: string, values: PlanValues}
  * @phpstan-type Draft array{kind: 'insert'|'update'|'delete'|'fixup'|'link'|'unlink', entity: object|null, plan: EntityPlan<object>, property: string|null, table: string|null, id: int|string|Reference|null, version: int|null, sent: PlanValues, values: PlanValues|null, snapshot: array<string, Value>|null, ordinal: int}
@@ -57,7 +59,7 @@ use SplMinHeap;
  * @psalm-type Value = null|bool|int|float|string
  * @psalm-type PlanValues = array<string, null|bool|int|float|string|Reference>
  * @psalm-type InsertAction = array{entity: object, plan: EntityPlan<object>, values: PlanValues}
- * @psalm-type UpdateAction = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>, values: PlanValues, changes: PlanValues}
+ * @psalm-type UpdateAction = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>, values: PlanValues, changes: PlanValues, joins: bool}
  * @psalm-type DeleteAction = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>}
  * @psalm-type LinkAction = array{plan: EntityPlan<object>, property: string, table: string, values: PlanValues}
  * @psalm-type Draft = array{kind: 'insert'|'update'|'delete'|'fixup'|'link'|'unlink', entity: object|null, plan: EntityPlan<object>, property: string|null, table: string|null, id: int|string|Reference|null, version: int|null, sent: PlanValues, values: PlanValues|null, snapshot: array<string, Value>|null, ordinal: int}
@@ -76,6 +78,9 @@ final class FlushPlanner
 
     /** @var array<class-string, array<int|string, int>> the node deleting each scheduled row */
     private array $deleteOf = [];
+
+    /** @var array<class-string, array<int|string, int>> the node updating each owner its link statements order around */
+    private array $updateOf = [];
 
     private int $ordinal = 0;
 
@@ -133,6 +138,10 @@ final class FlushPlanner
         }
 
         foreach ($updates as $update) {
+            if ($update['joins']) {
+                $this->updateOf[$update['plan']->class][$update['id']] = count($this->nodes);
+            }
+
             $this->nodes[] = [
                 'kind' => 'update',
                 'entity' => $update['entity'],
@@ -204,12 +213,14 @@ final class FlushPlanner
         foreach ($this->nodes as $i => $node) {
             if ($node['kind'] === 'unlink') {
                 $this->beforeOwnerDelete($i, $node);
+                $this->aroundOwnerUpdate($i, $node, true);
 
                 continue;
             }
 
             if ($node['kind'] === 'link') {
                 $this->afterEndpoints($i, $node);
+                $this->aroundOwnerUpdate($i, $node, false);
 
                 continue;
             }
@@ -273,18 +284,55 @@ final class FlushPlanner
     /**
      * The join rows an owner's DELETE leaves behind are deleted before it, so
      * the join table's foreign key to the owner never refuses that DELETE.
-     * The owner's identifier is the first column a link statement names.
      *
      * @param Draft $node
      */
     private function beforeOwnerDelete(int $i, array $node): void
     {
-        $owner = array_values($node['sent'])[0];
-        $delete = is_int($owner) || is_string($owner) ? $this->deleteOf[$node['plan']->class][$owner] ?? null : null;
+        $owner = self::ownerKey($node);
+        $delete = $owner === null ? null : $this->deleteOf[$node['plan']->class][$owner] ?? null;
 
         if ($delete !== null) {
             $this->edges[] = ['from' => $i, 'to' => $delete, 'node' => $i, 'property' => null, 'deferrable' => false];
         }
+    }
+
+    /**
+     * An owner whose changed membership advances its version writes that
+     * membership around its own UPDATE: every link DELETE before it, every
+     * link INSERT after it. The deletes first take this owner's join rows in
+     * the order its own deletion takes them, so the two cannot deadlock over
+     * each other, and holding the inserts back keeps a pair another writer
+     * added from failing before the UPDATE raises the optimistic conflict.
+     *
+     * @param Draft $node
+     * @param bool $before whether this statement runs before that UPDATE
+     */
+    private function aroundOwnerUpdate(int $i, array $node, bool $before): void
+    {
+        $owner = self::ownerKey($node);
+        $update = $owner === null ? null : $this->updateOf[$node['plan']->class][$owner] ?? null;
+
+        if ($update === null) {
+            return;
+        }
+
+        [$from, $to] = $before ? [$i, $update] : [$update, $i];
+        $this->edges[] = ['from' => $from, 'to' => $to, 'node' => $i, 'property' => null, 'deferrable' => false];
+    }
+
+    /**
+     * The identifier of the owner a link statement names, which is the first
+     * column it writes or matches. A Reference is an owner this flush
+     * inserts, whose row no other statement of it deletes or updates.
+     *
+     * @param Draft $node
+     */
+    private static function ownerKey(array $node): int|string|null
+    {
+        $owner = array_values($node['sent'])[0];
+
+        return is_int($owner) || is_string($owner) ? $owner : null;
     }
 
     /**

@@ -19,9 +19,11 @@ use Attribute;
  * for one row never reach one together, since an EntityManager holds one
  * object per identity and refuses a second. The unique constraint is what
  * refuses the pair a flush cannot see: one a concurrent writer added, one
- * the table already held, or one a separate unit of work created. A link
- * carrying payload, ordering or a lifecycle of its own is an ordinary entity
- * with two #[BelongsTo] properties instead.
+ * the table already held, or one a separate unit of work created. An owner
+ * carrying #[Version] locks its whole membership through that version, so
+ * two writers replacing it conflict rather than merge. A link carrying
+ * payload, ordering or a lifecycle of its own is an ordinary entity with two
+ * #[BelongsTo] properties instead.
  */
 #[Attribute(Attribute::TARGET_PROPERTY)]
 final readonly class ManyToMany
