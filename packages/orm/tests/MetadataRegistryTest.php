@@ -21,11 +21,15 @@ use Kinetis\Orm\Tests\Fixtures\Event;
 use Kinetis\Orm\Tests\Fixtures\Invoice;
 use Kinetis\Orm\Tests\Fixtures\Item;
 use Kinetis\Orm\Tests\Fixtures\Organization;
+use Kinetis\Orm\Tests\Fixtures\Parcel;
 use Kinetis\Orm\Tests\Fixtures\Part;
+use Kinetis\Orm\Tests\Fixtures\Peer;
 use Kinetis\Orm\Tests\Fixtures\Post;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\Profile;
+use Kinetis\Orm\Tests\Fixtures\Ribbon;
 use Kinetis\Orm\Tests\Fixtures\Seal;
+use Kinetis\Orm\Tests\Fixtures\Stamp;
 use Kinetis\Orm\Tests\Fixtures\Ticket;
 use Kinetis\Orm\Tests\Fixtures\Topic;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -51,6 +55,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'displayName', 'column' => 'display_name', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
                 'inverses' => [],
+                'joins' => [],
             ]]],
             MetadataRegistry::fromClasses([ArticleCategory::class])->toArray(),
         );
@@ -71,6 +76,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'email', 'column' => 'email_address', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
                 'inverses' => [],
+                'joins' => [],
             ]]],
             MetadataRegistry::fromClasses([Account::class])->toArray(),
         );
@@ -90,6 +96,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'subject', 'column' => 'subject', 'type' => 'string', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
                 'inverses' => [],
+                'joins' => [],
             ]]],
             MetadataRegistry::fromClasses([Ticket::class])->toArray(),
         );
@@ -113,6 +120,7 @@ final class MetadataRegistryTest extends TestCase
                     ['name' => 'total', 'column' => 'total', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                 ],
                 'inverses' => [],
+                'joins' => [],
             ]]],
             $data,
         );
@@ -190,6 +198,29 @@ final class MetadataRegistryTest extends TestCase
             ['name' => 'supersededBy', 'kind' => 'hasOne', 'target' => Topic::class, 'mappedBy' => 'supersedes', 'nullable' => true, 'owned' => false],
         ], $entities[Topic::class]['inverses']);
         self::assertSame([], $entities[Profile::class]['inverses']);
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_a_join_collection_maps_no_column_and_each_side_carries_the_same_table_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Parcel::class, Ribbon::class, Stamp::class, Peer::class])->toArray();
+        $entities = array_column($data['entities'], null, 'class');
+
+        self::assertSame(['id', 'code'], array_column($entities[Parcel::class]['properties'], 'name'));
+        self::assertSame([
+            ['name' => 'ribbons', 'target' => Ribbon::class, 'table' => 'parcel_ribbon', 'joinColumn' => 'parcel_id', 'inverseJoinColumn' => 'ribbon_id', 'mappedBy' => null],
+            ['name' => 'stamps', 'target' => Stamp::class, 'table' => 'parcel_stamp', 'joinColumn' => 'parcel_id', 'inverseJoinColumn' => 'stamp_code', 'mappedBy' => null],
+        ], $entities[Parcel::class]['joins']);
+        self::assertSame(
+            [['name' => 'parcels', 'target' => Parcel::class, 'table' => 'parcel_ribbon', 'joinColumn' => 'ribbon_id', 'inverseJoinColumn' => 'parcel_id', 'mappedBy' => 'ribbons']],
+            $entities[Ribbon::class]['joins'],
+            'the inverse side reads the owning table with its columns swapped',
+        );
+        self::assertSame([], $entities[Stamp::class]['joins']);
+        self::assertSame([
+            ['name' => 'links', 'target' => Peer::class, 'table' => 'peer_link', 'joinColumn' => 'peer_id', 'inverseJoinColumn' => 'linked_id', 'mappedBy' => null],
+            ['name' => 'linkedBy', 'target' => Peer::class, 'table' => 'peer_link', 'joinColumn' => 'linked_id', 'inverseJoinColumn' => 'peer_id', 'mappedBy' => 'links'],
+        ], $entities[Peer::class]['joins'], 'a self-referential mapping reads its own table from either column');
         self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
     }
 
@@ -327,6 +358,26 @@ final class MetadataRegistryTest extends TestCase
             'OwnedSecond::$children' . $inverse . self::INVALID . 'OwnedChild is already owned through ' . self::INVALID
                 . 'OwnedFirst::$children, and an entity class has at most one owned inverse relationship in a MetadataRegistry',
         ];
+        $join = ' is not a usable #[ManyToMany] relationship: ';
+
+        yield 'a #[ManyToMany] with a default value' => [self::INVALID . 'JoinDefault', 'JoinDefault::$categories' . $join . 'it declares a default value'];
+        yield 'a nullable #[ManyToMany]' => [self::INVALID . 'JoinNullable', 'JoinNullable::$categories' . $join . '#[ManyToMany] needs the type array, and it declares ?array'];
+        yield 'a #[ManyToMany] typed with an entity class' => [self::INVALID . 'JoinObject', 'JoinObject::$category' . $join . '#[ManyToMany] needs the type array, and it declares ' . ArticleCategory::class];
+        yield 'a #[ManyToMany] carrying #[HasMany]' => [self::INVALID . 'JoinWithHasMany', 'JoinWithHasMany::$categories' . $join . 'it also carries #[HasMany]'];
+        yield 'a #[ManyToMany] carrying #[Column]' => [self::INVALID . 'JoinWithColumn', 'JoinWithColumn::$categories' . $join . 'it also carries #[Column]'];
+        yield 'an owning side without a table' => [self::INVALID . 'JoinWithoutTable', 'JoinWithoutTable::$categories' . $join . 'an owning side names table, joinColumn and inverseJoinColumn'];
+        yield 'an inverse side naming a table' => [self::INVALID . 'JoinInverseWithTable', 'JoinInverseWithTable::$categories' . $join . 'an inverse side names mappedBy alone'];
+        yield 'a join table with a dash' => [self::INVALID . 'JoinInvalidTable', 'JoinInvalidTable::$categories' . $join . 'the join table "join-table" is not one or more identifiers separated by dots'];
+        yield 'a join column with a space' => [self::INVALID . 'JoinInvalidColumn', 'JoinInvalidColumn::$categories' . $join . 'the join column "a id" is not an identifier'];
+        yield 'one column for both ends' => [self::INVALID . 'JoinOneColumn', 'JoinOneColumn::$peers' . $join . 'joinColumn and inverseJoinColumn both name "peer_id"'];
+        yield 'a #[ManyToMany] target outside the registry' => [self::INVALID . 'JoinUnknownTarget', 'JoinUnknownTarget::$documents' . $join . Document::class . ' is not an entity in this MetadataRegistry'];
+        yield 'an unknown join mappedBy' => [self::INVALID . 'JoinUnknownMappedBy', 'JoinUnknownMappedBy::$mirrors' . $join . 'mappedBy names "peers", which is not a #[ManyToMany] property'];
+        yield 'a join mappedBy naming an inverse side' => [self::INVALID . 'JoinMappedByInverse', 'JoinMappedByInverse::$mirrors, which is itself an inverse #[ManyToMany] relationship'];
+        yield 'a join mappedBy referencing another class' => [
+            [self::INVALID . 'JoinWrongDirection', self::INVALID . 'JoinElsewhere'],
+            'JoinWrongDirection::$others' . $join . 'mappedBy names ' . self::INVALID . 'JoinElsewhere::$categories, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'JoinWrongDirection',
+        ];
+
         yield 'a mappedBy of its own class referencing another class' => [
             self::INVALID . 'InverseWrongSelf',
             'InverseWrongSelf::$twin' . $inverse . 'mappedBy names ' . self::INVALID . 'InverseWrongSelf::$category, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'InverseWrongSelf',
@@ -414,6 +465,16 @@ final class MetadataRegistryTest extends TestCase
         unset($unnulled['inverses'][0]['nullable']);
         $extended = $author;
         $extended['inverses'][0]['column'] = 'author_id';
+        [$parcel, $ribbon, $stamp] = MetadataRegistry::fromClasses([Parcel::class, Ribbon::class, Stamp::class])->toArray()['entities'];
+        $parcels = static fn (array $parcel): array => ['entities' => [$parcel, $ribbon, $stamp]];
+        $unjoined = $category;
+        unset($unjoined['joins']);
+        $rejoined = $parcel;
+        $rejoined['joins'][0]['table'] = 'ribbon_parcel';
+        $recolumned = $parcel;
+        $recolumned['joins'][1]['inverseJoinColumn'] = 'stamp_id';
+        $reowned = $ribbon;
+        $reowned['joins'][0]['mappedBy'] = null;
 
         yield 'an empty array' => [[], 'must hold exactly one "entities" list'];
         yield 'a second top-level field' => [[...$valid, 'version' => 1], 'must hold exactly one "entities" list'];
@@ -450,6 +511,10 @@ final class MetadataRegistryTest extends TestCase
         yield 'a changed inverse nullability' => [$graph($renulled), Author::class . ' does not match'];
         yield 'an inverse relationship without a nullable field' => [$graph($unnulled), Author::class . ' does not match'];
         yield 'an inverse relationship with an extra field' => [$graph($extended), Author::class . ' does not match'];
+        yield 'an entry without a joins field' => [['entities' => [$account, $unjoined]], ArticleCategory::class . ' does not match'];
+        yield 'a changed join table' => [$parcels($rejoined), Parcel::class . ' does not match'];
+        yield 'a changed join column' => [$parcels($recolumned), Parcel::class . ' does not match'];
+        yield 'an inverse join side recorded as owning' => [['entities' => [$parcel, $reowned, $stamp]], Ribbon::class . ' does not match'];
         yield 'an inverse relationship whose target has no entry' => [
             ['entities' => [$author, $charter, $comment, $organization, $post]],
             Author::class . '::$profile is not a usable #[HasOne] or #[HasMany] relationship: ' . Profile::class . ' is not an entity',

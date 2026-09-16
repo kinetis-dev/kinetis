@@ -70,6 +70,11 @@ final class MappingException extends RuntimeException
         return new self("{$class}::\${$property} is not a usable #[HasOne] or #[HasMany] relationship: {$reason}.");
     }
 
+    public static function join(string $class, string $property, string $reason): self
+    {
+        return new self("{$class}::\${$property} is not a usable #[ManyToMany] relationship: {$reason}.");
+    }
+
     public static function invalidTable(string $class, string $table): self
     {
         return new self(
@@ -121,16 +126,17 @@ final class MappingException extends RuntimeException
     public static function notAColumn(string $class, string $property): self
     {
         return new self(
-            "{$class}::\${$property} is an inverse relationship and maps no column, so no predicate, order or cursor "
-            . "can name it. Query its target's repository by the target's #[BelongsTo] property instead.",
+            "{$class}::\${$property} maps no column of its own table, so no predicate, order or cursor can name it. "
+            . "Filter and page its targets through their own repository, an inverse relationship by the target's "
+            . '#[BelongsTo] property and a #[ManyToMany] by its join table through builder().',
         );
     }
 
     public static function notARelation(string $class, string $property): self
     {
         return new self(
-            "{$class}::\${$property} is not a #[BelongsTo], #[HasOne] or #[HasMany] relationship, so with() cannot "
-            . 'load it.',
+            "{$class}::\${$property} is not a #[BelongsTo], #[HasOne], #[HasMany] or #[ManyToMany] relationship, so "
+            . 'with() cannot load it.',
         );
     }
 
@@ -165,6 +171,23 @@ final class MappingException extends RuntimeException
         return new self(
             "{$class}::\${$property} is a #[HasOne], and more than one {$target} row references its entity through the "
             . "\"{$column}\" foreign key. A #[HasOne] foreign-key column needs a unique constraint.",
+        );
+    }
+
+    /** @param class-string $target */
+    public static function missingJoinTarget(string $class, string $property, string $table, string $target): self
+    {
+        return new self(
+            "{$class}::\${$property} has a \"{$table}\" row naming a {$target} row that does not exist. A join table "
+            . 'needs a foreign key to each entity table.',
+        );
+    }
+
+    public static function invalidJoinRow(string $class, string $property, string $table, string $column): self
+    {
+        return new self(
+            "{$class}::\${$property} has a \"{$table}\" row whose \"{$column}\" column holds no identifier. Both join "
+            . 'columns are NOT NULL foreign keys.',
         );
     }
 

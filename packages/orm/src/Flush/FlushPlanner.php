@@ -24,10 +24,18 @@ use SplMinHeap;
  * - an insert or update whose final foreign key names a row being deleted is
  *   refused here, before a transaction begins.
  *
- * Where no dependency decides, the order is deletes, inserts, then updates,
- * each by class, identifier where it is known, and scheduling ordinal.
- * Deleting first frees the unique foreign-key slot an owned #[HasOne]
- * replacement needs.
+ * A #[ManyToMany] link statement writes a join table rather than an entity
+ * table: the DELETE of a link runs before the delete of its owning entity,
+ * both endpoint inserts run before the INSERT of a link, and a link naming a
+ * row this flush removes is refused here too.
+ *
+ * Where no dependency decides, the order is link deletes, entity deletes,
+ * entity inserts, link inserts, then updates; entity statements by class and
+ * identifier where it is known, link statements by join table and the
+ * identifiers of their pair, and both by scheduling ordinal. Deleting first
+ * frees the unique foreign-key slot an owned #[HasOne] replacement needs,
+ * and one order per join table keeps concurrent flushes from taking its row
+ * locks in opposite orders.
  *
  * Rows that reference each other in a loop have no such order. The planner
  * breaks one loop at a time by deferring a nullable foreign key: the insert
@@ -43,14 +51,16 @@ use SplMinHeap;
  * @phpstan-type InsertAction array{entity: object, plan: EntityPlan<object>, values: PlanValues}
  * @phpstan-type UpdateAction array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>, values: PlanValues, changes: PlanValues}
  * @phpstan-type DeleteAction array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>}
- * @phpstan-type Draft array{kind: 'insert'|'update'|'delete'|'fixup', entity: object|null, plan: EntityPlan<object>, id: int|string|Reference|null, version: int|null, sent: PlanValues, values: PlanValues|null, snapshot: array<string, Value>|null, ordinal: int}
+ * @phpstan-type LinkAction array{plan: EntityPlan<object>, property: string, table: string, values: PlanValues}
+ * @phpstan-type Draft array{kind: 'insert'|'update'|'delete'|'fixup'|'link'|'unlink', entity: object|null, plan: EntityPlan<object>, property: string|null, table: string|null, id: int|string|Reference|null, version: int|null, sent: PlanValues, values: PlanValues|null, snapshot: array<string, Value>|null, ordinal: int}
  * @phpstan-type Edge array{from: int, to: int, node: int, property: string|null, deferrable: bool}
  * @psalm-type Value = null|bool|int|float|string
  * @psalm-type PlanValues = array<string, null|bool|int|float|string|Reference>
  * @psalm-type InsertAction = array{entity: object, plan: EntityPlan<object>, values: PlanValues}
  * @psalm-type UpdateAction = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>, values: PlanValues, changes: PlanValues}
  * @psalm-type DeleteAction = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, snapshot: array<string, Value>}
- * @psalm-type Draft = array{kind: 'insert'|'update'|'delete'|'fixup', entity: object|null, plan: EntityPlan<object>, id: int|string|Reference|null, version: int|null, sent: PlanValues, values: PlanValues|null, snapshot: array<string, Value>|null, ordinal: int}
+ * @psalm-type LinkAction = array{plan: EntityPlan<object>, property: string, table: string, values: PlanValues}
+ * @psalm-type Draft = array{kind: 'insert'|'update'|'delete'|'fixup'|'link'|'unlink', entity: object|null, plan: EntityPlan<object>, property: string|null, table: string|null, id: int|string|Reference|null, version: int|null, sent: PlanValues, values: PlanValues|null, snapshot: array<string, Value>|null, ordinal: int}
  * @psalm-type Edge = array{from: int, to: int, node: int, property: string|null, deferrable: bool}
  */
 final class FlushPlanner
@@ -73,15 +83,23 @@ final class FlushPlanner
      * @param list<InsertAction> $inserts in scheduling order
      * @param list<UpdateAction> $updates
      * @param list<DeleteAction> $deletes
+     * @param list<LinkAction> $links
+     * @param list<LinkAction> $unlinks
      */
-    private function __construct(array $inserts, array $updates, array $deletes)
+    private function __construct(array $inserts, array $updates, array $deletes, array $links, array $unlinks)
     {
+        foreach ($unlinks as $unlink) {
+            $this->nodes[] = $this->linkNode('unlink', $unlink);
+        }
+
         foreach ($deletes as $delete) {
             $this->deleteOf[$delete['plan']->class][$delete['id']] = count($this->nodes);
             $this->nodes[] = [
                 'kind' => 'delete',
                 'entity' => $delete['entity'],
                 'plan' => $delete['plan'],
+                'property' => null,
+                'table' => null,
                 'id' => $delete['id'],
                 'version' => $delete['version'],
                 'sent' => [],
@@ -99,6 +117,8 @@ final class FlushPlanner
                 'kind' => 'insert',
                 'entity' => $insert['entity'],
                 'plan' => $insert['plan'],
+                'property' => null,
+                'table' => null,
                 'id' => $id,
                 'version' => null,
                 'sent' => $insert['values'],
@@ -108,11 +128,17 @@ final class FlushPlanner
             ];
         }
 
+        foreach ($links as $link) {
+            $this->nodes[] = $this->linkNode('link', $link);
+        }
+
         foreach ($updates as $update) {
             $this->nodes[] = [
                 'kind' => 'update',
                 'entity' => $update['entity'],
                 'plan' => $update['plan'],
+                'property' => null,
+                'table' => null,
                 'id' => $update['id'],
                 'version' => $update['version'],
                 'sent' => $update['changes'],
@@ -127,31 +153,67 @@ final class FlushPlanner
      * @param list<InsertAction> $inserts in scheduling order
      * @param list<UpdateAction> $updates
      * @param list<DeleteAction> $deletes
+     * @param list<LinkAction> $links the join rows to insert
+     * @param list<LinkAction> $unlinks the join rows to delete, each matching the columns it names
      * @return list<PlanNode>
-     * @throws InvalidEntityStateException for a foreign key naming a row this
-     *         flush deletes, and for a reference loop no nullable foreign key
-     *         breaks
+     * @throws InvalidEntityStateException for a foreign key or a link naming
+     *         a row this flush deletes, and for a reference loop no nullable
+     *         foreign key breaks
      */
-    public static function plan(array $inserts, array $updates, array $deletes): array
+    public static function plan(array $inserts, array $updates, array $deletes, array $links, array $unlinks): array
     {
-        $planner = new self($inserts, $updates, $deletes);
-        $planner->link();
+        $planner = new self($inserts, $updates, $deletes, $links, $unlinks);
+        $planner->connect();
         $order = $planner->schedule();
 
         return array_map(static fn (int $node): PlanNode => $planner->node($node), $order);
     }
 
     /**
-     * One edge per foreign key that decides order, and the refusal for a
-     * foreign key naming a row this flush deletes. A reference to a row
-     * awaiting insert whose identifier the application assigned becomes that
-     * identifier here: only the edge is needed, not a deferred key.
+     * @param 'link'|'unlink' $kind
+     * @param LinkAction $action
+     * @return Draft
+     */
+    private function linkNode(string $kind, array $action): array
+    {
+        return [
+            'kind' => $kind,
+            'entity' => null,
+            'plan' => $action['plan'],
+            'property' => $action['property'],
+            'table' => $action['table'],
+            'id' => null,
+            'version' => null,
+            'sent' => $action['values'],
+            'values' => null,
+            'snapshot' => null,
+            'ordinal' => $this->ordinal++,
+        ];
+    }
+
+    /**
+     * One edge per foreign key and per link endpoint that decides order, and
+     * the refusal for either naming a row this flush deletes. A reference to
+     * a row awaiting insert whose identifier the application assigned becomes
+     * that identifier here: only the edge is needed, not a deferred key.
      *
      * @throws InvalidEntityStateException
      */
-    private function link(): void
+    private function connect(): void
     {
         foreach ($this->nodes as $i => $node) {
+            if ($node['kind'] === 'unlink') {
+                $this->beforeOwnerDelete($i, $node);
+
+                continue;
+            }
+
+            if ($node['kind'] === 'link') {
+                $this->afterEndpoints($i, $node);
+
+                continue;
+            }
+
             $snapshot = $node['snapshot'];
 
             foreach ($node['plan']->relations() as $property => [$target, $nullable]) {
@@ -204,6 +266,63 @@ final class FlushPlanner
                 if ($moved !== null) {
                     $this->edges[] = ['from' => $i, 'to' => $moved, 'node' => $i, 'property' => $property, 'deferrable' => false];
                 }
+            }
+        }
+    }
+
+    /**
+     * The join rows an owner's DELETE leaves behind are deleted before it, so
+     * the join table's foreign key to the owner never refuses that DELETE.
+     * The owner's identifier is the first column a link statement names.
+     *
+     * @param Draft $node
+     */
+    private function beforeOwnerDelete(int $i, array $node): void
+    {
+        $owner = array_values($node['sent'])[0];
+        $delete = is_int($owner) || is_string($owner) ? $this->deleteOf[$node['plan']->class][$owner] ?? null : null;
+
+        if ($delete !== null) {
+            $this->edges[] = ['from' => $i, 'to' => $delete, 'node' => $i, 'property' => null, 'deferrable' => false];
+        }
+    }
+
+    /**
+     * A link row exists only once both rows it names do, so each endpoint
+     * awaiting insert runs first and hands the link its key. An endpoint this
+     * flush removes — a row it deletes, or one whose insert an aggregate
+     * removal cancelled — leaves the link unwritable.
+     *
+     * @param Draft $node
+     * @throws InvalidEntityStateException
+     */
+    private function afterEndpoints(int $i, array $node): void
+    {
+        /** @var string $property a link node names the owning relationship whose table it writes */
+        $property = $node['property'];
+        $target = $node['plan']->target($property);
+        $classes = [$node['plan']->class, $target];
+        $end = 0;
+
+        foreach ($node['sent'] as $column => $value) {
+            $class = $classes[$end++];
+
+            if ($value instanceof Reference) {
+                $insert = $this->insertOf[$value->entity]
+                    ?? throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
+                $assigned = $this->nodes[$insert]['id'];
+
+                if ($assigned !== null) {
+                    $this->nodes[$i]['sent'][$column] = $assigned;
+                }
+
+                $this->edges[] = ['from' => $insert, 'to' => $i, 'node' => $i, 'property' => null, 'deferrable' => false];
+
+                continue;
+            }
+
+            if ((is_int($value) || is_string($value)) && isset($this->deleteOf[$class][$value])) {
+                throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
             }
         }
     }
@@ -367,6 +486,8 @@ final class FlushPlanner
             'kind' => 'fixup',
             'entity' => null,
             'plan' => $plan,
+            'property' => null,
+            'table' => null,
             'id' => $id,
             'version' => null,
             'sent' => $sent,
@@ -431,6 +552,7 @@ final class FlushPlanner
             $draft['version'],
             $draft['sent'],
             $draft['values'],
+            $draft['table'],
         );
     }
 
@@ -441,7 +563,8 @@ final class FlushPlanner
     private static function compare(array $a, array $b): int
     {
         return self::category($a['kind']) <=> self::category($b['kind'])
-            ?: strcmp($a['plan']->class, $b['plan']->class)
+            ?: strcmp($a['table'] ?? $a['plan']->class, $b['table'] ?? $b['plan']->class)
+            ?: self::pair($a, $b)
             ?: self::known($a['id']) <=> self::known($b['id'])
             ?: self::identifier($a['id'], $b['id'])
             ?: $a['ordinal'] <=> $b['ordinal'];
@@ -450,13 +573,38 @@ final class FlushPlanner
     private static function category(string $kind): int
     {
         return match ($kind) {
-            'delete' => 0,
-            'insert' => 1,
-            default => 2,
+            'unlink' => 0,
+            'delete' => 1,
+            'insert' => 2,
+            'link' => 3,
+            default => 4,
         };
     }
 
-    private static function known(int|string|Reference|null $id): int
+    /**
+     * The identifiers one join table's rows are ordered by: the owner's
+     * first, the target's second, and none for an entity statement, whose
+     * category never meets a link statement's here.
+     *
+     * @param Draft $a
+     * @param Draft $b
+     */
+    private static function pair(array $a, array $b): int
+    {
+        if ($a['table'] === null) {
+            return 0;
+        }
+
+        $first = array_values($a['sent']);
+        $second = array_values($b['sent']);
+
+        return self::known($first[0]) <=> self::known($second[0])
+            ?: self::identifier($first[0], $second[0])
+            ?: self::known($first[1] ?? null) <=> self::known($second[1] ?? null)
+            ?: self::identifier($first[1] ?? null, $second[1] ?? null);
+    }
+
+    private static function known(null|bool|int|float|string|Reference $id): int
     {
         return $id === null || $id instanceof Reference ? 1 : 0;
     }
@@ -466,8 +614,10 @@ final class FlushPlanner
      * string by its bytes. An identifier this flush has yet to generate
      * compares equal, leaving the scheduling ordinal to decide.
      */
-    private static function identifier(int|string|Reference|null $a, int|string|Reference|null $b): int
-    {
+    private static function identifier(
+        null|bool|int|float|string|Reference $a,
+        null|bool|int|float|string|Reference $b,
+    ): int {
         if ($a === null || $b === null || $a instanceof Reference || $b instanceof Reference) {
             return 0;
         }

@@ -12,6 +12,7 @@ use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\HasMany;
 use Kinetis\Orm\Attributes\HasOne;
 use Kinetis\Orm\Attributes\Id;
+use Kinetis\Orm\Attributes\ManyToMany;
 use Kinetis\Orm\Attributes\Version;
 use Kinetis\Orm\Exception\MappingException;
 use ReflectionClass;
@@ -35,6 +36,12 @@ use ReflectionProperty;
  * among the inverses instead: its target is an entity of the same registry
  * whose #[BelongsTo] property mappedBy references the declaring class.
  *
+ * A #[ManyToMany] property maps no column either and is listed among the
+ * joins. An owning one names its join table and both join columns; an
+ * inverse one names the owning property with mappedBy and takes that join
+ * table with its columns swapped, so both sides read the same rows from
+ * their own end.
+ *
  * A property declared exactly DateTimeImmutable, nullable or not, has the
  * type timestamp; DateTime, DateTimeInterface and subclasses of
  * DateTimeImmutable are refused as declared types.
@@ -45,10 +52,12 @@ use ReflectionProperty;
  *
  * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
- * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
+ * @phpstan-type JoinMapping array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
+ * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
  * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
- * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
+ * @psalm-type JoinMapping = array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
+ * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
  */
 final readonly class MetadataRegistry
 {
@@ -148,6 +157,44 @@ final readonly class MetadataRegistry
                 $owned[$inverse['target']] = [$class, $inverse['name'], $mappedBy];
             }
 
+            foreach ($mapping['joins'] as $i => $join) {
+                $target = $entities[$join['target']] ?? throw MappingException::join(
+                    $class,
+                    $join['name'],
+                    "{$join['target']} is not an entity in this MetadataRegistry",
+                );
+                $mappedBy = $join['mappedBy'];
+
+                if ($mappedBy === null) {
+                    continue;
+                }
+
+                $owning = array_column($target['joins'], null, 'name')[$mappedBy] ?? null;
+                $reason = match (true) {
+                    $owning === null => "mappedBy names \"{$mappedBy}\", which is not a #[ManyToMany] property of {$target['class']}",
+                    $owning['mappedBy'] !== null => "mappedBy names {$target['class']}::\${$mappedBy}, which is itself an inverse "
+                        . '#[ManyToMany] relationship',
+                    $owning['target'] !== $class => "mappedBy names {$target['class']}::\${$mappedBy}, which references "
+                        . "{$owning['target']}, not {$class}",
+                    default => null,
+                };
+
+                if ($reason !== null) {
+                    throw MappingException::join($class, $join['name'], $reason);
+                }
+
+                // The owning property alone names the table: this end reads
+                // it with its two columns swapped.
+                $mapping['joins'][$i] = [
+                    'name' => $join['name'],
+                    'target' => $join['target'],
+                    'table' => $owning['table'],
+                    'joinColumn' => $owning['inverseJoinColumn'],
+                    'inverseJoinColumn' => $owning['joinColumn'],
+                    'mappedBy' => $mappedBy,
+                ];
+            }
+
             $entities[$class] = $mapping;
         }
 
@@ -236,6 +283,7 @@ final readonly class MetadataRegistry
         /** @var array<string, PropertyMapping> $properties */
         $properties = [];
         $inverses = [];
+        $joins = [];
         $columns = [];
         $ids = [];
         $versions = [];
@@ -247,6 +295,14 @@ final readonly class MetadataRegistry
             }
 
             $type = self::type($name, $property);
+            $join = self::join($name, $property, $type);
+
+            if ($join !== null) {
+                $joins[] = $join;
+
+                continue;
+            }
+
             $inverse = self::inverse($name, $property, $type);
 
             if ($inverse !== null) {
@@ -320,6 +376,7 @@ final readonly class MetadataRegistry
             'version' => $version,
             'properties' => array_values($properties),
             'inverses' => $inverses,
+            'joins' => $joins,
         ];
     }
 
@@ -432,6 +489,93 @@ final readonly class MetadataRegistry
         $target = $type->getName() === 'self' ? $class : $type->getName();
 
         return ['name' => $name, 'column' => $column, 'type' => 'int', 'nullable' => $type->allowsNull(), 'enum' => null, 'target' => $target];
+    }
+
+    /**
+     * An unloaded join collection is an uninitialized property, so it has no
+     * default value. An owning side carries its join table and columns; an
+     * inverse side carries none, and fromClasses() fills them in from the
+     * owning property once the target is mapped.
+     *
+     * @return JoinMapping|null null for a property carrying no #[ManyToMany]
+     */
+    private static function join(string $class, ReflectionProperty $property, ReflectionNamedType $type): ?array
+    {
+        $mapping = ($property->getAttributes(ManyToMany::class)[0] ?? null)?->newInstance();
+
+        if ($mapping === null) {
+            return null;
+        }
+
+        $name = $property->getName();
+        $owning = $mapping->mappedBy === null;
+        $reason = match (true) {
+            $property->getAttributes(BelongsTo::class) !== [] => 'it also carries #[BelongsTo]',
+            $property->getAttributes(HasOne::class) !== [] => 'it also carries #[HasOne]',
+            $property->getAttributes(HasMany::class) !== [] => 'it also carries #[HasMany]',
+            $property->getAttributes(Column::class) !== [] => 'it also carries #[Column]',
+            $property->getAttributes(Id::class) !== [] => 'it also carries #[Id]',
+            $property->getAttributes(Version::class) !== [] => 'it also carries #[Version]',
+            $type->getName() !== 'array' || $type->allowsNull() => "#[ManyToMany] needs the type array, and it declares {$type}",
+            $property->hasDefaultValue() => 'it declares a default value, and an unloaded join collection is uninitialized',
+            $owning && ($mapping->table === null || $mapping->joinColumn === null || $mapping->inverseJoinColumn === null)
+                => 'an owning side names table, joinColumn and inverseJoinColumn',
+            !$owning && ($mapping->table !== null || $mapping->joinColumn !== null || $mapping->inverseJoinColumn !== null)
+                => 'an inverse side names mappedBy alone, and the owning property names the table and both join columns',
+            default => null,
+        };
+
+        if ($reason !== null) {
+            throw MappingException::join($class, $name, $reason);
+        }
+
+        /** @var class-string $target */
+        $target = $mapping->target;
+
+        if (!$owning) {
+            /** @var string $mappedBy */
+            $mappedBy = $mapping->mappedBy;
+
+            return [
+                'name' => $name,
+                'target' => $target,
+                'table' => '',
+                'joinColumn' => '',
+                'inverseJoinColumn' => '',
+                'mappedBy' => $mappedBy,
+            ];
+        }
+
+        /**
+         * @var string $table
+         * @var string $joinColumn
+         * @var string $inverseJoinColumn
+         */
+        [$table, $joinColumn, $inverseJoinColumn] = [$mapping->table, $mapping->joinColumn, $mapping->inverseJoinColumn];
+        $invalid = match (true) {
+            preg_match('/^' . self::IDENTIFIER . '(\.' . self::IDENTIFIER . ')*$/D', $table) !== 1
+                => "the join table \"{$table}\" is not one or more identifiers separated by dots",
+            preg_match('/^' . self::IDENTIFIER . '$/D', $joinColumn) !== 1
+                => "the join column \"{$joinColumn}\" is not an identifier",
+            preg_match('/^' . self::IDENTIFIER . '$/D', $inverseJoinColumn) !== 1
+                => "the inverse join column \"{$inverseJoinColumn}\" is not an identifier",
+            $joinColumn === $inverseJoinColumn
+                => "joinColumn and inverseJoinColumn both name \"{$joinColumn}\", and a join row needs a column for each end",
+            default => null,
+        };
+
+        if ($invalid !== null) {
+            throw MappingException::join($class, $name, $invalid);
+        }
+
+        return [
+            'name' => $name,
+            'target' => $target,
+            'table' => $table,
+            'joinColumn' => $joinColumn,
+            'inverseJoinColumn' => $inverseJoinColumn,
+            'mappedBy' => null,
+        ];
     }
 
     /**

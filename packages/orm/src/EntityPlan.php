@@ -39,16 +39,19 @@ use ReflectionProperty;
  * foreign-key column. Its converted and database value is the target's
  * identifier, and instantiate() leaves the property uninitialized.
  *
- * An inverse relationship maps no column, so it is kept apart from the
- * mapped properties: conversion, instantiate(), extract() and every column
- * operation leave it out, and only the relationship methods reach it.
+ * An inverse relationship and a #[ManyToMany] join collection map no
+ * column, so they are kept apart from the mapped properties: conversion,
+ * instantiate(), extract() and every column operation leave them out, and
+ * only the relationship methods reach them.
  *
  * @template T of object
  * @phpstan-import-type EntityMapping from MetadataRegistry
  * @phpstan-import-type InverseMapping from MetadataRegistry
+ * @phpstan-import-type JoinMapping from MetadataRegistry
  * @phpstan-import-type PropertyMapping from MetadataRegistry
  * @psalm-import-type EntityMapping from MetadataRegistry
  * @psalm-import-type InverseMapping from MetadataRegistry
+ * @psalm-import-type JoinMapping from MetadataRegistry
  * @psalm-import-type PropertyMapping from MetadataRegistry
  */
 final class EntityPlan
@@ -89,6 +92,12 @@ final class EntityPlan
     /** @var array<string, ReflectionProperty> */
     private readonly array $inverseAccessors;
 
+    /** @var array<string, JoinMapping> */
+    private readonly array $joins;
+
+    /** @var array<string, ReflectionProperty> */
+    private readonly array $joinAccessors;
+
     /**
      * @param EntityMapping $mapping
      */
@@ -124,6 +133,17 @@ final class EntityPlan
 
         $this->inverses = $inverses;
         $this->inverseAccessors = $inverseAccessors;
+
+        $joins = [];
+        $joinAccessors = [];
+
+        foreach ($mapping['joins'] as $join) {
+            $joins[$join['name']] = $join;
+            $joinAccessors[$join['name']] = $this->reflection->getProperty($join['name']);
+        }
+
+        $this->joins = $joins;
+        $this->joinAccessors = $joinAccessors;
     }
 
     /**
@@ -134,19 +154,20 @@ final class EntityPlan
         return array_column($this->properties, 'column');
     }
 
-    /** @throws MappingException for a property this entity does not map, or an inverse relationship, which maps no column */
+    /** @throws MappingException for a property this entity does not map, or one that maps no column */
     public function column(string $property): string
     {
         return $this->property($property)['column'];
     }
 
     /**
-     * @return class-string the entity the relationship $property references, or the entity an inverse relationship holds
+     * @return class-string the entity the relationship $property references, or the entity an inverse or join relationship holds
      * @throws MappingException for a property this entity does not map, or one that is not a relationship
      */
     public function target(string $property): string
     {
         return $this->inverses[$property]['target']
+            ?? $this->joins[$property]['target']
             ?? $this->property($property)['target']
             ?? throw MappingException::notARelation($this->class, $property);
     }
@@ -157,6 +178,26 @@ final class EntityPlan
     public function inverse(string $property): ?array
     {
         return $this->inverses[$property] ?? null;
+    }
+
+    /**
+     * @return JoinMapping|null the #[ManyToMany] relationship named $property, or null for any other name
+     */
+    public function join(string $property): ?array
+    {
+        return $this->joins[$property] ?? null;
+    }
+
+    /**
+     * Every owning #[ManyToMany] relationship, in declaration order: the
+     * join collections flush() diffs and writes. An inverse one is left out,
+     * because the owning side writes every row of its table.
+     *
+     * @return array<string, JoinMapping>
+     */
+    public function owningJoins(): array
+    {
+        return array_filter($this->joins, static fn (array $join): bool => $join['mappedBy'] === null);
     }
 
     /**
@@ -342,7 +383,7 @@ final class EntityPlan
         return $values;
     }
 
-    /** Whether $property, a mapped property or an inverse relationship, holds a value. */
+    /** Whether $property, a mapped property or a relationship of either kind, holds a value. */
     public function initialized(object $entity, string $property): bool
     {
         return $this->accessor($property)->isInitialized($entity);
@@ -350,7 +391,7 @@ final class EntityPlan
 
     /**
      * What an initialized relationship holds: a target or null, or the array
-     * of a #[HasMany].
+     * of a #[HasMany] or #[ManyToMany].
      *
      * @return object|array<array-key, mixed>|null
      */
@@ -401,7 +442,7 @@ final class EntityPlan
 
     private function accessor(string $property): ReflectionProperty
     {
-        return $this->accessors[$property] ?? $this->inverseAccessors[$property];
+        return $this->accessors[$property] ?? $this->inverseAccessors[$property] ?? $this->joinAccessors[$property];
     }
 
     /**
@@ -409,7 +450,7 @@ final class EntityPlan
      */
     private function property(string $property): array
     {
-        return $this->properties[$property] ?? throw (isset($this->inverses[$property])
+        return $this->properties[$property] ?? throw (isset($this->inverses[$property]) || isset($this->joins[$property])
             ? MappingException::notAColumn($this->class, $property)
             : MappingException::unknownProperty($this->class, $property));
     }

@@ -139,7 +139,13 @@ rather than which form it took.
   an owned `#[HasOne]` replacement freeing its unique slot before the
   replacement takes it, an aggregate removal deleting children before
   their owner behind real foreign keys, and a failure after a fix-up
-  rolling the whole graph back.
+  rolling the whole graph back; and `#[ManyToMany]`: a join row taking
+  the keys the inserts at both of its ends generated, a loaded diff
+  writing only the pairs that changed, the join table's foreign keys
+  refusing a linked target's DELETE and an owner's until its join rows
+  go first, and a duplicate pair failing on the unique key, rolling the
+  flush back with its join work still pending, and committing once the
+  conflicting row is gone.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

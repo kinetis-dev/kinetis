@@ -22,8 +22,9 @@ use Kinetis\QueryBuilder\Query;
  * with() names the relationships get(), first(), paginate() and
  * cursorPaginate() load into those entities after the root select, each
  * through its own selects on the same link. A lock applies to the root
- * select only. exists() and count() load nothing. An inverse relationship
- * maps no column, so no predicate, order or cursor names it.
+ * select only. exists() and count() load nothing. An inverse or
+ * #[ManyToMany] relationship maps no column, so no predicate, order or
+ * cursor names it.
  *
  * Every terminal checks its EntityManager again once its SQL returns, so a
  * manager closed while the Fiber was suspended in that SQL is refused
@@ -152,9 +153,10 @@ final class EntityQuery
 
     /**
      * Relationship paths to load, such as `author`, `comments` or
-     * `comments.author`: dot-separated #[BelongsTo], #[HasOne] and #[HasMany]
-     * properties, each of the entity the one before it loads. Repeated calls
-     * add to the same set, and every path is checked before this returns.
+     * `comments.author`: dot-separated #[BelongsTo], #[HasOne], #[HasMany]
+     * and #[ManyToMany] properties, each of the entity the one before it
+     * loads. Repeated calls add to the same set, and every path is checked
+     * before this returns.
      *
      * @return $this
      * @throws MappingException for an empty segment, an unknown property or a property that is not a relationship
