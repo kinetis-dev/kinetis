@@ -76,7 +76,7 @@ final class FlushTest extends TestCase
         self::assertCount(1, $this->link->calls, 'every value read from its driver spelling compares equal to the property');
     }
 
-    public function test_every_statement_runs_on_the_one_transaction_inserts_first_then_by_class_and_identifier(): void
+    public function test_every_statement_runs_on_the_one_transaction_deletes_then_inserts_then_updates_by_class_and_identifier(): void
     {
         $manager = $this->factory->open();
         $this->link->queue(
@@ -94,19 +94,19 @@ final class FlushTest extends TestCase
         $second->title = 'Second, edited';
         $manager->remove($first);
 
-        $this->transaction->queue(self::insertId(42), self::affected(1), self::affected(1), self::affected(1), self::affected(1), self::affected(1));
+        $this->transaction->queue(self::affected(1), self::affected(1), self::insertId(42), self::affected(1), self::affected(1), self::affected(1));
         $manager->flush();
 
         self::assertSame(1, $this->link->begins);
         self::assertCount(2, $this->link->calls, 'no statement ran on the client');
         self::assertSame([
-            ['sql' => 'INSERT INTO `tickets` (`subject`) VALUES (?)', 'params' => ['Printer on fire']],
+            ['sql' => 'DELETE FROM `documents` WHERE `id` = ?', 'params' => [self::FIRST_UUID]],
             ['sql' => 'INSERT INTO `documents` (`id`, `title`) VALUES (?, ?)', 'params' => [self::THIRD_UUID, 'Third']],
+            ['sql' => 'INSERT INTO `tickets` (`subject`) VALUES (?)', 'params' => ['Printer on fire']],
             ['sql' => 'UPDATE `counted` SET `score` = 6 WHERE `id` = 9', 'params' => []],
             ['sql' => 'UPDATE `counted` SET `score` = 5 WHERE `id` = 10', 'params' => []],
-            ['sql' => 'DELETE FROM `documents` WHERE `id` = ?', 'params' => [self::FIRST_UUID]],
             ['sql' => 'UPDATE `documents` SET `title` = ? WHERE `id` = ?', 'params' => ['Second, edited', self::SECOND_UUID]],
-        ], $this->transaction->calls);
+        ], $this->transaction->calls, 'a delete frees a unique slot before an insert takes it, and persist() order never decides');
         self::assertSame(['commit'], $this->transaction->ends);
 
         self::assertFalse($manager->contains($first));
@@ -477,19 +477,20 @@ final class FlushTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{bool, 'UPDATE'|'DELETE'}>
+     * @return iterable<string, array{bool, 'UPDATE'|'DELETE', int}>
      */
     public static function staleWrites(): iterable
     {
-        yield 'a stale update' => [false, 'UPDATE'];
-        yield 'a stale delete' => [true, 'DELETE'];
+        // A stale DELETE runs before the INSERT, a stale UPDATE after it.
+        yield 'a stale update' => [false, 'UPDATE', 2];
+        yield 'a stale delete' => [true, 'DELETE', 1];
     }
 
     /**
      * @param 'UPDATE'|'DELETE' $statement
      */
     #[DataProvider('staleWrites')]
-    public function test_a_stale_write_rolls_back_and_keeps_the_whole_flush_pending_until_it_is_cleared(bool $remove, string $statement): void
+    public function test_a_stale_write_rolls_back_and_keeps_the_whole_flush_pending_until_it_is_cleared(bool $remove, string $statement, int $statements): void
     {
         $manager = $this->factory->open();
         $this->link->queue([self::invoiceRow(1, 3), self::invoiceRow(2, 3)]);
@@ -498,11 +499,13 @@ final class FlushTest extends TestCase
         $second->status = 'void';
         $ticket = new Ticket('Printer on fire');
         $manager->persist($ticket);
-        $this->transaction->queue(self::insertId(7), self::affected(0));
+        $remove
+            ? $this->transaction->queue(self::affected(0))
+            : $this->transaction->queue(self::insertId(7), self::affected(0));
 
         self::assertConflict($manager, $statement);
 
-        self::assertCount(2, $this->transaction->calls, 'the INSERT, then the stale statement');
+        self::assertCount($statements, $this->transaction->calls, 'the flush stopped at the stale statement');
         self::assertSame(['rollback'], $this->transaction->ends);
         self::assertFalse($manager->isClosed());
         self::assertSame([3, 3], [$first->version, $second->version]);
@@ -510,7 +513,7 @@ final class FlushTest extends TestCase
         self::assertTrue($manager->contains($first));
 
         $this->link->transaction = $retry = new SpyMysqlTransaction();
-        $retry->queue(self::insertId(8), self::affected(0));
+        $remove ? $retry->queue(self::affected(0)) : $retry->queue(self::insertId(8), self::affected(0));
 
         self::assertConflict($manager, $statement);
         self::assertSame($this->transaction->calls, $retry->calls, 'the retry sent the whole flush again');

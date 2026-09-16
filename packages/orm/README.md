@@ -35,7 +35,11 @@ transaction session locks entity rows and writes entities and
 query-builder SQL in one transaction. An entity references another
 through an explicit `#[BelongsTo]` relationship, and reaches the entities
 referencing it through explicit `#[HasOne]` and `#[HasMany]` inverse
-relationships; an entity query loads either side when asked.
+relationships; an entity query loads either side when asked. An inverse
+relationship marked `owned` is an aggregate: one `persist()` writes the
+whole graph below it in foreign-key order, one `remove()` deletes it, and
+a child dropped from a relationship the manager loaded is deleted or
+moved.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -362,7 +366,7 @@ final class Author
     #[BelongsTo]
     public ?Organization $organization; // organization_id, nullable
 
-    #[HasOne(mappedBy: 'author')]
+    #[HasOne(mappedBy: 'author', owned: true)]
     public ?Profile $profile;
 
     /** @var list<Post> */
@@ -381,7 +385,7 @@ final class Post
     public Author $author;
 
     /** @var list<Comment> */
-    #[HasMany(target: Comment::class, mappedBy: 'post')]
+    #[HasMany(target: Comment::class, mappedBy: 'post', owned: true)]
     public array $comments;
 }
 
@@ -451,6 +455,18 @@ $authors->data[0]->profile?->bio;
   `list<Target>` PHPDoc documents it. The target is mapped in the same
   `MetadataRegistry`. An inverse relationship maps no column of its own
   table.
+- **Ownership.** `owned: true` on `#[HasOne]` or `#[HasMany]` makes the
+  relationship an aggregate edge, which "Aggregates" below states in
+  full: `flush()` discovers new targets through it, `remove()` removes
+  them, and a target dropped from a relationship this manager loaded is
+  deleted or moved. It defaults to `false`, and a relationship that is
+  not owned reads and writes exactly as before. Ownership is a decision
+  about lifecycle, not about the foreign key: a `Comment` lives and dies
+  with its `Post`, while a `Post` is written and removed on its own.
+  Each entity class has at most one owned inverse relationship in a
+  `MetadataRegistry`, and one `#[BelongsTo]` property is named by at most
+  one of them, so one mapping alone decides how a row is discovered and
+  removed.
 - **Refusals.** `MappingException` refuses, when the metadata is built,
   for `#[BelongsTo]`: a type that is not a class, `#[Column]`, `#[Id]` or
   `#[Version]` on the same property, a default value, and a target the
@@ -459,9 +475,10 @@ $authors->data[0]->profile?->bio;
   `#[Column]`, `#[Id]`, `#[Version]`, `#[BelongsTo]` or both inverse
   attributes on the same property, a default value, a target the registry
   does not map, and a `mappedBy` naming no `#[BelongsTo]` property of the
-  target or one that references another class. A default value is
-  refused on either side because an initialized relationship is never
-  loaded.
+  target or one that references another class, a second owned inverse
+  relationship to one entity class, and two owned inverse relationships
+  over one `#[BelongsTo]` property. A default value is refused on either
+  side because an initialized relationship is never loaded.
 - **Loaded or not.** Loading a row leaves every relationship, of either
   side, uninitialized, and reading one throws PHP's `Error` as for any
   uninitialized typed property. Only `with()` or the application
@@ -520,9 +537,11 @@ An inverse relationship:
 5. The targets are the next level's entities.
 
 A relationship the application already initialized, on either side, is
-never overwritten or compared with the database. What it holds joins the
-next level and must be an entity of its target class that this manager
-manages — for a `#[HasMany]`, every value of the array, whatever its
+never overwritten by a load, and no load compares it with the database.
+A flush reconciles an *owned* relationship, and only one this manager
+loaded itself (see "Aggregates"). What an initialized relationship holds
+joins the next level and must be an entity of its target class that this
+manager manages — for a `#[HasMany]`, every value of the array, whatever its
 keys — or null where the type allows it. Anything else throws
 `InvalidEntityStateException` before that level's statements, on the last
 segment of a path too.
@@ -571,34 +590,204 @@ their own repository by their `#[BelongsTo]` property, as above.
 ### Writing relationships
 
 - **Owning side only.** Only a `#[BelongsTo]` property writes a foreign
-  key. `persist()` and `flush()` never read an inverse relationship: a
-  new entity may leave one uninitialized, and assigning `$post->comments`
-  or `$author->profile` writes nothing, cascades nothing and persists
-  nothing. To move a comment to another post, set its `post` property to
-  that managed post and flush.
-- **No fixup.** Nothing reconciles the two sides in memory. After that
+  key. Assigning `$post->comments` or `$author->profile` never writes an
+  owner column and never advances an owner's version. To move a comment
+  to another post, set its `post` property to that post. What an *owned*
+  relationship adds — which rows a flush discovers, deletes or moves — is
+  under "Aggregates"; a relationship that is not owned writes nothing,
+  cascades nothing and persists nothing, and a new entity may leave one
+  uninitialized.
+- **No fixup.** Nothing reconciles the two sides in memory. After a
   flush, a `comments` array already loaded or assigned still holds what
   it held, and a later `with()` keeps it because it is initialized.
   `clear()` the manager, or open another, to load the committed rows.
 - **Targets.** A relationship holds null, where its type allows it, or an
-  entity this manager manages: loaded, or inserted by a flush whose
-  COMMIT returned. The foreign key is the identifier in the manager's
-  snapshot of that entity. `persist()`, and `flush()` for every entity it
-  writes before its transaction begins, refuse anything else with
-  `InvalidEntityStateException`: an entity awaiting insert, one the same
-  flush would insert included, a detached entity, and one another manager
-  holds. A new entity needs every `#[BelongsTo]` initialized.
+  entity this manager holds: managed, or awaiting insert in the same
+  flush. A managed target's foreign key is the identifier in the
+  manager's snapshot; a target awaiting insert is written after its own
+  row exists, with the key that INSERT produced (see "Aggregates"). A new
+  entity needs every `#[BelongsTo]` initialized. `persist()` admits any
+  object of an entity class in the factory's metadata, and `flush()`
+  validates the whole graph before its transaction begins: a detached
+  entity, one another manager holds, and anything that is not an entity
+  of the target class are refused there with
+  `InvalidEntityStateException`.
 - **Never loaded.** A managed entity whose relationship is uninitialized
   writes the foreign key its snapshot holds, so changing another property
   never writes that column.
-- **Reassignment.** Assigning another managed target, or null, changes
-  the foreign key: the UPDATE sets the column, under the version predicate
-  of a versioned entity, and the snapshot takes the new key once COMMIT
-  returns.
-- **Removal.** Nothing cascades. Removing an entity another row still
-  references sends its DELETE, and the database's foreign key decides: a
-  refusal fails the flush before COMMIT (see "When a flush fails"). No
-  object holding the removed entity changes.
+- **Reassignment.** Assigning another target, or null, changes the
+  foreign key: the UPDATE sets the column, under the version predicate of
+  a versioned entity and advancing its version once, and the snapshot
+  takes the new key once COMMIT returns.
+- **Removal.** Nothing cascades through a relationship that is not owned.
+  Removing an entity another row still references sends its DELETE, and
+  the database's foreign key decides: a refusal fails the flush before
+  COMMIT (see "When a flush fails"). No object holding the removed entity
+  changes.
+
+## Aggregates
+
+An owned relationship makes one entity and the rows below it a single
+unit: one `persist()` writes the whole graph, in an order its foreign
+keys can take, inside one transaction.
+
+```php
+$author = new Author();
+[$author->id, $author->name, $author->organization] = [42, 'Jane', null];
+
+$profile = new Profile();
+[$profile->id, $profile->author, $profile->bio] = [7, $author, 'Mathematician'];
+
+$author->profile = $profile;    // the owned relationship
+
+$entities->persist($author);    // the profile needs no persist() of its own
+$entities->flush();             // INSERT the author, then the profile
+
+$profile->author;               // still $author; nothing in the graph was rewritten
+```
+
+`Author::$profile` is `#[HasOne(mappedBy: 'author', owned: true)]`, so
+`flush()` finds the profile through it and writes the author's row
+first, because the profile's `author_id` names it. The same holds at any
+depth and for a `#[HasMany]`: a post's owned `comments` are written
+after the post, and their own owned relationships after them. Where the
+parent's identifier is generated, the key its INSERT produced is what the
+child's foreign key is written with, inside the same transaction, and it
+reaches the parent's own property only once COMMIT returns.
+
+Entities persisted separately need no ordering either. Each `persist()`
+schedules one entity, and `flush()` orders every row it holds at once:
+
+```php
+$entities->persist($comment); // $comment->post is not written yet
+$entities->persist($post);
+$entities->flush();           // INSERT the post, then the comment
+```
+
+### What a flush discovers
+
+One pass runs at the start of `flush()`, before any statement, from
+every entity awaiting insert in `persist()` order and then every managed
+entity, across their **initialized owned relationships**, depth first in
+mapped declaration order and array order. It is iterative and cycle-safe,
+and it reads nothing from the database.
+
+- A new object it reaches is validated exactly as `persist()` validates
+  one, and scheduled for insert. That covers a child attached after its
+  root was persisted.
+- An uninitialized relationship is skipped and never loaded. An
+  uninitialized property holds no object, so no in-memory entity is lost.
+- A relationship that is not owned is not traversed. A `#[BelongsTo]`
+  target that is neither managed nor awaiting insert is refused.
+- Every object must be an instance of the mapped target class, appear
+  once in a relationship, and appear under one owner.
+- An object whose deletion this manager committed is refused rather than
+  inserted again, so an unchanged PHP array cannot resurrect a deleted
+  row. `persist()` on that object still inserts it as a new row.
+- The pass is atomic: a refusal anywhere leaves the unit of work exactly
+  as it was, with nothing scheduled and no transaction begun.
+
+### Loaded relationships, and what a flush may change through them
+
+The ORM never guesses what the database holds through a relationship.
+An owned relationship has a membership to reconcile against only when
+**this manager loaded it** with `with()`, or when its owner was inserted
+by a flush whose COMMIT returned.
+
+For a relationship the manager loaded, `flush()` compares the membership
+it loaded with the one the property holds now. Every decision reads the
+child's *foreign key* — its `#[BelongsTo]` property, or, where that
+property was never loaded, the value in its snapshot:
+
+| The child | Its final foreign key | What the flush does |
+|---|---|---|
+| is in the relationship | names this owner | nothing; its own changes write as usual |
+| is in the relationship | names another owner | `InvalidEntityStateException` before SQL |
+| was dropped from it | still names this owner, or is null | DELETE, with the aggregate below it |
+| was dropped from it | names another owner | the ordinary UPDATE moves the row |
+
+Dropping an eagerly loaded child from a collection is a complete
+instruction on its own: its `#[BelongsTo]` property may stay
+uninitialized, and a non-nullable one never has to be given an
+impossible null. Moving a child to another owner means assigning that
+owner to the child's `#[BelongsTo]` property; if the new owner's owned
+relationship is loaded too, it must hold the child, since the ORM does
+not repair the object graph.
+
+```php
+$post = $entities->repository(Post::class)->query()->with('comments')->first();
+
+$post->comments = array_values(array_filter($post->comments, fn (Comment $c) => !$c->isSpam()));
+
+$entities->flush(); // DELETE every comment the array no longer holds
+```
+
+For an owned relationship the manager did **not** load, `flush()` still
+discovers and inserts new children through it, and changes nothing else:
+what the database holds behind it is unknown, so no removal, replacement
+or orphan is inferred. Load it with `with()`, or operate on the child
+entity itself.
+
+Adding or removing children writes no owner column and does not advance
+the owner's version. A relationship that is merely reordered sends no
+SQL at all.
+
+### Removing an aggregate
+
+`remove($owner)` schedules the owner and everything below it through its
+owned relationships, and detaches every entity awaiting insert it
+reaches without SQL. `persist()` on a removed owner cancels the removal
+for the same subgraph.
+
+```php
+$post = $entities->repository(Post::class)->query()->with('comments')->first();
+
+$entities->remove($post);
+$entities->flush(); // DELETE each comment, then the post
+```
+
+A managed owner whose owned relationship is uninitialized, or was never
+loaded by this manager, is refused with `InvalidEntityStateException`:
+skipping it would leave rows the mapping promises to remove, and loading
+it would be I/O no property access performs. Load the relationship, or
+delete the rows with an explicit operation or a database `ON DELETE
+CASCADE` outside this contract.
+
+### Statement order
+
+`flush()` builds one ordered plan before it sends anything:
+
+- the INSERT of a row awaiting insert runs before the INSERT or UPDATE
+  that points to it, and that key travels from the one statement to the
+  next without ever reaching an entity property;
+- an UPDATE that moves or nulls a foreign key away from a row being
+  deleted runs before that DELETE;
+- the DELETE of a row runs before the DELETE of a row its foreign key
+  names;
+- an INSERT or UPDATE whose final foreign key names a row the same flush
+  removes — one it deletes, or one whose insert an aggregate removal
+  cancelled — is refused before SQL.
+
+Where no dependency decides, the order is deletes, inserts, then
+updates, each by entity class, by identifier where it is known, and last
+by the order the entity was scheduled in. Deleting first frees the
+unique foreign-key slot an owned `#[HasOne]` replacement needs.
+
+### Loops
+
+Rows that reference each other in a loop have no such order. A flush
+breaks one by deferring a **nullable** foreign key: the INSERT sends
+`NULL` and an UPDATE writes the key once both rows exist, inside the same
+transaction. That UPDATE must affect exactly one row; it matches no
+version and advances none, because it completes one logical insert before
+the row is externally visible, and the committed snapshot holds the final
+key. A loop among rows that are all being deleted is nullified the same
+way before the DELETEs.
+
+Only a nullable foreign key breaks a loop. A loop of `NOT NULL` columns
+throws `InvalidEntityStateException` before a transaction starts, naming
+the relationships it runs through: Kinetis does not depend on a
+backend's deferred-constraint configuration.
 
 ## Writing
 
@@ -619,7 +808,7 @@ For one manager, an object is in one of these states:
 
 | State | `contains()` | What `flush()` writes |
 |---|---|---|
-| Not held: new, or detached | false | nothing |
+| Not held: new, or detached | false | nothing, unless an owned relationship reaches it (see "Aggregates") |
 | Awaiting insert | true | an INSERT |
 | Managed | true | an UPDATE of its changed columns, and its next version when versioned, if any |
 | Scheduled for deletion | true | a DELETE |
@@ -628,18 +817,23 @@ For one manager, an object is in one of these states:
   new, or detached from this or another manager — and schedules its
   insert. Its class must be an entity in the factory's metadata, every
   property mapping a column initialized and admitted by the table under
-  "Loading" (a non-finite float is not), every `#[BelongsTo]` target one
-  this manager manages (see "Writing relationships"), an assigned identifier
-  not null and not held by another object of this manager, and a
-  generated identifier null. An assigned identity enters the identity map at once, so `find()`
-  returns the object; a generated one enters it when the insert commits.
+  "Loading" (a non-finite float is not), every `#[BelongsTo]` target an
+  entity of that metadata, an assigned identifier not null and not held
+  by another object of this manager, and a generated identifier null.
+  Which entity each target resolves to is settled by `flush()`, so
+  related entities can be persisted in any order (see "Aggregates"). An
+  assigned identity enters the identity map at once, so `find()` returns
+  the object; a generated one enters it when the insert commits.
   `persist()` leaves an entity awaiting insert or managed as it is, and
-  cancels the deletion of one scheduled for deletion.
-- **`remove($entity)`** schedules a managed entity for deletion. Until the
-  DELETE commits it stays managed, keeps its identity and is what loads of
-  its row return, and `persist()` cancels the deletion. An entity awaiting
-  insert is detached instead and its insert dropped, without SQL. Any
-  other object is refused.
+  cancels the deletion of one scheduled for deletion and of the aggregate
+  below it.
+- **`remove($entity)`** schedules a managed entity, and everything below
+  it through its owned relationships, for deletion. Until the DELETE
+  commits each stays managed, keeps its identity and is what loads of its
+  row return, and `persist()` cancels the deletion. An entity awaiting
+  insert is detached instead and its insert dropped, without SQL, as is
+  every pending entity below it. Any other object is refused, as is an
+  owned relationship this manager never loaded (see "Aggregates").
 - **Changes.** A managed entity has a snapshot: the values it was loaded
   or last flushed with. Each `flush()` compares every property mapping a
   column with it as a database value — a backed enum as its backing
@@ -660,25 +854,33 @@ A manager from `open()` begins it on the factory's client; inside a
 transaction session, `flush()` writes on the session's transaction and
 leaves COMMIT to the factory (see "Transaction sessions"):
 
-1. Before the transaction, it reads and validates every entity awaiting
-   insert as `persist()` does, and every managed entity, refuses an
-   identifier or version that changed and an UPDATE whose version cannot
-   advance, and computes each managed entity's changed columns. With
-   nothing to write, it returns without a transaction or any I/O.
-2. One INSERT per entity awaiting insert, in `persist()` order, of every
-   mapped column but a generated identifier.
+1. Before the transaction, it walks every initialized owned relationship
+   once and schedules the new entities it reaches (see "Aggregates"),
+   reads and validates every entity awaiting insert as `persist()` does
+   and every managed entity, refuses an identifier or version that
+   changed and an UPDATE whose version cannot advance, reconciles every
+   owned relationship it loaded, and orders every statement. With nothing
+   to write, it returns without a transaction or any I/O.
+2. One INSERT per entity awaiting insert, of every mapped column but a
+   generated identifier.
 3. One UPDATE of the changed columns, or one DELETE, per entity, by the
-   identifier column and, for a versioned entity, the version column
-   (see "Optimistic locking"), ordered by entity class and then
-   identifier, so concurrent flushes take row locks in one order.
-4. COMMIT.
+   identifier column and, for a versioned entity, the version column (see
+   "Optimistic locking").
+4. An UPDATE per deferred foreign key, where a loop of references needed
+   one (see "Loops").
+5. COMMIT.
 
-Every statement runs on that transaction. Nothing is batched, and no
-statement uses the key another insert generated.
+Statements 2 to 4 run in the one order "Statement order" states: every
+row after the rows its foreign keys name, and otherwise deletes, inserts
+then updates, by class and identifier, so concurrent flushes take row
+locks in one order where no dependency decides. Every statement runs on
+that transaction, and nothing is batched. A statement that needs a key an
+earlier INSERT generated takes it from that INSERT; no entity property
+holds it before COMMIT.
 
-A DELETE must affect exactly one row, and an UPDATE at most one. An
-unversioned UPDATE affecting none is followed by an existence check on
-the same transaction: the MySQL family counts changed rows rather than
+A DELETE and a deferred foreign key's UPDATE must affect exactly one
+row, and an entity's UPDATE at most one. An unversioned entity UPDATE
+affecting none is followed by an existence check on the same transaction: the MySQL family counts changed rows rather than
 matched ones, so an UPDATE writing the values its row already holds
 reports zero. A versioned UPDATE or DELETE affecting none throws
 `OptimisticLockException` without that check. A missing row, more than
@@ -1043,8 +1245,10 @@ instead.
 
 ## Not in scope
 
-Many-to-many relationships and pivot tables, writes through an inverse
-relationship or fixup of either side, cascades, orphan removal,
+Many-to-many relationships and pivot tables, foreign-key writes through
+an inverse relationship or fixup of either side, cascades a relationship
+does not own, cascade rules per operation, orphan removal through a
+relationship this manager never loaded,
 collection objects or mutation APIs, lazy loading or proxies, joined
 eager loading, streamed, capped or partial collections, predicates on a
 target's properties, timestamp,

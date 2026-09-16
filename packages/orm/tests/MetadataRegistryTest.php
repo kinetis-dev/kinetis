@@ -14,14 +14,18 @@ use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Author;
 use Kinetis\Orm\Tests\Fixtures\Charter;
 use Kinetis\Orm\Tests\Fixtures\Comment;
+use Kinetis\Orm\Tests\Fixtures\Crate;
 use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Edition;
 use Kinetis\Orm\Tests\Fixtures\Event;
 use Kinetis\Orm\Tests\Fixtures\Invoice;
+use Kinetis\Orm\Tests\Fixtures\Item;
 use Kinetis\Orm\Tests\Fixtures\Organization;
+use Kinetis\Orm\Tests\Fixtures\Part;
 use Kinetis\Orm\Tests\Fixtures\Post;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\Profile;
+use Kinetis\Orm\Tests\Fixtures\Seal;
 use Kinetis\Orm\Tests\Fixtures\Ticket;
 use Kinetis\Orm\Tests\Fixtures\Topic;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -150,6 +154,22 @@ final class MetadataRegistryTest extends TestCase
         self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
     }
 
+    public function test_an_owned_inverse_relationship_carries_its_ownership_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Part::class, Seal::class, Item::class, Crate::class])->toArray();
+        $entities = array_column($data['entities'], null, 'class');
+
+        self::assertSame([
+            ['name' => 'items', 'kind' => 'hasMany', 'target' => Item::class, 'mappedBy' => 'crate', 'nullable' => false, 'owned' => true],
+            ['name' => 'seal', 'kind' => 'hasOne', 'target' => Seal::class, 'mappedBy' => 'crate', 'nullable' => true, 'owned' => true],
+        ], $entities[Crate::class]['inverses']);
+        self::assertSame(
+            [['name' => 'parts', 'kind' => 'hasMany', 'target' => Part::class, 'mappedBy' => 'item', 'nullable' => false, 'owned' => true]],
+            $entities[Item::class]['inverses'],
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
     public function test_an_inverse_relationship_maps_no_column_and_round_trips(): void
     {
         $data = MetadataRegistry::fromClasses([Topic::class, Profile::class, Post::class, Organization::class, Comment::class, Charter::class, Author::class])->toArray();
@@ -157,17 +177,17 @@ final class MetadataRegistryTest extends TestCase
 
         self::assertSame(['id', 'name', 'organization'], array_column($entities[Author::class]['properties'], 'name'));
         self::assertSame([
-            ['name' => 'profile', 'kind' => 'hasOne', 'target' => Profile::class, 'mappedBy' => 'author', 'nullable' => true],
-            ['name' => 'posts', 'kind' => 'hasMany', 'target' => Post::class, 'mappedBy' => 'author', 'nullable' => false],
+            ['name' => 'profile', 'kind' => 'hasOne', 'target' => Profile::class, 'mappedBy' => 'author', 'nullable' => true, 'owned' => false],
+            ['name' => 'posts', 'kind' => 'hasMany', 'target' => Post::class, 'mappedBy' => 'author', 'nullable' => false, 'owned' => false],
         ], $entities[Author::class]['inverses']);
         self::assertSame(
-            [['name' => 'charter', 'kind' => 'hasOne', 'target' => Charter::class, 'mappedBy' => 'organization', 'nullable' => false]],
+            [['name' => 'charter', 'kind' => 'hasOne', 'target' => Charter::class, 'mappedBy' => 'organization', 'nullable' => false, 'owned' => false]],
             $entities[Organization::class]['inverses'],
         );
         self::assertSame(['id', 'parent', 'supersedes'], array_column($entities[Topic::class]['properties'], 'name'));
         self::assertSame([
-            ['name' => 'children', 'kind' => 'hasMany', 'target' => Topic::class, 'mappedBy' => 'parent', 'nullable' => false],
-            ['name' => 'supersededBy', 'kind' => 'hasOne', 'target' => Topic::class, 'mappedBy' => 'supersedes', 'nullable' => true],
+            ['name' => 'children', 'kind' => 'hasMany', 'target' => Topic::class, 'mappedBy' => 'parent', 'nullable' => false, 'owned' => false],
+            ['name' => 'supersededBy', 'kind' => 'hasOne', 'target' => Topic::class, 'mappedBy' => 'supersedes', 'nullable' => true, 'owned' => false],
         ], $entities[Topic::class]['inverses']);
         self::assertSame([], $entities[Profile::class]['inverses']);
         self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
@@ -296,6 +316,16 @@ final class MetadataRegistryTest extends TestCase
         yield 'a mappedBy referencing another class' => [
             [self::INVALID . 'InverseWrongDirection', self::INVALID . 'InverseChild'],
             'InverseWrongDirection::$children' . $inverse . 'mappedBy names ' . self::INVALID . 'InverseChild::$category, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'InverseWrongDirection',
+        ];
+        yield 'two owned inverse relationships over one #[BelongsTo]' => [
+            [self::INVALID . 'OwnedTwice', self::INVALID . 'OwnedOnce'],
+            'OwnedTwice::$first' . $inverse . 'it and ' . self::INVALID . 'OwnedTwice::$children both own ' . self::INVALID
+                . 'OwnedOnce::$owner, and one #[BelongsTo] property has at most one owned inverse relationship',
+        ];
+        yield 'two owners of one entity class' => [
+            [self::INVALID . 'OwnedChild', self::INVALID . 'OwnedFirst', self::INVALID . 'OwnedSecond'],
+            'OwnedSecond::$children' . $inverse . self::INVALID . 'OwnedChild is already owned through ' . self::INVALID
+                . 'OwnedFirst::$children, and an entity class has at most one owned inverse relationship in a MetadataRegistry',
         ];
         yield 'a mappedBy of its own class referencing another class' => [
             self::INVALID . 'InverseWrongSelf',

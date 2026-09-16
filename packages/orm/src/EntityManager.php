@@ -13,6 +13,9 @@ use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Exception\RollbackFailedException;
 use Kinetis\Orm\Exception\UnknownFlushOutcomeException;
+use Kinetis\Orm\Flush\FlushPlanner;
+use Kinetis\Orm\Flush\PlanNode;
+use Kinetis\Orm\Flush\Reference;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\MysqlTransaction;
@@ -42,14 +45,24 @@ use WeakMap;
  *
  * A relationship is loaded only on request, by the entity query terminal
  * that selected its source entities and on the same link, and its targets
- * resolve through the same identity map. flush() writes only a #[BelongsTo]
- * relationship, which holds an entity this manager already manages, or
- * null, and never reads an inverse relationship.
+ * resolve through the same identity map. A #[BelongsTo] relationship is the
+ * only one that maps a foreign key, and the only one flush() writes.
  *
- * flush() writes from a plan local to the call, and nothing in this
- * manager or its entities changes until COMMIT returns: flush()'s own, or
- * for a bound manager the factory's. A flush that fails before COMMIT
- * therefore leaves every change pending as it was.
+ * An owned inverse relationship is this manager's aggregate ownership edge.
+ * flush() walks every initialized one once, schedules the new entities it
+ * reaches, and reconciles the ones it loaded itself: a target dropped from
+ * a loaded relationship is deleted when its foreign key still names its
+ * owner, and updated when the application moved it to another. remove()
+ * takes the whole aggregate below an entity, and persist() gives it back.
+ * The manager never loads a relationship to answer one of those questions,
+ * never repairs the object graph, and refuses through automatic discovery
+ * an object whose deletion it committed.
+ *
+ * flush() writes from an ordered plan local to the call, which puts every
+ * row after the rows its foreign keys name, and nothing in this manager or
+ * its entities changes until COMMIT returns: flush()'s own, or for a bound
+ * manager the factory's. A flush that fails before COMMIT therefore leaves
+ * every change pending as it was, the graph it discovered included.
  *
  * Every method but close() and isClosed(), and every repository, query and
  * terminal created through this manager, refuses a closed manager, a Fiber
@@ -59,13 +72,19 @@ use WeakMap;
  * moment, so whoever owns the unit of work can end it.
  *
  * @phpstan-type Values array<string, null|bool|int|float|string>
- * @phpstan-type Insert array{entity: object, plan: EntityPlan<object>, values: Values}
- * @phpstan-type Write array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, values: Values|null, changes: Values}
+ * @phpstan-type Applied array{relations: list<array{object, string, list<object>}>, cancelled: list<object>}
  * @psalm-type Values = array<string, null|bool|int|float|string>
- * @psalm-type Insert = array{entity: object, plan: EntityPlan<object>, values: Values}
- * @psalm-type Write = array{entity: object, plan: EntityPlan<object>, id: int|string, version: int|null, values: Values|null, changes: Values}
+ * @psalm-type Applied = array{relations: list<array{object, string, list<object>}>, cancelled: list<object>}
  * @phpstan-import-type InverseMapping from MetadataRegistry
  * @psalm-import-type InverseMapping from MetadataRegistry
+ * @phpstan-import-type PlanValues from FlushPlanner
+ * @psalm-import-type PlanValues from FlushPlanner
+ * @phpstan-import-type InsertAction from FlushPlanner
+ * @psalm-import-type InsertAction from FlushPlanner
+ * @phpstan-import-type UpdateAction from FlushPlanner
+ * @psalm-import-type UpdateAction from FlushPlanner
+ * @phpstan-import-type DeleteAction from FlushPlanner
+ * @psalm-import-type DeleteAction from FlushPlanner
  */
 final class EntityManager
 {
@@ -92,9 +111,10 @@ final class EntityManager
     private WeakMap $snapshots;
 
     /**
-     * Entities awaiting insert, in persist() order, keyed by object id, each
-     * with the identifier it was persisted with: null when generated.
-     * Holding the entity keeps its object id from being reused.
+     * Entities awaiting insert, in scheduling order — persist() order, then
+     * the order a flush discovered them in — keyed by object id, each with
+     * the identifier it was scheduled with: null when generated. Holding the
+     * entity keeps its object id from being reused.
      *
      * @var array<int, array{object, int|string|null}>
      */
@@ -102,6 +122,25 @@ final class EntityManager
 
     /** @var WeakMap<object, true> managed entities scheduled for deletion */
     private WeakMap $removals;
+
+    /**
+     * The membership this manager loaded for each owned inverse
+     * relationship, or wrote into one, as the identifiers it held then.
+     * Only a relationship listed here has a database state to reconcile
+     * against; an application-initialized one has none.
+     *
+     * @var WeakMap<object, array<string, list<int|string>>>
+     */
+    private WeakMap $relations;
+
+    /**
+     * Every entity whose deletion this manager committed. Automatic
+     * discovery refuses one, so an unchanged collection cannot reinsert a
+     * row the manager deleted, while persist() still inserts it as new.
+     *
+     * @var WeakMap<object, true>
+     */
+    private WeakMap $tombstones;
 
     private bool $closed = false;
 
@@ -114,10 +153,11 @@ final class EntityManager
     private ?Throwable $failure = null;
 
     /**
-     * A bound manager's written flush with the identifiers it generated, for
-     * finish() to apply once the factory's COMMIT returns.
+     * A bound manager's written flush: its statements, the identifiers they
+     * generated and what else COMMIT applies, for finish() to apply once the
+     * factory's COMMIT returns.
      *
-     * @var array{list<Insert>, list<Write>, array<int, int>}|null
+     * @var array{list<PlanNode>, array<int, int>, Applied}|null
      */
     private ?array $flushed = null;
 
@@ -131,6 +171,8 @@ final class EntityManager
         $this->owner = Fiber::getCurrent();
         $this->snapshots = new WeakMap();
         $this->removals = new WeakMap();
+        $this->relations = new WeakMap();
+        $this->tombstones = new WeakMap();
     }
 
     /**
@@ -183,7 +225,13 @@ final class EntityManager
 
     /**
      * Schedules an entity this manager does not hold for insert, after
-     * validating it; keeps a managed entity, cancelling its deletion.
+     * validating it; keeps a managed entity, cancelling the deletion of it
+     * and of the aggregate below it.
+     *
+     * A #[BelongsTo] target that is an entity of this factory's metadata is
+     * admitted here whether or not this manager holds it yet: flush()
+     * validates the whole graph once, so persisting related entities in any
+     * order writes them in one transaction.
      *
      * @throws InvalidEntityStateException
      * @throws MappingException for a property value its type does not admit
@@ -191,10 +239,13 @@ final class EntityManager
     public function persist(object $entity): void
     {
         $this->assertUsable();
-        $plan = $this->plans[$entity::class] ?? throw InvalidEntityStateException::unmapped($entity::class);
+
+        if (!isset($this->plans[$entity::class])) {
+            throw InvalidEntityStateException::unmapped($entity::class);
+        }
 
         if (isset($this->snapshots[$entity])) {
-            unset($this->removals[$entity]);
+            $this->keep($entity);
 
             return;
         }
@@ -203,61 +254,54 @@ final class EntityManager
             return;
         }
 
-        /** @var int|string|null $id an identifier property is typed int or string */
-        $id = $plan->extract($entity, null, $this->heldIdentifier(...))[$plan->id];
-
-        if ($plan->generated) {
-            if ($id !== null) {
-                throw InvalidEntityStateException::generatedIdentifierSet($plan->class);
-            }
-        } elseif ($id === null) {
-            throw InvalidEntityStateException::nullIdentifier($plan->class);
-        } elseif (isset($this->identities[$plan->class][$id])) {
-            throw InvalidEntityStateException::identityConflict($plan->class);
-        } else {
-            $this->identities[$plan->class][$id] = $entity;
-        }
-
+        // Scheduled first: a refused re-persist leaves the committed
+        // deletion behind, so discovery still refuses the object.
+        $id = $this->schedule($entity, $this->identities);
+        unset($this->tombstones[$entity]);
         $this->inserts[spl_object_id($entity)] = [$entity, $id];
     }
 
     /**
-     * Schedules a managed entity for deletion, or detaches an entity
-     * awaiting insert without SQL.
+     * Schedules a managed entity and the aggregate below it for deletion,
+     * and detaches every entity awaiting insert it reaches, without SQL.
      *
-     * @throws InvalidEntityStateException for an object this manager does not hold
+     * An owned relationship this manager did not load is refused: skipping
+     * it would leave rows the ownership mapping promises to remove, and
+     * loading it would be I/O no property access performs.
+     *
+     * @throws InvalidEntityStateException for an object this manager does not
+     *         hold, and for an owned relationship it never loaded
      */
     public function remove(object $entity): void
     {
         $this->assertUsable();
-        $pending = $this->inserts[spl_object_id($entity)] ?? null;
 
-        if ($pending !== null) {
-            unset($this->inserts[spl_object_id($entity)]);
-
-            if ($pending[1] !== null) {
-                unset($this->identities[$entity::class][$pending[1]]);
-            }
-
-            return;
-        }
-
-        if (!isset($this->snapshots[$entity])) {
+        if (!isset($this->snapshots[$entity]) && !isset($this->inserts[spl_object_id($entity)])) {
             throw InvalidEntityStateException::notHeld($entity::class);
         }
 
-        $this->removals[$entity] = true;
+        [$deletes, $cancels] = $this->aggregate($entity, $this->inserts);
+
+        foreach ($cancels as $cancelled) {
+            $this->cancel($cancelled);
+        }
+
+        foreach ($deletes as $managed) {
+            $this->removals[$managed] = true;
+        }
     }
 
     /**
-     * Writes every scheduled insert, every change to a managed entity and
-     * every scheduled deletion in one transaction. Every entity is read and
-     * validated, and every change computed, before any statement; with
-     * nothing to write, nothing runs. A manager from open() begins the
-     * transaction on the factory's client and commits it. A bound manager
-     * writes on its transaction and leaves COMMIT to the factory. The package
-     * README's "Flushing" and "Transaction sessions" state the statements,
-     * the row checks and the failure contract.
+     * Writes the whole graph in one transaction: every scheduled insert, the
+     * new entities one pass across initialized owned relationships reaches,
+     * every change to a managed entity, every deletion an owned relationship
+     * calls for, and every scheduled deletion. Every entity is read,
+     * validated and ordered before any statement; with nothing to write,
+     * nothing runs. A manager from open() begins the transaction on the
+     * factory's client and commits it. A bound manager writes on its
+     * transaction and leaves COMMIT to the factory. The package README's
+     * "Aggregates", "Flushing" and "Transaction sessions" state the
+     * statements, the row checks and the failure contract.
      *
      * @throws InvalidEntityStateException
      * @throws MappingException for a property value its type does not admit
@@ -273,16 +317,16 @@ final class EntityManager
         $this->flushing = true;
 
         try {
-            [$inserts, $writes] = $this->plan();
+            [$nodes, $applied] = $this->prepare();
 
-            if ($inserts === [] && $writes === []) {
+            if ($nodes === []) {
                 return;
             }
 
             if ($this->link instanceof SqlTransaction) {
-                $this->flushed = [$inserts, $writes, $this->write($this->link, $inserts, $writes)];
+                $this->flushed = [$nodes, $this->write($this->link, $nodes), $applied];
             } else {
-                $this->commit($inserts, $writes);
+                $this->commit($nodes, $applied);
             }
         } catch (Throwable $failure) {
             $this->record($failure);
@@ -419,8 +463,8 @@ final class EntityManager
         $this->transaction = null;
 
         if ($committed && !$this->closed && $this->flushed !== null) {
-            [$inserts, $writes, $generated] = $this->flushed;
-            $this->apply($inserts, $writes, $generated);
+            [$nodes, $generated, $applied] = $this->flushed;
+            $this->apply($nodes, $generated, $applied);
         }
 
         $this->close();
@@ -628,7 +672,10 @@ final class EntityManager
 
     /**
      * Loads the inverse relationship $inverse into $entities and returns the
-     * next level: every target assigned, or held by an initialized one.
+     * next level: every target assigned, or held by an initialized one. An
+     * owned relationship it assigns also records that membership, which is
+     * what flush() reconciles a later one against; an initialized one records
+     * none, because the database state behind it is unknown.
      *
      * An initialized relationship is never overwritten, and every value it
      * holds must be a target this manager manages, or a nullable #[HasOne]'s
@@ -705,6 +752,12 @@ final class EntityManager
             };
             $plan->assign($entity, $property, $related);
 
+            // What the database held through an owned relationship is the one
+            // membership flush() may reconcile a later one against.
+            if ($inverse['owned']) {
+                $this->baseline($entity, $property, $loaded);
+            }
+
             foreach ($loaded as $held) {
                 $next[spl_object_id($held)] = $held;
             }
@@ -723,30 +776,278 @@ final class EntityManager
     }
 
     /**
-     * Every insert, in persist() order, and every update or delete, ordered
-     * by class and identifier so concurrent flushes lock rows in one order.
+     * A relationship target's foreign-key value while an entity is being
+     * scheduled: a managed target's identifier, or a Reference standing for
+     * any other entity of this factory's metadata, whose place in the graph
+     * flush() decides. An object that is no entity at all has none.
+     */
+    private function admit(object $target): int|string|Reference|null
+    {
+        return $this->heldIdentifier($target)
+            ?? (isset($this->plans[$target::class]) ? new Reference(spl_object_id($target)) : null);
+    }
+
+    /**
+     * Validates an entity this manager does not hold, as persist() does, and
+     * returns the identifier it is scheduled with: null when the database
+     * generates it. An assigned identity joins $identities, so the same pass
+     * refuses a second object for it.
      *
-     * @return array{list<Insert>, list<Write>}
+     * @param array<class-string, array<int|string, object>> $identities
+     * @throws InvalidEntityStateException
+     * @throws MappingException for a property value its type does not admit
+     */
+    private function schedule(object $entity, array &$identities): int|string|null
+    {
+        $plan = $this->plans[$entity::class];
+        /** @var int|string|null $id an identifier property is typed int or string */
+        $id = $plan->extract($entity, null, $this->admit(...))[$plan->id];
+
+        if ($plan->generated) {
+            return $id === null ? null : throw InvalidEntityStateException::generatedIdentifierSet($plan->class);
+        }
+
+        if ($id === null) {
+            throw InvalidEntityStateException::nullIdentifier($plan->class);
+        }
+
+        if (isset($identities[$plan->class][$id])) {
+            throw InvalidEntityStateException::identityConflict($plan->class);
+        }
+
+        $identities[$plan->class][$id] = $entity;
+
+        return $id;
+    }
+
+    /** Drops an entity awaiting insert and the identity an assigned one took. */
+    private function cancel(object $entity): void
+    {
+        $id = $this->inserts[spl_object_id($entity)][1] ?? null;
+        unset($this->inserts[spl_object_id($entity)]);
+
+        if ($id !== null) {
+            unset($this->identities[$entity::class][$id]);
+        }
+    }
+
+    /**
+     * Cancels the deletion of a managed entity and of every managed entity
+     * below it through an initialized owned relationship, so persist()
+     * restores exactly the aggregate remove() scheduled. The whole subgraph
+     * is collected and validated before the first deletion is cancelled, so
+     * a refusal anywhere leaves every scheduled deletion as it was.
+     *
+     * @throws InvalidEntityStateException
+     */
+    private function keep(object $entity): void
+    {
+        $queue = [$entity];
+        $seen = [spl_object_id($entity) => true];
+
+        for ($i = 0; isset($queue[$i]); $i++) {
+            foreach ($this->children($queue[$i], false) as $child) {
+                $key = spl_object_id($child);
+
+                if (!isset($seen[$key]) && isset($this->snapshots[$child])) {
+                    $seen[$key] = true;
+                    $queue[] = $child;
+                }
+            }
+        }
+
+        foreach ($queue as $owner) {
+            unset($this->removals[$owner]);
+        }
+    }
+
+    /**
+     * The aggregate below $entity: every managed entity to delete, and every
+     * entity awaiting insert whose insert is cancelled. Iterative and
+     * cycle-safe, and atomic — it changes nothing, so a refusal anywhere
+     * leaves the unit of work as it was.
+     *
+     * @param array<int, array{object, int|string|null}> $inserts the entities awaiting insert to cancel from
+     * @return array{list<object>, list<object>}
+     * @throws InvalidEntityStateException for an owned relationship of a managed entity this manager never loaded
+     */
+    private function aggregate(object $entity, array $inserts): array
+    {
+        $queue = [$entity];
+        $seen = [spl_object_id($entity) => true];
+        $deletes = [];
+        $cancels = [];
+
+        for ($i = 0; isset($queue[$i]); $i++) {
+            $owner = $queue[$i];
+            $managed = isset($this->snapshots[$owner]);
+
+            if ($managed) {
+                $deletes[] = $owner;
+            } elseif (isset($inserts[spl_object_id($owner)])) {
+                $cancels[] = $owner;
+            } else {
+                // Nothing this manager holds, so nothing below it is
+                // scheduled either.
+                continue;
+            }
+
+            foreach ($this->children($owner, $managed) as $child) {
+                $key = spl_object_id($child);
+
+                if (!isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $queue[] = $child;
+                }
+            }
+        }
+
+        return [$deletes, $cancels];
+    }
+
+    /**
+     * Everything $owner holds through its owned relationships, in mapped
+     * declaration and array order. $loaded demands that this manager loaded
+     * each of them: without that membership the database state behind the
+     * relationship is unknown, and neither skipping it nor reading it here
+     * is something an aggregate operation may do.
+     *
+     * @return list<object>
+     * @throws InvalidEntityStateException
+     */
+    private function children(object $owner, bool $loaded): array
+    {
+        $plan = $this->plans[$owner::class];
+        $children = [];
+
+        foreach ($plan->owned() as $property => $inverse) {
+            if (!$plan->initialized($owner, $property)) {
+                if ($loaded) {
+                    throw InvalidEntityStateException::ownedRelationNotLoaded($plan->class, $property);
+                }
+
+                continue;
+            }
+
+            if ($loaded && !isset(($this->relations[$owner] ?? [])[$property])) {
+                throw InvalidEntityStateException::ownedRelationNotLoaded($plan->class, $property);
+            }
+
+            foreach ($this->members($owner, $property, $inverse) as $child) {
+                $children[] = $child;
+            }
+        }
+
+        return $children;
+    }
+
+    /**
+     * What an initialized owned relationship holds, in array order, without
+     * a #[HasOne]'s null.
+     *
+     * @param InverseMapping $inverse
+     * @return list<object>
+     * @throws InvalidEntityStateException for a value outside the target class
+     */
+    private function members(object $owner, string $property, array $inverse): array
+    {
+        $plan = $this->plans[$owner::class];
+        $related = $plan->related($owner, $property);
+        $members = [];
+
+        foreach (is_array($related) ? array_values($related) : [$related] as $member) {
+            if ($member === null) {
+                continue;
+            }
+
+            $members[] = $member instanceof $inverse['target']
+                ? $member
+                : throw InvalidEntityStateException::relationTargetNotHeld($plan->class, $property);
+        }
+
+        return $members;
+    }
+
+    /**
+     * Records the membership an owned relationship was loaded or written
+     * with: the one state this manager may reconcile a later membership
+     * against.
+     *
+     * @param list<object> $members
+     */
+    private function baseline(object $owner, string $property, array $members): void
+    {
+        $identifiers = [];
+
+        foreach ($members as $member) {
+            $identifier = $this->heldIdentifier($member);
+
+            if ($identifier !== null) {
+                $identifiers[] = $identifier;
+            }
+        }
+
+        $relations = $this->relations[$owner] ?? [];
+        $relations[$property] = $identifiers;
+        $this->relations[$owner] = $relations;
+    }
+
+    /**
+     * Every entity a flush reads, in one order: those awaiting insert in
+     * scheduling order, then the managed ones in the order the identity map
+     * took them.
+     *
+     * @param array<int, array{object, int|string|null}> $inserts
+     * @return list<object>
+     */
+    private function roots(array $inserts): array
+    {
+        $roots = [];
+
+        foreach ($inserts as [$entity]) {
+            $roots[] = $entity;
+        }
+
+        foreach ($this->identities as $entities) {
+            foreach ($entities as $entity) {
+                if (isset($this->snapshots[$entity])) {
+                    $roots[] = $entity;
+                }
+            }
+        }
+
+        return $roots;
+    }
+
+    /**
+     * Everything one flush writes, computed without changing anything: the
+     * ordered statements, the owned memberships COMMIT records, and the
+     * inserts an orphaned aggregate cancels. A refusal here leaves the unit
+     * of work exactly as it was, so the flush can run again once its cause
+     * is fixed.
+     *
+     * @return array{list<PlanNode>, Applied}
      * @throws InvalidEntityStateException
      * @throws MappingException
      */
-    private function plan(): array
+    private function prepare(): array
     {
-        $identify = $this->heldIdentifier(...);
-        $inserts = [];
+        $inserts = $this->discover();
+        $identify = fn (object $target): int|string|Reference|null => $this->heldIdentifier($target)
+            ?? (isset($inserts[spl_object_id($target)]) ? new Reference(spl_object_id($target)) : null);
+        $values = [];
 
-        foreach ($this->inserts as [$entity, $id]) {
+        foreach ($inserts as $key => [$entity, $id]) {
             $plan = $this->plans[$entity::class];
-            $values = $plan->extract($entity, null, $identify);
+            $values[$key] = $plan->extract($entity, null, $identify);
 
-            if ($values[$plan->id] !== $id) {
+            if ($values[$key][$plan->id] !== $id) {
                 throw InvalidEntityStateException::identifierChanged($plan->class);
             }
-
-            $inserts[] = ['entity' => $entity, 'plan' => $plan, 'values' => $values];
         }
 
-        $writes = [];
+        $managed = [];
+        $removals = [];
 
         foreach ($this->identities as $class => $entities) {
             $plan = $this->plans[$class];
@@ -758,73 +1059,351 @@ final class EntityManager
                     continue;
                 }
 
-                /** @var int|string $id */
-                $id = $snapshot[$plan->id];
-                $values = $plan->extract($entity, $snapshot, $identify);
+                $key = spl_object_id($entity);
+                $values[$key] = $plan->extract($entity, $snapshot, $identify);
 
-                if ($values[$plan->id] !== $id) {
+                if ($values[$key][$plan->id] !== $snapshot[$plan->id]) {
                     throw InvalidEntityStateException::identifierChanged($plan->class);
                 }
 
-                /** @var int|null $version a version property is typed int */
-                $version = $plan->version === null ? null : $snapshot[$plan->version];
-
-                if ($plan->version !== null && $values[$plan->version] !== $version) {
+                if ($plan->version !== null && $values[$key][$plan->version] !== $snapshot[$plan->version]) {
                     throw InvalidEntityStateException::versionChanged($plan->class);
                 }
 
+                $managed[] = $entity;
+
                 if (isset($this->removals[$entity])) {
-                    $writes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'version' => $version, 'values' => null, 'changes' => []];
-
-                    continue;
+                    $removals[$key] = $entity;
                 }
-
-                $changes = array_filter(
-                    $values,
-                    static fn (mixed $value, string $name): bool => $value !== $snapshot[$name],
-                    ARRAY_FILTER_USE_BOTH,
-                );
-
-                if ($changes === []) {
-                    continue;
-                }
-
-                // The version is unchanged, so it is not among $changes: the
-                // UPDATE sets the next one, which the snapshot takes on COMMIT.
-                if ($plan->version !== null) {
-                    /** @var int $version set above for a versioned entity */
-                    $changes[$plan->version] = $values[$plan->version] = $version !== PHP_INT_MAX
-                        ? $version + 1
-                        : throw InvalidEntityStateException::versionExhausted($plan->class);
-                }
-
-                $writes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'version' => $version, 'values' => $values, 'changes' => $changes];
             }
         }
 
-        // One class's identifiers share a type: an int compares numerically,
-        // a string by its bytes.
-        usort($writes, static fn (array $a, array $b): int => strcmp($a['plan']->class, $b['plan']->class)
-            ?: (is_int($a['id']) && is_int($b['id']) ? $a['id'] <=> $b['id'] : strcmp((string) $a['id'], (string) $b['id'])));
+        [$relations, $orphans, $cancelled] = $this->reconcile($inserts, $values, $removals);
+        $removals += $orphans;
+        $scheduled = [];
 
-        return [$inserts, $writes];
+        foreach ($inserts as $key => [$entity]) {
+            if (!isset($cancelled[$key])) {
+                $scheduled[] = ['entity' => $entity, 'plan' => $this->plans[$entity::class], 'values' => $values[$key]];
+            }
+        }
+
+        [$updates, $deletes] = $this->writes($managed, $values, $removals);
+
+        return [
+            FlushPlanner::plan($scheduled, $updates, $deletes),
+            ['relations' => $relations, 'cancelled' => array_values($cancelled)],
+        ];
     }
 
     /**
-     * @param list<Insert> $inserts
-     * @param list<Write> $writes
+     * Each managed entity's DELETE, or the UPDATE of its changed columns and
+     * the next version a versioned entity takes.
+     *
+     * @param list<object> $managed
+     * @param array<int, PlanValues> $values
+     * @param array<int, object> $removals
+     * @return array{list<UpdateAction>, list<DeleteAction>}
+     * @throws InvalidEntityStateException
+     */
+    private function writes(array $managed, array $values, array $removals): array
+    {
+        $updates = [];
+        $deletes = [];
+
+        foreach ($managed as $entity) {
+            $key = spl_object_id($entity);
+            $plan = $this->plans[$entity::class];
+            $snapshot = $this->snapshots[$entity];
+            /** @var int|string $id a managed entity's snapshot holds its identifier */
+            $id = $snapshot[$plan->id];
+            /** @var int|null $version a version property is typed int */
+            $version = $plan->version === null ? null : $snapshot[$plan->version];
+
+            if (isset($removals[$key])) {
+                $deletes[] = ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'version' => $version, 'snapshot' => $snapshot];
+
+                continue;
+            }
+
+            $changes = array_filter(
+                $values[$key],
+                static fn (mixed $value, string $name): bool => $value !== $snapshot[$name],
+                ARRAY_FILTER_USE_BOTH,
+            );
+
+            if ($changes === []) {
+                continue;
+            }
+
+            // The version is unchanged, so it is not among $changes: the
+            // UPDATE sets the next one, which the snapshot takes on COMMIT.
+            if ($plan->version !== null) {
+                /** @var int $version set above for a versioned entity */
+                $changes[$plan->version] = $values[$key][$plan->version] = $version !== PHP_INT_MAX
+                    ? $version + 1
+                    : throw InvalidEntityStateException::versionExhausted($plan->class);
+            }
+
+            $updates[] = [
+                'entity' => $entity,
+                'plan' => $plan,
+                'id' => $id,
+                'version' => $version,
+                'snapshot' => $snapshot,
+                'values' => $values[$key],
+                'changes' => $changes,
+            ];
+        }
+
+        return [$updates, $deletes];
+    }
+
+    /**
+     * One pass across every initialized owned relationship, from the
+     * entities awaiting insert in scheduling order and then the managed
+     * ones, depth first in mapped declaration and array order, scheduling
+     * every new entity it reaches as persist() would.
+     *
+     * An uninitialized relationship is skipped and never loaded: an
+     * uninitialized property holds no object, so no in-memory entity is
+     * lost. An object whose deletion this manager committed is refused
+     * here rather than inserted again.
+     *
+     * Nothing is scheduled on this manager: the pass returns the entities
+     * awaiting insert the flush will write, and COMMIT records them.
+     *
+     * @return array<int, array{object, int|string|null}>
+     * @throws InvalidEntityStateException
+     * @throws MappingException
+     */
+    private function discover(): array
+    {
+        $inserts = $this->inserts;
+        $identities = $this->identities;
+        $roots = $this->roots($inserts);
+        $seen = [];
+
+        foreach ($roots as $root) {
+            $seen[spl_object_id($root)] = true;
+        }
+
+        // A stack, taken from the top and filled in reverse, walks the graph
+        // depth first without growing the call stack.
+        $stack = array_reverse($roots);
+
+        while ($stack !== []) {
+            $owner = array_pop($stack);
+            $key = spl_object_id($owner);
+
+            if (!isset($this->snapshots[$owner]) && !isset($inserts[$key])) {
+                $inserts[$key] = [$owner, $this->schedule($owner, $identities)];
+            }
+
+            $plan = $this->plans[$owner::class];
+            $children = [];
+
+            foreach ($plan->owned() as $property => $inverse) {
+                if (!$plan->initialized($owner, $property)) {
+                    continue;
+                }
+
+                foreach ($this->members($owner, $property, $inverse) as $child) {
+                    if (isset($this->tombstones[$child])) {
+                        throw InvalidEntityStateException::deletedChildRediscovered($plan->class, $property, $inverse['target']);
+                    }
+
+                    if (!isset($seen[spl_object_id($child)])) {
+                        $seen[spl_object_id($child)] = true;
+                        $children[] = $child;
+                    }
+                }
+            }
+
+            foreach (array_reverse($children) as $child) {
+                $stack[] = $child;
+            }
+        }
+
+        return $inserts;
+    }
+
+    /**
+     * Checks every initialized owned relationship against the graph the
+     * flush will write, and diffs the ones this manager loaded.
+     *
+     * A target it holds must name its owner through its own #[BelongsTo]
+     * property, must appear once, and must appear under one owner. A target
+     * the loaded membership held and the relationship no longer does is an
+     * orphan when its foreign key still names this owner or is null, and its
+     * whole aggregate is deleted; when the foreign key names another owner
+     * the ordinary UPDATE moves it, and a loaded relationship on that owner
+     * must hold it. Nothing here writes an owner column or advances an
+     * owner's version.
+     *
+     * @param array<int, array{object, int|string|null}> $inserts
+     * @param array<int, PlanValues> $values every scheduled entity's extracted values, by object id
+     * @param array<int, object> $removals managed entities already scheduled for deletion, by object id
+     * @return array{list<array{object, string, list<object>}>, array<int, object>, array<int, object>}
+     * @throws InvalidEntityStateException
+     */
+    private function reconcile(array $inserts, array $values, array $removals): array
+    {
+        $holder = [];
+        $loaded = [];
+        $records = [];
+
+        foreach ($this->roots($inserts) as $owner) {
+            $plan = $this->plans[$owner::class];
+
+            foreach ($plan->owned() as $property => $inverse) {
+                if (!$plan->initialized($owner, $property)) {
+                    continue;
+                }
+
+                $members = [];
+                $present = [];
+
+                foreach ($this->members($owner, $property, $inverse) as $child) {
+                    $key = spl_object_id($child);
+                    $identifier = $this->heldIdentifier($child) ?? ($inserts[$key][1] ?? null);
+
+                    if (isset($holder[$key]) || ($identifier !== null && in_array($identifier, $present, true))) {
+                        throw ($holder[$key] ?? $owner) === $owner
+                            ? InvalidEntityStateException::duplicateOwnedChild($plan->class, $property, $inverse['target'])
+                            : InvalidEntityStateException::ownedChildShared($plan->class, $property, $inverse['target']);
+                    }
+
+                    if (!$this->owns($owner, $child, $inverse['mappedBy'], $values)) {
+                        throw InvalidEntityStateException::ownedChildElsewhere($plan->class, $property, $inverse['target']);
+                    }
+
+                    $holder[$key] = $owner;
+                    $members[] = $child;
+
+                    if ($identifier !== null) {
+                        $present[] = $identifier;
+                    }
+                }
+
+                $baseline = ($this->relations[$owner] ?? [])[$property] ?? null;
+
+                // A new owner's relationship is its complete membership, so
+                // COMMIT makes it the baseline. A managed one this manager
+                // never loaded gets none: what the database holds through it
+                // stays unknown.
+                if ($baseline !== null || !isset($this->snapshots[$owner])) {
+                    $records[] = [$owner, $property, $members];
+                }
+
+                if ($baseline !== null) {
+                    $loaded[] = [$owner, $property, $inverse, $baseline, $present];
+                }
+            }
+        }
+
+        $orphans = [];
+        $cancelled = [];
+
+        foreach ($loaded as [$owner, $property, $inverse, $baseline, $present]) {
+            $plan = $this->plans[$owner::class];
+
+            foreach ($baseline as $identifier) {
+                if (in_array($identifier, $present, true)) {
+                    continue;
+                }
+
+                $child = $this->identities[$inverse['target']][$identifier] ?? null;
+
+                if ($child === null || !isset($this->snapshots[$child])) {
+                    continue;
+                }
+
+                if ($this->owns($owner, $child, $inverse['mappedBy'], $values)
+                    || $values[spl_object_id($child)][$inverse['mappedBy']] === null) {
+                    [$deletes, $cancels] = $this->aggregate($child, $inserts);
+
+                    foreach ($deletes as $managed) {
+                        $orphans[spl_object_id($managed)] = $managed;
+                    }
+
+                    foreach ($cancels as $pending) {
+                        $cancelled[spl_object_id($pending)] = $pending;
+                    }
+
+                    continue;
+                }
+
+                $next = $this->owner($plan, $values[spl_object_id($child)][$inverse['mappedBy']], $inserts);
+
+                if ($next !== null && $this->watches($next, $property) && ($holder[spl_object_id($child)] ?? null) !== $next) {
+                    throw InvalidEntityStateException::reparentedChildMissing($plan->class, $property, $inverse['target']);
+                }
+            }
+        }
+
+        return [$records, $orphans + $removals, $cancelled];
+    }
+
+    /**
+     * The entity a child's foreign key now names, or null when this manager
+     * holds no object for it.
+     *
+     * @param EntityPlan<object> $plan the owner's mapping
+     * @param array<int, array{object, int|string|null}> $inserts
+     */
+    private function owner(EntityPlan $plan, null|bool|int|float|string|Reference $key, array $inserts): ?object
+    {
+        if ($key instanceof Reference) {
+            return $inserts[$key->entity][0] ?? null;
+        }
+
+        return is_int($key) || is_string($key) ? $this->identities[$plan->class][$key] ?? null : null;
+    }
+
+    /**
+     * Whether $owner's relationship is one this flush reconciles: a new
+     * owner's initialized relationship is its complete membership, and a
+     * managed owner's counts once this manager loaded it.
+     */
+    private function watches(object $owner, string $property): bool
+    {
+        return $this->plans[$owner::class]->initialized($owner, $property)
+            && (!isset($this->snapshots[$owner]) || isset(($this->relations[$owner] ?? [])[$property]));
+    }
+
+    /**
+     * Whether the foreign key $child will hold names $owner. It reads the
+     * extracted value, which is the child's snapshot foreign key when the
+     * #[BelongsTo] property was never loaded, so dropping an eagerly loaded
+     * child from a collection is a complete instruction on its own.
+     *
+     * @param array<int, PlanValues> $values
+     */
+    private function owns(object $owner, object $child, string $mappedBy, array $values): bool
+    {
+        $key = $values[spl_object_id($child)][$mappedBy] ?? null;
+
+        return $key instanceof Reference
+            ? $key->entity === spl_object_id($owner)
+            : $key !== null && $key === $this->heldIdentifier($owner);
+    }
+
+    /**
+     * @param list<PlanNode> $nodes
+     * @param Applied $applied
      * @throws OptimisticLockException
      * @throws RollbackFailedException
      * @throws UnknownFlushOutcomeException
      */
-    private function commit(array $inserts, array $writes): void
+    private function commit(array $nodes, array $applied): void
     {
         $transaction = $this->link->beginTransaction();
         $this->transaction = $transaction;
         $committing = false;
 
         try {
-            $generated = $this->write($transaction, $inserts, $writes);
+            $generated = $this->write($transaction, $nodes);
             $committing = true;
             $transaction->commit();
         } catch (Throwable $failure) {
@@ -854,63 +1433,73 @@ final class EntityManager
 
         // A close() while COMMIT was answered has already detached everything.
         if (!$this->closed) {
-            $this->apply($inserts, $writes, $generated);
+            $this->apply($nodes, $generated, $applied);
         }
     }
 
     /**
-     * Runs every statement on $transaction and returns the identifier each
-     * generated insert reported, by its position in $inserts. No entity is
-     * written.
+     * Runs every statement of the plan, in its order, and returns the
+     * identifier each generated insert reported, by the object id of the
+     * entity it inserted. Every later statement resolves its references from
+     * those keys, and no entity is written.
      *
-     * @param list<Insert> $inserts
-     * @param list<Write> $writes
+     * @param list<PlanNode> $nodes
      * @return array<int, int>
      * @throws OptimisticLockException
      */
-    private function write(SqlTransaction $transaction, array $inserts, array $writes): array
+    private function write(SqlTransaction $transaction, array $nodes): array
     {
         $this->assertOpen();
         $generated = [];
 
-        foreach ($inserts as $i => ['plan' => $plan, 'values' => $values]) {
-            $query = new Query($transaction)->table($plan->table);
+        foreach ($nodes as $node) {
+            $plan = $node->plan;
+            $values = self::resolve($node->sent, $generated);
 
-            if (!$plan->generated) {
-                $query->insert($plan->row($values));
+            if ($node->kind === 'insert') {
+                /** @var object $entity an insert always writes one */
+                $entity = $node->entity;
+                $insert = new Query($transaction)->table($plan->table);
+
+                if (!$plan->generated) {
+                    $insert->insert($plan->row($values));
+                    $this->assertOpen();
+
+                    continue;
+                }
+
+                unset($values[$plan->id]);
+                $key = $insert->insertGetId($plan->row($values), $plan->column($plan->id));
                 $this->assertOpen();
+                $generated[spl_object_id($entity)] = $plan->generatedIdentifier($key);
 
                 continue;
             }
 
-            unset($values[$plan->id]);
-            $key = $query->insertGetId($plan->row($values), $plan->column($plan->id));
-            $this->assertOpen();
-            $generated[$i] = $plan->generatedIdentifier($key);
-        }
-
-        foreach ($writes as ['plan' => $plan, 'id' => $id, 'version' => $version, 'values' => $values, 'changes' => $changes]) {
-            $statement = $values === null ? 'DELETE' : 'UPDATE';
+            /** @var int|string $id a fix-up of a generated row resolves to the key its insert reported */
+            $id = $node->id instanceof Reference ? $generated[$node->id->entity] : $node->id;
             $row = new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id);
 
-            if ($plan->version !== null) {
-                $row->where($plan->column($plan->version), '=', $version);
+            if ($plan->version !== null && $node->version !== null) {
+                $row->where($plan->column($plan->version), '=', $node->version);
             }
 
-            $affected = $values === null ? $row->delete() : $row->update($plan->row($changes));
+            $affected = $node->kind === 'delete' ? $row->delete() : $row->update($plan->row($values));
             // The MySQL family reports changed rows, not matched ones, so an
             // UPDATE writing the values its row already holds affects none. A
             // versioned UPDATE that matches always changes its version, so
-            // none means the row is stale.
-            $exists = $affected === 0 && $values !== null && $plan->version === null
+            // none means the row is stale, and a fix-up always writes a key
+            // the row does not hold yet.
+            $exists = $affected === 0 && $node->kind === 'update' && $node->version === null
                 && new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id)->exists();
             $this->assertOpen();
+            $statement = $node->kind === 'delete' ? 'DELETE' : 'UPDATE';
 
             if ($affected > 1) {
                 throw InvalidEntityStateException::ambiguousRow($plan->class, $statement, $affected);
             }
 
-            if ($affected === 0 && $plan->version !== null) {
+            if ($affected === 0 && $node->version !== null) {
                 throw OptimisticLockException::stale($plan->class, $statement);
             }
 
@@ -925,20 +1514,62 @@ final class EntityManager
     /**
      * Snapshots every written entity with the values the flush sent, not
      * whatever its properties hold by now, and writes each inserted or
-     * updated entity's version: the flush owns it, so a change made
-     * meanwhile is overwritten.
+     * updated entity's version and each generated identifier: the flush owns
+     * them, so a change made meanwhile is overwritten. A deleted entity is
+     * detached behind a tombstone, every reconciled owned relationship takes
+     * the membership the plan was built from, and every membership this
+     * manager still holds loses the rows the flush deleted.
      *
-     * @param list<Insert> $inserts
-     * @param list<Write> $writes
+     * @param list<PlanNode> $nodes
      * @param array<int, int> $generated
+     * @param Applied $applied
      */
-    private function apply(array $inserts, array $writes, array $generated): void
+    private function apply(array $nodes, array $generated, array $applied): void
     {
-        foreach ($inserts as $i => ['entity' => $entity, 'plan' => $plan, 'values' => $values]) {
-            if ($plan->generated) {
-                $plan->assign($entity, $plan->id, $generated[$i]);
-                $values[$plan->id] = $generated[$i];
-                $this->identities[$plan->class][$generated[$i]] = $entity;
+        foreach ($applied['cancelled'] as $entity) {
+            $this->cancel($entity);
+        }
+
+        $deleted = [];
+
+        foreach ($nodes as $node) {
+            $plan = $node->plan;
+            $entity = $node->entity;
+
+            if ($entity === null) {
+                // A fix-up completes the row an insert or a delete owns.
+                continue;
+            }
+
+            if ($node->kind === 'delete') {
+                /** @var int|string $id a delete names a managed row */
+                $id = $node->id;
+                $deleted[$plan->class][$id] = true;
+                unset(
+                    $this->identities[$plan->class][$id],
+                    $this->snapshots[$entity],
+                    $this->removals[$entity],
+                    $this->relations[$entity],
+                );
+                $this->tombstones[$entity] = true;
+
+                continue;
+            }
+
+            /** @var PlanValues $planned an insert and an update both carry them */
+            $planned = $node->values;
+            $values = self::resolve($planned, $generated);
+
+            if ($node->kind === 'insert') {
+                if ($plan->generated) {
+                    $values[$plan->id] = $generated[spl_object_id($entity)];
+                    $plan->assign($entity, $plan->id, $generated[spl_object_id($entity)]);
+                }
+
+                /** @var int|string $identity an identifier is an int or a string by now */
+                $identity = $values[$plan->id];
+                $this->identities[$plan->class][$identity] = $entity;
+                unset($this->inserts[spl_object_id($entity)]);
             }
 
             if ($plan->version !== null) {
@@ -947,25 +1578,74 @@ final class EntityManager
                 $plan->assign($entity, $plan->version, $version);
             }
 
-            unset($this->inserts[spl_object_id($entity)]);
             $this->snapshots[$entity] = $values;
         }
 
-        foreach ($writes as ['entity' => $entity, 'plan' => $plan, 'id' => $id, 'values' => $values]) {
-            if ($values === null) {
-                unset($this->identities[$plan->class][$id], $this->snapshots[$entity], $this->removals[$entity]);
-
-                continue;
+        foreach ($applied['relations'] as [$owner, $property, $members]) {
+            if (isset($this->snapshots[$owner])) {
+                $this->baseline($owner, $property, $members);
             }
-
-            if ($plan->version !== null) {
-                /** @var int $next plan() set it */
-                $next = $values[$plan->version];
-                $plan->assign($entity, $plan->version, $next);
-            }
-
-            $this->snapshots[$entity] = $values;
         }
+
+        $this->prune($deleted);
+    }
+
+    /**
+     * Drops every row the flush deleted from the memberships this manager
+     * still holds, so a loaded relationship never names a deleted row.
+     *
+     * @param array<class-string, array<int|string, true>> $deleted
+     */
+    private function prune(array $deleted): void
+    {
+        if ($deleted === []) {
+            return;
+        }
+
+        $pruned = [];
+
+        foreach ($this->relations as $owner => $relations) {
+            $plan = $this->plans[$owner::class];
+            $changed = false;
+
+            foreach ($relations as $property => $identifiers) {
+                $target = $plan->target($property);
+                $kept = array_values(array_filter(
+                    $identifiers,
+                    static fn (int|string $identifier): bool => !isset($deleted[$target][$identifier]),
+                ));
+
+                if ($kept !== $identifiers) {
+                    $relations[$property] = $kept;
+                    $changed = true;
+                }
+            }
+
+            if ($changed) {
+                $pruned[] = [$owner, $relations];
+            }
+        }
+
+        foreach ($pruned as [$owner, $relations]) {
+            $this->relations[$owner] = $relations;
+        }
+    }
+
+    /**
+     * @param PlanValues $values
+     * @param array<int, int> $generated
+     * @return Values
+     */
+    private static function resolve(array $values, array $generated): array
+    {
+        foreach ($values as $name => $value) {
+            if ($value instanceof Reference) {
+                $values[$name] = $generated[$value->entity];
+            }
+        }
+
+        /** @var Values $values every Reference names an insert the plan ran first */
+        return $values;
     }
 
     /**
@@ -995,6 +1675,8 @@ final class EntityManager
         $this->snapshots = new WeakMap();
         $this->inserts = [];
         $this->removals = new WeakMap();
+        $this->relations = new WeakMap();
+        $this->tombstones = new WeakMap();
         $this->flushed = null;
     }
 }

@@ -11,8 +11,9 @@ composer require kinetis/orm kinetis/database-bridge
 `kinetis/orm` depends on `kinetis/query-builder` and
 `kinetis/persistence`, never on `kinetis/framework`. Its contract — the
 mapping rules, identifiers, the admitted row values, the identity map,
-the repository and query API, relationships, writing and flushing,
-optimistic locking, transaction sessions, and what it does not do — is
+the repository and query API, relationships, aggregates, writing and
+flushing, optimistic locking, transaction sessions, and what it does not
+do — is
 the [package README](https://github.com/kinetis-dev/orm#readme). This
 page covers using it in an application.
 ````
@@ -22,8 +23,9 @@ through typed repositories and entity queries without running their
 constructors, and each unit of work holds one object per row, tracks
 changes to it, and writes new, changed and removed entities in one
 transaction on `flush()`. Entities reference each other through explicit
-`#[BelongsTo]`, `#[HasOne]` and `#[HasMany]` relationships, and a
-`#[Version]` property adds optimistic locking.
+`#[BelongsTo]`, `#[HasOne]` and `#[HasMany]` relationships — an inverse
+one marked `owned` makes a whole aggregate persist and remove together —
+and a `#[Version]` property adds optimistic locking.
 
 ## Define an entity
 
@@ -92,8 +94,9 @@ other section.
 
 An entity opts into optimistic locking with `#[Version]` under the
 README's "Optimistic locking" contract, and declares relationships with
-`#[BelongsTo]`, `#[HasOne]` and `#[HasMany]` under its "Relationships"
-contract; the bridge adds nothing to either. A relationship's target
+`#[BelongsTo]`, `#[HasOne]` and `#[HasMany]` — `owned` included — under
+its "Relationships" and "Aggregates" contracts; the bridge adds nothing
+to any of them. A relationship's target
 must be an entity the same scan finds. Every one of these attributes is
 part of the compiled metadata, so run `kinetis build` again after
 adding, removing or moving one.
@@ -168,6 +171,98 @@ a plain `Query` on the manager's link for SQL the entity API does not
 cover. The README's "Repositories and queries" and "Relationships" give
 the complete API. `EntityRepository` is final: an application repository
 wraps it and injects `EntityManager`, which makes it request-scoped too.
+
+## Write a whole aggregate
+
+An inverse relationship marked `owned` ties a parent and its children
+into one unit. Mark it once on the parent:
+
+```{code-block} php
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\HasMany;
+use Kinetis\Orm\Attributes\Id;
+
+#[Entity(table: 'orders')]
+final class Order
+{
+    #[Id(generated: true)]
+    private ?int $id = null;
+
+    /** @var list<OrderLine> */
+    #[HasMany(target: OrderLine::class, mappedBy: 'order', owned: true)]
+    private array $lines;
+
+    public function __construct(private int $customerId)
+    {
+        // A new order's lines are known in full; a loaded one's are
+        // whatever with('lines') read, so the property declares no default.
+        $this->lines = [];
+    }
+
+    public function add(OrderLine $line): void
+    {
+        $this->lines[] = $line; // $line->order() is this order
+    }
+}
+```
+
+One `persist()` then writes the graph, in one transaction, in an order
+the foreign keys accept — the order row first, and the key the database
+generated for it in each line:
+
+```{code-block} php
+#[Post('/orders')]
+public function create(CreateOrder $input): array
+{
+    $order = new Order($input->customerId);
+
+    foreach ($input->lines as $line) {
+        $order->add(new OrderLine($order, $line->sku, $line->quantity));
+    }
+
+    $this->entities->persist($order);
+    $this->entities->flush();
+
+    return ['id' => $order->id()];
+}
+```
+
+Changing and removing the aggregate works the same way, on a
+relationship the request **loaded**:
+
+```{code-block} php
+$order = $this->entities->repository(Order::class)
+    ->query()
+    ->where('id', '=', $id)
+    ->with('lines')     // the membership the flush reconciles against
+    ->first();
+
+$order->removeLine($sku);   // that line's row is deleted
+$order->add($newLine);      // the new row is inserted
+$this->entities->flush();
+
+$this->entities->remove($order); // every line, then the order
+$this->entities->flush();
+```
+
+- **`with()` is the permission to remove.** An owned relationship this
+  manager never loaded still discovers and inserts new children, but
+  removes nothing: what the database holds behind it is unknown, and
+  reading it would be I/O a property access never performs. `remove()`
+  on such an owner is refused, naming the relationship to load.
+- **Nothing is repaired for you.** The child's `#[BelongsTo]` property is
+  the foreign key. Keep both sides consistent in the entity's own
+  methods; a child whose foreign key names another owner fails the flush
+  before SQL.
+- **Keys appear after `COMMIT`.** A generated key travels from the INSERT
+  that produced it to the statements that need it, and reaches the object
+  only once `COMMIT` returns.
+- **Loops need a nullable column.** Rows that reference each other are
+  written by deferring a nullable foreign key inside the transaction; a
+  loop of `NOT NULL` columns is refused before any statement.
+
+The README's "Aggregates" is the complete contract, including statement
+order, orphan and reparenting rules, and every refusal.
 
 (orm-flush-outcomes)=
 ## Flushing and transactions

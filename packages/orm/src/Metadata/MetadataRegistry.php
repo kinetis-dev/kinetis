@@ -39,11 +39,15 @@ use ReflectionProperty;
  * type timestamp; DateTime, DateTimeInterface and subclasses of
  * DateTimeImmutable are refused as declared types.
  *
+ * An owned inverse relationship is the aggregate ownership edge to its
+ * target. Each entity class is the target of at most one of them, so one
+ * mapping alone decides how a row is discovered, removed and orphaned.
+ *
  * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
- * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool}
+ * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
  * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
- * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool}
+ * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>}
  */
 final readonly class MetadataRegistry
@@ -85,7 +89,11 @@ final readonly class MetadataRegistry
         ksort($entities, SORT_STRING);
 
         // A relationship's target and type, and an inverse relationship's
-        // mappedBy property, resolve once every class is mapped.
+        // mappedBy property, resolve once every class is mapped. $owned
+        // holds the one owned inverse each target class may have, so the
+        // second one is refused whichever class declares it.
+        $owned = [];
+
         foreach ($entities as $class => $mapping) {
             foreach ($mapping['properties'] as $i => $property) {
                 if ($property['target'] === null) {
@@ -122,6 +130,22 @@ final readonly class MetadataRegistry
                 if ($reason !== null) {
                     throw MappingException::inverse($class, $inverse['name'], $reason);
                 }
+
+                if (!$inverse['owned']) {
+                    continue;
+                }
+
+                [$ownerClass, $ownerProperty, $ownerMappedBy] = $owned[$inverse['target']] ?? [null, null, null];
+
+                if ($ownerClass !== null) {
+                    throw MappingException::inverse($class, $inverse['name'], $ownerMappedBy === $mappedBy
+                        ? "it and {$ownerClass}::\${$ownerProperty} both own {$target['class']}::\${$mappedBy}, and one "
+                            . '#[BelongsTo] property has at most one owned inverse relationship'
+                        : "{$target['class']} is already owned through {$ownerClass}::\${$ownerProperty}, and an entity "
+                            . 'class has at most one owned inverse relationship in a MetadataRegistry');
+                }
+
+                $owned[$inverse['target']] = [$class, $inverse['name'], $mappedBy];
             }
 
             $entities[$class] = $mapping;
@@ -444,7 +468,14 @@ final readonly class MetadataRegistry
         }
 
         if ($hasMany !== null) {
-            return ['name' => $name, 'kind' => 'hasMany', 'target' => $hasMany->target, 'mappedBy' => $hasMany->mappedBy, 'nullable' => false];
+            return [
+                'name' => $name,
+                'kind' => 'hasMany',
+                'target' => $hasMany->target,
+                'mappedBy' => $hasMany->mappedBy,
+                'nullable' => false,
+                'owned' => $hasMany->owned,
+            ];
         }
 
         /**
@@ -453,7 +484,14 @@ final readonly class MetadataRegistry
          */
         $target = $type->getName() === 'self' ? $class : $type->getName();
 
-        return ['name' => $name, 'kind' => 'hasOne', 'target' => $target, 'mappedBy' => $hasOne->mappedBy, 'nullable' => $type->allowsNull()];
+        return [
+            'name' => $name,
+            'kind' => 'hasOne',
+            'target' => $target,
+            'mappedBy' => $hasOne->mappedBy,
+            'nullable' => $type->allowsNull(),
+            'owned' => $hasOne->owned,
+        ];
     }
 
     /**
