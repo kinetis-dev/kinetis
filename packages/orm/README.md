@@ -608,7 +608,8 @@ with `builder()`.
   key of an entity table, and only an owning `#[ManyToMany]` property
   writes a join table (see "Many-to-many relationships"). Assigning
   `$post->comments` or `$author->profile` never writes an owner column
-  and never advances an owner's version. To move a comment
+  and never advances an owner's version, while an owning `#[ManyToMany]`
+  collection advances a versioned owner's. To move a comment
   to another post, set its `post` property to that post. What an *owned*
   relationship adds — which rows a flush discovers, deletes or moves — is
   under "Aggregates"; a relationship that is not owned writes nothing,
@@ -785,7 +786,10 @@ CASCADE` outside this contract.
   removes — one it deletes, or one whose insert an aggregate removal
   cancelled — is refused before SQL, and so is a join row naming one;
 - the INSERT of a join row runs after the rows at both of its ends, and
-  the DELETE of one runs before the DELETE of its owning entity.
+  the DELETE of one runs before the DELETE of its owning entity;
+- an owner whose changed join membership advances its version writes that
+  membership around its own UPDATE: its join-row DELETEs before it, its
+  join-row INSERTs after it (see "Many-to-many relationships").
 
 Where no dependency decides, the order is join-row deletes, entity
 deletes, entity inserts, join-row inserts, then updates; entity
@@ -924,6 +928,7 @@ never a target's insert, update or deletion.
 |---|---|
 | of an entity awaiting insert | one INSERT per link it holds |
 | loaded with `with()` | one DELETE per pair it lost, one INSERT per pair it gained |
+| loaded with `with()`, on an owner carrying `#[Version]` | the same, and one UPDATE advancing the owner's version |
 | loaded and only reordered | nothing |
 | of an owner scheduled for deletion | one DELETE by the join column, before the owner's own |
 | uninitialized | nothing |
@@ -954,18 +959,32 @@ $entities->flush(); // DELETE the pair that left, INSERT the pair that joined
 - **The inverse side is inert.** Changing it writes nothing, exactly as
   an inverse `#[HasOne]` or `#[HasMany]`. Nothing reconciles the two
   sides in memory.
+- **A versioned owner locks its membership.** A non-empty difference on a
+  managed owner carrying `#[Version]` is a change of that owner, so the
+  flush advances its version once: through the UPDATE its changed columns
+  already send, or through one that writes the version column alone. Two
+  writers replacing one owner's membership therefore conflict instead of
+  merging — the second throws `OptimisticLockException` and writes none
+  of its links (see "Optimistic locking"). A new owner's INSERT carries
+  its initial version and needs no UPDATE, a removed owner's DELETE
+  carries the lock, and an owner without `#[Version]` writes join rows
+  alone.
 - **Order.** A link's INSERT runs after both endpoint rows exist, so a
   generated key travels from its INSERT into the link statement without
   reaching a property before COMMIT. A join table's DELETEs run before
   its INSERTs and before the owner's own DELETE, and the statements of
   one join table are ordered by their pair, so concurrent flushes take
-  its row locks in one order.
+  its row locks in one order. A versioned owner's UPDATE stands between
+  them: after its link DELETEs, which keeps its lock order the same as
+  its own deletion's, and before its link INSERTs, so a conflict answers
+  before a duplicate pair can.
 - **Row counts.** A link DELETE may affect any number of rows, zero
   included: a link already gone is nothing left to delete, and an owner's
-  cleanup removes whatever names it. A link has no version, so no
-  optimistic lock applies to it; the unique constraint is the concurrency
-  authority, and the pair it refuses fails the flush before COMMIT like
-  any other statement (see "When a flush fails").
+  cleanup removes whatever names it. A join row has no version of its
+  own, so no optimistic lock applies to the row: the unique constraint is
+  what refuses a pair the flush cannot see, and the pair it refuses fails
+  the flush before COMMIT like any other statement (see "When a flush
+  fails").
 - **After COMMIT.** The membership the plan was built from becomes the
   baseline the next flush diffs against. A rollback, a rollback failure
   and an unacknowledged COMMIT leave it as it was, so the whole flush
@@ -997,7 +1016,7 @@ For one manager, an object is in one of these states:
 |---|---|---|
 | Not held: new, or detached | false | nothing, unless an owned relationship reaches it (see "Aggregates") |
 | Awaiting insert | true | an INSERT |
-| Managed | true | an UPDATE of its changed columns, and its next version when versioned, if any |
+| Managed | true | an UPDATE of its changed columns, and its next version when a versioned entity's columns or owning join membership changed |
 | Scheduled for deletion | true | a DELETE |
 
 - **`persist($entity)`** validates an object the manager does not hold —
@@ -1053,7 +1072,9 @@ leaves COMMIT to the factory (see "Transaction sessions"):
    generated identifier.
 3. One UPDATE of the changed columns, or one DELETE, per entity, by the
    identifier column and, for a versioned entity, the version column (see
-   "Optimistic locking").
+   "Optimistic locking"). A versioned owner whose owning `#[ManyToMany]`
+   membership changed takes that UPDATE too, of the version column alone
+   where no other column changed.
 4. An UPDATE per deferred foreign key, where a loop of references needed
    one (see "Loops").
 5. One DELETE per join row an owning `#[ManyToMany]` collection dropped,
@@ -1062,8 +1083,9 @@ leaves COMMIT to the factory (see "Transaction sessions"):
 6. COMMIT.
 
 Statements 2 to 5 run in the one order "Statement order" states: every
-row after the rows its foreign keys name, and otherwise join-row deletes,
-entity deletes, entity inserts, join-row inserts then updates, by class,
+row after the rows its foreign keys name and a versioned owner's UPDATE
+between the join rows it changed, and otherwise join-row deletes, entity
+deletes, entity inserts, join-row inserts then updates, by class,
 identifier and join pair, so concurrent flushes take row
 locks in one order where no dependency decides. Every statement runs on
 that transaction, and nothing is batched. A statement that needs a key an
@@ -1186,6 +1208,13 @@ try {
   row always changes, so the MySQL family's changed-row count reports it.
   An UPDATE at `PHP_INT_MAX` cannot advance and is refused with
   `InvalidEntityStateException` before the transaction begins.
+- **Owning join membership.** A changed owning `#[ManyToMany]` collection
+  is a change of its owner, so it takes that same UPDATE and that same
+  one increment, however many of the owner's collections changed; with no
+  column changed, the UPDATE writes the version column alone (see
+  "Many-to-many relationships"). An owned inverse relationship is not:
+  adding, moving or removing children writes their own rows and advances
+  no owner version.
 - **DELETE.** One DELETE where the identifier column and the version
   column hold the snapshot's values, at `PHP_INT_MAX` too.
 - **Conflict.** A versioned UPDATE or DELETE that affects no row throws

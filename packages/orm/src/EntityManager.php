@@ -53,8 +53,11 @@ use WeakMap;
  * writes the links of a new owner's initialized collection, and the
  * difference between the membership it loaded for a managed owner and the
  * one that collection holds now; removing the owner deletes its join rows
- * before its own. The inverse side reads the same table backwards and
- * writes nothing, and neither side ever removes a target entity.
+ * before its own. A non-empty difference on a managed owner carrying
+ * #[Version] advances that version once, under the same optimistic lock its
+ * columns take, so two writers of one membership cannot merge. The inverse
+ * side reads the same table backwards and writes nothing, and neither side
+ * ever removes a target entity.
  *
  * An owned inverse relationship is this manager's aggregate ownership edge.
  * flush() walks every initialized one once, schedules the new entities it
@@ -1239,8 +1242,8 @@ final class EntityManager
             }
         }
 
-        [$updates, $deletes] = $this->writes($managed, $values, $removals);
-        [$links, $unlinks, $joined] = $this->joins($inserts, $removals, $cancelled);
+        [$links, $unlinks, $joined, $changed] = $this->joins($inserts, $removals, $cancelled);
+        [$updates, $deletes] = $this->writes($managed, $values, $removals, $changed);
 
         return [
             FlushPlanner::plan($scheduled, $updates, $deletes, $links, $unlinks),
@@ -1249,9 +1252,10 @@ final class EntityManager
     }
 
     /**
-     * Every join row this flush writes, and the membership COMMIT records for
-     * each owning collection it read. Nothing here writes or removes a target
-     * entity: a join row is the link alone.
+     * Every join row this flush writes, the membership COMMIT records for
+     * each owning collection it read, and the managed owners whose
+     * membership it changes. Nothing here writes or removes a target entity:
+     * a join row is the link alone.
      *
      * An owner this flush deletes loses every join row naming it, in one
      * DELETE by its join column and without reading the collection. Any other
@@ -1264,7 +1268,7 @@ final class EntityManager
      * @param array<int, array{object, int|string|null}> $inserts
      * @param array<int, object> $removals every entity this flush deletes, by object id
      * @param array<int, object> $cancelled the inserts an orphaned aggregate cancels, by object id
-     * @return array{list<LinkAction>, list<LinkAction>, list<array{object, string, list<object>}>}
+     * @return array{list<LinkAction>, list<LinkAction>, list<array{object, string, list<object>}>, array<int, true>}
      * @throws InvalidEntityStateException
      */
     private function joins(array $inserts, array $removals, array $cancelled): array
@@ -1272,6 +1276,7 @@ final class EntityManager
         $links = [];
         $unlinks = [];
         $records = [];
+        $changed = [];
 
         foreach ($this->roots($inserts) as $owner) {
             $key = spl_object_id($owner);
@@ -1304,6 +1309,7 @@ final class EntityManager
                 }
 
                 [$members, $present, $endpoints] = $this->endpoints($owner, $property, $join, $inserts);
+                $written = [count($unlinks), count($links)];
 
                 foreach ($baseline ?? [] as $identifier) {
                     if (!in_array($identifier, $present, true)) {
@@ -1323,11 +1329,18 @@ final class EntityManager
                     }
                 }
 
+                // A membership this flush changes is a change of the owner's
+                // own state that no column of its row carries, so a versioned
+                // owner locks it through its version like any other change.
+                if ($baseline !== null && [count($unlinks), count($links)] !== $written) {
+                    $changed[$key] = true;
+                }
+
                 $records[] = [$owner, $property, $members];
             }
         }
 
-        return [$links, $unlinks, $records];
+        return [$links, $unlinks, $records, $changed];
     }
 
     /**
@@ -1371,15 +1384,19 @@ final class EntityManager
 
     /**
      * Each managed entity's DELETE, or the UPDATE of its changed columns and
-     * the next version a versioned entity takes.
+     * the next version a versioned entity takes. A versioned owner whose
+     * owning join membership this flush changes takes that next version too:
+     * through the UPDATE its changed columns already send, or through one
+     * that writes the version column alone.
      *
      * @param list<object> $managed
      * @param array<int, PlanValues> $values
      * @param array<int, object> $removals
+     * @param array<int, true> $changed the owners whose owning join membership this flush changes, by object id
      * @return array{list<UpdateAction>, list<DeleteAction>}
      * @throws InvalidEntityStateException
      */
-    private function writes(array $managed, array $values, array $removals): array
+    private function writes(array $managed, array $values, array $removals, array $changed): array
     {
         $updates = [];
         $deletes = [];
@@ -1405,12 +1422,15 @@ final class EntityManager
                 ARRAY_FILTER_USE_BOTH,
             );
 
-            if ($changes === []) {
+            $joins = $plan->version !== null && isset($changed[$key]);
+
+            if ($changes === [] && !$joins) {
                 continue;
             }
 
             // The version is unchanged, so it is not among $changes: the
             // UPDATE sets the next one, which the snapshot takes on COMMIT.
+            // A join membership alone leaves it the only column to write.
             if ($plan->version !== null) {
                 /** @var int $version set above for a versioned entity */
                 $changes[$plan->version] = $values[$key][$plan->version] = $version !== PHP_INT_MAX
@@ -1426,6 +1446,7 @@ final class EntityManager
                 'snapshot' => $snapshot,
                 'values' => $values[$key],
                 'changes' => $changes,
+                'joins' => $joins,
             ];
         }
 

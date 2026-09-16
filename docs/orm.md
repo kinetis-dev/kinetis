@@ -341,7 +341,8 @@ final class Student
 
 Create the join table with a migration ({doc}`migrations`). Nothing
 inspects the schema: its unique key refuses a pair another writer added,
-its foreign keys an end that does not exist.
+its foreign keys an end that does not exist. A join row carries no
+version of its own.
 
 ```{code-block} sql
 CREATE TABLE course_student (
@@ -385,6 +386,12 @@ $this->entities->flush();
   or its `ON DELETE CASCADE` to decide.
 - **The inverse side reads.** `with('courses')` loads the same rows from
   the student's end; changing `Student::$courses` writes nothing.
+- **A versioned owner locks its roll.** When `Course` carries
+  `#[Version]`, a changed membership advances that version under the same
+  optimistic lock its columns take, so two writers replacing one course's
+  roll conflict with `OptimisticLockException` instead of merging. The
+  README's "Many-to-many relationships" and "Optimistic locking" are the
+  contract.
 
 A link with a grade, a position, a `deleted_at` or any other column of
 its own is not a join row but an entity. Map it with a surrogate
