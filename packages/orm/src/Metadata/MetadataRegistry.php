@@ -65,6 +65,10 @@ final readonly class MetadataRegistry
 
     private const array SCALAR_TYPES = ['string', 'int', 'float', 'bool'];
 
+    private const string CARRIES_ID = 'it also carries #[Id]';
+
+    private const string CARRIES_VERSION = 'it also carries #[Version]';
+
     /**
      * @param list<EntityMapping> $entities ordered by class name
      */
@@ -469,8 +473,8 @@ final readonly class MetadataRegistry
         $reason = match (true) {
             $type->isBuiltin() => "it declares {$type->getName()}, which is not an entity class",
             $property->getAttributes(Column::class) !== [] => 'it also carries #[Column]; name its foreign-key column with #[BelongsTo(column: ...)]',
-            $property->getAttributes(Id::class) !== [] => 'it also carries #[Id]',
-            $property->getAttributes(Version::class) !== [] => 'it also carries #[Version]',
+            $property->getAttributes(Id::class) !== [] => self::CARRIES_ID,
+            $property->getAttributes(Version::class) !== [] => self::CARRIES_VERSION,
             $property->hasDefaultValue() => 'it declares a default value, and an unloaded relationship is uninitialized',
             default => null,
         };
@@ -514,8 +518,8 @@ final readonly class MetadataRegistry
             $property->getAttributes(HasOne::class) !== [] => 'it also carries #[HasOne]',
             $property->getAttributes(HasMany::class) !== [] => 'it also carries #[HasMany]',
             $property->getAttributes(Column::class) !== [] => 'it also carries #[Column]',
-            $property->getAttributes(Id::class) !== [] => 'it also carries #[Id]',
-            $property->getAttributes(Version::class) !== [] => 'it also carries #[Version]',
+            $property->getAttributes(Id::class) !== [] => self::CARRIES_ID,
+            $property->getAttributes(Version::class) !== [] => self::CARRIES_VERSION,
             $type->getName() !== 'array' || $type->allowsNull() => "#[ManyToMany] needs the type array, and it declares {$type}",
             $property->hasDefaultValue() => 'it declares a default value, and an unloaded join collection is uninitialized',
             $owning && ($mapping->table === null || $mapping->joinColumn === null || $mapping->inverseJoinColumn === null)
@@ -599,8 +603,8 @@ final readonly class MetadataRegistry
             $hasOne !== null && $hasMany !== null => 'it carries both #[HasOne] and #[HasMany]',
             $property->getAttributes(BelongsTo::class) !== [] => 'it also carries #[BelongsTo]',
             $property->getAttributes(Column::class) !== [] => 'it also carries #[Column]',
-            $property->getAttributes(Id::class) !== [] => 'it also carries #[Id]',
-            $property->getAttributes(Version::class) !== [] => 'it also carries #[Version]',
+            $property->getAttributes(Id::class) !== [] => self::CARRIES_ID,
+            $property->getAttributes(Version::class) !== [] => self::CARRIES_VERSION,
             $hasMany === null && $type->isBuiltin() => "#[HasOne] needs a type naming one entity class, and it declares {$type}",
             $hasMany !== null && ($type->getName() !== 'array' || $type->allowsNull()) => "#[HasMany] needs the type array, and it declares {$type}",
             $property->hasDefaultValue() => 'it declares a default value, and an unloaded inverse relationship is uninitialized',

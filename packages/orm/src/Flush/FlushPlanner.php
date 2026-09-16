@@ -202,9 +202,7 @@ final class FlushPlanner
 
     /**
      * One edge per foreign key and per link endpoint that decides order, and
-     * the refusal for either naming a row this flush deletes. A reference to
-     * a row awaiting insert whose identifier the application assigned becomes
-     * that identifier here: only the edge is needed, not a deferred key.
+     * the refusal for either naming a row this flush deletes.
      *
      * @throws InvalidEntityStateException
      */
@@ -225,59 +223,13 @@ final class FlushPlanner
                 continue;
             }
 
-            $snapshot = $node['snapshot'];
+            if ($node['kind'] === 'delete') {
+                $this->beforeReferencedDelete($i, $node);
 
-            foreach ($node['plan']->relations() as $property => [$target, $nullable]) {
-                /** @var int|string|null $old a relationship's database value is its target's identifier */
-                $old = $snapshot === null ? null : $snapshot[$property];
-
-                if ($node['kind'] === 'delete') {
-                    $referenced = $old === null ? null : $this->deleteOf[$target][$old] ?? null;
-
-                    if ($referenced !== null && $referenced !== $i) {
-                        $this->edges[] = ['from' => $i, 'to' => $referenced, 'node' => $i, 'property' => $property, 'deferrable' => $nullable];
-                    }
-
-                    continue;
-                }
-
-                /** @var PlanValues $values a delete is the only node without them */
-                $values = $node['values'];
-                /** @var int|string|Reference|null $value a relationship's database value is its target's identifier */
-                $value = $values[$property];
-
-                if ($value instanceof Reference) {
-                    // An aggregate removal can cancel the insert this key
-                    // waits for, which leaves the referencing row unwritable.
-                    $insert = $this->insertOf[$value->entity]
-                        ?? throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
-                    $assigned = $this->nodes[$insert]['id'];
-
-                    if ($assigned !== null) {
-                        $this->nodes[$i]['values'][$property] = $assigned;
-
-                        if (array_key_exists($property, $node['sent'])) {
-                            $this->nodes[$i]['sent'][$property] = $assigned;
-                        }
-                    }
-
-                    $this->edges[] = [
-                        'from' => $insert,
-                        'to' => $i,
-                        'node' => $i,
-                        'property' => $property,
-                        'deferrable' => $nullable && $node['kind'] === 'insert',
-                    ];
-                } elseif ($value !== null && isset($this->deleteOf[$target][$value])) {
-                    throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
-                }
-
-                $moved = $old !== null && $old !== $value ? $this->deleteOf[$target][$old] ?? null : null;
-
-                if ($moved !== null) {
-                    $this->edges[] = ['from' => $i, 'to' => $moved, 'node' => $i, 'property' => $property, 'deferrable' => false];
-                }
+                continue;
             }
+
+            $this->afterReferences($i, $node);
         }
     }
 
@@ -373,6 +325,99 @@ final class FlushPlanner
                 throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
             }
         }
+    }
+
+    /**
+     * The delete of a row precedes the delete of a row its foreign key names,
+     * so the key never outlives the row it points at.
+     *
+     * @param Draft $node
+     */
+    private function beforeReferencedDelete(int $i, array $node): void
+    {
+        $snapshot = $node['snapshot'];
+
+        foreach ($node['plan']->relations() as $property => [$target, $nullable]) {
+            /** @var int|string|null $old a relationship's database value is its target's identifier */
+            $old = $snapshot === null ? null : $snapshot[$property];
+            $referenced = $old === null ? null : $this->deleteOf[$target][$old] ?? null;
+
+            if ($referenced !== null && $referenced !== $i) {
+                $this->edges[] = ['from' => $i, 'to' => $referenced, 'node' => $i, 'property' => $property, 'deferrable' => $nullable];
+            }
+        }
+    }
+
+    /**
+     * The edges every foreign key of one insert or update places: after the
+     * insert of the row the key names, and before the delete of the row the
+     * key moved or nulled away from.
+     *
+     * @param Draft $node
+     * @throws InvalidEntityStateException
+     */
+    private function afterReferences(int $i, array $node): void
+    {
+        $snapshot = $node['snapshot'];
+
+        foreach ($node['plan']->relations() as $property => [$target, $nullable]) {
+            /** @var int|string|null $old a relationship's database value is its target's identifier */
+            $old = $snapshot === null ? null : $snapshot[$property];
+            $value = $this->afterReference($i, $node, $property, $target, $nullable);
+            $moved = $old !== null && $old !== $value ? $this->deleteOf[$target][$old] ?? null : null;
+
+            if ($moved !== null) {
+                $this->edges[] = ['from' => $i, 'to' => $moved, 'node' => $i, 'property' => $property, 'deferrable' => false];
+            }
+        }
+    }
+
+    /**
+     * The edge one foreign key places on the insert it waits for, and the
+     * refusal for a key naming a row this flush deletes. A reference to a row
+     * awaiting insert whose identifier the application assigned becomes that
+     * identifier here: only the edge is needed, not a deferred key.
+     *
+     * @param Draft $node as it stood before this pass rewrote any key of it
+     * @param class-string $target
+     * @return int|string|Reference|null the key the statement carried
+     * @throws InvalidEntityStateException
+     */
+    private function afterReference(int $i, array $node, string $property, string $target, bool $nullable): int|string|Reference|null
+    {
+        /** @var PlanValues $values a delete is the only node without them */
+        $values = $node['values'];
+        /** @var int|string|Reference|null $value a relationship's database value is its target's identifier */
+        $value = $values[$property];
+
+        if ($value instanceof Reference) {
+            // An aggregate removal can cancel the insert this key
+            // waits for, which leaves the referencing row unwritable.
+            $insert = $this->insertOf[$value->entity]
+                ?? throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
+            $assigned = $this->nodes[$insert]['id'];
+
+            if ($assigned !== null) {
+                $this->nodes[$i]['values'][$property] = $assigned;
+
+                if (array_key_exists($property, $node['sent'])) {
+                    // @phpstan-ignore assign.propertyType (connect() walks its own node list, so $i always names a node of it)
+                    $this->nodes[$i]['sent'][$property] = $assigned;
+                }
+            }
+
+            $this->edges[] = [
+                'from' => $insert,
+                'to' => $i,
+                'node' => $i,
+                'property' => $property,
+                'deferrable' => $nullable && $node['kind'] === 'insert',
+            ];
+        } elseif ($value !== null && isset($this->deleteOf[$target][$value])) {
+            throw InvalidEntityStateException::referencesRemovedRow($node['plan']->class, $property, $target);
+        }
+
+        return $value;
     }
 
     /**
