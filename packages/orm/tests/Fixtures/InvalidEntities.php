@@ -20,6 +20,7 @@ use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\HasMany;
 use Kinetis\Orm\Attributes\HasOne;
 use Kinetis\Orm\Attributes\Id;
+use Kinetis\Orm\Attributes\ManyToMany;
 use Kinetis\Orm\Attributes\Version;
 use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
@@ -667,6 +668,161 @@ final class OwnedOnce
 
     #[BelongsTo]
     public OwnedTwice $owner;
+}
+
+#[Entity]
+final class JoinDefault
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $categories = [];
+}
+
+#[Entity]
+final class JoinNullable
+{
+    public int $id;
+
+    /** @var list<ArticleCategory>|null */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public ?array $categories;
+}
+
+#[Entity]
+final class JoinObject
+{
+    public int $id;
+
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public ArticleCategory $category;
+}
+
+#[Entity]
+final class JoinWithHasMany
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    #[HasMany(target: ArticleCategory::class, mappedBy: 'id')]
+    public array $categories;
+}
+
+#[Entity]
+final class JoinWithColumn
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    #[Column(name: 'categories')]
+    public array $categories;
+}
+
+#[Entity]
+final class JoinWithoutTable
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $categories;
+}
+
+#[Entity]
+final class JoinInverseWithTable
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', mappedBy: 'others')]
+    public array $categories;
+}
+
+#[Entity]
+final class JoinInvalidTable
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'join-table', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $categories;
+}
+
+#[Entity]
+final class JoinInvalidColumn
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a id', inverseJoinColumn: 'b_id')]
+    public array $categories;
+}
+
+#[Entity]
+final class JoinOneColumn
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[ManyToMany(target: self::class, table: 'j', joinColumn: 'peer_id', inverseJoinColumn: 'peer_id')]
+    public array $peers;
+}
+
+#[Entity]
+final class JoinUnknownTarget
+{
+    public int $id;
+
+    /** @var list<Document> */
+    #[ManyToMany(target: Document::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $documents;
+}
+
+#[Entity]
+final class JoinUnknownMappedBy
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[ManyToMany(target: self::class, mappedBy: 'peers')]
+    public array $mirrors;
+}
+
+#[Entity]
+final class JoinMappedByInverse
+{
+    public int $id;
+
+    /** @var list<self> */
+    #[ManyToMany(target: self::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $peers;
+
+    /** @var list<self> */
+    #[ManyToMany(target: self::class, mappedBy: 'mirrors')]
+    public array $mirrors;
+}
+
+#[Entity]
+final class JoinWrongDirection
+{
+    public int $id;
+
+    /** @var list<JoinElsewhere> */
+    #[ManyToMany(target: JoinElsewhere::class, mappedBy: 'categories')]
+    public array $others;
+}
+
+#[Entity]
+final class JoinElsewhere
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $categories;
 }
 
 interface EntityInterface

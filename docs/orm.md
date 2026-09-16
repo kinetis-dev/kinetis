@@ -25,7 +25,8 @@ changes to it, and writes new, changed and removed entities in one
 transaction on `flush()`. Entities reference each other through explicit
 `#[BelongsTo]`, `#[HasOne]` and `#[HasMany]` relationships — an inverse
 one marked `owned` makes a whole aggregate persist and remove together —
-and a `#[Version]` property adds optimistic locking.
+or across a join table with `#[ManyToMany]`, and a `#[Version]` property
+adds optimistic locking.
 
 ## Define an entity
 
@@ -94,8 +95,9 @@ other section.
 
 An entity opts into optimistic locking with `#[Version]` under the
 README's "Optimistic locking" contract, and declares relationships with
-`#[BelongsTo]`, `#[HasOne]` and `#[HasMany]` — `owned` included — under
-its "Relationships" and "Aggregates" contracts; the bridge adds nothing
+`#[BelongsTo]`, `#[HasOne]`, `#[HasMany]` — `owned` included — and
+`#[ManyToMany]` under its "Relationships", "Aggregates" and
+"Many-to-many relationships" contracts; the bridge adds nothing
 to any of them. A relationship's target
 must be an entity the same scan finds. Every one of these attributes is
 part of the compiled metadata, so run `kinetis build` again after
@@ -175,94 +177,223 @@ wraps it and injects `EntityManager`, which makes it request-scoped too.
 ## Write a whole aggregate
 
 An inverse relationship marked `owned` ties a parent and its children
-into one unit. Mark it once on the parent:
+into one unit: the parent marks the relationship, and the child keeps the
+foreign key.
 
 ```{code-block} php
+use Kinetis\Orm\Attributes\BelongsTo;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\HasMany;
 use Kinetis\Orm\Attributes\Id;
 
-#[Entity(table: 'orders')]
-final class Order
+#[Entity(table: 'invoices')]
+final class Invoice
 {
     #[Id(generated: true)]
     private ?int $id = null;
 
-    /** @var list<OrderLine> */
-    #[HasMany(target: OrderLine::class, mappedBy: 'order', owned: true)]
+    /** @var list<InvoiceLine> */
+    #[HasMany(target: InvoiceLine::class, mappedBy: 'invoice', owned: true)]
     private array $lines;
 
     public function __construct(private int $customerId)
     {
-        // A new order's lines are known in full; a loaded one's are
-        // whatever with('lines') read, so the property declares no default.
-        $this->lines = [];
+        $this->lines = [];  // a loaded invoice's lines are whatever with('lines') read
     }
 
-    public function add(OrderLine $line): void
+    public function add(InvoiceLine $line): void
     {
-        $this->lines[] = $line; // $line->order() is this order
+        $this->lines[] = $line;     // the line's constructor set the foreign key
+    }
+
+    public function drop(InvoiceLine $line): void
+    {
+        $keep = static fn (InvoiceLine $held): bool => $held !== $line;
+        $this->lines = array_values(array_filter($this->lines, $keep));
     }
 }
-```
 
-One `persist()` then writes the graph, in one transaction, in an order
-the foreign keys accept — the order row first, and the key the database
-generated for it in each line:
-
-```{code-block} php
-#[Post('/orders')]
-public function create(CreateOrder $input): array
+#[Entity(table: 'invoice_lines')]
+final class InvoiceLine
 {
-    $order = new Order($input->customerId);
+    #[Id(generated: true)]
+    private ?int $id = null;
 
-    foreach ($input->lines as $line) {
-        $order->add(new OrderLine($order, $line->sku, $line->quantity));
+    #[BelongsTo]
+    private Invoice $invoice;   // invoice_id, NOT NULL
+
+    public function __construct(Invoice $invoice, private string $sku, private int $quantity)
+    {
+        $this->invoice = $invoice;
     }
-
-    $this->entities->persist($order);
-    $this->entities->flush();
-
-    return ['id' => $order->id()];
 }
 ```
 
-Changing and removing the aggregate works the same way, on a
-relationship the request **loaded**:
+One `persist()` writes the graph in one transaction, in an order the
+foreign keys accept: the invoice row first, then its key in each line.
+The lines need none of their own, and `$input` is the application's own
+validated input ({doc}`routing-validation`).
 
 ```{code-block} php
-$order = $this->entities->repository(Order::class)
+$invoice = new Invoice($input->customerId);
+
+foreach ($input->lines as $line) {
+    $invoice->add(new InvoiceLine($invoice, $line->sku, $line->quantity));
+}
+
+$this->entities->persist($invoice);
+$this->entities->flush();   // INSERT the invoice, then one INSERT per line
+```
+
+Changing the aggregate works on a relationship the request **loaded**:
+that membership is what the flush compares against.
+
+```{code-block} php
+$invoice = $this->entities->repository(Invoice::class)
     ->query()
     ->where('id', '=', $id)
-    ->with('lines')     // the membership the flush reconciles against
+    ->with('lines')         // the membership the flush reconciles against
     ->first();
 
-$order->removeLine($sku);   // that line's row is deleted
-$order->add($newLine);      // the new row is inserted
-$this->entities->flush();
+$invoice->drop($discontinued);
+$invoice->add(new InvoiceLine($invoice, $sku, 1));
 
-$this->entities->remove($order); // every line, then the order
-$this->entities->flush();
+$this->entities->flush();   // DELETE the dropped row, INSERT the new one
 ```
 
 - **`with()` is the permission to remove.** An owned relationship this
-  manager never loaded still discovers and inserts new children, but
-  removes nothing: what the database holds behind it is unknown, and
-  reading it would be I/O a property access never performs. `remove()`
-  on such an owner is refused, naming the relationship to load.
-- **Nothing is repaired for you.** The child's `#[BelongsTo]` property is
-  the foreign key. Keep both sides consistent in the entity's own
-  methods; a child whose foreign key names another owner fails the flush
-  before SQL.
-- **Keys appear after `COMMIT`.** A generated key travels from the INSERT
-  that produced it to the statements that need it, and reaches the object
-  only once `COMMIT` returns.
-- **Loops need a nullable column.** Rows that reference each other are
-  written by deferring a nullable foreign key inside the transaction; a
-  loop of `NOT NULL` columns is refused before any statement.
+  manager never loaded still discovers and inserts new children but
+  removes nothing, and `remove()` on such an owner is refused.
+- **The child's foreign key decides.** A dropped line whose
+  `#[BelongsTo]` names another invoice is moved by an UPDATE rather than
+  deleted, and the receiving invoice must hold it when its own collection
+  is loaded. Nothing reconciles the two sides.
+- **`remove($invoice)`** schedules the invoice and every line below it,
+  children first. A generated key reaches its object only once `COMMIT`
+  returns, and a loop of `NOT NULL` foreign keys is refused before SQL
+  while a nullable one is deferred inside the transaction.
 
 The README's "Aggregates" is the complete contract, including statement
 order, orphan and reparenting rules, and every refusal.
+
+## Link rows across a join table
+
+`#[ManyToMany]` maps entities that reference each other through a join
+table and that no one owns. One side owns the table, naming it and both
+of its columns; the other is optional and reads it.
+
+```{code-block} php
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\Id;
+use Kinetis\Orm\Attributes\ManyToMany;
+
+#[Entity(table: 'courses')]
+final class Course
+{
+    #[Id(generated: true)]
+    private ?int $id = null;
+
+    /** @var list<Student> */
+    #[ManyToMany(
+        target: Student::class,
+        table: 'course_student',
+        joinColumn: 'course_id',            // this entity's identifier
+        inverseJoinColumn: 'student_id',    // a target's
+    )]
+    private array $students;
+
+    public function __construct(private string $title)
+    {
+        $this->students = [];   // a loaded course's roll is whatever with('students') read
+    }
+
+    public function enrol(Student $student): void
+    {
+        // A join collection is a set, and the ORM refuses one object twice.
+        if (!in_array($student, $this->students, true)) {
+            $this->students[] = $student;
+        }
+    }
+
+    public function withdraw(Student $student): void
+    {
+        $keep = static fn (Student $held): bool => $held !== $student;
+        $this->students = array_values(array_filter($this->students, $keep));
+    }
+}
+
+#[Entity(table: 'students')]
+final class Student
+{
+    #[Id(generated: true)]
+    private ?int $id = null;
+
+    /** @var list<Course> */
+    #[ManyToMany(target: Course::class, mappedBy: 'students')]
+    private array $courses;     // the same table, read from this end
+
+    public function __construct(private string $name)
+    {
+        $this->courses = [];
+    }
+}
+```
+
+Create the join table with a migration ({doc}`migrations`). Nothing
+inspects the schema: its unique key refuses a pair another writer added,
+its foreign keys an end that does not exist.
+
+```{code-block} sql
+CREATE TABLE course_student (
+    course_id  BIGINT NOT NULL,
+    student_id BIGINT NOT NULL,
+    PRIMARY KEY (course_id, student_id),
+    FOREIGN KEY (course_id)  REFERENCES courses (id),
+    FOREIGN KEY (student_id) REFERENCES students (id)
+);
+```
+
+Attaching and detaching is mutating the **owning** collection: load it
+with `with()`, and the flush writes the difference.
+
+```{code-block} php
+$course = $this->entities->repository(Course::class)
+    ->query()
+    ->where('id', '=', $id)
+    ->with('students')      // the membership the flush diffs against
+    ->first();
+
+$students = $this->entities->repository(Student::class);
+$joining = $students->findOrFail($joiningId);
+$leaving = $students->findOrFail($leavingId);
+
+$course->enrol($joining);
+$course->withdraw($leaving);
+
+// One INSERT and one DELETE in course_student, and no student row.
+$this->entities->flush();
+```
+
+- **`with()` is the permission to write.** A collection this manager
+  never loaded has no known database state, so assigning one on an entity
+  it loaded is refused. A new course's collection needs no load: its
+  links go in the flush that inserts it.
+- **Links only.** A flush writes join rows and never inserts, updates or
+  deletes a target: every student must already be managed or persisted,
+  detaching one leaves its row untouched, `remove($course)` deletes its
+  join rows first, and removing a student is the join table's foreign key
+  or its `ON DELETE CASCADE` to decide.
+- **The inverse side reads.** `with('courses')` loads the same rows from
+  the student's end; changing `Student::$courses` writes nothing.
+
+A link with a grade, a position, a `deleted_at` or any other column of
+its own is not a join row but an entity. Map it with a surrogate
+identifier and a `#[BelongsTo]` to each side, replace the course's
+`#[ManyToMany]` with an owned `#[HasMany]` to it, and the aggregate rules
+above apply unchanged — the unique key on the column pair kept, since it
+is still what makes one link one pair.
+
+The README's "Many-to-many relationships" is the complete contract.
 
 (orm-flush-outcomes)=
 ## Flushing and transactions

@@ -46,7 +46,15 @@ use WeakMap;
  * A relationship is loaded only on request, by the entity query terminal
  * that selected its source entities and on the same link, and its targets
  * resolve through the same identity map. A #[BelongsTo] relationship is the
- * only one that maps a foreign key, and the only one flush() writes.
+ * only one that maps a foreign key, and the only one flush() writes into an
+ * entity table.
+ *
+ * An owning #[ManyToMany] relationship is this manager's join table. It
+ * writes the links of a new owner's initialized collection, and the
+ * difference between the membership it loaded for a managed owner and the
+ * one that collection holds now; removing the owner deletes its join rows
+ * before its own. The inverse side reads the same table backwards and
+ * writes nothing, and neither side ever removes a target entity.
  *
  * An owned inverse relationship is this manager's aggregate ownership edge.
  * flush() walks every initialized one once, schedules the new entities it
@@ -56,7 +64,8 @@ use WeakMap;
  * takes the whole aggregate below an entity, and persist() gives it back.
  * The manager never loads a relationship to answer one of those questions,
  * never repairs the object graph, and refuses through automatic discovery
- * an object whose deletion it committed.
+ * an object whose deletion it committed. A join collection is no ownership
+ * edge: it discovers nothing and removes no target.
  *
  * flush() writes from an ordered plan local to the call, which puts every
  * row after the rows its foreign keys name, and nothing in this manager or
@@ -77,6 +86,8 @@ use WeakMap;
  * @psalm-type Applied = array{relations: list<array{object, string, list<object>}>, cancelled: list<object>}
  * @phpstan-import-type InverseMapping from MetadataRegistry
  * @psalm-import-type InverseMapping from MetadataRegistry
+ * @phpstan-import-type JoinMapping from MetadataRegistry
+ * @psalm-import-type JoinMapping from MetadataRegistry
  * @phpstan-import-type PlanValues from FlushPlanner
  * @psalm-import-type PlanValues from FlushPlanner
  * @phpstan-import-type InsertAction from FlushPlanner
@@ -85,6 +96,8 @@ use WeakMap;
  * @psalm-import-type UpdateAction from FlushPlanner
  * @phpstan-import-type DeleteAction from FlushPlanner
  * @psalm-import-type DeleteAction from FlushPlanner
+ * @phpstan-import-type LinkAction from FlushPlanner
+ * @psalm-import-type LinkAction from FlushPlanner
  */
 final class EntityManager
 {
@@ -124,10 +137,10 @@ final class EntityManager
     private WeakMap $removals;
 
     /**
-     * The membership this manager loaded for each owned inverse
-     * relationship, or wrote into one, as the identifiers it held then.
-     * Only a relationship listed here has a database state to reconcile
-     * against; an application-initialized one has none.
+     * The membership this manager loaded for each owned inverse relationship
+     * and each owning join collection, or wrote into one, as the identifiers
+     * it held then. Only a relationship listed here has a database state to
+     * reconcile against; an application-initialized one has none.
      *
      * @var WeakMap<object, array<string, list<int|string>>>
      */
@@ -295,13 +308,15 @@ final class EntityManager
      * Writes the whole graph in one transaction: every scheduled insert, the
      * new entities one pass across initialized owned relationships reaches,
      * every change to a managed entity, every deletion an owned relationship
-     * calls for, and every scheduled deletion. Every entity is read,
-     * validated and ordered before any statement; with nothing to write,
-     * nothing runs. A manager from open() begins the transaction on the
-     * factory's client and commits it. A bound manager writes on its
+     * calls for, every scheduled deletion, and every join row an owning
+     * #[ManyToMany] collection adds, drops or leaves behind. Every entity is
+     * read, validated and ordered before any statement; with nothing to
+     * write, nothing runs. A manager from open() begins the transaction on
+     * the factory's client and commits it. A bound manager writes on its
      * transaction and leaves COMMIT to the factory. The package README's
-     * "Aggregates", "Flushing" and "Transaction sessions" state the
-     * statements, the row checks and the failure contract.
+     * "Aggregates", "Many-to-many relationships", "Flushing" and
+     * "Transaction sessions" state the statements, the row checks and the
+     * failure contract.
      *
      * @throws InvalidEntityStateException
      * @throws MappingException for a property value its type does not admit
@@ -592,7 +607,8 @@ final class EntityManager
      * assigned. A null key assigns null, and a key no row matches throws.
      * A relationship already initialized is never overwritten: its target
      * only joins the next level, and must be managed by this manager. An
-     * inverse relationship loads as loadInverse() states.
+     * inverse relationship loads as loadInverse() states, and a
+     * #[ManyToMany] as loadJoin() does.
      *
      * @param EntityPlan<object> $plan
      * @param list<object> $entities
@@ -604,6 +620,15 @@ final class EntityManager
     {
         foreach ($relations as $property => $below) {
             $target = $this->plans[$plan->target($property)];
+            $join = $plan->join($property);
+
+            if ($join !== null) {
+                /** @var array<string, array<array-key, mixed>> $below */
+                $this->eager($target, $this->loadJoin($plan, $target, $entities, $join), $below);
+
+                continue;
+            }
+
             $inverse = $plan->inverse($property);
 
             if ($inverse !== null) {
@@ -764,6 +789,132 @@ final class EntityManager
         }
 
         return array_values($next);
+    }
+
+    /**
+     * Loads the join collection $join into $entities and returns the next
+     * level: every target assigned, or held by an initialized one. An owning
+     * collection it assigns also records that membership, which is what
+     * flush() diffs a later one against; an inverse one records none,
+     * because only the owning side writes the table.
+     *
+     * An initialized collection is never overwritten, and every value it
+     * holds must be a target this manager manages. Every other entity takes
+     * its identifier from its snapshot. The distinct identifiers are
+     * selected from the join table against this end's column,
+     * RELATIONSHIP_BATCH per statement and ordered by both columns, then the
+     * distinct targets those rows name are selected from the target table,
+     * RELATIONSHIP_BATCH per statement and ordered by its identifier. Each
+     * target row goes through register(), which refuses a manager closed
+     * during that statement before anything is assigned, and the join rows
+     * are checked for the same closure.
+     *
+     * @param EntityPlan<object> $plan
+     * @param EntityPlan<object> $target
+     * @param list<object> $entities
+     * @param JoinMapping $join
+     * @return list<object>
+     * @throws InvalidEntityStateException
+     * @throws MappingException
+     */
+    private function loadJoin(EntityPlan $plan, EntityPlan $target, array $entities, array $join): array
+    {
+        $property = $join['name'];
+        $unloaded = [];
+        $keys = [];
+        $next = [];
+
+        foreach ($entities as $entity) {
+            if (!$plan->initialized($entity, $property)) {
+                $snapshot = $this->snapshots[$entity] ?? throw InvalidEntityStateException::uninitialized($plan->class, $property);
+                /** @var int|string $key an identifier's database value is an int or a string */
+                $key = $snapshot[$plan->id];
+                $unloaded[] = [$entity, $key];
+                $keys[] = $key;
+
+                continue;
+            }
+
+            foreach ($this->members($entity, $property, $target->class) as $held) {
+                $next[spl_object_id($held)] = isset($this->snapshots[$held])
+                    ? $held
+                    : throw InvalidEntityStateException::relationTargetNotHeld($plan->class, $property);
+            }
+        }
+
+        $pairs = [];
+
+        foreach (array_chunk(array_unique($keys), self::RELATIONSHIP_BATCH) as $batch) {
+            $rows = new Query($this->link)
+                ->table($join['table'])
+                ->select($join['joinColumn'], $join['inverseJoinColumn'])
+                ->whereIn($join['joinColumn'], $batch)
+                ->orderBy($join['joinColumn'])
+                ->orderBy($join['inverseJoinColumn'])
+                ->get();
+            // Checked after the SQL, as register() is: the Fiber may have
+            // suspended there while the unit of work was closed.
+            $this->assertUsable();
+
+            foreach ($rows as $row) {
+                $pairs[] = [
+                    $plan->identifier(self::joinKey($plan, $join, $row, $join['joinColumn'])),
+                    $target->identifier(self::joinKey($plan, $join, $row, $join['inverseJoinColumn'])),
+                ];
+            }
+        }
+
+        $found = [];
+
+        foreach (array_chunk(array_unique(array_column($pairs, 1)), self::RELATIONSHIP_BATCH) as $batch) {
+            $rows = $this->select($target)->whereIn($target->column($target->id), $batch)->orderBy($target->column($target->id))->get();
+
+            foreach ($this->register($target, $rows) as [$id, $loaded]) {
+                $found[$id] = $loaded;
+            }
+        }
+
+        $members = [];
+
+        foreach ($pairs as [$owner, $id]) {
+            $members[$owner][] = $found[$id]
+                ?? throw MappingException::missingJoinTarget($plan->class, $property, $join['table'], $target->class);
+        }
+
+        foreach ($unloaded as [$entity, $key]) {
+            $loaded = $members[$key] ?? [];
+            $plan->assign($entity, $property, $loaded);
+
+            // What the join table held through the owning side is the one
+            // membership flush() may diff a later one against.
+            if ($join['mappedBy'] === null) {
+                $this->baseline($entity, $property, $loaded);
+            }
+
+            foreach ($loaded as $held) {
+                $next[spl_object_id($held)] = $held;
+            }
+        }
+
+        return array_values($next);
+    }
+
+    /**
+     * One end of a join row, which both join columns hold as a NOT NULL
+     * foreign key.
+     *
+     * @param EntityPlan<object> $plan
+     * @param JoinMapping $join
+     * @param array<string, mixed> $row
+     * @throws MappingException
+     */
+    private static function joinKey(EntityPlan $plan, array $join, array $row, string $column): int|string
+    {
+        $value = $row[$column] ?? null;
+
+        return is_int($value) || is_string($value)
+            ? $value
+            : throw MappingException::invalidJoinRow($plan->class, $join['name'], $join['table'], $column);
     }
 
     /** A relationship target's identifier in this manager's snapshot, or null when it does not manage the target. */
@@ -933,7 +1084,7 @@ final class EntityManager
                 throw InvalidEntityStateException::ownedRelationNotLoaded($plan->class, $property);
             }
 
-            foreach ($this->members($owner, $property, $inverse) as $child) {
+            foreach ($this->members($owner, $property, $inverse['target']) as $child) {
                 $children[] = $child;
             }
         }
@@ -942,14 +1093,14 @@ final class EntityManager
     }
 
     /**
-     * What an initialized owned relationship holds, in array order, without
-     * a #[HasOne]'s null.
+     * What an initialized relationship holds, in array order, without a
+     * #[HasOne]'s null.
      *
-     * @param InverseMapping $inverse
+     * @param class-string $target
      * @return list<object>
      * @throws InvalidEntityStateException for a value outside the target class
      */
-    private function members(object $owner, string $property, array $inverse): array
+    private function members(object $owner, string $property, string $target): array
     {
         $plan = $this->plans[$owner::class];
         $related = $plan->related($owner, $property);
@@ -960,7 +1111,7 @@ final class EntityManager
                 continue;
             }
 
-            $members[] = $member instanceof $inverse['target']
+            $members[] = $member instanceof $target
                 ? $member
                 : throw InvalidEntityStateException::relationTargetNotHeld($plan->class, $property);
         }
@@ -1089,11 +1240,133 @@ final class EntityManager
         }
 
         [$updates, $deletes] = $this->writes($managed, $values, $removals);
+        [$links, $unlinks, $joined] = $this->joins($inserts, $removals, $cancelled);
 
         return [
-            FlushPlanner::plan($scheduled, $updates, $deletes),
-            ['relations' => $relations, 'cancelled' => array_values($cancelled)],
+            FlushPlanner::plan($scheduled, $updates, $deletes, $links, $unlinks),
+            ['relations' => [...$relations, ...$joined], 'cancelled' => array_values($cancelled)],
         ];
+    }
+
+    /**
+     * Every join row this flush writes, and the membership COMMIT records for
+     * each owning collection it read. Nothing here writes or removes a target
+     * entity: a join row is the link alone.
+     *
+     * An owner this flush deletes loses every join row naming it, in one
+     * DELETE by its join column and without reading the collection. Any other
+     * owner's initialized collection is the state to reach: a new owner's is
+     * every link to insert, and a managed owner's is diffed against the
+     * membership this manager loaded, which is the only one it may diff
+     * against. Reordering the array reaches the same state and writes
+     * nothing.
+     *
+     * @param array<int, array{object, int|string|null}> $inserts
+     * @param array<int, object> $removals every entity this flush deletes, by object id
+     * @param array<int, object> $cancelled the inserts an orphaned aggregate cancels, by object id
+     * @return array{list<LinkAction>, list<LinkAction>, list<array{object, string, list<object>}>}
+     * @throws InvalidEntityStateException
+     */
+    private function joins(array $inserts, array $removals, array $cancelled): array
+    {
+        $links = [];
+        $unlinks = [];
+        $records = [];
+
+        foreach ($this->roots($inserts) as $owner) {
+            $key = spl_object_id($owner);
+
+            if (isset($cancelled[$key])) {
+                continue;
+            }
+
+            $plan = $this->plans[$owner::class];
+            /** @var int|string|Reference $ownerKey a root is managed or awaiting insert */
+            $ownerKey = $this->heldIdentifier($owner) ?? new Reference($key);
+
+            foreach ($plan->owningJoins() as $property => $join) {
+                $action = ['plan' => $plan, 'property' => $property, 'table' => $join['table']];
+
+                if (isset($removals[$key])) {
+                    $unlinks[] = [...$action, 'values' => [$join['joinColumn'] => $ownerKey]];
+
+                    continue;
+                }
+
+                if (!$plan->initialized($owner, $property)) {
+                    continue;
+                }
+
+                $baseline = ($this->relations[$owner] ?? [])[$property] ?? null;
+
+                if ($baseline === null && isset($this->snapshots[$owner])) {
+                    throw InvalidEntityStateException::joinCollectionNotLoaded($plan->class, $property);
+                }
+
+                [$members, $present, $endpoints] = $this->endpoints($owner, $property, $join, $inserts);
+
+                foreach ($baseline ?? [] as $identifier) {
+                    if (!in_array($identifier, $present, true)) {
+                        $unlinks[] = [...$action, 'values' => [
+                            $join['joinColumn'] => $ownerKey,
+                            $join['inverseJoinColumn'] => $identifier,
+                        ]];
+                    }
+                }
+
+                foreach ($endpoints as $i => $endpoint) {
+                    if ($baseline === null || $present[$i] === null || !in_array($present[$i], $baseline, true)) {
+                        $links[] = [...$action, 'values' => [
+                            $join['joinColumn'] => $ownerKey,
+                            $join['inverseJoinColumn'] => $endpoint,
+                        ]];
+                    }
+                }
+
+                $records[] = [$owner, $property, $members];
+            }
+        }
+
+        return [$links, $unlinks, $records];
+    }
+
+    /**
+     * What an owning join collection holds: its targets, the identifier each
+     * one already has, and the value a join row names it by — a Reference
+     * where an insert of this flush generates that identifier. One link is
+     * one join row and this manager holds one object per row, so an object
+     * appearing twice is a duplicate row.
+     *
+     * @param JoinMapping $join
+     * @param array<int, array{object, int|string|null}> $inserts
+     * @return array{list<object>, list<int|string|null>, list<int|string|Reference>}
+     * @throws InvalidEntityStateException
+     */
+    private function endpoints(object $owner, string $property, array $join, array $inserts): array
+    {
+        $plan = $this->plans[$owner::class];
+        $members = [];
+        $present = [];
+        $endpoints = [];
+        $seen = [];
+
+        foreach ($this->members($owner, $property, $join['target']) as $member) {
+            $key = spl_object_id($member);
+            $identifier = $this->heldIdentifier($member) ?? ($inserts[$key][1] ?? null);
+
+            if (isset($seen[$key])) {
+                throw InvalidEntityStateException::duplicateJoinTarget($plan->class, $property, $join['target']);
+            }
+
+            $seen[$key] = true;
+            $members[] = $member;
+            $present[] = $identifier;
+            $endpoints[] = $this->heldIdentifier($member) ?? (isset($inserts[$key])
+                ? new Reference($key)
+                : throw InvalidEntityStateException::relationTargetNotHeld($plan->class, $property));
+        }
+
+        return [$members, $present, $endpoints];
     }
 
     /**
@@ -1208,7 +1481,7 @@ final class EntityManager
                     continue;
                 }
 
-                foreach ($this->members($owner, $property, $inverse) as $child) {
+                foreach ($this->members($owner, $property, $inverse['target']) as $child) {
                     if (isset($this->tombstones[$child])) {
                         throw InvalidEntityStateException::deletedChildRediscovered($plan->class, $property, $inverse['target']);
                     }
@@ -1264,7 +1537,7 @@ final class EntityManager
                 $members = [];
                 $present = [];
 
-                foreach ($this->members($owner, $property, $inverse) as $child) {
+                foreach ($this->members($owner, $property, $inverse['target']) as $child) {
                     $key = spl_object_id($child);
                     $identifier = $this->heldIdentifier($child) ?? ($inserts[$key][1] ?? null);
 
@@ -1441,7 +1714,8 @@ final class EntityManager
      * Runs every statement of the plan, in its order, and returns the
      * identifier each generated insert reported, by the object id of the
      * entity it inserted. Every later statement resolves its references from
-     * those keys, and no entity is written.
+     * those keys, and no entity is written. A link statement writes a join
+     * table: its INSERT writes one row, and its DELETE may match any number.
      *
      * @param list<PlanNode> $nodes
      * @return array<int, int>
@@ -1455,6 +1729,27 @@ final class EntityManager
         foreach ($nodes as $node) {
             $plan = $node->plan;
             $values = self::resolve($node->sent, $generated);
+
+            if ($node->table !== null) {
+                $rows = new Query($transaction)->table($node->table);
+
+                if ($node->kind === 'link') {
+                    $rows->insert($values);
+                } else {
+                    foreach ($values as $column => $value) {
+                        $rows->where($column, '=', $value);
+                    }
+
+                    // A join row is a link alone, with no version and no row
+                    // the flush can claim: an owner keeps none, and a link
+                    // already gone is nothing left to delete.
+                    $rows->delete();
+                }
+
+                $this->assertOpen();
+
+                continue;
+            }
 
             if ($node->kind === 'insert') {
                 /** @var object $entity an insert always writes one */
@@ -1516,9 +1811,10 @@ final class EntityManager
      * whatever its properties hold by now, and writes each inserted or
      * updated entity's version and each generated identifier: the flush owns
      * them, so a change made meanwhile is overwritten. A deleted entity is
-     * detached behind a tombstone, every reconciled owned relationship takes
-     * the membership the plan was built from, and every membership this
-     * manager still holds loses the rows the flush deleted.
+     * detached behind a tombstone, every reconciled owned relationship and
+     * every written join collection takes the membership the plan was built
+     * from, and every membership this manager still holds loses the rows the
+     * flush deleted.
      *
      * @param list<PlanNode> $nodes
      * @param array<int, int> $generated
@@ -1537,7 +1833,8 @@ final class EntityManager
             $entity = $node->entity;
 
             if ($entity === null) {
-                // A fix-up completes the row an insert or a delete owns.
+                // A fix-up completes the row an insert or a delete owns, and
+                // a link statement writes a join row no entity holds.
                 continue;
             }
 

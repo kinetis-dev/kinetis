@@ -15,7 +15,8 @@ use Throwable;
  * call while flush() runs, a locking read outside a transaction session, a
  * nested session, a call after a session's flush or failure — an owned
  * relationship whose two sides disagree, whose database state the manager
- * never loaded, or that holds a row this manager already deleted, a
+ * never loaded, or that holds a row this manager already deleted, an owning
+ * join collection the manager never loaded or holding one row twice, a
  * reference loop no statement order writes — or a flush whose rows
  * disagree with the entities it writes. A message names the class and
  * property, never an identifier or version value: an identifier can be a
@@ -171,6 +172,23 @@ final class InvalidEntityStateException extends RuntimeException
         return new self(
             "Two {$class} objects both hold one {$target} row through {$class}::\${$property}. A row has one "
             . 'aggregate owner: drop it from the relationship it left.',
+        );
+    }
+
+    public static function joinCollectionNotLoaded(string $class, string $property): self
+    {
+        return new self(
+            "{$class}::\${$property} is an owning #[ManyToMany] collection this EntityManager did not load, so which "
+            . 'links the join table holds is unknown and writing it would guess. Load it with '
+            . "with('{$property}'), or write the join table through builder().",
+        );
+    }
+
+    public static function duplicateJoinTarget(string $class, string $property, string $target): self
+    {
+        return new self(
+            "{$class}::\${$property} holds one {$target} object twice. A join collection is a set of distinct rows: "
+            . 'one link is one join row, and this EntityManager holds one object per row.',
         );
     }
 

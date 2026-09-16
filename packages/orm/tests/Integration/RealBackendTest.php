@@ -23,8 +23,10 @@ use Kinetis\Orm\Tests\Fixtures\StoredEvent;
 use Kinetis\Orm\Tests\Fixtures\StoredInvoice;
 use Kinetis\Orm\Tests\Fixtures\StoredItem;
 use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
+use Kinetis\Orm\Tests\Fixtures\StoredParcel;
 use Kinetis\Orm\Tests\Fixtures\StoredPost;
 use Kinetis\Orm\Tests\Fixtures\StoredProfile;
+use Kinetis\Orm\Tests\Fixtures\StoredRibbon;
 use Kinetis\Orm\Tests\Fixtures\StoredSeal;
 use Kinetis\Orm\Tests\Fixtures\StoredTicket;
 use Kinetis\Persistence\ConnectionDefinition;
@@ -713,6 +715,156 @@ final class RealBackendTest extends TestCase
         self::assertTrue($entities->contains($cell));
     }
 
+    /**
+     * Both ends of a join row can have keys the inserts of the same flush
+     * generate, and the server's two foreign keys accept the row only once
+     * both of them exist.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_new_owner_links_the_keys_its_endpoint_inserts_generated(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $parcel = StoredParcel::of('fresh');
+        $gold = StoredRibbon::named('gold');
+        $entities->persist($parcel);
+        $entities->persist($gold);
+        $silk = $entities->repository(StoredRibbon::class)->query()->where('name', '=', 'silk')->first();
+        self::assertInstanceOf(StoredRibbon::class, $silk);
+        $parcel->ribbons = [$gold, $silk];
+
+        $entities->flush();
+
+        self::assertNotNull($parcel->id);
+        self::assertNotNull($gold->id);
+        $linked = [$silk->id, $gold->id];
+        sort($linked);
+        self::assertSame($linked, self::ribbons($this->parcel($factory->open(), 'fresh')));
+    }
+
+    /**
+     * A diff of a loaded collection touches the pairs that changed and no
+     * other row of the join table, and removes no target entity.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_loaded_diff_writes_only_the_pairs_that_changed(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $parcel = $this->parcel($entities, 'seeded-parcel');
+        $linen = $entities->repository(StoredRibbon::class)->query()->where('name', '=', 'linen')->first();
+        self::assertInstanceOf(StoredRibbon::class, $linen);
+        // silk goes, satin stays and is reordered, linen joins.
+        $parcel->ribbons = [$linen, $parcel->ribbons[1]];
+
+        $entities->flush();
+
+        $stored = $this->parcel($factory->open(), 'seeded-parcel');
+        self::assertSame([$parcel->ribbons[1]->id, $linen->id], self::ribbons($stored));
+        self::assertSame(3, new Query($this->link())->table('kin_orm_ribbons')->count(), 'no target entity was removed');
+    }
+
+    /**
+     * The join table's foreign key to the owner refuses that owner's DELETE
+     * while a link names it, so a committed removal is the ordering
+     * evidence. Its foreign key to a target refuses that target's DELETE the
+     * same way, which is the policy a shared row keeps.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_removing_an_owner_deletes_its_join_rows_first_and_removing_a_linked_target_is_refused(
+        string $dialect,
+        string $driver,
+    ): void {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $silk = $entities->repository(StoredRibbon::class)->query()->where('name', '=', 'silk')->first();
+        self::assertInstanceOf(StoredRibbon::class, $silk);
+        $entities->remove($silk);
+
+        try {
+            $entities->flush();
+            self::fail('A linked ribbon was deleted.');
+        } catch (QueryException) {
+        }
+
+        $removing = $factory->open();
+        $removing->remove($this->parcel($removing, 'seeded-parcel'));
+
+        $removing->flush();
+
+        self::assertSame(0, new Query($this->link())->table('kin_orm_parcel_ribbon')->count());
+        self::assertSame(0, new Query($this->link())->table('kin_orm_parcels')->count());
+        self::assertSame(3, new Query($this->link())->table('kin_orm_ribbons')->count(), 'the shared targets outlive the owner');
+    }
+
+    /**
+     * A link another writer added first is the join table's own uniqueness
+     * failure. The rollback takes the whole flush with it, and the manager
+     * keeps every link it was about to write, with no collection baseline
+     * acknowledged.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_duplicate_link_rolls_back_and_leaves_the_join_work_pending(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $parcel = $this->parcel($entities, 'seeded-parcel');
+        $linen = $entities->repository(StoredRibbon::class)->query()->where('name', '=', 'linen')->first();
+        self::assertInstanceOf(StoredRibbon::class, $linen);
+        $parcel->ribbons = [$parcel->ribbons[1], $linen];
+        $pair = ['parcel_id' => $parcel->id, 'ribbon_id' => $linen->id];
+        new Query($this->link())->table('kin_orm_parcel_ribbon')->insert($pair);
+
+        try {
+            $entities->flush();
+            self::fail('The duplicate link was accepted.');
+        } catch (QueryException) {
+        }
+
+        self::assertFalse($entities->isClosed());
+        self::assertSame(3, new Query($this->link())->table('kin_orm_parcel_ribbon')->count(), 'the rollback kept the seeded pairs');
+
+        new Query($this->link())->table('kin_orm_parcel_ribbon')
+            ->where('parcel_id', '=', $pair['parcel_id'])
+            ->where('ribbon_id', '=', $pair['ribbon_id'])
+            ->delete();
+
+        $entities->flush();
+
+        self::assertSame([$parcel->ribbons[0]->id, $linen->id], self::ribbons($this->parcel($factory->open(), 'seeded-parcel')));
+    }
+
+    /** The parcel with $code, read through $manager with its ribbons loaded. */
+    private function parcel(EntityManager $manager, string $code): StoredParcel
+    {
+        $parcel = $manager->repository(StoredParcel::class)->query()->where('code', '=', $code)->with('ribbons')->first();
+
+        return $parcel ?? self::fail("No parcel is coded {$code}.");
+    }
+
+    /**
+     * @return list<int|null> the identifiers of $parcel's ribbons, in ascending order
+     */
+    private static function ribbons(StoredParcel $parcel): array
+    {
+        $ids = array_map(static fn (StoredRibbon $ribbon): ?int => $ribbon->id, $parcel->ribbons);
+        sort($ids);
+
+        return $ids;
+    }
+
     /** The crate with $code, read through $manager with $relations loaded. */
     private function crate(EntityManager $manager, string $code, string ...$relations): StoredCrate
     {
@@ -743,8 +895,10 @@ final class RealBackendTest extends TestCase
                 StoredInvoice::class,
                 StoredItem::class,
                 StoredOrganization::class,
+                StoredParcel::class,
                 StoredPost::class,
                 StoredProfile::class,
+                StoredRibbon::class,
                 StoredSeal::class,
                 StoredTicket::class,
             ]),
@@ -813,6 +967,9 @@ final class RealBackendTest extends TestCase
 
     private static function seed(MysqlLink|PostgresLink $link, string $dialect): void
     {
+        $link->execute('DROP TABLE IF EXISTS kin_orm_parcel_ribbon');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_parcels');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_ribbons');
         $link->execute('DROP TABLE IF EXISTS kin_orm_seals');
         $link->execute('DROP TABLE IF EXISTS kin_orm_items');
         $link->execute('DROP TABLE IF EXISTS kin_orm_crates');
@@ -870,6 +1027,14 @@ final class RealBackendTest extends TestCase
             "CREATE TABLE kin_orm_cells (id BIGINT {$key} PRIMARY KEY, twin_id BIGINT NULL, name VARCHAR(50) NOT NULL, "
             . 'FOREIGN KEY (twin_id) REFERENCES kin_orm_cells (id))',
         );
+        $link->execute("CREATE TABLE kin_orm_parcels (id BIGINT {$key} PRIMARY KEY, code VARCHAR(50) NOT NULL)");
+        $link->execute("CREATE TABLE kin_orm_ribbons (id BIGINT {$key} PRIMARY KEY, name VARCHAR(50) NOT NULL)");
+        $link->execute(
+            'CREATE TABLE kin_orm_parcel_ribbon (parcel_id BIGINT NOT NULL, ribbon_id BIGINT NOT NULL, '
+            . 'PRIMARY KEY (parcel_id, ribbon_id), '
+            . 'FOREIGN KEY (parcel_id) REFERENCES kin_orm_parcels (id), '
+            . 'FOREIGN KEY (ribbon_id) REFERENCES kin_orm_ribbons (id))',
+        );
 
         new Query($link)->table('kin_orm_articles')->insert([
             ['id' => 1, 'title' => 'First', 'summary' => null, 'status' => 'published', 'priority' => null, 'featured' => true, 'rating' => 4.5, 'author_id' => 7],
@@ -900,6 +1065,15 @@ final class RealBackendTest extends TestCase
         new Query($link)->table('kin_orm_seals')->insert([
             ['crate_id' => $first, 'stamp' => 'wax'],
             ['crate_id' => $second, 'stamp' => 'lead'],
+        ]);
+
+        $silk = new Query($link)->table('kin_orm_ribbons')->insertGetId(['name' => 'silk'], 'id');
+        $satin = new Query($link)->table('kin_orm_ribbons')->insertGetId(['name' => 'satin'], 'id');
+        new Query($link)->table('kin_orm_ribbons')->insert(['name' => 'linen']);
+        $parcel = new Query($link)->table('kin_orm_parcels')->insertGetId(['code' => 'seeded-parcel'], 'id');
+        new Query($link)->table('kin_orm_parcel_ribbon')->insert([
+            ['parcel_id' => $parcel, 'ribbon_id' => $silk],
+            ['parcel_id' => $parcel, 'ribbon_id' => $satin],
         ]);
     }
 

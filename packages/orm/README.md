@@ -39,7 +39,8 @@ relationships; an entity query loads either side when asked. An inverse
 relationship marked `owned` is an aggregate: one `persist()` writes the
 whole graph below it in foreign-key order, one `remove()` deletes it, and
 a child dropped from a relationship the manager loaded is deleted or
-moved.
+moved. A `#[ManyToMany]` relationship maps a join table, whose rows one
+side owns and the other only reads.
 
 This README is the package's contract. How a Kinetis application wires
 it: [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
@@ -107,8 +108,8 @@ final class Article
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum,
   `DateTimeImmutable` (see "Timestamps"), and the nullable form of each;
   on a `#[BelongsTo]` or `#[HasOne]` property, an
-  entity class, and on a `#[HasMany]` property, `array` (see
-  "Relationships").
+  entity class, and on a `#[HasMany]` or `#[ManyToMany]` property, `array`
+  (see "Relationships" and "Many-to-many relationships").
 - **Classes.** An entity has no parent class and is neither abstract nor
   readonly; it may be final. Its constructor's signature and visibility
   do not matter.
@@ -117,9 +118,9 @@ final class Article
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
 type, an intersection, any other type (`mixed`, `array` without
-`#[HasMany]`, an object without `#[BelongsTo]` or `#[HasOne]`, such as
-`DateTime`, `DateTimeInterface` or a subclass of `DateTimeImmutable`, a
-unit enum), a missing or
+`#[HasMany]` or `#[ManyToMany]`, an object without `#[BelongsTo]` or
+`#[HasOne]`, such as `DateTime`, `DateTimeInterface` or a subclass of
+`DateTimeImmutable`, a unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
 `int`, an invalid name, a duplicate column, and each relationship
@@ -180,8 +181,10 @@ is not an entity, or a relationship whose target is not one of them.
 `toArray()` holds only class names, table and column names, type names
 and flags, ordered by class, so the same classes always produce the same
 array. Each entity lists its column-mapped `properties` and, apart from
-them, its inverse relationships as `inverses`. `fromArray()` accepts only
-what `toArray()` writes for those classes as they are declared now: a missing or extra field, a
+them, its inverse relationships as `inverses` and its `#[ManyToMany]`
+relationships as `joins`, each carrying the join table and the two
+columns that end of it reads. `fromArray()` accepts only what
+`toArray()` writes for those classes as they are declared now: a missing or extra field, a
 wrong type, an unknown class or a mapping the source no longer produces
 throws `MappingException`. It reflects the classes it names and nothing
 else. Nothing is cached outside the instance.
@@ -455,6 +458,10 @@ $authors->data[0]->profile?->bio;
   `list<Target>` PHPDoc documents it. The target is mapped in the same
   `MetadataRegistry`. An inverse relationship maps no column of its own
   table.
+- **Join table.** `#[ManyToMany]` marks an array property holding the
+  entities a join table links this one to, and is the third kind of
+  relationship: no side of it maps a column of its own table.
+  "Many-to-many relationships" below is its contract.
 - **Ownership.** `owned: true` on `#[HasOne]` or `#[HasMany]` makes the
   relationship an aggregate edge, which "Aggregates" below states in
   full: `flush()` discovers new targets through it, `remove()` removes
@@ -477,21 +484,23 @@ $authors->data[0]->profile?->bio;
   does not map, and a `mappedBy` naming no `#[BelongsTo]` property of the
   target or one that references another class, a second owned inverse
   relationship to one entity class, and two owned inverse relationships
-  over one `#[BelongsTo]` property. A default value is refused on either
-  side because an initialized relationship is never loaded.
+  over one `#[BelongsTo]` property. A default value is refused on every
+  kind because an initialized relationship is never loaded.
+  "Many-to-many relationships" lists `#[ManyToMany]`'s own refusals.
 - **Loaded or not.** Loading a row leaves every relationship, of either
-  side, uninitialized, and reading one throws PHP's `Error` as for any
-  uninitialized typed property. Only `with()` or the application
+  side and a `#[ManyToMany]` included, uninitialized, and reading one
+  throws PHP's `Error` as for any uninitialized typed property. Only
+  `with()` or the application
   initializes it: there is no proxy, no lazy loading and no loaded-state
   API. The manager's snapshot holds a `#[BelongsTo]`'s foreign key either
-  way, and nothing of an inverse relationship.
+  way, and nothing of any other relationship.
 
 ### Loading relationships
 
 `with(string ...$relations)` names relationship paths: each segment is a
-`#[BelongsTo]`, `#[HasOne]` or `#[HasMany]` property of the entity the
-segment before it loads, as in `author.organization`, `comments.author`
-or `author.posts`. Repeated calls add to one set. An empty segment, an
+`#[BelongsTo]`, `#[HasOne]`, `#[HasMany]` or `#[ManyToMany]` property of
+the entity the segment before it loads, as in `author.organization`,
+`comments.author` or `author.posts`. Repeated calls add to one set. An empty segment, an
 unknown property or a property that is not a relationship throws
 `MappingException` before SQL.
 
@@ -535,6 +544,9 @@ An inverse relationship:
    `MappingException`. Both messages name the class, property, target and
    column.
 5. The targets are the next level's entities.
+
+A `#[ManyToMany]` relationship reads its join table first, as
+"Many-to-many relationships" states.
 
 A relationship the application already initialized, on either side, is
 never overwritten by a load, and no load compares it with the database.
@@ -582,16 +594,21 @@ matches an `int` identifier and an entity object throws
 `MappingException`. No predicate reaches a target's own properties; a
 join belongs to `builder()`.
 
-An inverse relationship maps no column: `where()`, `whereIn()`,
-`orderBy()`, `findBy()` and a `cursorPaginate()` property naming one throw
-`MappingException` before SQL. Filter, order and page the targets through
-their own repository by their `#[BelongsTo]` property, as above.
+An inverse or `#[ManyToMany]` relationship maps no column of its own
+table: `where()`, `whereIn()`, `orderBy()`, `findBy()` and a
+`cursorPaginate()` property naming one throw
+`MappingException` before SQL. Filter, order and page the targets of an
+inverse relationship through their own repository by their `#[BelongsTo]`
+property, as above, and those of a `#[ManyToMany]` through its join table
+with `builder()`.
 
 ### Writing relationships
 
 - **Owning side only.** Only a `#[BelongsTo]` property writes a foreign
-  key. Assigning `$post->comments` or `$author->profile` never writes an
-  owner column and never advances an owner's version. To move a comment
+  key of an entity table, and only an owning `#[ManyToMany]` property
+  writes a join table (see "Many-to-many relationships"). Assigning
+  `$post->comments` or `$author->profile` never writes an owner column
+  and never advances an owner's version. To move a comment
   to another post, set its `post` property to that post. What an *owned*
   relationship adds — which rows a flush discovers, deletes or moves — is
   under "Aggregates"; a relationship that is not owned writes nothing,
@@ -766,11 +783,15 @@ CASCADE` outside this contract.
   names;
 - an INSERT or UPDATE whose final foreign key names a row the same flush
   removes — one it deletes, or one whose insert an aggregate removal
-  cancelled — is refused before SQL.
+  cancelled — is refused before SQL, and so is a join row naming one;
+- the INSERT of a join row runs after the rows at both of its ends, and
+  the DELETE of one runs before the DELETE of its owning entity.
 
-Where no dependency decides, the order is deletes, inserts, then
-updates, each by entity class, by identifier where it is known, and last
-by the order the entity was scheduled in. Deleting first frees the
+Where no dependency decides, the order is join-row deletes, entity
+deletes, entity inserts, join-row inserts, then updates; entity
+statements by class and by identifier where it is known, join-row
+statements by join table and by their pair, and both last by the order
+they were scheduled in. Deleting first frees the
 unique foreign-key slot an owned `#[HasOne]` replacement needs.
 
 ### Loops
@@ -788,6 +809,172 @@ Only a nullable foreign key breaks a loop. A loop of `NOT NULL` columns
 throws `InvalidEntityStateException` before a transaction starts, naming
 the relationships it runs through: Kinetis does not depend on a
 backend's deferred-constraint configuration.
+
+## Many-to-many relationships
+
+`#[ManyToMany]` maps a join table. One side owns it, naming the table and
+both of its columns; the other side is optional and only reads it.
+
+```php
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\ManyToMany;
+
+#[Entity(table: 'courses')]
+final class Course
+{
+    public int $id;
+
+    public string $title;
+
+    /** @var list<Student> */
+    #[ManyToMany(
+        target: Student::class,
+        table: 'course_student',
+        joinColumn: 'course_id',
+        inverseJoinColumn: 'student_id',
+    )]
+    public array $students;
+}
+
+#[Entity(table: 'students')]
+final class Student
+{
+    public int $id;
+
+    public string $name;
+
+    /** @var list<Course> */
+    #[ManyToMany(target: Course::class, mappedBy: 'students')]
+    public array $courses;
+}
+```
+
+```sql
+CREATE TABLE course_student (
+    course_id  BIGINT NOT NULL,
+    student_id BIGINT NOT NULL,
+    PRIMARY KEY (course_id, student_id),
+    FOREIGN KEY (course_id)  REFERENCES courses (id),
+    FOREIGN KEY (student_id) REFERENCES students (id)
+);
+```
+
+- **Owning side.** `target`, `table`, `joinColumn` — the column holding
+  this entity's identifier — and `inverseJoinColumn` — the column holding
+  a target's. It is the only side that writes the table.
+- **Inverse side.** `target` and `mappedBy`, the owning `#[ManyToMany]`
+  property of that target, and none of the other three: the owning
+  property names the table, and this side reads it with its two columns
+  swapped. It is a view, like an inverse `#[HasOne]` or `#[HasMany]`.
+- **Property.** Exactly `array`, not nullable and with no default value,
+  on both sides. `target` names the element class, `self::class`
+  included, since PHP cannot declare an element type; a `list<Target>`
+  PHPDoc documents it.
+- **Schema.** The join table needs a unique constraint over the column
+  pair and a foreign key to each entity table. Nothing inspects the
+  schema, so a target or an owner another row still names is the
+  database's refusal, and so is a duplicate pair the flush could not see:
+  one a concurrent writer added, one the table already held, or one a
+  separate unit of work created. A duplicate the collection itself holds
+  is refused before SQL, as "Writing a join collection" states. Give a
+  self-referential mapping two different columns.
+- **Refusals.** `MappingException`, when the metadata is built: a type
+  other than `array`, a nullable one, a default value, `#[BelongsTo]`,
+  `#[HasOne]`, `#[HasMany]`, `#[Column]`, `#[Id]` or `#[Version]` on the
+  same property, an owning side missing any of `table`, `joinColumn` and
+  `inverseJoinColumn`, an inverse side naming one of them, a table or
+  column name that is not an identifier, one column name for both ends, a
+  target the registry does not map, and a `mappedBy` naming no
+  `#[ManyToMany]` property of the target, an inverse one, or one that
+  references another class.
+
+### Loading a join collection
+
+`with('students')` and `with('courses')` load either side, after the root
+statement and on the manager's link:
+
+1. One `SELECT` of both join columns where this end's column is `IN` the
+   distinct identifiers of the level's entities whose property is
+   uninitialized, for at most 1,000 identifiers per statement, ordered by
+   both columns. A level without identifiers sends nothing, and a join
+   column holding no identifier throws `MappingException`.
+2. One `SELECT` of the target's mapped columns where its identifier
+   column is `IN` the distinct identifiers those rows name, again at most
+   1,000 per statement. There is no join. Every row loads under
+   "Loading", so a held target is returned as it is, and an identifier no
+   row matches throws `MappingException`.
+3. Each property is set to the list of its own rows' targets, in the
+   order step 1 read them, and to an empty list without rows. An
+   initialized property is never overwritten; what it holds joins the
+   next level and must be an entity of the target class this manager
+   manages.
+
+A join collection is a set of entity identities, so its array order
+carries no meaning and a duplicate is refused before SQL: a collection
+holding one target object twice, and two objects naming one row, which
+never reach one collection together because a manager holds one object
+per identity and refuses a second for one it already holds.
+
+### Writing a join collection
+
+Only the owning side writes, and it writes join rows alone: a link is
+never a target's insert, update or deletion.
+
+| The owning collection | What `flush()` writes |
+|---|---|
+| of an entity awaiting insert | one INSERT per link it holds |
+| loaded with `with()` | one DELETE per pair it lost, one INSERT per pair it gained |
+| loaded and only reordered | nothing |
+| of an owner scheduled for deletion | one DELETE by the join column, before the owner's own |
+| uninitialized | nothing |
+| initialized by the application on a managed owner | `InvalidEntityStateException` before SQL |
+
+```php
+$course = $entities->repository(Course::class)->query()->with('students')->first();
+
+$course->students = [...array_filter($course->students, fn (Student $s) => $s !== $dropped), $enrolled];
+
+$entities->flush(); // DELETE the pair that left, INSERT the pair that joined
+```
+
+`$dropped` and `$enrolled` are students this manager holds.
+
+- **A loaded membership is the only baseline.** Assigning an array to a
+  managed owner's collection the manager never loaded is refused, naming
+  the relationship to load: what the join table holds behind it is
+  unknown, and reading it would be I/O no property access performs. A new
+  owner's collection needs no load — it is the complete membership to
+  insert.
+- **Targets are never cascaded.** Every target must already be managed or
+  awaiting insert in the same flush; anything else is refused with
+  `InvalidEntityStateException`. Dropping a link leaves the target row
+  untouched, and removing a target entity writes no join row: the
+  database's foreign key refuses that DELETE, or a declared `ON DELETE
+  CASCADE` performs that policy.
+- **The inverse side is inert.** Changing it writes nothing, exactly as
+  an inverse `#[HasOne]` or `#[HasMany]`. Nothing reconciles the two
+  sides in memory.
+- **Order.** A link's INSERT runs after both endpoint rows exist, so a
+  generated key travels from its INSERT into the link statement without
+  reaching a property before COMMIT. A join table's DELETEs run before
+  its INSERTs and before the owner's own DELETE, and the statements of
+  one join table are ordered by their pair, so concurrent flushes take
+  its row locks in one order.
+- **Row counts.** A link DELETE may affect any number of rows, zero
+  included: a link already gone is nothing left to delete, and an owner's
+  cleanup removes whatever names it. A link has no version, so no
+  optimistic lock applies to it; the unique constraint is the concurrency
+  authority, and the pair it refuses fails the flush before COMMIT like
+  any other statement (see "When a flush fails").
+- **After COMMIT.** The membership the plan was built from becomes the
+  baseline the next flush diffs against. A rollback, a rollback failure
+  and an unacknowledged COMMIT leave it as it was, so the whole flush
+  can be sent again.
+
+A link that carries data of its own — a grade, a position, a
+`deleted_at` — is not a join row but an entity: map an `Enrollment` class
+with a surrogate identifier and two `#[BelongsTo]` properties, and it
+persists, orders and removes under "Aggregates" like any other row.
 
 ## Writing
 
@@ -859,7 +1046,8 @@ leaves COMMIT to the factory (see "Transaction sessions"):
    reads and validates every entity awaiting insert as `persist()` does
    and every managed entity, refuses an identifier or version that
    changed and an UPDATE whose version cannot advance, reconciles every
-   owned relationship it loaded, and orders every statement. With nothing
+   owned relationship it loaded, diffs every owning join collection it
+   may write, and orders every statement. With nothing
    to write, it returns without a transaction or any I/O.
 2. One INSERT per entity awaiting insert, of every mapped column but a
    generated identifier.
@@ -868,18 +1056,23 @@ leaves COMMIT to the factory (see "Transaction sessions"):
    "Optimistic locking").
 4. An UPDATE per deferred foreign key, where a loop of references needed
    one (see "Loops").
-5. COMMIT.
+5. One DELETE per join row an owning `#[ManyToMany]` collection dropped,
+   one per join table of an entity being deleted, and one INSERT per join
+   row such a collection gained (see "Many-to-many relationships").
+6. COMMIT.
 
-Statements 2 to 4 run in the one order "Statement order" states: every
-row after the rows its foreign keys name, and otherwise deletes, inserts
-then updates, by class and identifier, so concurrent flushes take row
+Statements 2 to 5 run in the one order "Statement order" states: every
+row after the rows its foreign keys name, and otherwise join-row deletes,
+entity deletes, entity inserts, join-row inserts then updates, by class,
+identifier and join pair, so concurrent flushes take row
 locks in one order where no dependency decides. Every statement runs on
 that transaction, and nothing is batched. A statement that needs a key an
 earlier INSERT generated takes it from that INSERT; no entity property
 holds it before COMMIT.
 
-A DELETE and a deferred foreign key's UPDATE must affect exactly one
-row, and an entity's UPDATE at most one. An unversioned entity UPDATE
+An entity's DELETE and a deferred foreign key's UPDATE must affect
+exactly one row, and an entity's UPDATE at most one; a join row's DELETE
+may affect any number. An unversioned entity UPDATE
 affecting none is followed by an existence check on the same transaction: the MySQL family counts changed rows rather than
 matched ones, so an UPDATE writing the values its row already holds
 reports zero. A versioned UPDATE or DELETE affecting none throws
@@ -892,7 +1085,9 @@ inserted or updated entity is then snapshotted with the values the flush
 sent, not whatever its properties hold by then; a generated key is
 written into its property and registered as the entity's identity; a
 versioned entity's version, as inserted or advanced by its update, is
-written into its property; and a deleted entity is detached.
+written into its property; every reconciled owned relationship and every
+written join collection takes the membership the plan was built from; and
+a deleted entity is detached.
 
 While `flush()` runs, the manager refuses every call but `close()` and
 `isClosed()` with `InvalidEntityStateException`, including a call made on
@@ -1245,7 +1440,8 @@ instead.
 
 ## Not in scope
 
-Many-to-many relationships and pivot tables, foreign-key writes through
+Join-table payload, ordering or soft deletion, cascading a target's
+persistence or removal through a join table, foreign-key writes through
 an inverse relationship or fixup of either side, cascades a relationship
 does not own, cascade rules per operation, orphan removal through a
 relationship this manager never loaded,
