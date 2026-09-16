@@ -709,6 +709,21 @@ final class FlushTest extends TestCase
         self::assertNull($ticket->id);
     }
 
+    public function test_a_close_during_a_row_statement_refuses_before_its_row_count_does(): void
+    {
+        $manager = $this->factory->open();
+        $this->link->queue([['id' => 1, 'score' => 1]]);
+        $manager->repository(Counted::class)->findOrFail(1)->score = 2;
+        $this->transaction->queue(self::affected(2));
+        $this->transaction->onStatement = static fn (): mixed => $manager->close();
+
+        self::assertThrows(ClosedEntityManagerException::class, static fn (): mixed => $manager->flush());
+
+        self::assertSame(['UPDATE `counted` SET `score` = 2 WHERE `id` = 1'], $this->transaction->statements());
+        self::assertSame(['close', 'rollback'], $this->transaction->ends);
+        self::assertTrue($manager->isClosed());
+    }
+
     public function test_a_close_from_another_fiber_during_a_statement_closes_the_transaction_and_fails_the_flush(): void
     {
         [$fiber, $manager, $ticket] = $this->flushInFiber();

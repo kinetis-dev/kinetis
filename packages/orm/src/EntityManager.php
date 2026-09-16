@@ -1748,83 +1748,129 @@ final class EntityManager
         $generated = [];
 
         foreach ($nodes as $node) {
-            $plan = $node->plan;
             $values = self::resolve($node->sent, $generated);
 
             if ($node->table !== null) {
-                $rows = new Query($transaction)->table($node->table);
-
-                if ($node->kind === 'link') {
-                    $rows->insert($values);
-                } else {
-                    foreach ($values as $column => $value) {
-                        $rows->where($column, '=', $value);
-                    }
-
-                    // A join row is a link alone, with no version and no row
-                    // the flush can claim: an owner keeps none, and a link
-                    // already gone is nothing left to delete.
-                    $rows->delete();
-                }
-
-                $this->assertOpen();
+                $this->writeJoin($transaction, $node, $values);
 
                 continue;
             }
 
             if ($node->kind === 'insert') {
-                /** @var object $entity an insert always writes one */
-                $entity = $node->entity;
-                $insert = new Query($transaction)->table($plan->table);
+                $key = $this->insert($transaction, $node, $values);
 
-                if (!$plan->generated) {
-                    $insert->insert($plan->row($values));
-                    $this->assertOpen();
-
-                    continue;
+                if ($key !== null) {
+                    /** @var object $entity an insert always writes one */
+                    $entity = $node->entity;
+                    $generated[spl_object_id($entity)] = $key;
                 }
-
-                unset($values[$plan->id]);
-                $key = $insert->insertGetId($plan->row($values), $plan->column($plan->id));
-                $this->assertOpen();
-                $generated[spl_object_id($entity)] = $plan->generatedIdentifier($key);
 
                 continue;
             }
 
-            /** @var int|string $id a fix-up of a generated row resolves to the key its insert reported */
-            $id = $node->id instanceof Reference ? $generated[$node->id->entity] : $node->id;
-            $row = new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id);
-
-            if ($plan->version !== null && $node->version !== null) {
-                $row->where($plan->column($plan->version), '=', $node->version);
-            }
-
-            $affected = $node->kind === 'delete' ? $row->delete() : $row->update($plan->row($values));
-            // The MySQL family reports changed rows, not matched ones, so an
-            // UPDATE writing the values its row already holds affects none. A
-            // versioned UPDATE that matches always changes its version, so
-            // none means the row is stale, and a fix-up always writes a key
-            // the row does not hold yet.
-            $exists = $affected === 0 && $node->kind === 'update' && $node->version === null
-                && new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id)->exists();
-            $this->assertOpen();
-            $statement = $node->kind === 'delete' ? 'DELETE' : 'UPDATE';
-
-            if ($affected > 1) {
-                throw InvalidEntityStateException::ambiguousRow($plan->class, $statement, $affected);
-            }
-
-            if ($affected === 0 && $node->version !== null) {
-                throw OptimisticLockException::stale($plan->class, $statement);
-            }
-
-            if ($affected === 0 && !$exists) {
-                throw InvalidEntityStateException::missingRow($plan->class, $statement);
-            }
+            $this->modify($transaction, $node, $values, $generated);
         }
 
         return $generated;
+    }
+
+    /**
+     * Runs one join-table statement: an INSERT writing one row, or a DELETE
+     * matching every row that holds the columns the statement names.
+     *
+     * @param Values $values
+     */
+    private function writeJoin(SqlTransaction $transaction, PlanNode $node, array $values): void
+    {
+        /** @var string $table a link statement names the join table it writes */
+        $table = $node->table;
+        $rows = new Query($transaction)->table($table);
+
+        if ($node->kind === 'link') {
+            $rows->insert($values);
+        } else {
+            foreach ($values as $column => $value) {
+                $rows->where($column, '=', $value);
+            }
+
+            // A join row is a link alone, with no version and no row the
+            // flush can claim: an owner keeps none, and a link already gone
+            // is nothing left to delete.
+            $rows->delete();
+        }
+
+        $this->assertOpen();
+    }
+
+    /**
+     * Runs one INSERT and returns the identifier it reported, or null for a
+     * row whose identifier the application assigned.
+     *
+     * @param Values $values
+     */
+    private function insert(SqlTransaction $transaction, PlanNode $node, array $values): ?int
+    {
+        $plan = $node->plan;
+        $insert = new Query($transaction)->table($plan->table);
+
+        if (!$plan->generated) {
+            $insert->insert($plan->row($values));
+            $this->assertOpen();
+
+            return null;
+        }
+
+        unset($values[$plan->id]);
+        $key = $insert->insertGetId($plan->row($values), $plan->column($plan->id));
+        $this->assertOpen();
+
+        return $plan->generatedIdentifier($key);
+    }
+
+    /**
+     * Runs one statement matching a single row by its identifier — an UPDATE,
+     * a fix-up or a DELETE — and reads the rows it affected: more than one is
+     * an ambiguous identifier, and none is a stale version, a row another
+     * writer removed, or an UPDATE whose row already held every value.
+     *
+     * @param Values $values
+     * @param array<int, int> $generated
+     * @throws InvalidEntityStateException
+     * @throws OptimisticLockException
+     */
+    private function modify(SqlTransaction $transaction, PlanNode $node, array $values, array $generated): void
+    {
+        $plan = $node->plan;
+        /** @var int|string $id a fix-up of a generated row resolves to the key its insert reported */
+        $id = $node->id instanceof Reference ? $generated[$node->id->entity] : $node->id;
+        $row = new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id);
+
+        if ($plan->version !== null && $node->version !== null) {
+            $row->where($plan->column($plan->version), '=', $node->version);
+        }
+
+        $affected = $node->kind === 'delete' ? $row->delete() : $row->update($plan->row($values));
+        // The MySQL family reports changed rows, not matched ones, so an
+        // UPDATE writing the values its row already holds affects none. A
+        // versioned UPDATE that matches always changes its version, so
+        // none means the row is stale, and a fix-up always writes a key
+        // the row does not hold yet.
+        $exists = $affected === 0 && $node->kind === 'update' && $node->version === null
+            && new Query($transaction)->table($plan->table)->where($plan->column($plan->id), '=', $id)->exists();
+        $this->assertOpen();
+        $statement = $node->kind === 'delete' ? 'DELETE' : 'UPDATE';
+
+        if ($affected > 1) {
+            throw InvalidEntityStateException::ambiguousRow($plan->class, $statement, $affected);
+        }
+
+        if ($affected === 0 && $node->version !== null) {
+            throw OptimisticLockException::stale($plan->class, $statement);
+        }
+
+        if ($affected === 0 && !$exists) {
+            throw InvalidEntityStateException::missingRow($plan->class, $statement);
+        }
     }
 
     /**
