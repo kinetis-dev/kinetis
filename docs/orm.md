@@ -103,12 +103,66 @@ must be an entity the same scan finds. Every one of these attributes is
 part of the compiled metadata, so run `kinetis build` again after
 adding, removing or moving one.
 
-## Map relationships
+## Map entities and relationships
 
-These four attributes describe where a foreign key or join row lives.
-The examples below show every constructor argument. "Write a whole
-aggregate" and "Link rows across a join table" later on cover lifecycle,
-loading and refusal rules in context.
+Eight attributes cover the ORM's mapping. `#[Entity]`, `#[Column]`,
+`#[Id]` and `#[Version]` describe an entity's own table; `#[BelongsTo]`,
+`#[HasOne]`, `#[HasMany]` and `#[ManyToMany]` describe where it
+references another. The examples below show every constructor argument,
+all as named arguments. "Write a whole aggregate" and "Link rows across
+a join table" later on cover lifecycle, loading and refusal rules in
+context.
+
+### `#[Entity]`
+
+```{code-block} php
+#[Entity(table: 'articles')]
+final class Article
+```
+
+Marks a class as an entity; required on every one. `table` is optional:
+unnamed, the table is the class's short name in snake case, singular
+(`ArticleCategory` maps to `article_category`). A dot separates a schema
+from the table (`table: 'reporting.articles'`).
+
+### `#[Column]`
+
+```{code-block} php
+#[Column(name: 'author')]
+private int $authorId;
+```
+
+Overrides one property's column name. `name` is optional: unnamed, the
+column is the property name in snake case (`publishedAt` maps to
+`published_at`). Name it when the table's column does not already follow
+that convention.
+
+### `#[Id]`
+
+```{code-block} php
+#[Id(generated: true)]
+private ?int $id = null;
+```
+
+Marks the identifier property; without it, the property named exactly
+`id` is the identifier. `generated` is optional and defaults to `false`:
+the application assigns the identifier before `persist()`. `generated:
+true` leaves it to the database — a MySQL/MariaDB `AUTO_INCREMENT` or a
+PostgreSQL identity column — and requires the property typed `?int`,
+holding null until the entity's insert commits.
+
+### `#[Version]`
+
+```{code-block} php
+#[Version]
+private int $version = 1; // a signed BIGINT NOT NULL column
+```
+
+Takes no constructor arguments. Marks the one property, typed non-null
+`int` and not the identifier, that opts the entity into optimistic
+locking: the application initializes it, conventionally to `1`, and the
+ORM never infers, defaults, generates or reads one back. The README's
+"Optimistic locking" is the complete contract.
 
 ### `#[BelongsTo]`
 
