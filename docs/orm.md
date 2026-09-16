@@ -103,6 +103,78 @@ must be an entity the same scan finds. Every one of these attributes is
 part of the compiled metadata, so run `kinetis build` again after
 adding, removing or moving one.
 
+## Map relationships
+
+These four attributes describe where a foreign key or join row lives.
+The examples below show every constructor argument. "Write a whole
+aggregate" and "Link rows across a join table" later on cover lifecycle,
+loading and refusal rules in context.
+
+### `#[BelongsTo]`
+
+```{code-block} php
+#[BelongsTo(column: 'written_by')]
+private Author $author;
+```
+
+Names the foreign-key column on this entity's own table, holding the
+target's identifier. `column` is optional: unnamed, it is the property
+name in snake case followed by `_id` (`$author` maps to `author_id`).
+
+### `#[HasOne]`
+
+```{code-block} php
+#[HasOne(mappedBy: 'author', owned: true)]
+private ?Profile $profile;
+```
+
+Names the one entity whose `#[BelongsTo]` property `mappedBy` references
+this entity. `mappedBy` is required; the target is inferred from the
+property's own type, not named on the attribute. `owned` is optional and
+defaults to `false` — "Write a whole aggregate" below covers what it
+changes.
+
+### `#[HasMany]`
+
+```{code-block} php
+#[HasMany(target: InvoiceLine::class, mappedBy: 'invoice', owned: true)]
+private array $lines;
+```
+
+Names every entity whose `#[BelongsTo]` property `mappedBy` references
+this entity. `target` and `mappedBy` are both required: PHP's `array`
+type cannot name the element class, so `target` does. `owned` is
+optional and defaults to `false`.
+
+### `#[ManyToMany]`
+
+The owning side:
+
+```{code-block} php
+#[ManyToMany(
+    target: Student::class,
+    table: 'course_student',
+    joinColumn: 'course_id',
+    inverseJoinColumn: 'student_id',
+)]
+private array $students;
+```
+
+The inverse side:
+
+```{code-block} php
+#[ManyToMany(target: Course::class, mappedBy: 'students')]
+private array $courses;
+```
+
+`target` is always required. The owning side also requires `table`, the
+join table's name; `joinColumn`, the join-table column holding this
+entity's identifier; and `inverseJoinColumn`, the column holding a
+target's. The inverse side instead names the owning property with
+`mappedBy` and takes none of the other three — an owning and an inverse
+form are mutually exclusive on one property. "Link rows across a join
+table" below is the complete contract.
+
 ## Use the request's `EntityManager`
 
 A controller or service in the request scope injects `EntityManager`:
