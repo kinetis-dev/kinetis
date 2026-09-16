@@ -16,12 +16,16 @@ use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\StoredArticle;
 use Kinetis\Orm\Tests\Fixtures\StoredAuthor;
+use Kinetis\Orm\Tests\Fixtures\StoredCell;
+use Kinetis\Orm\Tests\Fixtures\StoredCrate;
 use Kinetis\Orm\Tests\Fixtures\StoredDocument;
 use Kinetis\Orm\Tests\Fixtures\StoredEvent;
 use Kinetis\Orm\Tests\Fixtures\StoredInvoice;
+use Kinetis\Orm\Tests\Fixtures\StoredItem;
 use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
 use Kinetis\Orm\Tests\Fixtures\StoredPost;
 use Kinetis\Orm\Tests\Fixtures\StoredProfile;
+use Kinetis\Orm\Tests\Fixtures\StoredSeal;
 use Kinetis\Orm\Tests\Fixtures\StoredTicket;
 use Kinetis\Persistence\ConnectionDefinition;
 use Kinetis\Persistence\Contract\MysqlLink;
@@ -583,6 +587,141 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * One persist() writes a whole aggregate: every row lands after the rows
+     * its NOT NULL foreign keys name, and the key each parent insert
+     * generated is what the server stored in its children.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_new_aggregate_is_inserted_in_dependency_order_with_its_generated_keys(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $crate = StoredCrate::of('fresh');
+        $crate->items = [StoredItem::in($crate, 'first'), StoredItem::in($crate, 'second')];
+        $crate->seal = StoredSeal::on($crate, 'foil');
+        $entities->persist($crate);
+
+        $entities->flush();
+
+        self::assertNotNull($crate->id);
+        $stored = $this->crate($factory->open(), 'fresh', 'items', 'seal');
+        self::assertSame($crate->id, $stored->id);
+        self::assertSame(['first', 'second'], array_map(static fn (StoredItem $item): string => $item->name, $stored->items));
+        self::assertSame('foil', $stored->seal?->stamp);
+    }
+
+    /**
+     * A row whose nullable foreign key names itself cannot be inserted with
+     * its key: the flush sends NULL and fills it in before COMMIT, and the
+     * server's own foreign key accepts both statements.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_nullable_loop_is_inserted_as_null_and_fixed_up_inside_one_transaction(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $cell = StoredCell::named('self');
+        $cell->twin = $cell;
+        $entities->persist($cell);
+
+        $entities->flush();
+
+        self::assertNotNull($cell->id);
+        $stored = $factory->open()->repository(StoredCell::class)->query()->where('id', '=', $cell->id)->with('twin')->first();
+        self::assertInstanceOf(StoredCell::class, $stored);
+        self::assertSame($stored, $stored->twin, 'the fix-up wrote the key the insert could not carry');
+    }
+
+    /**
+     * The unique foreign key of an owned #[HasOne] admits one row at a time,
+     * so a replacement proves the flush deleted before it inserted.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_replaced_owned_has_one_frees_its_unique_slot_before_the_replacement(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $crate = $this->crate($entities, 'seeded-one', 'seal');
+        $crate->seal = StoredSeal::on($crate, 'resin');
+
+        $entities->flush();
+
+        self::assertSame(1, new Query($this->link())->table('kin_orm_seals')->where('crate_id', '=', $crate->id)->count());
+        self::assertSame('resin', $this->crate($factory->open(), 'seeded-one', 'seal')->seal?->stamp);
+    }
+
+    /**
+     * Every child row's foreign key refuses its owner's DELETE while it
+     * exists, so a committed aggregate removal is the ordering evidence.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_removing_an_aggregate_deletes_its_children_before_its_owner(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $entities->remove($this->crate($entities, 'seeded-one', 'items', 'seal'));
+
+        $entities->flush();
+
+        self::assertSame(0, new Query($this->link())->table('kin_orm_items')->count());
+        self::assertSame(1, new Query($this->link())->table('kin_orm_seals')->count(), 'the other crate keeps its seal');
+        self::assertNull($factory->open()->repository(StoredCrate::class)->query()->where('code', '=', 'seeded-one')->first());
+    }
+
+    /**
+     * A statement after a fix-up fails on the server's unique key. The
+     * rollback takes the insert and the fix-up with it, and the manager
+     * keeps the whole graph pending.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_failure_after_a_fix_up_rolls_the_whole_graph_back(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $cell = StoredCell::named('rolled back');
+        $cell->twin = $cell;
+        $entities->persist($cell);
+        $seal = $entities->repository(StoredSeal::class)->query()->where('stamp', '=', 'lead')->first();
+        self::assertInstanceOf(StoredSeal::class, $seal);
+        // The crate it moves to is already sealed, and one crate has one seal.
+        $seal->crate = $this->crate($entities, 'seeded-one');
+
+        try {
+            $entities->flush();
+            self::fail('The duplicate seal was accepted.');
+        } catch (QueryException) {
+        }
+
+        self::assertSame(0, new Query($this->link())->table('kin_orm_cells')->count());
+        self::assertNull($cell->id);
+        self::assertFalse($entities->isClosed());
+        self::assertTrue($entities->contains($cell));
+    }
+
+    /** The crate with $code, read through $manager with $relations loaded. */
+    private function crate(EntityManager $manager, string $code, string ...$relations): StoredCrate
+    {
+        $crate = $manager->repository(StoredCrate::class)->query()->where('code', '=', $code)->with(...$relations)->first();
+
+        return $crate ?? self::fail("No crate is coded {$code}.");
+    }
+
+    /**
      * @param 'mysql'|'pgsql' $dialect
      * @param 'native'|'pdo' $driver
      */
@@ -597,12 +736,16 @@ final class RealBackendTest extends TestCase
             MetadataRegistry::fromClasses([
                 StoredArticle::class,
                 StoredAuthor::class,
+                StoredCell::class,
+                StoredCrate::class,
                 StoredDocument::class,
                 StoredEvent::class,
                 StoredInvoice::class,
+                StoredItem::class,
                 StoredOrganization::class,
                 StoredPost::class,
                 StoredProfile::class,
+                StoredSeal::class,
                 StoredTicket::class,
             ]),
         );
@@ -670,6 +813,10 @@ final class RealBackendTest extends TestCase
 
     private static function seed(MysqlLink|PostgresLink $link, string $dialect): void
     {
+        $link->execute('DROP TABLE IF EXISTS kin_orm_seals');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_items');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_crates');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_cells');
         $link->execute('DROP TABLE IF EXISTS kin_orm_posts');
         $link->execute('DROP TABLE IF EXISTS kin_orm_profiles');
         $link->execute('DROP TABLE IF EXISTS kin_orm_authors');
@@ -709,6 +856,21 @@ final class RealBackendTest extends TestCase
             . 'FOREIGN KEY (author_id) REFERENCES kin_orm_authors (id))',
         );
 
+        $key = $dialect === 'mysql' ? 'AUTO_INCREMENT' : 'GENERATED BY DEFAULT AS IDENTITY';
+        $link->execute("CREATE TABLE kin_orm_crates (id BIGINT {$key} PRIMARY KEY, code VARCHAR(50) NOT NULL)");
+        $link->execute(
+            "CREATE TABLE kin_orm_items (id BIGINT {$key} PRIMARY KEY, crate_id BIGINT NOT NULL, name VARCHAR(50) NOT NULL, "
+            . 'FOREIGN KEY (crate_id) REFERENCES kin_orm_crates (id))',
+        );
+        $link->execute(
+            "CREATE TABLE kin_orm_seals (id BIGINT {$key} PRIMARY KEY, crate_id BIGINT NOT NULL UNIQUE, stamp VARCHAR(50) NOT NULL, "
+            . 'FOREIGN KEY (crate_id) REFERENCES kin_orm_crates (id))',
+        );
+        $link->execute(
+            "CREATE TABLE kin_orm_cells (id BIGINT {$key} PRIMARY KEY, twin_id BIGINT NULL, name VARCHAR(50) NOT NULL, "
+            . 'FOREIGN KEY (twin_id) REFERENCES kin_orm_cells (id))',
+        );
+
         new Query($link)->table('kin_orm_articles')->insert([
             ['id' => 1, 'title' => 'First', 'summary' => null, 'status' => 'published', 'priority' => null, 'featured' => true, 'rating' => 4.5, 'author_id' => 7],
             ['id' => 2, 'title' => 'Second', 'summary' => 'Lead', 'status' => 'draft', 'priority' => 2, 'featured' => false, 'rating' => 3.0, 'author_id' => 8],
@@ -729,6 +891,16 @@ final class RealBackendTest extends TestCase
             ['id' => 1, 'title' => 'First', 'written_by' => 7],
         ]);
         new Query($link)->table('kin_orm_profiles')->insert(['id' => 1, 'author_id' => 7, 'bio' => 'Mathematician']);
+        $first = new Query($link)->table('kin_orm_crates')->insertGetId(['code' => 'seeded-one'], 'id');
+        $second = new Query($link)->table('kin_orm_crates')->insertGetId(['code' => 'seeded-two'], 'id');
+        new Query($link)->table('kin_orm_items')->insert([
+            ['crate_id' => $first, 'name' => 'bolt'],
+            ['crate_id' => $first, 'name' => 'nut'],
+        ]);
+        new Query($link)->table('kin_orm_seals')->insert([
+            ['crate_id' => $first, 'stamp' => 'wax'],
+            ['crate_id' => $second, 'stamp' => 'lead'],
+        ]);
     }
 
     /**

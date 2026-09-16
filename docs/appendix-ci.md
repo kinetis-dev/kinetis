@@ -133,7 +133,13 @@ rather than which form it took.
   order from rows inserted out of order, a mixed nested path resolving
   into one identity map, a locking read that locks its root author and
   not the posts it loads, and a committed reassignment observed by a new
-  manager's `#[HasMany]`.
+  manager's `#[HasMany]`; and aggregates: a new graph inserted in
+  dependency order with the keys its inserts generated, a nullable
+  self-reference inserted as `NULL` and fixed up inside one transaction,
+  an owned `#[HasOne]` replacement freeing its unique slot before the
+  replacement takes it, an aggregate removal deleting children before
+  their owner behind real foreign keys, and a failure after a fix-up
+  rolling the whole graph back.
 - **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two

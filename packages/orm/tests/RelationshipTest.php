@@ -241,37 +241,61 @@ final class RelationshipTest extends TestCase
             static fn (EntityManager $entities): Closure => static fn (): mixed => $entities->persist(self::newPost()),
             InvalidEntityStateException::uninitialized(Post::class, 'author')->getMessage(),
         ];
-        yield 'a target awaiting insert' => [
-            static function (EntityManager $entities): Closure {
-                $post = self::newPost();
-                $post->author = self::newAuthor('lin');
-                $entities->persist($post->author);
-
-                return static fn (): mixed => $entities->persist($post);
-            },
-            $notHeld,
-        ];
         yield 'a target another manager holds' => [
             static function (EntityManager $entities, OrmFactory $factory, SpyMysqlLink $link): Closure {
                 $link->queue([self::author('ada')]);
                 $post = self::newPost();
                 $post->author = $factory->open()->repository(Author::class)->findOrFail('ada');
-
-                return static fn (): mixed => $entities->persist($post);
-            },
-            $notHeld,
-        ];
-        yield 'a managed entity reassigned to a target awaiting insert' => [
-            static function (EntityManager $entities, OrmFactory $factory, SpyMysqlLink $link): Closure {
-                $link->queue([self::post(1, 'ada')]);
-                $post = $entities->repository(Post::class)->findOrFail(1);
-                $post->author = self::newAuthor('lin');
-                $entities->persist($post->author);
+                $entities->persist($post);
 
                 return static fn (): mixed => $entities->flush();
             },
             $notHeld,
         ];
+        yield 'a target no manager holds' => [
+            static function (EntityManager $entities): Closure {
+                $post = self::newPost();
+                $post->author = self::newAuthor('lin');
+                $entities->persist($post);
+
+                return static fn (): mixed => $entities->flush();
+            },
+            $notHeld,
+        ];
+        yield 'a managed entity reassigned to a target no manager holds' => [
+            static function (EntityManager $entities, OrmFactory $factory, SpyMysqlLink $link): Closure {
+                $link->queue([self::post(1, 'ada')]);
+                $post = $entities->repository(Post::class)->findOrFail(1);
+                $post->author = self::newAuthor('lin');
+
+                return static fn (): mixed => $entities->flush();
+            },
+            $notHeld,
+        ];
+    }
+
+    public function test_a_flush_inserts_a_target_awaiting_insert_before_the_rows_that_name_it(): void
+    {
+        $this->link->queue([self::post(1, 'ada')]);
+        $managed = $this->entities->repository(Post::class)->findOrFail(1);
+        $author = self::newAuthor('lin');
+        $post = self::newPost();
+        $post->author = $author;
+        $managed->author = $author;
+        // The author is persisted last: the graph, not persist() order,
+        // decides which row is written first.
+        $this->entities->persist($post);
+        $this->entities->persist($author);
+        $this->transaction->queue(self::affected(1), self::affected(1), self::affected(1));
+
+        $this->entities->flush();
+
+        self::assertSame([
+            ['sql' => 'INSERT INTO `authors` (`id`, `name`, `organization_id`) VALUES (?, ?, ?)', 'params' => ['lin', 'Lin', null]],
+            ['sql' => 'INSERT INTO `posts` (`id`, `title`, `written_by`, `version`) VALUES (?, ?, ?, ?)', 'params' => [9, 'Draft', 'lin', 1]],
+            ['sql' => 'UPDATE `posts` SET `written_by` = ?, `version` = ? WHERE `id` = ? AND `version` = ?', 'params' => ['lin', 2, 1, 1]],
+        ], $this->transaction->calls);
+        self::assertSame(2, $managed->version, 'the reassignment is one logical update');
     }
 
     /**

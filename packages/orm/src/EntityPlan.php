@@ -10,6 +10,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
+use Kinetis\Orm\Flush\Reference;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use ReflectionClass;
 use ReflectionProperty;
@@ -159,6 +160,39 @@ final class EntityPlan
     }
 
     /**
+     * Every #[BelongsTo] property, in declaration order: the entity class it
+     * references, and whether its foreign-key column admits null, which is
+     * what a reference loop can be broken through.
+     *
+     * @return array<string, array{class-string, bool}>
+     */
+    public function relations(): array
+    {
+        $relations = [];
+
+        foreach ($this->properties as $name => $property) {
+            $target = $property['target'];
+
+            if ($target !== null) {
+                $relations[$name] = [$target, $property['nullable']];
+            }
+        }
+
+        return $relations;
+    }
+
+    /**
+     * Every owned inverse relationship, in declaration order: the aggregate
+     * ownership edges flush() discovers, removes and reconciles along.
+     *
+     * @return array<string, InverseMapping>
+     */
+    public function owned(): array
+    {
+        return array_filter($this->inverses, static fn (array $inverse): bool => $inverse['owned']);
+    }
+
+    /**
      * A predicate value for $property, admitted and converted like a loaded
      * value, as a database value. A relationship admits its target's
      * identifier, not an entity.
@@ -264,14 +298,15 @@ final class EntityPlan
     /**
      * The database value of every mapped property $entity holds now, each
      * admitted like a loaded value. A relationship holding an entity takes
-     * that entity's identifier from $identify. An uninitialized relationship
-     * of a managed entity keeps the foreign key of its $snapshot, so a
+     * that entity's identifier from $identify, or its Reference when an
+     * insert of this flush generates it. An uninitialized relationship of a
+     * managed entity keeps the foreign key of its $snapshot, so a
      * relationship that was never loaded is never written.
      *
      * @param array<string, null|bool|int|float|string>|null $snapshot the managed entity's snapshot, or null
-     * @param Closure(object): (int|string|null) $identify a target's identifier, or null when the manager does not manage it
-     * @return array<string, null|bool|int|float|string> property => database value
-     * @throws InvalidEntityStateException for an uninitialized property or a relationship target the manager does not manage
+     * @param Closure(object): (int|string|Reference|null) $identify a target's identifier, a Reference to the insert that generates it, or null when the manager does not hold the target
+     * @return array<string, null|bool|int|float|string|Reference> property => database value
+     * @throws InvalidEntityStateException for an uninitialized property or a relationship target the manager does not hold
      * @throws MappingException for a value its property does not admit, such as a non-finite float
      */
     public function extract(object $entity, ?array $snapshot, Closure $identify): array
@@ -293,6 +328,12 @@ final class EntityPlan
 
             if ($property['target'] !== null && is_object($value)) {
                 $value = $identify($value) ?? throw InvalidEntityStateException::relationTargetNotHeld($this->class, $name);
+
+                if ($value instanceof Reference) {
+                    $values[$name] = $value;
+
+                    continue;
+                }
             }
 
             $values[$name] = self::databaseValue($this->convert($property, $value));

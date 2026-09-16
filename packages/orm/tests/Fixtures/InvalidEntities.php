@@ -615,6 +615,60 @@ final class InverseWrongSelf
     public ?self $twin;
 }
 
+#[Entity]
+final class OwnedChild
+{
+    public int $id;
+
+    #[BelongsTo]
+    public OwnedFirst $first;
+
+    #[BelongsTo]
+    public OwnedSecond $second;
+}
+
+#[Entity]
+final class OwnedFirst
+{
+    public int $id;
+
+    /** @var list<OwnedChild> */
+    #[HasMany(target: OwnedChild::class, mappedBy: 'first', owned: true)]
+    public array $children;
+}
+
+#[Entity]
+final class OwnedSecond
+{
+    public int $id;
+
+    /** @var list<OwnedChild> */
+    #[HasMany(target: OwnedChild::class, mappedBy: 'second', owned: true)]
+    public array $children;
+}
+
+#[Entity]
+final class OwnedTwice
+{
+    public int $id;
+
+    /** @var list<OwnedOnce> */
+    #[HasMany(target: OwnedOnce::class, mappedBy: 'owner', owned: true)]
+    public array $children;
+
+    #[HasOne(mappedBy: 'owner', owned: true)]
+    public ?OwnedOnce $first;
+}
+
+#[Entity]
+final class OwnedOnce
+{
+    public int $id;
+
+    #[BelongsTo]
+    public OwnedTwice $owner;
+}
+
 interface EntityInterface
 {
 }
