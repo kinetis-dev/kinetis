@@ -7,6 +7,7 @@ namespace App\Tests\Unit;
 use App\Mcp\PingStatsToolController;
 use App\Repositories\PingRepository;
 use App\Tests\Fixtures\CannedMysqlLink;
+use App\Tests\Fixtures\CannedOrm;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\Events\EventListenerRegistry;
@@ -40,7 +41,7 @@ final class PingStatsToolControllerTest extends TestCase
         );
 
         return new PingStatsToolController(
-            new PingRepository(new CannedMysqlLink([['aggregate' => $perQuery]]), $events),
+            new PingRepository(CannedOrm::manager(new CannedMysqlLink([['aggregate' => $perQuery]])), $events),
         );
     }
 

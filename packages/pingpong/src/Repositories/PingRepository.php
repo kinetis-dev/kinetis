@@ -5,49 +5,71 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\Dto\ScenarioCounts;
+use App\Entities\Ping;
 use App\Events\ActionEvent;
-use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Events\EventDispatcher;
-use Kinetis\QueryBuilder\Query;
+use Kinetis\Orm\EntityManager;
 
+/**
+ * Every ping this unit of work touches, through the EntityManager
+ * kinetis/database-bridge opens for the request, job, MCP message or
+ * command that resolved it. The manager is request-scoped, so this class
+ * is too, and its identity map never outlives the unit of work that
+ * asked for it.
+ */
 final readonly class PingRepository
 {
     private const array SCENARIOS = ['direct', 'queued', 'cron'];
 
     public function __construct(
-        private MysqlLink $db,
+        private EntityManager $entities,
         private EventDispatcher $events,
     ) {}
 
+    /**
+     * Flushes before announcing anything: the id is MySQL's, assigned by
+     * the INSERT, and the `db` stage the dashboard draws means the row is
+     * committed. A flush that fails, or whose outcome is unknown, throws
+     * here and announces nothing.
+     */
     public function create(string $scenario): int
     {
-        $id = new Query($this->db)->table('ping_messages')->insertGetId([
-            'scenario' => $scenario,
-            'status' => 'pending',
-            'created_at' => date('Y-m-d H:i:s'),
-        ]);
-        $id = (int) $id;
+        $ping = new Ping($scenario);
 
+        $this->entities->persist($ping);
+        $this->entities->flush();
+
+        $id = $ping->id();
         $this->events->dispatch(new ActionEvent('db', $id));
 
         return $id;
     }
 
+    /**
+     * The caller always passes an id a flush committed, so a missing row
+     * is a broken assumption rather than a race to retry: findOrFail()
+     * throws instead of silently updating nothing.
+     */
     public function markPonged(int $id): void
     {
-        new Query($this->db)->table('ping_messages')->where('id', '=', $id)->update([
-            'status' => 'ponged',
-            'ponged_at' => date('Y-m-d H:i:s'),
-        ]);
+        $ping = $this->entities->repository(Ping::class)->findOrFail($id);
+        $ping->pong();
+
+        $this->entities->flush();
     }
 
+    /**
+     * Four counts, one after another: a manager belongs to the Fiber that
+     * opened it, so they cannot be spread over concurrent Fibers.
+     */
     public function countByScenario(): ScenarioCounts
     {
-        $total = new Query($this->db)->table('ping_messages')->count();
+        $pings = $this->entities->repository(Ping::class);
+        $total = $pings->query()->count();
         $counts = [];
 
         foreach (self::SCENARIOS as $scenario) {
-            $counts[$scenario] = new Query($this->db)->table('ping_messages')->where('scenario', '=', $scenario)->count();
+            $counts[$scenario] = $pings->query()->where('scenario', '=', $scenario)->count();
         }
 
         return new ScenarioCounts($total, $counts);

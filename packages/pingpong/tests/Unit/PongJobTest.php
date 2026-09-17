@@ -7,6 +7,7 @@ namespace App\Tests\Unit;
 use App\Queue\PongJob;
 use App\Repositories\PingRepository;
 use App\Tests\Fixtures\CannedMysqlLink;
+use App\Tests\Fixtures\CannedOrm;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\Events\EventListenerRegistry;
@@ -27,7 +28,7 @@ final class PongJobTest extends TestCase
 {
     public function test_running_it_marks_the_ping_ponged(): void
     {
-        $link = new CannedMysqlLink();
+        $link = new CannedMysqlLink([CannedOrm::pendingRow(7, 'queued')]);
         $app = new AppScope();
         $app->instance(EventListenerRegistry::class, new EventListenerRegistry());
         $app->boot();
@@ -39,10 +40,13 @@ final class PongJobTest extends TestCase
             $scope->get(ListenerInvokerInterface::class),
         );
 
-        new PongJob(7)->handle(new PingRepository($link, $events), $events);
+        new PongJob(7)->handle(new PingRepository(CannedOrm::manager($link), $events), $events);
 
-        self::assertCount(1, $link->statements);
-        [$sql, $params] = $link->statements[0];
+        // The worker's own unit of work holds no ping yet, so it loads
+        // the row the HTTP request committed before it can pong it.
+        self::assertCount(2, $link->statements);
+        self::assertStringContainsString('SELECT', $link->statements[0][0]);
+        [$sql, $params] = $link->statements[1];
         self::assertStringContainsString('UPDATE', $sql);
         self::assertContains('ponged', $params);
     }

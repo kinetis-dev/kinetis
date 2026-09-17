@@ -7,6 +7,7 @@ namespace App\Tests\Unit;
 use App\Console\PongCronCommand;
 use App\Repositories\PingRepository;
 use App\Tests\Fixtures\CannedMysqlLink;
+use App\Tests\Fixtures\CannedOrm;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventDispatcher;
@@ -36,9 +37,11 @@ final class PongCronCommandTest extends TestCase
             $scope->get(ListenerInvokerInterface::class),
         );
 
-        $exit = new PongCronCommand(new PingRepository($link, $events), $events)->run();
+        $exit = new PongCronCommand(new PingRepository(CannedOrm::manager($link), $events), $events)->run();
 
         self::assertSame(0, $exit);
+        // One manager for the whole command, so the ping it just
+        // inserted is still the object it pongs — no second load.
         self::assertCount(2, $link->statements, 'expected one insert and one update');
         self::assertStringContainsString('INSERT INTO', $link->statements[0][0]);
         self::assertContains('cron', $link->statements[0][1]);

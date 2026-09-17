@@ -127,12 +127,15 @@ final class PingControllerTest extends ApplicationTestCase
 
         // The compose stack's migrate service creates this; anywhere
         // else the suite creates it itself, so it needs no stack.
+        // DATETIME(6), the shape the migration sequence ends on:
+        // App\Entities\Ping writes UTC microseconds, which a plain
+        // DATETIME cannot retain.
         $pdo->exec('CREATE TABLE IF NOT EXISTS ping_messages (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             scenario VARCHAR(20) NOT NULL,
             status VARCHAR(20) NOT NULL DEFAULT \'pending\',
-            created_at DATETIME NOT NULL,
-            ponged_at DATETIME NULL
+            created_at DATETIME(6) NOT NULL,
+            ponged_at DATETIME(6) NULL
         )');
     }
 
@@ -143,6 +146,31 @@ final class PingControllerTest extends ApplicationTestCase
         $this->client->post('/pong/direct')->assertOk();
 
         self::assertSame($before + 1, $this->pingCount());
+    }
+
+    /**
+     * What the two flushes of a direct ping actually leave behind: a
+     * `ponged` row carrying a real pong time, to the microsecond the
+     * DATETIME(6) columns hold. A narrower column would discard the
+     * fraction the entity wrote.
+     */
+    public function test_a_direct_ping_is_stored_ponged_with_a_microsecond_timestamp(): void
+    {
+        $this->client->post('/pong/direct')->assertOk();
+
+        $row = $this->databaseLink()
+            ->query("SELECT status, created_at, ponged_at FROM ping_messages WHERE scenario = 'direct' ORDER BY id DESC LIMIT 1")
+            ->fetchRow();
+
+        self::assertSame('ponged', $row['status'] ?? null);
+        self::assertMatchesRegularExpression(
+            '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/',
+            (string) ($row['ponged_at'] ?? ''),
+        );
+        self::assertMatchesRegularExpression(
+            '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/',
+            (string) ($row['created_at'] ?? ''),
+        );
     }
 
     /**

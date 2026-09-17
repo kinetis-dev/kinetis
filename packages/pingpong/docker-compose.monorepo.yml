@@ -19,13 +19,14 @@
 # into vendor/kinetis/, and the symlink has to lead somewhere in the
 # container that follows it.
 x-monorepo-siblings: &monorepo-siblings
+  - ../query-builder:/query-builder
   - ../framework:/framework
   - ../migrations:/migrations
   - ../persistence:/persistence
   - ../database-bridge:/database-bridge
+  - ../orm:/orm
   - ../redis:/redis
   - ../cache-redis:/cache-redis
-  - ../query-builder:/query-builder
   - ../queue:/queue
   - ../mcp:/mcp
   - ../queue-redis:/queue-redis
