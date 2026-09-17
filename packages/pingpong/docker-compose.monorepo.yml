@@ -29,6 +29,7 @@ x-monorepo-siblings: &monorepo-siblings
   - ../cache-redis:/cache-redis
   - ../queue:/queue
   - ../mcp:/mcp
+  - ../mcp-protocol:/mcp-protocol
   - ../queue-redis:/queue-redis
   - ../broadcasting:/broadcasting
   - ../revolt-http-client:/revolt-http-client
