@@ -94,6 +94,8 @@ are in {doc}`appendix-mcp-docs`.
 
 ## See also
 
+- {doc}`agent-workflow` — where an agent should start: task routing and
+  the current-main/installed-version boundary.
 - {doc}`mcp` — the MCP server for your own application's tools and
   resources.
 - {doc}`appendix-mcp-docs` — installer, update, protocol and fetch

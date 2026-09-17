@@ -61,7 +61,8 @@ The binary speaks JSON-RPC over stdin and stdout, one message per line:
 `initialize`, `notifications/initialized`, `ping`, `resources/list` and
 `resources/read`, across protocol revisions `2024-11-05` through
 `2025-11-25`. Register that command with any MCP client that launches a
-server as a subprocess.
+server as a subprocess. Read `kinetis://docs/agent-workflow` first — the
+entry point and routing table for the rest of the catalogue.
 
 Requires PHP 8.4+. Full documentation:
 [kinetis.dev/docs/mcp-docs.html](https://kinetis.dev/docs/mcp-docs.html).

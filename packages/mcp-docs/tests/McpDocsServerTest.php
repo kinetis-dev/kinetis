@@ -44,10 +44,23 @@ final class McpDocsServerTest extends TestCase
     {
         $result = self::resultOf(self::server(), 'initialize', ['protocolVersion' => '2025-06-18']);
 
+        self::assertSame(['resources'], array_keys((array) $result->capabilities));
         self::assertSame([], (array) $result->capabilities->resources);
         self::assertSame('kinetis-mcp-docs', $result->serverInfo->name);
         self::assertSame(McpDocsServer::SERVER_VERSION, $result->serverInfo->version);
         self::assertNotSame('', $result->instructions);
+    }
+
+    public function test_instructions_warn_about_current_main_and_point_to_installed_source_without_claiming_project_access(): void
+    {
+        $result = self::resultOf(self::server(), 'initialize', ['protocolVersion' => '2025-06-18']);
+
+        self::assertStringContainsString('kinetis://docs/agent-workflow', $result->instructions);
+        self::assertStringContainsString('newer than the release installed', $result->instructions);
+        self::assertStringContainsString('installed package versions', $result->instructions);
+        self::assertStringContainsString('installed source', $result->instructions);
+        self::assertStringNotContainsString('composer.lock', $result->instructions);
+        self::assertStringNotContainsString('vendor/', $result->instructions);
     }
 
     public static function missingProtocolVersionProvider(): iterable
@@ -115,6 +128,29 @@ final class McpDocsServerTest extends TestCase
         self::assertSame('text/markdown', $first['mimeType']);
         self::assertArrayHasKey('name', $first);
         self::assertArrayHasKey('description', $first);
+    }
+
+    public static function agentGuideResourceProvider(): iterable
+    {
+        yield 'agent-workflow' => ['kinetis://docs/agent-workflow'];
+        yield 'application-recipes' => ['kinetis://docs/application-recipes'];
+        yield 'agent-correctness' => ['kinetis://docs/agent-correctness'];
+    }
+
+    #[DataProvider('agentGuideResourceProvider')]
+    public function test_resources_list_exposes_each_agent_guide_with_the_existing_uri_and_mime_type_contract(string $uri): void
+    {
+        $result = self::resultOf(self::server(), 'resources/list');
+
+        $matching = array_values(array_filter(
+            $result->resources,
+            static fn (array $resource): bool => $resource['uri'] === $uri,
+        ));
+
+        self::assertCount(1, $matching, "No single resources/list entry for {$uri}.");
+        self::assertSame('text/markdown', $matching[0]['mimeType']);
+        self::assertNotSame('', $matching[0]['name']);
+        self::assertNotSame('', $matching[0]['description']);
     }
 
     public function test_resources_list_rejects_a_cursor_it_never_issued(): void
