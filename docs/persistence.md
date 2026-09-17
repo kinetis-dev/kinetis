@@ -74,8 +74,9 @@ worker that client is the worker's connection pool.
 - `query($sql)` runs SQL that takes no arguments.
 - One call runs one statement, and its result is buffered whole: iterate
   it, or call `fetchRow()`, `getRowCount()` or `getLastInsertId()`.
-- On PostgreSQL, write the jsonb operators `?`, `?|` and `?&` as `??`,
-  `??|` and `??&`: a bare `?` is a placeholder.
+- On PostgreSQL, `execute()` reads a bare `?` as a placeholder: write the
+  jsonb operators `?`, `?|` and `?&` as `??`, `??|` and `??&` there. The
+  doubling is `execute()`'s own escape and belongs nowhere else.
 
 {ref}`database-reference-statements` holds the complete statement and
 argument contract.
