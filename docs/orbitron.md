@@ -2,10 +2,11 @@
 
 `kinetis/orbitron` is a development-only construction harness. It does
 not contain a coding agent — you bring one — and it does not talk to a
-model. What it gives an agent is three commands on
-`vendor/bin/kinetis`: a portable Kinetis context document, this
-project's installed `kinetis/*` package inventory as JSON, and a
-deterministic verification of this project's Composer layout.
+model. What it gives an agent is four commands on `vendor/bin/kinetis`:
+a portable Kinetis context document, this project's installed
+`kinetis/*` package inventory as JSON, a deterministic verification of
+this project's Composer layout, and one health-endpoint scaffold that is
+previewed before it is applied.
 
 Any agent that can run a shell command can use it. There is no MCP
 server to configure, which is the difference from {doc}`mcp-docs`:
@@ -190,14 +191,130 @@ non-blocking I/O, security, route uniqueness, or the correctness of any
 application code. {doc}`agent-correctness` is the review that addresses
 those, and the project's own test suite is the evidence.
 
+## Scaffold the health endpoint
+
+```console
+vendor/bin/kinetis orbitron:scaffold
+vendor/bin/kinetis orbitron:scaffold --apply
+```
+
+JSON only, for the same reason as the two commands above. Without
+`--apply` this is a preview: every precondition is read and the plan is
+written, with nothing touched on disk.
+
+```json
+{
+    "schemaVersion": 1,
+    "orbitronVersion": "1.0.0",
+    "mode": "preview",
+    "status": "ready",
+    "codes": [
+        "scaffold_ready"
+    ],
+    "targets": [
+        "src/Http/HealthController.php",
+        "tests/Http/HealthControllerTest.php"
+    ],
+    "remainingFiles": []
+}
+```
+
+`schemaVersion` is `1` and moves only when the document's shape changes.
+`mode` is `preview` or `apply`. `status` is `ready`, `created`,
+`refused` or `failed`. `codes` are the stable machine values to branch
+on, in a fixed order, and they name outcomes only — never a file's
+contents, an exception message, or an absolute path. `targets` is the
+complete write set, always both paths and always in this order.
+`remainingFiles` is empty unless a rollback could not put the project
+back.
+
+### The two files
+
+Nothing about them is configurable. There is no scaffold name, custom
+path, template, source body, saved plan or plugin registry — one
+workflow, built one way:
+
+- `src/Http/HealthController.php`, under the production namespace the
+  layout check found, declaring `#[Get('/health')]` and returning
+  `['status' => 'ok']`. The dispatcher encodes an array return as JSON
+  with the route's status, so the response is `{"status":"ok"}` — see
+  {doc}`routing-validation`.
+- `tests/Http/HealthControllerTest.php`, under the test namespace,
+  extending `Kinetis\Testing\ApplicationTestCase` and issuing two
+  sequential `GET /health` requests against one booted application,
+  asserting the same success response both times. The second request is
+  the point: a persistent worker answers it from whatever the first left
+  behind — see {doc}`testing`.
+
+Neither file names Orbitron. They import the framework and its testing
+API only, so `composer remove --dev kinetis/orbitron` leaves them
+working.
+
+### What must already be true
+
+- the layout above, with both namespaces valid;
+- `src`, `src/Http`, `tests` and `tests/Http` present as real
+  directories, none of them a symlink, each resolving inside the project
+  root;
+- neither target occupied. A regular file, a directory, a symlink and a
+  symlink pointing at nothing all count as occupied — `file_exists()`
+  answers `false` for the last of those, and the path is taken all the
+  same.
+
+Orbitron creates no directory. A project without `src/Http` is refused,
+not filled in.
+
+| Status | Code | Meaning |
+|---|---|---|
+| `ready` | `scaffold_ready` | The preview holds: both files can be created. |
+| `created` | `scaffold_created` | Both files exist, every byte written, flushed and closed. |
+| `refused` | the layout codes above, `manifest_unusable` included | The layout is not the admitted one, reported by the same reader `orbitron:verify` uses. |
+| `refused` | `directory_missing` | One of the four fixed directories is absent, or is not a directory. |
+| `refused` | `directory_outside_project` | One of them resolves outside the project root. |
+| `refused` | `directory_symlinked` | One of them is a symlink. |
+| `refused` | `target_exists` | One of the two targets is occupied. |
+| `failed` | `write_failed` with `rolled_back` | A file could not be created or written, and everything this invocation created was removed. |
+| `failed` | `write_failed` with `rollback_failed` | The removal failed too. `remainingFiles` names exactly the paths that may still be there. |
+
+### Preview, then apply
+
+`--apply` is the only mutation request, and it does not consume the
+preview that came before it. It re-reads the manifest, the four
+directories, their symlink state and both targets immediately before it
+writes, so a file that appeared in between is a refusal rather than an
+overwrite. `--apply` carries no value: `--apply=yes` is a rejected
+invocation, like an unsupported `--format`.
+
+Each file is created with `fopen($path, 'x+b')` — a create that fails
+rather than truncating whatever is already there — and every byte goes
+out in a loop that treats a failed write, or one that accepts nothing,
+as the end of the attempt. A flush and a close that fail are failures
+too; the handle closes on every path out.
+
+When the second file cannot be created or finished, every file this
+invocation created is removed, the incomplete one included. A file that
+was already there is never removed. A removal that fails is itself
+reported, with exactly the project-relative paths that may remain.
+
+### What it cannot tell you
+
+Whether this project already routes `GET /health` somewhere else.
+Orbitron reads no application source and runs no discovery, so a
+conflicting route is invisible to it and the apply succeeds. The
+generated test is what surfaces it: route discovery refuses two
+controllers claiming one path, and the first run of the suite after the
+scaffold says so — see {doc}`routing-validation`.
+
 ## The workflow
 
 1. `vendor/bin/kinetis orbitron:context` — once per task.
 2. `vendor/bin/kinetis orbitron:inspect` — the installed versions.
 3. `vendor/bin/kinetis orbitron:verify` — the project layout.
-4. Route the task through {doc}`agent-workflow`, then follow the
+4. `vendor/bin/kinetis orbitron:scaffold` — the health-endpoint plan,
+   then `--apply` when the plan is what you want.
+5. Route the task through {doc}`agent-workflow`, then follow the
    matching recipe in {doc}`application-recipes`.
-5. Before calling the change done, work through
+6. Before calling the change done, work through
    {doc}`agent-correctness` and run the project's own test suite.
 
 ## Output and exit codes
@@ -207,9 +324,9 @@ STDOUT, with fixed key and list order, and no progress text.
 
 | Exit | Meaning |
 |---|---|
-| `0` | The document was written, and for `orbitron:verify` it reports no error. |
-| `2` | An unsupported `--format`, a bare `--format` naming nothing, or a positional argument. STDERR names the accepted invocation; STDOUT stays empty. |
-| `3` | `orbitron:verify` only: the verification completed, and the document it wrote reports at least one error. |
+| `0` | The document was written; the verification reports no error, and the scaffold preview is ready or its apply completed. |
+| `2` | An unsupported `--format`, a bare `--format` naming nothing, an `--apply` carrying a value, or a positional argument. STDERR names the accepted invocation; STDOUT stays empty. |
+| `3` | `orbitron:verify` and `orbitron:scaffold` only: the operation completed, and the document it wrote reports an error, a refusal, or a failed write. |
 | `1` | A launcher or uncaught failure, from `vendor/bin/kinetis` itself — see {doc}`cli`. |
 | `70` | The command finished and disposing the request scope afterwards failed, which is the framework binary's own behavior, not Orbitron's. |
 
@@ -222,10 +339,18 @@ changed to reject one.
 
 ## Trust boundary
 
-Orbitron reads two things: Composer's installed-package metadata, and —
-for `orbitron:verify` — the project's own `composer.json`. No other
-application source, no configuration, no credentials. It writes no
-files, opens no socket and starts no process.
+Orbitron reads three things: Composer's installed-package metadata, the
+project's own `composer.json`, and — for `orbitron:scaffold` — the
+existence and symlink state of four fixed directories and two fixed
+paths. No other application source, no configuration, no credentials. It
+opens no socket and starts no process.
+
+It writes two files: the scaffold's fixed targets, only on
+`orbitron:scaffold --apply`, each through a create that refuses an
+occupied path and never truncates one. That is the whole write set. No
+command line supplies a path to any of it — the root comes from
+`Kinetis\Runtime\ProjectRoot::detect()` and every name below it is a
+constant — and no command creates a directory.
 
 The installed metadata is read through `Composer\InstalledVersions`,
 which loads `vendor/composer/installed.php` itself, so the invocation
@@ -240,7 +365,9 @@ without being read whole, and the diagnostic names the outcome rather
 than quoting the file or its path.
 
 Every command declares `bootstrap: false`, so neither the package
-bootstrap chain nor the application's `bootstrap.php` runs.
+bootstrap chain nor the application's `bootstrap.php` runs. No command
+boots an application or runs discovery: the scaffold's generated test is
+what does that, on the project's own next test run.
 
 The invocation as a whole is still not side-effect-free, and what
 remains belongs to the framework launcher rather than to Orbitron:

@@ -21,11 +21,13 @@ final readonly class Context
 
     /** @var list<string> */
     private const array LIMITS = [
-        'Orbitron ships no model, no MCP server, no HTTP client and no shell. It renders text and exits; you supply the coding agent.',
+        'Orbitron ships no model, no MCP server, no HTTP client and no shell; you supply the coding agent.',
         'This document is reference material, not evidence. It does not establish that an application preserves request isolation, non-blocking I/O, or any other invariant — the guides below state the rules, and the project\'s own tests and review are what settle compliance.',
         'The package facts below describe what is installed in this project. They say nothing about the current state of Kinetis main.',
         'Orbitron is a require-dev package. No production code depends on it, and removing it changes nothing an application does.',
-        'Orbitron reads Composer\'s installed-package metadata and, for `orbitron:verify`, the project\'s own `composer.json` through a bounded read — no other application source, no configuration and no credentials — and it writes no files.',
+        'Orbitron reads Composer\'s installed-package metadata and, for `orbitron:verify` and `orbitron:scaffold`, the project\'s own `composer.json` through a bounded read — no other application source, no configuration and no credentials. The two files `orbitron:scaffold --apply` creates are everything it writes.',
+        '`orbitron:scaffold` builds one fixed thing: `src/Http/HealthController.php` and `tests/Http/HealthControllerTest.php`, a `GET /health` route returning `{"status":"ok"}`, and a framework test that asserts that same response on two sequential requests. There is no name, path, template or other input, it creates no directory, and it writes only when `--apply` is given.',
+        'Orbitron reads no application source, so it cannot tell you in advance whether the project already routes `GET /health` somewhere else. The generated test surfaces that conflict through the framework\'s own route discovery, on the first run after the scaffold is applied.',
         '`orbitron:verify` answers one narrow question: whether this project\'s Composer layout is the fixed one Orbitron supports. That layout is narrower than anything Kinetis itself requires, so an error means the project is outside what Orbitron assumes — not that route, command or listener discovery is broken. It establishes nothing else either: not request isolation, not non-blocking I/O, not security, not route uniqueness, not the correctness of any application code.',
     ];
 
@@ -43,6 +45,7 @@ final readonly class Context
         'Run `vendor/bin/kinetis orbitron:context` once per task to read this document.',
         'Run `vendor/bin/kinetis orbitron:inspect` to read the installed Kinetis packages and their versions as JSON.',
         'Run `vendor/bin/kinetis orbitron:verify` to read whether this project\'s Composer layout is the one Orbitron supports; exit 3 means the document reports an error.',
+        'Run `vendor/bin/kinetis orbitron:scaffold` to read the health-endpoint scaffold plan, and add `--apply` to create its two files; exit 3 means the document reports a refusal or a failed write.',
         'Route the task through Agent Workflow, then follow the matching recipe — reading each guide for the versions orbitron:inspect reports, not for main.',
         'Before calling the change done, work through Agent Correctness Review and run the project\'s own test suite.',
     ];
@@ -64,12 +67,17 @@ final readonly class Context
             'formats' => ['json'],
             'effect' => 'Renders the project-layout verification to STDOUT. Reads Composer\'s installed-package records and the project\'s own composer.json through a bounded read, and changes nothing else: writes no file, opens no socket, starts no process. Exits 3 when the verification completed and the document reports an error.',
         ],
+        [
+            'name' => 'orbitron:scaffold',
+            'formats' => ['json'],
+            'effect' => 'Renders the health-endpoint scaffold plan to STDOUT. Without --apply it reads the project\'s composer.json, the four fixed directories and both targets, and changes nothing. With --apply it re-reads all of that and then creates exactly the two files it names, each through an exclusive create that never overwrites; if the second one cannot be finished, every file this invocation created is removed. It creates no directory, opens no socket and starts no process. Exits 3 when the completed operation refused or failed.',
+        ],
     ];
 
-    private const string LAUNCHER = 'Orbitron changes nothing, but the invocation as a whole is not side-effect-free. '
-        . '`vendor/bin/kinetis` loads `.env` before it dispatches any command, and under APP_ENV=production it compiles '
-        . '`.kinetis-cache/compiled.php` when no valid artifact is present. Both belong to the framework launcher, and '
-        . '`bootstrap: false` does not prevent either.';
+    private const string LAUNCHER = 'An invocation changes more than the command itself does, and the rest is not '
+        . 'side-effect-free. `vendor/bin/kinetis` loads `.env` before it dispatches any command, and under '
+        . 'APP_ENV=production it compiles `.kinetis-cache/compiled.php` when no valid artifact is present. Both belong '
+        . 'to the framework launcher, and `bootstrap: false` does not prevent either.';
 
     public function __construct(
         private InstalledPackages $packages,
@@ -93,8 +101,9 @@ final readonly class Context
             'harness' => [
                 'name' => 'Orbitron',
                 'role' => 'A development-only construction harness for Kinetis applications. It gives any shell-capable '
-                    . 'coding agent portable Kinetis context and a stable installed-package inventory, with no MCP '
-                    . 'configuration to set up.',
+                    . 'coding agent portable Kinetis context, a stable installed-package inventory, a deterministic '
+                    . 'layout verification and one previewable health-endpoint scaffold, with no MCP configuration to '
+                    . 'set up.',
                 'limits' => self::LIMITS,
             ],
             'guides' => self::GUIDES,

@@ -7,6 +7,7 @@ namespace Kinetis\Orbitron\Tests;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Orbitron\Console\ContextCommand;
 use Kinetis\Orbitron\Console\InspectCommand;
+use Kinetis\Orbitron\Console\ScaffoldCommand;
 use Kinetis\Orbitron\Console\VerifyCommand;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -26,6 +27,10 @@ use SplFileInfo;
  * `vendor/composer/installed.php` itself, which together with the
  * project's own `composer.json` is the whole file-read set the
  * documented boundary admits to.
+ *
+ * Writing is narrower still. One file creates files, one file removes
+ * one, and the only mode either opens is the exclusive create the
+ * scaffold's two targets need; no production file creates a directory.
  */
 final class PackageBoundaryTest extends TestCase
 {
@@ -39,6 +44,7 @@ final class PackageBoundaryTest extends TestCase
         yield 'context' => [ContextCommand::class, 'run', 'orbitron:context'];
         yield 'inspect' => [InspectCommand::class, 'run', 'orbitron:inspect'];
         yield 'verify' => [VerifyCommand::class, 'run', 'orbitron:verify'];
+        yield 'scaffold' => [ScaffoldCommand::class, 'run', 'orbitron:scaffold'];
     }
 
     /**
@@ -93,7 +99,7 @@ final class PackageBoundaryTest extends TestCase
             'network' => ['curl_init', 'curl_exec', 'fsockopen', 'stream_socket_client', 'socket_create', 'file_get_contents'],
             'environment' => ['getenv', 'putenv', 'parse_ini_file'],
             'process' => ['exec', 'shell_exec', 'passthru', 'system', 'proc_open', 'popen', 'pcntl_fork'],
-            'write' => ['file_put_contents', 'mkdir', 'unlink', 'rename', 'touch', 'copy'],
+            'write' => ['file_put_contents', 'mkdir', 'rename', 'touch', 'copy', 'chmod', 'symlink'],
         ] as $kind => $functions) {
             foreach ($functions as $function) {
                 yield "{$kind}: {$function}()" => [$function];
@@ -114,24 +120,65 @@ final class PackageBoundaryTest extends TestCase
     }
 
     /**
-     * `fopen()` is the one exception to the write list above, because the
-     * project manifest cannot be read without it: `file_get_contents()`
-     * is unbounded and stays forbidden. Exactly one call exists, in
-     * exactly one file, read-only and never with a write or append mode.
+     * `fopen()` is the one exception to the write list above:
+     * `file_get_contents()` is unbounded and stays forbidden, and a file
+     * that must not already exist cannot be created any other way. Two
+     * calls exist, in two files, and each names the one mode it is for.
      */
-    public function test_the_only_opened_file_is_the_read_only_manifest_read(): void
+    public function test_the_only_files_opened_are_the_manifest_read_and_the_exclusive_create(): void
     {
+        $modes = ['ProjectLayout.php' => 'fopen($path, \'rb\')', 'FileScaffoldWriter.php' => 'fopen($path, \'x+b\')'];
+
         foreach (self::sourceFiles() as $path => $contents) {
             $opens = preg_match_all('/fopen\s*\(/', $contents);
 
-            if ($path === 'ProjectLayout.php') {
+            if (isset($modes[$path])) {
                 self::assertSame(1, $opens);
-                self::assertStringContainsString('fopen($path, \'rb\')', $contents);
+                self::assertStringContainsString($modes[$path], $contents);
 
                 continue;
             }
 
             self::assertSame(0, $opens, "{$path} opens a file.");
+        }
+    }
+
+    /**
+     * Removal exists for one reason — undoing a scaffold that did not
+     * finish — so it lives with the create it undoes and nowhere else.
+     */
+    public function test_only_the_scaffold_writer_removes_a_file(): void
+    {
+        foreach (self::sourceFiles() as $path => $contents) {
+            $removals = preg_match_all('/unlink\s*\(/', $contents);
+
+            if ($path === 'FileScaffoldWriter.php') {
+                self::assertSame(1, $removals);
+
+                continue;
+            }
+
+            self::assertSame(0, $removals, "{$path} removes a file.");
+        }
+    }
+
+    /**
+     * A command never reads an argument itself: `Console\Invocation` is
+     * the one place the parsed invocation is inspected, and it answers a
+     * format and a flag. No value from a command line can become a path.
+     */
+    public function test_only_the_invocation_surface_reads_the_parsed_arguments(): void
+    {
+        foreach (self::sourceFiles() as $path => $contents) {
+            if ($path === 'Console/Invocation.php') {
+                continue;
+            }
+
+            self::assertSame(
+                0,
+                preg_match('/\$arguments->/', $contents),
+                "{$path} reads the parsed arguments directly.",
+            );
         }
     }
 
@@ -194,6 +241,7 @@ final class PackageBoundaryTest extends TestCase
                 'Kinetis\Console\Attributes\Command',
                 'Kinetis\Console\CommandArguments',
                 'Kinetis\Orbitron\Context',
+                'Kinetis\Orbitron\HealthScaffold',
                 'Kinetis\Orbitron\InstalledPackages',
                 'Kinetis\Orbitron\ProjectLayout',
                 'Kinetis\Runtime\ProjectRoot',

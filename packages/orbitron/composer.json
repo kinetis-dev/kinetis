@@ -1,6 +1,6 @@
 {
     "name": "kinetis/orbitron",
-    "description": "A development-only application construction harness for Kinetis: read-only commands that hand any shell-capable coding agent a portable Kinetis context document, the installed kinetis/* package inventory, and a deterministic verification of the project's Composer layout, with no MCP configuration and no model of its own.",
+    "description": "A development-only application construction harness for Kinetis: commands that hand any shell-capable coding agent a portable Kinetis context document, the installed kinetis/* package inventory, a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no MCP configuration and no model of its own.",
     "type": "library",
     "license": "MIT",
     "authors": [

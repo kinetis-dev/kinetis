@@ -55,14 +55,28 @@ final class ContextTest extends TestCase
         self::assertStringContainsString('require-dev', $limits);
         self::assertStringContainsString('not evidence', $limits);
         // Precise rather than absolute: reading that metadata goes
-        // through Composer's own installed.php, orbitron:verify reads the
-        // project's own composer.json, and STDOUT makes "writes nothing"
-        // false too.
+        // through Composer's own installed.php, orbitron:verify and
+        // orbitron:scaffold read the project's own composer.json, and
+        // STDOUT makes "writes nothing" false too.
         self::assertStringContainsString("Composer's installed-package metadata", $limits);
         self::assertStringContainsString('`composer.json` through a bounded read', $limits);
         self::assertStringContainsString('no configuration and no credentials', $limits);
-        self::assertStringContainsString('writes no files', $limits);
         self::assertStringNotContainsString('reads no project file', $limits);
+        // The write boundary is the two fixed files and the flag that
+        // asks for them, named rather than waved at.
+        self::assertStringContainsString(
+            'The two files `orbitron:scaffold --apply` creates are everything it writes',
+            $limits,
+        );
+        self::assertStringContainsString('src/Http/HealthController.php', $limits);
+        self::assertStringContainsString('tests/Http/HealthControllerTest.php', $limits);
+        self::assertStringContainsString('it creates no directory', $limits);
+        // What the scaffold cannot establish, stated where an agent
+        // reads it rather than left to be discovered.
+        self::assertStringContainsString(
+            'it cannot tell you in advance whether the project already routes `GET /health`',
+            $limits,
+        );
         // Verification is bounded in what it claims, not only in what it
         // reads — including the claim a narrower check invites, that a
         // rejected layout is a broken application.
@@ -90,6 +104,7 @@ final class ContextTest extends TestCase
         self::assertStringContainsString('orbitron:context', $workflow);
         self::assertStringContainsString('orbitron:inspect', $workflow);
         self::assertStringContainsString('orbitron:verify', $workflow);
+        self::assertStringContainsString('orbitron:scaffold', $workflow);
         self::assertStringContainsString('Agent Workflow', $workflow);
         self::assertStringContainsString('Agent Correctness Review', $workflow);
     }
@@ -99,10 +114,13 @@ final class ContextTest extends TestCase
         $commands = self::context()->toArray()['commands'];
 
         self::assertSame(
-            ['orbitron:context', 'orbitron:inspect', 'orbitron:verify'],
+            ['orbitron:context', 'orbitron:inspect', 'orbitron:verify', 'orbitron:scaffold'],
             array_column($commands, 'name'),
         );
-        self::assertSame([['markdown', 'json'], ['json'], ['json']], array_column($commands, 'formats'));
+        self::assertSame(
+            [['markdown', 'json'], ['json'], ['json'], ['json']],
+            array_column($commands, 'formats'),
+        );
 
         foreach ($commands as $command) {
             self::assertStringContainsString('STDOUT', $command['effect']);
@@ -135,6 +153,8 @@ final class ContextTest extends TestCase
         yield 'queue fact' => ['kinetis/queue'];
         yield 'agent workflow link' => ['https://kinetis.dev/docs/agent-workflow.html'];
         yield 'launcher cache claim' => ['.kinetis-cache/compiled.php'];
+        yield 'scaffold command' => ['orbitron:scaffold'];
+        yield 'scaffold controller target' => ['src/Http/HealthController.php'];
     }
 
     /**
