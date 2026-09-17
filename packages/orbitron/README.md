@@ -22,12 +22,20 @@ Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
-You bring the coding agent. Orbitron gives it four documents: a portable
-Kinetis context document, the project's installed `kinetis/*` package
-inventory as JSON, a deterministic verification of the project's Composer
-layout, and one health-endpoint scaffold you preview before you apply it.
-Only applying the scaffold changes anything, and what it changes is two
-fixed files.
+Kinetis does not hand you a generic dashboard or force your application
+into a prebuilt scaffold. Orbitron equips the AI coding agent you already
+use with Kinetis context, project inspection, verification and controlled
+scaffolding, so it builds against the packages and versions actually
+installed.
+
+You bring the agent: Orbitron contains no model and talks to none, and it
+generates no application of its own. What it gives the agent is four
+documents — a portable Kinetis context document, the project's installed
+`kinetis/*` package inventory as JSON, a deterministic verification of the
+project's Composer layout, and one health-endpoint scaffold you preview
+before you apply it. Only applying the scaffold changes anything, and what
+it changes is two fixed files. None of the four is evidence that
+application code is correct.
 
 ```console
 composer require --dev kinetis/orbitron
@@ -298,13 +306,12 @@ suite after the scaffold says so.
 vendor/bin/kinetis-orbitron-mcp
 ```
 
-A stdio MCP server speaking `2025-06-18`. Register it with any client
-that launches a server as a subprocess:
-
-```console
-claude mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
-codex mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
-```
+A stdio MCP server speaking `2025-06-18`, for any client that launches a
+server as a subprocess. Register the launcher as a stdio server named
+`orbitron`, the way that client registers any other — it takes no
+argument and needs no environment. [Wire it into a
+project](#wire-it-into-a-project) is that registration checked in, with
+the per-client configuration paths.
 
 | Tool or resource | What it returns |
 |---|---|
@@ -316,7 +323,7 @@ codex mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
 
 `orbitron_scaffold_apply` writes to the project. Selecting it *is* the
 mutation request: it takes no argument, and your MCP client's own
-approval prompt is where a human decides. It is annotated
+approval policy is what decides whether it runs. It is annotated
 `destructiveHint: true` and `idempotentHint: false`, because a second
 apply refuses rather than overwriting.
 
@@ -326,6 +333,53 @@ source body, a URL or a command, and the server never boots the Kinetis
 application. Composer's installed-package inventory is process-cached, so
 restart the server after installing or removing a dependency; every other
 document is re-read on each call.
+
+## Wire it into a project
+
+`kinetis/skeleton` arrives with all of this in place. For an application
+that already exists, the checked-in form of the registration above is:
+
+- `composer require --dev kinetis/orbitron` — plus
+  `kinetis/mcp-protocol` in a monorepo that resolves siblings through
+  `path` repositories, because a root whose `minimum-stability` is
+  `stable` will not take that sibling's `dev-main` from Packagist;
+- `bin/orbitron-mcp`, executable. For a project that runs in Docker it
+  is a one-file bridge that resolves its own project directory and
+  `exec`s `docker compose --project-directory "$dir" exec -T app php
+  vendor/bin/kinetis-orbitron-mcp`; `-T` is required, because an
+  allocated TTY would rewrite the protocol's newline-delimited frames.
+  With PHP on the host there is no bridge — the launcher is
+  `./vendor/bin/kinetis-orbitron-mcp` itself;
+- `AGENTS.md`, the one place the agent contract is written: on the first
+  application task of a session, confirm the `orbitron` tools, read
+  `kinetis://orbitron/context`, call `orbitron_inspect`, call
+  `orbitron_verify`, and then either one readiness line beginning
+  `Orbitron ready` or no application change at all and the exact
+  failure;
+- `CLAUDE.md` and `GEMINI.md` containing `@AGENTS.md` and nothing else;
+- `.mcp.json`, `.codex/config.toml` and `.gemini/settings.json`, each
+  naming one stdio server `orbitron` launched as `./bin/orbitron-mcp`,
+  with no `env` block, no `trust` key and no preapproved tool.
+
+These files register a server; they change no policy. Carrying no
+credential, no trust override and no preapproval, they leave the
+client's own trust and approval policy authoritative — and that policy
+differs. Claude Code prompts about a project-scoped `.mcp.json` in an
+interactive session, while its documented non-interactive and
+policy-managed modes can behave differently; Codex reads a project's
+`.codex/config.toml` only for a trusted project; Gemini CLI may ignore
+workspace settings in an untrusted workspace, and an omitted server
+`trust` leaves that server's default `false`. Reload or restart the
+client when the configuration was added or changed after the current
+session started, or when its tool catalog has not picked the server up
+yet — a Markdown file read inside a running session cannot register a
+server into it.
+
+The [Orbitron documentation](https://kinetis.dev/docs/orbitron.html)
+carries the full recipe — the bridge verbatim, each configuration file,
+the readiness and blocked handshake, the shell fallback, and the
+diagnostics for a stopped container, a disconnected server and a stale
+package inventory.
 
 ## Output and exit codes
 

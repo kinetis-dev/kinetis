@@ -14,6 +14,8 @@
     },
     "require-dev": {
         "infection/infection": "^0.35.0",
+        "kinetis/mcp-protocol": "dev-main",
+        "kinetis/orbitron": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^13.3.3",
         "vimeo/psalm": "^6.17"
@@ -29,6 +31,14 @@
         }
     },
     "repositories": [
+        {
+            "type": "path",
+            "url": "../orbitron"
+        },
+        {
+            "type": "path",
+            "url": "../mcp-protocol"
+        },
         {
             "type": "path",
             "url": "../framework"

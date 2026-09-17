@@ -31,8 +31,9 @@ use stdClass;
  *
  * `orbitron_scaffold_apply` is the one tool that writes. Selecting it is
  * the whole mutation request, which is why it has no boolean to set: the
- * MCP client's own approval prompt is the human boundary, and the local
- * process and filesystem permissions are the authority boundary.
+ * MCP client's configured approval policy controls whether it runs, and
+ * the local process and filesystem permissions remain the authority
+ * boundary.
  *
  * Orbitron does not boot the Kinetis application here, so nothing about
  * running this server registers a route, a listener or a bootstrap.

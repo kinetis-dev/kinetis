@@ -95,7 +95,7 @@ final readonly class Context
             ],
             [
                 'name' => 'orbitron_scaffold_apply',
-                'effect' => 'Returns the same document as `orbitron:scaffold --apply`, and creates the two files. This is the only tool that writes; selecting it is the whole mutation request, so it takes no argument and your MCP client\'s approval prompt is the boundary.',
+                'effect' => 'Returns the same document as `orbitron:scaffold --apply`, and creates the two files. This is the only tool that writes; selecting it is the whole mutation request, so it takes no argument, and your MCP client\'s configured approval policy controls whether it runs.',
             ],
         ],
         'resource' => 'kinetis://orbitron/context',

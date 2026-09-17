@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+        "orbitron": {
+            "command": "./bin/orbitron-mcp",
+            "args": []
+        }
+    }
+}
