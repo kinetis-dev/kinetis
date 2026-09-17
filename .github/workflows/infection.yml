@@ -95,6 +95,9 @@ jobs:
           # Set it from the score its own first run reports, the way
           # every other threshold here was.
           - { name: mcp-docs, dir: packages/mcp-docs, minMsi: 60, minCoveredMsi: 60 }
+          # 78% measured against this package's own suite; 70 leaves a
+          # margin below it.
+          - { name: orbitron, dir: packages/orbitron, minMsi: 70, minCoveredMsi: 70 }
           - { name: query-builder, dir: packages/query-builder, minMsi: 80, minCoveredMsi: 80 }
           # A provisional floor until this package's first CI mutation run
           # provides a measured score.

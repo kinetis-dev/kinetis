@@ -251,6 +251,18 @@ Separate Composer package, depending on no Kinetis package at all — the standa
 - `Transport`: `StdioLoop` — one JSON-RPC message per line in, one response per line out, ending at end of input. `writeFrame()` loops `fwrite()` until every byte of the frame has been written, and a stream that stops accepting data is `Exception\StdioWriteException` rather than a truncated line followed by another message.
 - Depends on `symfony/http-client` and `symfony/http-client-contracts`, and on nothing from this monorepo. Own `composer.json`/`phpunit.xml`/`phpstan.neon` — the last without core's `NoStaticPropertiesRule`, which ships in `kinetis/framework`.
 
+## `packages/orbitron` (`kinetis/orbitron`)
+
+Separate Composer package, installed with `composer require --dev`. The development-only construction harness described in full in {doc}`orbitron`: two read-only commands for the coding agent a developer brings. Namespace `Kinetis\Orbitron`, no binary, no bootstrap, no discovery plugin — `extra.kinetis.scan` naming `Kinetis\Orbitron\Console\` is the whole registration.
+
+- `PackageFact` — one record from Composer's installed set: `name`, and the nullable `version`/`installPath`. Both are nullable because `Composer\InstalledVersions::getInstalledPackages()` also lists every name an installed package *replaces* or *provides*, reporting null for each on those.
+- `InstalledPackages` — the retention rules, and the seam the suite constructs directly. A list of `PackageFact` objects is read as given; null reads Composer's own installed set instead, which is what the container's autowiring builds. A record is kept only when its name is under the `kinetis/` vendor *and* it carries both a version and an install path, so a replaced- or provided-only name never reaches a document. Entries are keyed by name — one per name, first record winning, as Composer's own lookup does — and `ksort`ed. `records()` returns `{name, version}` pairs; install paths are read as a retention test and never leave the object. `orbitronVersion()` is the detected `kinetis/orbitron` version, the single authority both documents report, and throws rather than inventing one when no such record exists. Nothing is memoized between instances.
+- `Context` — the context document. `toArray()` is the document: the harness identity and its limits, the guide links, the workflow, each command's own effect boundary, the launcher note, and the package facts. `toMarkdown()` renders that same array, so the two formats cannot state different things.
+- `Console\Invocation::format()` — the whole invocation surface: `--format`, no positionals. Returns the command's default when `--format` is absent, and null for a positional value, a bare `--format`, or a format the command does not render. An option neither command reads is invisible to `CommandArguments` and is left alone rather than met with a second parser.
+- `Console\JsonDocument::render()` — the one JSON encoding both commands write: key and list order as built, slashes and unicode unescaped, one trailing newline.
+- `Console\ContextCommand` / `Console\InspectCommand` — `orbitron:context` (`--format=markdown|json`, markdown default) and `orbitron:inspect` (`--format=json` only, and the default). Both `bootstrap: false`, both writing one document to STDOUT and returning `0`, or writing a diagnostic to STDERR and returning `2` for a rejected invocation with STDOUT left empty. `InspectCommand::SCHEMA_VERSION` versions that envelope.
+- Depends on `kinetis/framework` for the command attribute and `CommandArguments`, and on `composer-runtime-api` for `Composer\InstalledVersions`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`/`psalm.xml`.
+
 ## `packages/migrations` (`kinetis/migrations`)
 
 Separate Composer package, not part of `kinetis/framework` core.
@@ -729,5 +741,6 @@ vendor dependencies out of core.
   {doc}`search-opensearch`, {doc}`search-elasticsearch`,
   {doc}`broadcasting`, {doc}`telemetry`, {doc}`auth`, {doc}`auth-jwt`,
   {doc}`session`, {doc}`authorization`, {doc}`mcp`, {doc}`mcp-docs`,
+  {doc}`orbitron`,
   {doc}`runtime-adapters` — the task-oriented page for each package
   above.

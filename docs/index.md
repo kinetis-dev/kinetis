@@ -228,6 +228,7 @@ aws-sigv4
 
 mcp
 mcp-docs
+orbitron
 agent-workflow
 application-recipes
 agent-correctness
