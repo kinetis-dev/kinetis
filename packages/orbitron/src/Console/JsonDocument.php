@@ -7,7 +7,7 @@ namespace Kinetis\Orbitron\Console;
 use JsonException;
 
 /**
- * The one JSON encoding both commands write: key and list order exactly
+ * The one JSON encoding every command writes: key and list order exactly
  * as the document was built, slashes and unicode left as written, and a
  * single trailing newline so one invocation puts exactly one document on
  * STDOUT.

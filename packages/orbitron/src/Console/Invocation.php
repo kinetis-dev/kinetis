@@ -7,11 +7,11 @@ namespace Kinetis\Orbitron\Console;
 use Kinetis\Console\CommandArguments;
 
 /**
- * The whole invocation surface both Orbitron commands offer: one
+ * The whole invocation surface every Orbitron command offers: one
  * `--format` option, no positional arguments.
  *
  * CommandArguments cannot enumerate the options it parsed, so an option
- * neither command reads is invisible here. That is left alone rather
+ * no command reads is invisible here. That is left alone rather
  * than met with a second argument parser of Orbitron's own: what is
  * checked is what the commands actually consume.
  */

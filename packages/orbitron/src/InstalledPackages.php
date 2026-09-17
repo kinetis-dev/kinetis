@@ -8,7 +8,7 @@ use Composer\InstalledVersions;
 use RuntimeException;
 
 /**
- * The installed `kinetis/*` packages both Orbitron commands report, read
+ * The installed `kinetis/*` packages the Orbitron commands report, read
  * once per instance from the records handed to the constructor.
  *
  * This is the seam the suite constructs directly: passing a list of
@@ -56,8 +56,8 @@ final readonly class InstalledPackages
     }
 
     /**
-     * The installed packages as the `{name, version}` records both
-     * documents carry, in name order. Install paths are read as a
+     * The installed packages as the `{name, version}` records the
+     * context and inventory documents carry, in name order. Install paths are read as a
      * retention test above and never leave this object.
      *
      * @return list<array{name: string, version: string}>
@@ -74,8 +74,8 @@ final readonly class InstalledPackages
     }
 
     /**
-     * Orbitron's own version, which is the single authority both
-     * documents report — the detected package fact, never a constant
+     * Orbitron's own version, which is the single authority every
+     * document reports — the detected package fact, never a constant
      * maintained beside it.
      *
      * @throws RuntimeException when the records carry no entry for this

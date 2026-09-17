@@ -7,6 +7,7 @@ namespace Kinetis\Orbitron\Tests;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Orbitron\Console\ContextCommand;
 use Kinetis\Orbitron\Console\InspectCommand;
+use Kinetis\Orbitron\Console\VerifyCommand;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use FilesystemIterator;
@@ -22,8 +23,9 @@ use SplFileInfo;
  * The scans below cover Orbitron's own source and nothing beyond it.
  * They are not a claim about the vendor code it calls:
  * `Composer\InstalledVersions::getInstalled()` loads
- * `vendor/composer/installed.php` itself, which is exactly the one file
- * read the documented boundary admits to.
+ * `vendor/composer/installed.php` itself, which together with the
+ * project's own `composer.json` is the whole file-read set the
+ * documented boundary admits to.
  */
 final class PackageBoundaryTest extends TestCase
 {
@@ -36,6 +38,7 @@ final class PackageBoundaryTest extends TestCase
     {
         yield 'context' => [ContextCommand::class, 'run', 'orbitron:context'];
         yield 'inspect' => [InspectCommand::class, 'run', 'orbitron:inspect'];
+        yield 'verify' => [VerifyCommand::class, 'run', 'orbitron:verify'];
     }
 
     /**
@@ -90,7 +93,7 @@ final class PackageBoundaryTest extends TestCase
             'network' => ['curl_init', 'curl_exec', 'fsockopen', 'stream_socket_client', 'socket_create', 'file_get_contents'],
             'environment' => ['getenv', 'putenv', 'parse_ini_file'],
             'process' => ['exec', 'shell_exec', 'passthru', 'system', 'proc_open', 'popen', 'pcntl_fork'],
-            'write' => ['file_put_contents', 'fopen', 'mkdir', 'unlink', 'rename', 'touch', 'copy'],
+            'write' => ['file_put_contents', 'mkdir', 'unlink', 'rename', 'touch', 'copy'],
         ] as $kind => $functions) {
             foreach ($functions as $function) {
                 yield "{$kind}: {$function}()" => [$function];
@@ -108,6 +111,44 @@ final class PackageBoundaryTest extends TestCase
                 "{$path} calls {$function}().",
             );
         }
+    }
+
+    /**
+     * `fopen()` is the one exception to the write list above, because the
+     * project manifest cannot be read without it: `file_get_contents()`
+     * is unbounded and stays forbidden. Exactly one call exists, in
+     * exactly one file, read-only and never with a write or append mode.
+     */
+    public function test_the_only_opened_file_is_the_read_only_manifest_read(): void
+    {
+        foreach (self::sourceFiles() as $path => $contents) {
+            $opens = preg_match_all('/fopen\s*\(/', $contents);
+
+            if ($path === 'ProjectLayout.php') {
+                self::assertSame(1, $opens);
+                self::assertStringContainsString('fopen($path, \'rb\')', $contents);
+
+                continue;
+            }
+
+            self::assertSame(0, $opens, "{$path} opens a file.");
+        }
+    }
+
+    /**
+     * The read is bounded by construction: one byte past the admitted
+     * size is all that separates an accepted manifest from an oversized
+     * one, and nothing ever reads the stream to its end.
+     */
+    public function test_the_manifest_read_is_bounded_by_the_admitted_size_plus_one_byte(): void
+    {
+        $reader = self::sourceFiles()['ProjectLayout.php'];
+
+        self::assertStringContainsString(
+            'stream_get_contents($handle, self::MAX_MANIFEST_BYTES + 1)',
+            $reader,
+        );
+        self::assertSame(1, preg_match_all('/stream_get_contents\s*\(/', $reader));
     }
 
     /**
@@ -154,6 +195,8 @@ final class PackageBoundaryTest extends TestCase
                 'Kinetis\Console\CommandArguments',
                 'Kinetis\Orbitron\Context',
                 'Kinetis\Orbitron\InstalledPackages',
+                'Kinetis\Orbitron\ProjectLayout',
+                'Kinetis\Runtime\ProjectRoot',
                 'RuntimeException',
             ],
             $imported,

@@ -6,8 +6,8 @@ namespace Kinetis\Orbitron;
 
 /**
  * The Orbitron context document: what Orbitron is, what it does not do,
- * where the authoritative Kinetis guidance lives, the two-command
- * workflow, what each command may and may not change, and the installed
+ * where the authoritative Kinetis guidance lives, the command workflow,
+ * what each command may and may not change, and the installed
  * `kinetis/*` package facts.
  *
  * toArray() is the document; toMarkdown() renders that same array, so
@@ -25,7 +25,8 @@ final readonly class Context
         'This document is reference material, not evidence. It does not establish that an application preserves request isolation, non-blocking I/O, or any other invariant — the guides below state the rules, and the project\'s own tests and review are what settle compliance.',
         'The package facts below describe what is installed in this project. They say nothing about the current state of Kinetis main.',
         'Orbitron is a require-dev package. No production code depends on it, and removing it changes nothing an application does.',
-        'Orbitron reads only Composer\'s installed-package metadata — no application source, configuration or credentials — and writes no files.',
+        'Orbitron reads Composer\'s installed-package metadata and, for `orbitron:verify`, the project\'s own `composer.json` through a bounded read — no other application source, no configuration and no credentials — and it writes no files.',
+        '`orbitron:verify` answers one narrow question: whether this project\'s Composer layout is the fixed one Orbitron supports. That layout is narrower than anything Kinetis itself requires, so an error means the project is outside what Orbitron assumes — not that route, command or listener discovery is broken. It establishes nothing else either: not request isolation, not non-blocking I/O, not security, not route uniqueness, not the correctness of any application code.',
     ];
 
     /** @var list<array{title: string, url: string}> */
@@ -41,6 +42,7 @@ final readonly class Context
     private const array WORKFLOW = [
         'Run `vendor/bin/kinetis orbitron:context` once per task to read this document.',
         'Run `vendor/bin/kinetis orbitron:inspect` to read the installed Kinetis packages and their versions as JSON.',
+        'Run `vendor/bin/kinetis orbitron:verify` to read whether this project\'s Composer layout is the one Orbitron supports; exit 3 means the document reports an error.',
         'Route the task through Agent Workflow, then follow the matching recipe — reading each guide for the versions orbitron:inspect reports, not for main.',
         'Before calling the change done, work through Agent Correctness Review and run the project\'s own test suite.',
     ];
@@ -56,6 +58,11 @@ final readonly class Context
             'name' => 'orbitron:inspect',
             'formats' => ['json'],
             'effect' => 'Renders the installed kinetis/* inventory to STDOUT, under the same boundary: reads Composer\'s installed-package records and changes nothing.',
+        ],
+        [
+            'name' => 'orbitron:verify',
+            'formats' => ['json'],
+            'effect' => 'Renders the project-layout verification to STDOUT. Reads Composer\'s installed-package records and the project\'s own composer.json through a bounded read, and changes nothing else: writes no file, opens no socket, starts no process. Exits 3 when the verification completed and the document reports an error.',
         ],
     ];
 

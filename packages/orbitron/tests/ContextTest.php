@@ -55,11 +55,22 @@ final class ContextTest extends TestCase
         self::assertStringContainsString('require-dev', $limits);
         self::assertStringContainsString('not evidence', $limits);
         // Precise rather than absolute: reading that metadata goes
-        // through Composer's own installed.php, so "reads nothing" would
-        // be false, and STDOUT makes "writes nothing" false too.
-        self::assertStringContainsString("only Composer's installed-package metadata", $limits);
+        // through Composer's own installed.php, orbitron:verify reads the
+        // project's own composer.json, and STDOUT makes "writes nothing"
+        // false too.
+        self::assertStringContainsString("Composer's installed-package metadata", $limits);
+        self::assertStringContainsString('`composer.json` through a bounded read', $limits);
+        self::assertStringContainsString('no configuration and no credentials', $limits);
         self::assertStringContainsString('writes no files', $limits);
         self::assertStringNotContainsString('reads no project file', $limits);
+        // Verification is bounded in what it claims, not only in what it
+        // reads — including the claim a narrower check invites, that a
+        // rejected layout is a broken application.
+        self::assertStringContainsString('not route uniqueness', $limits);
+        self::assertStringContainsString(
+            'not that route, command or listener discovery is broken',
+            $limits,
+        );
     }
 
     public function test_it_links_to_the_authoritative_kinetis_guides(): void
@@ -72,12 +83,13 @@ final class ContextTest extends TestCase
         self::assertSame('https://kinetis.dev/docs/orbitron.html', $urls['Orbitron']);
     }
 
-    public function test_the_workflow_is_the_two_orbitron_commands_and_then_the_guides(): void
+    public function test_the_workflow_is_the_orbitron_commands_and_then_the_guides(): void
     {
         $workflow = implode("\n", self::context()->toArray()['workflow']);
 
         self::assertStringContainsString('orbitron:context', $workflow);
         self::assertStringContainsString('orbitron:inspect', $workflow);
+        self::assertStringContainsString('orbitron:verify', $workflow);
         self::assertStringContainsString('Agent Workflow', $workflow);
         self::assertStringContainsString('Agent Correctness Review', $workflow);
     }
@@ -86,8 +98,11 @@ final class ContextTest extends TestCase
     {
         $commands = self::context()->toArray()['commands'];
 
-        self::assertSame(['orbitron:context', 'orbitron:inspect'], array_column($commands, 'name'));
-        self::assertSame([['markdown', 'json'], ['json']], array_column($commands, 'formats'));
+        self::assertSame(
+            ['orbitron:context', 'orbitron:inspect', 'orbitron:verify'],
+            array_column($commands, 'name'),
+        );
+        self::assertSame([['markdown', 'json'], ['json'], ['json']], array_column($commands, 'formats'));
 
         foreach ($commands as $command) {
             self::assertStringContainsString('STDOUT', $command['effect']);
