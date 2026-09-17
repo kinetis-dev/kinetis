@@ -284,6 +284,17 @@ final class McpControllerTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
     }
 
+    public function test_each_comma_separated_allowed_origin_is_trimmed(): void
+    {
+        $kernel = $this->mcpEnabledKernel(config: [
+            'MCP_ALLOWED_ORIGINS' => 'https://first.example, https://second.example',
+        ]);
+
+        $response = $kernel->handle($this->mcpToolsListRequest()->withHeader('Origin', 'https://second.example'));
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
     public function test_the_default_allow_list_rejects_any_origin_at_all(): void
     {
         $kernel = $this->mcpEnabledKernel();
