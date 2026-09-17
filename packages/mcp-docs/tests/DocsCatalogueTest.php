@@ -7,7 +7,7 @@ namespace Kinetis\McpDocs\Tests;
 use JsonException;
 use Kinetis\McpDocs\DocsCatalogue;
 use Kinetis\McpDocs\DocsPage;
-use Kinetis\McpDocs\McpDocsServer;
+use Kinetis\McpDocs\DocsApplication;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -152,6 +152,6 @@ final class DocsCatalogueTest extends TestCase
         $manifest = json_decode((string) file_get_contents($manifestPath), true, flags: JSON_THROW_ON_ERROR);
 
         self::assertIsArray($manifest);
-        self::assertSame($manifest['packages']['mcp-docs']['version'], McpDocsServer::SERVER_VERSION);
+        self::assertSame($manifest['packages']['mcp-docs']['version'], DocsApplication::SERVER_VERSION);
     }
 }

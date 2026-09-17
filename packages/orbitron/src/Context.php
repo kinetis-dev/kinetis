@@ -21,14 +21,15 @@ final readonly class Context
 
     /** @var list<string> */
     private const array LIMITS = [
-        'Orbitron ships no model, no MCP server, no HTTP client and no shell; you supply the coding agent.',
+        'Orbitron ships no model, no HTTP client and no shell; you supply the coding agent. Its MCP server exposes the same documents to an agent that speaks MCP, and adds no capability the commands do not have.',
         'This document is reference material, not evidence. It does not establish that an application preserves request isolation, non-blocking I/O, or any other invariant — the guides below state the rules, and the project\'s own tests and review are what settle compliance.',
         'The package facts below describe what is installed in this project. They say nothing about the current state of Kinetis main.',
         'Orbitron is a require-dev package. No production code depends on it, and removing it changes nothing an application does.',
-        'Orbitron reads Composer\'s installed-package metadata and, for `orbitron:verify` and `orbitron:scaffold`, the project\'s own `composer.json` through a bounded read — no other application source, no configuration and no credentials. The two files `orbitron:scaffold --apply` creates are everything it writes.',
-        '`orbitron:scaffold` builds one fixed thing: `src/Http/HealthController.php` and `tests/Http/HealthControllerTest.php`, a `GET /health` route returning `{"status":"ok"}`, and a framework test that asserts that same response on two sequential requests. There is no name, path, template or other input, it creates no directory, and it writes only when `--apply` is given.',
+        'Orbitron reads Composer\'s installed-package metadata and, for verification and scaffolding, the project\'s own `composer.json` through a bounded read — no other application source, no configuration and no credentials. The two files an applied scaffold creates are everything it writes.',
+        'The scaffold builds one fixed thing: `src/Http/HealthController.php` and `tests/Http/HealthControllerTest.php`, a `GET /health` route returning `{"status":"ok"}`, and a framework test that asserts that same response on two sequential requests. There is no name, path, template or other input, it creates no directory, and it writes only when `--apply` is given.',
         'Orbitron reads no application source, so it cannot tell you in advance whether the project already routes `GET /health` somewhere else. The generated test surfaces that conflict through the framework\'s own route discovery, on the first run after the scaffold is applied.',
-        '`orbitron:verify` answers one narrow question: whether this project\'s Composer layout is the fixed one Orbitron supports. That layout is narrower than anything Kinetis itself requires, so an error means the project is outside what Orbitron assumes — not that route, command or listener discovery is broken. It establishes nothing else either: not request isolation, not non-blocking I/O, not security, not route uniqueness, not the correctness of any application code.',
+        'Verification answers one narrow question: whether this project\'s Composer layout is the fixed one Orbitron supports. That layout is narrower than anything Kinetis itself requires, so an error means the project is outside what Orbitron assumes — not that route, command or listener discovery is broken. It establishes nothing else either: not request isolation, not non-blocking I/O, not security, not route uniqueness, not the correctness of any application code.',
+        'The MCP server reads Composer\'s installed-package inventory once at startup, because that inventory is process-cached. Restart it after installing or removing a dependency; every other document is re-read on each call.',
     ];
 
     /** @var list<array{title: string, url: string}> */
@@ -46,6 +47,7 @@ final readonly class Context
         'Run `vendor/bin/kinetis orbitron:inspect` to read the installed Kinetis packages and their versions as JSON.',
         'Run `vendor/bin/kinetis orbitron:verify` to read whether this project\'s Composer layout is the one Orbitron supports; exit 3 means the document reports an error.',
         'Run `vendor/bin/kinetis orbitron:scaffold` to read the health-endpoint scaffold plan, and add `--apply` to create its two files; exit 3 means the document reports a refusal or a failed write.',
+        'An agent that speaks MCP can register `vendor/bin/kinetis-orbitron-mcp` instead and call the same documents as tools.',
         'Route the task through Agent Workflow, then follow the matching recipe — reading each guide for the versions orbitron:inspect reports, not for main.',
         'Before calling the change done, work through Agent Correctness Review and run the project\'s own test suite.',
     ];
@@ -74,6 +76,36 @@ final readonly class Context
         ],
     ];
 
+    /** @var array{binary: string, protocolVersion: string, tools: list<array{name: string, effect: string}>, resource: string} */
+    private const array MCP = [
+        'binary' => 'vendor/bin/kinetis-orbitron-mcp',
+        'protocolVersion' => '2025-06-18',
+        'tools' => [
+            [
+                'name' => 'orbitron_inspect',
+                'effect' => 'Returns the same document as `orbitron:inspect`. Read-only.',
+            ],
+            [
+                'name' => 'orbitron_verify',
+                'effect' => 'Returns the same document as `orbitron:verify`. Read-only; an error document comes back as an MCP error result.',
+            ],
+            [
+                'name' => 'orbitron_scaffold_plan',
+                'effect' => 'Returns the same document as `orbitron:scaffold` without `--apply`. Read-only.',
+            ],
+            [
+                'name' => 'orbitron_scaffold_apply',
+                'effect' => 'Returns the same document as `orbitron:scaffold --apply`, and creates the two files. This is the only tool that writes; selecting it is the whole mutation request, so it takes no argument and your MCP client\'s approval prompt is the boundary.',
+            ],
+        ],
+        'resource' => 'kinetis://orbitron/context',
+    ];
+
+    private const string SERVER = 'The MCP server speaks one protocol revision and serves the same documents the '
+        . 'commands print. It never boots the Kinetis application, accepts no path, source, URL or command from a '
+        . 'message, and every tool takes no arguments at all. It is a local process your client launches, so that '
+        . 'process and your filesystem permissions are the trust boundary.';
+
     private const string LAUNCHER = 'An invocation changes more than the command itself does, and the rest is not '
         . 'side-effect-free. `vendor/bin/kinetis` loads `.env` before it dispatches any command, and under '
         . 'APP_ENV=production it compiles `.kinetis-cache/compiled.php` when no valid artifact is present. Both belong '
@@ -90,6 +122,8 @@ final readonly class Context
      *     guides: list<array{title: string, url: string}>,
      *     workflow: list<string>,
      *     commands: list<array{name: string, formats: list<string>, effect: string}>,
+     *     mcp: array{binary: string, protocolVersion: string, tools: list<array{name: string, effect: string}>, resource: string},
+     *     server: string,
      *     launcher: string,
      *     packages: list<array{name: string, version: string}>,
      * }
@@ -102,13 +136,15 @@ final readonly class Context
                 'name' => 'Orbitron',
                 'role' => 'A development-only construction harness for Kinetis applications. It gives any shell-capable '
                     . 'coding agent portable Kinetis context, a stable installed-package inventory, a deterministic '
-                    . 'layout verification and one previewable health-endpoint scaffold, with no MCP configuration to '
-                    . 'set up.',
+                    . 'layout verification and one previewable health-endpoint scaffold, reachable from a shell or '
+                    . 'through its own MCP server.',
                 'limits' => self::LIMITS,
             ],
             'guides' => self::GUIDES,
             'workflow' => self::WORKFLOW,
             'commands' => self::COMMANDS,
+            'mcp' => self::MCP,
+            'server' => self::SERVER,
             'launcher' => self::LAUNCHER,
             'packages' => $this->packages->records(),
         ];
@@ -156,6 +192,19 @@ final readonly class Context
             $lines[] = "- `{$command['name']} --format=" . implode('|', $command['formats']) . "` — {$command['effect']}";
         }
 
+        $lines[] = '';
+        $lines[] = '## MCP server';
+        $lines[] = '';
+        $lines[] = "Binary: `{$document['mcp']['binary']}` — MCP {$document['mcp']['protocolVersion']}.";
+        $lines[] = '';
+
+        foreach ($document['mcp']['tools'] as $tool) {
+            $lines[] = "- `{$tool['name']}` — {$tool['effect']}";
+        }
+
+        $lines[] = "- Resource `{$document['mcp']['resource']}` — this document, as Markdown.";
+        $lines[] = '';
+        $lines[] = $document['server'];
         $lines[] = '';
         $lines[] = '## Launcher';
         $lines[] = '';

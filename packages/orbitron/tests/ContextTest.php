@@ -55,9 +55,9 @@ final class ContextTest extends TestCase
         self::assertStringContainsString('require-dev', $limits);
         self::assertStringContainsString('not evidence', $limits);
         // Precise rather than absolute: reading that metadata goes
-        // through Composer's own installed.php, orbitron:verify and
-        // orbitron:scaffold read the project's own composer.json, and
-        // STDOUT makes "writes nothing" false too.
+        // through Composer's own installed.php, verification and
+        // scaffolding read the project's own composer.json, and STDOUT
+        // makes "writes nothing" false too.
         self::assertStringContainsString("Composer's installed-package metadata", $limits);
         self::assertStringContainsString('`composer.json` through a bounded read', $limits);
         self::assertStringContainsString('no configuration and no credentials', $limits);
@@ -65,7 +65,7 @@ final class ContextTest extends TestCase
         // The write boundary is the two fixed files and the flag that
         // asks for them, named rather than waved at.
         self::assertStringContainsString(
-            'The two files `orbitron:scaffold --apply` creates are everything it writes',
+            'The two files an applied scaffold creates are everything it writes',
             $limits,
         );
         self::assertStringContainsString('src/Http/HealthController.php', $limits);

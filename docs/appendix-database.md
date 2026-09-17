@@ -54,7 +54,7 @@ resolves it builds none. Every entry point takes its scopes from
   `#[Command(bootstrap: false)]`. A bootstrap-free command runs no
   package bootstrap, so its scope carries no initializer and there is no
   bound connection to guard.
-- `kinetis/mcp`'s `Transport\StdioTransport`, for every MCP message over
+- `kinetis/mcp`'s `ScopedMessageHandler`, for every MCP message over
   stdio.
 - `kinetis/queue`'s `QueueWorker`, for every popped job, and `SyncQueue`,
   for every `push()`. A job that begins a transaction and returns or

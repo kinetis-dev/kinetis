@@ -7,16 +7,19 @@ namespace Kinetis\Orbitron\Console;
 use JsonException;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
-use Kinetis\Orbitron\Context;
-use Kinetis\Orbitron\InstalledPackages;
+use Kinetis\Orbitron\Documents;
+use Kinetis\Orbitron\JsonDocument;
 
 /**
  * `orbitron:context` — the Orbitron context document, rendered whole to
  * STDOUT in one write.
  *
+ * An adapter over {@see Documents} holding no document policy of its own,
+ * so the MCP server reaches the same text without running this command.
+ *
  * `bootstrap: false`: the document is built from Composer's
- * installed-package records alone, so neither the package bootstrap
- * chain nor the application's own bootstrap runs.
+ * installed-package records alone, so neither the package bootstrap chain
+ * nor the application's own bootstrap runs.
  */
 final readonly class ContextCommand
 {
@@ -28,7 +31,7 @@ final readonly class ContextCommand
      * @param resource $errorOutput
      */
     public function __construct(
-        private InstalledPackages $packages = new InstalledPackages(),
+        private Documents $documents = new Documents(),
         private mixed $output = STDOUT,
         private mixed $errorOutput = STDERR,
     ) {}
@@ -54,9 +57,9 @@ final readonly class ContextCommand
             return 2;
         }
 
-        $context = new Context($this->packages);
-
-        fwrite($this->output, $format === 'json' ? JsonDocument::render($context->toArray()) : $context->toMarkdown());
+        fwrite($this->output, $format === 'json'
+            ? JsonDocument::render($this->documents->contextBody())
+            : $this->documents->context());
 
         return 0;
     }

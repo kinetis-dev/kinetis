@@ -18,11 +18,12 @@ namespace Kinetis\Validation;
  * `#[ListOf]` counterpart can reject an object-shaped wire value
  * outright, regardless of what its own keys happen to look like.
  *
- * Deliberately a thin wrapper, not `Kinetis\Mcp\JsonObject` reused
- * directly: that class solves a narrower, protocol-specific problem
- * (JSON-RPC envelope structural validation) in a package that already
- * depends on this one — `Kinetis\Mcp` code converts into *this* marker
- * before handing a value to `Hydrator`, not the other way around.
+ * Deliberately a thin wrapper, not `Kinetis\McpProtocol\JsonObject`
+ * reused directly: that class solves a narrower, protocol-specific
+ * problem (writing a JSON object in a hand-built JSON-RPC message) in a
+ * framework-agnostic package this one knows nothing about —
+ * `Kinetis\Mcp` code converts a decoded tool argument into *this* marker
+ * before handing it to `Hydrator`, not the other way around.
  */
 final readonly class JsonObject
 {

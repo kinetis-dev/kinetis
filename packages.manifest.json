@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.11.2",
+            "version": "1.11.3",
             "bin": [
                 "bin/kinetis"
             ],
@@ -80,13 +80,14 @@
             "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata and a lazy request-scoped EntityManager.",
             "namespace": "Kinetis\\DatabaseBridge\\",
             "testNamespace": "Kinetis\\DatabaseBridge\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.1.2",
             "requires": [
                 "framework",
                 "persistence"
             ],
             "requiresDev": [
                 "mcp",
+                "mcp-protocol",
                 "queue",
                 "orm",
                 "query-builder"
@@ -247,14 +248,22 @@
                 "scan": "Kinetis\\Migrations\\Console\\"
             }
         },
+        "mcp-protocol": {
+            "name": "kinetis/mcp-protocol",
+            "description": "Model Context Protocol 2025-06-18 over JSON-RPC 2.0 — envelope validation, typed tool and resource contracts, progress notifications, and checked newline-delimited stdio framing. Requires PHP only.",
+            "namespace": "Kinetis\\McpProtocol\\",
+            "testNamespace": "Kinetis\\McpProtocol\\Tests\\",
+            "version": "1.0.0"
+        },
         "mcp": {
             "name": "kinetis/mcp",
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.5.2",
+            "version": "1.6.0",
             "requires": [
-                "framework"
+                "framework",
+                "mcp-protocol"
             ],
             "requiresDev": [
                 "auth"
@@ -274,12 +283,15 @@
         },
         "mcp-docs": {
             "name": "kinetis/mcp-docs",
-            "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
+            "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.3.1",
+            "version": "1.4.0",
             "bin": [
                 "bin/kinetis-mcp-docs"
+            ],
+            "requires": [
+                "mcp-protocol"
             ],
             "require": {
                 "symfony/http-client": "^8.1.4",
@@ -288,12 +300,16 @@
         },
         "orbitron": {
             "name": "kinetis/orbitron",
-            "description": "A development-only application construction harness for Kinetis: commands that hand any shell-capable coding agent a portable Kinetis context document, the installed kinetis/* package inventory, a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no MCP configuration and no model of its own.",
+            "description": "A development-only application construction harness for Kinetis: a CLI and a standalone MCP server that hand any coding agent a portable Kinetis context document, the installed kinetis/* package inventory, a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no model of its own.",
             "namespace": "Kinetis\\Orbitron\\",
             "testNamespace": "Kinetis\\Orbitron\\Tests\\",
             "version": "1.0.0",
+            "bin": [
+                "bin/kinetis-orbitron-mcp"
+            ],
             "requires": [
-                "framework"
+                "framework",
+                "mcp-protocol"
             ],
             "require": {
                 "composer-runtime-api": "^2.0"
@@ -632,7 +648,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, mapped entities and a request-scoped unit of work over kinetis/orm, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.4.1",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -649,6 +665,7 @@
                 "cache-redis",
                 "queue",
                 "mcp",
+                "mcp-protocol",
                 "queue-redis",
                 "broadcasting",
                 "revolt-http-client",

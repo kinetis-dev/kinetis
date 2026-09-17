@@ -68,12 +68,52 @@ final class PackageBoundaryTest extends TestCase
     }
 
     /**
-     * Registration is the scan root and nothing else — no bootstrap, no
-     * discovery plugin, no binary.
+     * Registration is the console scan root and nothing else — no
+     * bootstrap and no discovery plugin, so installing Orbitron adds
+     * nothing to an application's runtime surface. The one binary is the
+     * MCP server, which is launched by a client rather than registered
+     * with the framework.
      *
      * @throws \JsonException
      */
-    public function test_the_package_registers_only_its_console_scan_root(): void
+    public function test_the_package_registers_only_its_console_scan_root_and_the_mcp_binary(): void
+    {
+        $composer = self::composer();
+
+        self::assertSame(['kinetis' => ['scan' => 'Kinetis\\Orbitron\\Console\\']], $composer['extra']);
+        self::assertSame(['bin/kinetis-orbitron-mcp'], $composer['bin']);
+        self::assertSame(
+            [
+                'php' => '^8.4',
+                'kinetis/framework' => 'dev-main',
+                'kinetis/mcp-protocol' => 'dev-main',
+                'composer-runtime-api' => '^2.0',
+            ],
+            $composer['require'],
+        );
+    }
+
+    /**
+     * Installing the MCP server must not install the application MCP
+     * package with it: that one contributes a bootstrap and a discovery
+     * plugin, so it would change what a consumer application does at
+     * runtime. Orbitron depends on the protocol package alone.
+     *
+     * @throws \JsonException
+     */
+    public function test_the_package_does_not_depend_on_the_application_mcp_package(): void
+    {
+        $composer = self::composer();
+
+        self::assertArrayNotHasKey('kinetis/mcp', $composer['require']);
+        self::assertArrayNotHasKey('kinetis/mcp', $composer['require-dev'] ?? []);
+    }
+
+    /**
+     * @return array<string, mixed>
+     * @throws \JsonException
+     */
+    private static function composer(): array
     {
         $composer = json_decode(
             (string) file_get_contents(__DIR__ . '/../composer.json'),
@@ -82,12 +122,9 @@ final class PackageBoundaryTest extends TestCase
         );
 
         self::assertIsArray($composer);
-        self::assertSame(['kinetis' => ['scan' => 'Kinetis\\Orbitron\\Console\\']], $composer['extra']);
-        self::assertArrayNotHasKey('bin', $composer);
-        self::assertSame(
-            ['php' => '^8.4', 'kinetis/framework' => 'dev-main', 'composer-runtime-api' => '^2.0'],
-            $composer['require'],
-        );
+
+        /** @var array<string, mixed> */
+        return $composer;
     }
 
     /**
@@ -219,7 +256,8 @@ final class PackageBoundaryTest extends TestCase
     /**
      * The exact set of types the production code imports. An application
      * boot dependency — a container scope, a Config, a package bootstrap
-     * — would have to appear here first.
+     * — would have to appear here first, and so would anything from
+     * `kinetis/mcp`, whose installation registers both.
      */
     public function test_production_code_imports_only_the_command_contract_and_composers_installed_set(): void
     {
@@ -240,12 +278,22 @@ final class PackageBoundaryTest extends TestCase
                 'JsonException',
                 'Kinetis\Console\Attributes\Command',
                 'Kinetis\Console\CommandArguments',
-                'Kinetis\Orbitron\Context',
-                'Kinetis\Orbitron\HealthScaffold',
-                'Kinetis\Orbitron\InstalledPackages',
-                'Kinetis\Orbitron\ProjectLayout',
+                'Kinetis\McpProtocol\Exception\JsonRpcException',
+                'Kinetis\McpProtocol\McpApplication',
+                'Kinetis\McpProtocol\ProgressEmitter',
+                'Kinetis\McpProtocol\ResourceDescription',
+                'Kinetis\McpProtocol\ResourceResult',
+                'Kinetis\McpProtocol\ServerInfo',
+                'Kinetis\McpProtocol\ToolAnnotations',
+                'Kinetis\McpProtocol\ToolDescription',
+                'Kinetis\McpProtocol\ToolResult',
+                'Kinetis\Orbitron\Document',
+                'Kinetis\Orbitron\Documents',
+                'Kinetis\Orbitron\JsonDocument',
+                'Kinetis\Orbitron\ScaffoldMode',
                 'Kinetis\Runtime\ProjectRoot',
                 'RuntimeException',
+                'stdClass',
             ],
             $imported,
         );

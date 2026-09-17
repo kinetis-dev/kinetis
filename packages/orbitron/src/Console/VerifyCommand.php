@@ -7,8 +7,7 @@ namespace Kinetis\Orbitron\Console;
 use JsonException;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
-use Kinetis\Orbitron\InstalledPackages;
-use Kinetis\Orbitron\ProjectLayout;
+use Kinetis\Orbitron\Documents;
 use Kinetis\Runtime\ProjectRoot;
 
 /**
@@ -18,15 +17,16 @@ use Kinetis\Runtime\ProjectRoot;
  * JSON is the only format, for the same reason as `orbitron:inspect`:
  * this document exists to be parsed.
  *
+ * An adapter over {@see Documents} holding no verification policy of its
+ * own, so the MCP server reaches the same document without running this
+ * command.
+ *
  * `bootstrap: false`: the answer is read from Composer's installed
  * records and the project's own `composer.json`, so neither the package
  * bootstrap chain nor the application's own bootstrap runs.
  */
 final readonly class VerifyCommand
 {
-    /** The envelope's own version, moved only when the document's shape changes. */
-    public const int SCHEMA_VERSION = 1;
-
     /** @var non-empty-list<string> */
     private const array FORMATS = ['json'];
 
@@ -42,7 +42,7 @@ final readonly class VerifyCommand
      * @param resource $errorOutput
      */
     public function __construct(
-        private InstalledPackages $packages = new InstalledPackages(),
+        private Documents $documents = new Documents(),
         private ?string $projectRootOverride = null,
         private mixed $output = STDOUT,
         private mixed $errorOutput = STDERR,
@@ -72,25 +72,15 @@ final readonly class VerifyCommand
         // ProjectRoot::detect() expects in its non-proxied fallback
         // branch. An installed project runs through Composer's real
         // bin-proxy, which ignores this argument entirely.
-        $layout = ProjectLayout::read($this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__)));
+        $document = $this->documents->verify(
+            $this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__)),
+        );
 
-        $checks = [];
-
-        foreach ($layout->checks() as $check) {
-            $checks[] = ['name' => $check->name, 'state' => $check->state->value, 'code' => $check->code];
-        }
-
-        fwrite($this->output, JsonDocument::render([
-            'schemaVersion' => self::SCHEMA_VERSION,
-            'orbitronVersion' => $this->packages->orbitronVersion(),
-            'status' => $layout->hasError() ? 'error' : 'pass',
-            'checks' => $checks,
-            'namespaces' => $layout->namespaces(),
-        ]));
+        fwrite($this->output, $document->toJson());
 
         // A completed verification that found errors is a distinct
         // outcome from a launcher failure (1) and from a rejected
         // invocation (2): the document was written and is the answer.
-        return $layout->hasError() ? 3 : 0;
+        return $document->failed ? 3 : 0;
     }
 }

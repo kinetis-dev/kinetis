@@ -7,7 +7,7 @@ namespace Kinetis\Orbitron\Console;
 use JsonException;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
-use Kinetis\Orbitron\InstalledPackages;
+use Kinetis\Orbitron\Documents;
 
 /**
  * `orbitron:inspect` — the installed `kinetis/*` inventory as one JSON
@@ -17,13 +17,11 @@ use Kinetis\Orbitron\InstalledPackages;
  * JSON is the only format: this document exists to be parsed. Omitting
  * `--format` and writing `--format=json` are the same invocation.
  *
- * `bootstrap: false`, for the same reason as `orbitron:context`.
+ * An adapter over {@see Documents}, and `bootstrap: false` for the same
+ * reason as `orbitron:context`.
  */
 final readonly class InspectCommand
 {
-    /** The envelope's own version, moved only when the document's shape changes. */
-    public const int SCHEMA_VERSION = 1;
-
     /** @var non-empty-list<string> */
     private const array FORMATS = ['json'];
 
@@ -32,7 +30,7 @@ final readonly class InspectCommand
      * @param resource $errorOutput
      */
     public function __construct(
-        private InstalledPackages $packages = new InstalledPackages(),
+        private Documents $documents = new Documents(),
         private mixed $output = STDOUT,
         private mixed $errorOutput = STDERR,
     ) {}
@@ -56,11 +54,7 @@ final readonly class InspectCommand
             return 2;
         }
 
-        fwrite($this->output, JsonDocument::render([
-            'schemaVersion' => self::SCHEMA_VERSION,
-            'orbitronVersion' => $this->packages->orbitronVersion(),
-            'packages' => $this->packages->records(),
-        ]));
+        fwrite($this->output, $this->documents->inspect()->toJson());
 
         return 0;
     }

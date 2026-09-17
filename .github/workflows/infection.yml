@@ -89,6 +89,11 @@ jobs:
           - { name: authorization, dir: packages/authorization, minMsi: 90, minCoveredMsi: 90 }
           - { name: broadcasting, dir: packages/broadcasting, minMsi: 75, minCoveredMsi: 75 }
           - { name: migrations, dir: packages/migrations, minMsi: 75, minCoveredMsi: 75 }
+          # A provisional floor: this package's Infection job has not
+          # run yet, so 60 is a starting point rather than a measurement.
+          # Set it from the score its own first run reports, the way
+          # every other threshold here was.
+          - { name: mcp-protocol, dir: packages/mcp-protocol, minMsi: 60, minCoveredMsi: 60 }
           - { name: mcp, dir: packages/mcp, minMsi: 75, minCoveredMsi: 75 }
           # A provisional floor: this package's Infection job has not
           # run yet, so 60 is a starting point rather than a measurement.

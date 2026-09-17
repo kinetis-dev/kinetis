@@ -6,6 +6,7 @@ namespace Kinetis\Orbitron\Tests;
 
 use Kinetis\Console\CommandArguments;
 use Kinetis\Orbitron\Console\ScaffoldCommand;
+use Kinetis\Orbitron\Documents;
 use Kinetis\Orbitron\HealthScaffold;
 use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\PackageFact;
@@ -61,8 +62,7 @@ final class ScaffoldCommandTest extends TestCase
     private function invoke(?string $projectRoot, array $argv = [], ?HealthScaffold $scaffold = null): int
     {
         $command = new ScaffoldCommand(
-            self::packages(),
-            $scaffold ?? new HealthScaffold(),
+            new Documents(self::packages(), $scaffold ?? new HealthScaffold()),
             $projectRoot,
             $this->output->stream,
             $this->errorOutput->stream,

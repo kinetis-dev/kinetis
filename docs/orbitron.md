@@ -2,16 +2,17 @@
 
 `kinetis/orbitron` is a development-only construction harness. It does
 not contain a coding agent — you bring one — and it does not talk to a
-model. What it gives an agent is four commands on `vendor/bin/kinetis`:
-a portable Kinetis context document, this project's installed
-`kinetis/*` package inventory as JSON, a deterministic verification of
-this project's Composer layout, and one health-endpoint scaffold that is
-previewed before it is applied.
+model. What it gives an agent is four documents: a portable Kinetis
+context document, this project's installed `kinetis/*` package inventory
+as JSON, a deterministic verification of this project's Composer layout,
+and one health-endpoint scaffold that is previewed before it is applied.
 
-Any agent that can run a shell command can use it. There is no MCP
-server to configure, which is the difference from {doc}`mcp-docs`:
-that package serves these pages to an MCP client, while Orbitron answers
-a shell.
+Reach them either way. Any agent that can run a shell command uses the
+four commands on `vendor/bin/kinetis`; an agent that speaks MCP registers
+`vendor/bin/kinetis-orbitron-mcp` and calls the same documents as tools
+(see [Over MCP](#over-mcp)). Both adapt the same services, so neither can
+report something the other does not. {doc}`mcp-docs` is the separate
+server that hands these documentation pages to an MCP client.
 
 ## Install
 
@@ -21,7 +22,8 @@ composer require --dev kinetis/orbitron
 
 `--dev` is the supported installation. Orbitron registers one scan root
 and nothing else — no bootstrap, no route, no listener, no runtime
-service, no configuration key. Application production code never depends
+service, no configuration key. Its MCP server is a binary a client
+launches, not a registration. Application production code never depends
 on it, and `composer remove --dev kinetis/orbitron` changes nothing an
 application does.
 
@@ -317,6 +319,59 @@ scaffold says so — see {doc}`routing-validation`.
 6. Before calling the change done, work through
    {doc}`agent-correctness` and run the project's own test suite.
 
+An MCP client runs the same steps as tool calls; see
+[Over MCP](#over-mcp).
+
+(over-mcp)=
+
+## Over MCP
+
+```console
+vendor/bin/kinetis-orbitron-mcp
+```
+
+A stdio MCP server speaking `2025-06-18`, for a client that launches a
+server as a subprocess. Register it the way that client registers any
+stdio server — Claude Code:
+
+```console
+claude mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
+```
+
+Codex:
+
+```console
+codex mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
+```
+
+| Tool or resource | What it returns |
+|---|---|
+| `orbitron_inspect` | The `orbitron:inspect` document. Read-only. |
+| `orbitron_verify` | The `orbitron:verify` document. Read-only; an error document comes back as an MCP error result still carrying the document. |
+| `orbitron_scaffold_plan` | The `orbitron:scaffold` preview document. Read-only. |
+| `orbitron_scaffold_apply` | The `orbitron:scaffold --apply` document, and creates the two files. |
+| `kinetis://orbitron/context` | The `orbitron:context` document, as Markdown. |
+
+```{warning}
+`orbitron_scaffold_apply` writes to the project. Selecting it *is* the
+mutation request: it takes no argument, and your MCP client's own
+approval prompt is where a human decides. It is annotated
+`destructiveHint: true` and `idempotentHint: false` — a second apply
+refuses, because the targets exist by then.
+```
+
+All four tools publish a closed, empty input schema and refuse a call
+that carries any argument at all. No message can name a project root, a
+path, a source body, a URL, a template or a command: the root comes from
+Composer's own bin proxy, exactly as it does for `vendor/bin/kinetis`,
+and every name below it is a constant. The server never boots the Kinetis
+application, so running it registers no route, listener or bootstrap.
+
+Composer's installed-package inventory is process-cached, so the server
+reads it once at startup. Restart it after installing or removing a
+dependency; every other document is re-read on each call, and nothing
+about one call survives into the next.
+
 ## Output and exit codes
 
 Every command writes exactly one document plus a trailing newline to
@@ -329,6 +384,11 @@ STDOUT, with fixed key and list order, and no progress text.
 | `3` | `orbitron:verify` and `orbitron:scaffold` only: the operation completed, and the document it wrote reports an error, a refusal, or a failed write. |
 | `1` | A launcher or uncaught failure, from `vendor/bin/kinetis` itself — see {doc}`cli`. |
 | `70` | The command finished and disposing the request scope afterwards failed, which is the framework binary's own behavior, not Orbitron's. |
+
+The MCP server reports the same outcomes differently: a refusal or a
+failed write is an MCP result with `isError: true` still carrying the
+document, and the binary itself exits `0` at end of input and `1` when a
+write to stdout fails.
 
 A command's `CommandArguments` cannot enumerate options it never reads,
 so an option no command consumes is ignored rather than rejected.
@@ -346,11 +406,16 @@ paths. No other application source, no configuration, no credentials. It
 opens no socket and starts no process.
 
 It writes two files: the scaffold's fixed targets, only on
-`orbitron:scaffold --apply`, each through a create that refuses an
-occupied path and never truncates one. That is the whole write set. No
-command line supplies a path to any of it — the root comes from
+`orbitron:scaffold --apply` or `orbitron_scaffold_apply`, each through a
+create that refuses an occupied path and never truncates one. That is the
+whole write set. Neither a command line nor an MCP message supplies a
+path to any of it — the root comes from
 `Kinetis\Runtime\ProjectRoot::detect()` and every name below it is a
-constant — and no command creates a directory.
+constant — and nothing creates a directory.
+
+The MCP server is a local process the client launches, so that process
+and your filesystem permissions are the authority boundary. It has no
+network client, no shell and no credentials to reach.
 
 The installed metadata is read through `Composer\InstalledVersions`,
 which loads `vendor/composer/installed.php` itself, so the invocation
@@ -365,12 +430,14 @@ without being read whole, and the diagnostic names the outcome rather
 than quoting the file or its path.
 
 Every command declares `bootstrap: false`, so neither the package
-bootstrap chain nor the application's `bootstrap.php` runs. No command
-boots an application or runs discovery: the scaffold's generated test is
-what does that, on the project's own next test run.
+bootstrap chain nor the application's `bootstrap.php` runs, and the MCP
+binary boots no application at all. Nothing here runs discovery: the
+scaffold's generated test is what does that, on the project's own next
+test run.
 
-The invocation as a whole is still not side-effect-free, and what
-remains belongs to the framework launcher rather than to Orbitron:
+A command invocation as a whole is still not side-effect-free, and what
+remains belongs to the framework launcher rather than to Orbitron (the
+MCP binary loads no `.env` and compiles no cache):
 `vendor/bin/kinetis` loads `.env` before it dispatches any command, and
 under `APP_ENV=production` it compiles `.kinetis-cache/compiled.php`
 when no valid artifact is present — see {doc}`caching`. `bootstrap:

@@ -25,9 +25,10 @@ API-first applications, developed in the
 A [Model Context Protocol](https://modelcontextprotocol.io) server that
 serves every page of the Kinetis documentation as a resource, so an
 agent working in any codebase can read the framework's own docs instead
-of answering from training data. It depends on no Kinetis package: the
-pages are fetched as published markdown from the monorepo's `main`
-branch.
+of answering from training data. It is framework-agnostic: the only
+Kinetis package it depends on is `kinetis/mcp-protocol`, which is PHP-only
+and registers nothing, and the pages are fetched as published markdown
+from the monorepo's `main` branch.
 
 For a server that exposes *your own* application's tools and resources,
 install [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) instead.
@@ -59,9 +60,8 @@ php vendor/bin/kinetis-mcp-docs
 
 The binary speaks JSON-RPC over stdin and stdout, one message per line:
 `initialize`, `notifications/initialized`, `ping`, `resources/list` and
-`resources/read`, across protocol revisions `2024-11-05` through
-`2025-11-25`. Register that command with any MCP client that launches a
-server as a subprocess. Read `kinetis://docs/agent-workflow` first — the
+`resources/read`, on MCP `2025-06-18`. Register that command with any MCP
+client that launches a server as a subprocess. Read `kinetis://docs/agent-workflow` first — the
 entry point and routing table for the rest of the catalogue.
 
 Requires PHP 8.4+. Full documentation:

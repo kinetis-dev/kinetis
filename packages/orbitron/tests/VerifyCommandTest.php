@@ -6,6 +6,7 @@ namespace Kinetis\Orbitron\Tests;
 
 use Kinetis\Console\CommandArguments;
 use Kinetis\Orbitron\Console\VerifyCommand;
+use Kinetis\Orbitron\Documents;
 use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\PackageFact;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -64,7 +65,7 @@ final class VerifyCommandTest extends TestCase
     private function invoke(?string $projectRoot, array $argv = []): int
     {
         $command = new VerifyCommand(
-            self::packages(),
+            new Documents(self::packages()),
             $projectRoot,
             $this->output->stream,
             $this->errorOutput->stream,

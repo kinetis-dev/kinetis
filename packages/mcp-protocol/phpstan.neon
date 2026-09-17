@@ -1,0 +1,7 @@
+# No Kinetis PHPStan rules here, unlike most packages' phpstan.neon: the
+# rule classes ship in kinetis/framework, and this package requires no
+# Kinetis package at all.
+parameters:
+    level: 8
+    paths:
+        - src

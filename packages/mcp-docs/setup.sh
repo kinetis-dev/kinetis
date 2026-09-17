@@ -143,7 +143,7 @@ echo "Verifying the server responds..."
 # what answers here is what the client spawns; the timestamp the
 # install just wrote turns its update check into a no-op.
 VERIFICATION=$(printf '%s\n' \
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"kinetis-mcp-docs-setup","version":"1.0"}}}' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"kinetis-mcp-docs-setup","version":"1.0"}}}' \
     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
     '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
     '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"kinetis://docs/index"}}' \

@@ -7,6 +7,7 @@ namespace Kinetis\Orbitron\Tests;
 use Kinetis\Console\CommandArguments;
 use Kinetis\Orbitron\Console\ContextCommand;
 use Kinetis\Orbitron\Context;
+use Kinetis\Orbitron\Documents;
 use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\PackageFact;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -36,7 +37,7 @@ final class ContextCommandTest extends TestCase
      */
     private function invoke(array $argv = []): int
     {
-        $command = new ContextCommand(self::packages(), $this->output->stream, $this->errorOutput->stream);
+        $command = new ContextCommand(new Documents(self::packages()), $this->output->stream, $this->errorOutput->stream);
 
         return $command->run(CommandArguments::parse($argv));
     }

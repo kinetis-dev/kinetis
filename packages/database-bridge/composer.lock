@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c57077202509367f6650dac61c33ae22",
+    "content-hash": "a06db79ca4d4996268826d34f0b2a921",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -3170,10 +3170,11 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp",
-                "reference": "f76bcc56a7c25d963be2bcbd2bea2aed4991e9a3"
+                "reference": "88f499d58559737a4a4f7a2ba3f3ae7a85f27835"
             },
             "require": {
                 "kinetis/framework": "dev-main",
+                "kinetis/mcp-protocol": "dev-main",
                 "nyholm/psr7": "^1.8.2",
                 "php": "^8.4",
                 "psr/container": "^2.0.2",
@@ -3220,12 +3221,53 @@
             }
         },
         {
+            "name": "kinetis/mcp-protocol",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../mcp-protocol",
+                "reference": "a920c32b51bd6f01fbbe8a59875443eee244135d"
+            },
+            "require": {
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\McpProtocol\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\McpProtocol\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "Model Context Protocol 2025-06-18 over JSON-RPC 2.0 — envelope validation, typed tool and resource contracts, progress notifications, and checked newline-delimited stdio framing. Requires PHP only.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
             "name": "kinetis/orm",
             "version": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "../orm",
-                "reference": "3b52adfd7d1219cc578a370803433c99ebbce780"
+                "reference": "52318541e8113d08b3a475e4fe667aabe897dc44"
             },
             "require": {
                 "kinetis/persistence": "dev-main",
@@ -3261,7 +3303,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, and a unit of work with an identity map, snapshot change tracking and a transactional flush. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, and factory-owned transaction sessions with locking entity reads. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "transport-options": {
                 "relative": true
             }
@@ -7556,6 +7598,7 @@
     "stability-flags": {
         "kinetis/framework": 20,
         "kinetis/mcp": 20,
+        "kinetis/mcp-protocol": 20,
         "kinetis/orm": 20,
         "kinetis/persistence": 20,
         "kinetis/query-builder": 20,

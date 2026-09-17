@@ -62,6 +62,8 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
   HTTP routes — one definition, two audiences.
 - These docs as an MCP server of their own (`kinetis/mcp-docs`), so an
   agent reads the framework's documentation instead of recalling it.
+- A development-only construction harness (`kinetis/orbitron`), from a
+  shell or over MCP.
 
 ## Long-running or classic, same code
 

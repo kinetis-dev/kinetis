@@ -6,6 +6,7 @@ namespace Kinetis\Orbitron\Tests;
 
 use Kinetis\Console\CommandArguments;
 use Kinetis\Orbitron\Console\InspectCommand;
+use Kinetis\Orbitron\Documents;
 use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\PackageFact;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -29,13 +30,13 @@ final class InspectCommandTest extends TestCase
     private function invoke(array $argv = [], ?array $facts = null): int
     {
         $command = new InspectCommand(
-            new InstalledPackages($facts ?? [
+            new Documents(new InstalledPackages($facts ?? [
                 new PackageFact('kinetis/queue', '1.3.2', '/app/vendor/kinetis/queue'),
                 new PackageFact('kinetis/orbitron', '1.0.0', '/app/vendor/kinetis/orbitron'),
                 new PackageFact('kinetis/framework', '1.11.2', '/app/vendor/kinetis/framework'),
                 new PackageFact('kinetis/replaced-by-framework', null, null),
                 new PackageFact('psr/log', '3.0.2', '/app/vendor/psr/log'),
-            ]),
+            ])),
             $this->output->stream,
             $this->errorOutput->stream,
         );

@@ -7,8 +7,8 @@ namespace Kinetis\Orbitron\Console;
 use JsonException;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
-use Kinetis\Orbitron\HealthScaffold;
-use Kinetis\Orbitron\InstalledPackages;
+use Kinetis\Orbitron\Documents;
+use Kinetis\Orbitron\ScaffoldMode;
 use Kinetis\Runtime\ProjectRoot;
 
 /**
@@ -20,12 +20,12 @@ use Kinetis\Runtime\ProjectRoot;
  * only mutation request, and it reads the project again rather than
  * trusting the preview that came before it.
  *
- * This command is an adapter over {@see HealthScaffold} and holds no
- * scaffold policy of its own, so another protocol reaches the same
- * service instead of running this command and parsing its output.
+ * An adapter over {@see Documents} holding no scaffold policy of its own,
+ * so the MCP server reaches the same document without running this
+ * command and parsing its output.
  *
- * JSON is the only format, for the same reason as `orbitron:verify`:
- * this document exists to be parsed.
+ * JSON is the only format, for the same reason as `orbitron:verify`: this
+ * document exists to be parsed.
  *
  * `bootstrap: false`: the answer comes from Composer's installed records,
  * the project's own `composer.json` and four directory checks, so neither
@@ -33,9 +33,6 @@ use Kinetis\Runtime\ProjectRoot;
  */
 final readonly class ScaffoldCommand
 {
-    /** The envelope's own version, moved only when the document's shape changes. */
-    public const int SCHEMA_VERSION = 1;
-
     /** @var non-empty-list<string> */
     private const array FORMATS = ['json'];
 
@@ -48,8 +45,7 @@ final readonly class ScaffoldCommand
      * @param resource $errorOutput
      */
     public function __construct(
-        private InstalledPackages $packages = new InstalledPackages(),
-        private HealthScaffold $scaffold = new HealthScaffold(),
+        private Documents $documents = new Documents(),
         private ?string $projectRootOverride = null,
         private mixed $output = STDOUT,
         private mixed $errorOutput = STDERR,
@@ -79,23 +75,16 @@ final readonly class ScaffoldCommand
 
         // dirname(__DIR__): the same non-proxied fallback branch
         // `orbitron:verify` relies on — see VerifyCommand::run().
-        $projectRoot = $this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__));
+        $document = $this->documents->scaffold(
+            $this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__)),
+            $apply ? ScaffoldMode::Apply : ScaffoldMode::Preview,
+        );
 
-        $outcome = $apply ? $this->scaffold->apply($projectRoot) : $this->scaffold->preview($projectRoot);
-
-        fwrite($this->output, JsonDocument::render([
-            'schemaVersion' => self::SCHEMA_VERSION,
-            'orbitronVersion' => $this->packages->orbitronVersion(),
-            'mode' => $outcome->mode->value,
-            'status' => $outcome->status->value,
-            'codes' => $outcome->codes,
-            'targets' => HealthScaffold::TARGETS,
-            'remainingFiles' => $outcome->remainingFiles,
-        ]));
+        fwrite($this->output, $document->toJson());
 
         // A completed operation that refused or failed is its own
         // outcome, distinct from a launcher failure (1) and a rejected
         // invocation (2): the document was written and is the answer.
-        return $outcome->succeeded() ? 0 : 3;
+        return $document->failed ? 3 : 0;
     }
 }

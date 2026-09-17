@@ -13,9 +13,10 @@ code over the [Model Context Protocol](https://modelcontextprotocol.io).
 Mark a method with `#[McpTool]` or `#[McpResource]`, and the
 `kinetis mcp:serve` stdio command and the `POST /mcp` HTTP route serve
 it; installing the package registers both. The server implements the
-`2026-07-28` protocol revision. {doc}`appendix-mcp` holds the wire
-contract behind this page. To give an agent Kinetis's own documentation
-instead, see {doc}`mcp-docs`, a separate package.
+`2025-06-18` protocol revision, over the JSON-RPC and stdio mechanics in
+`kinetis/mcp-protocol`. {doc}`appendix-mcp` holds the wire contract
+behind this page. To give an agent Kinetis's own documentation instead,
+see {doc}`mcp-docs`, a separate package.
 
 ## Expose a tool and a resource
 
@@ -87,9 +88,10 @@ php vendor/bin/kinetis mcp:serve
 
 A local MCP client registers this command and launches it as a
 subprocess: one JSON-RPC message per line on stdin, one response per
-line on stdout, until stdin closes. The client must implement the
-`2026-07-28` revision; a request without that revision's `_meta` is
-refused (see {doc}`appendix-mcp`'s "Protocol revision").
+line on stdout, until stdin closes. `initialize` always answers with
+`2025-06-18`, whichever revision the client asked for, and the client
+decides whether to continue (see {doc}`appendix-mcp`'s "Protocol
+revision").
 
 stdio has no origin check, no authentication and no `MCP_HTTP_PUBLIC`.
 The process runs with the application's configuration and belongs to
@@ -135,35 +137,23 @@ constructor-injects `CurrentUserInterface` and receives the caller of
 that message.
 
 With that middleware in place, a request carries a token your
-`UserProviderInterface` resolves, plus the headers the protocol mirrors
-from the body:
+`UserProviderInterface` resolves, plus the protocol-version header:
 
 ```{code-block} bash
 curl -X POST http://localhost:8080/mcp \
     -H "Authorization: Bearer $MCP_TOKEN" \
     -H "Content-Type: application/json" \
-    -H "MCP-Protocol-Version: 2026-07-28" \
-    -H "Mcp-Method: tools/list" \
-    -d '{
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/list",
-        "params": {
-            "_meta": {
-                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                "io.modelcontextprotocol/clientCapabilities": {}
-            }
-        }
-    }'
+    -H "MCP-Protocol-Version: 2025-06-18" \
+    -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
 ```
 
-An MCP client sets `MCP-Protocol-Version`, `Mcp-Method` and, for
-`tools/call` and `resources/read`, `Mcp-Name` itself; a missing or
-mismatched header is `400` (see {doc}`appendix-mcp`'s "Streamable HTTP
-headers"). Configure the token as the client's `Authorization` header.
-Both authentication middleware read the credential from that header
-only, so a token never belongs in the endpoint URL, where proxies and
-access logs record it.
+`MCP-Protocol-Version` is the transport's one header, and an MCP client
+sets it itself. `initialize` may omit it; every later message must carry
+it, and must carry exactly `2025-06-18` — anything else is `400` (see
+{doc}`appendix-mcp`'s "Streamable HTTP"). Configure the token as the
+client's `Authorization` header. Both authentication middleware read the
+credential from that header only, so a token never belongs in the
+endpoint URL, where proxies and access logs record it.
 
 **Allow anonymous callers.** An endpoint meant for anonymous
 callers, with no authentication middleware in the group, says so:
@@ -189,9 +179,8 @@ The list is comma-separated and empty by default. Requests without an
 `Origin` header — command-line clients and server-to-server calls — are
 unaffected. This check guards against DNS rebinding and is not CORS: a
 page served from another origin also needs the application's global
-`CorsMiddleware` to admit that origin and allow the `Authorization`,
-`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` request headers (see
-{doc}`middleware`).
+`CorsMiddleware` to admit that origin and allow the `Authorization` and
+`MCP-Protocol-Version` request headers (see {doc}`middleware`).
 
 The origin check runs first, your middleware next, and the identity
 check last; {doc}`appendix-mcp`'s "The `mcp` middleware group" gives the
@@ -258,9 +247,7 @@ message and parameters — for the agent to correct its call. Calling
     "id": 2,
     "result": {
         "content": [{"type": "text", "text": "{\"errors\":[{\"path\":[\"grams\"],\"code\":\"greater_than\",\"message\":\"must be greater than 0.\",\"parameters\":{\"threshold\":0}}]}"}],
-        "isError": true,
-        "resultType": "complete",
-        "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "Kinetis", "version": "1.0.0"}}
+        "isError": true
     }
 }
 ```
@@ -272,10 +259,9 @@ JSON-RPC error `-32603` with the message `Internal error.`, also logged.
 No exception message reaches the client.
 
 Problems with the request itself — invalid JSON, an unknown method, an
-unregistered tool name or resource URI, a missing `_meta`, another
-protocol revision, a mismatched header — are JSON-RPC error responses.
-{doc}`appendix-mcp`'s "Error catalogue" lists each code, and "HTTP status
-codes" its status.
+unregistered tool name or resource URI, a malformed parameter — are
+JSON-RPC error responses. {doc}`appendix-mcp`'s "Error catalogue" lists
+each code, and "HTTP status codes" its status.
 
 ## See also
 

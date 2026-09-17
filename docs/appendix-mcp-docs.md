@@ -3,7 +3,8 @@
 The mechanics behind {doc}`mcp-docs`: how the setup script decides it
 may write to a directory, how installs and updates share that directory,
 the methods and errors the server answers, and how a page fetch is
-bounded. For setup and use, see {doc}`mcp-docs`.
+bounded. The wire itself belongs to `kinetis/mcp-protocol` and is
+described in {doc}`appendix-mcp`. For setup and use, see {doc}`mcp-docs`.
 
 ## The install directory
 
@@ -72,21 +73,22 @@ it runs from `vendor/`.
 
 ## Protocol
 
-The server speaks revisions `2024-11-05`, `2025-03-26`, `2025-06-18` and
-`2025-11-25`. `initialize` requires a non-empty string
-`protocolVersion`, answers with the client's version when it is one of
-those, and with `2025-11-25` when it is not. Its result declares an
-empty `resources` capability — no `listChanged`, no `subscribe` — names
-the server `kinetis-mcp-docs` at the package's version, and carries
-`instructions` telling the agent to read these pages rather than answer
-from memory, naming `kinetis://docs/agent-workflow` as the starting
-resource and warning that a served page can describe behavior newer than
-the client's installed release. No method depends on an earlier
-`initialize`.
+The server speaks MCP `2025-06-18` and no other revision, over
+`kinetis/mcp-protocol`; {doc}`appendix-mcp`'s "Protocol revision" and
+"Stdio framing" are the wire contract, shared with the application MCP
+server. `initialize` always answers with `2025-06-18`, whichever revision
+the client asked for. Its result declares an empty `resources` capability
+— no `tools`, since the catalogue has none, and no `listChanged` or
+`subscribe` — names the server `kinetis-mcp-docs` at the package's
+version, and carries `instructions` telling the agent to read these pages
+rather than answer from memory, naming `kinetis://docs/agent-workflow` as
+the starting resource and warning that a served page can describe
+behavior newer than the client's installed release. No method depends on
+an earlier `initialize`.
 
 | Method | Behavior |
 |---|---|
-| `initialize` | Negotiates the revision and declares the `resources` capability. |
+| `initialize` | Selects `2025-06-18` and declares the `resources` capability. |
 | `notifications/initialized` | Accepted and answered with nothing, as every notification is. |
 | `ping` | An empty result. |
 | `resources/list` | The whole catalogue in one response, each entry with `uri`, `name`, `description` and `mimeType` `text/markdown`. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
@@ -99,9 +101,9 @@ There are no tools, prompts or subscriptions.
 | Code | Answered when |
 |---|---|
 | `-32700` | The line is not valid JSON. |
-| `-32600` | The JSON is not an object — a top-level array (a batch) included — or `jsonrpc` is not `"2.0"`, `method` is missing or not a string, or `id` is not a string, integer or null. |
+| `-32600` | The JSON is not an object — a top-level array (a batch) included — or `jsonrpc` is not `"2.0"`, `method` is missing or empty, or `id` is not a string or an integer. |
 | `-32601` | The method is not in the table, including `notifications/initialized` sent with an `id`. |
-| `-32602` | `params` is present and not an object — an array, a scalar or `null` — or `initialize` lacks `protocolVersion`, `resources/read` lacks `uri`, or `resources/list` carries `cursor`. |
+| `-32602` | `params` is present and not an object — an array, a scalar or `null` — or `initialize` lacks a valid `protocolVersion`, `capabilities` or `clientInfo`, `resources/read` lacks `uri`, or `resources/list` carries `cursor`. |
 | `-32002` | `resources/read` names a URI outside the catalogue; `error.data.uri` carries it. No fetch is made. |
 | `-32603` | The page could not be fetched or is not valid UTF-8. The message is `Could not read "<uri>".`; the URL and the real reason go to stderr. |
 
@@ -110,20 +112,20 @@ any other error answers under the request's own `id`.
 
 A notification — a valid envelope with no `id` — is never answered and
 never dispatched, whatever its method or `params` shape: JSON-RPC 2.0
-gives its sender no response to read, and a frame matching no
-outstanding request can desynchronize a strict client. A message that
-fails the envelope check is not a notification, and still answers with
-`-32600` or `-32700` even without an `id`.
+gives its sender no response to read, and a frame matching no outstanding
+request can desynchronize a strict client. A message that fails the
+envelope check is not a notification, and still answers with `-32600` or
+`-32700` even without an `id`. A well-formed client *response* message is
+ignored rather than answered: this server sends no requests.
 
 ## Stdio framing
 
-The server reads one message per line and strips only the `\r\n`
-terminator before decoding, never a bare `trim()`. A line holding only
-spaces or tabs is skipped. Each response is written as one complete line:
-the write loops until every byte is accepted, and a write that makes no
-progress ends the process with exit code `1` and a message on stderr,
-rather than leaving a truncated frame. End of input ends the loop and
-the process exits `0`. Nothing but JSON-RPC frames reaches stdout.
+Framing belongs to `kinetis/mcp-protocol` and is described once in
+{doc}`appendix-mcp`'s "Stdio framing": bounded reads, a 2 MiB payload cap,
+only `\r`/`\n` stripped, and every frame written whole. A write that
+makes no progress ends this binary with exit code `1` and a message on
+stderr rather than leaving a truncated frame. End of input ends the loop
+and the process exits `0`. Nothing but JSON-RPC frames reaches stdout.
 
 ## Page fetch
 

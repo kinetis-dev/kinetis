@@ -22,21 +22,21 @@ Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
-You bring the coding agent. Orbitron gives it four commands on
-`vendor/bin/kinetis`: a portable Kinetis context document, the project's
-installed `kinetis/*` package inventory as JSON, a deterministic
-verification of the project's Composer layout, and one health-endpoint
-scaffold you preview before you apply it. Each writes one document to
-STDOUT. Only `orbitron:scaffold --apply` changes anything, and what it
-changes is two fixed files.
+You bring the coding agent. Orbitron gives it four documents: a portable
+Kinetis context document, the project's installed `kinetis/*` package
+inventory as JSON, a deterministic verification of the project's Composer
+layout, and one health-endpoint scaffold you preview before you apply it.
+Only applying the scaffold changes anything, and what it changes is two
+fixed files.
 
 ```console
 composer require --dev kinetis/orbitron
 ```
 
-Orbitron has no model of its own, no MCP server, no HTTP client and no
-shell, and it needs no MCP configuration: any agent that can run a shell
-command can use it.
+Reach them either way: four commands on `vendor/bin/kinetis`, each
+writing one document to STDOUT, or the stdio MCP server
+`vendor/bin/kinetis-orbitron-mcp`, which serves the same documents as
+tools. Orbitron has no model of its own, no HTTP client and no shell.
 
 ## `orbitron:context`
 
@@ -292,6 +292,41 @@ generated test is what surfaces it: the framework's own route discovery
 refuses two controllers claiming one path, and the first run of the test
 suite after the scaffold says so.
 
+## Over MCP
+
+```console
+vendor/bin/kinetis-orbitron-mcp
+```
+
+A stdio MCP server speaking `2025-06-18`. Register it with any client
+that launches a server as a subprocess:
+
+```console
+claude mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
+codex mcp add orbitron -- ./vendor/bin/kinetis-orbitron-mcp
+```
+
+| Tool or resource | What it returns |
+|---|---|
+| `orbitron_inspect` | The `orbitron:inspect` document. Read-only. |
+| `orbitron_verify` | The `orbitron:verify` document. Read-only; an error document comes back as an MCP error result still carrying the document. |
+| `orbitron_scaffold_plan` | The `orbitron:scaffold` preview document. Read-only. |
+| `orbitron_scaffold_apply` | The `orbitron:scaffold --apply` document, and creates the two files. |
+| `kinetis://orbitron/context` | The `orbitron:context` document, as Markdown. |
+
+`orbitron_scaffold_apply` writes to the project. Selecting it *is* the
+mutation request: it takes no argument, and your MCP client's own
+approval prompt is where a human decides. It is annotated
+`destructiveHint: true` and `idempotentHint: false`, because a second
+apply refuses rather than overwriting.
+
+All four tools publish a closed, empty input schema and refuse a call
+carrying any argument. No message can name a project root, a path, a
+source body, a URL or a command, and the server never boots the Kinetis
+application. Composer's installed-package inventory is process-cached, so
+restart the server after installing or removing a dependency; every other
+document is re-read on each call.
+
 ## Output and exit codes
 
 Every command writes exactly one document plus a trailing newline to
@@ -309,26 +344,36 @@ STDOUT, with fixed key and list order. None writes progress text.
 unknown option is ignored rather than rejected. Orbitron adds no parser
 of its own for it.
 
+The MCP server reports the same outcomes differently: a refusal or a
+failed write is an MCP result with `isError: true` still carrying the
+document, and the binary exits `0` at end of input and `1` when a write
+to stdout fails.
+
 ## Trust boundary
 
 Orbitron reads three things and nothing more: Composer's
 installed-package metadata, the project's own `composer.json` — bounded
-as described above — and, for `orbitron:scaffold`, the existence and
-symlink state of four fixed directories and two fixed paths. No other
-application source, no configuration, no credentials. It opens no socket
-and starts no process. Reading the installed metadata goes through
+as described above — and, for the scaffold, the existence and symlink
+state of four fixed directories and two fixed paths. No other application
+source, no configuration, no credentials. It opens no socket and starts
+no process. Reading the installed metadata goes through
 `Composer\InstalledVersions`, which loads `vendor/composer/installed.php`
 itself; Orbitron reaches nothing beyond it. Every command declares
-`bootstrap: false`, so no package or application bootstrap runs.
+`bootstrap: false`, and the MCP binary boots no application at all, so no
+package or application bootstrap runs either way.
 
-It writes two files, both fixed, both only on `orbitron:scaffold
---apply`, and both through a create that refuses an occupied path. No
-command line supplies a path to any of this: the project root comes from
-the framework's own `Kinetis\Runtime\ProjectRoot::detect()`, and every
-name below it is a constant.
+It writes two files, both fixed, both only on `orbitron:scaffold --apply`
+or `orbitron_scaffold_apply`, and both through a create that refuses an
+occupied path. Neither a command line nor an MCP message supplies a path
+to any of this: the project root comes from the framework's own
+`Kinetis\Runtime\ProjectRoot::detect()`, reading Composer's generated bin
+proxy, and every name below it is a constant. The MCP server is a local
+process your client launches, so that process and your filesystem
+permissions are the authority boundary.
 
-The invocation as a whole is still not side-effect-free, and what
-remains belongs to the framework launcher rather than to Orbitron:
+A command invocation as a whole is still not side-effect-free, and what
+remains belongs to the framework launcher rather than to Orbitron (the
+MCP binary loads no `.env` and compiles no cache):
 `vendor/bin/kinetis` loads `.env` before it dispatches any command, and
 under `APP_ENV=production` it compiles `.kinetis-cache/compiled.php`
 when no valid artifact is present. `bootstrap: false` prevents neither.
@@ -338,7 +383,7 @@ when no valid artifact is present. `bootstrap: false` prevents neither.
 Orbitron is a `require-dev` package. Generated and application
 production code never depends on it, so
 `composer remove --dev kinetis/orbitron` changes nothing an application
-does — only the commands stop being discovered.
+does — only the commands and the MCP binary go away.
 
 See the [Orbitron documentation](https://kinetis.dev/docs/orbitron.html)
 for the full workflow, and

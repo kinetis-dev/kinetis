@@ -13,10 +13,13 @@ use Kinetis\DatabaseBridge\Tests\Fixtures\DanglingTransactionToolController;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Mcp\Http\McpController;
+use Kinetis\Mcp\KinetisMcpApplication;
 use Kinetis\Mcp\McpDispatcher;
 use Kinetis\Mcp\McpRegistry;
-use Kinetis\Mcp\McpServer;
-use Kinetis\Mcp\Transport\StdioTransport;
+use Kinetis\Mcp\ScopedMessageHandler;
+use Kinetis\McpProtocol\McpServer;
+use Kinetis\McpProtocol\ServerInfo;
+use Kinetis\McpProtocol\StdioLoop;
 use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 
@@ -56,7 +59,10 @@ final class KernelIntegrationTest extends TestCase
             $app->instance(Config::class, new Config([]));
             $registry = new McpRegistry();
             $registry->register(DanglingTransactionToolController::class);
-            $app->instance(McpServer::class, new McpServer($registry, new McpDispatcher($app)));
+            $app->instance(McpServer::class, new McpServer(
+                new ServerInfo('Kinetis', '1.0.0'),
+                new KinetisMcpApplication($registry, new McpDispatcher($app)),
+            ));
         });
 
         $router = new Router();
@@ -70,9 +76,7 @@ final class KernelIntegrationTest extends TestCase
             '/mcp',
             [
                 'Content-Type' => 'application/json',
-                'MCP-Protocol-Version' => '2026-07-28',
-                'Mcp-Method' => 'tools/call',
-                'Mcp-Name' => 'begin_transaction',
+                'MCP-Protocol-Version' => McpServer::PROTOCOL_VERSION,
             ],
         );
         $request->getBody()->write((string) \json_encode(self::toolCall()));
@@ -82,10 +86,11 @@ final class KernelIntegrationTest extends TestCase
 
         self::assertSame(200, $response->getStatusCode());
 
-        // A 200 alone doesn't prove the tool actually ran — most, but
-        // not all, preflight/validation rejections map to 400, so the
-        // envelope itself has to be checked too: a genuine result, never
-        // an error, and the tool's own real return value inside it.
+        // A 200 alone doesn't prove the tool actually ran — a rejected
+        // envelope is answered with a JSON-RPC error under the same
+        // status, so the envelope itself has to be checked too: a genuine
+        // result, never an error, and the tool's own real return value
+        // inside it.
         $body = \json_decode((string) $response->getBody(), true);
         self::assertArrayNotHasKey('error', $body);
         self::assertFalse($body['result']['isError']);
@@ -104,7 +109,10 @@ final class KernelIntegrationTest extends TestCase
 
         $registry = new McpRegistry();
         $registry->register(DanglingTransactionToolController::class);
-        $server = new McpServer($registry, new McpDispatcher($app));
+        $server = new McpServer(
+            new ServerInfo('Kinetis', '1.0.0'),
+            new KinetisMcpApplication($registry, new McpDispatcher($app)),
+        );
 
         DanglingTransactionHolder::$link = null;
 
@@ -115,7 +123,7 @@ final class KernelIntegrationTest extends TestCase
         $output = \fopen('php://memory', 'r+');
         \assert($output !== false);
 
-        (new StdioTransport())->run($server, $input, $output, $app);
+        new StdioLoop()->run(new ScopedMessageHandler($server, $app), $input, $output);
 
         // Decode and assert the actual output line rather than ignoring
         // it — a pre-dispatch rejection would still leave $output
@@ -163,13 +171,7 @@ final class KernelIntegrationTest extends TestCase
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'tools/call',
-            'params' => [
-                'name' => 'begin_transaction',
-                '_meta' => [
-                    'io.modelcontextprotocol/protocolVersion' => '2026-07-28',
-                    'io.modelcontextprotocol/clientCapabilities' => (object) [],
-                ],
-            ],
+            'params' => ['name' => 'begin_transaction'],
         ];
     }
 }

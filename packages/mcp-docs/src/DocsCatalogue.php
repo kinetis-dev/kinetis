@@ -106,7 +106,7 @@ final class DocsCatalogue
 
     /**
      * The page $uri names, or null when no entry carries it — which is
-     * what McpDocsServer turns into a -32002 "resource not found".
+     * what DocsApplication turns into a -32002 "resource not found".
      */
     public static function find(string $uri): ?DocsPage
     {

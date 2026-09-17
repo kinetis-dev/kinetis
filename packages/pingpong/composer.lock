@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "ce914be590e4b8218fb96ce65113a643",
+    "content-hash": "d2f831b6f5d3742fc0c5bc3b7adf784f",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1326,7 +1326,7 @@
             "dist": {
                 "type": "path",
                 "url": "../database-bridge",
-                "reference": "866b277e44343f2dd411b91b6c0f60f9b022d92d"
+                "reference": "f4461772fd7604fa0e2eb917facaf1901e9d5104"
             },
             "require": {
                 "kinetis/framework": "dev-main",
@@ -1337,6 +1337,7 @@
             "require-dev": {
                 "infection/infection": "^0.35.0",
                 "kinetis/mcp": "dev-main",
+                "kinetis/mcp-protocol": "dev-main",
                 "kinetis/orm": "dev-main",
                 "kinetis/query-builder": "dev-main",
                 "kinetis/queue": "dev-main",
@@ -1450,10 +1451,11 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp",
-                "reference": "f76bcc56a7c25d963be2bcbd2bea2aed4991e9a3"
+                "reference": "88f499d58559737a4a4f7a2ba3f3ae7a85f27835"
             },
             "require": {
                 "kinetis/framework": "dev-main",
+                "kinetis/mcp-protocol": "dev-main",
                 "nyholm/psr7": "^1.8.2",
                 "php": "^8.4",
                 "psr/container": "^2.0.2",
@@ -1495,6 +1497,47 @@
                 }
             ],
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/mcp-protocol",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../mcp-protocol",
+                "reference": "a920c32b51bd6f01fbbe8a59875443eee244135d"
+            },
+            "require": {
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\McpProtocol\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\McpProtocol\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "Model Context Protocol 2025-06-18 over JSON-RPC 2.0 — envelope validation, typed tool and resource contracts, progress notifications, and checked newline-delimited stdio framing. Requires PHP only.",
             "transport-options": {
                 "relative": true
             }
@@ -7413,6 +7456,7 @@
         "kinetis/database-bridge": 20,
         "kinetis/framework": 20,
         "kinetis/mcp": 20,
+        "kinetis/mcp-protocol": 20,
         "kinetis/migrations": 20,
         "kinetis/orm": 20,
         "kinetis/persistence": 20,
