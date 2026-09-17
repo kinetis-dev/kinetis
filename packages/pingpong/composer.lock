@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "ef06c9fcdf17f220f6294213544ba014",
+    "content-hash": "ce914be590e4b8218fb96ce65113a643",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1544,6 +1544,53 @@
                 }
             ],
             "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/orm",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../orm",
+                "reference": "52318541e8113d08b3a475e4fe667aabe897dc44"
+            },
+            "require": {
+                "kinetis/persistence": "dev-main",
+                "kinetis/query-builder": "dev-main",
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "kinetis/framework": "dev-main",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": []
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Orm\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\Orm\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, and factory-owned transaction sessions with locking entity reads. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "transport-options": {
                 "relative": true
             }
@@ -7367,6 +7414,7 @@
         "kinetis/framework": 20,
         "kinetis/mcp": 20,
         "kinetis/migrations": 20,
+        "kinetis/orm": 20,
         "kinetis/persistence": 20,
         "kinetis/query-builder": 20,
         "kinetis/queue": 20,

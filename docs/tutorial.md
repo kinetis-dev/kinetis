@@ -27,8 +27,9 @@ A tiny "ping/pong" API:
   against first.
 
 Each piece is stored in a database, so `MySQL`, a migration, and the
-query builder come first — everything after that builds on having
-somewhere to write a row.
+query builder come first, and the same table again as mapped entities
+right after — everything from there builds on having somewhere to write
+a row.
 
 ## Requirements
 
@@ -523,6 +524,238 @@ curl -X POST http://localhost:8080/pong/direct
 # {"id":1,"status":"ponged"}
 ```
 
+## The same pings as entities: kinetis/orm
+
+What you just built works, and nothing below takes it away: a repository
+that writes its own two statements is a complete, supported way to store
+a ping. This section builds the second flavor of the same thing — the
+rows become mapped objects and the statements become a unit of work —
+because it is the shape `kinetis/pingpong` ships with, and everything
+after this point builds on it.
+
+```{code-block} bash
+composer require kinetis/orm
+```
+
+`kinetis/orm` is a data mapper over the query builder you just used, and
+`kinetis/database-bridge` — already installed, since `kinetis/migrations`
+requires it — is what wires it into the application. You will not add a
+line to `bootstrap.php` for it.
+
+Since the ORM builds on the query builder, the application stops naming
+it:
+
+```{code-block} bash
+composer remove kinetis/query-builder
+```
+
+The package stays installed — `kinetis/orm` requires it — but as a
+transitive dependency rather than a direct one.
+
+First the table has to hold what an entity writes. The ORM writes a
+timestamp as a UTC instant to the microsecond, and a plain `DATETIME`
+cannot retain a fractional second: it discards the fraction on the way
+in, and the stored row silently stops matching the object that wrote it.
+The create migration you already ran stays exactly as it is — a second
+migration widens the two columns:
+
+```{code-block} php
+:caption: migrations/20260810124500_widen_ping_timestamps_to_microseconds.php
+
+<?php
+
+declare(strict_types=1);
+
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Migrations\Migration;
+
+return new class implements Migration
+{
+    public function up(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute(<<<'SQL'
+            ALTER TABLE ping_messages
+                MODIFY created_at DATETIME(6) NOT NULL,
+                MODIFY ponged_at DATETIME(6) NULL
+            SQL);
+    }
+
+    public function down(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute(<<<'SQL'
+            ALTER TABLE ping_messages
+                MODIFY created_at DATETIME NOT NULL,
+                MODIFY ponged_at DATETIME NULL
+            SQL);
+    }
+};
+```
+
+A new file rather than an edit to the first one: `kinetis_migrations`
+already records the create as applied, so changing it would change
+nothing in a database that ran it. The `migrate` service applies this on
+the next `docker compose up`.
+
+Now the row as a class:
+
+```{code-block} php
+:caption: src/Entities/Ping.php
+
+<?php
+
+declare(strict_types=1);
+
+namespace App\Entities;
+
+use DateTimeImmutable;
+use DateTimeZone;
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Attributes\Id;
+use LogicException;
+
+#[Entity(table: 'ping_messages')]
+final class Ping
+{
+    #[Id(generated: true)]
+    private ?int $id = null;
+
+    private string $status = 'pending';
+
+    private DateTimeImmutable $createdAt;
+
+    private ?DateTimeImmutable $pongedAt = null;
+
+    public function __construct(private string $scenario)
+    {
+        $this->createdAt = self::now();
+    }
+
+    public function id(): int
+    {
+        return $this->id ?? throw new LogicException('A ping has no id until its insert has been flushed.');
+    }
+
+    public function pong(): void
+    {
+        $this->status = 'ponged';
+        $this->pongedAt = self::now();
+    }
+
+    private static function now(): DateTimeImmutable
+    {
+        return new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    }
+}
+```
+
+Every non-static property maps a column, named in snake case, so
+`pongedAt` is `ponged_at` and all five columns of `ping_messages` are
+covered without naming one of them. `#[Id(generated: true)]` says MySQL
+assigns the key: the property is `?int`, holds null until that row's
+INSERT commits, and `id()` refuses rather than handing a null onward for
+the next layer to guess about. Each `DateTimeImmutable` property maps one
+of the timestamp columns you just widened, and is UTC in and out.
+
+Nothing registers this class. `#[Entity]` under your own PSR-4 root is
+what discovery looks for, exactly as `#[Post]` and `#[Command]` are —
+`kinetis/database-bridge` declares the entity scan, and `APP_ENV=development`
+runs it at every boot. ({doc}`caching` covers what production compiles
+ahead of time instead.)
+
+Note what the constructor does *not* do: loading a row never runs it. The
+ORM allocates the object and writes each mapped property directly, so
+`$createdAt` is the creation time of a *new* ping and never overwrites a
+loaded one.
+
+The repository keeps its two methods and the signatures the controller
+already calls, and swaps the statements for the unit of work:
+
+```{code-block} php
+:caption: src/Repositories/PingRepository.php
+
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories;
+
+use App\Entities\Ping;
+use Kinetis\Orm\EntityManager;
+
+final readonly class PingRepository
+{
+    public function __construct(
+        private EntityManager $entities,
+    ) {}
+
+    public function create(string $scenario): int
+    {
+        $ping = new Ping($scenario);
+
+        $this->entities->persist($ping);
+        $this->entities->flush();
+
+        return $ping->id();
+    }
+
+    public function markPonged(int $id): void
+    {
+        $ping = $this->entities->repository(Ping::class)->findOrFail($id);
+        $ping->pong();
+
+        $this->entities->flush();
+    }
+}
+```
+
+`persist()` schedules an insert and `flush()` writes everything pending
+in one transaction. Nothing flushes on its own — not at the end of a
+request, not when the manager closes — so every write in this
+application is a `flush()` you can point at.
+
+`create()` flushes before it returns because the id is MySQL's. Until
+that INSERT commits there is no key to hand back, which is why `id()`
+throws before a flush and returns the generated key after one.
+
+`markPonged()` loads the ping, changes the object, and flushes. The ORM
+compares each property against the snapshot the row was loaded with, so
+the UPDATE carries `status` and `ponged_at` and nothing else.
+`findOrFail()` throws when the row is not there: every caller in this
+application passes an id a flush already committed, so a missing row is
+a broken assumption, not a race worth retrying.
+
+A direct ping therefore flushes twice — once to create, once to pong —
+and the second one costs no SELECT: within one request the manager holds
+one object per row, so `findOrFail()` returns the very ping the insert
+just created.
+
+That manager is per unit of work, and `kinetis/database-bridge` binds it
+on every one: an HTTP request, a queued job, an MCP message, a command.
+It opens the first time something resolves it, and when that scope is
+disposed it is closed — everything detached, anything still unflushed
+abandoned. Nothing survives into the next request of a persistent
+worker, and nothing reaches the database that you did not flush. A
+manager also belongs to the Fiber that opened it and refuses every
+other, so concurrent work takes a unit of work of its own rather than
+sharing one.
+
+`bootstrap.php`, `public/index.php` and the controller are all unchanged:
+`DB_CONNECTION` in `.env` is still the entire configuration, and
+`PingRepository` now constructor-injects `Kinetis\Orm\EntityManager`
+where it injected `Kinetis\Persistence\Contract\MysqlLink` before.
+
+```{code-block} bash
+docker compose up --build
+```
+
+```{code-block} bash
+:caption: Try it
+
+curl -X POST http://localhost:8080/pong/direct
+# {"id":1,"status":"ponged"}
+```
+
 ## Deferring the reply: Redis and the queue
 
 ```{code-block} bash
@@ -568,7 +801,11 @@ final readonly class PongJob implements Job
 Nothing to register: `QUEUE_CONNECTION=redis` in `.env` is the whole
 wiring — `kinetis/queue`'s package bootstrap binds `QueueInterface` to a
 Redis-backed queue from it, the same way `kinetis/database-bridge`
-already bound `MysqlLink`.
+already bound the `EntityManager` your repository injects.
+
+A job is its own unit of work, so it resolves an `EntityManager` of its
+own: the worker holds nothing from the request that queued the ping, and
+`markPonged()` loads the row that request committed.
 
 Add a second method that pushes a job instead of ponging inline:
 
@@ -842,27 +1079,26 @@ declare(strict_types=1);
 
 namespace App\Repositories;
 
+use App\Entities\Ping;
 use App\Events\ActionEvent;
-use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Events\EventDispatcher;
-use Kinetis\QueryBuilder\Query;
+use Kinetis\Orm\EntityManager;
 
 final readonly class PingRepository
 {
     public function __construct(
-        private MysqlLink $db,
+        private EntityManager $entities,
         private EventDispatcher $events,
     ) {}
 
     public function create(string $scenario): int
     {
-        $id = new Query($this->db)->table('ping_messages')->insertGetId([
-            'scenario' => $scenario,
-            'status' => 'pending',
-            'created_at' => date('Y-m-d H:i:s'),
-        ]);
-        $id = (int) $id;
+        $ping = new Ping($scenario);
 
+        $this->entities->persist($ping);
+        $this->entities->flush();
+
+        $id = $ping->id();
         $this->events->dispatch(new ActionEvent('db', $id));
 
         return $id;
@@ -870,13 +1106,18 @@ final readonly class PingRepository
 
     public function markPonged(int $id): void
     {
-        new Query($this->db)->table('ping_messages')->where('id', '=', $id)->update([
-            'status' => 'ponged',
-            'ponged_at' => date('Y-m-d H:i:s'),
-        ]);
+        $ping = $this->entities->repository(Ping::class)->findOrFail($id);
+        $ping->pong();
+
+        $this->entities->flush();
     }
 }
 ```
+
+The `db` stage says a ping reached the database, so it is dispatched
+after the flush, never before: the id it carries is the one the INSERT
+generated, and a flush that fails — or whose COMMIT ends in an unknown
+outcome — throws out of `create()` having announced nothing.
 
 The controller's two methods each get one for being called, and — since
 the browser will now hear about a finished pong over the socket instead
@@ -926,6 +1167,12 @@ final readonly class PingController
     }
 }
 ```
+
+`direct()` announces `app` between creating the ping and ponging it,
+which is the order the dashboard draws. Each repository call flushes its
+own work, so a direct ping is two transactions rather than one: folding
+them into a single flush would have `db` and `app` announce a ping no
+transaction had stored yet.
 
 `PongJob` and `PongCronCommand` each get their own stage, plus the same
 `socket` announcement once the pong is actually written:
@@ -1290,32 +1537,40 @@ final readonly class ScenarioCounts
 
 use App\Dto\ScenarioCounts;
 
-use function Kinetis\Async\concurrently;
-
 private const array SCENARIOS = ['direct', 'queued', 'cron'];
 
 public function countByScenario(): ScenarioCounts
 {
-    $tasks = [fn () => new Query($this->db)->table('ping_messages')->count()];
+    $pings = $this->entities->repository(Ping::class);
+    $total = $pings->query()->count();
+    $counts = [];
 
     foreach (self::SCENARIOS as $scenario) {
-        $tasks[] = fn () => new Query($this->db)->table('ping_messages')->where('scenario', '=', $scenario)->count();
+        $counts[$scenario] = $pings->query()->where('scenario', '=', $scenario)->count();
     }
 
-    $results = concurrently($tasks);
-    $total = array_shift($results);
-
-    return new ScenarioCounts($total, array_combine(self::SCENARIOS, $results));
+    return new ScenarioCounts($total, $counts);
 }
 ```
 
-The total and each scenario's count are four independent queries — none
-needs another's result — so they go through `concurrently()` rather than
-one after another. What that buys depends on the driver underneath: a
-persistent worker takes the native MySQL driver, where each query
-suspends only its own Fiber and the four overlap; PHP-FPM, which this
-tutorial runs on, takes the blocking PDO driver, where they still run in
-sequence. See {doc}`concurrency` and {doc}`persistence`.
+An entity query names properties, not columns: `where()` takes the
+property and the ORM resolves it — `pongedAt` would reach the SQL as
+`ponged_at` — and converts the value through that property's type before
+any statement is built. `count()` asks the database for the number
+rather than loading pings to count them.
+
+The total and each scenario's count are four independent queries, and
+outside a unit of work they would be a natural fit for `concurrently()`.
+Here they are not: an `EntityManager` belongs to the Fiber that opened it
+and refuses every other, so these four run one after another on the
+request's own manager. Overlapping them would take four managers and four
+identity maps to answer one tally, which four counts do not earn.
+`concurrently()` is still how independent work overlaps in Kinetis — each
+task simply needs a unit of work of its own where it touches one. What
+that buys also depends on the driver underneath: a persistent worker
+takes the native MySQL driver, where a query suspends only its own Fiber;
+PHP-FPM, which this tutorial runs on, takes the blocking PDO driver,
+where nothing overlaps. See {doc}`concurrency` and {doc}`persistence`.
 
 `countByScenario()` builds `ScenarioCounts` with a plain `new`, not
 `Hydrator::hydrate()`. `Hydrator` casts and validates data crossing an
@@ -1570,14 +1825,15 @@ and answers from that.
 
 Four independent scenarios — an immediate reply, a delayed one, a
 scheduled one, and a live view of all three — built up one working piece
-at a time: a controller, a repository backed by a real database, a queued
-job, a scheduled command, and an event published to a browser over a
-public and a private WebSocket channel. Nothing here is scenario-specific
-plumbing either — the same `bootstrap.php` convention, the same query
-builder, the same queue and event dispatcher, apply to any Kinetis
-application. The same repository also fed a typed DTO to an HTTP route
-and, unchanged, to an MCP tool an AI agent can call directly over the
-same server.
+at a time: a controller, a repository backed by a real database — two
+query-builder statements first, then a mapped `Ping` entity written
+through a unit of work — a queued job, a scheduled command, and an event
+published to a browser over a public and a private WebSocket channel.
+Nothing here is scenario-specific plumbing either — the same
+`bootstrap.php` convention, the same request-scoped unit of work, the
+same queue and event dispatcher, apply to any Kinetis application. The
+same repository also fed a typed DTO to an HTTP route and, unchanged, to
+an MCP tool an AI agent can call directly over the same server.
 
 (starting-from-kinetis-pingpong-instead)=
 ## Starting from `kinetis/pingpong` instead
@@ -1596,11 +1852,12 @@ docker compose up --build
 `--no-install` leaves dependency resolution to the containers, which is
 where `docker compose up` runs it.
 
-Everything from this tutorial — `bootstrap.php`, the migration, the
-repository, the job, the scheduled command, the events, the broadcaster
-and its private-channel authorizer, the statistics DTOs, and the MCP
-tool — is already there, under the same file layout this tutorial used,
-ready to read through and modify directly.
+Everything from this tutorial — `bootstrap.php`, the migrations, the
+`Ping` entity, the repository, the job, the scheduled command, the
+events, the broadcaster and its private-channel authorizer, the
+statistics DTOs, and the MCP tool — is already there, under the same file
+layout this tutorial used, ready to read through and modify directly.
+Its repository is the ORM one, the flavor this tutorial ends on.
 
 Unlike this tutorial's own PHP-FPM setup above, `kinetis/pingpong`'s
 `docker-compose.yml` runs `app` under a genuine FrankenPHP persistent
@@ -1627,6 +1884,8 @@ persistent-worker runtime.
   when one of several concurrent tasks fails.
 - {doc}`migrations` — the migration runner used above, in full.
 - {doc}`query-builder` — the query builder used above, in full.
+- {doc}`orm` — entities, the request's unit of work, relationships and
+  transaction sessions, in full.
 - {doc}`queue` — the job queue used above, including multiple workers,
   named queues, and retry limits.
 - {doc}`events` — the event dispatcher used above, including stopping

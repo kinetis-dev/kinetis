@@ -23,7 +23,7 @@ API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
 A small, working application showing most of Kinetis at once:
-MySQL + [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) + [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder),
+MySQL + [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) + [`kinetis/orm`](https://github.com/kinetis-dev/orm),
 Redis-backed [`kinetis/queue`](https://github.com/kinetis-dev/queue), `Kinetis\Events`, a
 `Kinetis\Console` command run on a schedule, a
 [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) tool an AI agent can
@@ -73,12 +73,12 @@ running on nginx + PHP-FPM for exactly that reason.
 
 ## Using this as a starting point
 
-Start editing what you just created — every
-piece (`bootstrap.php`, the migration, the repository, the job, the
-scheduled command, the events, the broadcaster and its private-channel
-authorizer, the MCP tool controller, `resources/views/dashboard.php`) is
-a small, plain file meant to be read end to end. Kinetis deliberately
-reuses existing template engines instead of inventing another language.
+Start editing what you just created — every piece (`bootstrap.php`, the
+migrations, the `Ping` entity, the repository, the job, the scheduled
+command, the events, the broadcaster and its private-channel authorizer,
+the MCP tool controller, `resources/views/dashboard.php`) is a small,
+plain file meant to be read end to end. Kinetis deliberately reuses
+existing template engines instead of inventing another language.
 `PingController::index()` injects the engine-neutral `Views` service,
 while `bootstrap.php` selects the small pure-PHP adapter. The controller
 would be unchanged if the application selected Latte or Twig instead.

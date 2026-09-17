@@ -1,6 +1,6 @@
 {
     "name": "kinetis/pingpong",
-    "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, the query builder, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
+    "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, mapped entities and a request-scoped unit of work over kinetis/orm, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
     "type": "project",
     "license": "MIT",
     "authors": [
@@ -14,9 +14,9 @@
         "kinetis/migrations": "dev-main",
         "kinetis/persistence": "dev-main",
         "kinetis/database-bridge": "dev-main",
+        "kinetis/orm": "dev-main",
         "kinetis/redis": "dev-main",
         "kinetis/cache-redis": "dev-main",
-        "kinetis/query-builder": "dev-main",
         "kinetis/queue": "dev-main",
         "kinetis/mcp": "dev-main",
         "kinetis/queue-redis": "dev-main",
@@ -28,6 +28,7 @@
         "psr/http-message": "^2.0"
     },
     "require-dev": {
+        "kinetis/query-builder": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^13.3.3",
         "vimeo/psalm": "^6.17"
@@ -43,6 +44,10 @@
         }
     },
     "repositories": [
+        {
+            "type": "path",
+            "url": "../query-builder"
+        },
         {
             "type": "path",
             "url": "../framework"
@@ -61,15 +66,15 @@
         },
         {
             "type": "path",
+            "url": "../orm"
+        },
+        {
+            "type": "path",
             "url": "../redis"
         },
         {
             "type": "path",
             "url": "../cache-redis"
-        },
-        {
-            "type": "path",
-            "url": "../query-builder"
         },
         {
             "type": "path",
