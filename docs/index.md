@@ -228,6 +228,9 @@ aws-sigv4
 
 mcp
 mcp-docs
+agent-workflow
+application-recipes
+agent-correctness
 ```
 
 ```{toctree}

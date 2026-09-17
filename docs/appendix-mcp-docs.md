@@ -79,7 +79,10 @@ those, and with `2025-11-25` when it is not. Its result declares an
 empty `resources` capability — no `listChanged`, no `subscribe` — names
 the server `kinetis-mcp-docs` at the package's version, and carries
 `instructions` telling the agent to read these pages rather than answer
-from memory. No method depends on an earlier `initialize`.
+from memory, naming `kinetis://docs/agent-workflow` as the starting
+resource and warning that a served page can describe behavior newer than
+the client's installed release. No method depends on an earlier
+`initialize`.
 
 | Method | Behavior |
 |---|---|

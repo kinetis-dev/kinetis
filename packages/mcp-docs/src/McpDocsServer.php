@@ -28,7 +28,7 @@ final class McpDocsServer
     public const string SERVER_NAME = 'kinetis-mcp-docs';
 
     /** Paired against this package's manifest version by the suite. */
-    public const string SERVER_VERSION = '1.2.0';
+    public const string SERVER_VERSION = '1.3.0';
 
     /**
      * Every protocol revision this server speaks, oldest first. The
@@ -40,9 +40,11 @@ final class McpDocsServer
      */
     public const array PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
 
-    private const string INSTRUCTIONS = 'Resources are the pages of the Kinetis documentation site, '
-        . 'served as their published markdown. Call resources/list for the catalogue, then resources/read '
-        . 'with a page URI. Read these instead of answering about Kinetis from memory.';
+    private const string INSTRUCTIONS = 'Resources are Kinetis documentation pages, served as published '
+        . 'markdown from main — read them instead of answering about Kinetis from memory. Call resources/list, '
+        . 'then resources/read with a page URI; start at kinetis://docs/agent-workflow. A page can describe '
+        . 'behavior newer than the release installed in this project: establish the installed package versions '
+        . 'and inspect matching installed source before treating a version-sensitive claim as settled.';
 
     private readonly DocsFetcher $fetcher;
 

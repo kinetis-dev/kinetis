@@ -8,6 +8,7 @@ use JsonException;
 use Kinetis\McpDocs\DocsCatalogue;
 use Kinetis\McpDocs\DocsPage;
 use Kinetis\McpDocs\McpDocsServer;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -65,6 +66,29 @@ final class DocsCatalogueTest extends TestCase
         $slugs = array_map(static fn (DocsPage $page): string => $page->slug, DocsCatalogue::pages());
 
         self::assertSame(count($slugs), count(array_unique($slugs)));
+    }
+
+    /**
+     * @return iterable<string, array{string, string, string}>
+     */
+    public static function agentGuideProvider(): iterable
+    {
+        yield 'agent-workflow' => ['agent-workflow', 'Agent Workflow', 'installed-version'];
+        yield 'application-recipes' => ['application-recipes', 'Application Recipes', 'recipes'];
+        yield 'agent-correctness' => ['agent-correctness', 'Agent Correctness Review', 'checklist'];
+    }
+
+    #[DataProvider('agentGuideProvider')]
+    public function test_each_agent_guide_page_is_catalogued_with_a_task_oriented_name_and_description(
+        string $slug,
+        string $expectedName,
+        string $descriptionNeedle,
+    ): void {
+        $page = DocsCatalogue::find(DocsCatalogue::URI_PREFIX . $slug);
+
+        self::assertInstanceOf(DocsPage::class, $page);
+        self::assertSame($expectedName, $page->name);
+        self::assertStringContainsStringIgnoringCase($descriptionNeedle, $page->description);
     }
 
     public function test_a_page_builds_its_own_uri_and_source_url_from_its_slug(): void

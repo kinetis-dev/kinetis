@@ -81,6 +81,9 @@ tutorial, then read whichever section you have reached.
 
 - [Model Context Protocol (MCP)](https://kinetis.dev/docs/mcp.html): kinetis/mcp: the native Model Context Protocol server — tools, resources, stdio and HTTP transports, and protocol-era handling.
 - [MCP Documentation Server](https://kinetis.dev/docs/mcp-docs.html): kinetis/mcp-docs: a standalone MCP server serving these pages as resources, depending on no Kinetis package.
+- [Agent Workflow](https://kinetis.dev/docs/agent-workflow.html): Entry point for an agent: the current-main/installed-version boundary, and where to route a task.
+- [Application Recipes](https://kinetis.dev/docs/application-recipes.html): Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each.
+- [Agent Correctness Review](https://kinetis.dev/docs/agent-correctness.html): A review checklist for persistent-worker, I/O, security and integrity correctness before calling a change done.
 
 ## Reference
 
