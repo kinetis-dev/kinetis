@@ -53,10 +53,9 @@ php vendor/bin/kinetis-mcp-docs
 ```
 
 Register `vendor/bin/kinetis-mcp-docs` with any MCP client that launches
-a stdio server as a subprocess. It speaks protocol revisions
-`2024-11-05` through `2025-11-25`, reads one JSON-RPC message per line on
-stdin, writes one response per line on stdout, and exits when its input
-closes. Diagnostics go to stderr.
+a stdio server as a subprocess. It speaks MCP `2025-06-18`, reads one
+JSON-RPC message per line on stdin, writes one response per line on
+stdout, and exits when its input closes. Diagnostics go to stderr.
 
 ## Resources
 

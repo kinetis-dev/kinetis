@@ -1,0 +1,6 @@
+# Project-scoped MCP server for Codex. The same stdio bridge .mcp.json
+# and .gemini/settings.json launch: no credentials are forwarded, and
+# nothing here approves a tool call in advance.
+[mcp_servers.orbitron]
+command = "./bin/orbitron-mcp"
+args = []

@@ -1,6 +1,6 @@
 {
     "name": "kinetis/mcp-docs",
-    "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Depends on no Kinetis package.",
+    "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -10,6 +10,7 @@
     ],
     "require": {
         "php": "^8.4",
+        "kinetis/mcp-protocol": "dev-main",
         "symfony/http-client": "^8.1.4",
         "symfony/http-client-contracts": "^3.7.1"
     },
@@ -31,6 +32,12 @@
     },
     "bin": [
         "bin/kinetis-mcp-docs"
+    ],
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../mcp-protocol"
+        }
     ],
     "config": {
         "sort-packages": true,

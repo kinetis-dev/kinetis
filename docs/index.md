@@ -16,6 +16,8 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 - OpenAPI generated from your code rather than maintained beside it.
 - Request-level concurrency over non-blocking I/O.
 - Native Model Context Protocol (MCP) server, one install away.
+- Orbitron, a development harness that equips the AI coding agent you
+  already use.
 
 ## What you get
 
@@ -62,6 +64,10 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
   HTTP routes — one definition, two audiences.
 - These docs as an MCP server of their own (`kinetis/mcp-docs`), so an
   agent reads the framework's documentation instead of recalling it.
+- Orbitron (`kinetis/orbitron`), the development-only harness that hands
+  your own coding agent this project's Kinetis context, its installed
+  package inventory, a layout verification and one previewable scaffold —
+  from a shell or over MCP. See {doc}`orbitron`.
 
 ## Long-running or classic, same code
 
@@ -120,6 +126,18 @@ OpenAPI.
 
 Run a database query, an HTTP call, and a cache read side by side inside
 one request, instead of one after another.
+```
+
+```{grid-item-card} Build it with an AI agent
+:link: orbitron
+:link-type: doc
+
+Kinetis does not force every application through a generic dashboard or
+prebuilt scaffold. Orbitron instead equips the MCP-capable coding agent
+you already use with Kinetis context, project inspection, verification
+and controlled scaffolding, so it builds against the packages and
+versions actually installed. Orbitron contains no model — you bring the
+agent.
 ```
 ````
 
@@ -228,6 +246,7 @@ aws-sigv4
 
 mcp
 mcp-docs
+orbitron
 agent-workflow
 application-recipes
 agent-correctness

@@ -73,6 +73,7 @@ final class DocsCatalogue
             new DocsPage('aws-sigv4', 'AWS request signing (SigV4)', 'Sign requests for one trusted AWS origin, including Amazon OpenSearch Service'),
             new DocsPage('mcp', 'Model Context Protocol (MCP)', 'Expose application tools and resources over stdio or guarded HTTP'),
             new DocsPage('mcp-docs', 'MCP Documentation Server', 'Install the standalone server and read Kinetis pages as MCP resources'),
+            new DocsPage('orbitron', 'Orbitron', 'kinetis/orbitron: a development-only construction harness — read the portable Kinetis context document and the installed kinetis/* package inventory from a shell'),
             new DocsPage('agent-workflow', 'Agent Workflow', 'Entry point for an agent: the current-main/installed-version boundary, and where to route a task'),
             new DocsPage('application-recipes', 'Application Recipes', 'Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each'),
             new DocsPage('agent-correctness', 'Agent Correctness Review', 'A review checklist for persistent-worker, I/O, security and integrity correctness before calling a change done'),
@@ -105,7 +106,7 @@ final class DocsCatalogue
 
     /**
      * The page $uri names, or null when no entry carries it — which is
-     * what McpDocsServer turns into a -32002 "resource not found".
+     * what DocsApplication turns into a -32002 "resource not found".
      */
     public static function find(string $uri): ?DocsPage
     {

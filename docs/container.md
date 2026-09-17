@@ -230,7 +230,7 @@ other registration it is allowed only before `boot()`, and throws
 `Kinetis\Container\Exception\ContainerException` after. It is how a
 package bootstrap installs request-scoped bindings and dispose hooks
 without any entry point knowing about them: `Kernel`, `bin/kinetis`, `kinetis/queue`'s
-`QueueWorker`/`SyncQueue`, and `kinetis/mcp`'s `StdioTransport` all take
+`QueueWorker`/`SyncQueue`, and `kinetis/mcp`'s `ScopedMessageHandler` all take
 their scopes from `createRequestScope()`, so every initializer runs on
 each. A `#[Command(bootstrap: false)]` command runs no package bootstrap
 and gets no package initializer.
@@ -277,7 +277,7 @@ a problem — worse than the failure it was supposed to be reporting on.
 
 Every place in Kinetis that disposes a `RequestScope` — `Kernel`,
 `kinetis/queue`'s `QueueWorker`/`SyncQueue`, `kinetis/mcp`'s
-`StdioTransport`, and `bin/kinetis` — disposes it *outside* any `finally` that could still
+`ScopedMessageHandler`, and `bin/kinetis` — disposes it *outside* any `finally` that could still
 discard an already-decided outcome, and defines an explicit precedence
 instead: whatever the unit of work already produced (a response, a job's
 durable transition, a command's exit code) is preserved exactly, and a

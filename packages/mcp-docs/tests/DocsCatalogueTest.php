@@ -7,7 +7,7 @@ namespace Kinetis\McpDocs\Tests;
 use JsonException;
 use Kinetis\McpDocs\DocsCatalogue;
 use Kinetis\McpDocs\DocsPage;
-use Kinetis\McpDocs\McpDocsServer;
+use Kinetis\McpDocs\DocsApplication;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -91,6 +91,20 @@ final class DocsCatalogueTest extends TestCase
         self::assertStringContainsStringIgnoringCase($descriptionNeedle, $page->description);
     }
 
+    /**
+     * The development harness is reachable as a resource of its own: an
+     * agent that reads these pages over MCP finds the same entry point a
+     * shell-driven one reads from `orbitron:context`.
+     */
+    public function test_the_orbitron_page_is_catalogued(): void
+    {
+        $page = DocsCatalogue::find(DocsCatalogue::URI_PREFIX . 'orbitron');
+
+        self::assertInstanceOf(DocsPage::class, $page);
+        self::assertSame('Orbitron', $page->name);
+        self::assertStringContainsString('kinetis/orbitron', $page->description);
+    }
+
     public function test_a_page_builds_its_own_uri_and_source_url_from_its_slug(): void
     {
         $page = new DocsPage('routing-validation', 'Routing & Validation', 'Attribute-based routes');
@@ -138,6 +152,6 @@ final class DocsCatalogueTest extends TestCase
         $manifest = json_decode((string) file_get_contents($manifestPath), true, flags: JSON_THROW_ON_ERROR);
 
         self::assertIsArray($manifest);
-        self::assertSame($manifest['packages']['mcp-docs']['version'], McpDocsServer::SERVER_VERSION);
+        self::assertSame($manifest['packages']['mcp-docs']['version'], DocsApplication::SERVER_VERSION);
     }
 }

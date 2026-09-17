@@ -1,0 +1,23 @@
+#!/bin/sh
+# Launches the Orbitron stdio MCP server inside this project's `app`
+# container and relays it to whatever started this script, so an
+# MCP-capable client on the host reaches the server without PHP or
+# Composer existing on the host. Configured in .mcp.json,
+# .codex/config.toml and .gemini/settings.json.
+#
+# The project directory is derived from this script's own location, so
+# the checked-in configuration works in any clone, at any path, from any
+# client working directory.
+#
+# -T is required, not cosmetic: an allocated TTY would rewrite the
+# newline-delimited JSON-RPC frames the protocol depends on.
+#
+# The container must already be up. When it is not, `docker compose
+# exec` fails and the client reports the server as unavailable — which is
+# the honest outcome, and the one AGENTS.md tells the agent to act on.
+set -e
+
+project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+
+exec docker compose --project-directory "$project_directory" \
+    exec -T app php vendor/bin/kinetis-orbitron-mcp

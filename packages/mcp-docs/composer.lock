@@ -4,8 +4,49 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "990e26fa476dd7ca356003f76adfc914",
+    "content-hash": "59ee028560e105af5b1d321c19080a04",
     "packages": [
+        {
+            "name": "kinetis/mcp-protocol",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../mcp-protocol",
+                "reference": "a920c32b51bd6f01fbbe8a59875443eee244135d"
+            },
+            "require": {
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\McpProtocol\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\McpProtocol\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "Model Context Protocol 2025-06-18 over JSON-RPC 2.0 — envelope validation, typed tool and resource contracts, progress notifications, and checked newline-delimited stdio framing. Requires PHP only.",
+            "transport-options": {
+                "relative": true
+            }
+        },
         {
             "name": "psr/container",
             "version": "2.0.2",
@@ -6743,7 +6784,9 @@
     ],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": {},
+    "stability-flags": {
+        "kinetis/mcp-protocol": 20
+    },
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {

@@ -26,6 +26,13 @@ One controller, one route, a welcome page — nginx + PHP-FPM, so a code
 change takes effect on your very next request with no container
 restart. Meant to be copied and grown from, not run as-is.
 
+It also arrives ready for AI-driven development. There is no generic
+dashboard and no prebuilt scaffold to grow out of: instead
+[`kinetis/orbitron`](https://github.com/kinetis-dev/orbitron) is
+installed as a development dependency, wired to your own MCP-capable
+coding agent, so the agent builds against the Kinetis packages and
+versions this project actually has.
+
 ## Running it
 
 ```sh
@@ -44,7 +51,139 @@ dependencies, which `docker compose up` then does inside the container
 it will run them in.)
 
 The project is yours from that point on. `docker-compose.yml` mounts it
-at `/app` and needs nothing outside it.
+at `/app`, and every path the containers read is inside it.
+
+## Building it with an AI coding agent
+
+Start the stack, open your agent in this directory, and describe what
+you want built. The agent's first application task in a session begins
+by initializing Orbitron, so it works from this project's real installed
+versions and verified layout rather than from recalled framework
+trivia.
+
+What is checked in for that is already correct for whatever path you
+cloned into:
+
+- `AGENTS.md` — the agent contract, and the only place it is written.
+  `CLAUDE.md` and `GEMINI.md` are one-line imports of it.
+- `bin/orbitron-mcp` plus one config file per client — `.mcp.json`,
+  `.codex/config.toml` and `.gemini/settings.json`. Each registers one
+  stdio MCP server named `orbitron`, launched as `./bin/orbitron-mcp`.
+
+`bin/orbitron-mcp` runs `docker compose exec -T app php
+vendor/bin/kinetis-orbitron-mcp` against this project's own directory.
+The server lives in the container next to the code it reports on, so
+your host still needs no PHP and no Composer, and the agent needs no
+absolute path.
+
+### Trust and approval
+
+The checked-in files register a server and configure nothing else: no
+credential, no trust override, no preapproved tool. Whatever trust and
+approval policy your client already runs under is what applies, and it
+differs by client — Claude Code prompts about a project-scoped
+`.mcp.json` in an interactive session (its documented non-interactive
+and policy-managed modes can behave differently), Codex reads
+`.codex/config.toml` only for a trusted project, and Gemini CLI may
+ignore workspace settings in an untrusted workspace, where an omitted
+server `trust` leaves that server's default `false`.
+
+Reload or restart the client when this configuration was added or
+changed after the current session started, or when its tool catalog has
+not picked the server up yet.
+
+### The readiness handshake
+
+`AGENTS.md` requires the agent to confirm the `orbitron` tools are
+there, read `kinetis://orbitron/context`, call `orbitron_inspect` and
+call `orbitron_verify` before it touches application code. When all of
+that succeeds it says so in one line and gets on with your request:
+
+```
+Orbitron ready — kinetis/framework 1.11.3, layout pass (App\, App\Tests\).
+```
+
+When any part of it fails, the agent is required to stop, say exactly
+what failed, and bring you here instead of guessing. A refusal to start
+is the contract working. Run through [Diagnostics](#diagnostics), then
+ask again.
+
+### Client differences
+
+The launcher and the contract are the same everywhere. What differs is
+where a client looks and what its own trust boundary is:
+
+| Client | Reads instructions from | Project MCP configuration |
+|---|---|---|
+| Claude Code | `CLAUDE.md` (imports `AGENTS.md`) | `.mcp.json`, subject to its project-server prompt in an interactive session |
+| Codex | `AGENTS.md` | `.codex/config.toml`, read for a trusted project |
+| Gemini CLI | `GEMINI.md` (imports `AGENTS.md`) | `.gemini/settings.json`, subject to workspace trust |
+| Any other MCP-capable client | `AGENTS.md` | register `./bin/orbitron-mcp` as a stdio server named `orbitron` |
+
+A client that reads none of those three file names still works: point it
+at `AGENTS.md` yourself and register the launcher the way it registers
+any stdio server.
+
+### Without MCP
+
+The four documents are commands too, so an agent that can only run a
+shell — or you, reading them yourself — has all of them:
+
+```sh
+docker compose exec app vendor/bin/kinetis orbitron:context
+docker compose exec app vendor/bin/kinetis orbitron:inspect
+docker compose exec app vendor/bin/kinetis orbitron:verify
+docker compose exec app vendor/bin/kinetis orbitron:scaffold
+```
+
+`orbitron:scaffold` previews; `orbitron:scaffold --apply` is the only
+one of them that writes anything, and what it writes is two fixed files.
+See the [Orbitron guide](https://kinetis.dev/docs/orbitron.html) for
+every document's shape and exit code.
+
+### Diagnostics
+
+**The container is not running.** `bin/orbitron-mcp` fails immediately
+with a `docker compose exec` error, and the client shows the server as
+failed to start. Bring the stack up from this directory and restart the
+client:
+
+```sh
+docker compose up -d
+docker compose ps
+```
+
+**The server shows as disconnected.** Run the launcher yourself — it is
+an ordinary command, and a working server answers a handshake on stdin:
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual","version":"0"}}}' \
+    | ./bin/orbitron-mcp
+```
+
+A JSON-RPC result naming `kinetis-orbitron-mcp` means the bridge and the
+server are both fine, and what remains is client-side: its trust and
+approval policy, or a tool catalog that has not picked the server up
+since the configuration arrived.
+
+**The reported packages are stale.** Orbitron reads Composer's installed
+inventory once per server process, and your client launches one server
+per session. So after a dependency change —
+
+```sh
+docker compose exec app composer require kinetis/orm
+```
+
+— restart the client. That launches a fresh server, which reads the new
+inventory.
+
+**`orbitron_verify` reports an error.** The `code` in each failed check
+names the outcome. This project ships the layout Orbitron admits — one
+`autoload.psr-4` prefix mapped to `src/`, one `autoload-dev.psr-4`
+prefix mapped to `tests/` — so an error here means `composer.json` has
+moved away from it. The
+[Orbitron guide](https://kinetis.dev/docs/orbitron.html) lists every
+code.
 
 ## Using this as a starting point
 
@@ -65,8 +204,9 @@ This package is developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo
 and published from it; `kinetis-dev/skeleton` is the split mirror the
 commands above install from. Inside the monorepo, `composer.json` still
-carries the `path` repository that resolves `kinetis/framework` from the
-sibling checkout, so the stack needs the override that mounts it:
+carries the `path` repositories that resolve `kinetis/framework`,
+`kinetis/orbitron` and `kinetis/mcp-protocol` from sibling checkouts, so
+the stack needs the override that mounts them:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.monorepo.yml up --build

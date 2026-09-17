@@ -1,138 +1,118 @@
 # Appendix: MCP Reference
 
 The contracts behind {doc}`mcp`: the protocol revision and its request
-grammar, the Streamable HTTP headers and status codes, the error
-catalogue, progress streaming, the `mcp` middleware group, request scope
-and disposal, and argument binding. For the task-first path — tools,
+grammar, Streamable HTTP and its status codes, the error catalogue,
+progress streaming, the `mcp` middleware group, request scope and
+disposal, and argument binding. For the task-first path — tools,
 resources, stdio and HTTP setup — see {doc}`mcp`.
+
+## Ownership
+
+`kinetis/mcp-protocol` owns the wire: JSON-RPC 2.0 envelopes, the one MCP
+revision, typed tool and resource descriptions, progress notifications,
+and the checked newline-delimited stdio loop. `kinetis/mcp` owns
+everything Kinetis-specific around it — the attributes, discovery and
+registry, schema generation, hydration and validation, telemetry,
+middleware, request scopes, the `/mcp` route and the package bootstrap —
+and adapts them to that wire through `Kinetis\Mcp\KinetisMcpApplication`.
+`kinetis/mcp-docs` and `kinetis/orbitron` are the other two consumers of
+the same protocol package; neither depends on `kinetis/mcp`, whose
+installation would register a bootstrap and a discovery plugin in the
+consumer application.
 
 ## Protocol revision
 
-`McpServer` implements the `2026-07-28` revision of MCP and no other: a
-stateless, per-request model. Every request carries its own protocol
-version and client capabilities in `params._meta`. There is no
-connection-level handshake — no `initialize`, no
-`notifications/initialized`, no `ping` — and a client discovers what the
-server offers with `server/discover`.
+`Kinetis\McpProtocol\McpServer` implements MCP `2025-06-18` and no
+other. A session opens with the ordinary lifecycle handshake:
 
 ```{code-block} json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/list",
-    "params": {
-        "_meta": {
-            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-            "io.modelcontextprotocol/clientCapabilities": {}
-        }
-    }
-}
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude-code", "version": "2.1.273"}}}
 ```
 
-The server answers five methods: `server/discover`, `tools/list`,
-`tools/call`, `resources/list` and `resources/read`. Any other method is
-`-32601`, once `_meta` has passed the checks below.
-
-`_meta.io.modelcontextprotocol/protocolVersion` and
-`_meta.io.modelcontextprotocol/clientCapabilities` are required on every
-request. A request missing either is `-32602 Invalid params` — which is
-also what a client on an earlier revision receives for an `initialize`
-without `_meta`. A request naming any version other than `2026-07-28` is
-`-32022 UnsupportedProtocolVersion`, whose `error.data` carries
-`supported` (`["2026-07-28"]`) and `requested`.
-
-Every result carries `resultType: "complete"` and the server's identity
-under `_meta`, added after the handler's own result so a handler cannot
-override either:
+`protocolVersion` must be a non-empty string, `capabilities` an object,
+and `clientInfo` an object with non-empty string `name` and `version`;
+anything else is `-32602`. The answer always selects `2025-06-18`,
+whatever the client asked for — the specification's rule is that a server
+responds with a version it supports and the client decides whether to
+continue, so a single-version server has no unsupported-version error to
+raise. A repeat `initialize` returns the identical result: the server
+keeps no negotiated state.
 
 ```{code-block} json
-{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "result": {
-        "tools": [],
-        "ttlMs": 3600000,
-        "cacheScope": "public",
-        "resultType": "complete",
-        "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "Kinetis", "version": "1.0.0"}}
-    }
-}
+{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "Kinetis", "version": "1.0.0"}}}
 ```
 
-`server/discover` returns `supportedVersions: ["2026-07-28"]` and
-`capabilities` with empty `tools` and `resources` objects.
+`capabilities` carries `tools` only when the application registered at
+least one tool, and `resources` only when it registered at least one
+resource, so a server never invites a call it cannot answer.
+`instructions` is present only when the consumer supplied it — `kinetis/mcp`
+supplies none.
 
-### Caching hints and server instructions
+The server answers six methods: `initialize`, `ping`, `tools/list`,
+`tools/call`, `resources/list` and `resources/read`. Any other request
+method is `-32601`. `tools/list` and `resources/list` return the whole
+list and issue no `nextCursor`, so a `cursor` a client sends is one this
+server never gave it and is `-32602`.
 
-`server/discover`, `tools/list` and `resources/list` results carry
-`ttlMs` (how long a client may consider the result fresh, in
-milliseconds, `3600000`) and `cacheScope: "public"`, since they describe
-the registered tools and resources, identical for every caller.
-`resources/read` carries the same `ttlMs` with `cacheScope: "private"`,
-since a resource method's content can be caller-specific. `tools/call`
-carries neither: it is an action, not a cacheable read.
+Notifications are never answered and never dispatch anything.
+`notifications/initialized` is a no-op, and every other valid
+notification is suppressed — including a `tools/call` without an `id`,
+which runs no tool, because nothing this revision defines from client to
+server asks this server to act. A structurally valid *response* message
+(an `id` plus exactly one of `result` and `error`, and no `method`) is
+ignored too: this server sends no requests, so there is nothing it could
+be a response to.
 
-`server/discover` also carries `instructions` — a short description of
-what the server's tools are for — when `McpServer` is constructed with
-one, and omits the key otherwise:
+Initialization ordering is not enforced. A client is required to
+initialize first, but the same stateless server sits behind the HTTP
+route, where each request stands alone, so an otherwise valid
+`tools/list` before `initialize` is answered rather than refused.
 
-```{code-block} php
-use Kinetis\Mcp\McpServer;
+## Streamable HTTP
 
-$server = new McpServer($registry, $dispatcher, instructions: 'This server manages orders and inventory.');
-```
-
-## Streamable HTTP headers
-
-A request over HTTP mirrors body fields into headers, so an intermediary
-can route or inspect it without parsing the body:
+`POST /mcp` carries one JSON-RPC message. `MCP-Protocol-Version` is the
+transport's only protocol header:
 
 ```{code-block} text
 POST /mcp HTTP/1.1
 Content-Type: application/json
-MCP-Protocol-Version: 2026-07-28
-Mcp-Method: tools/call
-Mcp-Name: get_weather
+MCP-Protocol-Version: 2025-06-18
 
-{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_weather", ...}}
+{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_weather", "arguments": {"city": "Berlin"}}}
 ```
 
-`MCP-Protocol-Version` mirrors `_meta`'s protocol version and
-`Mcp-Method` mirrors `method`; both are required on every request.
-`Mcp-Name` mirrors `params.name` on `tools/call` and `params.uri` on
-`resources/read`, and is required for those two methods only. A value
-that is not safe as a plain header (non-ASCII or control characters) is
-sent Base64-encoded inside `=?base64?…?=`:
+`initialize` may arrive without the header, because it is what
+establishes the version. Every later message must carry it and must
+carry exactly `2025-06-18`. A missing header on a later message means the
+specification's `2025-03-26` fallback, which this single-version server
+does not implement, so it is `400` rather than assumed; an unsupported or
+malformed value is `400` too. Nothing is remembered between requests, so
+an earlier `initialize` never excuses a missing header on a later one.
 
-```{code-block} text
-Mcp-Name: =?base64?SGVsbG8sIOS4lueVjA==?=
-```
-
-A header that is missing, that does not match its body value once
-decoded, or that uses the wrapper around invalid Base64 is rejected with
-`400` and a JSON-RPC `-32020` header-mismatch error. The comparison runs
-only after the body has passed the checks in "Malformed requests" below,
-so a malformed body is never reported as a header mismatch.
-
-`GET /mcp` and `DELETE /mcp` answer the router's own `405` with
-`Allow: POST`. Earlier Streamable HTTP revisions used GET for a
-server-initiated stream and DELETE to end a session; `2026-07-28` has
-neither.
+Sessions are optional in this revision and this server issues none: no
+`Mcp-Session-Id` is ever sent, and none is ever required. `GET /mcp` and
+`DELETE /mcp` answer the router's own `405` with `Allow: POST` — GET
+opens a server-initiated stream and DELETE terminates a session, and
+neither is implemented.
 
 ## HTTP status codes
 
 | Outcome | Status | Body |
 |---|---|---|
-| A JSON-RPC result | `200` | JSON-RPC response |
-| `-32600`, `-32602`, `-32020`, `-32022` | `400` | JSON-RPC error |
-| `-32601` | `404` | JSON-RPC error |
-| `-32700`, `-32603` | `200` | JSON-RPC error |
-| A `tools/call` request with `_meta.progressToken` | `200` | `text/event-stream`; an error arrives in the final event |
-| A notification | `202` | none |
+| A JSON-RPC result, or a JSON-RPC error after a valid envelope | `200` | JSON-RPC response |
+| Malformed JSON or a malformed envelope (`-32700`, `-32600`, `-32602` on `params`) | `400` | JSON-RPC error |
+| A missing, unsupported or malformed `MCP-Protocol-Version` | `400` | JSON-RPC `-32600` naming the supported revision |
+| A `tools/call` request with a well-formed `_meta.progressToken` | `200` | `text/event-stream`; an error arrives in the final event |
+| A notification, or a client response message | `202` | none |
 | An `Origin` not listed in `MCP_ALLOWED_ORIGINS` | `403` | `{"error": "Origin \"…\" is not allowed to access this MCP endpoint."}` |
 | No `CurrentUserInterface` and `MCP_HTTP_PUBLIC` not true | `401` | `{"error": "Unauthenticated."}` |
 | A body over the request body limit | `413` | the framework's error body |
 | `GET` or `DELETE` | `405` | the framework's error body, with `Allow: POST` |
+
+A request whose envelope was understood carries its outcome in the
+JSON-RPC envelope rather than in the status: an unknown method, an
+unknown tool name and a failed parameter check are all `200`. Only input
+the transport could not use at all is a `4xx`.
 
 A `401` produced by an authentication middleware in the group, such as
 `BearerAuthMiddleware`'s, is that middleware's own response and runs
@@ -141,63 +121,61 @@ before the guard.
 ## Malformed requests
 
 Every message — over HTTP, over stdio, or handed to
-`McpServer::handle()` directly — passes the same structural validation
-before `method` is dispatched. Invalid JSON is `-32700 Parse error`.
-Valid JSON that is not a well-formed request object is `-32600 Invalid
-Request`: a missing or wrong `jsonrpc`, a missing or non-string
-`method`, an `id` outside string, integer or null, or a top-level JSON
-array. Batching is not supported, so an array body is rejected outright.
+`McpServer::handle()` directly — passes the same structural validation in
+`Kinetis\McpProtocol\JsonRpcCodec` before `method` is dispatched.
+Invalid JSON is `-32700 Parse error` under `id: null`. Valid JSON that is
+not a well-formed message is `-32600 Invalid Request`: a missing or wrong
+`jsonrpc`, a missing or empty `method`, an `id` outside string and
+integer, or a top-level JSON array. Batching is not part of this
+revision, so an array body is rejected outright.
 
-Only a structurally valid message without `id` is a notification and
+An `id` MUST NOT be null in `2025-06-18`, so `{"id": null}` is an invalid
+request rather than a request whose id is null. A boolean, a float or a
+structured `id` is refused the same way, and the error answers under
+`id: null` because there was nothing valid to echo.
+
+Only a structurally valid message without `id` is a notification, and it
 gets no response. A structurally invalid message still gets an error,
-with `id: null` when no valid id could be read. Over HTTP a malformed
-body therefore never becomes `202`: a `202` always means a genuine
-notification.
+because the envelope is exactly the thing that would have told us it was
+a notification. Over HTTP a malformed body therefore never becomes
+`202`: a `202` always means a genuine notification or a client response
+message.
 
-`params`, `_meta`, `_meta.io.modelcontextprotocol/clientCapabilities`
-and `tools/call`'s `arguments` are named objects. A present value that
-is a JSON array, a scalar or `null` is `-32602`; only omitting the field
-means "none given". `{}` and `[]` are different on the wire and get the
-responses their shapes mean. A present `_meta.progressToken` that is not
-a string or integer is also `-32602`, rather than silently disabling
-progress.
+`params`, `_meta` and `tools/call`'s `arguments` are named objects. A
+present value that is a JSON array, a scalar or `null` is `-32602`; only
+omitting the field means "none given". `{}` and `[]` are different on the
+wire and get the responses their shapes mean. A present
+`_meta.progressToken` that is not a string or an integer is also
+`-32602`, rather than silently disabling progress. A notification whose
+own `params` are malformed is neither answered nor dispatched.
+
+`tools/call`'s `name` and `resources/read`'s `uri` are required non-empty
+strings. A well-formed name or URI the consumer does not publish is
+refused before anything runs: `-32602` for a tool, `-32002` for a
+resource.
 
 A caller building a message in PHP — a test, or an embedder bypassing
 both transports — cannot write `{}` and `[]` differently in an array
-literal. `Kinetis\Mcp\JsonObject` marks a value as an object:
-`new JsonObject([])` is accepted by `McpServer::handle()` and
-`JsonRpcCodec::validateMessage()` exactly like a decoded `{}`, and
-`json_encode()`s as `{}` when empty or as its properties otherwise.
-
-`McpServer::preflight()` checks all of this, including the
-method-specific requirements, without invoking anything. `tools/call`'s
-`name` and `resources/read`'s `uri` are required non-empty strings there.
-A well-formed name or URI that is not registered passes preflight and is
-refused at dispatch with `-32602`. `handle()` runs preflight as its own
-first step; `McpController` runs it before the header comparison and
-before choosing a progress stream, so a malformed nested value can never
-surface as a header mismatch or commit the response to
-`text/event-stream`.
-
-Once the envelope is valid, a notification whose MCP content fails
-preflight is neither answered nor dispatched: no tool or resource runs,
-and over HTTP the request gets a plain `202`, never a `400` and never a
-stream.
+literal. `Kinetis\McpProtocol\JsonObject` marks a value as an object:
+`new JsonObject()` is accepted exactly like a decoded `{}`, and
+`JsonRpcCodec::toObjectTree()` converts a tree holding markers back into
+the `stdClass`/array shape a consumer receives, so a marker never reaches
+consumer code.
 
 ## Error catalogue
 
 | Code | Message | Raised when |
 |---|---|---|
-| `-32700` | `Parse error.` | The body or line is not valid JSON. |
-| `-32600` | `Invalid Request.` | The envelope is malformed, including a top-level array. |
-| `-32601` | `Method not found: "…".` | The method is not one of the five this server answers. |
-| `-32602` | varies | A named object has the wrong shape, a required `_meta` key, `name` or `uri` is missing, `progressToken` has the wrong type, or the tool name or resource URI is not registered. |
-| `-32603` | `Internal error.` | An unexpected exception outside a tool call, including a resource method that throws. |
-| `-32020` | `Header mismatch: …` | HTTP only: a mirrored header is missing or does not match the body. |
-| `-32022` | `Unsupported protocol version "…".` | `_meta` names a version other than `2026-07-28`. |
+| `-32700` | `Parse error.` | The body or line is not valid JSON, or a stdio line exceeded the payload cap. |
+| `-32600` | `Invalid Request.` | The envelope is malformed, including a top-level array. HTTP also uses it, with its own message, for a missing or unsupported `MCP-Protocol-Version`. |
+| `-32601` | `Method not found: "…".` | The method is not one of the six this server answers. |
+| `-32602` | varies | A named object has the wrong shape, `name`, `uri`, `protocolVersion`, `capabilities` or `clientInfo` is missing or malformed, `progressToken` has the wrong type, a `cursor` was sent, or the tool name is not registered. |
+| `-32002` | `Resource not found: "…".` | `resources/read` names a URI the consumer does not publish; `error.data.uri` carries it. |
+| `-32603` | `Internal error.` | An unexpected exception outside a tool call, including a resource method that throws, or a response the consumer made unencodable. |
 
-A tool that runs and fails is not in this table. `McpServer::callTool()`
-catches it and returns a result with `isError: true`:
+A tool that runs and fails is not in this table.
+`KinetisMcpApplication::callTool()` catches it and returns a result with
+`isError: true`:
 
 - A `ValidationException` carries its violations as
   `{"errors": [...]}` in the text content, each entry with a segmented
@@ -208,51 +186,68 @@ catches it and returns a result with `isError: true`:
 - Any other exception, including a tool result that cannot be
   JSON-encoded, becomes the fixed text `Tool execution failed.`.
 
-A resource method has no such containment: its exception propagates to
-`handle()`'s top-level catch and becomes `-32603` with the fixed message
-`Internal error.`. Every unexpected exception in `handle()` is redacted
-the same way. A resource method's string return value is its `text`;
+A read has no error result of its own: a resource method that throws
+becomes `-32603` with the fixed message `Internal error.`. Every
+unexpected exception the protocol server catches is redacted the same
+way, and its text is discarded rather than reported — a consumer that
+wants diagnostics writes them before letting the exception reach that
+boundary. A resource method's string return value is its `text`;
 anything else is JSON-encoded.
 
+Containment covers the response as well as the exceptions on the way to
+it. A consumer chooses the bytes in a tool result, a resource's text, and
+a protocol error's own message and data, and any of them can be a string
+PHP accepts and JSON refuses. The protocol server checks every envelope
+before returning it and answers the same generic `-32603` under the
+request's own id when it cannot be encoded — never the bytes, and never a
+repaired version of them, since altered content under a successful result
+would be a worse answer than an honest failure. Encoding those bytes
+where the frame is written would instead end a persistent stdio process
+and lose every message queued behind the bad one.
+
 The real exception, in every case, goes to the `Psr\Log\LoggerInterface`
-passed as `McpServer`'s `logger` argument, `NullLogger` by default. The
-package's bootstrap passes the container's logger, so `mcp:serve` and
-`/mcp` both log through the application's binding (see {doc}`logging`).
-A logger that throws is caught and discarded; it can never replace the
-response or stop a stdio process.
+passed to `KinetisMcpApplication`, `NullLogger` by default. The package's
+bootstrap passes the container's logger, so `mcp:serve` and `/mcp` both
+log through the application's binding (see {doc}`logging`). A logger that
+throws is caught and discarded; it can never replace the response or stop
+a stdio process.
 
 ## Progress streaming
 
-A `ProgressReporter`-typed tool parameter is injected by type. It is
-excluded from the tool's `inputSchema`, never required of a call, and an
-argument of that name sent by a client is `unexpected_field`.
+A `Kinetis\Mcp\ProgressReporter`-typed tool parameter is injected by
+type. It is excluded from the tool's `inputSchema`, never required of a
+call, and an argument of that name sent by a client is
+`unexpected_field`.
 `report(int|float $progress, int|float|null $total = null, ?string $message = null)`
-calls the transport's emitter synchronously, on the tool's own call
-stack; no Fiber or generator is involved. Without
-`_meta.progressToken` on the request, `report()` does nothing.
+delegates to the protocol package's own emitter synchronously, on the
+tool's own call stack; no Fiber or generator is involved. Without
+`_meta.progressToken` on the request, `report()` does nothing, so a tool
+calls it unconditionally.
 
-Each report becomes one notification. `total` and `message` are always
-present, `null` when not given:
+Each report becomes one notification. `total` and `message` are omitted
+when not given, rather than written as `null` — an absent optional and an
+explicit null are different values, and only the first means "not
+reported":
 
 ```{code-block} json
-{"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": "reindex-1", "progress": 2, "total": 3, "message": null}}
+{"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": "reindex-1", "progress": 2, "total": 3, "message": "halfway"}}
 ```
 
 Over stdio, each notification is one line written before the response
 line.
 
-Over HTTP, a `tools/call` request — `id` present, including `id: null`,
-which JSON-RPC treats as a request — carrying `_meta.progressToken` is
-answered with `Content-Type: text/event-stream` and
-`X-Accel-Buffering: no`. Each notification is one `data: <json>` event,
-flushed as `report()` is called, and the final event is the JSON-RPC
-response. The status is `200` because headers are sent before the tool
-runs, so a JSON-RPC error arrives in that final event. Every other
-request gets one buffered JSON response.
+Over HTTP, a `tools/call` request carrying a well-formed
+`_meta.progressToken` is answered with `Content-Type: text/event-stream`
+and `X-Accel-Buffering: no`. Each notification is one `data: <json>`
+event, flushed as `report()` is called, and the final event is the
+JSON-RPC response. The status is `200` because headers are sent before
+the tool runs, so a JSON-RPC error arrives in that final event. Every
+other request gets one buffered JSON response — including one whose
+`progressToken` has the wrong type, which is rejected as `-32602` rather
+than streamed.
 
-A `tools/call` notification — `id` absent — never opens a stream, even
-with a valid `progressToken`. It gets `202` with no body, and the tool
-still runs, as JSON-RPC requires; its reports have nowhere to go.
+A `tools/call` notification — `id` absent — never opens a stream and
+never runs the tool. It gets `202` with no body.
 
 ## The `mcp` middleware group
 
@@ -328,47 +323,72 @@ as `JwtUser`, anything else request-scoped — is still there when the
 tool runs. A disposal failure there is contained and logged rather than
 raised.
 
-**Over stdio**, `mcp:serve` gives the transport the application's
-`AppScope`, and each line is its own unit of work: a scope from
-`AppScope::createRequestScope()` with every initializer run, the
-response written, then disposal and `gc_collect_cycles()` in a
-`finally`. Disposal never throws: a failure is logged through
-`AppScope`'s logger, since the message's own scope is already disposed,
-and the loop moves on to the next line.
+**Over stdio**, `mcp:serve` wraps the shared server in
+`Kinetis\Mcp\ScopedMessageHandler`, which is where every lifecycle rule
+lives: each decoded message gets a scope from
+`AppScope::createRequestScope()` with every initializer run, and the
+scope is disposed — followed by `gc_collect_cycles()` — in a `finally`
+once the response has been computed and before the loop writes its frame.
+Disposal never throws: a failure is logged through `AppScope`'s logger,
+since the message's own scope is already disposed, and the loop moves on
+to the next line. Progress notifications may already have been written by
+then; they belong to the tool that was still running. A parse error the
+codec answers on its own never reaches the handler, so it creates no
+scope.
 
 On both transports, a disposal failure never suppresses a response that
 was written and never produces a second JSON-RPC message. A write
 failure — a closed or broken stdout, or, on the streamed HTTP transport,
 an output-buffer handler throwing during the flush — propagates as the
 primary failure, with the scope still disposed underneath it. The data
-being written was already encoded once inside `handle()`, so a tool's
+being written was already encoded once inside the server, so a tool's
 result cannot cause it. Nothing about disposal timing changes when
 progress notifications are written.
 
 State a tool registers on its scope does not survive to the next
-message. Only a hand-rolled transport that calls `McpServer::handle()`
-without a scope shares the dispatcher's own container across messages.
+message. Only a hand-rolled transport that drives the protocol server
+without `ScopedMessageHandler` shares the dispatcher's own container
+across messages.
 
 ### Stdio framing
 
-The transport strips only the line terminator (`\r\n`) before decoding —
-never a bare `trim()`, which would also remove NUL and vertical-tab
-bytes and turn invalid input into accepted input. A line holding only
-spaces or tabs is skipped as a blank.
+`Kinetis\McpProtocol\StdioLoop` is the transport: one JSON-RPC message
+per line on stdin, one frame per response on stdout, synchronous and one
+message at a time, which is the backpressure. EOF ends the loop and
+returns normally — a client closing the pipe is how a stdio server is
+stopped.
+
+Input is read in bounded chunks, never a whole-line `fgets()`, and a
+message payload is capped at 2 MiB, matching the framework's default
+`MAX_BODY_SIZE`. A line past the cap is drained through its next
+terminator or to EOF, answered with exactly one `-32700` under `id: null`,
+and the next frame is then processed normally. A full chunk arriving with
+no terminator is not oversized on that ground alone: only the accumulated
+payload decides, and a final line at EOF with no terminator is a complete
+message.
+
+Only `\r` and `\n` are stripped before decoding — never a bare `trim()`,
+which would also remove NUL and vertical-tab bytes and turn invalid input
+into accepted input. A line holding only spaces or tabs is skipped as a
+blank.
 
 Every frame — a progress notification or a response — is written whole:
-the transport loops `fwrite()` until the encoded message and its newline
-are written, because `fwrite()` may accept fewer bytes than given when
-the reader of a pipe falls behind. A write that stops making progress
-throws `Kinetis\Mcp\Exception\StdioWriteException` with the bytes
-written and the total, and ends the loop, since nothing can safely
-follow a partial frame.
+the loop repeats `fwrite()` until the encoded message and its newline are
+written, because `fwrite()` may accept fewer bytes than given when the
+reader of a pipe falls behind. A write that stops making progress (a
+`false` or a `0`) throws
+`Kinetis\McpProtocol\Exception\StdioWriteException` with the bytes
+written and the total, and ends the loop, since nothing can safely follow
+a partial frame.
 
-A failed progress write is not allowed to reach the tool, where
-`callTool()` would turn it into `Tool execution failed.` and write that
-into the corrupted stream. The transport records the failure, skips
-every later notification for that message, and throws it once
-`handle()` returns, before the response is attempted.
+A failed progress write is never allowed to reach the tool, where it
+would be caught as an ordinary tool failure and that failure then written
+into the corrupted stream. The loop records it, skips every later
+notification for that message, and re-throws it once the handler returns
+— before any final response is attempted.
+
+There is no output cap. A tool result has no universal safe size, so each
+consumer bounds its own.
 
 ## Argument binding
 
@@ -418,7 +438,8 @@ production build compiles the registry into the cache (see
 ## See also
 
 - {doc}`mcp` — the task-first guide.
+- {doc}`appendix-packages` — `kinetis/mcp-protocol` and its three
+  consumers in the package map.
 - {doc}`appendix-configuration` — every `MCP_*` key.
-- {doc}`appendix-packages` — `Kinetis\Mcp` in the package map.
 - {doc}`middleware` — middleware groups and `CorsMiddleware`.
 - {doc}`container` — request scopes and disposal.

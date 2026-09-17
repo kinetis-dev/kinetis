@@ -3,8 +3,9 @@
 
 declare(strict_types=1);
 
-use Kinetis\McpDocs\McpDocsServer;
-use Kinetis\McpDocs\StdioLoop;
+use Kinetis\McpDocs\DocsApplication;
+use Kinetis\McpProtocol\McpServer;
+use Kinetis\McpProtocol\StdioLoop;
 
 // Composer's generated vendor/bin/kinetis-mcp-docs proxy sets this
 // global before including this script, and that proxy is the entry
@@ -26,9 +27,13 @@ require $autoloadPath;
 // stream is stderr and a failure that ends the loop is reported there
 // too.
 try {
-    new StdioLoop()->run(new McpDocsServer(diagnostics: STDERR), STDIN, STDOUT);
+    new StdioLoop()->run(
+        new McpServer(DocsApplication::serverInfo(), new DocsApplication(diagnostics: STDERR)),
+        STDIN,
+        STDOUT,
+    );
 } catch (Throwable $e) {
-    fwrite(STDERR, McpDocsServer::SERVER_NAME . ': ' . $e->getMessage() . "\n");
+    fwrite(STDERR, DocsApplication::SERVER_NAME . ': ' . $e->getMessage() . "\n");
 
     exit(1);
 }

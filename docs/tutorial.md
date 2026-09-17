@@ -1784,19 +1784,8 @@ the server rejects one whose header and body disagree:
 curl -X POST http://localhost:8080/mcp \
     -H "Authorization: Bearer local-mcp-token" \
     -H "Content-Type: application/json" \
-    -H "MCP-Protocol-Version: 2026-07-28" \
-    -H "Mcp-Method: tools/list" \
-    -d '{
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/list",
-        "params": {
-            "_meta": {
-                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                "io.modelcontextprotocol/clientCapabilities": {}
-            }
-        }
-    }'
+    -H "MCP-Protocol-Version: 2025-06-18" \
+    -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
 ```
 
 That confirms `ping_scenario_breakdown` is reachable over `/mcp`. To ask a

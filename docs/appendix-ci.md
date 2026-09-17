@@ -354,6 +354,7 @@ above the number here by design:
 | `mcp` | 75% |
 | `mcp-docs` | 60% |
 | `migrations` | 75% |
+| `orbitron` | 70% |
 | `orm` | 60% |
 | `persistence` | 75% |
 | `query-builder` | 80% |

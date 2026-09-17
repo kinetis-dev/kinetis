@@ -1,0 +1,9 @@
+{
+    "mcpServers": {
+        "orbitron": {
+            "type": "stdio",
+            "command": "./bin/orbitron-mcp",
+            "args": []
+        }
+    }
+}

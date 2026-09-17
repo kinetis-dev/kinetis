@@ -18,8 +18,9 @@ use RuntimeException;
  * present them. HTTP rendering belongs to
  * `Kinetis\Http\ValidationExceptionRendererInterface`, which the
  * terminal `Kinetis\Http\Middleware\ExceptionHandlerMiddleware` resolves;
- * `Kinetis\Mcp\McpServer` renders its own tool-result envelope. Both
- * reach the same violations and serialize them the same way.
+ * `Kinetis\Mcp\KinetisMcpApplication` renders its own tool-result
+ * envelope. Both reach the same violations and serialize them the same
+ * way.
  *
  * Empty is not a failure, so it is refused at construction rather than
  * producing an exception that claims a failure it cannot describe.

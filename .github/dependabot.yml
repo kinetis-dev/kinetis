@@ -82,12 +82,22 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
+    directory: "/packages/mcp-protocol"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
     directory: "/packages/mcp"
     schedule:
       interval: "weekly"
 
   - package-ecosystem: "composer"
     directory: "/packages/mcp-docs"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
+    directory: "/packages/orbitron"
     schedule:
       interval: "weekly"
 
