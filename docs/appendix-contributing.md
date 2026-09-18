@@ -351,11 +351,17 @@ you're actively working on a change:
   change in the same commit — and workflow coverage, which requires
   every package to have a `ci.yml` and `infection.yml` job, and
   `sonarqube.yml`'s coverage loop to name the same packages as
-  `sonar-project.properties` reads reports for) plus `composer validate
-  --strict` across every package. This is the one that enforces
-  everything in the "changing a package's dependencies" section above —
-  skip a version bump, forget to regenerate, or introduce a dependency
-  cycle, and this is what catches it. On a pull request it compares
+  `sonar-project.properties` reads reports for, and the skeleton archive
+  policy — `packages/skeleton/.gitattributes` must read exactly, and
+  only, the three publication artifacts a generated application has no
+  use for, since that file decides what `composer create-project` hands
+  a user and an `export-ignore` reaching `tests/`, `phpunit.xml` or
+  `phpstan.neon` would ship an application with no test suite and no
+  static analysis) plus `composer validate --strict` across every
+  package. This is the one that enforces everything in the "changing a
+  package's dependencies" section above — skip a version bump, forget to
+  regenerate, or introduce a dependency cycle, and this is what catches
+  it. On a pull request it compares
   against the PR's base commit, so the branch is judged as one change.
   Run it locally against your own branch's base the same way:
   ```sh

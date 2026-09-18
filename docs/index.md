@@ -62,12 +62,15 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
   HTTP — installing the package is the whole setup.
 - Tools and resources declared with attributes and validated exactly like
   HTTP routes — one definition, two audiences.
-- These docs as an MCP server of their own (`kinetis/mcp-docs`), so an
-  agent reads the framework's documentation instead of recalling it.
 - Orbitron (`kinetis/orbitron`), the development-only harness that hands
   your own coding agent this project's Kinetis context, its installed
   package inventory, a layout verification and one previewable scaffold —
   from a shell or over MCP. See {doc}`orbitron`.
+- These docs as MCP resources, so an agent reads the framework's
+  documentation instead of recalling it. Orbitron serves them on its own
+  connection, and `kinetis/mcp-docs` — which owns the catalogue and the
+  fetch — installs on its own for documentation without the harness. See
+  {doc}`mcp-docs`.
 
 ## Long-running or classic, same code
 
@@ -134,10 +137,10 @@ one request, instead of one after another.
 
 Kinetis does not force every application through a generic dashboard or
 prebuilt scaffold. Orbitron instead equips the MCP-capable coding agent
-you already use with Kinetis context, project inspection, verification
-and controlled scaffolding, so it builds against the packages and
-versions actually installed. Orbitron contains no model — you bring the
-agent.
+you already use with Kinetis context, project inspection, verification,
+controlled scaffolding and this documentation — one server to register,
+so it builds against the packages and versions actually installed.
+Orbitron contains no model — you bring the agent.
 ```
 ````
 

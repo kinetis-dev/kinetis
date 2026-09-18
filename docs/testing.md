@@ -50,6 +50,15 @@ composer require --dev phpunit/phpunit
 `tests/Http/WelcomeControllerTest.php`. Run the suite with
 `vendor/bin/phpunit`.
 
+A project created from the skeleton archive arrives with `tests/`,
+`phpunit.xml` and a `phpstan.neon` at level 8 that registers
+`Kinetis\Linting\NoStaticPropertiesRule` ({doc}`container`) and
+`Kinetis\Linting\NoBlockingIoRule` ({doc}`concurrency`). Those two
+rules are guardrails over two specific mistakes — a `static` property,
+and a call that waits synchronously — not a proof that the application
+keeps request isolation or stays non-blocking. The suite you write is
+the evidence, and {doc}`agent-correctness` is the review.
+
 ## Testing a route
 
 Extend `Kinetis\Testing\ApplicationTestCase` and point it at the project
@@ -96,6 +105,14 @@ the test's setup.
 Three properties are available on the test case: `$this->client` for
 requests, `$this->app` for the booted container, and `$this->application`
 for the `TestApplication` itself.
+
+Each test's application is disposed after that test, from an `#[After]`
+hook, so an app-scoped resource a package opened at boot — the database
+link `kinetis/database-bridge` builds, for one — is closed instead of
+abandoned once per test. The hook is guarded: a test whose boot failed
+is reported as that failure rather than as an uninitialized property
+during teardown. What disposal runs is [`AppScope::onDispose()`'s own
+contract](container.md#ending-the-applications-lifetime).
 
 ## Overriding configuration
 
@@ -418,7 +435,16 @@ $application = TestApplication::boot(__DIR__ . '/..', ['DB_NAME' => 'app_test'])
 
 $application->client()->get('/orders')->assertOk();
 $repository = $application->get(OrderRepository::class);
+
+$application->dispose();
 ```
+
+Call `dispose()` when the test is finished with the application, or
+every app-scoped resource its boot opened is abandoned rather than
+closed. It is idempotent, so a suite that disposes explicitly and then
+reaches `ApplicationTestCase`'s own hook disposes once. A boot that
+fails disposes the partly-built scope itself before the failure
+propagates.
 
 `TestApplication::withRouter()` builds one from an explicit route table
 instead of discovery, for a test that wants a fixed set of routes rather

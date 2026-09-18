@@ -78,15 +78,23 @@ writing `--format=json` are the same invocation.
 ```json
 {
     "schemaVersion": 1,
-    "orbitronVersion": "1.0.0",
+    "orbitronVersion": "1.1.0",
     "packages": [
         {
             "name": "kinetis/framework",
-            "version": "1.11.2"
+            "version": "1.12.0"
+        },
+        {
+            "name": "kinetis/mcp-docs",
+            "version": "1.4.0"
+        },
+        {
+            "name": "kinetis/mcp-protocol",
+            "version": "1.0.0"
         },
         {
             "name": "kinetis/orbitron",
-            "version": "1.0.0"
+            "version": "1.1.0"
         }
     ]
 }
@@ -121,7 +129,7 @@ fixed key and check order:
 ```json
 {
     "schemaVersion": 1,
-    "orbitronVersion": "1.0.0",
+    "orbitronVersion": "1.1.0",
     "status": "pass",
     "checks": [
         {
@@ -225,7 +233,7 @@ nothing touched on disk.
 ```json
 {
     "schemaVersion": 1,
-    "orbitronVersion": "1.0.0",
+    "orbitronVersion": "1.1.0",
     "mode": "preview",
     "status": "ready",
     "codes": [

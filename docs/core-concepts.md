@@ -71,6 +71,11 @@ the `Kernel` it builds is what handles requests. In order, it:
    client address.
 5. Constructs the `Kernel` with the adapter's own `isPersistent()`, and
    hands `Kernel::handle()` to the adapter's request loop.
+6. Disposes the application once that loop returns — a worker shutting
+   down, or the end of the one request a boot-per-request SAPI served —
+   so an app-scoped resource opened at boot is closed rather than
+   abandoned. A loop that throws ends the worker with that exception
+   instead; nothing here intercepts it. See {doc}`container`.
 
 The request body takes no part in this. An adapter hands the body on as
 raw PSR-7 bytes, and `RequestBodyMiddleware` bounds and parses it inside

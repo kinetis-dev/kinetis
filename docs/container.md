@@ -75,7 +75,7 @@ logger in development, `Psr\Log\NullLogger` in production (see
 built from that `Config`, standing in for an entry point that registered
 neither of its own (see {doc}`appendix`);
 `Psr\SimpleCache\CacheInterface` → a Redis-backed cache when one's
-configured, else a null one that always misses (see {doc}`persistence`);
+configured, else a null one that always misses (see {doc}`redis`);
 `Kinetis\Events\ListenerInvokerInterface` → a synchronous invoker (see
 {doc}`events`); and `AppScope::class` → the exact instance that's
 booting. That last one means `$app->get(AppScope::class) === $app` is
@@ -91,6 +91,69 @@ $app->boot();
 
 $app->get(AppScope::class) === $app; // true
 ```
+
+(container-app-disposal)=
+### Ending the application's lifetime
+
+`dispose()` is the other end of `boot()`. It runs what `onDispose()`
+registered, releases every retained instance, and refuses every later
+use — so an application-scoped resource opened at boot is closed rather
+than abandoned when the process, or the test, that created the scope is
+finished with it.
+
+```{code-block} php
+$pool = new ConnectionPool($config);
+
+$app->onDispose($pool->close(...));
+```
+
+`onDispose()` takes a `callable(): void` and is the **one registration
+allowed after `boot()`**, not only before it. An app-scoped factory is
+lazy: a pool that opens on first resolution can register its own close
+operation only then, with the binding set long since locked. It is
+refused once the scope has actually been disposed, where nothing would
+ever run the callback.
+
+`dispose()`'s contract:
+
+- every callback runs, in registration order, even if an earlier one
+  threw;
+- bindings, instances and every registration list are released either
+  way, so a failing callback cannot leave the scope holding
+  worker-lifetime state;
+- only then is the *first* failure rethrown. A later failure is not the
+  one `dispose()` surfaces;
+- a second `dispose()` has nothing left to run or release and returns;
+- `bind()`, `instance()`, `get()`, `boot()`, `createRequestScope()` and
+  `onDispose()` all throw
+  `Kinetis\Container\Exception\ContainerException` afterwards, naming
+  disposal rather than the boot lock — two different mistakes, and only
+  one is fixed by registering earlier.
+
+This is the same shape `RequestScope::dispose()` has, one lifetime out.
+The two stay distinct: a request-scoped resource is registered on the
+scope that resolved it and closed at the end of that unit of work, while
+an application-scoped one is registered here and closed when the
+execution context ends. `kinetis/database-bridge` uses both — the
+default link it builds is closed on application disposal, and each
+scope's `TransactionGuard` and `EntityManager` on that scope's (see
+{doc}`persistence`).
+
+Who calls it:
+
+| Entry point | When |
+|---|---|
+| `Kinetis\Runtime\HttpStartup::serve()` | Once the adapter's request loop returns — a worker shutting down, or the end of the one request a boot-per-request SAPI served. A loop that *throws* ends the worker with that exception instead, uncaught, since the failure that ended it is what the runtime has to see. |
+| `HttpStartup::assemble()` and `Kinetis\Testing\TestApplication::boot()` | On a failure anywhere past the scope's construction. A bootstrap that already opened something owns a real resource; the disposal's own failure is swallowed rather than replacing the assembly or boot failure the caller has to see. |
+| `bin/kinetis` | After the command's request scope, the longer-lived scope going second. Each disposal is contained on its own, so a failing request-scope disposal does not skip this one. |
+| `TestApplication::dispose()` | When a test finishes with the application it booted. Idempotent, because `AppScope::dispose()` is. |
+| `Kinetis\Testing\ApplicationTestCase` | From a `#[After]` hook, per test, guarded so a boot failure is reported as itself rather than as an uninitialized property during teardown ({doc}`testing`). |
+
+`bin/kinetis` keeps the command's own outcome authoritative: a disposal
+failure is reported separately and replaces nothing. It becomes the
+process's exit code only when the command completed successfully and
+nothing else was signaling a problem, in which case the binary exits
+`70` — see {doc}`cli`.
 
 ## `RequestScope` — the ephemeral container
 
@@ -249,8 +312,11 @@ $scope->onDispose(function (): void {
 ```
 
 `onDispose()` is the generic mechanism the request lifecycle's cleanup
-hangs off of. `kinetis/database-bridge`'s request-scope initializer uses
-it: the first time a scope resolves `TransactionGuard`, the guard's
+hangs off of — `AppScope` has its own counterpart for what a worker
+owns ([Ending the application's
+lifetime](#ending-the-applications-lifetime)).
+`kinetis/database-bridge`'s request-scope initializer uses it: the first
+time a scope resolves `TransactionGuard`, the guard's
 `rollbackDangling()` (see {doc}`persistence`) is registered on that
 scope's disposal, so a transaction opened through the guard and never
 explicitly closed is still closed before the scope disappears.
@@ -443,7 +509,8 @@ blanket exemption.
 | | `AppScope` | `RequestScope` |
 |---|---|---|
 | Lifetime | One execution context: a FrankenPHP worker thread, a RoadRunner worker process, one PHP-FPM request | One request |
-| Registration | Only before `boot()` | Any time before `dispose()` |
+| Registration | Only before `boot()` — `onDispose()` excepted, which is allowed until disposal | Any time before `dispose()` |
+| Disposed by | The entry point that built it, when its execution context ends | The owner of the unit of work, at its end |
 | Falls back to autowiring? | Yes, for an instantiable class whose constructor resolves | Same, for anything not explicitly on `AppScope` |
 | Autowired instances cached? | Never | For this request only, never promoted |
 | Analogous to | A correctly-scoped singleton | A fresh object graph per request |

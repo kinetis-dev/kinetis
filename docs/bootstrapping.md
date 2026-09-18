@@ -135,7 +135,9 @@ serves, or must it be built fresh — or reset — per request?
   worker's whole lifetime, shared by every request it handles. Correct
   for a database connection, a queue client, a stateless service — never
   for anything holding a specific request's identity, input, or
-  resources.
+  resources. When one of those holds a resource that has to be released
+  at the end, register the release with `$app->onDispose(...)`; see
+  {doc}`container`'s "Ending the application's lifetime".
 - **`RequestScope`**: nothing to register for the ordinary case. A class
   you never explicitly bind autowires fresh per request, and that
   instance is discarded when the request's scope is disposed. Reach for

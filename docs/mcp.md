@@ -16,7 +16,8 @@ it; installing the package registers both. The server implements the
 `2025-06-18` protocol revision, over the JSON-RPC and stdio mechanics in
 `kinetis/mcp-protocol`. {doc}`appendix-mcp` holds the wire contract
 behind this page. To give an agent Kinetis's own documentation instead,
-see {doc}`mcp-docs`, a separate package.
+see {doc}`mcp-docs` — a separate package, served on its own or through
+{doc}`orbitron`.
 
 ## Expose a tool and a resource
 
@@ -273,5 +274,5 @@ each code, and "HTTP status codes" its status.
 - {doc}`routing-validation` — the validation tool arguments share with
   HTTP request bodies.
 - {doc}`caching` — tools and resources in the compiled cache.
-- {doc}`mcp-docs` — the standalone server for Kinetis's own
-  documentation.
+- {doc}`mcp-docs` — Kinetis's own documentation as MCP resources, from
+  that package's server or from {doc}`orbitron`.

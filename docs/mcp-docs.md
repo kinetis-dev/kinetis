@@ -1,14 +1,24 @@
 # MCP Documentation Server
 
-`kinetis/mcp-docs` is an MCP server that serves every page of this
-documentation as a resource, so a coding agent reads Kinetis's current
-documentation instead of answering from training data. It runs beside
-your MCP client, not inside your application: it depends on no Kinetis
-package, including {doc}`kinetis/mcp <mcp>`, exposes no tools, and
-knows nothing about your code. To let an agent call your own
-application, see {doc}`mcp`.
+`kinetis/mcp-docs` owns the catalogue of this documentation and the
+fetch behind it, and serves every page as an MCP resource, so a coding
+agent reads Kinetis's current documentation instead of answering from
+training data. It is framework-agnostic: `kinetis/mcp-protocol` is the
+only Kinetis package it depends on — not the framework, and not
+{doc}`kinetis/mcp <mcp>` — it exposes no tools, and it knows nothing
+about your code. To let an agent call your own application, see
+{doc}`mcp`.
 
-## Set up for Claude Code or Codex
+```{note}
+A project that already registers {doc}`orbitron` has these pages
+already. Orbitron requires this package and publishes its
+`kinetis://docs/*` resources from that one connection, so there is no
+second server to configure. Install and register `kinetis/mcp-docs` on
+its own when you want the documentation without the harness — beside a
+client, for any project or none.
+```
+
+## Set up on its own, for Claude Code or Codex
 
 For Claude Code:
 
@@ -95,6 +105,8 @@ are in {doc}`appendix-mcp-docs`.
 
 - {doc}`agent-workflow` — where an agent should start: task routing and
   the current-main/installed-version boundary.
+- {doc}`orbitron` — the project-local harness that composes this package
+  and serves these pages alongside its own tools.
 - {doc}`mcp` — the MCP server for your own application's tools and
   resources.
 - {doc}`appendix-mcp-docs` — installer, update, protocol and fetch

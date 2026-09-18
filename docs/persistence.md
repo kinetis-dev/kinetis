@@ -65,7 +65,14 @@ final readonly class OrderController
 ```
 
 Every request resolves the same registered client. Under a persistent
-worker that client is the worker's connection pool.
+worker that client is the worker's connection pool, and the bridge
+closes that exact client when the application scope is disposed — the
+worker shutting down, the command finishing, the test ending. A link
+your own `bootstrap.php` binds instead is yours: the bridge holds the
+one it built, so replacing the binding never leaves the bridge closing
+something it does not own, and never closes yours for you. See
+{ref}`the disposal contract <container-app-disposal>`, and
+{ref}`database-reference-registration` for replacing the binding.
 
 - `execute($sql, $params)` binds exactly one argument per `?`. Each
   argument is `null`, a `bool`, an `int`, a finite `float` or a `string`:

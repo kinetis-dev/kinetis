@@ -16,7 +16,8 @@ registry, schema generation, hydration and validation, telemetry,
 middleware, request scopes, the `/mcp` route and the package bootstrap —
 and adapts them to that wire through `Kinetis\Mcp\KinetisMcpApplication`.
 `kinetis/mcp-docs` and `kinetis/orbitron` are the other two consumers of
-the same protocol package; neither depends on `kinetis/mcp`, whose
+the same protocol package, and Orbitron composes `kinetis/mcp-docs` to
+publish its resources too; neither depends on `kinetis/mcp`, whose
 installation would register a bootstrap and a discovery plugin in the
 consumer application.
 

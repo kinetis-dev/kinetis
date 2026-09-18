@@ -80,10 +80,11 @@ composer require kinetis/cache-redis
 
 Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and
 [`kinetis/redis`](https://github.com/kinetis-dev/redis). Full documentation:
-[kinetis.dev/docs/persistence.html](https://kinetis.dev/docs/persistence.html)
-(the cache and its configuration) and
 [kinetis.dev/docs/redis.html](https://kinetis.dev/docs/redis.html)
-(the transport underneath).
+(this runtime cache, its configuration, and the transport underneath).
+It is unrelated to
+[kinetis.dev/docs/caching.html](https://kinetis.dev/docs/caching.html),
+which covers Kinetis's build-time compiled artifact.
 
 ## License
 

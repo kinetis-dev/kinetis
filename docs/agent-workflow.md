@@ -4,30 +4,44 @@ This is the entry point for an AI agent working in a project that uses
 Kinetis. Start here, then follow the routes below into the guide each
 task actually needs.
 
+## Where these pages come from
+
+A project that registers {doc}`orbitron` reaches them as
+`kinetis://docs/*` resources on that one connection, alongside
+Orbitron's own context and tools; a client that registers
+{doc}`mcp-docs` on its own reaches the same resources from that server.
+Either way `kinetis/mcp-docs` owns the catalogue and the fetch, and the
+resource URIs are identical.
+
 ## The version boundary
 
-As {doc}`mcp-docs` explains, every page this server serves is fetched
-from `main` at read time, with no local copy and no cache — so a page
-can describe behavior newer than the release your project has
-installed. A page served here is current documentation, not proof of
-your installed version's behavior.
+Every page is fetched from `main` at read time, with no local copy and
+no cache — so a page can describe behavior newer than the release the
+project has installed. A page served here is current documentation, not
+proof of the installed version's behavior.
 
 Before a version-sensitive claim governs a decision:
 
-1. Read the installed version from the project's own `composer.lock` or
-   `composer show kinetis/<package>` — never assume it matches `main`.
-2. When the exact behavior matters — a signature, a default, a failure
-   code, a config key — open the matching file under the project's own
-   `vendor/kinetis/<package>` and read it directly. Documentation and
-   interfaces alone do not prove installed behavior; the installed
-   source does.
+1. **Establish the installed version.** Call `orbitron_inspect` where
+   Orbitron is registered; otherwise read the project's own
+   `composer.lock` or run `composer show kinetis/<package>`. Never
+   assume it matches `main`.
+2. **Read the matching installed source** when the exact behavior
+   matters — a signature, a default, a failure code, a config key. Open
+   the file under the project's own `vendor/kinetis/<package>` and read
+   it. Documentation and interfaces alone do not prove installed
+   behavior; the installed source does.
 
-`mcp-docs` knows nothing about the project it runs beside: it has no
-tool, no file access, and no way to read `composer.lock` or `vendor/`
-itself. That inspection is the calling agent's own job, done with its
-own file-reading tools. To let an agent call the *project's own*
-application code — its controllers, its data, its queues — the project
-installs `kinetis/mcp` (see {doc}`mcp`); this server never does that.
+Neither documentation server reads application code. `mcp-docs` has no
+tool and no file access at all. Orbitron's `orbitron_inspect` and
+`orbitron_verify` report only Composer's installed metadata and the
+project's `composer.json`; its two scaffold tools additionally read the
+fixed scaffold paths, and `orbitron_scaffold_apply` writes them. None of
+the four reads existing application source, so the inspection above is
+the calling agent's own, done with its own file-reading tools. To let an
+agent call the *project's own* application code — its controllers, its
+data, its queues — the project installs `kinetis/mcp` (see {doc}`mcp`);
+neither documentation server does that.
 
 ## Workflow
 
@@ -54,6 +68,9 @@ installs `kinetis/mcp` (see {doc}`mcp`); this server never does that.
 - {doc}`application-recipes` — routing recipes for common application
   tasks.
 - {doc}`agent-correctness` — the review checklist.
-- {doc}`mcp-docs` — this server's own setup and resource contract.
+- {doc}`orbitron` — the project-local harness: installed versions,
+  layout verification, and these pages on one connection.
+- {doc}`mcp-docs` — the catalogue and fetch behind these resources, and
+  how to register it on its own.
 - {doc}`mcp` — exposing a project's own application as MCP tools and
   resources.

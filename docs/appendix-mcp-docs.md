@@ -6,6 +6,14 @@ the methods and errors the server answers, and how a page fetch is
 bounded. The wire itself belongs to `kinetis/mcp-protocol` and is
 described in {doc}`appendix-mcp`. For setup and use, see {doc}`mcp-docs`.
 
+"The install directory", "Install, verify and register" and "Updates"
+describe `setup.sh`, which is how this package is registered as a server
+of its own. The catalogue, protocol and fetch sections below hold for
+either way it is reached: {doc}`orbitron` composes the same
+`DocsApplication` in its own process, publishing these resources beside
+its own and delegating every read to it, with no installer, no update
+lock and no registration of its own.
+
 ## The install directory
 
 `setup.sh` installs into `KINETIS_MCP_DOCS_DIR`, or `~/.kinetis-mcp-docs`
@@ -156,4 +164,6 @@ release stays listed there and answers `-32603` when read.
 ## See also
 
 - {doc}`mcp-docs` — setup and use.
+- {doc}`orbitron` — the harness that composes this package to serve the
+  same resources from one project-local connection.
 - {doc}`appendix-packages` — `Kinetis\McpDocs` in the package map.

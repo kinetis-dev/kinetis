@@ -268,11 +268,58 @@ a registered service that failed to construct included, is a defect and
 is reported rather than quietly arriving as `null`; {doc}`container`
 states the rule constructor autowiring and `Dispatcher` share.
 
+A class-typed parameter that *is* claimed by another source is decided
+by that source instead: `#[Body]` hydrates the class from the request
+body, and a `#[Query]` or path parameter admits one class only, a backed
+enum — see [Enum path and query
+parameters](#enum-path-and-query-parameters).
+
 ```{note}
 This applies to HTTP controllers. An MCP tool's arguments arrive as one
 flat object, so a class-typed parameter there is a DTO hydrated from
 those arguments — see {doc}`mcp`.
 ```
+
+### Enum path and query parameters
+
+A `#[Query]` or path parameter typed as a backed enum binds the case its
+backing value names. `Dispatcher` resolves it through the same
+`Hydrator::resolveEnumValue()` a [backed enum field](#backed-enum-fields)
+goes through, so an HTTP parameter and a DTO field answer by one set of
+rules:
+
+- The wire text is resolved as the enum's backing type first, under the
+  raw-string rules below. `?priority=urgent` on an `int`-backed enum is
+  therefore the ordinary `not_an_integer` violation — the value named no
+  case of anything — while `?priority=9` is an `enum_case` violation
+  carrying `{"choices": [1, 2, 3]}`.
+- The lookup is `tryFrom()` on that backing value, so matching is exact.
+  A `string`-backed `asc` case is not named by `ASC`.
+- A nullable parameter with no matching key binds `null`; one with a
+  default binds that default case; one with neither is required. A path
+  segment is always present.
+- Constraint attributes run against the resolved case, as they do on a
+  DTO field.
+
+Every other class type on a `#[Query]`/path parameter is refused when
+the route's binding plan is derived, which `Router::register()` does
+eagerly — so the route never registers, is never advertised at
+`/openapi.json`, and never accepts traffic. A unit enum's cases have no
+backing value, and an interface, an abstract class or a DTO has no wire
+spelling a single query value or path segment could carry;
+`Kinetis\Http\Exception\UnresolvableParameterException` names the
+parameter, its source and the class, and points at `#[Body]`, where a
+DTO field may declare a class type.
+
+The parameter's compiled binding plan records the enum as `enumClass`
+and its backing type as `scalarType`, the same pairing a DTO field's
+hydration plan uses. Both are plain strings, so the plan is written into
+`.kinetis-cache/compiled.php` unchanged — see {ref}`the AOT artifact
+<runtime-reference-aot-artifact>`.
+
+The generated document publishes the enum's own domain for that
+parameter: the backing scalar's JSON type and the exact `enum` of its
+case values, widened with `null` where the declaration admits it.
 
 ### Parameters no source claims
 
@@ -306,6 +353,8 @@ content type says. Several consequences follow:
 - **A `#[Query]`/path parameter typed outside the supported set is
   rejected at registration**, not at request time — see [Builtin types
   outside the supported set](#builtin-types-outside-the-supported-set).
+  A class type is refused there too, a backed enum excepted; see [Enum
+  path and query parameters](#enum-path-and-query-parameters).
 - **A `#[Query]`/path parameter declaring a union or intersection type
   is rejected at registration.** One request value has one shape, and
   the `T|Absent` presence union a DTO field may declare needs a member
@@ -905,6 +954,13 @@ The rejection fires wherever the binding is described:
 A controller parameter that reads no request value at all — one filled
 from the request container or from its own default — is unaffected.
 
+Class types meet the same registration-time boundary from the other
+side: a `#[Query]`/path parameter admits a backed enum and nothing else,
+and a `#[Body]` DTO field admits an instantiable class or a backed enum.
+Each refusal has a schema counterpart in
+`Exception\JsonSchemaException`, since a declaration neither can bind
+has no shape to publish either.
+
 ### Required, optional, and absent fields
 
 A constructor parameter with no default is required: omitting its member
@@ -1166,12 +1222,12 @@ since `null` has to satisfy each:
 }
 ```
 
-This is a DTO field's shape and only that. An MCP tool argument typed
-directly as a backed enum still fails registration — a tool's arguments
-are one flat object with no DTO to own the distinction — and a
-controller method parameter typed as a class is looked for in the
-request container like any other, not read from the request. A *unit*
-enum has no backing values at all, so a field declaring one stays
+A `#[Query]` or path parameter typed as a backed enum resolves through
+this same path and publishes this same schema pair — see [Enum path and
+query parameters](#enum-path-and-query-parameters). An MCP tool argument
+typed directly as a backed enum still fails registration: a tool's
+arguments are one flat object with no DTO to own the distinction. A
+*unit* enum has no backing values at all, so a field declaring one stays
 instance-only, exactly like an interface — the `BackedEnum` interface
 itself included.
 
@@ -1694,14 +1750,56 @@ data — an array or a DTO. A returned `ResponseInterface` passes through
 `Dispatcher` untouched, with whatever status, headers and body it
 carries.
 
-`#[Response(status, description)]` is repeatable and purely descriptive:
-`Dispatcher` never reads it, only `OpenApiGenerator` does. Each one adds
-one entry to that operation's `responses` alongside the route's default,
-and nothing checks that the method produces the status it declares. It
-documents the statuses *besides* the route's own. The generator describes
-the route's own status from the method's return type, response schema
-included, so an attribute repeating that status is ignored rather than
-replacing the richer entry with a bare description.
+`#[Response(int $status, string $description, ?string $body = null,
+string $mediaType = 'application/json')]` is repeatable and purely
+descriptive: `Dispatcher` never reads it, only `OpenApiGenerator` does.
+Each one adds one entry to that operation's `responses` alongside the
+route's default, and nothing checks that the method produces the status,
+the shape or the media type it declares. It documents the statuses
+*besides* the route's own. The generator describes the route's own status
+from the method's return type, response schema included, so an attribute
+repeating that status is ignored rather than replacing the richer entry
+with a bare description.
+
+`$body` names the DTO that status's payload is shaped like — an error
+envelope, a problem document — which the method's declared return type
+does not describe. It is published as that class's component schema
+under `$mediaType`, through the same deduplication a request body and
+the default response use, so a DTO named by two statuses, or by a status
+and a request body, is one `components/schemas` entry referenced twice:
+
+```{code-block} php
+#[Get('/users/{id}')]
+#[Response(404, description: 'User not found.', body: ApiError::class)]
+#[Response(422, description: 'Validation failed.', body: ApiError::class, mediaType: 'application/problem+json')]
+#[Response(503, description: 'Temporarily unavailable.')]
+public function show(int $id): ResponseInterface|UserResponse
+```
+
+```{code-block} json
+{
+    "404": {
+        "description": "User not found.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}
+    },
+    "422": {
+        "description": "Validation failed.",
+        "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}
+    },
+    "503": {"description": "Temporarily unavailable."}
+}
+```
+
+Without a `$body` the entry carries a description and nothing else, and
+`$mediaType` then describes nothing and is not read at all. A `$body`
+naming something that is not a class fails document generation with
+`Exception\JsonSchemaException`: publishing a component under a name
+nothing backs would advertise a response shape no route can produce.
+
+Kinetis adds no status of its own here. A route that should advertise the
+`422` a validation failure produces declares its own
+`#[Response(422, ...)]`, with the problem document's DTO as the body
+where it has one.
 
 ## OpenAPI generation
 
@@ -1720,8 +1818,10 @@ onto the matching JSON Schema keyword (`format: email`,
 keyword listed in [Validation constraints](#validation-constraints).
 `#[Query]` parameters and path parameters become `parameters` entries,
 with the identical constraint-to-keyword mapping applied to their own
-`schema`. A controller method's declared return type becomes the default
-response's schema — `UserResponse` (or `?UserResponse`, or a union like
+`schema`; one typed as a [backed
+enum](#enum-path-and-query-parameters) publishes that enum's backing
+`type` and the exact `enum` of its case values. A controller method's
+declared return type becomes the default response's schema — `UserResponse` (or `?UserResponse`, or a union like
 `ResponseInterface|array` where `UserResponse` is one member) produces a
 `content` entry describing it; a bare `array`/`ResponseInterface`-only
 return, with no shape reflection can recover, leaves the response
@@ -1733,6 +1833,11 @@ A rooted `#[Body('article')]` publishes the document it reads — `{"type":
 unrooted `#[Body]` of the same DTO gets, so a DTO declaring an upload
 still advertises `multipart/form-data` alone. The DTO's own component is
 the same either way, and an unrooted `#[Body]` publishes its bare `$ref`.
+
+Each additional status a `#[Response]` attribute declares becomes its own
+entry, with the DTO it names published as a component schema under the
+attribute's media type — see ["`#[Response]` and the route's own
+status"](#response-and-the-routes-own-status) above.
 
 A [`#[ListOf]` field](#typed-collections) becomes a `{"type": "array",
 "items": ...}` schema: `items` describes the element class the same way
