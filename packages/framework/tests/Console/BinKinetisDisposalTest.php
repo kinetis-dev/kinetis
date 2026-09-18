@@ -28,6 +28,21 @@ use PHPUnit\Framework\TestCase;
  */
 final class BinKinetisDisposalTest extends TestCase
 {
+    /**
+     * What a retained AMQP client puts in an application-disposal
+     * failure: its PHP 8.4 destructor disconnects,
+     * re-awaits the connection that already failed, and re-raises it
+     * naming the broker endpoint — credentials and internal host
+     * included. The application scope releases its bindings as part of
+     * disposal, which is what runs that destructor, so this is a
+     * disposal message bin/kinetis really can be handed. None of it may
+     * reach STDERR, where the last-resort path has no configured logger
+     * left to apply anyone's redaction policy.
+     */
+    private const string BROKER_URI = 'amqp://queue-user:s3cr3t-broker-pw@broker.internal.example:5672/prod';
+
+    private const string DISPOSAL_FAILURE_MESSAGE = 'Cannot close the AMQP connection to ' . self::BROKER_URI;
+
     private string $projectDir;
 
     protected function setUp(): void
@@ -483,7 +498,7 @@ final class BinKinetisDisposalTest extends TestCase
         $result = $this->runBinKinetis('fails-app-disposal', $this->projectDir . '/log.jsonl');
 
         self::assertSame(70, $result['exitCode']);
-        self::assertStringContainsString('app dispose callback failed', $result['stderr']);
+        $this->assertStderrNamesTheFailureAndWithholdsItsMessage($result['stderr']);
     }
 
     public function test_a_failing_application_disposal_does_not_replace_a_failing_commands_own_exit_code(): void
@@ -493,7 +508,29 @@ final class BinKinetisDisposalTest extends TestCase
         $result = $this->runBinKinetis('fails-app-disposal', $this->projectDir . '/log.jsonl');
 
         self::assertSame(1, $result['exitCode'], "the command's own failure decides exit(1)");
-        self::assertStringContainsString('app dispose callback failed', $result['stderr']);
+        $this->assertStderrNamesTheFailureAndWithholdsItsMessage($result['stderr']);
+    }
+
+    /**
+     * The last-resort line reports that the application scope failed to
+     * dispose, after which command, and what class was thrown — enough
+     * to find the failure in the logs the command itself already wrote.
+     * It reports the exception's own message nowhere: by this point the
+     * scope has released the configured logger, so there is no
+     * redaction or transport policy left to route arbitrary text
+     * through, and that text can be a broker URI carrying credentials.
+     */
+    private function assertStderrNamesTheFailureAndWithholdsItsMessage(string $stderr): void
+    {
+        self::assertStringContainsString(
+            'Application disposal failed after command "fails-app-disposal" finished: RuntimeException.',
+            $stderr,
+            'the fixed sentence names the command and the throwable class',
+        );
+
+        foreach ([self::DISPOSAL_FAILURE_MESSAGE, self::BROKER_URI, 's3cr3t-broker-pw', 'queue-user', 'broker.internal.example', 'Cannot close the AMQP connection'] as $withheld) {
+            self::assertStringNotContainsString($withheld, $stderr, "STDERR must not carry \"{$withheld}\" out of a disposal failure");
+        }
     }
 
     /**
@@ -506,6 +543,7 @@ final class BinKinetisDisposalTest extends TestCase
         $outcome = $returnsSuccessfully
             ? 'return 0;'
             : "throw new RuntimeException('the command itself failed');";
+        $disposalMessage = $this->phpString(self::DISPOSAL_FAILURE_MESSAGE);
 
         return <<<PHP
             <?php
@@ -526,7 +564,7 @@ final class BinKinetisDisposalTest extends TestCase
                 public function run(): int
                 {
                     \$this->scope->appScope()->onDispose(static function (): void {
-                        throw new RuntimeException('app dispose callback failed');
+                        throw new RuntimeException({$disposalMessage});
                     });
 
                     {$outcome}

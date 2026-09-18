@@ -38,7 +38,7 @@ use Throwable;
  * convention that can quietly drift.
  *
  * dispose() ends that lifetime: it runs what onDispose() registered,
- * releases every retained instance, and refuses every later use. An
+ * refuses every later use, and releases every retained instance. An
  * entry point that owns the scope calls it once the process — or the
  * test — that created it is finished with it, so an application-scoped
  * resource opened at boot is closed rather than abandoned.
@@ -397,12 +397,22 @@ final class AppScope implements ContainerInterface
 
     /**
      * Ends this scope's lifetime: every callback onDispose() registered
-     * runs in registration order, then every retained binding, instance
-     * and registration list is released whether or not one of them
-     * failed. A callback throwing must not leave the scope holding
-     * worker-lifetime state, and must not stop the callbacks after it
-     * from closing what they own, so all of them run and the first
-     * failure is rethrown only once the wipe has completed.
+     * runs in registration order, the scope is then marked disposed, and
+     * only then is every retained binding, instance and registration list
+     * released. All of that happens whether or not a callback failed and
+     * whether or not releasing a retained object ran a destructor that
+     * threw, so nothing worker-lifetime survives a failed teardown; the
+     * first failure is rethrown once the wipe has completed.
+     *
+     * The scope is marked disposed *before* the release rather than after
+     * it: replacing a property holding the last reference to a service
+     * runs that service's destructor, and a destructor reaching back into
+     * this scope must be refused rather than handed a half-wiped
+     * container. Each release that can hold an object or a callable is
+     * contained on its own for the same reason a callback is — PHP
+     * surfaces a destructor's exception from the assignment that
+     * triggered it, which would otherwise abandon every collection after
+     * it.
      *
      * Disposing twice is harmless: the second call has nothing left to
      * run or release and returns. Everything else — binding, resolution,
@@ -426,13 +436,46 @@ final class AppScope implements ContainerInterface
             }
         }
 
-        $this->bindings = [];
+        // The loop variable still holds the last callback. Released here,
+        // its destruction belongs to the contained property clear below;
+        // left in place it happens as dispose() unwinds, outside every
+        // guard, where what it captured replaces the reported failure.
+        unset($callback);
+
+        $this->disposed = true;
+
+        // A destructor is the one thing PHPStan cannot see here:
+        // replacing a collection that holds objects or callables destroys
+        // them, and PHP surfaces a __destruct() exception from the
+        // assignment itself. Each such release is contained so one of them
+        // cannot abandon the collections after it. `resolving`,
+        // `middleware` and `openApiMiddleware` admit only `true` and
+        // class-name strings, which destroy nothing.
+
+        try {
+            $this->bindings = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
+
         $this->resolving = [];
         $this->middleware = [];
         $this->openApiMiddleware = [];
-        $this->requestScopeInitializers = [];
-        $this->disposeCallbacks = [];
-        $this->disposed = true;
+
+        try {
+            $this->requestScopeInitializers = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
+
+        try {
+            $this->disposeCallbacks = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
 
         if ($firstError !== null) {
             throw $firstError;

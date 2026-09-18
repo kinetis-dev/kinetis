@@ -224,8 +224,19 @@ try {
     // it would itself be refused. STDERR is what is left, and it is
     // where this script already reports what it cannot route anywhere
     // else.
+    //
+    // Fixed text plus the throwable's class, never its message: the
+    // message is arbitrary text from whatever the application scope
+    // still held, and a destructor run by the scope's own state release
+    // is a real source of it — the installed AMQP client's, for one,
+    // reports the broker endpoint it failed to reach, credentials
+    // included. Every earlier path reports a disposal failure through a
+    // live configured logger that owns its own redaction and transport;
+    // this one has neither, so it names what failed and leaves the
+    // detail to the logs the command itself already wrote.
     fwrite(STDERR, "Application disposal failed after command \"{$commandName}\" finished: "
-        . $appDisposalFailure->getMessage() . "\n");
+        . $appDisposalFailure::class . ". Its message is withheld — the application logger is "
+        . "released by disposal, so this last-resort line has no redaction policy to route it through.\n");
 
     if ($exitCode === 0) {
         $exitCode = 70;

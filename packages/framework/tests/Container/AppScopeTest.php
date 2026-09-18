@@ -20,6 +20,7 @@ use Kinetis\Tests\Container\Fixtures\Counter;
 use Kinetis\Tests\Container\Fixtures\OptionalInterface;
 use Kinetis\Tests\Container\Fixtures\ServiceA;
 use Kinetis\Tests\Container\Fixtures\ServiceB;
+use Kinetis\Tests\Container\Fixtures\ThrowingDestructor;
 use Kinetis\Tests\Container\Fixtures\Unresolvable;
 use Kinetis\Tests\Container\Fixtures\WithDefault;
 use Kinetis\Tests\Container\Fixtures\WithOptionalInterfaceDependency;
@@ -38,6 +39,7 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Psr\SimpleCache\CacheInterface;
 use RuntimeException;
+use WeakReference;
 
 final class AppScopeTest extends TestCase
 {
@@ -598,6 +600,128 @@ final class AppScopeTest extends TestCase
 
         self::assertSame(['before', 'after'], $ran);
         self::assertTrue($app->isDisposed());
+    }
+
+    /**
+     * The failure a dispose callback cannot report: a retained service
+     * whose destructor throws, run by the state release itself rather
+     * than by any callback. Without containment PHP would surface that
+     * exception from the bindings assignment, leaving every collection
+     * after it retained and the scope never marked disposed — a worker
+     * still holding what it just tried to close, and still accepting
+     * resolutions.
+     */
+    public function test_a_throwing_destructor_cannot_stop_the_state_wipe_or_leave_the_scope_usable(): void
+    {
+        $app = new AppScope();
+        $app->instance(ThrowingDestructor::class, new ThrowingDestructor('destructor failed'));
+        $app->middleware(GlobalMiddleware::class);
+        $app->openApiMiddleware(GlobalMiddleware::class);
+        $app->boot();
+
+        try {
+            $app->dispose();
+            self::fail('Expected the destructor failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('destructor failed', $e->getMessage());
+        }
+
+        self::assertTrue($app->isDisposed(), 'the scope is marked disposed before its state is released, so a destructor cannot leave it live');
+        self::assertFalse($app->has(ThrowingDestructor::class));
+        self::assertSame([], $app->middlewares(), 'a collection released after the failing one is still cleared');
+        self::assertSame([], $app->openApiMiddlewares());
+
+        $this->expectException(ContainerException::class);
+        $this->expectExceptionMessage('has been disposed');
+        $app->get(Counter::class);
+    }
+
+    /**
+     * dispose() surfaces the first failure, and every callback runs
+     * before any state is released — so a destructor failing during the
+     * wipe never replaces what a callback already reported.
+     */
+    public function test_a_dispose_callback_failure_is_preserved_over_a_later_destructor_failure(): void
+    {
+        $app = new AppScope();
+        $app->instance(ThrowingDestructor::class, new ThrowingDestructor('destructor failed'));
+        $app->boot();
+        $app->onDispose(static fn () => throw new RuntimeException('callback failed'));
+
+        try {
+            $app->dispose();
+            self::fail('Expected the callback failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('callback failed', $e->getMessage());
+        }
+
+        self::assertTrue($app->isDisposed());
+        self::assertFalse($app->has(ThrowingDestructor::class));
+    }
+
+    /**
+     * The destructor a dispose callback brings with it. A callback holds
+     * whatever it captured, so its own failure and the destruction of
+     * that capture are one release apart — and the release has to be the
+     * contained property clear, not the loop variable letting go as
+     * dispose() unwinds. Left to the unwind, the captured service's
+     * destructor exception replaces the callback's, and the caller is
+     * told about a teardown it did not write instead of the hook that
+     * actually failed.
+     */
+    public function test_a_failing_dispose_callback_is_not_replaced_by_its_own_captured_destructor(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $app->onDispose((static function (): callable {
+            $held = new ThrowingDestructor('captured destructor');
+
+            return static function () use ($held): void {
+                throw new RuntimeException('callback failed');
+            };
+        })());
+
+        try {
+            $app->dispose();
+            self::fail('Expected the callback failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('callback failed', $e->getMessage());
+        }
+
+        self::assertTrue($app->isDisposed());
+    }
+
+    /**
+     * A request-scope initializer is a callable this scope holds for its
+     * whole lifetime, so what one captured is destroyed by the release of
+     * that list — the same containment the binding table needs, one list
+     * over. The dispose-callback list released after the failing one
+     * still lets go of what it captured.
+     */
+    public function test_a_request_scope_initializer_destructor_cannot_abandon_the_list_after_it(): void
+    {
+        $app = new AppScope();
+        $app->onRequestScopeCreated((static function (): callable {
+            $held = new ThrowingDestructor('initializer destructor');
+
+            return static function (RequestScope $scope) use ($held): void {};
+        })());
+        $app->boot();
+
+        $captured = new Counter();
+        $stillHeld = WeakReference::create($captured);
+        $app->onDispose(static function () use ($captured): void {});
+        unset($captured);
+
+        try {
+            $app->dispose();
+            self::fail('Expected the initializer destructor failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('initializer destructor', $e->getMessage());
+        }
+
+        self::assertTrue($app->isDisposed());
+        self::assertNull($stillHeld->get(), 'the dispose callbacks released after the failing list let go of what they captured');
     }
 
     /**

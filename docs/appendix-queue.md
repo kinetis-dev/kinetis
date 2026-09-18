@@ -337,6 +337,15 @@ Without `ext-pcntl`, `QueueWorker::supportsGracefulShutdown()` is false,
 signal. Its supervisor's kill ends whatever job is running, and the
 backend's recovery redelivers it.
 
+`SIGTERM` and `SIGINT` are the only two signals registered. A supervisor
+that sends another — a container whose image declares a different
+`STOPSIGNAL`, such as the `SIGQUIT` the official PHP FPM images carry —
+ends the process with the same outcome as a missing `ext-pcntl`, and
+without the startup warning. Graceful shutdown needs both halves:
+`ext-pcntl` loaded, and one of those two signals actually delivered.
+{doc}`queue`'s "Deploys and restarts" is where a deployment settles
+that.
+
 ### Observers never decide or rewrite the outcome
 
 Everything that describes a job's outcome runs best-effort, before or

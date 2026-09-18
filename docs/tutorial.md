@@ -169,8 +169,14 @@ Three files get `docker compose` running PHP-FPM behind nginx:
 
 FROM php:8.4-fpm-alpine
 
-# unzip is what Composer extracts downloaded packages with.
-RUN apk add --no-cache unzip
+# unzip is what Composer extracts downloaded packages with. pcntl is
+# what lets the queue-worker service below stop gracefully; the official
+# images do not load it, and building it needs the toolchain for the
+# length of this step only.
+RUN apk add --no-cache unzip \
+    && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
+    && docker-php-ext-install pcntl \
+    && apk del .build-deps
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
@@ -873,9 +879,19 @@ Add Redis and a worker process to run the job:
         condition: service_completed_successfully
     entrypoint: []
     command: ["php", "vendor/bin/kinetis", "queue:work"]
+    stop_signal: SIGTERM
     healthcheck:
       disable: true
 ```
+
+Graceful shutdown — the worker finishing the job in flight instead of
+being cut off mid-job — needs both halves: `ext-pcntl` loaded, and
+`SIGTERM` or `SIGINT` delivered. The image above installs the
+extension. `stop_signal` is the other half, because the
+`php:8.4-fpm-alpine` base declares `STOPSIGNAL SIGQUIT`, which this
+worker does not handle: without the line, `docker compose stop` kills it
+mid-job and leaves the ping for the backend to redeliver. See
+{doc}`queue`'s "Deploys and restarts" for the production form of both.
 
 ```{code-block} bash
 docker compose up --build

@@ -101,13 +101,23 @@ final class RequestScope implements ContainerInterface
     }
 
     /**
-     * Runs every registered dispose callback, then discards all
-     * request-scoped bindings and instances regardless of whether any
-     * callback failed — a hook throwing must never leave this scope
-     * un-disposed, or its bindings would leak into whatever reuses this
-     * object next. Every callback still gets to run even if an earlier
-     * one throws; the first failure (if any) is rethrown only after all
-     * of them, and the wipe, have completed.
+     * Runs every registered dispose callback, marks this scope disposed,
+     * then discards all request-scoped bindings and instances — all of
+     * it regardless of whether a callback failed or a released
+     * instance's own destructor threw. A hook or a destructor throwing
+     * must never leave this scope un-disposed, or its bindings would
+     * leak into whatever reuses this object next. Every callback still
+     * gets to run even if an earlier one throws; the first failure (if
+     * any) is rethrown only after all of them, and the wipe, have
+     * completed.
+     *
+     * The disposed flag is set before the release rather than after it,
+     * and each release that can hold an object or a callable is contained
+     * on its own, for the reasons {@see AppScope::dispose()} states:
+     * releasing the last reference to a service runs its destructor, that
+     * destructor must not be able to resolve anything from a half-wiped
+     * scope, and PHP surfaces its exception from the assignment that
+     * triggered it.
      *
      * Must be called once the request finishes; the container must not be
      * reused or held onto past that point.
@@ -124,10 +134,36 @@ final class RequestScope implements ContainerInterface
             }
         }
 
-        $this->bindings = [];
-        $this->resolving = [];
-        $this->disposeCallbacks = [];
+        // The loop variable still holds the last callback. Released here,
+        // its destruction belongs to the contained property clear below;
+        // left in place it happens as dispose() unwinds, outside every
+        // guard, where what it captured replaces the reported failure.
+        unset($callback);
+
         $this->disposed = true;
+
+        // A destructor is the one thing PHPStan cannot see here:
+        // replacing a collection that holds objects or callables destroys
+        // them, and PHP surfaces a __destruct() exception from the
+        // assignment itself. Each such release is contained so one of them
+        // cannot abandon the collection after it. `resolving` admits only
+        // `true`, which destroys nothing.
+
+        try {
+            $this->bindings = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
+
+        $this->resolving = [];
+
+        try {
+            $this->disposeCallbacks = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
 
         if ($firstError !== null) {
             throw $firstError;

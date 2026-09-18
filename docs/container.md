@@ -118,9 +118,11 @@ ever run the callback.
 
 - every callback runs, in registration order, even if an earlier one
   threw;
-- bindings, instances and every registration list are released either
-  way, so a failing callback cannot leave the scope holding
-  worker-lifetime state;
+- the scope is marked disposed, and then bindings, instances and every
+  registration list are released — all of it either way, so neither a
+  failing callback nor a released service whose own destructor throws
+  can leave the scope holding worker-lifetime state or still answering
+  resolutions;
 - only then is the *first* failure rethrown. A later failure is not the
   one `dispose()` surfaces;
 - a second `dispose()` has nothing left to run or release and returns;

@@ -12,6 +12,7 @@ use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Container\RequestScope;
 use Kinetis\Tests\Container\Fixtures\CircularA;
 use Kinetis\Tests\Container\Fixtures\Counter;
+use Kinetis\Tests\Container\Fixtures\ThrowingDestructor;
 use Kinetis\Tests\Container\Fixtures\WithOptionalInterfaceDependency;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -196,6 +197,75 @@ final class RequestScopeTest extends TestCase
 
         self::assertTrue($ranSecond, 'A later dispose callback must still run even if an earlier one throws.');
         self::assertTrue($request->isDisposed());
+    }
+
+    /**
+     * The request-scope half of the same containment
+     * {@see \Kinetis\Tests\Container\AppScopeTest} proves for the
+     * application scope: a retained instance whose destructor throws is
+     * destroyed by the state release itself, and PHP surfaces its
+     * exception from that assignment. Without containment the scope
+     * would keep its bindings and its callback list, and the next unit
+     * of work reusing this object would inherit both.
+     */
+    public function test_a_throwing_destructor_cannot_stop_the_state_wipe_or_leave_the_scope_usable(): void
+    {
+        $request = $this->bootedApp()->createRequestScope();
+        $request->instance(ThrowingDestructor::class, new ThrowingDestructor('destructor failed'));
+
+        $callbackRuns = 0;
+        $request->onDispose(static function () use (&$callbackRuns): void {
+            ++$callbackRuns;
+        });
+
+        try {
+            $request->dispose();
+            self::fail('Expected the destructor failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('destructor failed', $e->getMessage());
+        }
+
+        self::assertTrue($request->isDisposed(), 'the scope is marked disposed before its state is released, so a destructor cannot leave it live');
+        self::assertFalse($request->isRegistered(ThrowingDestructor::class));
+
+        $request->dispose();
+        self::assertSame(1, $callbackRuns, 'the callback list was released too, so a second disposal has nothing left to run');
+
+        $this->expectException(ContainerException::class);
+        $request->get(Counter::class);
+    }
+
+    /**
+     * The request-scope half of what
+     * {@see \Kinetis\Tests\Container\AppScopeTest} proves for the
+     * application scope: the failure a dispose callback reports must not
+     * be replaced by the destructor of what that same callback captured.
+     * The contained property clear has to own that callable's
+     * destruction; the loop variable letting go as dispose() unwinds
+     * happens outside every guard.
+     */
+    public function test_a_failing_dispose_callback_is_not_replaced_by_its_own_captured_destructor(): void
+    {
+        $request = $this->bootedApp()->createRequestScope();
+        $request->onDispose((static function (): callable {
+            $held = new ThrowingDestructor('captured destructor');
+
+            return static function () use ($held): void {
+                throw new RuntimeException('callback failed');
+            };
+        })());
+
+        try {
+            $request->dispose();
+            self::fail('Expected the callback failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('callback failed', $e->getMessage());
+        }
+
+        self::assertTrue($request->isDisposed());
+
+        $this->expectException(ContainerException::class);
+        $request->get(Counter::class);
     }
 
     public function test_cannot_register_a_dispose_callback_after_disposal(): void

@@ -61,6 +61,31 @@ Without an acknowledgement both throw
 `push()`, treat the job as possibly queued (see {doc}`queue`'s "When
 `push()` throws").
 
+Waiting is not the same as bounded. `QueueInterface::push()` takes no
+deadline and no cancellation, and the confirmation this backend awaits
+offers neither, so once the message is out the wait lasts as long as the
+broker takes to answer or the connection takes to fail. The two bounds
+the AMQP URI does carry are connection properties:
+
+```{code-block} text
+QUEUE_RABBITMQ_URL=amqp://guest:guest@rabbit:5672/?connection_timeout=10&heartbeat=60
+```
+
+`connection_timeout` (seconds, default `10`) bounds establishing the
+connection. `heartbeat` (seconds, default `60`) is the interval at which
+the peers exchange heartbeats, which is how a connection that has
+stopped answering gets noticed at all. Neither is a ceiling on a
+confirmation, and this backend offers no in-process one: no argument on
+`push()` or on the confirmation carries a deadline or a cancellation, so
+nothing in the application can end that wait once it has begun.
+
+What can end it is something outside the process killing the process — a
+container stop timeout, a SAPI request limit. That bounds the process,
+not the publish: the message may already be at the broker, and the
+publish outcome is then the unknown one {doc}`queue`'s "When `push()`
+throws" describes. Treat the job as possibly queued rather than as not
+sent.
+
 ## A released job can be delivered twice
 
 `release()` publishes the replacement, waits for the broker to
@@ -76,6 +101,34 @@ connection drops, with the attempt count unchanged, so `maxAttempts`
 does not count those runs. Handlers on this backend must tolerate
 running more than once. [RabbitMQ mechanisms](appendix-queue.md#rabbitmq)
 has the full settlement sequence.
+
+## Attempts the broker does not count
+
+`QueuedJob::$attempts` travels in the message the application published,
+so a redelivery of that same message arrives carrying the same number. A
+worker killed mid-job, or a connection that dropped before the job
+settled, costs the job a real processing attempt that `maxAttempts`
+never sees. What `maxAttempts` bounds is how many times the application
+itself released a job — a backstop against a retry loop, not a count of
+failures.
+
+A domain rule that has to act on processing failures records them
+itself, durably, keyed by the logical work rather than by the delivery —
+the same identifier the handler already needs to be idempotent. Counting
+them exactly is not available to a process that can be killed mid-job,
+so the choice is which error to take:
+
+- **Record a claim before the work.** Commit a row for this work id in
+  its own transaction, before the effect's transaction runs, and read
+  that count. It survives a hard process death and a broker redelivery,
+  which is what a durable cap needs, and it overcounts: a delivery that
+  dies before doing anything useful has still spent an attempt.
+- **Record a failure after the work.** Write the row from the handler's
+  own `catch`. It never overcounts, and it cannot see a worker that was
+  killed — a job that dies that way every time is never capped by it.
+
+A counter written inside the effect's own transaction is neither: it
+rolls back with the effect it was meant to count.
 
 ## Clearing a queue
 

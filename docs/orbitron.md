@@ -355,6 +355,8 @@ scaffold says so — see {doc}`routing-validation`.
    recipe in {doc}`application-recipes`.
 6. Before calling the change done, work through
    {doc}`agent-correctness` and run the project's own test suite.
+7. Run one suite at a time against a shared database, broker or object
+   store — {ref}`testing-serialized-shared-state`.
 
 An MCP client runs the same steps as tool and resource reads; see
 [Over MCP](#over-mcp).

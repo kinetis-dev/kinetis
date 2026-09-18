@@ -112,6 +112,11 @@ specific choice in the project.
   yields, and a real timed probe against the real backend for whether
   two operations actually ran side by side. {doc}`concurrency`,
   {doc}`testing`.
+- **Run one suite at a time against one backend.** Overlapping runs
+  against a shared database, broker or object store interleave their
+  writes and produce failures that name the code under test but belong
+  to the schedule. Serialize the runs, or give each one state nothing
+  else reaches — {ref}`testing-serialized-shared-state`.
 - **Tell a mistyped command from a wrong document.** A command that
   fails is first a claim about what you typed. Re-read the invocation
   against the page before concluding the page is wrong, and change
