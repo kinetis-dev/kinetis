@@ -357,6 +357,54 @@ final class ValidateManifestTest extends TestCase
         self::assertStringContainsString('never generates', $problems[0]);
     }
 
+    public function test_the_skeleton_gitattributes_is_the_accepted_policy(): void
+    {
+        self::assertSame([], checkSkeletonArchive(__DIR__ . '/../../packages/skeleton/.gitattributes'));
+    }
+
+    public function test_an_export_ignored_test_directory_is_rejected(): void
+    {
+        self::assertCount(1, checkSkeletonArchive(self::gitattributes(
+            '/.gitattributes export-ignore',
+            '/composer.lock export-ignore',
+            '/docker-compose.monorepo.yml export-ignore',
+            '/tests export-ignore',
+        )));
+    }
+
+    public function test_an_export_ignored_phpstan_configuration_is_rejected(): void
+    {
+        self::assertCount(1, checkSkeletonArchive(self::gitattributes(
+            '/.gitattributes export-ignore',
+            '/composer.lock export-ignore',
+            '/docker-compose.monorepo.yml export-ignore',
+            '/phpstan.neon export-ignore',
+        )));
+    }
+
+    public function test_a_gitattributes_that_ships_itself_is_rejected(): void
+    {
+        self::assertSame(
+            ['packages/skeleton/.gitattributes must read exactly, and only: /.gitattributes export-ignore, '
+                . '/composer.lock export-ignore, /docker-compose.monorepo.yml export-ignore — a generated '
+                . 'application needs everything else, tests, phpunit.xml and phpstan.neon included.'],
+            checkSkeletonArchive(self::gitattributes(
+                '/composer.lock export-ignore',
+                '/docker-compose.monorepo.yml export-ignore',
+            )),
+        );
+    }
+
+    public function test_a_wildcard_that_empties_the_archive_is_rejected(): void
+    {
+        self::assertCount(1, checkSkeletonArchive(self::gitattributes(
+            '/.gitattributes export-ignore',
+            '/composer.lock export-ignore',
+            '/docker-compose.monorepo.yml export-ignore',
+            '* export-ignore',
+        )));
+    }
+
     public function test_an_explicit_base_wins_over_the_environment(): void
     {
         $repository = self::scratchRepository();
@@ -501,6 +549,15 @@ final class ValidateManifestTest extends TestCase
     private static function versioned(string $version): array
     {
         return ['packages' => ['demo' => ['name' => 'kinetis/demo', 'version' => $version]]];
+    }
+
+    /** Writes one scratch .gitattributes and returns its path. */
+    private static function gitattributes(string ...$lines): string
+    {
+        $path = sys_get_temp_dir() . '/kinetis-archive-' . bin2hex(random_bytes(6));
+        file_put_contents($path, implode("\n", $lines) . "\n");
+
+        return $path;
     }
 
     private static function scratchRepository(): string

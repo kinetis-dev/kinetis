@@ -7,7 +7,7 @@
 # develops against (the released package has none), and a path
 # repository resolves relative to the composer.json's own directory. The
 # project is /app in every mode, so `../orbitron` is /orbitron — and
-# mounting the three declared siblings at those paths is the entire
+# mounting the four declared siblings at those paths is the entire
 # difference between the two modes. Every container path stays exactly what the
 # released package uses, so the Dockerfile, nginx.conf and the base
 # compose file need no monorepo variant of their own.
@@ -15,5 +15,6 @@ services:
   app:
     volumes:
       - ../orbitron:/orbitron
+      - ../mcp-docs:/mcp-docs
       - ../mcp-protocol:/mcp-protocol
       - ../framework:/framework

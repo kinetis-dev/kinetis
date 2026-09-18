@@ -31,7 +31,8 @@ dashboard and no prebuilt scaffold to grow out of: instead
 [`kinetis/orbitron`](https://github.com/kinetis-dev/orbitron) is
 installed as a development dependency, wired to your own MCP-capable
 coding agent, so the agent builds against the Kinetis packages and
-versions this project actually has.
+versions this project actually has — and reads the current Kinetis
+documentation over the same connection.
 
 ## Running it
 
@@ -56,13 +57,42 @@ at `/app`, and every path the containers read is inside it.
 ## Building it with an AI coding agent
 
 Start the stack, open your agent in this directory, and describe what
-you want built. The agent's first application task in a session begins
-by initializing Orbitron, so it works from this project's real installed
-versions and verified layout rather than from recalled framework
-trivia.
+you want built. `AGENTS.md` is the contract it works to: its first
+application task in a session begins by initializing Orbitron, so it
+works from this project's real installed versions and verified layout
+rather than from recalled framework trivia.
 
-What is checked in for that is already correct for whatever path you
-cloned into:
+That initialization follows the order starting the server needs:
+
+1. **Bring the stack up** — `docker compose up -d`, with the `app`
+   service running. The MCP server lives in that container.
+2. **Reload, restart or reconnect the client** when this configuration
+   arrived or changed after the session started, when an earlier launch
+   failed while the stack was down, or when the containers were
+   recreated. A client launches one server process per session, and
+   `docker compose exec` dies with the container it entered — nothing
+   the agent can do from inside that session brings it back.
+3. **Approve the project-local `orbitron` server** under your client's
+   own policy; see [Trust and approval](#trust-and-approval).
+4. The agent confirms the `orbitron` tools and resources, reads
+   `kinetis://orbitron/context` and `kinetis://docs/agent-workflow`,
+   calls `orbitron_inspect` and calls `orbitron_verify`.
+5. It reports readiness in one line and gets on with your request:
+
+   ```
+   Orbitron ready — kinetis/framework <installed-version>, layout pass (App\, App\Tests\).
+   ```
+
+An agent with a shell does step 1 itself. Steps 2 and 3 are yours: it
+cannot reconnect the server process it is running inside, and it cannot
+grant its own approval. When any step fails it is required to stop, name
+the step, quote the exact error, and bring you to
+[Diagnostics](#diagnostics) rather than guess. A refusal to start is the
+contract working.
+
+### What is checked in for that
+
+Already correct for whatever path you cloned into:
 
 - `AGENTS.md` — the agent contract, and the only place it is written.
   `CLAUDE.md` and `GEMINI.md` are one-line imports of it.
@@ -75,6 +105,48 @@ vendor/bin/kinetis-orbitron-mcp` against this project's own directory.
 The server lives in the container next to the code it reports on, so
 your host still needs no PHP and no Composer, and the agent needs no
 absolute path.
+
+That one server is the whole registration. The Kinetis documentation
+pages arrive on the same connection as `kinetis://docs/*` resources,
+fetched by [`kinetis/mcp-docs`](https://kinetis.dev/docs/mcp-docs.html)
+from inside it — there is no second server to configure, and
+`kinetis://docs/agent-workflow` is where the agent starts. Those pages
+are published from Kinetis `main`, so `orbitron_inspect` and the
+installed source under `vendor/kinetis/` stay the authority for anything
+version-sensitive.
+
+### What you get from the archive
+
+`composer create-project` hands you everything in this package except
+three files, which are how it is published rather than part of an
+application: `.gitattributes`, `composer.lock` and
+`docker-compose.monorepo.yml`. What that leaves is the application and
+the means to check it — `tests/` with the welcome controller's test,
+`phpunit.xml`, and `phpstan.neon` at level 8 with two Kinetis rules
+registered.
+
+### Verifying a change
+
+Both tools run inside the container, over the project at `/app`:
+
+```sh
+docker compose exec app vendor/bin/phpunit
+docker compose exec app vendor/bin/phpstan analyse
+```
+
+`phpstan.neon` runs at level 8 and adds two rules a general-purpose
+analyser has no reason to carry.
+`NoStaticPropertiesRule` flags a `static` property, which survives every
+request the worker goes on to handle; `NoBlockingIoRule` flags a call
+that waits synchronously instead of yielding, holding the event loop and
+everything else on it until it returns.
+
+They are guardrails over two specific mistakes, not a complete proof of
+persistent-worker correctness. `AGENTS.md` asks for a closing pass by
+hand as well — request-scoped state stays request-scoped, waits yield,
+credentials stay where they belong, and the documentation still matches
+the behavior — and, at a material milestone, a re-read of this README's
+framing for claims the work made false.
 
 ### Trust and approval
 
@@ -91,22 +163,6 @@ server `trust` leaves that server's default `false`.
 Reload or restart the client when this configuration was added or
 changed after the current session started, or when its tool catalog has
 not picked the server up yet.
-
-### The readiness handshake
-
-`AGENTS.md` requires the agent to confirm the `orbitron` tools are
-there, read `kinetis://orbitron/context`, call `orbitron_inspect` and
-call `orbitron_verify` before it touches application code. When all of
-that succeeds it says so in one line and gets on with your request:
-
-```
-Orbitron ready — kinetis/framework 1.11.3, layout pass (App\, App\Tests\).
-```
-
-When any part of it fails, the agent is required to stop, say exactly
-what failed, and bring you here instead of guessing. A refusal to start
-is the contract working. Run through [Diagnostics](#diagnostics), then
-ask again.
 
 ### Client differences
 
@@ -152,6 +208,12 @@ client:
 docker compose up -d
 docker compose ps
 ```
+
+**The containers were recreated.** `docker compose up --build`,
+`down`, or any change that recreates `app` kills the `docker compose
+exec` process your client is holding, and the client does not relaunch
+it. The stack is healthy and the server is gone: restart or reconnect
+the client.
 
 **The server shows as disconnected.** Run the launcher yourself — it is
 an ordinary command, and a working server answers a handshake on stdin:
@@ -205,8 +267,8 @@ This package is developed in the
 and published from it; `kinetis-dev/skeleton` is the split mirror the
 commands above install from. Inside the monorepo, `composer.json` still
 carries the `path` repositories that resolve `kinetis/framework`,
-`kinetis/orbitron` and `kinetis/mcp-protocol` from sibling checkouts, so
-the stack needs the override that mounts them:
+`kinetis/orbitron`, `kinetis/mcp-docs` and `kinetis/mcp-protocol` from
+sibling checkouts, so the stack needs the override that mounts them:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.monorepo.yml up --build

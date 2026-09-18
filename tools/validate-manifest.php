@@ -40,6 +40,10 @@ declare(strict_types=1);
  *      package in one but not the other produces a coverage report
  *      nobody reads, or names a report nobody writes, and reads as 0%
  *      either way.
+ *   8. Skeleton archive policy. kinetis/skeleton is installed as a
+ *      Composer dist archive, so its .gitattributes decides what a
+ *      generated application actually contains, and it is held to one
+ *      exact content.
  *
  * A separate check — does each package's committed composer.lock still
  * match its composer.json — is just `composer validate --strict`, run
@@ -537,6 +541,48 @@ function checkWorkflowCoverage(array $manifest, array $ciPackages, array $infect
     return $problems;
 }
 
+/**
+ * The whole of packages/skeleton/.gitattributes: the three publication
+ * artifacts a generated application has no use for, in this order.
+ */
+const SKELETON_EXPORT_IGNORES = [
+    '/.gitattributes export-ignore',
+    '/composer.lock export-ignore',
+    '/docker-compose.monorepo.yml export-ignore',
+];
+
+/**
+ * Check 8. Every other package is a library whose archive is right to
+ * leave its tests and quality configuration behind. The skeleton is the
+ * opposite: its archive *is* the generated application, so an
+ * export-ignored phpstan.neon, phpunit.xml or tests hands the user a
+ * project with no test suite and no static analysis — and with it no
+ * NoStaticPropertiesRule and no NoBlockingIoRule, the two rules that
+ * guard persistent-worker correctness in application code. The monorepo
+ * never reads the archive, so nothing else here would notice.
+ *
+ * The policy is the exact file rather than a set of entries to look for,
+ * because every way of losing a path is a different pattern: a glob, a
+ * directory, a descendant, a bare `*` that ignores the package whole.
+ * Comparing the lines answers all of them at once, and it is the file a
+ * contributor is meant to be looking at anyway.
+ *
+ * @return list<string>
+ */
+function checkSkeletonArchive(string $gitattributesPath): array
+{
+    $contents = @file_get_contents($gitattributesPath);
+    $lines = $contents === false ? [] : explode("\n", rtrim($contents, "\n"));
+
+    if ($lines === SKELETON_EXPORT_IGNORES) {
+        return [];
+    }
+
+    return ['packages/skeleton/.gitattributes must read exactly, and only: '
+        . implode(', ', SKELETON_EXPORT_IGNORES)
+        . ' — a generated application needs everything else, tests, phpunit.xml and phpstan.neon included.'];
+}
+
 /** A git read that could not answer the question it was asked. */
 final class GitUnavailable extends RuntimeException
 {
@@ -871,6 +917,7 @@ function validatorMain(array $argv = []): int
     ];
 
     reportCheck('workflow-coverage', $coverageProblems, $ok);
+    reportCheck('skeleton-archive', checkSkeletonArchive(packageDirectory('skeleton') . '/.gitattributes'), $ok);
 
     return $ok ? 0 : 1;
 }
