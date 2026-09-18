@@ -71,7 +71,9 @@ following automatically, through the `extra.kinetis` declaration in its
   is built and bound under its dialect contract
   (`Kinetis\Persistence\Contract\MysqlLink` or `Contract\PostgresLink`)
   before your own `bootstrap.php` runs — your registration wins on the
-  same binding. No connection is built when `DB_CONNECTION` is unset.
+  same binding. The connection built here is closed when the application
+  scope is disposed; a link your own `bootstrap.php` binds stays yours to
+  close. No connection is built when `DB_CONNECTION` is unset.
   Named connections stay explicit wiring:
   `Kinetis\DatabaseBridge\ConnectionFactory::fromConfig($config, 'reporting')`.
 - **Lazy transaction cleanup**: every request scope — an HTTP request, a
