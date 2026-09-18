@@ -302,11 +302,26 @@ defines sweep order and timeouts on each backend.
 ## Deploys and restarts
 
 `SIGTERM` and `SIGINT` stop the worker after the job in flight: it
-settles that job, exits `0`, and leaves nothing reserved. Docker,
-systemd and Kubernetes send `SIGTERM` before `SIGKILL`, so a rolling
-deploy, `docker compose restart` or `systemctl restart` needs no extra
-command. Decide three things:
+settles that job, exits `0`, and leaves nothing reserved. Those two are
+the only signals it handles — any other one ends the process where it
+stands, mid-job included. Decide four things:
 
+- **The signal the supervisor actually sends.** Docker, systemd and
+  Kubernetes all send `SIGTERM` by default, but a Docker image can
+  declare its own `STOPSIGNAL` and the official PHP FPM images declare
+  `SIGQUIT`. A worker image built `FROM php:8.4-fpm` inherits that, and
+  `docker compose stop` then kills the worker mid-job while every
+  default in the stack still says `SIGTERM`. Put it back explicitly —
+  `STOPSIGNAL SIGTERM` in the image, or `stop_signal: SIGTERM` on the
+  Compose service — and read back what the running container will get
+  rather than assuming the default survived the base image:
+
+  ```{code-block} sh
+  docker inspect --format '{{.Config.StopSignal}}' "$(docker compose ps -q queue-worker)"
+  ```
+
+  The same command takes an image name instead, to check a base image
+  before anything runs.
 - **The grace period.** A worker signalled while it waits for a job can
   still receive one and run it before stopping, so set the supervisor's
   grace period above your slowest job plus `QUEUE_POLL_TIMEOUT`. Docker's default is

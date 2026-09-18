@@ -424,6 +424,32 @@ worker. The integration workflow's `orm-runtime` job sends a request
 sequence through a FrankenPHP worker and through PHP-FPM (see
 {doc}`appendix-ci`).
 
+(testing-serialized-shared-state)=
+
+## One run at a time against shared state
+
+A suite that writes to a real database, message broker or object store
+owns that state for as long as it runs. Two runs against one backend —
+a second `phpunit` started while the first is still going, a watcher
+re-running on save, two CI jobs sharing one service container — interleave
+their writes. A truncation empties a table the other run has just filled,
+a worker pops the other run's job, an object turns up under a key a test
+asserted was free.
+
+The failures that follow name the code under test and are not about it.
+They also move between runs and disappear on a rerun, which is the signal
+that the schedule was wrong rather than the change. Chasing one costs
+more than the run it came from.
+
+So run one at a time, or give each run state nothing else reaches: its
+own database name, its own broker virtual host, its own bucket or key
+prefix. PHPUnit's own parallel execution and any test-splitting tool are
+subject to the same rule — they are safe exactly where every process has
+a backend to itself.
+
+{doc}`orbitron`'s context document carries the same rule, where an agent
+driving the suite reads it.
+
 ## Without the base class
 
 `ApplicationTestCase` is thin wiring over `Kinetis\Testing\TestApplication`,

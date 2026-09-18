@@ -124,6 +124,22 @@ Its failure is written to STDERR rather than logged: the scope is
 already disposed by then, so resolving a logger from it would itself be
 refused.
 
+That last-resort line is fixed text naming the command and the class of
+what was thrown, never the throwable's own message:
+
+```{code-block} text
+Application disposal failed after command "queue:work" finished: RuntimeException. Its message is withheld — the application logger is released by disposal, so this last-resort line has no redaction policy to route it through.
+```
+
+Disposing the scope releases the services it retained, which runs their
+destructors, and a destructor's message is whatever that service put in
+it — a connection error naming a broker URI with its credentials, for
+one. Every earlier path reports a disposal failure through the
+configured `LoggerInterface`, which owns the redaction and transport
+that message needs; this one has no logger left, so it names what failed
+and leaves the detail to what the service logged while it was still
+alive. The class plus the command is what locates it there.
+
 MCP tools and resources (see {doc}`mcp`) and HTTP routes (see
 {doc}`routing-validation`) work the same way — discovered anywhere under
 your own PSR-4 roots, with no directory convention required.

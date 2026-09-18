@@ -101,13 +101,22 @@ final class RequestScope implements ContainerInterface
     }
 
     /**
-     * Runs every registered dispose callback, then discards all
-     * request-scoped bindings and instances regardless of whether any
-     * callback failed — a hook throwing must never leave this scope
-     * un-disposed, or its bindings would leak into whatever reuses this
-     * object next. Every callback still gets to run even if an earlier
-     * one throws; the first failure (if any) is rethrown only after all
-     * of them, and the wipe, have completed.
+     * Runs every registered dispose callback, marks this scope disposed,
+     * then discards all request-scoped bindings and instances — all of
+     * it regardless of whether a callback failed or a released
+     * instance's own destructor threw. A hook or a destructor throwing
+     * must never leave this scope un-disposed, or its bindings would
+     * leak into whatever reuses this object next. Every callback still
+     * gets to run even if an earlier one throws; the first failure (if
+     * any) is rethrown only after all of them, and the wipe, have
+     * completed.
+     *
+     * The disposed flag is set before the release rather than after it,
+     * and each release is contained on its own, for the reasons
+     * {@see AppScope::dispose()} states: releasing the last reference to
+     * a service runs its destructor, that destructor must not be able to
+     * resolve anything from a half-wiped scope, and PHP surfaces its
+     * exception from the assignment that triggered it.
      *
      * Must be called once the request finishes; the container must not be
      * reused or held onto past that point.
@@ -124,10 +133,34 @@ final class RequestScope implements ContainerInterface
             }
         }
 
-        $this->bindings = [];
-        $this->resolving = [];
-        $this->disposeCallbacks = [];
         $this->disposed = true;
+
+        // A destructor is the one thing PHPStan cannot see here:
+        // replacing a collection destroys whatever it held, and PHP
+        // surfaces that object's __destruct() exception from the
+        // assignment itself. Each release is contained so one of them
+        // cannot abandon the collections after it.
+
+        try {
+            $this->bindings = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
+
+        try {
+            $this->resolving = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
+
+        try {
+            $this->disposeCallbacks = [];
+        // @phpstan-ignore-next-line catch.neverThrown
+        } catch (Throwable $e) {
+            $firstError ??= $e;
+        }
 
         if ($firstError !== null) {
             throw $firstError;
