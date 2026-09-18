@@ -408,10 +408,11 @@ final class AppScope implements ContainerInterface
      * it: replacing a property holding the last reference to a service
      * runs that service's destructor, and a destructor reaching back into
      * this scope must be refused rather than handed a half-wiped
-     * container. Each release is contained on its own for the same reason
-     * a callback is — PHP surfaces a destructor's exception from the
-     * assignment that triggered it, which would otherwise abandon every
-     * collection after it.
+     * container. Each release that can hold an object or a callable is
+     * contained on its own for the same reason a callback is — PHP
+     * surfaces a destructor's exception from the assignment that
+     * triggered it, which would otherwise abandon every collection after
+     * it.
      *
      * Disposing twice is harmless: the second call has nothing left to
      * run or release and returns. Everything else — binding, resolution,
@@ -435,13 +436,21 @@ final class AppScope implements ContainerInterface
             }
         }
 
+        // The loop variable still holds the last callback. Released here,
+        // its destruction belongs to the contained property clear below;
+        // left in place it happens as dispose() unwinds, outside every
+        // guard, where what it captured replaces the reported failure.
+        unset($callback);
+
         $this->disposed = true;
 
         // A destructor is the one thing PHPStan cannot see here:
-        // replacing a collection destroys whatever it held, and PHP
-        // surfaces that object's __destruct() exception from the
-        // assignment itself. Each release is contained so one of them
-        // cannot abandon the collections after it.
+        // replacing a collection that holds objects or callables destroys
+        // them, and PHP surfaces a __destruct() exception from the
+        // assignment itself. Each such release is contained so one of them
+        // cannot abandon the collections after it. `resolving`,
+        // `middleware` and `openApiMiddleware` admit only `true` and
+        // class-name strings, which destroy nothing.
 
         try {
             $this->bindings = [];
@@ -450,26 +459,9 @@ final class AppScope implements ContainerInterface
             $firstError ??= $e;
         }
 
-        try {
-            $this->resolving = [];
-        // @phpstan-ignore-next-line catch.neverThrown
-        } catch (Throwable $e) {
-            $firstError ??= $e;
-        }
-
-        try {
-            $this->middleware = [];
-        // @phpstan-ignore-next-line catch.neverThrown
-        } catch (Throwable $e) {
-            $firstError ??= $e;
-        }
-
-        try {
-            $this->openApiMiddleware = [];
-        // @phpstan-ignore-next-line catch.neverThrown
-        } catch (Throwable $e) {
-            $firstError ??= $e;
-        }
+        $this->resolving = [];
+        $this->middleware = [];
+        $this->openApiMiddleware = [];
 
         try {
             $this->requestScopeInitializers = [];
