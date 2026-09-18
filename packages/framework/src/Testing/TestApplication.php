@@ -14,6 +14,7 @@ use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Runtime\AppEnvironment;
+use Throwable;
 
 /**
  * Boots a real application for a test: the same container, discovery, and
@@ -65,40 +66,58 @@ final class TestApplication
         $config = new Config([...$environment, ...$configOverrides]);
 
         $app = new AppScope();
-        $app->instance(Config::class, $config);
-        // AppScope::boot()'s own default detects the environment from
-        // getenv(), which an APP_ENV in $configOverrides never reaches —
-        // registering it from the merged config is what makes that
-        // override actually win, like every other key.
-        $app->instance(AppEnvironment::class, AppEnvironment::detect($config->get('APP_ENV')));
 
-        // Discovered before routes, not after: RouteDiscovery needs the
-        // global middleware list to resolve any #[RoutePrefix] those
-        // classes declare into each route's own path — see
-        // Router::register()'s own doc comment.
-        $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
-        $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
-        $listeners = EventListenerDiscovery::discover($projectRoot);
+        // Everything past the scope's own construction can fail —
+        // discovery, a package's bootstrap, a test double's factory,
+        // boot() itself — and a callback an earlier step already
+        // registered on the scope owns something real. Disposal is
+        // attempted so that resource closes, and its own failure is
+        // swallowed rather than allowed to replace the boot failure the
+        // caller has to see.
+        try {
+            $app->instance(Config::class, $config);
+            // AppScope::boot()'s own default detects the environment from
+            // getenv(), which an APP_ENV in $configOverrides never reaches —
+            // registering it from the merged config is what makes that
+            // override actually win, like every other key.
+            $app->instance(AppEnvironment::class, AppEnvironment::detect($config->get('APP_ENV')));
 
-        // PluginDiscovery::bindInstances() and the discovered
-        // EventListenerRegistry both have to be bound before the
-        // bootstrap chain runs — see BootSequence's own docblock, the one
-        // place this ordering lives, shared with HttpStartup and
-        // bin/kinetis. null pluginInstances means "discover and
-        // reconstruct live," since this never consults a compiled cache,
-        // the same choice every other discovery call above already
-        // makes. Package bootstraps run first inside it, then this
-        // application's own bootstrap.php — the same last-write-wins
-        // order every other entry point uses.
-        BootSequence::run($app, $projectRoot, $config, $listeners, null, null);
+            // Discovered before routes, not after: RouteDiscovery needs the
+            // global middleware list to resolve any #[RoutePrefix] those
+            // classes declare into each route's own path — see
+            // Router::register()'s own doc comment.
+            $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+            $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
+            $listeners = EventListenerDiscovery::discover($projectRoot);
 
-        // Last, so a double registered here replaces whatever
-        // bootstrap.php bound under the same id.
-        if ($beforeBoot !== null) {
-            $beforeBoot($app, $config);
+            // PluginDiscovery::bindInstances() and the discovered
+            // EventListenerRegistry both have to be bound before the
+            // bootstrap chain runs — see BootSequence's own docblock, the one
+            // place this ordering lives, shared with HttpStartup and
+            // bin/kinetis. null pluginInstances means "discover and
+            // reconstruct live," since this never consults a compiled cache,
+            // the same choice every other discovery call above already
+            // makes. Package bootstraps run first inside it, then this
+            // application's own bootstrap.php — the same last-write-wins
+            // order every other entry point uses.
+            BootSequence::run($app, $projectRoot, $config, $listeners, null, null);
+
+            // Last, so a double registered here replaces whatever
+            // bootstrap.php bound under the same id.
+            if ($beforeBoot !== null) {
+                $beforeBoot($app, $config);
+            }
+
+            $app->boot();
+        } catch (Throwable $e) {
+            try {
+                $app->dispose();
+            } catch (Throwable) {
+                // Secondary: the boot failure is the outcome.
+            }
+
+            throw $e;
         }
-
-        $app->boot();
 
         $kernel = new Kernel(
             $app,
@@ -146,5 +165,21 @@ final class TestApplication
     public function get(string $id): mixed
     {
         return $this->app->get($id);
+    }
+
+    /**
+     * Disposes the application this booted, running whatever a package
+     * or a test double registered through {@see AppScope::onDispose()}.
+     * A test that boots a fresh application per test calls this when it
+     * finishes, or every app-scoped resource that boot opened is
+     * abandoned once per test — {@see ApplicationTestCase} does it from
+     * its own after-hook.
+     *
+     * Idempotent, because AppScope::dispose() is: a suite that disposes
+     * explicitly and then hits the after-hook disposes once.
+     */
+    public function dispose(): void
+    {
+        $this->app->dispose();
     }
 }

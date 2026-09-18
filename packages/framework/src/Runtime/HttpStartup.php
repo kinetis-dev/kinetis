@@ -18,6 +18,7 @@ use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Instrumentation\Telemetry;
+use Throwable;
 
 /**
  * The HTTP startup program itself, owned by the framework. An
@@ -88,10 +89,22 @@ final class HttpStartup
         self::assemble(ProjectRoot::detect($entryPointDir))->serve();
     }
 
-    /** Hands the Kernel to the detected adapter's own request loop. */
+    /**
+     * Hands the Kernel to the detected adapter's own request loop, then
+     * disposes the application once that loop returns — which for a
+     * persistent runtime is the worker shutting down, and for a
+     * boot-per-request SAPI is the end of the one request this process
+     * served. An app-scoped resource opened at boot is closed there,
+     * through {@see AppScope::dispose()}.
+     *
+     * A loop that throws instead ends the worker with that exception,
+     * and nothing here intercepts it: the failure that ended the worker
+     * is what the runtime has to see.
+     */
     public function serve(): void
     {
         $this->adapter->run($this->kernel->handle(...));
+        $this->app->dispose();
     }
 
     /**
@@ -121,84 +134,101 @@ final class HttpStartup
         $env = AppEnvironment::detect();
 
         $app = new AppScope();
-        $config = Config::fromEnvironment();
-        $app->instance(Config::class, $config);
 
-        $httpCache = null;
-        $pluginInstances = null;
+        // Everything past the scope's own construction runs inside this
+        // `try`: a package bootstrap that already opened something and
+        // registered its close operation owns a real resource, and a
+        // later step failing must not abandon it. The disposal's own
+        // failure is swallowed rather than replacing the assembly
+        // failure the entry point has to report.
+        try {
+            $config = Config::fromEnvironment();
+            $app->instance(Config::class, $config);
 
-        if ($env->isProduction()) {
-            // resolveHttp() is the entire "use the artifact, or compile
-            // fresh" decision: .kinetis-cache/compiled.php has to be
-            // present, the right format, and reconstruct into live
-            // objects — Router/EventListenerRegistry/every plugin
-            // instance included, not just the raw DTOs — or it counts as
-            // absent and the compile runs exactly once. See its own
-            // docblock.
-            $resolved = BootSequence::resolveHttp(
-                new CacheStore($projectRoot . '/.kinetis-cache'),
-                static fn (): CompiledCache => new Compiler()->compileProject($projectRoot),
+            $httpCache = null;
+            $pluginInstances = null;
+
+            if ($env->isProduction()) {
+                // resolveHttp() is the entire "use the artifact, or compile
+                // fresh" decision: .kinetis-cache/compiled.php has to be
+                // present, the right format, and reconstruct into live
+                // objects — Router/EventListenerRegistry/every plugin
+                // instance included, not just the raw DTOs — or it counts as
+                // absent and the compile runs exactly once. See its own
+                // docblock.
+                $resolved = BootSequence::resolveHttp(
+                    new CacheStore($projectRoot . '/.kinetis-cache'),
+                    static fn (): CompiledCache => new Compiler()->compileProject($projectRoot),
+                );
+
+                $httpCache = $resolved['httpCache'];
+                $router = $resolved['router'];
+                $listenerRegistry = $resolved['listenerRegistry'];
+                $pluginInstances = $resolved['pluginInstances'];
+                $globalMiddleware = $httpCache->globalMiddleware;
+                $openApiMiddleware = $httpCache->openApiMiddleware;
+                $middlewareGroups = $httpCache->middlewareGroups;
+                $packageBootstraps = $resolved['packageBootstraps'];
+            } else {
+                $phaseStart = microtime(true);
+                // Middleware before routes: RouteDiscovery needs the global
+                // middleware list to resolve any #[RoutePrefix] those classes
+                // declare into every route's own path — see
+                // Router::register()'s own doc comment. That one scan also
+                // covers #[AsOpenApiMiddleware] and #[AsMiddlewareGroup], so
+                // all three lists come out of it at once.
+                $discovered = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
+                $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discovered['global']);
+                $globalMiddleware = $discovered['global'];
+                $openApiMiddleware = $discovered['openApi'];
+                $middlewareGroups = $discovered['groups'];
+                $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
+                // null = discover the package bootstrap list live, and
+                // discover and reconstruct the plugin instances live, both
+                // alongside the rest.
+                $packageBootstraps = null;
+                $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
+            }
+
+            $app->instance(FormLimits::class, FormLimits::fromConfig($config));
+            $app->instance(TrustedProxies::class, TrustedProxies::fromConfig($config));
+
+            $phaseStart = microtime(true);
+            BootSequence::run($app, $projectRoot, $config, $listenerRegistry, $pluginInstances, $packageBootstraps);
+            $app->boot();
+            $phases['bootstrap.services'] = [$phaseStart, microtime(true)];
+
+            $telemetry = Telemetry::global();
+
+            foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
+                $telemetry->phase($phaseName, $phaseStartedAt, $phaseEndedAt);
+            }
+
+            /** @var TrustedProxies $trustedProxies */
+            $trustedProxies = $app->get(TrustedProxies::class);
+
+            $detectAdapter ??= RuntimeDetector::detect(...);
+            $adapter = $detectAdapter($trustedProxies);
+
+            $kernel = new Kernel(
+                $app,
+                $router,
+                isPersistent: $adapter->isPersistent(),
+                httpCache: $httpCache,
+                discoveredGlobalMiddleware: $globalMiddleware,
+                discoveredOpenApiMiddleware: $openApiMiddleware,
+                middlewareGroups: $middlewareGroups,
             );
 
-            $httpCache = $resolved['httpCache'];
-            $router = $resolved['router'];
-            $listenerRegistry = $resolved['listenerRegistry'];
-            $pluginInstances = $resolved['pluginInstances'];
-            $globalMiddleware = $httpCache->globalMiddleware;
-            $openApiMiddleware = $httpCache->openApiMiddleware;
-            $middlewareGroups = $httpCache->middlewareGroups;
-            $packageBootstraps = $resolved['packageBootstraps'];
-        } else {
-            $phaseStart = microtime(true);
-            // Middleware before routes: RouteDiscovery needs the global
-            // middleware list to resolve any #[RoutePrefix] those classes
-            // declare into every route's own path — see
-            // Router::register()'s own doc comment. That one scan also
-            // covers #[AsOpenApiMiddleware] and #[AsMiddlewareGroup], so
-            // all three lists come out of it at once.
-            $discovered = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
-            $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discovered['global']);
-            $globalMiddleware = $discovered['global'];
-            $openApiMiddleware = $discovered['openApi'];
-            $middlewareGroups = $discovered['groups'];
-            $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
-            // null = discover the package bootstrap list live, and
-            // discover and reconstruct the plugin instances live, both
-            // alongside the rest.
-            $packageBootstraps = null;
-            $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
+            return new self($app, $kernel, $adapter);
+        } catch (Throwable $e) {
+            try {
+                $app->dispose();
+            } catch (Throwable) {
+                // Secondary: the assembly failure is the outcome.
+            }
+
+            throw $e;
         }
-
-        $app->instance(FormLimits::class, FormLimits::fromConfig($config));
-        $app->instance(TrustedProxies::class, TrustedProxies::fromConfig($config));
-
-        $phaseStart = microtime(true);
-        BootSequence::run($app, $projectRoot, $config, $listenerRegistry, $pluginInstances, $packageBootstraps);
-        $app->boot();
-        $phases['bootstrap.services'] = [$phaseStart, microtime(true)];
-
-        $telemetry = Telemetry::global();
-
-        foreach ($phases as $phaseName => [$phaseStartedAt, $phaseEndedAt]) {
-            $telemetry->phase($phaseName, $phaseStartedAt, $phaseEndedAt);
-        }
-
-        /** @var TrustedProxies $trustedProxies */
-        $trustedProxies = $app->get(TrustedProxies::class);
-
-        $detectAdapter ??= RuntimeDetector::detect(...);
-        $adapter = $detectAdapter($trustedProxies);
-
-        $kernel = new Kernel(
-            $app,
-            $router,
-            isPersistent: $adapter->isPersistent(),
-            httpCache: $httpCache,
-            discoveredGlobalMiddleware: $globalMiddleware,
-            discoveredOpenApiMiddleware: $openApiMiddleware,
-            middlewareGroups: $middlewareGroups,
-        );
-
-        return new self($app, $kernel, $adapter);
     }
 }

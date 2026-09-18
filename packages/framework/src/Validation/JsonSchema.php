@@ -576,11 +576,21 @@ final class JsonSchema
      * ever running the rule against it, the same short-circuit an
      * untyped or nullable-scalar field gets.
      *
+     * A backed-enum type is published as that enum's own domain — the
+     * backing scalar's JSON type and the exact set of case values — the
+     * same two keywords a #[Body] DTO's enum field publishes, because
+     * `Dispatcher` binds a #[Query]/path enum parameter through the same
+     * `Hydrator::resolveEnumValue()` that field goes through. No other
+     * class type reaches here: `Dispatcher::derivePlan()` refuses one on
+     * a #[Query]/path parameter at route registration, and a DTO field's
+     * own class types are answered by objectSchema() before it ever
+     * calls this.
+     *
      * @return array<string, mixed>|\stdClass
+     * @throws JsonSchemaException
      */
     public static function schemaForScalar(ReflectionParameter $parameter, ?ReflectionType $type): array|\stdClass
     {
-        $base = $type instanceof ReflectionNamedType ? self::baseTypeSchema($type) : [];
         // Hydrator::compileParameter() sets its own compiled plan's
         // `allowsNull` the identical way: an untyped parameter has no
         // ReflectionNamedType to ask, but resolveScalar() still accepts
@@ -588,6 +598,20 @@ final class JsonSchema
         // published schema has to widen for null here too, not only when
         // $type carries its own answer.
         $nullable = $type === null || $type->allowsNull();
+
+        if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+            /** @var class-string $class */
+            $class = $type->getName();
+            $backingType = Hydrator::backedEnumScalarType($class, $parameter);
+
+            if ($backingType === null) {
+                throw JsonSchemaException::unsupportedClassType($class);
+            }
+
+            return self::schemaForEnum($parameter, $class, $backingType, $nullable);
+        }
+
+        $base = $type instanceof ReflectionNamedType ? self::baseTypeSchema($type) : [];
         $schema = self::withNullableSchema(self::withConstraintSchema($base, $parameter), $nullable);
 
         return $schema === [] ? (object) [] : $schema;

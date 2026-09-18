@@ -8,6 +8,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Testing\TestApplication;
 use Kinetis\Tests\Cache\Fixtures\AcmePackage\AcmeCacheableDiscovery;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 /**
  * Proves PluginDiscovery::bind() is genuinely wired into
@@ -63,5 +64,57 @@ final class TestApplicationTest extends TestCase
         );
 
         self::assertSame($override, $application->get(AcmeCacheableDiscovery::class));
+    }
+
+    /**
+     * A test that boots a fresh application per test has to be able to
+     * close what that boot opened, or every app-scoped resource is
+     * abandoned once per test.
+     */
+    public function test_dispose_disposes_the_booted_application_and_is_idempotent(): void
+    {
+        $calls = 0;
+        $application = TestApplication::boot(
+            self::PLAIN_DISCOVERY_ROOT,
+            beforeBoot: static function (AppScope $app) use (&$calls): void {
+                $app->onDispose(static function () use (&$calls): void {
+                    ++$calls;
+                });
+            },
+        );
+
+        $application->dispose();
+        $application->dispose();
+
+        self::assertSame(1, $calls);
+        self::assertTrue($application->app->isDisposed());
+    }
+
+    /**
+     * The scope exists before the step that fails, so what an earlier
+     * registration already opened is closed — and the failure the test
+     * is shown is still the one that actually broke the boot.
+     */
+    public function test_a_boot_failure_disposes_the_scope_it_had_already_created(): void
+    {
+        $disposed = false;
+
+        try {
+            TestApplication::boot(
+                self::PLAIN_DISCOVERY_ROOT,
+                beforeBoot: static function (AppScope $app) use (&$disposed): void {
+                    $app->onDispose(static function () use (&$disposed): void {
+                        $disposed = true;
+                    });
+
+                    throw new RuntimeException('test double registration failed');
+                },
+            );
+            self::fail('Expected the boot failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('test double registration failed', $e->getMessage());
+        }
+
+        self::assertTrue($disposed);
     }
 }

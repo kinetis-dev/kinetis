@@ -170,16 +170,18 @@ try {
     $exitCode = 1;
 }
 
-// $scope->dispose() is deliberately outside the try/catch/finally above:
+// Both disposals are deliberately outside the try/catch/finally above:
 // a Throwable raised in a `finally` block silently replaces whatever
 // exception or return value was already in flight, which would let a
 // cleanup failure here either bypass the command's own intended exit(1)
 // (the catch branch already ran, $exitCode is already decided) or turn
 // a completed, successful command into an uncaught fatal outside this
-// script's own error handling entirely. Neither is acceptable, so
+// script's own error handling entirely. Neither is acceptable, so each
 // disposal is contained in its own try/catch instead, and its outcome
 // never replaces $exitCode's own already-decided value except in the
-// one case below where nothing was decided yet.
+// one case below where nothing was decided yet. Separately contained,
+// so the application scope is still disposed when the request scope's
+// disposal failed.
 try {
     $scope->dispose();
 } catch (Throwable $disposeFailure) {
@@ -206,6 +208,26 @@ try {
         // case, kept distinct from the 1 a genuine command failure above
         // already produces and from any exit code a command's own logic
         // returns deliberately.
+        $exitCode = 70;
+    }
+}
+
+// The application scope outlives the request scope and owns whatever a
+// package opened once for this process — a connection pool, a client —
+// so it is disposed after it, on the same precedence rule.
+try {
+    $app->dispose();
+} catch (Throwable $appDisposalFailure) {
+    // Not logged through SafeLogger: $app is already disposed by the
+    // time this runs (dispose() marks the scope and releases its
+    // bindings before rethrowing), so resolving a LoggerInterface from
+    // it would itself be refused. STDERR is what is left, and it is
+    // where this script already reports what it cannot route anywhere
+    // else.
+    fwrite(STDERR, "Application disposal failed after command \"{$commandName}\" finished: "
+        . $appDisposalFailure->getMessage() . "\n");
+
+    if ($exitCode === 0) {
         $exitCode = 70;
     }
 }

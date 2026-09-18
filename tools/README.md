@@ -32,7 +32,14 @@ root) — the canonical source of truth for every `packages/*/composer.json`
   requires `sonarqube.yml`'s coverage loop and `sonar-project.properties`'
   `reportPaths` to name the same packages — a package in one but not the
   other writes a report nobody reads, and shows as 0% covered while its
-  tests pass. It also owns the two history reads the version and content
+  tests pass. One further check holds `packages/skeleton/.gitattributes`
+  to one exact content: the skeleton is installed as a dist archive, so
+  that file decides what a generated application contains, and an
+  `export-ignore` reaching `tests/`, `phpunit.xml` or `phpstan.neon`
+  would hand the user a project with no test suite and no static
+  analysis. The validator compares the whole file rather than looking
+  for entries, because every way of losing a path is a different
+  pattern. It also owns the two history reads the version and content
   checks need: the comparison base, and the file-level diff against it.
 - `release-plan.php` — computes which packages this round has to look
   at, read-only and unauthenticated. A package is a candidate when its

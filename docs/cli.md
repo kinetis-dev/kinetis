@@ -96,11 +96,14 @@ through whatever `Psr\Log\LoggerInterface` you've registered (see
 {doc}`logging`), dispatches `Kinetis\Console\Events\CommandFailed` (see
 {doc}`events`), and also produces exit code `1`.
 
-That exit code is retained even if disposing the command's own
-`RequestScope` afterward also fails — see {doc}`container`'s own general
-explanation of why a `finally`-based dispose is unsafe here. `bin/kinetis`
-disposes the scope outside any `finally` that could still replace an
-already-decided exit code, and defines two cases explicitly:
+That exit code is retained even when the disposal that follows the
+command fails — the command's own `RequestScope` first, then the
+application scope. See {doc}`container`'s own general explanation of why
+a `finally`-based dispose is unsafe here. `bin/kinetis` disposes both
+outside any `finally` that could still replace an already-decided exit
+code, each contained separately so a failing request-scope disposal
+still leaves the application scope disposed, and defines two cases
+explicitly:
 
 - **The command already threw, or returned a deliberate non-zero exit
   code.** That outcome is exactly what gets returned; a disposal failure
@@ -113,6 +116,13 @@ already-decided exit code, and defines two cases explicitly:
   has been detected"), distinct from the `1` a genuine command failure
   produces. Either way, `bin/kinetis` never fatals uncaught outside the
   command boundary over a cleanup failure alone.
+
+Both rules apply to the application scope's disposal too, which runs
+after the request scope's and closes whatever a package opened once for
+this process — the database link `kinetis/database-bridge` built, say.
+Its failure is written to STDERR rather than logged: the scope is
+already disposed by then, so resolving a logger from it would itself be
+refused.
 
 MCP tools and resources (see {doc}`mcp`) and HTTP routes (see
 {doc}`routing-validation`) work the same way — discovered anywhere under

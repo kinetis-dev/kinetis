@@ -13,6 +13,7 @@ use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
+use Kinetis\Tests\Http\Fixtures\EnumParameterController;
 use Kinetis\Tests\Http\Fixtures\MethodLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
@@ -263,6 +264,44 @@ final class CompilerTest extends TestCase
             );
 
             self::assertSame(['direction' => 'desc'], json_decode((string) $response->getBody(), true));
+        } finally {
+            @unlink($store->path());
+            @rmdir($directory);
+        }
+    }
+
+    /**
+     * An enum-typed #[Query] parameter's plan carries a class name and a
+     * backing type the artifact has to preserve, and a plan reloaded
+     * without them would bind the raw query text into an enum-typed
+     * parameter. Proven by dispatching a real request through the plan
+     * that came back out of the written file.
+     */
+    public function test_an_enum_query_parameters_plan_survives_the_full_compile_and_reload_round_trip(): void
+    {
+        $router = new Router();
+        $router->register(EnumParameterController::class);
+
+        $directory = sys_get_temp_dir() . '/kinetis_enum_query_cache_test_' . bin2hex(random_bytes(8));
+        $store = new CacheStore($directory);
+        $store->write((new Compiler())->compile($router));
+
+        try {
+            $reloadedHttp = $store->load()?->http;
+            self::assertNotNull($reloadedHttp);
+
+            $key = EnumParameterController::class . '::show';
+            self::assertSame(SortDirection::class, $reloadedHttp->httpBindingPlans[$key][0]['enumClass']);
+            self::assertSame('string', $reloadedHttp->httpBindingPlans[$key][0]['scalarType']);
+
+            $app = new AppScope();
+            $app->boot();
+            $response = new Dispatcher($app, $reloadedHttp->httpBindingPlans)->dispatch(
+                $router->match('GET', '/enum-query'),
+                (new ServerRequest('GET', '/enum-query'))->withQueryParams(['direction' => 'desc', 'priority' => '2']),
+            );
+
+            self::assertSame(['direction' => 'desc', 'priority' => 2], json_decode((string) $response->getBody(), true));
         } finally {
             @unlink($store->path());
             @rmdir($directory);

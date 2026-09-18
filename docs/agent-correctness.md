@@ -64,7 +64,7 @@ These hold regardless of adapter, driver, or use case.
   that describes the changed behavior is updated in the same change,
   not left for later.
 - **Current-main versus installed-version assumptions.** A claim read
-  from this server governs a decision only after it is checked against
+  from these pages governs a decision only after it is checked against
   the project's own installed version and source. {doc}`agent-workflow`.
 
 ## Questions that depend on the adapter, driver, or use case
@@ -86,6 +86,53 @@ specific choice in the project.
 - **Broadcast delivery to a subscriber** depends on the chosen broker —
   Soketi, Reverb, or Pusher; this framework's own contract ends at
   whether the trigger request reached it. {doc}`broadcasting`.
+
+## Working habits that keep the checklist honest
+
+- **A passing verification is not a ready application.**
+  `orbitron_verify` answers one question — whether the project's
+  Composer layout is the narrow one Orbitron supports — and a layout
+  pass says nothing about request isolation, non-blocking I/O, route
+  uniqueness or any behavior. The same holds for `phpstan.neon`'s
+  `NoStaticPropertiesRule` and `NoBlockingIoRule`: two guardrails, not a
+  proof. Report readiness as what was actually established.
+  {doc}`orbitron`, {doc}`testing`.
+- **Read the driver a task depends on, not the contract above it.** Which
+  database driver `DB_DRIVER=auto` selects decides where the blocking
+  boundary is: the native drivers suspend on query I/O but still block
+  on a mysqli connect and a libpq host lookup, and PDO blocks
+  throughout. When a change depends on that boundary, read the installed
+  driver's source rather than inferring it from `MysqlLink`.
+  {doc}`persistence`, {doc}`concurrency`.
+- **Prove overlap where overlap is the requirement.** `concurrently()`
+  running without error is not evidence that anything overlapped — a
+  blocking call inside it still serializes the whole loop. Where
+  concurrency is a property the change has to deliver, measure it:
+  `Kinetis\Testing\LoopLiveness::turnedDuring()` for whether a wait
+  yields, and a real timed probe against the real backend for whether
+  two operations actually ran side by side. {doc}`concurrency`,
+  {doc}`testing`.
+- **Tell a mistyped command from a wrong document.** A command that
+  fails is first a claim about what you typed. Re-read the invocation
+  against the page before concluding the page is wrong, and change
+  documentation only once the documented invocation itself is the thing
+  that fails.
+- **Ask the route table rather than reading controllers.**
+  `kinetis routes:list` runs the same discovery a boot runs and prints
+  the global middleware pipeline outermost to innermost, then every
+  discovered route's method, path, status, controller and own
+  middleware, sorted by path and then method. It settles "did my
+  `#[RoutePrefix]` apply", "is this path already taken" and "what wraps
+  my controller" without reading a single class. Those rows are a sorted
+  listing, not a matching order — which route wins a request is
+  {doc}`routing-validation`'s own rule. {doc}`cli`.
+- **At a material milestone, re-read the top-level framing.** When a
+  feature lands, a dependency is added, or a route or contract changes,
+  scan the project's own `README.md` and the package READMEs the change
+  touched for claims it made demonstrably false — a capability described
+  as absent that now exists, a count, a list, a setup step. Correct
+  those. This is a correctness pass, not permission to rewrite prose
+  that is merely not how you would have put it.
 
 ## See also
 

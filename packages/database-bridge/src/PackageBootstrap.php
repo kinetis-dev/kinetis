@@ -29,10 +29,12 @@ use Psr\Log\LoggerInterface;
  * With DB_CONNECTION configured, the default connection is built and
  * bound under its dialect contract, so application code
  * constructor-injects MysqlLink/PostgresLink with no bootstrap code of
- * its own. Without DB_CONNECTION no connection is built — "no database"
- * is a configuration, not an error. The application's bootstrap.php
- * runs after this and wins on a shared binding; named (non-default)
- * connections stay explicit application wiring.
+ * its own, and is closed when the application scope is disposed.
+ * Without DB_CONNECTION no connection is built — "no database" is a
+ * configuration, not an error. The application's bootstrap.php runs
+ * after this and wins on a shared binding, keeping ownership of the
+ * link it binds; named (non-default) connections stay explicit
+ * application wiring.
  *
  * kinetis/orm is optional and detected with class_exists(). With it and
  * DB_CONNECTION, OrmFactory and a lazy request-scoped EntityManager are
@@ -58,6 +60,12 @@ final class PackageBootstrap implements PackageBootstrapInterface
         $link = ConnectionFactory::fromConfig($config);
         $contract = $link instanceof MysqlLink ? MysqlLink::class : PostgresLink::class;
 
+        // This package opened it, so this package closes it when the
+        // worker ends — registered ahead of the binding so a later
+        // bootstrap or boot failure still closes it, and holding this
+        // exact object so an application binding its own link owns that
+        // one.
+        $app->onDispose($link->close(...));
         $app->instance($contract, $link);
 
         if ($orm) {

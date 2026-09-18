@@ -11,6 +11,7 @@ use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Attributes\Response;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Validation\Exception\JsonSchemaException;
 use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\JsonSchema;
 use Psr\Http\Message\ResponseInterface;
@@ -46,12 +47,13 @@ use ReflectionUnionType;
  * controller can return a ResponseInterface directly to produce a
  * different one at runtime (a 404 when a fetched entity doesn't exist, a
  * 3xx redirect, ...), which the route attribute alone can't describe.
- * Repeatable #[Response(status, description)] attributes on the same
- * method document those additional statuses; see describeOperation(). They
- * stay purely descriptive text with no derived schema, unlike the default
- * response — a #[Response(404, ...)] is typically describing a shape the
+ * Repeatable #[Response] attributes on the same method document those
+ * additional statuses; see describeOperation(). Their schema is never
+ * derived — a #[Response(404, ...)] is typically describing a shape the
  * method's declared return type doesn't capture at all (an error body, not
- * the success DTO), so there's nothing correct to derive it from.
+ * the success DTO) — so a status whose payload has one names its DTO
+ * explicitly through the attribute's own `body`, and one that does not
+ * stays description-only.
  *
  * #[Hidden] on a route method, or on the controller it is registered on,
  * excludes the route entirely — checked before describeOperation() ever
@@ -200,7 +202,7 @@ final class OpenApiGenerator
                 continue;
             }
 
-            $responses[(string) $response->status()] = ['description' => $response->description()];
+            $responses[(string) $response->status()] = $this->describeAdditionalResponse($response);
         }
 
         $operation = ['responses' => $responses];
@@ -214,6 +216,43 @@ final class OpenApiGenerator
         }
 
         return $operation;
+    }
+
+    /**
+     * One #[Response] attribute's own entry: its description, plus the
+     * declared body's component schema under the declared media type.
+     *
+     * The body goes through the same schemaRefFor() a request body and
+     * the default response use, so a DTO named by two statuses — or by
+     * a status and a request body — is one `components/schemas` entry
+     * referenced twice. An attribute with no body publishes a
+     * description and nothing else, and its media type describes
+     * nothing, so it is not read at all.
+     *
+     * A body naming something that is not a class is refused rather than
+     * published: `schemaRefFor()` would otherwise register a component
+     * under a name no class backs, advertising a shape no response can
+     * ever have.
+     *
+     * @return array<string, mixed>
+     * @throws JsonSchemaException
+     */
+    private function describeAdditionalResponse(Response $response): array
+    {
+        $described = ['description' => $response->description()];
+        $body = $response->body();
+
+        if ($body === null) {
+            return $described;
+        }
+
+        if (!class_exists($body)) {
+            throw JsonSchemaException::undescribableResponseBody($response->status(), $body);
+        }
+
+        $described['content'] = [$response->mediaType() => ['schema' => $this->schemaRefFor($body)]];
+
+        return $described;
     }
 
     /**

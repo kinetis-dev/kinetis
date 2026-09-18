@@ -106,6 +106,7 @@ use ReflectionType;
  *     dtoClass: ?string, // the DTO for 'body', the service class for 'container'
  *     bodyRoot: ?string, // the top-level member a 'body' DTO is read from; null reads the whole document
  *     scalarType: ?string,
+ *     enumClass: ?string, // the backed enum a 'query'/'path' value names a case of; scalarType is then its backing type
  *     hasDefault: bool,
  *     defaultValue: mixed,
  *     allowsNull: bool,
@@ -115,7 +116,7 @@ use ReflectionType;
 final class Dispatcher
 {
     private const array BINDING_PLAN_KEYS = [
-        'name', 'source', 'dtoClass', 'bodyRoot', 'scalarType', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+        'name', 'source', 'dtoClass', 'bodyRoot', 'scalarType', 'enumClass', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
     ];
 
     public function __construct(
@@ -196,7 +197,7 @@ final class Dispatcher
      * class re-deriving the same rules itself. Every top-level key must
      * be a real string (PHP silently coerces a numeric-looking array key
      * to int); every value must be a list of entries, each with exactly
-     * the nine fields `derivePlan()` itself always produces, correctly
+     * the ten fields `derivePlan()` itself always produces, correctly
      * typed. `defaultValue` is never checked beyond "the key is
      * present" — it holds an arbitrary PHP default value, which has no
      * single type to validate against.
@@ -227,6 +228,7 @@ final class Dispatcher
                 ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'dtoClass');
                 ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'bodyRoot');
                 ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'scalarType');
+                ArtifactValidation::nullableString($entry, 'HttpBindingPlan', 'enumClass');
                 ArtifactValidation::bool($entry, 'HttpBindingPlan', 'hasDefault');
                 ArtifactValidation::bool($entry, 'HttpBindingPlan', 'allowsNull');
                 // defaultValue's own presence is already guaranteed by
@@ -263,6 +265,7 @@ final class Dispatcher
             [$source, $dtoClass] = self::resolveSource($parameter, $name, $type, $pathParameterNames);
             $scalarType = $type instanceof ReflectionNamedType && $type->isBuiltin() ? $type->getName() : null;
             $bodyRoot = null;
+            $enumClass = null;
 
             // A request carries one document, and every #[Body]
             // parameter validates its outer object as its own — under
@@ -316,6 +319,25 @@ final class Dispatcher
                 throw UnresolvableParameterException::forImpossiblePathArray($name);
             }
 
+            // A class-typed query or path parameter binds one wire value,
+            // so the only class it can legally name is a backed enum,
+            // whose cases *are* written as that scalar. The plan then
+            // carries the enum and its backing type, and
+            // resolveScalarFromPlan() resolves the text as that scalar
+            // before asking the enum for the case naming it. Every other
+            // class — a unit enum, an interface, a DTO — has no wire
+            // spelling a query string or path segment could carry, and is
+            // refused here rather than admitted with no scalar type at
+            // all and left to explode as a TypeError at invocation.
+            if ($readsRequestInput && $type instanceof ReflectionNamedType && !$type->isBuiltin()) {
+                $enumClass = $type->getName();
+                $scalarType = Hydrator::backedEnumScalarType($enumClass, $parameter);
+
+                if ($scalarType === null) {
+                    throw UnresolvableParameterException::forUnsupportedClassType($name, $source, $enumClass);
+                }
+            }
+
             $plan[] = [
                 'name' => $name,
                 'source' => $source,
@@ -326,6 +348,7 @@ final class Dispatcher
                 // isBuiltin(), so $scalarType is already null by the time
                 // any of those branches below is reached.
                 'scalarType' => $scalarType,
+                'enumClass' => $enumClass,
                 'hasDefault' => $parameter->isDefaultValueAvailable(),
                 'defaultValue' => ParameterDefault::capture($parameter, $owner),
                 // An untyped parameter accepts anything, null included.
@@ -877,6 +900,12 @@ final class Dispatcher
      * non-numeric string for an int/float one) is a violation, never a
      * silently wrong cast (`"not-a-number"` -> `0`).
      *
+     * A parameter typed as a backed enum takes
+     * Hydrator::resolveEnumValue() instead, which is that same scalar
+     * resolution against the enum's backing type followed by tryFrom() —
+     * so malformed text is the ordinary type violation and text naming
+     * no case is an `enum_case` one, never a TypeError at invocation.
+     *
      * Presence stays here because only this method can tell what an
      * absent value means: a query key that never appeared and a path
      * segment are both read as `null`, and a #[Query] parameter that
@@ -908,14 +937,27 @@ final class Dispatcher
             return null;
         }
 
-        [$value, $violations] = Hydrator::resolveScalar(
-            InputSource::Text,
-            [$name],
-            $raw,
-            $param['scalarType'],
-            $param['allowsNull'],
-            $param['constraints'],
-        );
+        /** @var class-string|null $enumClass */
+        $enumClass = $param['enumClass'];
+
+        [$value, $violations] = $enumClass !== null
+            ? Hydrator::resolveEnumValue(
+                InputSource::Text,
+                [$name],
+                $raw,
+                $enumClass,
+                $param['scalarType'],
+                $param['allowsNull'],
+                $param['constraints'],
+            )
+            : Hydrator::resolveScalar(
+                InputSource::Text,
+                [$name],
+                $raw,
+                $param['scalarType'],
+                $param['allowsNull'],
+                $param['constraints'],
+            );
 
         if ($violations !== []) {
             throw ValidationException::fromViolations($violations);

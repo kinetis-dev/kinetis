@@ -26,8 +26,8 @@ same keys.
 The bridge composes with each database package on that package's terms:
 
 - `kinetis/persistence` receives the connection configuration, SQL
-  telemetry, the default link binding, and the lazy request-scoped
-  `TransactionGuard`.
+  telemetry, the default link binding and its close on application
+  disposal, and the lazy request-scoped `TransactionGuard`.
 - `kinetis/migrations` requires the bridge and registers its own
   `migrate*` commands, which connect through
   `ConnectionFactory::singleSession()` ({doc}`migrations`).
@@ -38,6 +38,34 @@ The bridge composes with each database package on that package's terms:
 - `kinetis/orm` receives its entity metadata through the bridge's AOT
   discovery section, one `OrmFactory` for the worker, and a lazy
   request-scoped `EntityManager` closed with its scope ({doc}`orm`).
+
+### The default link's lifetime
+
+With `DB_CONNECTION` set, the bridge's package bootstrap builds the
+default client, registers `close()` on `AppScope::onDispose()` and only
+then binds it under its dialect contract. Registering the close first is
+what makes a later bootstrap failure, or a failing `boot()`, still close
+a connection that is already open ({ref}`container-app-disposal`).
+
+The callback holds that exact object, so ownership follows whoever built
+the link:
+
+- **The bridge built it.** It is closed when the application scope is
+  disposed.
+- **`bootstrap.php` bound its own.** The bridge's callback still closes
+  the link the bridge built, if it built one; the replacement is
+  application-owned and nothing here closes it. Register its own
+  `onDispose()` if it needs one.
+- **No `DB_CONNECTION`.** No link is built, so there is nothing to
+  register and nothing to close. "No database" is a configuration, not
+  an error.
+- **A named connection.** Explicit application wiring throughout,
+  including its lifetime.
+
+Request-scoped cleanup is unchanged and separate: `TransactionGuard`'s
+`rollbackDangling()` and `EntityManager`'s `close()` are registered on
+the scope that resolved them and run at the end of that unit of work,
+not at application disposal.
 
 ### The request-scoped `TransactionGuard`
 
@@ -73,9 +101,11 @@ override.
 ## Registering connections in `bootstrap.php`
 
 A registration in `bootstrap.php` wins over the bridge's default
-binding. Register the default connection to set pool options in code,
-which win over `DB_MAX_CONNECTIONS` and `DB_WARM_CONNECTIONS`, and a named
-connection under an id of its own:
+binding, and the link it registers is the application's to close — see
+[The default link's lifetime](#the-default-links-lifetime). Register the
+default connection to set pool options in code, which win over
+`DB_MAX_CONNECTIONS` and `DB_WARM_CONNECTIONS`, and a named connection
+under an id of its own:
 
 ```{code-block} php
 :caption: bootstrap.php

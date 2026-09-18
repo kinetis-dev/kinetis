@@ -32,10 +32,16 @@ use Throwable;
  * booted once at server startup and live for as long as the worker process
  * does — they must never hold per-request state.
  *
- * Registration is only allowed before boot(). Once booted, the binding set
- * is locked: this is what makes "compiled routes and service definitions
+ * Binding registration is only allowed before boot(). Once booted, the
+ * binding set is locked: this is what makes "compiled routes and service definitions
  * booted once at server startup" an enforced invariant rather than a
  * convention that can quietly drift.
+ *
+ * dispose() ends that lifetime: it runs what onDispose() registered,
+ * releases every retained instance, and refuses every later use. An
+ * entry point that owns the scope calls it once the process — or the
+ * test — that created it is finished with it, so an application-scoped
+ * resource opened at boot is closed rather than abandoned.
  */
 final class AppScope implements ContainerInterface
 {
@@ -60,17 +66,22 @@ final class AppScope implements ContainerInterface
     /** @var list<callable(RequestScope): void> */
     private array $requestScopeInitializers = [];
 
+    /** @var list<callable(): void> */
+    private array $disposeCallbacks = [];
+
     private bool $booted = false;
+
+    private bool $disposed = false;
 
     public function bind(string $id, Closure|string|null $concrete = null, bool $shared = true): void
     {
-        $this->assertNotBooted($id);
+        $this->assertUsable($id);
         $this->bindings[$id] = new Binding($this->normalizeConcrete($id, $concrete), $shared);
     }
 
     public function instance(string $id, object $instance): void
     {
-        $this->assertNotBooted($id);
+        $this->assertUsable($id);
         $binding = new Binding(static fn (): object => $instance);
         $binding->remember($instance);
         $this->bindings[$id] = $binding;
@@ -87,7 +98,7 @@ final class AppScope implements ContainerInterface
      */
     public function middleware(string $middlewareClass): void
     {
-        $this->assertNotBooted($middlewareClass);
+        $this->assertUsable($middlewareClass);
         $this->middleware[] = $middlewareClass;
     }
 
@@ -111,7 +122,7 @@ final class AppScope implements ContainerInterface
      */
     public function openApiMiddleware(string $middlewareClass): void
     {
-        $this->assertNotBooted($middlewareClass);
+        $this->assertUsable($middlewareClass);
         $this->openApiMiddleware[] = $middlewareClass;
     }
 
@@ -165,6 +176,8 @@ final class AppScope implements ContainerInterface
      */
     public function boot(): void
     {
+        $this->assertNotDisposed('boot');
+
         if (!$this->has(AppEnvironment::class)) {
             $this->instance(AppEnvironment::class, AppEnvironment::detect());
         }
@@ -301,6 +314,8 @@ final class AppScope implements ContainerInterface
     #[\Override]
     public function get(string $id): mixed
     {
+        $this->assertNotDisposed("resolve \"{$id}\"");
+
         return $this->resolve($id);
     }
 
@@ -322,12 +337,14 @@ final class AppScope implements ContainerInterface
      */
     public function onRequestScopeCreated(callable $initializer): void
     {
-        $this->assertNotBooted('request scope initializer');
+        $this->assertUsable('request scope initializer');
         $this->requestScopeInitializers[] = $initializer;
     }
 
     public function createRequestScope(): RequestScope
     {
+        $this->assertNotDisposed('create a request scope');
+
         if (!$this->booted) {
             throw new ContainerException('Cannot create a request scope before the application container is booted.');
         }
@@ -355,6 +372,76 @@ final class AppScope implements ContainerInterface
         }
 
         return $scope;
+    }
+
+    /**
+     * Registers a callback to run when this scope is disposed — the
+     * application-lifetime counterpart to
+     * {@see RequestScope::onDispose()}, for the resource a package opens
+     * once per worker (a connection pool, a background client) and has
+     * to close once the worker ends.
+     *
+     * Allowed before *and* after boot(), unlike every other registration
+     * here, because an app-scoped factory is lazy: a pool that opens on
+     * first resolution can only register its own close operation then,
+     * with the binding set long since locked. Refused only once the
+     * scope has actually been disposed, where nothing would ever run it.
+     *
+     * @param callable(): void $callback
+     */
+    public function onDispose(callable $callback): void
+    {
+        $this->assertNotDisposed('register a dispose callback');
+        $this->disposeCallbacks[] = $callback;
+    }
+
+    /**
+     * Ends this scope's lifetime: every callback onDispose() registered
+     * runs in registration order, then every retained binding, instance
+     * and registration list is released whether or not one of them
+     * failed. A callback throwing must not leave the scope holding
+     * worker-lifetime state, and must not stop the callbacks after it
+     * from closing what they own, so all of them run and the first
+     * failure is rethrown only once the wipe has completed.
+     *
+     * Disposing twice is harmless: the second call has nothing left to
+     * run or release and returns. Everything else — binding, resolution,
+     * boot, request-scope creation, further dispose registration — is
+     * refused afterwards, since this scope no longer holds what any of
+     * them would need.
+     */
+    public function dispose(): void
+    {
+        if ($this->disposed) {
+            return;
+        }
+
+        $firstError = null;
+
+        foreach ($this->disposeCallbacks as $callback) {
+            try {
+                $callback();
+            } catch (Throwable $e) {
+                $firstError ??= $e;
+            }
+        }
+
+        $this->bindings = [];
+        $this->resolving = [];
+        $this->middleware = [];
+        $this->openApiMiddleware = [];
+        $this->requestScopeInitializers = [];
+        $this->disposeCallbacks = [];
+        $this->disposed = true;
+
+        if ($firstError !== null) {
+            throw $firstError;
+        }
+    }
+
+    public function isDisposed(): bool
+    {
+        return $this->disposed;
     }
 
     private function resolve(string $id): mixed
@@ -435,11 +522,28 @@ final class AppScope implements ContainerInterface
         return $id;
     }
 
-    private function assertNotBooted(string $id): void
+    /**
+     * The registration guard: a disposed scope is refused first, so a
+     * caller reaching a scope whose lifetime has ended is told that
+     * rather than that its bindings are locked — two different
+     * mistakes, and only one of them is fixable by registering earlier.
+     */
+    private function assertUsable(string $id): void
     {
+        $this->assertNotDisposed("register \"{$id}\"");
+
         if ($this->booted) {
             throw new ContainerException(
                 "Cannot register \"{$id}\": the application container is booted and its bindings are locked."
+            );
+        }
+    }
+
+    private function assertNotDisposed(string $operation): void
+    {
+        if ($this->disposed) {
+            throw new ContainerException(
+                "Cannot {$operation}: this application container has been disposed and cannot be reused."
             );
         }
     }

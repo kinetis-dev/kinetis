@@ -1,5 +1,11 @@
 # Caching & AOT Compilation
 
+This page owns build-time compilation and nothing else. The runtime
+key-value cache an application reads and writes —
+`Psr\SimpleCache\CacheInterface`, Redis-backed — is {doc}`redis`. Those
+two pages are the whole subject; there is no separate runtime-cache page
+to look for, and the two caches share a word and nothing else.
+
 In production, Kinetis boots from one build-time artifact,
 `.kinetis-cache/compiled.php`, instead of reflecting the application on
 every boot: routes, commands, middleware, event listeners, parameter
@@ -121,8 +127,7 @@ file format, atomic publication and rejection behavior.
 - {doc}`routing-validation` / {doc}`mcp` — the live behavior this
   precomputes; nothing about how routes, tools or DTOs are declared
   changes.
-- {doc}`redis` — the *other* "cache" in this codebase:
-  `Psr\SimpleCache\CacheInterface`, a runtime key-value cache unrelated to
-  this build-time compilation beyond the shared word.
+- {doc}`redis` — the runtime `Psr\SimpleCache\CacheInterface` cache, as
+  above.
 - {doc}`appendix-runtime` — the artifact's format and publication
   protocol.

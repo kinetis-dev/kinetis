@@ -8,18 +8,22 @@ use Kinetis\Http\Routing\Router;
 use Kinetis\OpenApi\OpenApiGenerator;
 use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
+use Kinetis\Tests\Http\Fixtures\EnumParameterController;
 use Kinetis\Tests\Http\Fixtures\HiddenController;
 use Kinetis\Tests\Http\Fixtures\NullableFieldsController;
 use Kinetis\Tests\Http\Fixtures\OrderController;
 use Kinetis\Tests\Http\Fixtures\OrderItemsController;
 use Kinetis\Tests\Http\Fixtures\PaginatedOrderController;
 use Kinetis\Tests\Http\Fixtures\PlainArrayFieldController;
+use Kinetis\Tests\Http\Fixtures\ResponseBodyController;
 use Kinetis\Tests\Http\Fixtures\RootedBodyController;
 use Kinetis\Tests\Http\Fixtures\SameStatusResponseController;
+use Kinetis\Tests\Http\Fixtures\UndescribableResponseBodyController;
 use Kinetis\Tests\Http\Fixtures\UploadBindingController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Reflection\Fixtures\HiddenChildOfRoutedBase;
+use Kinetis\Validation\Exception\JsonSchemaException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -258,6 +262,90 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame('Successful response', $responses['201']['description']);
         self::assertArrayHasKey('content', $responses['201']);
         self::assertSame('Validation failed.', $responses['422']['description']);
+    }
+
+    /**
+     * A declared body publishes that DTO's component schema under the
+     * declared media type, through the same deduplication path a
+     * request body and the default response use — so one DTO named by
+     * two statuses is one component referenced twice, never two copies.
+     * A status with no body keeps the description-only shape it had.
+     */
+    public function test_a_response_attribute_publishes_its_declared_body_under_its_media_type(): void
+    {
+        $router = new Router();
+        $router->register(ResponseBodyController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $responses = $spec['paths']['/documented-errors']['get']['responses'];
+
+        self::assertSame('User not found.', $responses['404']['description']);
+        self::assertSame(
+            ['application/json' => ['schema' => ['$ref' => '#/components/schemas/ApiError']]],
+            $responses['404']['content'],
+        );
+
+        self::assertSame(
+            ['application/problem+json' => ['schema' => ['$ref' => '#/components/schemas/ApiError']]],
+            $responses['422']['content'],
+        );
+
+        self::assertSame('Temporarily unavailable.', $responses['503']['description']);
+        self::assertArrayNotHasKey('content', $responses['503']);
+
+        // One component for the DTO both statuses name, and it is the
+        // real expanded schema rather than a placeholder.
+        self::assertSame(
+            ['title' => ['type' => 'string'], 'status' => ['type' => 'integer']],
+            $spec['components']['schemas']['ApiError']['properties'],
+        );
+    }
+
+    public function test_a_response_body_naming_no_class_fails_document_generation(): void
+    {
+        $router = new Router();
+        $router->register(UndescribableResponseBodyController::class);
+
+        $this->expectException(JsonSchemaException::class);
+        $this->expectExceptionMessage('App\\NoSuchClass');
+
+        (new OpenApiGenerator($router))->generate();
+    }
+
+    /**
+     * A #[Query] or path parameter typed as a backed enum publishes the
+     * enum's own domain — the JSON type its backing values carry and
+     * the exact set of them — which is what Dispatcher binds it
+     * against, so a client generating requests from this document can
+     * send nothing the route rejects.
+     */
+    public function test_a_backed_enum_parameter_publishes_its_backing_type_and_case_values(): void
+    {
+        $router = new Router();
+        $router->register(EnumParameterController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $parameters = $spec['paths']['/enum-query']['get']['parameters'];
+
+        self::assertSame('query', $parameters[0]['in']);
+        self::assertSame(['type' => 'string', 'enum' => ['asc', 'desc']], $parameters[0]['schema']);
+        self::assertSame(['type' => 'integer', 'enum' => [1, 2, 3]], $parameters[1]['schema']);
+
+        $pathParameter = $spec['paths']['/enum-path/{direction}']['get']['parameters'][0];
+        self::assertSame('path', $pathParameter['in']);
+        self::assertSame(['type' => 'string', 'enum' => ['asc', 'desc']], $pathParameter['schema']);
+    }
+
+    public function test_a_nullable_backed_enum_parameter_widens_both_its_type_and_its_case_set(): void
+    {
+        $router = new Router();
+        $router->register(EnumParameterController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        self::assertSame(
+            ['type' => ['string', 'null'], 'enum' => ['asc', 'desc', null]],
+            $spec['paths']['/enum-query-nullable']['get']['parameters'][0]['schema'],
+        );
     }
 
     public function test_a_list_of_property_is_a_dollar_ref_array_not_an_inlined_bare_object(): void

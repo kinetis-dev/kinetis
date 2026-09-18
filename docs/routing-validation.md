@@ -115,6 +115,48 @@ path parameter is always a single segment, never an array. See [Query and
 path values are raw
 strings](appendix-routing-validation.md#query-and-path-values-are-raw-strings).
 
+### Enum path and query values
+
+A `#[Query]` or path parameter may also be typed as a backed enum. The
+text is read as the enum's backing type and then matched against its
+cases:
+
+```{code-block} php
+use Kinetis\Http\Attributes\{Get, Query};
+
+enum SortDirection: string
+{
+    case Ascending = 'asc';
+    case Descending = 'desc';
+}
+
+#[Get('/articles/{direction}')]
+public function index(
+    SortDirection $direction,
+    #[Query] ?SortDirection $secondary = null,
+): array
+```
+
+- The match is exact: `asc` binds `SortDirection::Ascending`, and `ASC`
+  does not. Text naming no case is a `422` with code `enum_case`,
+  listing every backing value.
+- An `int`-backed enum resolves the text as an integer first, so
+  `?priority=urgent` is the ordinary not-an-integer `422` rather than an
+  unknown-case one.
+- A missing query value takes the parameter's default, then `null` for a
+  nullable type, exactly as for a scalar. A path segment is always
+  present.
+- The generated document publishes the backing type and the exact set of
+  case values, so a generated client cannot send what the route rejects.
+
+A backed enum is the *only* class a query string or a path segment can
+carry, since both carry text. A unit enum has no backing values, and a
+DTO is a document, so either one — or any other class type on a
+`#[Query]`/path parameter — fails at route registration rather than at
+request time. Move such a parameter to `#[Body]`, where a DTO field may
+declare a class type. See [Enum path and query
+parameters](appendix-routing-validation.md#enum-path-and-query-parameters).
+
 ### The request body
 
 `#[Body]` builds the parameter's class from the request body and
@@ -466,6 +508,35 @@ public function show(int $id): ResponseInterface|ArticleResponse
 `{"error": "Article 7 not found."}` — the shape of Kinetis's own `404`,
 `405` and `500` responses. `#[Response]` only documents the extra status
 in the OpenAPI document; nothing checks that the method returns it.
+
+### Documenting an error payload
+
+`#[Response]` takes an optional `body` naming the DTO that status
+returns, and an optional `mediaType`, `application/json` unless it says
+otherwise:
+
+```{code-block} php
+use Kinetis\Http\Attributes\{Get, Response};
+
+#[Get('/articles/{id}')]
+#[Response(404, description: 'Article not found.', body: ApiError::class)]
+#[Response(503, description: 'Temporarily unavailable.')]
+public function show(int $id): ResponseInterface|ArticleResponse
+```
+
+The named DTO is published as a component schema under the declared
+media type, and one DTO named by two statuses is one component
+referenced twice. Without a `body` the entry stays description-only, and
+`mediaType` then describes nothing and is ignored. A `body` naming
+something that is not a class fails document generation rather than
+advertising a shape no response can have.
+
+This stays descriptive: nothing enforces the status, the schema or the
+media type at runtime, and Kinetis declares no `422` for you — document
+the validation response with a `#[Response(422, ...)]` of your own where
+a route should advertise it. An attribute repeating the route's own
+status is ignored, since the generator already describes that status
+from the method's return type.
 
 An exception can carry its own status instead; see [Mapping your own
 exceptions to a

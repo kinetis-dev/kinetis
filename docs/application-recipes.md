@@ -144,9 +144,9 @@ rather than restating it — read those before writing code. Start at
   "Malformed requests") to exercise `McpDispatcher` argument hydration,
   validation, and the MCP result envelope — a direct method call
   bypasses both.
-- **Non-goal**: this documentation server. `mcp-docs` serves only its
-  own fixed page catalogue; an application's own tools and resources are
-  `kinetis/mcp`'s job.
+- **Non-goal**: this documentation. `mcp-docs` serves only its own fixed
+  page catalogue, whether reached directly or through Orbitron; an
+  application's own tools and resources are `kinetis/mcp`'s job.
 
 ## See also
 

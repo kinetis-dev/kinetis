@@ -55,8 +55,6 @@ final class BinKinetisDisposalTest extends TestCase
             use Kinetis\Container\AppScope;
             use Psr\Log\AbstractLogger;
             use Psr\Log\LoggerInterface;
-            use RuntimeException;
-            use Stringable;
 
             return static function (AppScope $app, Config $config): void {
                 if (getenv('DISPOSAL_TEST_THROWING_LOGGER') !== false) {
@@ -380,5 +378,160 @@ final class BinKinetisDisposalTest extends TestCase
         );
 
         self::assertSame(70, $result['exitCode'], 'EX_SOFTWARE must still be reported even though nothing could be logged about why');
+    }
+
+    /**
+     * The application scope outlives the request scope, so it is
+     * disposed after it — and it is disposed at all, which is what
+     * closes a connection pool a package opened once for this process.
+     */
+    public function test_both_scopes_are_disposed_in_order_after_a_successful_command(): void
+    {
+        $this->writeCommand('DisposingCommand.php', <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            namespace App;
+
+            use Kinetis\Console\Attributes\Command;
+            use Kinetis\Container\RequestScope;
+
+            final readonly class DisposingCommand
+            {
+                public function __construct(private RequestScope $scope) {}
+
+                #[Command(name: 'disposes-both-scopes', bootstrap: true)]
+                public function run(): int
+                {
+                    $this->scope->onDispose(static function (): void {
+                        fwrite(STDOUT, "REQUEST_SCOPE_DISPOSED\n");
+                    });
+                    $this->scope->appScope()->onDispose(static function (): void {
+                        fwrite(STDOUT, "APP_SCOPE_DISPOSED\n");
+                    });
+
+                    return 0;
+                }
+            }
+            PHP);
+
+        $result = $this->runBinKinetis('disposes-both-scopes', $this->projectDir . '/log.jsonl');
+
+        self::assertSame(0, $result['exitCode']);
+        self::assertSame(
+            ['REQUEST_SCOPE_DISPOSED', 'APP_SCOPE_DISPOSED'],
+            array_values(array_filter(explode("\n", $result['stdout']))),
+        );
+    }
+
+    /**
+     * One cleanup failing must not skip the other: the application
+     * scope still owns real resources whatever the request scope's own
+     * disposal did.
+     */
+    public function test_the_application_scope_is_still_disposed_when_the_request_scopes_disposal_failed(): void
+    {
+        $this->writeCommand('FailingRequestDisposalCommand.php', <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            namespace App;
+
+            use Kinetis\Console\Attributes\Command;
+            use Kinetis\Container\RequestScope;
+            use RuntimeException;
+
+            final readonly class FailingRequestDisposalCommand
+            {
+                public function __construct(private RequestScope $scope) {}
+
+                #[Command(name: 'fails-request-disposal', bootstrap: true)]
+                public function run(): int
+                {
+                    $this->scope->onDispose(static function (): void {
+                        throw new RuntimeException('request dispose callback failed');
+                    });
+                    $this->scope->appScope()->onDispose(static function (): void {
+                        fwrite(STDOUT, "APP_SCOPE_DISPOSED\n");
+                    });
+
+                    return 0;
+                }
+            }
+            PHP);
+
+        $logFile = $this->projectDir . '/log.jsonl';
+        $result = $this->runBinKinetis('fails-request-disposal', $logFile);
+
+        self::assertSame(70, $result['exitCode']);
+        self::assertStringContainsString('APP_SCOPE_DISPOSED', $result['stdout']);
+        self::assertSame('request dispose callback failed', $this->readLog($logFile)[0]['contextMessage']);
+    }
+
+    /**
+     * The same precedence the request scope's own disposal follows, and
+     * reported on STDERR rather than through the logger: the
+     * application scope is already disposed by then, so nothing can be
+     * resolved from it.
+     */
+    public function test_a_failing_application_disposal_after_a_successful_command_reports_exit_70(): void
+    {
+        $this->writeCommand('FailingAppDisposalCommand.php', $this->failingAppDisposalCommand(returnsSuccessfully: true));
+
+        $result = $this->runBinKinetis('fails-app-disposal', $this->projectDir . '/log.jsonl');
+
+        self::assertSame(70, $result['exitCode']);
+        self::assertStringContainsString('app dispose callback failed', $result['stderr']);
+    }
+
+    public function test_a_failing_application_disposal_does_not_replace_a_failing_commands_own_exit_code(): void
+    {
+        $this->writeCommand('FailingAppDisposalCommand.php', $this->failingAppDisposalCommand(returnsSuccessfully: false));
+
+        $result = $this->runBinKinetis('fails-app-disposal', $this->projectDir . '/log.jsonl');
+
+        self::assertSame(1, $result['exitCode'], "the command's own failure decides exit(1)");
+        self::assertStringContainsString('app dispose callback failed', $result['stderr']);
+    }
+
+    /**
+     * One command source, differing only in whether the command itself
+     * completes — the two exit codes above are the same cleanup failure
+     * measured against a decided and an undecided outcome.
+     */
+    private function failingAppDisposalCommand(bool $returnsSuccessfully): string
+    {
+        $outcome = $returnsSuccessfully
+            ? 'return 0;'
+            : "throw new RuntimeException('the command itself failed');";
+
+        return <<<PHP
+            <?php
+
+            declare(strict_types=1);
+
+            namespace App;
+
+            use Kinetis\Console\Attributes\Command;
+            use Kinetis\Container\RequestScope;
+            use RuntimeException;
+
+            final readonly class FailingAppDisposalCommand
+            {
+                public function __construct(private RequestScope \$scope) {}
+
+                #[Command(name: 'fails-app-disposal', bootstrap: true)]
+                public function run(): int
+                {
+                    \$this->scope->appScope()->onDispose(static function (): void {
+                        throw new RuntimeException('app dispose callback failed');
+                    });
+
+                    {$outcome}
+                }
+            }
+            PHP;
     }
 }
