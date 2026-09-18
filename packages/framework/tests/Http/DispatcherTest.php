@@ -16,8 +16,10 @@ use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
 use Kinetis\Tests\Http\Fixtures\ConstructionCountingController;
 use Kinetis\Tests\Http\Fixtures\CreateUserRequest;
+use Kinetis\Tests\Http\Fixtures\ClassTypedQueryController;
 use Kinetis\Tests\Http\Fixtures\EmptyBodyRootController;
 use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
+use Kinetis\Tests\Http\Fixtures\EnumParameterController;
 use Kinetis\Tests\Http\Fixtures\ImpossiblePathArrayController;
 use Kinetis\Tests\Http\Fixtures\NoteController;
 use Kinetis\Tests\Http\Fixtures\NullableFieldsController;
@@ -35,10 +37,12 @@ use Kinetis\Tests\Http\Fixtures\TagSearchController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedPathTypeController;
 use Kinetis\Tests\Http\Fixtures\PresenceUnionQueryController;
 use Kinetis\Tests\Http\Fixtures\UnionPathTypeController;
+use Kinetis\Tests\Http\Fixtures\UnitEnumQueryController;
 use Kinetis\Tests\Http\Fixtures\UnsupportedQueryTypeController;
 use Kinetis\Tests\Http\Fixtures\UploadController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Tests\Instrumentation\RecordingTelemetry;
+use Kinetis\Tests\Validation\Fixtures\Priority;
 use Kinetis\Tests\Validation\Fixtures\SortDirection;
 use Nyholm\Psr7\ServerRequest;
 use Nyholm\Psr7\Stream;
@@ -816,7 +820,7 @@ final class DispatcherTest extends TestCase
 
         $plan = [
             'Kinetis\Tests\Http\Fixtures\UserController::show' => [
-                ['name' => 'id', 'source' => 'path', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
+                ['name' => 'id', 'source' => 'path', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'enumClass' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
             ],
         ];
 
@@ -1421,6 +1425,139 @@ final class DispatcherTest extends TestCase
         return $this->dispatcher()->dispatch($match, $request);
     }
 
+    // --- Backed enums on a #[Query] or path parameter ---
+
+    public function test_a_string_backed_and_an_int_backed_enum_query_parameter_bind_their_cases(): void
+    {
+        $response = $this->enumQuery('/enum-query', ['direction' => 'desc', 'priority' => '3']);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['direction' => 'desc', 'priority' => 3], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_backed_enum_path_parameter_binds_its_case(): void
+    {
+        $router = new Router();
+        $router->register(EnumParameterController::class);
+
+        $response = $this->dispatcher()->dispatch(
+            $router->match('GET', '/enum-path/asc'),
+            new ServerRequest('GET', '/enum-path/asc'),
+        );
+
+        self::assertSame(['direction' => 'asc'], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * Text naming no case is a closed-set violation carrying the enum's
+     * own backing values, exactly as a #[Body] DTO's enum field reports
+     * it — never a TypeError raised as the controller is invoked.
+     */
+    public function test_a_query_value_naming_no_enum_case_is_a_validation_violation(): void
+    {
+        try {
+            $this->enumQuery('/enum-query', ['direction' => 'sideways', 'priority' => '1']);
+            self::fail('binding must fail');
+        } catch (ValidationException $e) {
+            $violations = $e->violations;
+        }
+
+        self::assertCount(1, $violations);
+        self::assertSame(['direction'], $violations[0]->path);
+        self::assertSame('enum_case', $violations[0]->code);
+        self::assertSame(['choices' => ['asc', 'desc']], $violations[0]->parameters);
+    }
+
+    /**
+     * An int-backed enum resolves its wire text as an integer first, so
+     * text that is no integer at all fails as the ordinary
+     * not-an-integer violation rather than as an unknown case: the
+     * value never named a case of anything.
+     */
+    public function test_malformed_text_for_an_int_backed_enum_query_parameter_is_not_an_enum_case_failure(): void
+    {
+        try {
+            $this->enumQuery('/enum-query', ['direction' => 'asc', 'priority' => 'urgent']);
+            self::fail('binding must fail');
+        } catch (ValidationException $e) {
+            $violations = $e->violations;
+        }
+
+        self::assertCount(1, $violations);
+        self::assertSame(['priority'], $violations[0]->path);
+        self::assertSame('not_an_integer', $violations[0]->code);
+    }
+
+    public function test_a_missing_nullable_enum_query_parameter_binds_null(): void
+    {
+        $response = $this->enumQuery('/enum-query-nullable', []);
+
+        self::assertSame(['direction' => null], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_missing_defaulted_enum_query_parameter_binds_its_default_case(): void
+    {
+        $response = $this->enumQuery('/enum-query-default', []);
+
+        self::assertSame(['direction' => 'asc'], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * A unit enum's cases have no backing value, so no query string can
+     * name one — rejected at the same `Router::register()` boundary
+     * every other unsatisfiable declaration is, rather than admitted
+     * with no scalar type and left to explode at invocation.
+     */
+    public function test_a_unit_enum_query_parameter_is_rejected_at_registration(): void
+    {
+        $router = new Router();
+
+        $this->expectException(UnresolvableParameterException::class);
+        $this->expectExceptionMessage('only a backed enum');
+
+        $router->register(UnitEnumQueryController::class);
+    }
+
+    public function test_an_arbitrary_class_typed_query_parameter_is_rejected_at_registration(): void
+    {
+        $router = new Router();
+
+        $this->expectException(UnresolvableParameterException::class);
+        $this->expectExceptionMessage('filter');
+
+        $router->register(ClassTypedQueryController::class);
+    }
+
+    public function test_an_enum_query_parameters_plan_carries_the_enum_and_its_backing_type(): void
+    {
+        $router = new Router();
+        $router->register(EnumParameterController::class);
+
+        $plan = Dispatcher::derivePlan(
+            new \ReflectionMethod(EnumParameterController::class, 'show'),
+            $router->match('GET', '/enum-query')->route,
+        );
+
+        self::assertSame(SortDirection::class, $plan[0]['enumClass']);
+        self::assertSame('string', $plan[0]['scalarType']);
+        self::assertSame(Priority::class, $plan[1]['enumClass']);
+        self::assertSame('int', $plan[1]['scalarType']);
+    }
+
+    /**
+     * @param array<string, string> $query
+     */
+    private function enumQuery(string $path, array $query): ResponseInterface
+    {
+        $router = new Router();
+        $router->register(EnumParameterController::class);
+
+        return $this->dispatcher()->dispatch(
+            $router->match('GET', $path),
+            (new ServerRequest('GET', $path))->withQueryParams($query),
+        );
+    }
+
     /**
      * A query or path value carries text only, so a parameter typed
      * outside Hydrator::SUPPORTED_BUILTIN_TYPES is rejected at
@@ -1652,7 +1789,7 @@ final class DispatcherTest extends TestCase
         $plan = Dispatcher::derivePlan(new \ReflectionMethod(RootedBodyController::class, 'store'), $match->route);
 
         self::assertSame(
-            [['name' => 'user', 'source' => 'body', 'dtoClass' => CreateUserRequest::class, 'bodyRoot' => 'user', 'scalarType' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []]],
+            [['name' => 'user', 'source' => 'body', 'dtoClass' => CreateUserRequest::class, 'bodyRoot' => 'user', 'scalarType' => null, 'enumClass' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []]],
             $plan,
         );
 

@@ -6,6 +6,7 @@ namespace Kinetis\Testing;
 
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
+use PHPUnit\Framework\Attributes\After;
 use PHPUnit\Framework\Attributes\Before;
 use PHPUnit\Framework\TestCase;
 
@@ -35,6 +36,10 @@ use PHPUnit\Framework\TestCase;
  * them, matching the per-request isolation the framework itself gives.
  * Discovery is the cost, not the container: override
  * {@see configOverrides()} rather than avoiding the boot.
+ *
+ * Each of those applications is disposed after its own test, so an
+ * app-scoped resource a package opened at boot is closed instead of
+ * being abandoned once per test.
  */
 abstract class ApplicationTestCase extends TestCase
 {
@@ -84,5 +89,22 @@ abstract class ApplicationTestCase extends TestCase
         );
         $this->client = $this->application->client();
         $this->app = $this->application->app;
+    }
+
+    /**
+     * PHPUnit runs after-hooks even when a before-hook failed, so this
+     * can be reached with the typed property never assigned —
+     * isset() is what keeps a boot failure reported as itself rather
+     * than as an uninitialized-property Error raised during teardown.
+     *
+     * A failure here becomes the test's error only when the test has
+     * not already failed, which PHPUnit itself decides.
+     */
+    #[After]
+    protected function disposeApplication(): void
+    {
+        if (isset($this->application)) {
+            $this->application->dispose();
+        }
     }
 }

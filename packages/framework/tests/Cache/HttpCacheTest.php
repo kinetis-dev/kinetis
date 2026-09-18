@@ -17,10 +17,10 @@ final class HttpCacheTest extends TestCase
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::index' => [
-                    ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'hasDefault' => true, 'defaultValue' => 1, 'allowsNull' => false, 'constraints' => []],
-                    ['name' => 'flag', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'bool', 'hasDefault' => true, 'defaultValue' => false, 'allowsNull' => false, 'constraints' => []],
-                    ['name' => 'label', 'source' => 'default', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'string', 'hasDefault' => true, 'defaultValue' => null, 'allowsNull' => true, 'constraints' => []],
-                    ['name' => 'user', 'source' => 'body', 'dtoClass' => 'App\\Dto', 'bodyRoot' => 'user', 'scalarType' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'enumClass' => null, 'hasDefault' => true, 'defaultValue' => 1, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'flag', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'bool', 'enumClass' => null, 'hasDefault' => true, 'defaultValue' => false, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'label', 'source' => 'default', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'string', 'enumClass' => null, 'hasDefault' => true, 'defaultValue' => null, 'allowsNull' => true, 'constraints' => []],
+                    ['name' => 'user', 'source' => 'body', 'dtoClass' => 'App\\Dto', 'bodyRoot' => 'user', 'scalarType' => null, 'enumClass' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
                 ],
             ],
             hydrationPlans: [
@@ -99,7 +99,7 @@ final class HttpCacheTest extends TestCase
             routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
             httpBindingPlans: [
                 'App\\C::m' => [
-                    ['name' => 'id', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
+                    ['name' => 'id', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'enumClass' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
                 ],
             ],
             hydrationPlans: [

@@ -1685,8 +1685,11 @@ final class Hydrator
     }
 
     /**
-     * One backed-enum value: a field declaring that enum, or one
-     * element of a #[ListOf] naming it.
+     * One backed-enum value: a field declaring that enum, an element of
+     * a #[ListOf] naming it, or a `#[Query]`/path controller parameter
+     * typed as it — `Kinetis\Http\Dispatcher` binds one through this
+     * same method, so an HTTP parameter and a DTO field resolve a case
+     * by one set of rules rather than two.
      *
      * An existing case is taken as given, exactly as a class-typed
      * field takes an instance. Anything else is the case's backing
@@ -1706,7 +1709,7 @@ final class Hydrator
      * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
      * @return array{0: mixed, 1: list<Violation>}
      */
-    private static function resolveEnumValue(
+    public static function resolveEnumValue(
         InputSource $source,
         array $path,
         mixed $value,

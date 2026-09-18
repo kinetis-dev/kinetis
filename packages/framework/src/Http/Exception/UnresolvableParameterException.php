@@ -91,6 +91,26 @@ final class UnresolvableParameterException extends RuntimeException
     }
 
     /**
+     * A class-typed `#[Query]`/path parameter that is not a backed enum.
+     * A query string and a path segment carry text, so the only class a
+     * request value can name is one whose cases are written as a scalar:
+     * a unit enum has no such spelling, and an interface, an abstract
+     * class or a DTO has none either. Thrown from the same
+     * `Router::register()`-time boundary as forUnsupportedBuiltinType(),
+     * so a route declaring one never registers, is never advertised by
+     * OpenApiGenerator, and never accepts traffic.
+     */
+    public static function forUnsupportedClassType(string $name, string $source, string $class): self
+    {
+        return new self(
+            "Controller parameter \"\${$name}\" is a {$source} parameter typed \"{$class}\" — a {$source} value "
+            . 'is text, and only a backed enum has cases written as a scalar a request can send. Use a backed '
+            . 'enum or a supported builtin type, or move the parameter to #[Body], where a DTO field may declare '
+            . 'a class type.'
+        );
+    }
+
+    /**
      * A second `#[Body]` parameter on one controller method. A request
      * carries one document, and every `#[Body]` parameter validates that
      * document's outer object as its own — under JSON a rooted one
@@ -131,7 +151,7 @@ final class UnresolvableParameterException extends RuntimeException
      * there is no repetition, comma, or any other convention that could
      * ever let a path segment become an array. Thrown from the same
      * `Router::register()`-time boundary as
-     * forImpossibleQueryOrPathNull().
+     * forUnsupportedBuiltinType().
      */
     public static function forImpossiblePathArray(string $name): self
     {

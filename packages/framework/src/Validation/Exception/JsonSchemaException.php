@@ -16,20 +16,20 @@ use RuntimeException;
  * from its own binding-plan derivation for the same declaration, so a
  * method the published schema could not describe is never bound either.
  *
- * Five declarations reach this. A composite type — an intersection, or
+ * Six declarations reach this. A composite type — an intersection, or
  * any union other than the `Kinetis\Validation\Absent` presence union a
  * DTO field may declare — which has no single wire shape to publish and
  * which neither a controller nor an MCP tool method may declare at all.
  * A builtin type outside
  * Kinetis\Validation\Hydrator::SUPPORTED_BUILTIN_TYPES, which no
- * request value can carry. A class type that cannot be instantiated, for
- * which Hydrator accepts only an already-constructed instance, so no
- * wire value could satisfy an expanded object schema either. Two rules
- * on one parameter claiming the same JSON Schema keyword, where
- * publishing either one alone would understate what the request is
- * checked against. And a rule claiming a keyword the parameter's own PHP
+ * request value can carry. A class type no wire value could produce.
+ * Two rules on one parameter claiming the same JSON Schema keyword,
+ * where publishing either one alone would understate what the request
+ * is checked against. A rule claiming a keyword the parameter's own PHP
  * type already states, which would publish a shape Hydrator does not
- * check the request against at all.
+ * check the request against at all. And a
+ * `Kinetis\Http\Attributes\Response` body naming something that is not
+ * a class at all, which has no schema to publish.
  */
 final class JsonSchemaException extends RuntimeException
 {
@@ -60,11 +60,33 @@ final class JsonSchemaException extends RuntimeException
         );
     }
 
+    /**
+     * A class type no wire value could produce: one that cannot be
+     * instantiated at all, for which Hydrator accepts only an
+     * already-constructed instance, or — on a `#[Query]`/path parameter,
+     * which carries text — any class other than a backed enum.
+     */
     public static function unsupportedClassType(string $class): self
     {
         return new self(
-            "Cannot generate a JSON Schema for \"{$class}\": it cannot be instantiated, so no request "
-            . 'value can be hydrated into it. Use an instantiable class.',
+            "Cannot generate a JSON Schema for \"{$class}\": no request value can be hydrated into it. "
+            . 'Use an instantiable class, or a backed enum for a query or path parameter.',
+        );
+    }
+
+    /**
+     * A `#[Response(..., body: ...)]` naming something that is not a
+     * class. The body names the DTO the status's payload is shaped
+     * like, and only a real class has a schema; publishing a component
+     * under a name nothing backs would advertise a response shape no
+     * route can ever produce.
+     */
+    public static function undescribableResponseBody(int $status, string $body): self
+    {
+        return new self(
+            "Cannot generate a JSON Schema for the #[Response({$status})] body \"{$body}\": it is not a class. "
+            . 'Name the DTO class this status returns, or drop the body and leave the response described by '
+            . 'its description alone.',
         );
     }
 

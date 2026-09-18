@@ -549,4 +549,124 @@ final class AppScopeTest extends TestCase
         self::assertInstanceOf(RequestScope::class, $cleanedUp);
         self::assertTrue($cleanedUp->isDisposed());
     }
+
+    // --- Application lifetime ---
+
+    public function test_dispose_runs_every_callback_in_registration_order(): void
+    {
+        $app = new AppScope();
+        $order = [];
+        $app->onDispose(static function () use (&$order): void {
+            $order[] = 'first';
+        });
+        $app->boot();
+        // Registered after boot(), which a lazy factory opening a
+        // resource on first resolution can only do.
+        $app->onDispose(static function () use (&$order): void {
+            $order[] = 'second';
+        });
+
+        $app->dispose();
+
+        self::assertSame(['first', 'second'], $order);
+    }
+
+    /**
+     * A callback throwing must not stop the ones after it from closing
+     * what they own, and the first failure is what the caller is told —
+     * not a later one that happened to run afterwards.
+     */
+    public function test_every_callback_runs_after_one_fails_and_the_first_failure_is_rethrown(): void
+    {
+        $app = new AppScope();
+        $ran = [];
+        $app->onDispose(static function () use (&$ran): void {
+            $ran[] = 'before';
+        });
+        $app->onDispose(static fn () => throw new RuntimeException('first failure'));
+        $app->onDispose(static fn () => throw new \LogicException('second failure'));
+        $app->onDispose(static function () use (&$ran): void {
+            $ran[] = 'after';
+        });
+
+        try {
+            $app->dispose();
+            self::fail('Expected the first callback failure to propagate.');
+        } catch (RuntimeException $e) {
+            self::assertSame('first failure', $e->getMessage());
+        }
+
+        self::assertSame(['before', 'after'], $ran);
+        self::assertTrue($app->isDisposed());
+    }
+
+    /**
+     * The point of disposal for a worker-lifetime container: whatever it
+     * retained is released, so nothing it built outlives it through the
+     * scope itself.
+     */
+    public function test_dispose_releases_every_retained_instance_and_registration(): void
+    {
+        $app = new AppScope();
+        $counter = new Counter();
+        $app->instance(Counter::class, $counter);
+        $app->middleware(GlobalMiddleware::class);
+        $app->boot();
+
+        $app->dispose();
+
+        self::assertFalse($app->has(Counter::class));
+        self::assertSame([], $app->middlewares());
+        self::assertSame([], $app->openApiMiddlewares());
+    }
+
+    public function test_disposing_twice_runs_the_callbacks_once_and_does_not_throw(): void
+    {
+        $app = new AppScope();
+        $calls = 0;
+        $app->onDispose(static function () use (&$calls): void {
+            ++$calls;
+        });
+
+        $app->dispose();
+        $app->dispose();
+
+        self::assertSame(1, $calls);
+    }
+
+    /**
+     * A disposed scope holds nothing any of these would need, so each is
+     * refused rather than answered from the cleared state — and the
+     * refusal says the scope is disposed, not that its bindings are
+     * locked, which is a different and fixable mistake.
+     *
+     * @param callable(AppScope): void $operation
+     */
+    #[DataProvider('operationsRefusedAfterDisposal')]
+    public function test_every_operation_is_refused_after_disposal(callable $operation): void
+    {
+        $app = new AppScope();
+        $app->dispose();
+
+        $this->expectException(ContainerException::class);
+        $this->expectExceptionMessage('has been disposed');
+
+        $operation($app);
+    }
+
+    /**
+     * @return iterable<string, array{callable(AppScope): void}>
+     */
+    public static function operationsRefusedAfterDisposal(): iterable
+    {
+        yield 'bind' => [static fn (AppScope $app) => $app->bind(Counter::class)];
+        yield 'instance' => [static fn (AppScope $app) => $app->instance(Counter::class, new Counter())];
+        yield 'middleware' => [static fn (AppScope $app) => $app->middleware(GlobalMiddleware::class)];
+        yield 'openApiMiddleware' => [static fn (AppScope $app) => $app->openApiMiddleware(GlobalMiddleware::class)];
+        yield 'boot' => [static fn (AppScope $app) => $app->boot()];
+        yield 'get' => [static fn (AppScope $app) => $app->get(Counter::class)];
+        yield 'createRequestScope' => [static fn (AppScope $app) => $app->createRequestScope()];
+        yield 'onRequestScopeCreated' => [static fn (AppScope $app) => $app->onRequestScopeCreated(static function (RequestScope $scope): void {})];
+        yield 'onDispose' => [static fn (AppScope $app) => $app->onDispose(static function (): void {})];
+    }
 }

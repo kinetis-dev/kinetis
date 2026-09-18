@@ -19,6 +19,7 @@ use Kinetis\Instrumentation\NullTelemetry;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Runtime\Adapters\FpmAdapter;
 use Kinetis\Runtime\HttpStartup;
+use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Tests\Instrumentation\RecordingTelemetry;
 use Kinetis\Tests\Runtime\Fixtures\RecordingAdapter;
 use Kinetis\Tests\Runtime\Fixtures\StartupProject\Events\StartupEvent;
@@ -29,6 +30,7 @@ use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use RuntimeException;
 
 // The same test-only gc_collect_cycles() override KernelTest uses, so
 // the persistent flag the adapter reports can be observed on the Kernel
@@ -224,12 +226,101 @@ final class HttpStartupTest extends TestCase
     {
         putenv('APP_ENV=development');
 
-        $started = HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+        $started = HttpStartup::assemble(
+            $this->projectRoot,
+            static fn (TrustedProxies $proxies): RecordingAdapter => new RecordingAdapter(
+                $proxies,
+                request: new ServerRequest('GET', '/startup-ping'),
+            ),
+        );
         $started->serve();
 
         self::assertInstanceOf(RecordingAdapter::class, $started->adapter);
-        self::assertNotNull($started->adapter->handler);
-        self::assertSame(200, ($started->adapter->handler)(new ServerRequest('GET', '/startup-ping'))->getStatusCode());
+        self::assertNotNull($started->adapter->response);
+        self::assertSame(200, $started->adapter->response->getStatusCode());
+    }
+
+    /**
+     * The loop returning is the worker ending, which is when an
+     * app-scoped resource opened at boot has to be closed. Nothing else
+     * in the process is left to do it.
+     */
+    public function test_serving_disposes_the_application_once_the_adapters_loop_returns(): void
+    {
+        putenv('APP_ENV=development');
+
+        $started = HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+        self::assertFalse($started->app->isDisposed());
+
+        $started->serve();
+
+        self::assertTrue($started->app->isDisposed());
+    }
+
+    /**
+     * A loop that throws is the worker ending on that failure, and it
+     * propagates untouched — there is no catch here to convert it into
+     * something else or to report a second, secondary failure over it.
+     */
+    public function test_a_failing_adapter_loop_propagates_its_own_exception(): void
+    {
+        putenv('APP_ENV=development');
+
+        $started = HttpStartup::assemble($this->projectRoot, static fn (TrustedProxies $proxies): RuntimeAdapterInterface => new class implements RuntimeAdapterInterface {
+            #[\Override]
+            public function run(callable $handler): void
+            {
+                throw new RuntimeException('the loop failed');
+            }
+
+            #[\Override]
+            public function isPersistent(): bool
+            {
+                return false;
+            }
+        });
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('the loop failed');
+
+        $started->serve();
+    }
+
+    /**
+     * Assembly fails after the scope exists — a bootstrap.php that
+     * throws — and the scope still gets disposed, so whatever an
+     * earlier package bootstrap already opened is closed. The failure
+     * the caller sees is still the bootstrap's own.
+     */
+    public function test_an_assembly_failure_after_the_scope_exists_still_disposes_it(): void
+    {
+        putenv('APP_ENV=development');
+        file_put_contents($this->projectRoot . '/bootstrap.php', <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            use Kinetis\Config\Config;
+            use Kinetis\Container\AppScope;
+
+            return static function (AppScope $app, Config $config): void {
+                $GLOBALS['kinetisAssemblyFailureDisposals'] = 0;
+                $app->onDispose(static function (): void {
+                    ++$GLOBALS['kinetisAssemblyFailureDisposals'];
+                });
+
+                throw new RuntimeException('bootstrap.php failed');
+            };
+            PHP);
+
+        try {
+            HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+            self::fail('the bootstrap failure must propagate');
+        } catch (RuntimeException $e) {
+            self::assertSame('bootstrap.php failed', $e->getMessage());
+        }
+
+        self::assertSame(1, $GLOBALS['kinetisAssemblyFailureDisposals']);
     }
 
     // --- Telemetry ---
