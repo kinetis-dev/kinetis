@@ -383,6 +383,7 @@ the default connection.
 | `BROADCAST_HOST` | `api.pusherapp.com` | Server host the backend publishes to. |
 | `BROADCAST_PORT` | `443` | Server port; must be a valid TCP port (1–65535). |
 | `BROADCAST_TLS` | `true` | Connect over TLS. |
+| `BROADCAST_TIMEOUT` | `30.0` | The whole budget for one trigger request, in seconds; must be above zero. A non-positive value fails at worker boot and names the scoped key. `PusherBroadcaster::fromConfig()` applies it even to an injected `Http`. |
 | `BROADCAST_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact `Origin` values this route's own guard admits on `POST /broadcasting/auth`, on top of the request's own origin, which always passes. Requests without an `Origin` header (server-side clients) pass too; any other origin is `403`. Not a CORS policy: a cross-origin browser request must also be allowed by the global `CorsMiddleware`. Not connection-scoped — the endpoint is one route. See {doc}`broadcasting`'s "Securing the endpoint". |
 
 The keys above address the server your *backend* publishes to. Where the

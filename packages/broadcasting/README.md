@@ -104,6 +104,7 @@ BROADCAST_SECRET=your-secret
 BROADCAST_HOST=soketi.example.com
 BROADCAST_PORT=6001
 BROADCAST_TLS=false
+BROADCAST_TIMEOUT=2.0
 BROADCAST_ALLOWED_ORIGINS=https://app.example
 ```
 
@@ -116,14 +117,23 @@ BROADCAST_ALLOWED_ORIGINS=https://app.example
 | `BROADCAST_HOST` | `api.pusherapp.com` | The broker's host. |
 | `BROADCAST_PORT` | `443` | The broker's port. |
 | `BROADCAST_TLS` | `true` | Whether to connect over TLS. |
+| `BROADCAST_TIMEOUT` | `30.0` | The whole budget for one trigger, in seconds; must be above zero. |
 | `BROADCAST_ALLOWED_ORIGINS` | *(empty)* | Extra exact `Origin` values this route's own guard admits on `POST /broadcasting/auth`. The request's own origin, and a request sending no `Origin` at all, pass without it. A cross-origin browser request must also be allowed by the app's global `CorsMiddleware`. |
 | `BROADCAST_CHANNEL_DISCOVERY_PATHS` | *(unset)* | Comma-separated sub-paths (relative to each PSR-4 base directory) restricting the `#[BroadcastChannel]` scan, for a large application that wants a bounded scan. |
 
-The six Pusher connection keys are scoped — `BROADCAST_KEY` +
+The seven Pusher connection keys are scoped — `BROADCAST_KEY` +
 `notifications` → `BROADCAST_NOTIFICATIONS_KEY`; `BROADCAST_DRIVER`,
 `BROADCAST_ALLOWED_ORIGINS` and `BROADCAST_CHANNEL_DISCOVERY_PATHS` are
 read unscoped. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
+
+A trigger returns once the broker answered `2xx` — accepted for fan-out,
+not a delivery receipt. An unencodable payload raises `JsonException`
+before a request; an attempted request that does not produce `2xx` raises
+`Kinetis\RevoltHttpClient\Exception\HttpRequestException`. A
+`Timeout` or `Transport` failure leaves it unknown whether the broker
+took the event, so the driver never repeats the attempt. See
+[kinetis.dev/docs/broadcasting.html](https://kinetis.dev/docs/broadcasting.html).
 
 ## Installation
 
