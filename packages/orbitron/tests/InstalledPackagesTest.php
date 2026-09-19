@@ -270,6 +270,37 @@ final class InstalledPackagesTest extends TestCase
     }
 
     /**
+     * The concrete defect this reader must not have: a metapackage is
+     * installed, at a real version, but has no files of its own to
+     * install a path under, and Composer reports that as an explicit
+     * `null` `install_path` rather than a string — the one value
+     * `install_path` carries that `pretty_version` never does. A real
+     * inventory carries one beside genuine Kinetis entries, and the read
+     * must succeed rather than fail the whole snapshot over an entry
+     * that is not malformed, only sourceless. Whether the metapackage
+     * itself is `kinetis/*` or not, it has no readable source root and
+     * so has no record and no source of its own.
+     */
+    public function test_it_reads_a_generated_inventory_carrying_a_metapackage(): void
+    {
+        $packages = InstalledPackages::fromProject($this->project([
+            'root' => ['name' => 'kinetis/orbitron'],
+            'versions' => [
+                'kinetis/framework' => [
+                    'pretty_version' => '1.12.2',
+                    'install_path' => '/app/vendor/kinetis/framework',
+                ],
+                'kinetis/meta' => ['pretty_version' => '1.0.0', 'install_path' => null],
+                'spiral/roadrunner' => ['pretty_version' => 'v2025.1.15', 'install_path' => null],
+            ],
+        ]));
+
+        self::assertSame([['name' => 'kinetis/framework', 'version' => '1.12.2']], $packages->records());
+        self::assertNull($packages->source('kinetis/meta'));
+        self::assertNull($packages->source('spiral/roadrunner'));
+    }
+
+    /**
      * A project with no generated inventory has no installed set to
      * report, and saying so is the only truthful answer: a server that
      * fell back to whatever it read earlier would report a set that is no
@@ -328,11 +359,6 @@ final class InstalledPackagesTest extends TestCase
         yield 'a pretty_version that is not a string' => [
             ['kinetis/queue' => ['pretty_version' => 132, 'install_path' => '/app/vendor/kinetis/queue']],
             'non-string "pretty_version" for "kinetis/queue"',
-        ];
-
-        yield 'a null install_path beside a real version' => [
-            ['kinetis/queue' => ['pretty_version' => '1.3.2', 'install_path' => null]],
-            'non-string "install_path" for "kinetis/queue"',
         ];
 
         yield 'an install_path that is not a string' => [

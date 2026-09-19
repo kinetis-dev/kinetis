@@ -58,9 +58,11 @@ final readonly class InstalledPackages
 
         foreach ($facts ?? self::readComposer() as $fact) {
             // A name that is only replaced or provided carries neither a
-            // version nor an install path. Both are required here: either
-            // one alone would let such a name through as a package that
-            // is not installed at all. `??=` keeps the first record for a
+            // version nor an install path; a metapackage carries a version
+            // but never an install path, having no files of its own to put
+            // one under. Both are required here: either check alone would
+            // let such a name through as a package with a readable source,
+            // which neither one has. `??=` keeps the first record for a
             // name, matching Composer's own first-match lookup.
             if (!str_starts_with($fact->name, self::PREFIX)
                 || $fact->version === null
@@ -108,10 +110,12 @@ final readonly class InstalledPackages
      * The shape read here is the one `Composer\InstalledVersions`
      * documents and itself requires: a `root` naming the project, and a
      * `versions` map keyed by package name whose entries carry
-     * `pretty_version` and `install_path` only when something is really
-     * installed under that name. Those are the fields the constructor
-     * above already consumes; nothing else is interpreted, and each one
-     * is required to be what Composer writes.
+     * `pretty_version` only when something is really installed under
+     * that name, and `install_path` the same way except that a
+     * metapackage — installed, but with no files of its own — carries it
+     * as an explicit `null` rather than a string. Those are the fields
+     * the constructor above already consumes; nothing else is
+     * interpreted, and each one is required to be what Composer writes.
      *
      * @param string $projectRoot the detected consumer root, never a path a caller chose
      * @throws RuntimeException when no generated inventory is there, or it does not carry
@@ -153,7 +157,7 @@ final readonly class InstalledPackages
             $facts[] = new PackageFact(
                 $name,
                 self::optional($entry, 'pretty_version', $name, $inventory),
-                self::optional($entry, 'install_path', $name, $inventory),
+                self::optional($entry, 'install_path', $name, $inventory, nullable: true),
                 $name === $root,
             );
         }
@@ -162,25 +166,41 @@ final readonly class InstalledPackages
     }
 
     /**
-     * One of the two fields an entry carries only when something is
-     * really installed under that name.
+     * One of the fields an entry carries only when something is really
+     * installed under that name.
      *
      * Absent is the meaning Composer gives a name that is merely
      * replaced or provided, and the constructor drops such a name. A
      * field that is there but is not a string has no such meaning, so it
      * fails here rather than being read as absent — which would report
-     * an installed package as one that is not on disk.
+     * an installed package as one that is not on disk. `install_path`
+     * alone carries one further, Composer-documented meaning for
+     * present-and-null: a metapackage, which is installed but has no
+     * files of its own to install path names. `$nullable` admits that
+     * one value for that one field; `pretty_version` never passes it, so
+     * a present null there still fails, matching Composer giving no such
+     * allowance to versions.
      *
      * @param array<array-key, mixed> $entry
-     * @throws RuntimeException when the field is present and is not a string
+     * @throws RuntimeException when the field is present, is not a
+     *         string, and is not the one admitted null
      */
-    private static function optional(array $entry, string $field, string $name, string $inventory): ?string
-    {
+    private static function optional(
+        array $entry,
+        string $field,
+        string $name,
+        string $inventory,
+        bool $nullable = false,
+    ): ?string {
         if (!\array_key_exists($field, $entry)) {
             return null;
         }
 
         $value = $entry[$field];
+
+        if ($nullable && $value === null) {
+            return null;
+        }
 
         if (!\is_string($value)) {
             throw new RuntimeException(
