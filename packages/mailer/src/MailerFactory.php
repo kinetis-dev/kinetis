@@ -39,7 +39,9 @@ final class MailerFactory
      * and the total duration of one API send, so a response fed a byte
      * at a time cannot outlive it; no redirect is followed, so the
      * provider endpoint the DSN names is the only one contacted. SMTP
-     * ignores all three and carries its own timeouts from the DSN.
+     * ignores all three. Symfony's SMTP socket instead inherits PHP's
+     * default_socket_timeout for connection and individual blocking stream
+     * operations; that is not a total deadline for a whole send.
      */
     public static function fromConfig(Config $config, string $connection = 'default'): MailerInterface
     {

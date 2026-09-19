@@ -46,7 +46,18 @@ These hold regardless of adapter, driver, or use case.
   {doc}`queue`.
 - **Direct dependencies.** A new dependency points toward the contract
   it consumes; application code does not reach past that contract into
-  an optional or runtime-specific implementation it does not need.
+  an optional or runtime-specific implementation it does not need. Every
+  package whose namespace production code names is declared directly in
+  `require`, and every package named only by tests or development tooling
+  is declared directly in `require-dev`; transitive availability is not
+  a dependency contract.
+- **Sensitive response caching.** A response that carries a CSRF token,
+  bearer credential, authenticated identity, or session-establishing or
+  session-ending cookie has an explicit cache policy such as
+  `Cache-Control: no-store`. Apply it at the narrow response boundary;
+  do not infer protection from the presence of `Set-Cookie`, TLS, or a
+  referrer policy, and do not disable caching globally when public
+  responses contain nothing sensitive.
 - **Compiled-cache freshness.** A change to a route, an MCP tool or
   resource, a command, an event listener, or a validation plan needs
   `kinetis build` before a production deploy that pre-warms

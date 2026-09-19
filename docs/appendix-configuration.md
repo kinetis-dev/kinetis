@@ -312,7 +312,7 @@ The gate below is on the unscoped `MAILER_DSN`; both keys are scoped when
 | Key | Default | Purpose |
 |---|---|---|
 | `MAILER_DSN` | *(unset: no mailer)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
-| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it and carries its own timeouts from the DSN. |
+| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it; Symfony instead inherits PHP's per-operation `default_socket_timeout`, which is not a total-send deadline. |
 
 ### Search (`kinetis/search-opensearch`, `kinetis/search-elasticsearch`) — scoped
 

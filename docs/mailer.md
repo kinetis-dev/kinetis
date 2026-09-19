@@ -44,8 +44,10 @@ MAILER_TIMEOUT=30
 over — as the idle timeout between bytes and as the total duration — and
 redirects are disabled, so the provider endpoint the DSN names is the
 only one contacted. Zero or a negative value is rejected when the mailer
-is built. SMTP ignores all three: that transport carries its own
-timeouts from the DSN.
+is built. SMTP ignores all three. Symfony's SMTP socket instead inherits
+PHP's `default_socket_timeout` for the connection and each blocking
+stream operation. One SMTP exchange performs several operations, so
+that setting is an inactivity bound, not a total deadline for the send.
 
 Whichever scheme you use, `composer require` the matching Symfony bridge
 package too (`symfony/sendgrid-mailer`, `symfony/mailgun-mailer`,
@@ -56,7 +58,11 @@ discovers whichever bridge classes are installed.
 ```{important}
 Only the API-based transports are non-blocking. SMTP opens a raw socket
 directly (`stream_socket_client()`), with no Fiber-yield point — sending
-over SMTP blocks the worker for as long as the send takes. See
+over SMTP blocks the worker for as long as the send takes. A queue
+visibility timeout or shutdown grace greater than
+`default_socket_timeout` still cannot guarantee it encloses the whole
+send; at-least-once handling must remain safe if a reservation expires
+or a process is killed. See
 [Queueing mail](#queueing-mail) below for the practical fix, whichever
 transport you choose.
 ```
