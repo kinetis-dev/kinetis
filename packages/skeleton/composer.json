@@ -10,7 +10,8 @@
     ],
     "require": {
         "php": "^8.4",
-        "kinetis/framework": "dev-main"
+        "kinetis/framework": "dev-main",
+        "psr/http-message": "^2.0"
     },
     "require-dev": {
         "infection/infection": "^0.35.0",
