@@ -95,11 +95,16 @@ Once Orbitron is ready, every task runs the same way:
 1. Route the task through the Orbitron documentation resource that
    covers it. `kinetis://docs/agent-workflow` names the routes;
    `resources/list` names every page.
-2. Read the installed source under `vendor/kinetis/` for anything
-   version-sensitive — a signature, a default, a config key, a failure
-   code. Those pages are published from Kinetis `main` and can describe
-   behavior newer than this project has installed; `orbitron_inspect`
-   and the installed source are what is true here.
+2. Call `orbitron_read_package_source` for anything version-sensitive —
+   a signature, a default, a config key, a failure code — before
+   searching for the same fact under `vendor/kinetis/`. Those pages are
+   published from Kinetis `main` and can describe behavior newer than
+   this project has installed; `orbitron_inspect` and the installed
+   source are what is true here. Read `vendor/kinetis/<package>`
+   directly only when the call returns an exact refusal — a
+   `status: error` result naming why, such as `package_unknown` — that
+   cannot serve the needed evidence; when that happens, record the
+   refusal and the reason before falling back.
 3. Make the smallest change that satisfies the task.
 4. Run focused verification in the container:
 

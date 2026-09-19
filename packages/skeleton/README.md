@@ -111,9 +111,14 @@ pages arrive on the same connection as `kinetis://docs/*` resources,
 fetched by [`kinetis/mcp-docs`](https://kinetis.dev/docs/mcp-docs.html)
 from inside it — there is no second server to configure, and
 `kinetis://docs/agent-workflow` is where the agent starts. Those pages
-are published from Kinetis `main`, so `orbitron_inspect` and the
-installed source under `vendor/kinetis/` stay the authority for anything
-version-sensitive.
+are published from Kinetis `main`, so `orbitron_inspect` and
+`orbitron_read_package_source` — which reads a bounded line window of
+one installed `kinetis/*` package's own source live, over that same
+connection — stay the authority for anything version-sensitive. An agent
+with that MCP connection calls the tool first and reads
+`vendor/kinetis/<package>` directly only after an exact refusal that
+cannot supply the needed evidence. A shell-only agent has no such
+call to make and reads `vendor/kinetis/<package>` directly instead.
 
 ### What you get from the archive
 
