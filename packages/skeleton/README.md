@@ -239,16 +239,18 @@ server are both fine, and what remains is client-side: its trust and
 approval policy, or a tool catalog that has not picked the server up
 since the configuration arrived.
 
-**The reported packages are stale.** Orbitron reads Composer's installed
-inventory once per server process, and your client launches one server
-per session. So after a dependency change —
+**A dependency change needs no restart.** Orbitron reads this project's
+generated inventory again for every package-aware call, so after a
+successful dependency change —
 
 ```sh
 docker compose exec app composer require kinetis/orm
 ```
 
-— restart the client. That launches a fresh server, which reads the new
-inventory.
+— the next `orbitron_inspect`, `orbitron_verify`, or installed-source
+call already sees it. This is not one of the restart cases above: those
+are new or changed MCP configuration, a launch attempted while the stack
+was down, and the containers being recreated.
 
 **`orbitron_verify` reports an error.** The `code` in each failed check
 names the outcome. This project ships the layout Orbitron admits — one
