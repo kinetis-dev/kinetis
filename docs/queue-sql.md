@@ -49,6 +49,65 @@ with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
 [SQL mechanisms](appendix-queue.md#sql) describes the columns the backend
 runs on.
 
+## Enqueueing inside a transaction
+
+{doc}`queue`'s `QueueInterface::push()` is not enlisted in a transaction
+the caller has open: it runs its `INSERT` on the queue's own connection,
+so the job is enqueued whether or not the surrounding transaction
+commits. `Kinetis\QueueSql\SqlQueue::pushOn()` puts the row on a
+transaction you already hold, so the job and the writes it belongs to
+land together:
+
+```{code-block} php
+use Kinetis\Persistence\Contract\SqlTransaction;
+
+$this->transactions->transaction($this->db, function (SqlTransaction $tx) use ($orderId): void {
+    $tx->execute('UPDATE orders SET status = ? WHERE id = ?', ['paid', $orderId]);
+
+    $this->queue->pushOn($tx, new SendReceipt($orderId));
+});
+```
+
+The row becomes visible and durable only if that transaction commits. A
+throw before the commit rolls it back with the caller's other work, and a
+`COMMIT` that fails leaves the outcome unknown — see {doc}`persistence`'s
+"When a write's outcome is unknown". Push telemetry closes when the
+`INSERT` statement completes, so the span reports the enqueue statement
+rather than the later commit.
+
+`pushOn()` runs that one statement and nothing else: it never commits,
+rolls back, nests a transaction, or falls back to the connection the
+queue was built with. Addressing the database that holds
+`kinetis_queue_jobs` is therefore the caller's job —
+`QUEUE_CONNECTION_NAME` picks the connection behind `push()` and does not
+redirect a transaction you supply.
+
+The signature belongs to this package, not to `QueueInterface`, so a
+caller needs the `SqlQueue` itself rather than the `QueueInterface` the
+container binds. `SqlQueueFactory::fromConfig()` returns that class.
+Build it once and register that one object under both ids:
+
+```{code-block} php
+use Kinetis\Queue\QueueInterface;
+use Kinetis\QueueSql\SqlQueue;
+use Kinetis\QueueSql\SqlQueueFactory;
+
+$queue = SqlQueueFactory::fromConfig($config);
+
+$app->instance(SqlQueue::class, $queue);
+$app->instance(QueueInterface::class, $queue);
+```
+
+Ordinary `QueueInterface` consumers and `pushOn()` callers then share
+one backend instance and its one connection pool. Binding only
+`SqlQueue::class` leaves the default `QueueInterface` binding in place,
+and it builds a second `SqlQueue` with a pool of its own.
+
+{doc}`appendix-queue`'s "Multiple backends" shows the same registration
+where several backends run side by side. `pushOn()` takes a raw
+{doc}`persistence` transaction; an {doc}`orm` transaction session does
+not expose its transaction.
+
 ## Visibility timeout
 
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` (default `300`, at least `1`) is how
