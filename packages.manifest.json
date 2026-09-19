@@ -238,12 +238,16 @@
             "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework",
                 "persistence",
                 "database-bridge"
             ],
+            "suggest": {
+                "ext-pdo_mysql": "Required by the migrate* commands when DB_CONNECTION=mysql; migrations always hold one PDO session, whatever DB_DRIVER says.",
+                "ext-pdo_pgsql": "Required by the migrate* commands when DB_CONNECTION=pgsql; migrations always hold one PDO session, whatever DB_DRIVER says."
+            },
             "kinetis": {
                 "scan": "Kinetis\\Migrations\\Console\\"
             }

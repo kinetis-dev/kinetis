@@ -119,6 +119,19 @@ composer require kinetis/migrations
 Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence), and
 [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge).
+The `migrate*` commands always hold one PDO session for their advisory
+lock, whatever `DB_DRIVER` says. Install the matching PDO driver as well:
+`ext-pdo_mysql` for `DB_CONNECTION=mysql`, or `ext-pdo_pgsql` for
+`DB_CONNECTION=pgsql`. A worker application using the native driver still
+needs that PDO extension for migrations.
+
+For example, a PostgreSQL image whose request path uses native `ext-pgsql`
+needs both extensions:
+
+```dockerfile
+RUN docker-php-ext-install pgsql pdo_pgsql
+```
+
 Full documentation:
 [kinetis.dev/docs/migrations.html](https://kinetis.dev/docs/migrations.html).
 

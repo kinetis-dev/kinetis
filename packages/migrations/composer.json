@@ -20,6 +20,10 @@
         "phpunit/phpunit": "^13.3.3",
         "vimeo/psalm": "^6.17"
     },
+    "suggest": {
+        "ext-pdo_mysql": "Required by the migrate* commands when DB_CONNECTION=mysql; migrations always hold one PDO session, whatever DB_DRIVER says.",
+        "ext-pdo_pgsql": "Required by the migrate* commands when DB_CONNECTION=pgsql; migrations always hold one PDO session, whatever DB_DRIVER says."
+    },
     "autoload": {
         "psr-4": {
             "Kinetis\\Migrations\\": "src/"
