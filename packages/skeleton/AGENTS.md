@@ -100,11 +100,13 @@ Once Orbitron is ready, every task runs the same way:
    searching for the same fact under `vendor/kinetis/`. Those pages are
    published from Kinetis `main` and can describe behavior newer than
    this project has installed; `orbitron_inspect` and the installed
-   source are what is true here. Read `vendor/kinetis/<package>`
-   directly only when the call returns an exact refusal — a
-   `status: error` result naming why, such as `package_unknown` — that
-   cannot serve the needed evidence; when that happens, record the
-   refusal and the reason before falling back.
+   source are what is true here. A success reporting `hasMore: true` is
+   not a refusal: call again with `startLine` set to `endLine + 1`
+   until the needed evidence is in view or `hasMore` is `false`. Read
+   `vendor/kinetis/<package>` directly only when the call returns an
+   exact refusal — a `status: error` result naming why, such as
+   `package_unknown` — that cannot serve the needed evidence; when that
+   happens, record the refusal and the reason before falling back.
 3. Make the smallest change that satisfies the task.
 4. Run focused verification in the container:
 

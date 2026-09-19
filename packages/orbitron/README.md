@@ -393,10 +393,13 @@ this schema before any lookup or read runs; a call outside it is a
 JSON-RPC `-32602` protocol error, not a refusal document.
 
 A success reports `status: "ok"`, `package`, `version`, `path`,
-`startLine`, `endLine`, `hasMore` and `content`. A refusal reports only
-`status: "error"` and one `code`: `package_unknown`, `path_not_admitted`,
-`source_missing`, `source_unreadable`, `source_oversize`,
-`source_not_text`, or `line_out_of_range`.
+`startLine`, `endLine`, `hasMore` and `content`. `hasMore: true` is a
+success, not a refusal: continue by calling again with `startLine` set
+to `endLine + 1` until the needed evidence is in view or `hasMore` is
+`false`. A refusal reports only `status: "error"` and one `code`:
+`package_unknown`, `path_not_admitted`, `source_missing`,
+`source_unreadable`, `source_oversize`, `source_not_text`, or
+`line_out_of_range`.
 
 ### The documentation resources
 

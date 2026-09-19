@@ -114,11 +114,14 @@ from inside it — there is no second server to configure, and
 are published from Kinetis `main`, so `orbitron_inspect` and
 `orbitron_read_package_source` — which reads a bounded line window of
 one installed `kinetis/*` package's own source live, over that same
-connection — stay the authority for anything version-sensitive. An agent
-with that MCP connection calls the tool first and reads
-`vendor/kinetis/<package>` directly only after an exact refusal that
-cannot supply the needed evidence. A shell-only agent has no such
-call to make and reads `vendor/kinetis/<package>` directly instead.
+connection — stay the authority for anything version-sensitive. A
+window reporting `hasMore: true` is a success, not a refusal: the agent
+pages through with `startLine` set to `endLine + 1` before treating the
+file as exhausted. An agent with that MCP connection calls the tool
+first and reads `vendor/kinetis/<package>` directly only after an exact
+refusal that cannot supply the needed evidence. A shell-only agent has
+no such call to make and reads `vendor/kinetis/<package>` directly
+instead.
 
 ### What you get from the archive
 
