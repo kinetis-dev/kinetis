@@ -8,16 +8,17 @@ use JsonException;
 use Kinetis\McpDocs\DocsApplication;
 use Kinetis\McpDocs\DocsCatalogue;
 use Kinetis\McpDocs\DocsFetcher;
+use Kinetis\McpProtocol\Exception\JsonRpcException;
 use Kinetis\McpProtocol\McpServer;
+use Kinetis\McpProtocol\ProgressEmitter;
 use Kinetis\McpProtocol\StdioLoop;
 use Kinetis\Orbitron\Documents;
 use Kinetis\Orbitron\HealthScaffold;
 use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\Mcp\OrbitronMcpApplication;
-use Kinetis\Orbitron\PackageFact;
-use Kinetis\Orbitron\PackageSourceReader;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use stdClass;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
@@ -49,7 +50,7 @@ final class OrbitronMcpApplicationTest extends TestCase
         OrbitronMcpApplication::SEARCH_TOOL,
     ];
 
-    /** The one package the source reader below can see, named like an installed one. */
+    /** The one package the fixture project installs beyond Orbitron and the framework. */
     private const string PACKAGE = 'kinetis/fixture';
 
     private ScaffoldProject $project;
@@ -73,6 +74,7 @@ final class OrbitronMcpApplicationTest extends TestCase
     {
         $this->project = new ScaffoldProject();
         $this->packageRoot = $this->project->root;
+        $this->writeInventory();
         $this->responses = [];
         $this->requests = [];
 
@@ -345,6 +347,60 @@ final class OrbitronMcpApplicationTest extends TestCase
     }
 
     /**
+     * A server outlives the Composer changes an agent makes while
+     * building, so what it reports is the set on disk now rather than the
+     * set the process started with.
+     *
+     * One application answers both halves: first the package is not
+     * installed, and neither the inventory document nor the source tool
+     * knows it; then the generated inventory is replaced, exactly as a
+     * completed `composer require` replaces it, and the very next calls on
+     * that same object report it and read its admitted source. A second
+     * application would assert nothing here — a new object reads a new
+     * inventory whether or not the old one held onto its own.
+     *
+     * @throws JsonException
+     */
+    public function test_a_completed_dependency_change_reaches_the_next_call_on_the_same_server(): void
+    {
+        $this->writeInventory(['kinetis/orbitron' => ['1.0.0', '/app/vendor/kinetis/orbitron']]);
+
+        $application = new OrbitronMcpApplication($this->project->root, $this->docs());
+        $calls = [
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"orbitron_inspect"}}',
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"' . self::PACKAGE . '","path":"composer.json"}}}',
+        ];
+
+        $before = self::decoded(self::session($application, $calls));
+
+        self::assertSame(
+            [['name' => 'kinetis/orbitron', 'version' => '1.0.0']],
+            self::document($before[0])['packages'],
+        );
+
+        self::assertTrue($before[1]['result']['isError']);
+        self::assertSame(['status' => 'error', 'code' => 'package_unknown'], self::document($before[1]));
+
+        $this->writeInventory();
+
+        $after = self::decoded(self::session($application, $calls));
+        $packages = self::document($after[0])['packages'];
+        $source = self::document($after[1]);
+
+        self::assertIsArray($packages);
+        self::assertSame(
+            [self::PACKAGE => '3.1.4', 'kinetis/framework' => '1.11.2', 'kinetis/orbitron' => '1.0.0'],
+            array_column($packages, 'version', 'name'),
+        );
+
+        self::assertFalse($after[1]['result']['isError']);
+        self::assertSame('ok', $source['status']);
+        self::assertSame('3.1.4', $source['version']);
+        self::assertStringContainsString('"autoload"', (string) $source['content']);
+    }
+
+    /**
      * A verification that found errors is a tool that ran and concluded,
      * so the document still comes back — carried by an MCP error result
      * rather than a transport error that would leave the codes unreadable.
@@ -458,6 +514,31 @@ final class OrbitronMcpApplicationTest extends TestCase
         ])[0];
 
         self::assertSame(-32602, $frame['error']['code']);
+    }
+
+    /**
+     * A name no tool answers is decided from the name alone, so it is
+     * refused before the operation's inventory read.
+     *
+     * Removing the generated inventory first is what tells the two
+     * orderings apart: a snapshot taken before the name is checked turns
+     * this refusal into the internal error a failed inventory read
+     * becomes, which tells a client its call was malformed for the wrong
+     * reason.
+     */
+    public function test_an_unknown_tool_is_refused_before_the_inventory_is_read(): void
+    {
+        $application = new OrbitronMcpApplication($this->project->root, $this->docs());
+
+        self::assertTrue(unlink($this->project->path('vendor/composer/installed.php')));
+
+        try {
+            $application->callTool('orbitron_delete_everything', new stdClass(), new ProgressEmitter(), null);
+            self::fail('an unknown tool must be refused.');
+        } catch (JsonRpcException $refusal) {
+            self::assertSame(-32602, $refusal->rpcCode);
+            self::assertSame('Unknown tool: "orbitron_delete_everything".', $refusal->getMessage());
+        }
     }
 
     /**
@@ -728,6 +809,7 @@ final class OrbitronMcpApplicationTest extends TestCase
     public function test_invalid_params_are_refused_before_a_missing_install_root_is_reached(): void
     {
         $this->packageRoot = $this->project->path('gone');
+        $this->writeInventory();
 
         $frame = $this->frames([
             '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
@@ -840,6 +922,7 @@ final class OrbitronMcpApplicationTest extends TestCase
     public function test_invalid_search_params_are_refused_before_a_missing_install_root_is_reached(): void
     {
         $this->packageRoot = $this->project->path('gone');
+        $this->writeInventory();
 
         $frame = $this->frames([
             '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
@@ -884,15 +967,10 @@ final class OrbitronMcpApplicationTest extends TestCase
      */
     private function call(string $arguments, string $tool = OrbitronMcpApplication::SOURCE_TOOL): array
     {
-        $frame = $this->frames([
+        return self::document($this->frames([
             '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . $tool
             . '","arguments":' . $arguments . '}}',
-        ])[0];
-
-        self::assertArrayHasKey('result', $frame, 'the call was refused: ' . json_encode($frame));
-
-        /** @var array<string, mixed> */
-        return json_decode($frame['result']['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR);
+        ])[0]);
     }
 
     /**
@@ -922,12 +1000,71 @@ final class OrbitronMcpApplicationTest extends TestCase
         return (string) stream_get_contents($this->diagnostics);
     }
 
+    /** The documents the server must have produced, from the same inventory it reads. */
     private function documents(): Documents
     {
-        return new Documents(new InstalledPackages([
-            new PackageFact('kinetis/orbitron', '1.0.0', '/app/vendor/kinetis/orbitron'),
-            new PackageFact('kinetis/framework', '1.11.2', '/app/vendor/kinetis/framework'),
-        ]));
+        return new Documents(InstalledPackages::fromProject($this->project->root));
+    }
+
+    /**
+     * The generated Composer inventory the server reads, in the shape
+     * `Composer\InstalledVersions` documents and itself requires.
+     *
+     * Writing it again is what a completed Composer dependency change
+     * does to a project, which is how the live-refresh test above moves
+     * a package into a running server's view.
+     *
+     * @param array<string, array{string, string}>|null $packages name => [pretty version, install
+     *        root], or null for the set the fixture project normally has
+     */
+    private function writeInventory(?array $packages = null): void
+    {
+        $versions = [];
+
+        foreach ($packages ?? $this->installed() as $name => [$version, $root]) {
+            $versions[$name] = [
+                'pretty_version' => $version,
+                'version' => $version . '.0',
+                'type' => 'library',
+                'install_path' => $root,
+                'aliases' => [],
+                'dev_requirement' => false,
+            ];
+        }
+
+        $directory = $this->project->path('vendor/composer');
+
+        if (!is_dir($directory)) {
+            self::assertTrue(mkdir($directory, 0o700, true), "Could not create {$directory}.");
+        }
+
+        file_put_contents($directory . '/installed.php', '<?php return ' . var_export([
+            'root' => [
+                'name' => 'orbitron/consumer',
+                'pretty_version' => 'dev-main',
+                'version' => 'dev-main',
+                'type' => 'project',
+                'install_path' => $this->project->root . '/',
+                'aliases' => [],
+                'dev' => true,
+            ],
+            'versions' => $versions,
+        ], true) . ';');
+    }
+
+    /**
+     * The set the fixture project has installed: Orbitron itself, the
+     * framework, and the one package the installed-source tools read.
+     *
+     * @return array<string, array{string, string}>
+     */
+    private function installed(): array
+    {
+        return [
+            'kinetis/framework' => ['1.11.2', '/app/vendor/kinetis/framework'],
+            'kinetis/orbitron' => ['1.0.0', '/app/vendor/kinetis/orbitron'],
+            self::PACKAGE => ['3.1.4', $this->packageRoot],
+        ];
     }
 
     /**
@@ -936,9 +1073,34 @@ final class OrbitronMcpApplicationTest extends TestCase
      */
     private function frames(array $messages): array
     {
+        return self::decoded($this->rawFrames($messages));
+    }
+
+    /**
+     * The document one frame's tool result carries.
+     *
+     * @param array<string, mixed> $frame
+     * @return array<string, mixed>
+     * @throws JsonException
+     */
+    private static function document(array $frame): array
+    {
+        self::assertArrayHasKey('result', $frame, 'the call was refused: ' . json_encode($frame));
+
+        /** @var array<string, mixed> */
+        return json_decode($frame['result']['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @param list<string> $frames
+     * @return list<array<string, mixed>>
+     * @throws JsonException
+     */
+    private static function decoded(array $frames): array
+    {
         $decoded = [];
 
-        foreach ($this->rawFrames($messages) as $frame) {
+        foreach ($frames as $frame) {
             $decoded[] = json_decode($frame, associative: true, flags: JSON_THROW_ON_ERROR);
         }
 
@@ -952,6 +1114,20 @@ final class OrbitronMcpApplicationTest extends TestCase
      */
     private function rawFrames(array $messages): array
     {
+        return self::session(new OrbitronMcpApplication($this->project->root, $this->docs()), $messages);
+    }
+
+    /**
+     * One server, one batch of messages, the frames it wrote back. The
+     * application is a parameter so a test can send it two batches with a
+     * dependency change between them, which is the only way a defect that
+     * only a second call can show is reachable at all.
+     *
+     * @param list<string> $messages
+     * @return list<string>
+     */
+    private static function session(OrbitronMcpApplication $application, array $messages): array
+    {
         $input = fopen('php://memory', 'r+');
         self::assertIsResource($input);
         fwrite($input, implode("\n", $messages) . "\n");
@@ -959,15 +1135,6 @@ final class OrbitronMcpApplicationTest extends TestCase
 
         $output = fopen('php://memory', 'r+');
         self::assertIsResource($output);
-
-        $application = new OrbitronMcpApplication(
-            $this->project->root,
-            $this->docs(),
-            $this->documents(),
-            new PackageSourceReader(new InstalledPackages([
-                new PackageFact(self::PACKAGE, '3.1.4', $this->packageRoot),
-            ])),
-        );
 
         new StdioLoop()->run(new McpServer($application->serverInfo(), $application), $input, $output);
 

@@ -327,6 +327,7 @@ final class PackageBoundaryTest extends TestCase
                 'Kinetis\McpProtocol\ToolResult',
                 'Kinetis\Orbitron\Document',
                 'Kinetis\Orbitron\Documents',
+                'Kinetis\Orbitron\InstalledPackages',
                 'Kinetis\Orbitron\JsonDocument',
                 'Kinetis\Orbitron\PackageSourceReader',
                 'Kinetis\Orbitron\ScaffoldMode',

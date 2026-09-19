@@ -8,14 +8,18 @@ use Composer\InstalledVersions;
 use RuntimeException;
 
 /**
- * The installed `kinetis/*` packages the Orbitron commands report, read
+ * The installed `kinetis/*` packages an Orbitron document reports, read
  * once per instance from the records handed to the constructor.
  *
  * This is the seam the suite constructs directly: passing a list of
  * PackageFact objects exercises the same filtering, ordering and
  * de-duplication production runs on, without touching Composer's
  * process-global installed state. Passing null — what the container's
- * autowiring does when it builds a command — reads that state instead.
+ * autowiring does when it builds a command — reads that state instead;
+ * a command is one short-lived invocation, so the process cache behind
+ * it cannot outlive the set it describes. {@see fromProject()} is the
+ * third construction, for a server that does outlive it.
+ *
  * Nothing is memoized across instances, so a second construction with
  * different records reports the different records.
  */
@@ -23,6 +27,9 @@ final readonly class InstalledPackages
 {
     private const string PREFIX = 'kinetis/';
     private const string ORBITRON = 'kinetis/orbitron';
+
+    /** Composer's generated inventory, under the project's own vendor directory. */
+    private const string INVENTORY = '/vendor/composer/installed.php';
 
     /** @var array<string, string> package name => pretty version, ordered by name */
     private array $versions;
@@ -85,6 +92,103 @@ final readonly class InstalledPackages
         $this->versions = $versions;
         $this->roots = $roots;
         $this->sources = $sources;
+    }
+
+    /**
+     * A fresh snapshot of one project's installed set, taken from the
+     * generated inventory under its own vendor directory.
+     *
+     * `Composer\InstalledVersions` requires that file once and keeps it
+     * in `$installed` and `$installedByVendor` for the life of the
+     * process, so a server that outlives a Composer dependency change
+     * cannot observe the new set through it. Reading the generated file
+     * is the same data without that retention, and without mutating
+     * Composer's process-global state the way `reload()` would.
+     *
+     * The shape read here is the one `Composer\InstalledVersions`
+     * documents and itself requires: a `root` naming the project, and a
+     * `versions` map keyed by package name whose entries carry
+     * `pretty_version` and `install_path` only when something is really
+     * installed under that name. Those are the fields the constructor
+     * above already consumes; nothing else is interpreted, and each one
+     * is required to be what Composer writes.
+     *
+     * @param string $projectRoot the detected consumer root, never a path a caller chose
+     * @throws RuntimeException when no generated inventory is there, or it does not carry
+     *         that shape — a truthful failure, rather than an older set reported as current.
+     */
+    public static function fromProject(string $projectRoot): self
+    {
+        $inventory = $projectRoot . self::INVENTORY;
+
+        // Tested before the include, so a project without one fails with
+        // this exception rather than a PHP warning on a stdout that
+        // carries JSON-RPC frames.
+        if (!is_file($inventory)) {
+            throw new RuntimeException("No Composer inventory was found at {$inventory}.");
+        }
+
+        /** @var mixed $data */
+        $data = require $inventory;
+
+        if (!\is_array($data)
+            || !\is_string($data['root']['name'] ?? null)
+            || !\is_array($data['versions'] ?? null)) {
+            throw new RuntimeException("The Composer inventory at {$inventory} is not the generated shape.");
+        }
+
+        $root = $data['root']['name'];
+        $facts = [];
+
+        /** @var mixed $entry */
+        foreach ($data['versions'] as $name => $entry) {
+            // Each entry is required to be what Composer generates, not
+            // read as far as it goes: coercing a malformed entry to an
+            // empty one would drop a package that is installed and report
+            // the remainder as the project's whole set.
+            if (!\is_string($name) || !\is_array($entry)) {
+                throw new RuntimeException("The Composer inventory at {$inventory} is not the generated shape.");
+            }
+
+            $facts[] = new PackageFact(
+                $name,
+                self::optional($entry, 'pretty_version', $name, $inventory),
+                self::optional($entry, 'install_path', $name, $inventory),
+                $name === $root,
+            );
+        }
+
+        return new self($facts);
+    }
+
+    /**
+     * One of the two fields an entry carries only when something is
+     * really installed under that name.
+     *
+     * Absent is the meaning Composer gives a name that is merely
+     * replaced or provided, and the constructor drops such a name. A
+     * field that is there but is not a string has no such meaning, so it
+     * fails here rather than being read as absent — which would report
+     * an installed package as one that is not on disk.
+     *
+     * @param array<array-key, mixed> $entry
+     * @throws RuntimeException when the field is present and is not a string
+     */
+    private static function optional(array $entry, string $field, string $name, string $inventory): ?string
+    {
+        if (!\array_key_exists($field, $entry)) {
+            return null;
+        }
+
+        $value = $entry[$field];
+
+        if (!\is_string($value)) {
+            throw new RuntimeException(
+                "The Composer inventory at {$inventory} carries a non-string \"{$field}\" for \"{$name}\".",
+            );
+        }
+
+        return $value;
     }
 
     /**

@@ -391,14 +391,13 @@ A success reports `status: "ok"`, `package`, `version`, `path`,
 | `source_not_text` | The file contains a NUL byte or is not valid UTF-8. |
 | `line_out_of_range` | `startLine` is past the file's last line. |
 
-The Composer inventory and each package's install root are fixed at MCP
-server startup — restart it after installing, removing or updating a
-dependency. File content is not part of that cache: an edit to an
-already-installed source file is visible on the very next call, no
-restart needed. This tool never reads the application's own controllers,
-tests, configuration or credentials, and never reads a non-`kinetis/*`
-package or the Composer root project; that boundary is
-[Trust boundary](#trust-boundary).
+The inventory this tool resolves a package against is the project's own
+generated one, read again for every call, so a completed dependency
+change is visible to the next one and an edit to an already-installed
+source file is visible on the very next call. This tool never reads the
+application's own controllers, tests, configuration or credentials, and
+never reads a non-`kinetis/*` package or the Composer root project; that
+boundary is [Trust boundary](#trust-boundary).
 
 (search-installed-package-source)=
 
@@ -527,11 +526,18 @@ root comes from Composer's own bin proxy, exactly as it does for
 never boots the Kinetis application, so running it registers no route,
 listener or bootstrap.
 
-Composer's installed-package inventory and each package's install root
-are process-cached, so the server reads them once at startup. Restart it
-after installing, removing or updating a dependency. Every other
-document, and the file content the two installed-source tools report, is
-re-read on each call, and nothing about one call survives into the next.
+The server evaluates this project's generated
+`vendor/composer/installed.php` again for every operation that reports or
+uses installed package facts, so a completed `composer require`, `remove`
+or `update` is visible to the next such call and no restart or reconnect
+is involved. One operation reads it once, so the versions a document
+reports and the source a read opens cannot come from two different
+inventories, and the snapshot is discarded with the response — nothing
+is watched, polled or cached between calls. An inventory that is absent
+or not the generated shape fails an operation that needs it rather than
+producing an answer from an older one. Every other document, and the file
+content the two installed-source tools report, is re-read on each call
+too, and nothing about one call survives into the next.
 
 ### The documentation resources
 
@@ -794,7 +800,6 @@ agent there. These failures cover what actually happens:
 | The server fails to start | `docker compose exec` had no running container | `docker compose up -d`, then restart the client |
 | The server was there and is gone | The containers were recreated, killing the `docker compose exec` process the client held | Restart or reconnect the client; the stack itself is healthy |
 | The server shows as disconnected | The bridge or the client, not yet distinguished | Run the launcher by hand (below). A handshake reply puts it on the client side: its trust or approval policy, or a tool catalog that has not refreshed |
-| The reported versions are stale | The inventory is process-cached, and the server process predates the dependency change | Restart the client, which launches a fresh server |
 | `orbitron_verify` reports `error` | `composer.json` is outside [the layout Orbitron admits](#the-layout-it-admits) | Read the `code` on each failed check |
 | A `kinetis://docs/*` read fails | The fetch to the documentation origin failed, timed out, or returned something unusable | Read the server's stderr in the client's log for the URL and reason; every other document is local and unaffected |
 
@@ -890,12 +895,15 @@ The MCP server is a local process the client launches, so that process
 and your filesystem permissions are the authority boundary. It has no
 shell and no credentials to reach.
 
-The installed metadata is read through `Composer\InstalledVersions`,
-which loads `vendor/composer/installed.php` itself, so the invocation
-does touch a file inside `vendor/`. Beyond that one file, the commands
-and four of the six MCP tools reach nothing else under `vendor/`; only
-`orbitron_read_package_source` and `orbitron_search_package_source` read
-further, and only inside the one admitted location — `composer.json`,
+The installed metadata is the one generated file
+`vendor/composer/installed.php`, so the invocation does touch a file
+inside `vendor/`: a command reads it through `Composer\InstalledVersions`,
+which loads it itself, and the MCP server evaluates that same fixed path
+under the detected project root — no message can name it. Beyond that one
+file, the commands and four of the six MCP tools reach nothing else under
+`vendor/`; only `orbitron_read_package_source` and
+`orbitron_search_package_source` read further, and only inside the one
+admitted location — `composer.json`,
 `README.md`, `src/`, `bin/` or `resources/` — of the one installed,
 non-root `kinetis/*` package a call names, as bounded in [Read installed
 package source](#read-installed-package-source).

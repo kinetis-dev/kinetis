@@ -366,12 +366,17 @@ No message can otherwise name a project root, a source body, a URL, an
 origin, a ref or a command, and the server never boots the Kinetis
 application.
 
-Composer's installed-package inventory and each package's install root
-are process-cached, so restart the server after installing, removing or
-updating a dependency. Every other document, and the file content the two
-installed-source tools report, is re-read on each call: an edit to an
-already-installed source file is visible on the next call, no restart
-needed.
+The server reads this project's generated
+`vendor/composer/installed.php` again for every operation that reports or
+uses installed package facts, so a completed `composer require`, `remove`
+or `update` is visible to the next such call — there is nothing to restart
+or reconnect. One operation reads it once, so the version a document
+reports and the source a read opens always come from the same inventory,
+and the snapshot is discarded with the response. An inventory that is
+absent or not the generated shape fails an operation that needs it rather
+than producing an answer from an older one. Every other document, and the
+file content the two installed-source tools report, is re-read on each
+call too.
 
 ### The installed-source tools
 
@@ -498,8 +503,7 @@ server into it.
 The [Orbitron documentation](https://kinetis.dev/docs/orbitron.html)
 carries the full recipe — the bridge verbatim, each configuration file,
 the readiness and blocked handshake, the shell fallback, and the
-diagnostics for a stopped container, a disconnected server and a stale
-package inventory.
+diagnostics for a stopped container and a disconnected server.
 
 ## Output and exit codes
 
@@ -534,13 +538,15 @@ package's own `composer.json`, `README.md`, or a file beneath `src/`,
 `bin/` or `resources/`, and searches one such file for a literal string —
 never a non-`kinetis/*` package, the Composer root project, or the
 application's own source. No configuration, no
-credentials. It starts no process. Reading the installed metadata goes
-through `Composer\InstalledVersions`, which loads
-`vendor/composer/installed.php` itself. Beyond that one file, the
-commands and four of the six MCP tools reach nothing else under
-`vendor/`; only `orbitron_read_package_source` and
-`orbitron_search_package_source` read further, and only inside the one
-admitted location of the one installed, non-root `kinetis/*` package a
+credentials. It starts no process. That metadata is the one generated
+file `vendor/composer/installed.php`: a command reads it through
+`Composer\InstalledVersions`, which loads it itself, and the MCP server
+evaluates that same fixed path under the detected project root, which no
+message can name. Beyond that one file, the commands and four of the six
+MCP tools reach nothing else under `vendor/`; only
+`orbitron_read_package_source` and `orbitron_search_package_source` read
+further, and only inside the one admitted location of the one installed,
+non-root `kinetis/*` package a
 call names — see [The installed-source
 tools](#the-installed-source-tools). Every command declares
 `bootstrap: false`, and the MCP binary boots no application at all, so

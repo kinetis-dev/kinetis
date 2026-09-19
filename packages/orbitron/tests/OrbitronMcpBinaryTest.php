@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Orbitron\Tests;
 
+use Composer\InstalledVersions;
 use JsonException;
 use Kinetis\McpDocs\DocsCatalogue;
 use Kinetis\Orbitron\HealthScaffold;
@@ -45,6 +46,7 @@ final class OrbitronMcpBinaryTest extends TestCase
 
         $this->project = new ScaffoldProject();
         $this->writeBinProxy();
+        $this->writeInventory();
     }
 
     protected function tearDown(): void
@@ -311,6 +313,54 @@ final class OrbitronMcpBinaryTest extends TestCase
         fclose($pipes[2]);
 
         return [$stdout, $stderr, proc_close($process)];
+    }
+
+    /**
+     * The generated Composer inventory the launched server reads, built
+     * from the set this suite itself runs against.
+     *
+     * The server reads the consumer project's own
+     * `vendor/composer/installed.php`, so the fixture needs one. Every
+     * name, version and install root below is copied from the vendor tree
+     * this suite runs against — with each root resolved to an absolute
+     * path, because the generated file's own roots are written relative
+     * to the directory it sits in.
+     *
+     * A name that is only replaced or provided carries neither field,
+     * which is how Composer generates it and what the reader requires.
+     */
+    private function writeInventory(): void
+    {
+        $versions = [];
+
+        foreach (InstalledVersions::getInstalledPackages() as $name) {
+            $path = InstalledVersions::getInstallPath($name);
+            $resolved = $path === null ? false : realpath($path);
+            $version = InstalledVersions::getPrettyVersion($name);
+
+            $entry = ['dev_requirement' => false];
+
+            if ($version !== null) {
+                $entry['pretty_version'] = $version;
+            }
+
+            if ($resolved !== false) {
+                $entry['install_path'] = $resolved;
+            }
+
+            $versions[$name] = $entry;
+        }
+
+        $directory = $this->project->path('vendor/composer');
+
+        if (!mkdir($directory, 0o700, true)) {
+            throw new RuntimeException("Could not create {$directory}.");
+        }
+
+        file_put_contents($directory . '/installed.php', '<?php return ' . var_export([
+            'root' => InstalledVersions::getRootPackage(),
+            'versions' => $versions,
+        ], true) . ';');
     }
 
     /**

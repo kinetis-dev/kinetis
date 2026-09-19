@@ -16,6 +16,7 @@ use Kinetis\McpProtocol\ToolDescription;
 use Kinetis\McpProtocol\ToolResult;
 use Kinetis\Orbitron\Document;
 use Kinetis\Orbitron\Documents;
+use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\PackageSourceReader;
 use Kinetis\Orbitron\ScaffoldMode;
 use stdClass;
@@ -35,18 +36,20 @@ use stdClass;
  * framework-agnostic owner of both and is installable on its own; none
  * of it is copied here.
  *
- * The project root, that documentation application and the source
- * reader are the only things this object holds. No MCP message can name
- * a source body, a URL, an origin, a ref, a template or a command: four
- * tools take no argument at all, a resource read selects one entry of a
- * fixed catalogue whose URLs are the documentation server's own
- * constants, and the two that take a path admit it only as a relative
- * name under one installed package: each schema is validated here in
- * full before the package lookup, and the path itself is admitted
- * against a fixed set of locations, with the resolved target
- * re-admitted, before anything reaches the filesystem. The two share
- * that validation, and {@see PackageSourceReader} is the one place a
- * file behind either is opened.
+ * The project root and that documentation application are the only
+ * things this object holds; the inventory, the documents built from it
+ * and the source reader are created for one operation and discarded
+ * with its response. No MCP message can name a source body, a URL, an
+ * origin, a ref, a template, a command or the inventory path: four tools
+ * take no argument at all, a resource read selects one entry of a fixed
+ * catalogue whose URLs are the documentation server's own constants, and
+ * the two that take a path admit it only as a relative name under one
+ * installed package: each schema is validated here in full before the
+ * package lookup, and the path itself is admitted against a fixed set of
+ * locations, with the resolved target re-admitted, before anything
+ * reaches the filesystem. The two share that validation, and
+ * {@see PackageSourceReader} is the one place a file behind either is
+ * opened.
  *
  * `orbitron_scaffold_apply` is the one tool that writes. Selecting it is
  * the whole mutation request, which is why it has no boolean to set: the
@@ -78,10 +81,10 @@ final readonly class OrbitronMcpApplication implements McpApplication
         . 'read ' . self::DOCS_ENTRY_URI . ' and route the task through the pages it names — read them instead of '
         . 'answering about Kinetis from memory. Those pages are published from main and can describe behavior newer '
         . 'than this project has installed, so the versions orbitron_inspect reports and the installed source stay '
-        . 'the authority for anything version-sensitive. Installed versions are read once at startup, so restart '
-        . 'this server after changing dependencies. Call orbitron_read_package_source to read a window of an '
-        . 'installed kinetis/* package\'s own source, which is the authority whenever a page and the installed '
-        . 'version could differ. When the file is known but the relevant line is not, call '
+        . 'the authority for anything version-sensitive. A completed composer require or remove is visible to the '
+        . 'next call, so nothing has to be restarted or reconnected. Call orbitron_read_package_source to read a '
+        . 'window of an installed kinetis/* package\'s own source, which is the authority whenever a page and the '
+        . 'installed version could differ. When the file is known but the relevant line is not, call '
         . 'orbitron_search_package_source for a literal string in that file and read a window around a line it '
         . 'reports: derive the file from the class and the package\'s own composer.json autoload map, or search '
         . 'that package\'s README.md for the option or term to find the file. Read vendor/kinetis/* directly only '
@@ -98,9 +101,34 @@ final readonly class OrbitronMcpApplication implements McpApplication
     public function __construct(
         private string $projectRoot,
         private DocsApplication $docs,
-        private Documents $documents = new Documents(),
-        private PackageSourceReader $source = new PackageSourceReader(),
     ) {}
+
+    /**
+     * One fresh immutable snapshot of this project's installed set, for
+     * the one operation that asked for it.
+     *
+     * A server outlives a Composer dependency change, so a snapshot held
+     * on this object would report the set the process started with.
+     * Every operation reads the project's generated inventory again and
+     * lets it go with the response: nothing is watched, polled, memoized
+     * or carried into the next call, and an inventory that is absent or
+     * malformed fails the operation rather than answering from an older
+     * one.
+     *
+     * One operation takes exactly one snapshot, so a document's reported
+     * version and the source a read opens cannot come from two different
+     * inventories.
+     */
+    private function packages(): InstalledPackages
+    {
+        return InstalledPackages::fromProject($this->projectRoot);
+    }
+
+    /** The documents of the one snapshot the calling operation takes. */
+    private function documents(): Documents
+    {
+        return new Documents($this->packages());
+    }
 
     /**
      * Orbitron's own installed version is what this server reports, the
@@ -108,7 +136,7 @@ final readonly class OrbitronMcpApplication implements McpApplication
      */
     public function serverInfo(): ServerInfo
     {
-        $version = $this->documents->inspect()->body['orbitronVersion'];
+        $version = $this->documents()->inspect()->body['orbitronVersion'];
         \assert(\is_string($version));
 
         return new ServerInfo(self::SERVER_NAME, $version, self::INSTRUCTIONS);
@@ -124,7 +152,8 @@ final readonly class OrbitronMcpApplication implements McpApplication
             self::tool(
                 'orbitron_inspect',
                 'Reports the installed kinetis/* packages and their versions as a JSON document. '
-                . 'Read once at startup by Composer; restart this server after installing or removing a dependency.',
+                . 'Read from this project\'s Composer inventory on every call, so a completed dependency change '
+                . 'shows up here without restarting or reconnecting.',
                 self::readOnly(),
             ),
             self::tool(
@@ -271,14 +300,16 @@ final readonly class OrbitronMcpApplication implements McpApplication
         // error, not a refusal document.
         if ($name === self::SOURCE_TOOL) {
             [$package, $path, $startLine, $lineCount] = self::sourceArguments($arguments);
+            $reader = new PackageSourceReader($this->packages());
 
-            return self::result($this->source->read($package, $path, $startLine, $lineCount));
+            return self::result($reader->read($package, $path, $startLine, $lineCount));
         }
 
         if ($name === self::SEARCH_TOOL) {
             [$package, $path, $query, $startLine] = self::searchArguments($arguments);
+            $reader = new PackageSourceReader($this->packages());
 
-            return self::result($this->source->search($package, $path, $query, $startLine));
+            return self::result($reader->search($package, $path, $query, $startLine));
         }
 
         // Every other tool publishes a closed, empty schema, so an
@@ -288,11 +319,16 @@ final readonly class OrbitronMcpApplication implements McpApplication
             throw JsonRpcException::invalidParams("The \"{$name}\" tool takes no arguments.");
         }
 
+        // A match evaluates the one arm it selected, so a name no tool
+        // answers is refused here before the inventory is read: whether
+        // this project has a readable one is not what makes an unknown
+        // tool invalid, and must not turn that refusal into an internal
+        // error. The selected arm takes the operation's one snapshot.
         return self::result(match ($name) {
-            'orbitron_inspect' => $this->documents->inspect(),
-            'orbitron_verify' => $this->documents->verify($this->projectRoot),
-            'orbitron_scaffold_plan' => $this->documents->scaffold($this->projectRoot, ScaffoldMode::Preview),
-            'orbitron_scaffold_apply' => $this->documents->scaffold($this->projectRoot, ScaffoldMode::Apply),
+            'orbitron_inspect' => $this->documents()->inspect(),
+            'orbitron_verify' => $this->documents()->verify($this->projectRoot),
+            'orbitron_scaffold_plan' => $this->documents()->scaffold($this->projectRoot, ScaffoldMode::Preview),
+            'orbitron_scaffold_apply' => $this->documents()->scaffold($this->projectRoot, ScaffoldMode::Apply),
             default => throw JsonRpcException::invalidParams("Unknown tool: \"{$name}\"."),
         });
     }
@@ -423,7 +459,7 @@ final readonly class OrbitronMcpApplication implements McpApplication
     public function readResource(string $uri, ?object $context): ResourceResult
     {
         if ($uri === self::CONTEXT_URI) {
-            return new ResourceResult($uri, 'text/markdown', $this->documents->context());
+            return new ResourceResult($uri, 'text/markdown', $this->documents()->context());
         }
 
         return $this->docs->readResource($uri, $context);
