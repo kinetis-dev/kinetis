@@ -37,10 +37,11 @@ before you apply it. Only applying the scaffold changes anything, and what
 it changes is two fixed files. None of the four is evidence that
 application code is correct.
 
-Over MCP it also serves the Kinetis documentation and a fifth tool that
-reads a bounded window of an installed `kinetis/*` package's own source —
-the exact source this project has installed, when a guide published from
-main could describe a newer release.
+Over MCP it also serves the Kinetis documentation and two more tools that
+reach an installed `kinetis/*` package's own source — one reads a bounded
+line window of a file, the other searches one file for a literal string.
+That is the exact source this project has installed, when a guide
+published from main could describe a newer release.
 
 ```console
 composer require --dev kinetis/orbitron
@@ -348,6 +349,7 @@ the per-client configuration paths.
 | `orbitron_scaffold_plan` | The `orbitron:scaffold` preview document. Read-only. |
 | `orbitron_scaffold_apply` | The `orbitron:scaffold --apply` document, and creates the two files. |
 | `orbitron_read_package_source` | One line window of one installed `kinetis/*` package's own source. Read-only. |
+| `orbitron_search_package_source` | The lines of one such file that contain a literal string. Read-only. |
 | `kinetis://orbitron/context` | The `orbitron:context` document, as Markdown. |
 | `kinetis://docs/<page>` | One Kinetis documentation page, as Markdown. `resources/list` names every page; start at `kinetis://docs/agent-workflow`. |
 
@@ -358,19 +360,20 @@ approval policy is what decides whether it runs. It is annotated
 apply refuses rather than overwriting.
 
 Four tools publish a closed, empty input schema and refuse a call
-carrying any argument. The fifth, `orbitron_read_package_source`, has a
-schema of its own — see below. No message can otherwise name a project
-root, a source body, a URL, an origin, a ref or a command, and the
-server never boots the Kinetis application.
+carrying any argument. The other two, `orbitron_read_package_source` and
+`orbitron_search_package_source`, have schemas of their own — see below.
+No message can otherwise name a project root, a source body, a URL, an
+origin, a ref or a command, and the server never boots the Kinetis
+application.
 
 Composer's installed-package inventory and each package's install root
 are process-cached, so restart the server after installing, removing or
-updating a dependency. Every other document, and the file content
-`orbitron_read_package_source` returns, is re-read on each call: an edit
-to an already-installed source file is visible on the next call, no
-restart needed.
+updating a dependency. Every other document, and the file content the two
+installed-source tools report, is re-read on each call: an edit to an
+already-installed source file is visible on the next call, no restart
+needed.
 
-### The installed-source tool
+### The installed-source tools
 
 `orbitron_read_package_source` reads one bounded line window of one
 installed `kinetis/*` package's own source — the exact source this
@@ -400,6 +403,31 @@ to `endLine + 1` until the needed evidence is in view or `hasMore` is
 `package_unknown`, `path_not_admitted`, `source_missing`,
 `source_unreadable`, `source_oversize`, `source_not_text`, or
 `line_out_of_range`.
+
+`orbitron_search_package_source` searches one such file instead of
+paging through it, and takes the same `package` and `path`:
+
+| Argument | Type | Constraint |
+|---|---|---|
+| `query` | string | Required, non-empty, at most 256 Unicode code points. |
+| `startLine` | integer | Optional, at least 1, default `1`. |
+
+The scan is literal and case-sensitive — no pattern, no case mode, no
+result count, and one file per call rather than a directory or a
+package. A success reports `status: "ok"`, `package`, `version`, `path`,
+`query`, `startLine`, `matches` and `hasMore`. `matches` lists at most
+50 `{"line": <integer>, "content": <string>}` entries in source order,
+each line without the newline the file stores after it; finding nothing
+is a success with an empty list. `hasMore: true` means a later line
+matches too — call again with `startLine` set to the last reported line
+plus one. The refusal codes are the ones above.
+
+Use them together: derive a file from the class and that package's own
+`composer.json` autoload map, or find it by searching the package's
+`README.md` for the option or term, then search the file and read a
+window around a reported line. Neither tool lists a directory or
+searches a package, so an unknown file is not something either of them
+can refuse — read `vendor/kinetis/<package>` directly for that.
 
 ### The documentation resources
 
@@ -503,16 +531,18 @@ as described above — and, for the scaffold, the existence and symlink
 state of four fixed directories and two fixed paths. Over MCP only, it
 also reads a bounded line window of one installed, non-root `kinetis/*`
 package's own `composer.json`, `README.md`, or a file beneath `src/`,
-`bin/` or `resources/` — never a non-`kinetis/*` package, the Composer
-root project, or the application's own source. No configuration, no
+`bin/` or `resources/`, and searches one such file for a literal string —
+never a non-`kinetis/*` package, the Composer root project, or the
+application's own source. No configuration, no
 credentials. It starts no process. Reading the installed metadata goes
 through `Composer\InstalledVersions`, which loads
 `vendor/composer/installed.php` itself. Beyond that one file, the
-commands and four of the five MCP tools reach nothing else under
-`vendor/`; only `orbitron_read_package_source` reads further, and only
-inside the one admitted location of the one installed, non-root
-`kinetis/*` package a call names — see [The installed-source
-tool](#the-installed-source-tool). Every command declares
+commands and four of the six MCP tools reach nothing else under
+`vendor/`; only `orbitron_read_package_source` and
+`orbitron_search_package_source` read further, and only inside the one
+admitted location of the one installed, non-root `kinetis/*` package a
+call names — see [The installed-source
+tools](#the-installed-source-tools). Every command declares
 `bootstrap: false`, and the MCP binary boots no application at all, so
 no package or application bootstrap runs either way.
 
@@ -521,17 +551,17 @@ One operation leaves this machine, and only over MCP: reading a
 from its own fixed origin under the bounds
 [above](#the-documentation-resources). It carries no credential, sends
 nothing about your project, and no message can redirect it. The four
-commands and all five tools reach no network at all.
+commands and all six tools reach no network at all.
 
 It writes two files, both fixed, both only on `orbitron:scaffold --apply`
 or `orbitron_scaffold_apply`, and both through a create that refuses an
 occupied path. Neither a command line nor an MCP message supplies a path
 to either write target: the project root comes from the framework's own
 `Kinetis\Runtime\ProjectRoot::detect()`, reading Composer's generated bin
-proxy, and every name below it is a constant. `orbitron_read_package_source`
-is the one call that does take a caller-supplied path, and only for
-reading — admitted against a fixed set of locations, with the resolved
-target re-admitted, before anything reaches the filesystem. The MCP
+proxy, and every name below it is a constant. The two installed-source
+tools are the only calls that do take a caller-supplied path, and only
+for reading — admitted against a fixed set of locations, with the
+resolved target re-admitted, before anything reaches the filesystem. The MCP
 server is a local process your client launches, so that process and
 your filesystem permissions are the authority boundary.
 

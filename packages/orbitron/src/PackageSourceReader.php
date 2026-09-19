@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Orbitron;
 
 /**
- * One window of one file of one installed `kinetis/*` package, as the
- * JSON document the MCP tool returns.
+ * One window, or one bounded literal search, of one file of one
+ * installed `kinetis/*` package, as the JSON document the MCP tools
+ * return.
  *
  * The documentation pages Orbitron serves are published from main and
  * can describe behavior newer than a project has installed. This reader
@@ -15,14 +16,15 @@ namespace Kinetis\Orbitron;
  * every call.
  *
  * Nothing here is chosen by a caller except the package name, the
- * relative path, and the window. The install root comes from Composer's
- * own installed set; the path is admitted against a fixed set of
- * locations before anything is opened; and the resolved target must be a
- * regular file that still sits in the admitted location the request
- * named. A symlink is therefore resolved and then re-admitted, so one
- * pointing out of the package, or at a part of it this tool does not
- * serve, is refused rather than followed. A refusal names a fixed code
- * and nothing else — no resolved path, no exception text, no content.
+ * relative path, and the window or the query. Both calls reach the file
+ * through one load path: the install root comes from Composer's own
+ * installed set; the path is admitted against a fixed set of locations
+ * before anything is opened; and the resolved target must be a regular
+ * file that still sits in the admitted location the request named. A
+ * symlink is therefore resolved and then re-admitted, so one pointing
+ * out of the package, or at a part of it this tool does not serve, is
+ * refused rather than followed. A refusal names a fixed code and
+ * nothing else — no resolved path, no exception text, no content.
  *
  * The read is bounded by construction: one stream read of the admitted
  * size plus one byte, and that byte alone tells an admitted file from an
@@ -42,6 +44,12 @@ final readonly class PackageSourceReader
     /** The longest path a call may name, counted in Unicode characters. */
     public const int MAX_PATH_LENGTH = 256;
 
+    /** The longest query a search may name, counted in Unicode characters. */
+    public const int MAX_QUERY_LENGTH = 256;
+
+    /** The most matches one search returns. */
+    public const int MAX_MATCH_COUNT = 50;
+
     /** The two package-root files a call may name. */
     private const array ROOT_FILES = ['composer.json', 'README.md'];
 
@@ -54,12 +62,126 @@ final readonly class PackageSourceReader
      * The window, or the refusal. Both are documents; the refusal is the
      * failed one.
      *
-     * @param string $path relative `/` syntax, admitted below before any
-     *        lookup result is turned into a filesystem operation
+     * @param string $path relative `/` syntax, admitted by {@see load()}
+     *        before any lookup result is turned into a filesystem operation
      * @param int $startLine one-based, already validated by the adapter
      * @param int $lineCount already validated by the adapter to 1..{@see MAX_LINE_COUNT}
      */
     public function read(string $package, string $path, int $startLine, int $lineCount): Document
+    {
+        $loaded = $this->load($package, $path);
+
+        if ($loaded instanceof Document) {
+            return $loaded;
+        }
+
+        [$version, $lines] = $loaded;
+        $total = count($lines);
+
+        if ($startLine > $total) {
+            return self::refuse('line_out_of_range');
+        }
+
+        $window = array_slice($lines, $startLine - 1, $lineCount);
+        $endLine = $startLine + count($window) - 1;
+
+        return new Document([
+            'status' => 'ok',
+            'package' => $package,
+            'version' => $version,
+            'path' => $path,
+            'startLine' => $startLine,
+            'endLine' => $endLine,
+            'hasMore' => $endLine < $total,
+            'content' => implode('', $window),
+        ], failed: false);
+    }
+
+    /**
+     * The lines from $startLine that contain $query, up to
+     * {@see MAX_MATCH_COUNT} of them, or the refusal. Finding none is a
+     * successful search with an empty list, not a refusal.
+     *
+     * The scan is literal and case-sensitive, and each line is compared
+     * as it is reported — without its terminator — so a query carrying
+     * a line ending matches nothing rather than the end of a line.
+     *
+     * Scanning stops at the first match past the cap. `hasMore` says
+     * another one exists; the caller continues from the last reported
+     * line plus one, which is why no cursor is returned.
+     *
+     * @param string $path relative `/` syntax, admitted by {@see load()}
+     *        before any lookup result is turned into a filesystem operation
+     * @param string $query non-empty, already validated by the adapter to
+     *        at most {@see MAX_QUERY_LENGTH} characters
+     * @param int $startLine one-based, already validated by the adapter
+     */
+    public function search(string $package, string $path, string $query, int $startLine): Document
+    {
+        $loaded = $this->load($package, $path);
+
+        if ($loaded instanceof Document) {
+            return $loaded;
+        }
+
+        [$version, $lines] = $loaded;
+        $total = count($lines);
+
+        if ($startLine > $total) {
+            return self::refuse('line_out_of_range');
+        }
+
+        /** @var list<array{line: int, content: string}> $matches */
+        $matches = [];
+        $hasMore = false;
+
+        for ($line = $startLine; $line <= $total; $line++) {
+            $content = $lines[$line - 1];
+
+            // The terminator is the file's, not the line's, and a line
+            // carries at most one because the split point follows it.
+            if (str_ends_with($content, "\n")) {
+                $content = substr($content, 0, str_ends_with($content, "\r\n") ? -2 : -1);
+            }
+
+            if (!str_contains($content, $query)) {
+                continue;
+            }
+
+            // The match past the cap is the only reason the scan runs on
+            // this far: it answers hasMore, and it is not reported.
+            if (count($matches) === self::MAX_MATCH_COUNT) {
+                $hasMore = true;
+
+                break;
+            }
+
+            $matches[] = ['line' => $line, 'content' => $content];
+        }
+
+        return new Document([
+            'status' => 'ok',
+            'package' => $package,
+            'version' => $version,
+            'path' => $path,
+            'query' => $query,
+            'startLine' => $startLine,
+            'matches' => $matches,
+            'hasMore' => $hasMore,
+        ], failed: false);
+    }
+
+    /**
+     * The installed version and the lines of the one admitted file, or
+     * the refusal that stopped the call before it became one.
+     *
+     * Every rule that bounds what this package serves lives here, so a
+     * window and a search are admitted, confined, bounded and validated
+     * identically — there is one path to a file, not one per tool.
+     *
+     * @return array{string, list<string>}|Document
+     */
+    private function load(string $package, string $path): array|Document
     {
         $source = $this->packages->source($package);
 
@@ -135,25 +257,8 @@ final readonly class PackageSourceReader
         // newline.
         $lines = preg_split('/(?<=\n)/', $contents, flags: PREG_SPLIT_NO_EMPTY);
         \assert(is_array($lines));
-        $total = count($lines);
 
-        if ($startLine > $total) {
-            return self::refuse('line_out_of_range');
-        }
-
-        $window = array_slice($lines, $startLine - 1, $lineCount);
-        $endLine = $startLine + count($window) - 1;
-
-        return new Document([
-            'status' => 'ok',
-            'package' => $package,
-            'version' => $source['version'],
-            'path' => $path,
-            'startLine' => $startLine,
-            'endLine' => $endLine,
-            'hasMore' => $endLine < $total,
-            'content' => implode('', $window),
-        ], failed: false);
+        return [$source['version'], $lines];
     }
 
     /**

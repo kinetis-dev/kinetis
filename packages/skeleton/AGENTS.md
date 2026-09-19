@@ -95,18 +95,34 @@ Once Orbitron is ready, every task runs the same way:
 1. Route the task through the Orbitron documentation resource that
    covers it. `kinetis://docs/agent-workflow` names the routes;
    `resources/list` names every page.
-2. Call `orbitron_read_package_source` for anything version-sensitive —
-   a signature, a default, a config key, a failure code — before
+2. Call the installed-source tools for anything version-sensitive — a
+   signature, a default, a config key, a failure code — rather than
    searching for the same fact under `vendor/kinetis/`. Those pages are
    published from Kinetis `main` and can describe behavior newer than
    this project has installed; `orbitron_inspect` and the installed
-   source are what is true here. A success reporting `hasMore: true` is
-   not a refusal: call again with `startLine` set to `endLine + 1`
-   until the needed evidence is in view or `hasMore` is `false`. Read
-   `vendor/kinetis/<package>` directly only when the call returns an
-   exact refusal — a `status: error` result naming why, such as
-   `package_unknown` — that cannot serve the needed evidence; when that
-   happens, record the refusal and the reason before falling back.
+   source are what is true here. `vendor/` is a Docker volume rather
+   than a directory on the host, so the tools are also the way to reach
+   it at all.
+
+   - **Known class or symbol.** Derive its file from the class name and
+     that package's own `composer.json` autoload map — itself a
+     readable path — then call `orbitron_search_package_source` for the
+     symbol and `orbitron_read_package_source` for a window around a
+     line it reports.
+   - **Known package, unknown file.** Search that package's `README.md`
+     for the option, setting or term; it names the class or file to go
+     to next.
+   - A success reporting `hasMore: true` is not a refusal. Continue with
+     `startLine` set to `endLine + 1` for a window, or to the last
+     reported match line plus one for a search, until the needed
+     evidence is in view or `hasMore` is `false`.
+   - Neither tool lists a directory or searches a whole package, so an
+     unknown file is not something either of them can refuse. Read
+     `vendor/kinetis/<package>` inside the container only when neither
+     step above yields a file, or when a call returns an exact refusal —
+     a `status: error` result naming why, such as `package_unknown` —
+     that cannot serve the needed evidence; when that happens, record
+     what you tried and why before falling back.
 3. Make the smallest change that satisfies the task.
 4. Run focused verification in the container:
 

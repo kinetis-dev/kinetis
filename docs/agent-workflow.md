@@ -32,10 +32,17 @@ Before a version-sensitive claim governs a decision:
    package name and the relative path — `composer.json`, `README.md`, or
    a file beneath `src/`, `bin/` or `resources/` — and an optional line
    window; it reads the exact installed source live, on every call.
-   Otherwise, or for a shell-only agent, open the file under the
-   project's own `vendor/kinetis/<package>` directly. Documentation and
-   interfaces alone do not prove installed behavior; the installed
-   source does.
+   When the file is known but the line is not, call
+   `orbitron_search_package_source` for a literal string in that file
+   and read a window around a line it reports. Derive the file from the
+   class and that package's own `composer.json` autoload map, or search
+   the package's `README.md` for the option or term to find the file;
+   neither tool lists a directory or searches a package, so an unknown
+   file is not something either can refuse. Only when neither yields a
+   file, or a call is refused, open the file under the project's own
+   `vendor/kinetis/<package>` directly — as a shell-only agent does in
+   every case. Documentation and interfaces alone do not prove installed
+   behavior; the installed source does.
 
 Neither documentation server reads application code. `mcp-docs` has no
 tool and no file access at all. Orbitron's `orbitron_inspect` and
@@ -43,11 +50,13 @@ tool and no file access at all. Orbitron's `orbitron_inspect` and
 project's `composer.json`; its two scaffold tools additionally read the
 fixed scaffold paths, and `orbitron_scaffold_apply` writes them.
 `orbitron_read_package_source` reads one bounded window of one installed,
-non-root `kinetis/*` package's own source and nothing else. None of the
-five tools reads the *application's* own source — its controllers, its
-tests, its configuration — so that inspection is still the calling
-agent's own, done with its own file-reading tools when Orbitron's
-installed-source tool is unavailable. To let an agent call the project's
+non-root `kinetis/*` package's own source, and
+`orbitron_search_package_source` searches one such file for a literal
+string; neither reaches anything else. None of the six tools reads the
+*application's* own source — its controllers, its tests, its
+configuration — so that inspection is still the calling agent's own,
+done with its own file-reading tools when Orbitron's installed-source
+tools are unavailable. To let an agent call the project's
 own application code — its controllers, its data, its queues — the
 project installs `kinetis/mcp` (see {doc}`mcp`); neither documentation
 server does that.

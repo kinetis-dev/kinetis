@@ -85,6 +85,7 @@ final class OrbitronMcpBinaryTest extends TestCase
                 'orbitron_scaffold_plan',
                 'orbitron_scaffold_apply',
                 OrbitronMcpApplication::SOURCE_TOOL,
+                OrbitronMcpApplication::SEARCH_TOOL,
             ],
             array_column($frames[1]['result']['tools'], 'name'),
         );
@@ -149,6 +150,41 @@ final class OrbitronMcpBinaryTest extends TestCase
         self::assertTrue($read['hasMore']);
         self::assertStringContainsString('kinetis/framework', $read['content']);
         self::assertStringStartsWith('{', $read['content']);
+    }
+
+    /**
+     * The search an agent actually runs, through the real binary: a
+     * literal in a real installed manifest, reported at the line it is
+     * on, with the window tool then reading that line back unchanged.
+     *
+     * @throws JsonException
+     */
+    public function test_a_real_search_locates_a_line_the_window_tool_then_reads(): void
+    {
+        $frames = $this->session([
+            '{"jsonrpc":"2.0","id":0,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
+            . '","arguments":{"package":"kinetis/framework","path":"composer.json","query":"\"name\""}}}',
+        ]);
+
+        $search = $this->document($frames[0]);
+
+        self::assertFalse($frames[0]['result']['isError']);
+        self::assertSame('kinetis/framework', $search['package']);
+        self::assertSame('"name"', $search['query']);
+        self::assertFalse($search['hasMore']);
+        self::assertIsArray($search['matches']);
+        self::assertNotSame([], $search['matches']);
+
+        $match = $search['matches'][0];
+        self::assertStringContainsString('kinetis/framework', $match['content']);
+
+        $read = $this->document($this->session([
+            '{"jsonrpc":"2.0","id":0,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"kinetis/framework","path":"composer.json","startLine":'
+            . $match['line'] . ',"lineCount":1}}}',
+        ])[0]);
+
+        self::assertSame($match['content'], rtrim($read['content'], "\r\n"));
     }
 
     /**

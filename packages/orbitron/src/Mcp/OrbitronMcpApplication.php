@@ -21,11 +21,11 @@ use Kinetis\Orbitron\ScaffoldMode;
 use stdClass;
 
 /**
- * Orbitron's four documents and one installed-source window as MCP
- * tools, and its context document plus the Kinetis documentation as MCP
- * resources, over the shared protocol server. One connection is the
- * whole project-local surface an agent needs: there is no second server
- * to register.
+ * Orbitron's four documents, one installed-source window and one
+ * installed-source search as MCP tools, and its context document plus
+ * the Kinetis documentation as MCP resources, over the shared protocol
+ * server. One connection is the whole project-local surface an agent
+ * needs: there is no second server to register.
  *
  * Every document tool call reaches {@see Documents}, the same service
  * the CLI commands adapt: no command is invoked, no output is parsed,
@@ -40,11 +40,13 @@ use stdClass;
  * a source body, a URL, an origin, a ref, a template or a command: four
  * tools take no argument at all, a resource read selects one entry of a
  * fixed catalogue whose URLs are the documentation server's own
- * constants, and the one tool that takes a path admits it only as a
- * relative name under one installed package: its schema is validated
- * here in full before the package lookup, and the path itself is
- * admitted against a fixed set of locations, with the resolved target
- * re-admitted, before anything reaches the filesystem.
+ * constants, and the two that take a path admit it only as a relative
+ * name under one installed package: each schema is validated here in
+ * full before the package lookup, and the path itself is admitted
+ * against a fixed set of locations, with the resolved target
+ * re-admitted, before anything reaches the filesystem. The two share
+ * that validation, and {@see PackageSourceReader} is the one place a
+ * file behind either is opened.
  *
  * `orbitron_scaffold_apply` is the one tool that writes. Selecting it is
  * the whole mutation request, which is why it has no boolean to set: the
@@ -64,6 +66,8 @@ final readonly class OrbitronMcpApplication implements McpApplication
 
     public const string SOURCE_TOOL = 'orbitron_read_package_source';
 
+    public const string SEARCH_TOOL = 'orbitron_search_package_source';
+
     private const string DOCS_ENTRY_URI = 'kinetis://docs/agent-workflow';
 
     private const string INSTRUCTIONS = 'Orbitron reports what this project has, serves the Kinetis documentation, '
@@ -77,7 +81,11 @@ final readonly class OrbitronMcpApplication implements McpApplication
         . 'the authority for anything version-sensitive. Installed versions are read once at startup, so restart '
         . 'this server after changing dependencies. Call orbitron_read_package_source to read a window of an '
         . 'installed kinetis/* package\'s own source, which is the authority whenever a page and the installed '
-        . 'version could differ.';
+        . 'version could differ. When the file is known but the relevant line is not, call '
+        . 'orbitron_search_package_source for a literal string in that file and read a window around a line it '
+        . 'reports: derive the file from the class and the package\'s own composer.json autoload map, or search '
+        . 'that package\'s README.md for the option or term to find the file. Read vendor/kinetis/* directly only '
+        . 'when neither yields a file, or a tool refuses.';
 
     /** The input schema the four document tools share: an object with no members and nothing else admitted. */
     private const string CLOSED_SCHEMA_DESCRIPTION = 'Takes no arguments.';
@@ -181,6 +189,49 @@ final readonly class OrbitronMcpApplication implements McpApplication
                 ],
                 self::readOnly(),
             ),
+            new ToolDescription(
+                self::SEARCH_TOOL,
+                'Reports every line of one file of one installed kinetis/* package that contains a literal '
+                . 'string, as a JSON document: the line numbers and the lines themselves, at the version '
+                . 'orbitron_inspect reports. Use it when the file is known but the line is not — derive the file '
+                . 'from the class and that package\'s own composer.json autoload map, or search its README.md for '
+                . 'the option or term — then read a window around a line it reports with '
+                . self::SOURCE_TOOL . '. Takes the same package name and path, the exact string to look for, and '
+                . 'an optional first line. The search is case-sensitive and literal, with no pattern, and it '
+                . 'searches the one file it is given rather than a directory or a package. Reads nothing else '
+                . 'and writes nothing.',
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'package' => [
+                            'type' => 'string',
+                            'minLength' => 1,
+                            'description' => 'An installed package name, as orbitron_inspect reports it.',
+                        ],
+                        'path' => [
+                            'type' => 'string',
+                            'minLength' => 1,
+                            'maxLength' => PackageSourceReader::MAX_PATH_LENGTH,
+                            'description' => 'The file, relative to the package root, with / separators.',
+                        ],
+                        'query' => [
+                            'type' => 'string',
+                            'minLength' => 1,
+                            'maxLength' => PackageSourceReader::MAX_QUERY_LENGTH,
+                            'description' => 'The exact string a line must contain, matched case-sensitively.',
+                        ],
+                        'startLine' => [
+                            'type' => 'integer',
+                            'minimum' => 1,
+                            'default' => 1,
+                            'description' => 'The first line to scan, counting from 1.',
+                        ],
+                    ],
+                    'required' => ['package', 'path', 'query'],
+                    'additionalProperties' => false,
+                ],
+                self::readOnly(),
+            ),
         ];
     }
 
@@ -214,14 +265,20 @@ final readonly class OrbitronMcpApplication implements McpApplication
         ProgressEmitter $progress,
         ?object $context,
     ): ToolResult {
-        // The one tool that takes arguments validates its whole closed
+        // The two tools that take arguments validate their whole closed
         // schema here, before a name or a path reaches a lookup or the
-        // filesystem: a call this schema has no reading of is a protocol
+        // filesystem: a call a schema has no reading of is a protocol
         // error, not a refusal document.
         if ($name === self::SOURCE_TOOL) {
             [$package, $path, $startLine, $lineCount] = self::sourceArguments($arguments);
 
             return self::result($this->source->read($package, $path, $startLine, $lineCount));
+        }
+
+        if ($name === self::SEARCH_TOOL) {
+            [$package, $path, $query, $startLine] = self::searchArguments($arguments);
+
+            return self::result($this->source->search($package, $path, $query, $startLine));
         }
 
         // Every other tool publishes a closed, empty schema, so an
@@ -241,52 +298,18 @@ final readonly class OrbitronMcpApplication implements McpApplication
     }
 
     /**
-     * The call's arguments, each member validated for presence, type,
-     * range and length, and every key the schema does not name refused.
+     * The window call's arguments, each member validated for presence,
+     * type, range and length, and every key the schema does not name
+     * refused.
      *
      * @return array{string, string, int, int}
      */
     private static function sourceArguments(stdClass $arguments): array
     {
-        $values = get_object_vars($arguments);
-        $unknown = array_diff(array_keys($values), ['package', 'path', 'startLine', 'lineCount']);
-
-        if ($unknown !== []) {
-            throw JsonRpcException::invalidParams(
-                'Unknown argument: "' . implode('", "', $unknown) . '".',
-            );
-        }
-
-        $package = $values['package'] ?? throw JsonRpcException::invalidParams('"package" is required.');
-        $path = $values['path'] ?? throw JsonRpcException::invalidParams('"path" is required.');
-
-        if (!\is_string($package) || $package === '') {
-            throw JsonRpcException::invalidParams('"package" must be a non-empty string.');
-        }
-
-        if (!\is_string($path) || $path === '') {
-            throw JsonRpcException::invalidParams('"path" must be a non-empty string.');
-        }
-
-        // JSON Schema counts maxLength in characters, so the check that
-        // enforces it must count the same units: `strlen()` would refuse
-        // a path the published schema admits as soon as it carries a
-        // multi-byte character. `/./us` counts code points without
-        // requiring ext-mbstring, and returns false only for a subject
-        // that is not UTF-8 — which a decoded JSON string cannot be.
-        $length = preg_match_all('/./us', $path);
-
-        if ($length === false || $length > PackageSourceReader::MAX_PATH_LENGTH) {
-            throw JsonRpcException::invalidParams(
-                '"path" must be at most ' . PackageSourceReader::MAX_PATH_LENGTH . ' characters.',
-            );
-        }
-
-        $startLine = \array_key_exists('startLine', $values) ? $values['startLine'] : 1;
-
-        if (!\is_int($startLine) || $startLine < 1) {
-            throw JsonRpcException::invalidParams('"startLine" must be an integer of at least 1.');
-        }
+        $values = self::members($arguments, ['package', 'path', 'startLine', 'lineCount']);
+        $package = self::text($values, 'package');
+        $path = self::text($values, 'path', PackageSourceReader::MAX_PATH_LENGTH);
+        $startLine = self::startLine($values);
 
         $lineCount = \array_key_exists('lineCount', $values)
             ? $values['lineCount']
@@ -299,6 +322,96 @@ final readonly class OrbitronMcpApplication implements McpApplication
         }
 
         return [$package, $path, $startLine, $lineCount];
+    }
+
+    /**
+     * The search call's arguments, validated the same way and from the
+     * same helpers: the two calls admit one package name, one path and
+     * one first line, so neither can be reachable with something the
+     * other refuses.
+     *
+     * @return array{string, string, string, int}
+     */
+    private static function searchArguments(stdClass $arguments): array
+    {
+        $values = self::members($arguments, ['package', 'path', 'query', 'startLine']);
+
+        return [
+            self::text($values, 'package'),
+            self::text($values, 'path', PackageSourceReader::MAX_PATH_LENGTH),
+            self::text($values, 'query', PackageSourceReader::MAX_QUERY_LENGTH),
+            self::startLine($values),
+        ];
+    }
+
+    /**
+     * The named members of the call, with every key the schema does not
+     * name refused.
+     *
+     * @param list<string> $known
+     * @return array<string, mixed>
+     */
+    private static function members(stdClass $arguments, array $known): array
+    {
+        $values = get_object_vars($arguments);
+        $unknown = array_diff(array_keys($values), $known);
+
+        if ($unknown !== []) {
+            throw JsonRpcException::invalidParams(
+                'Unknown argument: "' . implode('", "', $unknown) . '".',
+            );
+        }
+
+        return $values;
+    }
+
+    /**
+     * One required string member, present, non-empty, and within the
+     * maximum its schema publishes.
+     *
+     * JSON Schema counts maxLength in characters, so the check that
+     * enforces it must count the same units: `strlen()` would refuse a
+     * value the published schema admits as soon as it carries a
+     * multi-byte character. `/./us` counts code points without requiring
+     * ext-mbstring, and returns false only for a subject that is not
+     * UTF-8 — which a decoded JSON string cannot be.
+     *
+     * @param array<string, mixed> $values
+     */
+    private static function text(array $values, string $member, ?int $maximum = null): string
+    {
+        $value = $values[$member] ?? throw JsonRpcException::invalidParams("\"{$member}\" is required.");
+
+        if (!\is_string($value) || $value === '') {
+            throw JsonRpcException::invalidParams("\"{$member}\" must be a non-empty string.");
+        }
+
+        if ($maximum !== null) {
+            $length = preg_match_all('/./us', $value);
+
+            if ($length === false || $length > $maximum) {
+                throw JsonRpcException::invalidParams("\"{$member}\" must be at most {$maximum} characters.");
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * The optional first line both calls count from, defaulting to the
+     * first line of the file.
+     *
+     * @param array<string, mixed> $values
+     */
+    private static function startLine(array $values): int
+    {
+        $startLine = \array_key_exists('startLine', $values) ? $values['startLine'] : 1;
+
+        if (!\is_int($startLine) || $startLine < 1) {
+            throw JsonRpcException::invalidParams('"startLine" must be an integer of at least 1.');
+        }
+
+        return $startLine;
     }
 
     /**

@@ -116,11 +116,12 @@ final class ContextTest extends TestCase
     }
 
     /**
-     * The fifth MCP tool is named and its argument-taking contract is
-     * stated in both the tool entry and the server-level claim: the
-     * document must not say every tool is argument-free once one is not.
+     * The two installed-source tools are named and their argument-taking
+     * contract is stated in both the tool entries and the server-level
+     * claim: the document must not say every tool is argument-free once
+     * two are not.
      */
-    public function test_the_mcp_tools_include_the_installed_source_reader(): void
+    public function test_the_mcp_tools_include_the_installed_source_reader_and_search(): void
     {
         $document = self::context()->toArray();
 
@@ -131,24 +132,35 @@ final class ContextTest extends TestCase
                 'orbitron_scaffold_plan',
                 'orbitron_scaffold_apply',
                 'orbitron_read_package_source',
+                'orbitron_search_package_source',
             ],
             array_column($document['mcp']['tools'], 'name'),
         );
 
-        $sourceTool = array_values(array_filter(
-            $document['mcp']['tools'],
-            static fn (array $tool): bool => $tool['name'] === 'orbitron_read_package_source',
-        ))[0];
+        $effects = array_column($document['mcp']['tools'], 'effect', 'name');
+        $sourceTool = $effects['orbitron_read_package_source'];
 
-        self::assertStringContainsString('package', $sourceTool['effect']);
-        self::assertStringContainsString('path', $sourceTool['effect']);
-        self::assertStringContainsString('startLine', $sourceTool['effect']);
-        self::assertStringContainsString('lineCount', $sourceTool['effect']);
-        self::assertStringContainsString('package_unknown', $sourceTool['effect']);
-        self::assertStringContainsString('line_out_of_range', $sourceTool['effect']);
+        self::assertStringContainsString('package', $sourceTool);
+        self::assertStringContainsString('path', $sourceTool);
+        self::assertStringContainsString('startLine', $sourceTool);
+        self::assertStringContainsString('lineCount', $sourceTool);
+        self::assertStringContainsString('package_unknown', $sourceTool);
+        self::assertStringContainsString('line_out_of_range', $sourceTool);
+
+        $searchTool = $effects['orbitron_search_package_source'];
+
+        self::assertStringContainsString('query', $searchTool);
+        self::assertStringContainsString('startLine', $searchTool);
+        self::assertStringContainsString('matches', $searchTool);
+        self::assertStringContainsString('hasMore', $searchTool);
+        // The cursor rule, which is the whole paging contract: there is
+        // no member to carry it back.
+        self::assertStringContainsString('last reported line plus one', $searchTool);
+        self::assertStringNotContainsString('nextStartLine', $searchTool);
 
         self::assertStringContainsString('Four tools take no argument', $document['server']);
         self::assertStringContainsString('orbitron_read_package_source', $document['server']);
+        self::assertStringContainsString('orbitron_search_package_source', $document['server']);
         self::assertStringNotContainsString('every tool takes no arguments', $document['server']);
     }
 
@@ -260,6 +272,7 @@ final class ContextTest extends TestCase
         yield 'scaffold controller target' => ['src/Http/HealthController.php'];
         yield 'documentation entry resource' => ['kinetis://docs/agent-workflow'];
         yield 'installed source tool' => ['orbitron_read_package_source'];
+        yield 'installed source search tool' => ['orbitron_search_package_source'];
         yield 'serialized shared-state rule' => ['shared database, broker or object store one at a time'];
     }
 

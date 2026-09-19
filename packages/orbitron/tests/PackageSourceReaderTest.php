@@ -14,9 +14,10 @@ use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 /**
- * The installed-source window, against a real package directory: the
- * bytes a window carries, and every refusal, decided from files on disk
- * rather than from a mocked filesystem.
+ * The installed-source window and the literal search over the same
+ * files, against a real package directory: the bytes a window carries,
+ * the lines a search reports, and every refusal, decided from files on
+ * disk rather than from a mocked filesystem.
  *
  * The package under test here is a fixture named like an installed one,
  * so what is proved is the reader's own rules — not whatever happens to
@@ -412,6 +413,272 @@ final class PackageSourceReaderTest extends TestCase
         }
     }
 
+    /**
+     * The match list is the lines of the file that contain the literal,
+     * in source order, each at its own line number and without the
+     * terminator the file stores.
+     *
+     * @throws JsonException
+     */
+    public function test_a_search_reports_every_matching_line_in_source_order(): void
+    {
+        $this->write('src/A.php', "public function read(): void\n{\n    // read the file\n}\nreturn 0;\n");
+
+        $document = $this->search('src/A.php', 'read', 1);
+
+        self::assertFalse($document->failed);
+        self::assertSame(
+            ['status', 'package', 'version', 'path', 'query', 'startLine', 'matches', 'hasMore'],
+            array_keys($document->body),
+        );
+        self::assertSame([
+            'status' => 'ok',
+            'package' => self::PACKAGE,
+            'version' => '2.4.0',
+            'path' => 'src/A.php',
+            'query' => 'read',
+            'startLine' => 1,
+            'matches' => [
+                ['line' => 1, 'content' => 'public function read(): void'],
+                ['line' => 3, 'content' => '    // read the file'],
+            ],
+            'hasMore' => false,
+        ], $document->body);
+    }
+
+    /**
+     * The scan is literal and case-sensitive: a symbol is found by the
+     * spelling it has, and a differently-cased line is not a match.
+     */
+    public function test_the_scan_is_case_sensitive(): void
+    {
+        $this->write('src/A.php', "read the file\nRead the file\n");
+
+        self::assertSame(
+            [['line' => 2, 'content' => 'Read the file']],
+            $this->search('src/A.php', 'Read', 1)->body['matches'],
+        );
+    }
+
+    /**
+     * A CRLF file reports the line without either terminator byte: a
+     * carriage return left on the end would be part of every match a
+     * caller compares or prints.
+     */
+    public function test_a_crlf_line_is_reported_without_its_terminator(): void
+    {
+        $this->write('src/A.php', "one\r\ntwo\r\nthree\r\n");
+
+        self::assertSame(
+            [['line' => 2, 'content' => 'two']],
+            $this->search('src/A.php', 'two', 1)->body['matches'],
+        );
+    }
+
+    /**
+     * Exactly one terminator is removed. A carriage return the file
+     * stores before its line ending is part of the line, and a trim of
+     * every trailing one would silently change the text reported.
+     */
+    public function test_only_one_line_terminator_is_removed_from_a_reported_line(): void
+    {
+        $this->write('src/A.php', "one\nkeep\r\r\n");
+
+        self::assertSame(
+            [['line' => 2, 'content' => "keep\r"]],
+            $this->search('src/A.php', 'keep', 1)->body['matches'],
+        );
+    }
+
+    /**
+     * The query is matched by its characters, not by bytes the file
+     * happens to store, so a multi-byte literal finds its line and the
+     * line comes back unchanged.
+     */
+    public function test_a_multi_byte_query_matches_and_is_echoed_with_the_line(): void
+    {
+        $this->write('src/A.php', "// plain\n// ☑ écrit\n");
+
+        $document = $this->search('src/A.php', '☑ écrit', 1);
+
+        self::assertSame([['line' => 2, 'content' => '// ☑ écrit']], $document->body['matches']);
+        self::assertSame('☑ écrit', $document->body['query']);
+    }
+
+    /** A last line with no terminator at all is scanned like any other. */
+    public function test_a_match_on_a_last_line_without_a_final_newline_is_reported(): void
+    {
+        $this->write('src/A.php', "one\ntwo\nthree");
+
+        self::assertSame(
+            [['line' => 3, 'content' => 'three']],
+            $this->search('src/A.php', 'three', 1)->body['matches'],
+        );
+    }
+
+    /**
+     * Finding nothing is an answer, not a refusal: the file was read and
+     * the literal is not in it.
+     */
+    public function test_a_query_that_matches_nothing_is_a_successful_empty_search(): void
+    {
+        $this->write('src/A.php', "one\ntwo\n");
+
+        $document = $this->search('src/A.php', 'three', 1);
+
+        self::assertFalse($document->failed);
+        self::assertSame([], $document->body['matches']);
+        self::assertFalse($document->body['hasMore']);
+    }
+
+    /**
+     * A query carrying a line ending matches nothing, because each line
+     * is compared as it is reported. Nothing about it is refused: the
+     * search simply has no line to find it on.
+     */
+    public function test_a_query_containing_a_line_terminator_matches_nothing(): void
+    {
+        $this->write('src/A.php', "one\ntwo\n");
+
+        $document = $this->search('src/A.php', "one\ntwo", 1);
+
+        self::assertFalse($document->failed);
+        self::assertSame([], $document->body['matches']);
+    }
+
+    /** The scan starts where it is told to, so an earlier match is not reported again. */
+    public function test_a_later_start_line_skips_the_matches_before_it(): void
+    {
+        $this->write('src/A.php', "hit\nmiss\nhit\n");
+
+        $document = $this->search('src/A.php', 'hit', 2);
+
+        self::assertSame(2, $document->body['startLine']);
+        self::assertSame([['line' => 3, 'content' => 'hit']], $document->body['matches']);
+    }
+
+    /**
+     * The cap is the reported maximum, and `hasMore` is decided by one
+     * match past it: continuing from the last reported line plus one
+     * returns the rest, with nothing repeated and nothing skipped.
+     */
+    public function test_matches_past_the_cap_continue_from_the_last_reported_line(): void
+    {
+        $total = PackageSourceReader::MAX_MATCH_COUNT + 10;
+        $this->write('src/A.php', str_repeat("hit\n", $total));
+
+        $first = $this->search('src/A.php', 'hit', 1);
+
+        self::assertCount(PackageSourceReader::MAX_MATCH_COUNT, $first->body['matches']);
+        self::assertTrue($first->body['hasMore']);
+
+        $last = $first->body['matches'][PackageSourceReader::MAX_MATCH_COUNT - 1]['line'];
+        self::assertSame(PackageSourceReader::MAX_MATCH_COUNT, $last);
+
+        $second = $this->search('src/A.php', 'hit', $last + 1);
+
+        self::assertCount(10, $second->body['matches']);
+        self::assertFalse($second->body['hasMore']);
+        self::assertSame(
+            range(1, $total),
+            array_column([...$first->body['matches'], ...$second->body['matches']], 'line'),
+        );
+    }
+
+    /**
+     * Exactly the cap and no more is a complete answer: `hasMore` says a
+     * later match exists, not that the cap was reached.
+     */
+    public function test_exactly_the_cap_is_reported_as_complete(): void
+    {
+        $this->write(
+            'src/A.php',
+            str_repeat("hit\n", PackageSourceReader::MAX_MATCH_COUNT) . str_repeat("miss\n", 5),
+        );
+
+        $document = $this->search('src/A.php', 'hit', 1);
+
+        self::assertCount(PackageSourceReader::MAX_MATCH_COUNT, $document->body['matches']);
+        self::assertFalse($document->body['hasMore']);
+    }
+
+    public function test_a_search_start_line_past_the_last_line_is_refused(): void
+    {
+        $this->write('src/A.php', "one\ntwo\n");
+
+        self::assertRefusal('line_out_of_range', $this->search('src/A.php', 'one', 3));
+    }
+
+    public function test_an_empty_file_has_no_line_to_search_from(): void
+    {
+        $this->write('src/A.php', '');
+
+        self::assertRefusal('line_out_of_range', $this->search('src/A.php', 'one', 1));
+    }
+
+    /**
+     * Nothing is held between calls here either: the same reader
+     * searches the file as it is now.
+     */
+    public function test_a_search_re_reads_a_rewritten_file(): void
+    {
+        $this->write('src/A.php', "before\n");
+
+        $reader = $this->reader();
+
+        self::assertSame([], $reader->search(self::PACKAGE, 'src/A.php', 'after', 1)->body['matches']);
+
+        $this->write('src/A.php', "before\nafter\n");
+
+        self::assertSame(
+            [['line' => 2, 'content' => 'after']],
+            $reader->search(self::PACKAGE, 'src/A.php', 'after', 1)->body['matches'],
+        );
+    }
+
+    /**
+     * The search reaches a file through the same admission, confinement
+     * and bounds the window does, so every refusal is the read's own —
+     * the code alone, with no path, root or content behind it.
+     *
+     * @throws JsonException
+     */
+    public function test_every_refusal_reaches_a_search_as_the_code_alone(): void
+    {
+        $this->write('src/Http/Controller.php', "secret body\n");
+        $this->write('src/Big.php', str_repeat('a', PackageSourceReader::MAX_SOURCE_BYTES + 1));
+        $this->write('src/Binary.php', "\0");
+        $this->link('src/Link.php', 'README.md');
+        $this->write('README.md', "secret body\n");
+
+        $refusals = [
+            'package_unknown' => $this->reader()->search('kinetis/absent', 'src/A.php', 'secret', 1),
+            'path_not_admitted' => $this->search('tests/ATest.php', 'secret', 1),
+            'source_missing' => $this->search('src/Absent.php', 'secret', 1),
+            'source_unreadable' => $this->search('src/Http', 'secret', 1),
+            'source_oversize' => $this->search('src/Big.php', 'a', 1),
+            'source_not_text' => $this->search('src/Binary.php', 'secret', 1),
+            'line_out_of_range' => $this->search('src/Http/Controller.php', 'secret', 9),
+        ];
+
+        foreach ($refusals as $code => $document) {
+            self::assertRefusal((string) $code, $document);
+
+            $json = $document->toJson();
+
+            self::assertStringNotContainsString($this->root, $json);
+            self::assertStringNotContainsString(sys_get_temp_dir(), $json);
+            self::assertStringNotContainsString('secret body', $json);
+        }
+
+        // A symlink out of its admitted location is refused on the
+        // search path too, and the file it reached is not searched.
+        $escaped = $this->search('src/Link.php', 'secret', 1);
+
+        self::assertRefusal('path_not_admitted', $escaped);
+        self::assertStringNotContainsString('secret body', $escaped->toJson());
+    }
+
     private static function assertRefusal(string $code, Document $document): void
     {
         self::assertTrue($document->failed, "expected a refusal carrying {$code}");
@@ -421,6 +688,11 @@ final class PackageSourceReaderTest extends TestCase
     private function read(string $path, int $startLine, int $lineCount): Document
     {
         return $this->reader()->read(self::PACKAGE, $path, $startLine, $lineCount);
+    }
+
+    private function search(string $path, string $query, int $startLine): Document
+    {
+        return $this->reader()->search(self::PACKAGE, $path, $query, $startLine);
     }
 
     private function reader(): PackageSourceReader

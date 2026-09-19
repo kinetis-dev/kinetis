@@ -46,6 +46,7 @@ final class OrbitronMcpApplicationTest extends TestCase
         'orbitron_scaffold_plan',
         'orbitron_scaffold_apply',
         OrbitronMcpApplication::SOURCE_TOOL,
+        OrbitronMcpApplication::SEARCH_TOOL,
     ];
 
     /** The one package the source reader below can see, named like an installed one. */
@@ -113,10 +114,10 @@ final class OrbitronMcpApplicationTest extends TestCase
     }
 
     /**
-     * The one tool that takes arguments publishes the whole closed
-     * schema a client validates against, and the adapter enforces the
-     * same bounds itself — the tests below prove it does not rely on the
-     * client having done so.
+     * The window tool publishes the whole closed schema a client
+     * validates against, and the adapter enforces the same bounds
+     * itself — the tests below prove it does not rely on the client
+     * having done so.
      */
     public function test_the_source_tool_publishes_a_closed_schema_with_its_bounds(): void
     {
@@ -135,6 +136,29 @@ final class OrbitronMcpApplicationTest extends TestCase
         self::assertSame(1, $schema['properties']['lineCount']['minimum']);
         self::assertSame(200, $schema['properties']['lineCount']['maximum']);
         self::assertSame(200, $schema['properties']['lineCount']['default']);
+    }
+
+    /**
+     * The search tool publishes its own closed schema: the same package
+     * and path the window tool takes, the query, and the first line —
+     * and no result count, pattern or case member to widen it.
+     */
+    public function test_the_search_tool_publishes_a_closed_schema_with_its_bounds(): void
+    {
+        $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
+        $schema = $tools[5]['inputSchema'];
+
+        self::assertSame(OrbitronMcpApplication::SEARCH_TOOL, $tools[5]['name']);
+        self::assertSame(['package', 'path', 'query'], $schema['required']);
+        self::assertFalse($schema['additionalProperties']);
+        self::assertSame(['package', 'path', 'query', 'startLine'], array_keys($schema['properties']));
+        self::assertSame(1, $schema['properties']['path']['minLength']);
+        self::assertSame(256, $schema['properties']['path']['maxLength']);
+        self::assertSame('string', $schema['properties']['query']['type']);
+        self::assertSame(1, $schema['properties']['query']['minLength']);
+        self::assertSame(256, $schema['properties']['query']['maxLength']);
+        self::assertSame(1, $schema['properties']['startLine']['minimum']);
+        self::assertSame(1, $schema['properties']['startLine']['default']);
     }
 
     /**
@@ -159,7 +183,13 @@ final class OrbitronMcpApplicationTest extends TestCase
         $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
         $annotations = array_combine(array_column($tools, 'name'), array_column($tools, 'annotations'));
 
-        $reading = ['orbitron_inspect', 'orbitron_verify', 'orbitron_scaffold_plan', self::TOOLS[4]];
+        $reading = [
+            'orbitron_inspect',
+            'orbitron_verify',
+            'orbitron_scaffold_plan',
+            self::TOOLS[4],
+            self::TOOLS[5],
+        ];
 
         foreach ($reading as $name) {
             self::assertSame([
@@ -500,6 +530,67 @@ final class OrbitronMcpApplicationTest extends TestCase
     }
 
     /**
+     * What a client reads back from a search: the matching lines of the
+     * installed file, each without its terminator, and no path in the
+     * frame.
+     *
+     * @throws JsonException
+     */
+    public function test_a_search_returns_the_matching_lines_of_the_installed_file(): void
+    {
+        file_put_contents(
+            $this->project->path('src/Http/Controller.php'),
+            "final class Controller\n{\n    public function show(): Response\n    {\n",
+        );
+
+        $frame = $this->rawFrames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
+            . '","arguments":{"package":"' . self::PACKAGE
+            . '","path":"src/Http/Controller.php","query":"public function"}}}',
+        ])[0];
+
+        $result = json_decode($frame, associative: true, flags: JSON_THROW_ON_ERROR)['result'];
+
+        self::assertFalse($result['isError']);
+        self::assertSame([
+            'status' => 'ok',
+            'package' => self::PACKAGE,
+            'version' => '3.1.4',
+            'path' => 'src/Http/Controller.php',
+            'query' => 'public function',
+            'startLine' => 1,
+            'matches' => [['line' => 3, 'content' => '    public function show(): Response']],
+            'hasMore' => false,
+        ], json_decode($result['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR));
+
+        self::assertStringNotContainsString($this->project->root, $frame);
+    }
+
+    /**
+     * A search that finds nothing is a successful call with an empty
+     * list, so a client does not read it as a failed one.
+     *
+     * @throws JsonException
+     */
+    public function test_a_search_that_matches_nothing_is_a_successful_empty_result(): void
+    {
+        file_put_contents($this->project->path('src/Http/Controller.php'), "one\ntwo\n");
+
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
+            . '","arguments":{"package":"' . self::PACKAGE
+            . '","path":"src/Http/Controller.php","query":"three"}}}',
+        ])[0];
+
+        self::assertFalse($frame['result']['isError']);
+
+        $document = json_decode($frame['result']['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertSame([], $document['matches']);
+        self::assertFalse($document['hasMore']);
+    }
+
+    /**
      * A refusal is a tool that ran and concluded, so it comes back as an
      * MCP error result carrying the code — readable by the model, and
      * naming nothing about the filesystem.
@@ -648,14 +739,137 @@ final class OrbitronMcpApplicationTest extends TestCase
     }
 
     /**
-     * The tool that takes arguments must not have loosened the other
-     * four: each of them still refuses any argument at all.
+     * @return iterable<string, array{string}>
      */
-    public function test_the_document_tools_still_take_no_arguments(): void
+    public static function invalidSearchArgumentsProvider(): iterable
+    {
+        yield 'no arguments at all' => ['{}'];
+        yield 'query missing' => ['{"package":"kinetis/fixture","path":"composer.json"}'];
+        yield 'query empty' => ['{"package":"kinetis/fixture","path":"composer.json","query":""}'];
+        yield 'query not a string' => ['{"package":"kinetis/fixture","path":"composer.json","query":7}'];
+        yield 'query null' => ['{"package":"kinetis/fixture","path":"composer.json","query":null}'];
+        yield 'package missing' => ['{"path":"composer.json","query":"final"}'];
+        yield 'path missing' => ['{"package":"kinetis/fixture","query":"final"}'];
+        yield 'path too long' => [
+            '{"package":"kinetis/fixture","path":"src/' . str_repeat('a', 253) . '","query":"final"}',
+        ];
+        yield 'startLine zero' => ['{"package":"kinetis/fixture","path":"composer.json","query":"a","startLine":0}'];
+        yield 'startLine not an integer' => [
+            '{"package":"kinetis/fixture","path":"composer.json","query":"a","startLine":"2"}',
+        ];
+
+        // The window tool's member, which this schema does not name: the
+        // two are validated apart, so neither admits the other's input.
+        yield 'the window tool\'s lineCount' => [
+            '{"package":"kinetis/fixture","path":"composer.json","query":"a","lineCount":10}',
+        ];
+        yield 'a result limit' => ['{"package":"kinetis/fixture","path":"composer.json","query":"a","limit":5}'];
+        yield 'a case mode' => [
+            '{"package":"kinetis/fixture","path":"composer.json","query":"a","caseSensitive":false}',
+        ];
+    }
+
+    /**
+     * The search schema is enforced here as fully as the window's, so a
+     * client that ignored it still cannot reach the reader with a
+     * member, a type or a bound the published schema has no reading of.
+     */
+    #[DataProvider('invalidSearchArgumentsProvider')]
+    public function test_search_arguments_outside_the_schema_are_invalid_params(string $arguments): void
     {
         $frame = $this->frames([
-            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"orbitron_inspect",'
-            . '"arguments":{"package":"kinetis/framework"}}}',
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
+            . '","arguments":' . $arguments . '}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertArrayNotHasKey('result', $frame);
+    }
+
+    /**
+     * @return iterable<string, array{string, bool}>
+     */
+    public static function queryLengthProvider(): iterable
+    {
+        yield 'ascii at the maximum' => [str_repeat('a', 256), true];
+        yield 'ascii one past it' => [str_repeat('a', 257), false];
+
+        // 1024 bytes behind the same 256 characters: a byte count would
+        // refuse a query the published maxLength admits.
+        yield 'four-byte characters at the maximum' => [str_repeat('𝍔', 256), true];
+        yield 'four-byte characters one past it' => [str_repeat('𝍔', 257), false];
+    }
+
+    /**
+     * The query bound is counted in the characters JSON Schema counts,
+     * so the same literal is admitted or refused by its length rather
+     * than by the bytes its encoding happens to need.
+     *
+     * @throws JsonException
+     */
+    #[DataProvider('queryLengthProvider')]
+    public function test_a_query_is_bounded_by_characters_rather_than_bytes(string $query, bool $admitted): void
+    {
+        file_put_contents($this->project->path('src/Http/Controller.php'), "one\n");
+
+        $arguments = (string) json_encode(
+            ['package' => self::PACKAGE, 'path' => 'src/Http/Controller.php', 'query' => $query],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+        );
+
+        if ($admitted) {
+            self::assertSame([], $this->call($arguments, OrbitronMcpApplication::SEARCH_TOOL)['matches']);
+
+            return;
+        }
+
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
+            . '","arguments":' . $arguments . '}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertStringContainsString('"query" must be at most 256 characters', $frame['error']['message']);
+    }
+
+    /**
+     * The order is the window tool's: a malformed search is refused
+     * before the package is looked up, so it cannot turn into
+     * filesystem work either.
+     */
+    public function test_invalid_search_params_are_refused_before_a_missing_install_root_is_reached(): void
+    {
+        $this->packageRoot = $this->project->path('gone');
+
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SEARCH_TOOL
+            . '","arguments":{"package":"' . self::PACKAGE . '","path":"composer.json","query":""}}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertStringContainsString('"query" must be a non-empty string', $frame['error']['message']);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function documentToolProvider(): iterable
+    {
+        foreach (array_slice(self::TOOLS, 0, 4) as $name) {
+            yield $name => [$name];
+        }
+    }
+
+    /**
+     * The two tools that take arguments must not have loosened the other
+     * four: each of them still refuses any argument at all.
+     */
+    #[DataProvider('documentToolProvider')]
+    public function test_the_document_tools_still_take_no_arguments(string $name): void
+    {
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . $name
+            . '","arguments":{"package":"kinetis/framework"}}}',
         ])[0];
 
         self::assertSame(-32602, $frame['error']['code']);
@@ -668,10 +882,10 @@ final class OrbitronMcpApplicationTest extends TestCase
      * @return array<string, mixed>
      * @throws JsonException
      */
-    private function call(string $arguments): array
+    private function call(string $arguments, string $tool = OrbitronMcpApplication::SOURCE_TOOL): array
     {
         $frame = $this->frames([
-            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . $tool
             . '","arguments":' . $arguments . '}}',
         ])[0];
 

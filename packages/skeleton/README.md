@@ -111,17 +111,20 @@ pages arrive on the same connection as `kinetis://docs/*` resources,
 fetched by [`kinetis/mcp-docs`](https://kinetis.dev/docs/mcp-docs.html)
 from inside it — there is no second server to configure, and
 `kinetis://docs/agent-workflow` is where the agent starts. Those pages
-are published from Kinetis `main`, so `orbitron_inspect` and
-`orbitron_read_package_source` — which reads a bounded line window of
-one installed `kinetis/*` package's own source live, over that same
-connection — stay the authority for anything version-sensitive. A
-window reporting `hasMore: true` is a success, not a refusal: the agent
-pages through with `startLine` set to `endLine + 1` before treating the
-file as exhausted. An agent with that MCP connection calls the tool
-first and reads `vendor/kinetis/<package>` directly only after an exact
-refusal that cannot supply the needed evidence. A shell-only agent has
-no such call to make and reads `vendor/kinetis/<package>` directly
-instead.
+are published from Kinetis `main`, so `orbitron_inspect` and the two
+installed-source tools — `orbitron_read_package_source` for a bounded
+line window of one installed `kinetis/*` package's own file, and
+`orbitron_search_package_source` for the lines of one such file that
+contain a literal string, both read live over that same connection —
+stay the authority for anything version-sensitive. A `hasMore: true` is
+a success, not a refusal: the agent continues from `endLine + 1`, or
+from the last reported match line plus one, before treating the file as
+exhausted. An agent with that MCP connection searches the file to find
+the line and reads a window around it, and reaches
+`vendor/kinetis/<package>` only when neither yields a file or a call is
+refused — `vendor/` is a Docker volume, so that means reading it inside
+the container. A shell-only agent has no such call to make and reads it
+in the container from the start.
 
 ### What you get from the archive
 
