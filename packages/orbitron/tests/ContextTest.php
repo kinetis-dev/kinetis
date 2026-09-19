@@ -115,6 +115,43 @@ final class ContextTest extends TestCase
         );
     }
 
+    /**
+     * The fifth MCP tool is named and its argument-taking contract is
+     * stated in both the tool entry and the server-level claim: the
+     * document must not say every tool is argument-free once one is not.
+     */
+    public function test_the_mcp_tools_include_the_installed_source_reader(): void
+    {
+        $document = self::context()->toArray();
+
+        self::assertSame(
+            [
+                'orbitron_inspect',
+                'orbitron_verify',
+                'orbitron_scaffold_plan',
+                'orbitron_scaffold_apply',
+                'orbitron_read_package_source',
+            ],
+            array_column($document['mcp']['tools'], 'name'),
+        );
+
+        $sourceTool = array_values(array_filter(
+            $document['mcp']['tools'],
+            static fn (array $tool): bool => $tool['name'] === 'orbitron_read_package_source',
+        ))[0];
+
+        self::assertStringContainsString('package', $sourceTool['effect']);
+        self::assertStringContainsString('path', $sourceTool['effect']);
+        self::assertStringContainsString('startLine', $sourceTool['effect']);
+        self::assertStringContainsString('lineCount', $sourceTool['effect']);
+        self::assertStringContainsString('package_unknown', $sourceTool['effect']);
+        self::assertStringContainsString('line_out_of_range', $sourceTool['effect']);
+
+        self::assertStringContainsString('Four tools take no argument', $document['server']);
+        self::assertStringContainsString('orbitron_read_package_source', $document['server']);
+        self::assertStringNotContainsString('every tool takes no arguments', $document['server']);
+    }
+
     public function test_it_links_to_the_authoritative_kinetis_guides(): void
     {
         $urls = array_column(self::context()->toArray()['guides'], 'url', 'title');
@@ -222,6 +259,7 @@ final class ContextTest extends TestCase
         yield 'scaffold command' => ['orbitron:scaffold'];
         yield 'scaffold controller target' => ['src/Http/HealthController.php'];
         yield 'documentation entry resource' => ['kinetis://docs/agent-workflow'];
+        yield 'installed source tool' => ['orbitron_read_package_source'];
         yield 'serialized shared-state rule' => ['shared database, broker or object store one at a time'];
     }
 

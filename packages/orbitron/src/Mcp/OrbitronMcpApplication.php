@@ -41,8 +41,10 @@ use stdClass;
  * tools take no argument at all, a resource read selects one entry of a
  * fixed catalogue whose URLs are the documentation server's own
  * constants, and the one tool that takes a path admits it only as a
- * relative name under one installed package, validated here in full
- * before any lookup or read.
+ * relative name under one installed package: its schema is validated
+ * here in full before the package lookup, and the path itself is
+ * admitted against a fixed set of locations, with the resolved target
+ * re-admitted, before anything reaches the filesystem.
  *
  * `orbitron_scaffold_apply` is the one tool that writes. Selecting it is
  * the whole mutation request, which is why it has no boolean to set: the

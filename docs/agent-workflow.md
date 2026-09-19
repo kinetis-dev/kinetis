@@ -27,21 +27,30 @@ Before a version-sensitive claim governs a decision:
    `composer.lock` or run `composer show kinetis/<package>`. Never
    assume it matches `main`.
 2. **Read the matching installed source** when the exact behavior
-   matters — a signature, a default, a failure code, a config key. Open
-   the file under the project's own `vendor/kinetis/<package>` and read
-   it. Documentation and interfaces alone do not prove installed
-   behavior; the installed source does.
+   matters — a signature, a default, a failure code, a config key. Where
+   Orbitron is registered, call `orbitron_read_package_source` with the
+   package name and the relative path — `composer.json`, `README.md`, or
+   a file beneath `src/`, `bin/` or `resources/` — and an optional line
+   window; it reads the exact installed source live, on every call.
+   Otherwise, or for a shell-only agent, open the file under the
+   project's own `vendor/kinetis/<package>` directly. Documentation and
+   interfaces alone do not prove installed behavior; the installed
+   source does.
 
 Neither documentation server reads application code. `mcp-docs` has no
 tool and no file access at all. Orbitron's `orbitron_inspect` and
 `orbitron_verify` report only Composer's installed metadata and the
 project's `composer.json`; its two scaffold tools additionally read the
-fixed scaffold paths, and `orbitron_scaffold_apply` writes them. None of
-the four reads existing application source, so the inspection above is
-the calling agent's own, done with its own file-reading tools. To let an
-agent call the *project's own* application code — its controllers, its
-data, its queues — the project installs `kinetis/mcp` (see {doc}`mcp`);
-neither documentation server does that.
+fixed scaffold paths, and `orbitron_scaffold_apply` writes them.
+`orbitron_read_package_source` reads one bounded window of one installed,
+non-root `kinetis/*` package's own source and nothing else. None of the
+five tools reads the *application's* own source — its controllers, its
+tests, its configuration — so that inspection is still the calling
+agent's own, done with its own file-reading tools when Orbitron's
+installed-source tool is unavailable. To let an agent call the project's
+own application code — its controllers, its data, its queues — the
+project installs `kinetis/mcp` (see {doc}`mcp`); neither documentation
+server does that.
 
 ## Workflow
 
