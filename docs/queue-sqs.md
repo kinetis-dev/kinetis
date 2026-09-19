@@ -122,8 +122,19 @@ semantics explicitly.
 
 SQS delays a message by at most 900 seconds (15 minutes). A longer
 `delaySeconds` makes `push()` throw before anything is sent. Retries
-follow {doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS`, and a released
-job visible again immediately.
+follow {doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS` and
+`QUEUE_RETRY_BASE_DELAY_SECONDS`. A delayed retry is the message's own
+visibility timeout: `ChangeMessageVisibility`'s request field accepts up
+to 43200 seconds (12 hours), wider than the send-time delay, and a
+larger value throws before anything is sent.
+
+Being within that field's range is not the same as being accepted. SQS
+refuses a timeout longer than the time left in that received message's
+own 12-hour maximum and does not recalculate down to it, so a long
+backoff late in a message's life can be rejected. That is service state
+this package cannot see, so it makes no local guess: SQS's error
+propagates and the delivery stays unsettled, the same as any other
+settlement failure here.
 
 ## Named connections
 

@@ -308,20 +308,29 @@ final class SqlQueue implements ClearableQueueInterface
     }
 
     /**
-     * Clears the reservation and credits the attempt for this delivery
-     * only. The token predicate is what keeps a late release() from
-     * unreserving a row another worker is actively running and adding an
-     * attempt that worker never made.
+     * Clears the reservation, credits the attempt for this delivery only,
+     * and moves `available_at` to `now + $delaySeconds` — the same column
+     * and the same `date('Y-m-d H:i:s')` format push() writes a delayed
+     * enqueue with, and the one reserveNext() already requires to be due
+     * before it will reserve a row. A delayed retry therefore needs no
+     * schema change and no second mechanism: it is the existing fenced
+     * UPDATE writing one more column.
+     *
+     * The token predicate is what keeps a late release() from unreserving
+     * a row another worker is actively running, adding an attempt that
+     * worker never made, and pushing their job's availability out.
      */
     #[\Override]
-    public function release(QueuedJob $job): void
+    public function release(QueuedJob $job, int $delaySeconds = 0): void
     {
+        QueueContract::assertValidReleaseDelay($delaySeconds);
+
         $reservation = self::receipt($job);
 
         self::assertSettled(JobSettlement::Release, $job->queue, $this->db->execute(
             self::UPDATE_TABLE . ' SET reserved_at = NULL, reserved_token = NULL, attempts = attempts + 1'
-            . ' WHERE id = ? AND reserved_token = ?',
-            [$reservation->id, $reservation->token],
+            . ', available_at = ? WHERE id = ? AND reserved_token = ?',
+            [self::formatTimestamp(time() + $delaySeconds), $reservation->id, $reservation->token],
         )->getRowCount());
     }
 

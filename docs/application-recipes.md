@@ -99,8 +99,9 @@ rather than restating it — read those before writing code. Start at
 - **Non-goal**: treating delivery as exactly-once. Leaving `maxAttempts`
   unset defers to the worker's `QUEUE_MAX_ATTEMPTS`, which defaults to
   `0` and gives up after the first failed attempt — no setting retries a
-  job forever, and a released job is retried immediately with no
-  backoff.
+  job forever. A released job is held by the backend for the
+  exponentially-backed-off delay `QUEUE_RETRY_BASE_DELAY_SECONDS`
+  produces, so a retry lands later rather than at once.
 
 ## Outbound HTTP integration with deadline/cancellation/uncertain-write semantics
 

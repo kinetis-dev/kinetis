@@ -140,7 +140,9 @@ still be running the job.
 A delayed job becomes available to the first `pop()` after its delay,
 measured with the pushing and popping hosts' clocks, so it runs late
 while every worker is busy. Retries follow {doc}`queue`: `maxAttempts`,
-`QUEUE_MAX_ATTEMPTS`, and immediate release.
+`QUEUE_MAX_ATTEMPTS` and `QUEUE_RETRY_BASE_DELAY_SECONDS`. A delayed
+retry moves the row's own `available_at`, so it waits exactly as a
+delayed push does and needs no schema change.
 
 ## Named connections
 

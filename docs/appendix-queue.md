@@ -219,9 +219,31 @@ available, and the backends differ in whether that is one step:
 | Backend | `release()` mechanism | Duplication window |
 |---|---|---|
 | Redis | One Lua script, conditional on the exact leased envelope still being leased | None. A stop anywhere leaves the job where it was or completes the swap, and a stale or repeated `release()` is rejected rather than queuing a second copy |
-| SQL | One `UPDATE` clearing the reservation and incrementing `attempts`, matched on the delivery's reservation token | None |
-| SQS | One `ChangeMessageVisibility` with `VisibilityTimeout: 0` | None from `release()`; SQS's own redelivery is independent of it |
+| SQL | One `UPDATE` clearing the reservation, incrementing `attempts` and setting `available_at`, matched on the delivery's reservation token | None |
+| SQS | One `ChangeMessageVisibility` carrying the requested delay as the new `VisibilityTimeout` | None from `release()`; SQS's own redelivery is independent of it |
 | RabbitMQ | Publish the replacement, wait for the broker's confirmation, then `nack` the original | A stop between the confirmation and the `nack` delivers the job twice. A publish the broker never confirms settles nothing, so no job is lost |
+
+`release(QueuedJob $job, int $delaySeconds = 0)` holds the job for at
+least `$delaySeconds` before it is poppable again, using the same
+mechanism that backend gives a delayed `push()`:
+
+| Backend | Delayed `release()` | Own ceiling |
+|---|---|---|
+| Redis | The replacement is written into the `delayed` sorted set with a due score instead of onto `pending`, chosen inside the same fenced script | None |
+| SQL | The one `UPDATE` also sets `available_at` to `now + $delaySeconds` | None |
+| SQS | The delay *is* the new `VisibilityTimeout` | 43200 seconds — `ChangeMessageVisibility`'s request field, wider than `DelaySeconds`'; SQS refuses one beyond the message's own remaining 12 hours |
+| RabbitMQ | The replacement is published into the [delay ladder](#rabbitmq) rather than onto the real queue, confirmed before the original is nacked | 4,194,303 seconds — the ladder's |
+
+Every backend validates `$delaySeconds` through
+`QueueContract::assertValidReleaseDelay()` before telemetry,
+serialization or any I/O: negative is rejected. There is no universal
+ceiling — how long a backend can hold a job is the backend's own
+property — so SQS and RabbitMQ each raise against their own limit on top
+of that check. `SyncQueue` runs the same check and stores nothing.
+
+A crashed delivery reclaimed after its lease or reservation expired is
+not a handled job failure and gets no delay: the work never ran to a
+conclusion, so the next worker takes it immediately.
 
 ### Delayed jobs
 
@@ -229,7 +251,7 @@ available, and the backends differ in whether that is one step:
 |---|---|
 | Redis | Scored in a `delayed` sorted set with the pushing process's clock; promoted by any worker's `pop()` sweep, compared against that worker's clock |
 | SQL | `available_at`, written with the pushing process's clock and compared against the popping worker's clock in each `pop()` query |
-| SQS | `SendMessage`'s native `DelaySeconds`, at most 900 seconds |
+| SQS | `SendMessage`'s native `DelaySeconds`, at most 900 seconds (a delayed `release()` uses `ChangeMessageVisibility` instead, with its own wider cap) |
 | RabbitMQ | A broker-side [delay ladder](#rabbitmq), at most 4,194,303 seconds |
 
 A delay is a floor on every backend: a job is not poppable before it
@@ -291,6 +313,31 @@ released otherwise. The default is `QueueWorker`'s `$defaultMaxAttempts`
 (`QUEUE_MAX_ATTEMPTS` under `queue:work`), `0` when unset, and must not
 be negative. With a cap of `0` or `1` a failing job is never retried.
 
+A release carries a delay the worker computes from the attempt that just
+failed:
+
+```{code-block} text
+delay(attempt) = min(900, $retryBaseDelaySeconds * 2 ** min(attempt - 1, 10))
+```
+
+`$retryBaseDelaySeconds` is `QueueWorker`'s fourth constructor argument,
+`QUEUE_RETRY_BASE_DELAY_SECONDS` under `queue:work`, `5` when unset, and
+admitted in the range `0`–`900`; `0` selects immediate retries. The
+900-second ceiling is worker policy, not a backend limit, and is a code
+constant rather than a second setting. The exponent is capped so the
+doubling cannot overflow on a high attempt count. The schedule carries
+no jitter: a delayed release is already spread across whenever each
+worker's own attempt failed.
+
+The worker computes the delay only on the retrying path — `fail()` takes
+none — and never sleeps or retains the job's request scope while the
+delay runs. `Events\JobReleased` is unchanged and carries no delay
+field; the failure log line and its `job` context report it instead:
+
+```{code-block} text
+Job "App\SendWelcomeEmail" failed (attempt 2), retrying in 10s: Connection refused
+```
+
 When the backend accepts the transition, the worker closes the job's
 span and dispatches `Kinetis\Queue\Events\JobSucceeded`, `JobReleased`
 or `JobFailedPermanently`. A final failure is logged before the
@@ -327,9 +374,10 @@ a job, which runs and settles before the worker stops.
 That is why `run()` needs a positive poll timeout.
 `QueueWorker::assertValidPollTimeout()` rejects `0`, which `pop()` reads
 as "wait with no deadline" and which would keep an idle worker from ever
-reading the flag. `queue:work` applies it to `QUEUE_POLL_TIMEOUT`, and
-`assertValidDefaultMaxAttempts()` to `QUEUE_MAX_ATTEMPTS`, before
-printing anything. `processNext()` accepts `0`, since one call is not a
+reading the flag. `queue:work` applies it to `QUEUE_POLL_TIMEOUT`,
+`assertValidDefaultMaxAttempts()` to `QUEUE_MAX_ATTEMPTS`, and
+`assertValidRetryBaseDelay()` to `QUEUE_RETRY_BASE_DELAY_SECONDS`,
+before printing anything. `processNext()` accepts `0`, since one call is not a
 loop.
 
 Without `ext-pcntl`, `QueueWorker::supportsGracefulShutdown()` is false,
@@ -567,10 +615,12 @@ script, which Redis executes as an indivisible unit:
   `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, and only then removes it from
   `pending`, so a failing `leased` key cannot destroy the only copy.
 - **Release and reclaim** check that the exact old envelope is still
-  leased, push its replacement — with the attempt count advanced — onto
-  `pending`, and then remove the old envelope. Two sweepers racing, or a
-  sweep racing a settlement, produce one winner; the loser writes
-  nothing.
+  leased, write its replacement — with the attempt count advanced — onto
+  `pending`, or into `delayed` with a due score when `release()` carried
+  a delay, and then remove the old envelope. The choice of destination
+  is inside the same script as the check, so a delayed retry is as
+  indivisible as an immediate one. Two sweepers racing, or a sweep
+  racing a settlement, produce one winner; the loser writes nothing.
 - **Promotion** moves due envelopes from `delayed` to `pending`.
 
 `ack()` and `fail()` remove the exact envelope with `ZREM` and read back
@@ -628,8 +678,9 @@ Each `pop()` attempt runs one transaction:
 Between empty attempts `pop()` suspends for up to one second through
 `Kinetis\Async\Timer::delay()`, cut to what is left of the deadline.
 
-`ack()` and `fail()` delete the row and `release()` clears its
-reservation and increments `attempts`, each
+`ack()` and `fail()` delete the row; `release()` clears the reservation,
+increments `attempts` and sets `available_at` to `now + $delaySeconds`,
+the same column and format a delayed `push()` writes. Each is
 `WHERE id = ? AND reserved_token = ?`. An affected-row count other than
 one raises `StaleJobHandleException`, so a late settlement can neither
 delete, unreserve nor credit an attempt against a reservation another
@@ -662,10 +713,18 @@ whose `reserved_at` is null.
 - `QueuedJob::$attempts` is the message's `ApproximateReceiveCount`; a
   message without it is malformed.
 - `ack()` and `fail()` call `DeleteMessage`. `release()` calls
-  `ChangeMessageVisibility` with `VisibilityTimeout: 0`, so the message
-  and its attributes survive unchanged and it is available again
-  immediately. Every mutation resolves at its call site, so a service or
-  network failure fails the queue operation itself.
+  `ChangeMessageVisibility` with its `$delaySeconds` as the new
+  `VisibilityTimeout`, so the message and its attributes survive
+  unchanged; on a call SQS accepts, the new timeout counts from the call
+  — `0` making it visible immediately. Two limits apply. The request
+  field accepts 0 to 43200 seconds, which this backend raises against
+  before any transport. SQS separately refuses a timeout longer than the
+  time left in that received message's own 12-hour maximum and does not
+  recalculate down to it; how much is left is service state, so an
+  in-range value is a request SQS may still refuse. Every mutation
+  resolves at its call site, so that refusal — like any service or
+  network failure — fails the queue operation itself with nothing
+  settled.
 - `QueuedJob::$handle` is the `ReceiptHandle`. The backend cannot tell
   SQS's answer to an expired handle from any other API error, so it
   raises no `StaleJobHandleException`. If SQS rejects the settlement, its
@@ -706,7 +765,11 @@ message by; that header travels with the job.
 **Settlement.** `ack()` acks the delivery and `fail()` nacks it without
 requeue. `release()` publishes a replacement carrying the incremented
 `attempts` header, waits for its confirmation, and then nacks the
-original without requeue. AMQP 0-9-1 has no cross-message transaction:
+original without requeue. A `release()` carrying a delay publishes that
+replacement into the delay ladder below instead of onto the real queue —
+the same publication path a delayed `push()` takes — and the
+confirm-then-nack order is unchanged. AMQP 0-9-1 has no cross-message
+transaction:
 
 - A failure before the confirmation leaves the original unacked, and
   the broker redelivers it, on the attempt it was popped on, once the
@@ -726,7 +789,8 @@ travels as a JSON-encoded `metadata` header, through the delay ladder and
 **Polling and declaration.** `pop()` sweeps with `basic.get`, which never
 blocks, and suspends for up to one second between sweeps, cut to what is
 left of the deadline. A queue is declared durable on first touch by
-`push()`, `pop()` or `release()`.
+`push()`, `pop()` or `release()`, and a delayed `push()` or `release()`
+declares the tiers its own delay uses.
 
 **Delay ladder.** AMQP 0-9-1 has no per-message delay, and RabbitMQ
 expires a queue's messages from its head, so one holding queue with

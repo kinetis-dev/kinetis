@@ -261,7 +261,8 @@ leaving `QUEUE_CONNECTION` unset leaves core's inline default in place
 |---|---|---|
 | `QUEUE_CONNECTION` | *(unset: no queue)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). Gates on the key being absent, not blank. |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
-| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only — retries are immediate, with no backoff (see {doc}`queue`). |
+| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only; `QUEUE_RETRY_BASE_DELAY_SECONDS` sets how long each retry waits (see {doc}`queue`). |
+| `QUEUE_RETRY_BASE_DELAY_SECONDS` | `5` | Seconds the first retry of a failed job waits, doubling per attempt up to a fixed 15-minute ceiling: `min(900, base * 2 ** (attempt - 1))`. Admitted range `0`–`900`; `0` selects immediate retries. The backend holds the job — the worker never sleeps (see {doc}`queue`). |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a positive integer, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
 | `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | `300` | `kinetis/queue-redis` and `kinetis/queue-sql`: reclaim a crashed worker's reserved job after this long. Must be a positive integer; set it above the slowest job you expect. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |

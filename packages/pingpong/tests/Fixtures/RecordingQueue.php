@@ -35,7 +35,7 @@ final class RecordingQueue implements ClearableQueueInterface
     public function ack(QueuedJob $job): void {}
 
     #[\Override]
-    public function release(QueuedJob $job): void {}
+    public function release(QueuedJob $job, int $delaySeconds = 0): void {}
 
     #[\Override]
     public function fail(QueuedJob $job): void {}

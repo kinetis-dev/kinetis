@@ -95,7 +95,10 @@ A delayed job becomes available on the first `pop()` sweep after its
 delay elapses, so it runs late while every worker is busy. The delay is
 measured with the clocks of the pushing and popping hosts, so keep them
 synchronized; lease expiry uses the Redis server's clock. Retries follow
-{doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS`, and immediate release.
+{doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS` and
+`QUEUE_RETRY_BASE_DELAY_SECONDS`. A delayed retry goes into the same
+`delayed` sorted set a delayed push uses, written inside the one fenced
+script that removes the lease.
 
 ## See also
 
