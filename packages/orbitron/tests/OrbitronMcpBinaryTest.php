@@ -79,7 +79,13 @@ final class OrbitronMcpBinaryTest extends TestCase
         self::assertSame(OrbitronMcpApplication::SERVER_NAME, $frames[0]['result']['serverInfo']['name']);
 
         self::assertSame(
-            ['orbitron_inspect', 'orbitron_verify', 'orbitron_scaffold_plan', 'orbitron_scaffold_apply'],
+            [
+                'orbitron_inspect',
+                'orbitron_verify',
+                'orbitron_scaffold_plan',
+                'orbitron_scaffold_apply',
+                OrbitronMcpApplication::SOURCE_TOOL,
+            ],
             array_column($frames[1]['result']['tools'], 'name'),
         );
 
@@ -108,6 +114,64 @@ final class OrbitronMcpBinaryTest extends TestCase
             'namespace ' . rtrim($this->project->production, '\\') . '\\Http;',
             $this->project->contents(HealthScaffold::TARGETS[0]),
         );
+    }
+
+    /**
+     * A real installed package, read through the real binary: the file
+     * that comes back is kinetis/framework's own manifest, at the very
+     * version the inventory reports for it, and the frame names no path.
+     *
+     * Nothing about this is a fixture — the install root comes from the
+     * Composer metadata of the vendor tree this suite runs against.
+     *
+     * @throws JsonException
+     */
+    public function test_a_real_read_returns_an_installed_kinetis_file_at_its_installed_version(): void
+    {
+        $frames = $this->session([
+            '{"jsonrpc":"2.0","id":0,"method":"tools/call","params":{"name":"orbitron_inspect"}}',
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"kinetis/framework","path":"composer.json","lineCount":3}}}',
+        ]);
+
+        $installed = $this->document($frames[0])['packages'];
+        self::assertIsArray($installed);
+        $versions = array_column($installed, 'version', 'name');
+
+        $read = $this->document($frames[1]);
+
+        self::assertFalse($frames[1]['result']['isError']);
+        self::assertSame('ok', $read['status']);
+        self::assertSame('kinetis/framework', $read['package']);
+        self::assertSame($versions['kinetis/framework'], $read['version']);
+        self::assertSame(1, $read['startLine']);
+        self::assertSame(3, $read['endLine']);
+        self::assertTrue($read['hasMore']);
+        self::assertStringContainsString('kinetis/framework', $read['content']);
+        self::assertStringStartsWith('{', $read['content']);
+    }
+
+    /**
+     * A path the tool does not admit is refused by the real binary too,
+     * and the refusal names nothing about this machine.
+     *
+     * @throws JsonException
+     */
+    public function test_a_real_read_outside_the_admitted_paths_is_refused_without_a_path(): void
+    {
+        [$stdout] = $this->execute([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"kinetis/framework","path":"../../../etc/passwd"}}}',
+        ]);
+
+        $frame = json_decode(trim($stdout), true, flags: JSON_THROW_ON_ERROR);
+
+        self::assertTrue($frame['result']['isError']);
+        self::assertSame(
+            ['status' => 'error', 'code' => 'path_not_admitted'],
+            json_decode($frame['result']['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR),
+        );
+        self::assertStringNotContainsString('vendor', $stdout);
     }
 
     /**

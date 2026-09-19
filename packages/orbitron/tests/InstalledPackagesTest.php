@@ -160,6 +160,49 @@ final class InstalledPackagesTest extends TestCase
     }
 
     /**
+     * The one lookup that hands out an install path, and the exact set
+     * of names it answers for: a real installed dependency, and nothing
+     * else — not the root project, not a name that is only replaced or
+     * provided, not another vendor's package, and not a name that was
+     * never installed.
+     */
+    public function test_only_a_real_installed_non_root_kinetis_package_has_a_readable_source(): void
+    {
+        $packages = new InstalledPackages([
+            new PackageFact('kinetis/skeleton', '1.3.0', '/app', root: true),
+            new PackageFact('kinetis/framework', '1.11.2', '/app/vendor/kinetis/framework'),
+            new PackageFact('kinetis/replaced-by-framework', null, null),
+            new PackageFact('psr/log', '3.0.2', '/app/vendor/psr/log'),
+        ]);
+
+        self::assertSame(
+            ['version' => '1.11.2', 'root' => '/app/vendor/kinetis/framework'],
+            $packages->source('kinetis/framework'),
+        );
+
+        foreach (['kinetis/skeleton', 'kinetis/replaced-by-framework', 'psr/log', 'kinetis/absent'] as $name) {
+            self::assertNull($packages->source($name), $name);
+        }
+    }
+
+    /**
+     * The lookup keeps Composer's own first-match rule, the same one the
+     * versions follow, so a name reported twice resolves to one root.
+     */
+    public function test_the_source_lookup_keeps_the_first_record_for_a_name(): void
+    {
+        $packages = new InstalledPackages([
+            new PackageFact('kinetis/framework', '1.11.2', '/app/vendor/kinetis/framework'),
+            new PackageFact('kinetis/framework', '1.0.0', '/other/vendor/kinetis/framework'),
+        ]);
+
+        self::assertSame(
+            ['version' => '1.11.2', 'root' => '/app/vendor/kinetis/framework'],
+            $packages->source('kinetis/framework'),
+        );
+    }
+
+    /**
      * Each instance reports the records it was given: nothing is held in
      * a static between constructions.
      */

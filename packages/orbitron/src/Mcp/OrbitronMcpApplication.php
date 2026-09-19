@@ -16,28 +16,33 @@ use Kinetis\McpProtocol\ToolDescription;
 use Kinetis\McpProtocol\ToolResult;
 use Kinetis\Orbitron\Document;
 use Kinetis\Orbitron\Documents;
+use Kinetis\Orbitron\PackageSourceReader;
 use Kinetis\Orbitron\ScaffoldMode;
 use stdClass;
 
 /**
- * Orbitron's four documents as MCP tools, and its context document plus
- * the Kinetis documentation as MCP resources, over the shared protocol
- * server. One connection is the whole project-local surface an agent
- * needs: there is no second server to register.
+ * Orbitron's four documents and one installed-source window as MCP
+ * tools, and its context document plus the Kinetis documentation as MCP
+ * resources, over the shared protocol server. One connection is the
+ * whole project-local surface an agent needs: there is no second server
+ * to register.
  *
- * Every tool call reaches {@see Documents}, the same service the CLI
- * commands adapt: no command is invoked, no output is parsed, and no
- * envelope is built twice. Every `kinetis://docs/*` read reaches the
- * {@see DocsApplication} this object was handed, which owns the fixed
+ * Every document tool call reaches {@see Documents}, the same service
+ * the CLI commands adapt: no command is invoked, no output is parsed,
+ * and no envelope is built twice. Every `kinetis://docs/*` read reaches
+ * the {@see DocsApplication} this object was handed, which owns the fixed
  * catalogue and the bounded fetch. kinetis/mcp-docs remains the
  * framework-agnostic owner of both and is installable on its own; none
  * of it is copied here.
  *
- * The project root and that documentation application are the only
- * things this object holds. No MCP message can name a path, a source
- * body, a URL, an origin, a ref, a template or a command: a tool takes
- * no argument at all, and a resource read selects one entry of a fixed
- * catalogue whose URLs are the documentation server's own constants.
+ * The project root, that documentation application and the source
+ * reader are the only things this object holds. No MCP message can name
+ * a source body, a URL, an origin, a ref, a template or a command: four
+ * tools take no argument at all, a resource read selects one entry of a
+ * fixed catalogue whose URLs are the documentation server's own
+ * constants, and the one tool that takes a path admits it only as a
+ * relative name under one installed package, validated here in full
+ * before any lookup or read.
  *
  * `orbitron_scaffold_apply` is the one tool that writes. Selecting it is
  * the whole mutation request, which is why it has no boolean to set: the
@@ -55,6 +60,8 @@ final readonly class OrbitronMcpApplication implements McpApplication
 
     public const string CONTEXT_URI = 'kinetis://orbitron/context';
 
+    public const string SOURCE_TOOL = 'orbitron_read_package_source';
+
     private const string DOCS_ENTRY_URI = 'kinetis://docs/agent-workflow';
 
     private const string INSTRUCTIONS = 'Orbitron reports what this project has, serves the Kinetis documentation, '
@@ -66,9 +73,11 @@ final readonly class OrbitronMcpApplication implements McpApplication
         . 'answering about Kinetis from memory. Those pages are published from main and can describe behavior newer '
         . 'than this project has installed, so the versions orbitron_inspect reports and the installed source stay '
         . 'the authority for anything version-sensitive. Installed versions are read once at startup, so restart '
-        . 'this server after changing dependencies.';
+        . 'this server after changing dependencies. Call orbitron_read_package_source to read a window of an '
+        . 'installed kinetis/* package\'s own source, which is the authority whenever a page and the installed '
+        . 'version could differ.';
 
-    /** The input schema all four tools share: an object with no members and nothing else admitted. */
+    /** The input schema the four document tools share: an object with no members and nothing else admitted. */
     private const string CLOSED_SCHEMA_DESCRIPTION = 'Takes no arguments.';
 
     /**
@@ -80,6 +89,7 @@ final readonly class OrbitronMcpApplication implements McpApplication
         private string $projectRoot,
         private DocsApplication $docs,
         private Documents $documents = new Documents(),
+        private PackageSourceReader $source = new PackageSourceReader(),
     ) {}
 
     /**
@@ -129,6 +139,46 @@ final readonly class OrbitronMcpApplication implements McpApplication
                 . 'targets now exist.',
                 new ToolAnnotations(readOnly: false, destructive: true, idempotent: false, openWorld: false),
             ),
+            new ToolDescription(
+                self::SOURCE_TOOL,
+                'Reports one window of one file of one installed kinetis/* package as a JSON document: the '
+                . 'package\'s own source, at the version orbitron_inspect reports, which is the authority when a '
+                . 'documentation page could describe a newer release. Takes the package name, a path relative to '
+                . 'the package root — composer.json, README.md, or a file under src/, bin/ or resources/ — and an '
+                . 'optional window. Reads nothing else and writes nothing.',
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'package' => [
+                            'type' => 'string',
+                            'minLength' => 1,
+                            'description' => 'An installed package name, as orbitron_inspect reports it.',
+                        ],
+                        'path' => [
+                            'type' => 'string',
+                            'minLength' => 1,
+                            'maxLength' => PackageSourceReader::MAX_PATH_LENGTH,
+                            'description' => 'The file, relative to the package root, with / separators.',
+                        ],
+                        'startLine' => [
+                            'type' => 'integer',
+                            'minimum' => 1,
+                            'default' => 1,
+                            'description' => 'The first line to return, counting from 1.',
+                        ],
+                        'lineCount' => [
+                            'type' => 'integer',
+                            'minimum' => 1,
+                            'maximum' => PackageSourceReader::MAX_LINE_COUNT,
+                            'default' => PackageSourceReader::MAX_LINE_COUNT,
+                            'description' => 'How many lines to return.',
+                        ],
+                    ],
+                    'required' => ['package', 'path'],
+                    'additionalProperties' => false,
+                ],
+                self::readOnly(),
+            ),
         ];
     }
 
@@ -162,9 +212,19 @@ final readonly class OrbitronMcpApplication implements McpApplication
         ProgressEmitter $progress,
         ?object $context,
     ): ToolResult {
-        // Every tool publishes a closed, empty schema, so an argument is
-        // a call the tool has no reading of — refused before anything
-        // runs rather than silently discarded.
+        // The one tool that takes arguments validates its whole closed
+        // schema here, before a name or a path reaches a lookup or the
+        // filesystem: a call this schema has no reading of is a protocol
+        // error, not a refusal document.
+        if ($name === self::SOURCE_TOOL) {
+            [$package, $path, $startLine, $lineCount] = self::sourceArguments($arguments);
+
+            return self::result($this->source->read($package, $path, $startLine, $lineCount));
+        }
+
+        // Every other tool publishes a closed, empty schema, so an
+        // argument is a call the tool has no reading of — refused before
+        // anything runs rather than silently discarded.
         if (get_object_vars($arguments) !== []) {
             throw JsonRpcException::invalidParams("The \"{$name}\" tool takes no arguments.");
         }
@@ -176,6 +236,67 @@ final readonly class OrbitronMcpApplication implements McpApplication
             'orbitron_scaffold_apply' => $this->documents->scaffold($this->projectRoot, ScaffoldMode::Apply),
             default => throw JsonRpcException::invalidParams("Unknown tool: \"{$name}\"."),
         });
+    }
+
+    /**
+     * The call's arguments, each member validated for presence, type,
+     * range and length, and every key the schema does not name refused.
+     *
+     * @return array{string, string, int, int}
+     */
+    private static function sourceArguments(stdClass $arguments): array
+    {
+        $values = get_object_vars($arguments);
+        $unknown = array_diff(array_keys($values), ['package', 'path', 'startLine', 'lineCount']);
+
+        if ($unknown !== []) {
+            throw JsonRpcException::invalidParams(
+                'Unknown argument: "' . implode('", "', $unknown) . '".',
+            );
+        }
+
+        $package = $values['package'] ?? throw JsonRpcException::invalidParams('"package" is required.');
+        $path = $values['path'] ?? throw JsonRpcException::invalidParams('"path" is required.');
+
+        if (!\is_string($package) || $package === '') {
+            throw JsonRpcException::invalidParams('"package" must be a non-empty string.');
+        }
+
+        if (!\is_string($path) || $path === '') {
+            throw JsonRpcException::invalidParams('"path" must be a non-empty string.');
+        }
+
+        // JSON Schema counts maxLength in characters, so the check that
+        // enforces it must count the same units: `strlen()` would refuse
+        // a path the published schema admits as soon as it carries a
+        // multi-byte character. `/./us` counts code points without
+        // requiring ext-mbstring, and returns false only for a subject
+        // that is not UTF-8 — which a decoded JSON string cannot be.
+        $length = preg_match_all('/./us', $path);
+
+        if ($length === false || $length > PackageSourceReader::MAX_PATH_LENGTH) {
+            throw JsonRpcException::invalidParams(
+                '"path" must be at most ' . PackageSourceReader::MAX_PATH_LENGTH . ' characters.',
+            );
+        }
+
+        $startLine = \array_key_exists('startLine', $values) ? $values['startLine'] : 1;
+
+        if (!\is_int($startLine) || $startLine < 1) {
+            throw JsonRpcException::invalidParams('"startLine" must be an integer of at least 1.');
+        }
+
+        $lineCount = \array_key_exists('lineCount', $values)
+            ? $values['lineCount']
+            : PackageSourceReader::MAX_LINE_COUNT;
+
+        if (!\is_int($lineCount) || $lineCount < 1 || $lineCount > PackageSourceReader::MAX_LINE_COUNT) {
+            throw JsonRpcException::invalidParams(
+                '"lineCount" must be an integer between 1 and ' . PackageSourceReader::MAX_LINE_COUNT . '.',
+            );
+        }
+
+        return [$package, $path, $startLine, $lineCount];
     }
 
     /**
@@ -222,7 +343,8 @@ final readonly class OrbitronMcpApplication implements McpApplication
 
     /**
      * Closed-world because a tool's whole read set is this project's own
-     * Composer metadata and manifest: no network, no database, no other
+     * Composer metadata and manifest, and the installed source beneath
+     * the roots that metadata names: no network, no database, no other
      * system to reach. Reading a documentation resource is the one
      * operation that leaves this machine, and it is not a tool.
      */

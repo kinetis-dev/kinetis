@@ -31,6 +31,15 @@ final readonly class InstalledPackages
     private array $roots;
 
     /**
+     * Where a real installed dependency lives and at what version — the
+     * one place an install path is retained for use rather than only as
+     * a presence test, and the lookup {@see source()} answers from.
+     *
+     * @var array<string, array{version: string, root: string}>
+     */
+    private array $sources;
+
+    /**
      * @param list<PackageFact>|null $facts the records to read, or null to
      *        read Composer's own installed set — the production path.
      */
@@ -38,6 +47,7 @@ final readonly class InstalledPackages
     {
         $versions = [];
         $roots = [];
+        $paths = [];
 
         foreach ($facts ?? self::readComposer() as $fact) {
             // A name that is only replaced or provided carries neither a
@@ -52,6 +62,7 @@ final readonly class InstalledPackages
             }
 
             $versions[$fact->name] ??= $fact->version;
+            $paths[$fact->name] ??= $fact->installPath;
 
             if ($fact->root) {
                 $roots[$fact->name] = true;
@@ -60,8 +71,39 @@ final readonly class InstalledPackages
 
         ksort($versions, SORT_STRING);
 
+        $sources = [];
+
+        foreach ($versions as $name => $version) {
+            // The root project is the checkout being developed, not
+            // something this project installed, so it is not a package
+            // whose installed source can be read.
+            if (!isset($roots[$name])) {
+                $sources[$name] = ['version' => $version, 'root' => $paths[$name]];
+            }
+        }
+
         $this->versions = $versions;
         $this->roots = $roots;
+        $this->sources = $sources;
+    }
+
+    /**
+     * The version and install root of one real installed, non-root
+     * `kinetis/*` package, or null for every other name — including a
+     * name that is only replaced or provided, and the root project
+     * itself.
+     *
+     * This is the only accessor that hands out an install path, and it
+     * hands it to the source reader alone. No document built from this
+     * object carries one: {@see records()} reports names and versions,
+     * and the reader reports neither the root it resolved nor the path
+     * it opened.
+     *
+     * @return array{version: string, root: string}|null
+     */
+    public function source(string $name): ?array
+    {
+        return $this->sources[$name] ?? null;
     }
 
     /**
@@ -72,8 +114,8 @@ final readonly class InstalledPackages
      * developed, not something this project installed, so reporting it
      * as a dependency at a version would be untrue. It is still retained
      * above, because {@see orbitronVersion()} needs it when Orbitron
-     * itself is the root. Install paths are read as a retention test in
-     * the constructor and never leave this object.
+     * itself is the root. Install paths never reach these records;
+     * {@see source()} is the one place they leave this object.
      *
      * @return list<array{name: string, version: string}>
      */

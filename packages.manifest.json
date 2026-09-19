@@ -303,7 +303,7 @@
             "description": "A development-only application construction harness for Kinetis: a CLI and a standalone MCP server that hand any coding agent a portable Kinetis context document, the Kinetis documentation pages as MCP resources, the installed kinetis/* package inventory, a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no model of its own.",
             "namespace": "Kinetis\\Orbitron\\",
             "testNamespace": "Kinetis\\Orbitron\\Tests\\",
-            "version": "1.1.1",
+            "version": "1.2.0",
             "bin": [
                 "bin/kinetis-orbitron-mcp"
             ],

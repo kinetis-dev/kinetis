@@ -15,6 +15,8 @@ use Kinetis\Orbitron\HealthScaffold;
 use Kinetis\Orbitron\InstalledPackages;
 use Kinetis\Orbitron\Mcp\OrbitronMcpApplication;
 use Kinetis\Orbitron\PackageFact;
+use Kinetis\Orbitron\PackageSourceReader;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
@@ -37,6 +39,18 @@ use Symfony\Component\HttpClient\Response\MockResponse;
  */
 final class OrbitronMcpApplicationTest extends TestCase
 {
+    /** @var list<string> every tool this server publishes, in the order it publishes them */
+    private const array TOOLS = [
+        'orbitron_inspect',
+        'orbitron_verify',
+        'orbitron_scaffold_plan',
+        'orbitron_scaffold_apply',
+        OrbitronMcpApplication::SOURCE_TOOL,
+    ];
+
+    /** The one package the source reader below can see, named like an installed one. */
+    private const string PACKAGE = 'kinetis/fixture';
+
     private ScaffoldProject $project;
 
     /** @var list<MockResponse> what the composed documentation server's client answers with, in order */
@@ -48,12 +62,16 @@ final class OrbitronMcpApplicationTest extends TestCase
     /** @var resource the stream the composed server reports a failed fetch on — the binary's stderr */
     private $diagnostics;
 
+    /** The install root the one fixture package is read from; a test points it somewhere else. */
+    private string $packageRoot;
+
     /**
      * @throws JsonException
      */
     protected function setUp(): void
     {
         $this->project = new ScaffoldProject();
+        $this->packageRoot = $this->project->root;
         $this->responses = [];
         $this->requests = [];
 
@@ -80,21 +98,43 @@ final class OrbitronMcpApplicationTest extends TestCase
         self::assertStringContainsString(OrbitronMcpApplication::CONTEXT_URI, $result['instructions']);
     }
 
-    public function test_the_four_tools_are_published_with_closed_empty_schemas(): void
+    public function test_the_document_tools_are_published_with_closed_empty_schemas(): void
     {
         $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
 
-        self::assertSame(
-            ['orbitron_inspect', 'orbitron_verify', 'orbitron_scaffold_plan', 'orbitron_scaffold_apply'],
-            array_column($tools, 'name'),
-        );
+        self::assertSame(self::TOOLS, array_column($tools, 'name'));
 
-        foreach ($tools as $tool) {
+        foreach (array_slice($tools, 0, 4) as $tool) {
             self::assertSame(
                 ['type' => 'object', 'properties' => [], 'additionalProperties' => false],
                 $tool['inputSchema'],
             );
         }
+    }
+
+    /**
+     * The one tool that takes arguments publishes the whole closed
+     * schema a client validates against, and the adapter enforces the
+     * same bounds itself — the tests below prove it does not rely on the
+     * client having done so.
+     */
+    public function test_the_source_tool_publishes_a_closed_schema_with_its_bounds(): void
+    {
+        $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
+        $schema = $tools[4]['inputSchema'];
+
+        self::assertSame(['package', 'path'], $schema['required']);
+        self::assertFalse($schema['additionalProperties']);
+        self::assertSame(['package', 'path', 'startLine', 'lineCount'], array_keys($schema['properties']));
+        self::assertSame(1, $schema['properties']['package']['minLength']);
+        self::assertSame(1, $schema['properties']['path']['minLength']);
+        self::assertSame(256, $schema['properties']['path']['maxLength']);
+        self::assertSame('integer', $schema['properties']['startLine']['type']);
+        self::assertSame(1, $schema['properties']['startLine']['minimum']);
+        self::assertSame(1, $schema['properties']['startLine']['default']);
+        self::assertSame(1, $schema['properties']['lineCount']['minimum']);
+        self::assertSame(200, $schema['properties']['lineCount']['maximum']);
+        self::assertSame(200, $schema['properties']['lineCount']['default']);
     }
 
     /**
@@ -119,7 +159,9 @@ final class OrbitronMcpApplicationTest extends TestCase
         $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
         $annotations = array_combine(array_column($tools, 'name'), array_column($tools, 'annotations'));
 
-        foreach (['orbitron_inspect', 'orbitron_verify', 'orbitron_scaffold_plan'] as $name) {
+        $reading = ['orbitron_inspect', 'orbitron_verify', 'orbitron_scaffold_plan', self::TOOLS[4]];
+
+        foreach ($reading as $name) {
             self::assertSame([
                 'readOnlyHint' => true,
                 'destructiveHint' => false,
@@ -412,6 +454,234 @@ final class OrbitronMcpApplicationTest extends TestCase
     }
 
     /**
+     * The window a client reads: the exact lines of the exact file, the
+     * installed version beside them, and no path anywhere in the frame.
+     */
+    public function test_a_source_read_returns_the_window_of_the_installed_file(): void
+    {
+        file_put_contents($this->project->path('src/Http/Controller.php'), "one\ntwo\nthree\nfour\n");
+
+        $frame = $this->rawFrames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"' . self::PACKAGE
+            . '","path":"src/Http/Controller.php","startLine":2,"lineCount":2}}}',
+        ])[0];
+
+        $result = json_decode($frame, associative: true, flags: JSON_THROW_ON_ERROR)['result'];
+
+        self::assertFalse($result['isError']);
+        self::assertSame([
+            'status' => 'ok',
+            'package' => self::PACKAGE,
+            'version' => '3.1.4',
+            'path' => 'src/Http/Controller.php',
+            'startLine' => 2,
+            'endLine' => 3,
+            'hasMore' => true,
+            'content' => "two\nthree\n",
+        ], json_decode($result['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR));
+
+        self::assertStringNotContainsString($this->project->root, $frame);
+    }
+
+    /**
+     * The window is optional: a call naming only the two required
+     * members reads from line 1 for the published default.
+     */
+    public function test_the_window_defaults_to_the_first_two_hundred_lines(): void
+    {
+        file_put_contents($this->project->path('src/Http/Controller.php'), "one\ntwo\n");
+
+        $document = $this->call('{"package":"' . self::PACKAGE . '","path":"src/Http/Controller.php"}');
+
+        self::assertSame(1, $document['startLine']);
+        self::assertSame(2, $document['endLine']);
+        self::assertFalse($document['hasMore']);
+    }
+
+    /**
+     * A refusal is a tool that ran and concluded, so it comes back as an
+     * MCP error result carrying the code — readable by the model, and
+     * naming nothing about the filesystem.
+     */
+    public function test_a_refused_source_read_is_an_error_result_carrying_only_the_code(): void
+    {
+        $frame = $this->rawFrames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"kinetis/not-installed","path":"src/A.php"}}}',
+        ])[0];
+
+        $result = json_decode($frame, associative: true, flags: JSON_THROW_ON_ERROR)['result'];
+
+        self::assertTrue($result['isError']);
+        self::assertSame(
+            ['status' => 'error', 'code' => 'package_unknown'],
+            json_decode($result['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR),
+        );
+        self::assertStringNotContainsString($this->project->root, $frame);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidArgumentsProvider(): iterable
+    {
+        yield 'no arguments at all' => ['{}'];
+        yield 'package missing' => ['{"path":"composer.json"}'];
+        yield 'path missing' => ['{"package":"kinetis/fixture"}'];
+        yield 'package not a string' => ['{"package":7,"path":"composer.json"}'];
+        yield 'package empty' => ['{"package":"","path":"composer.json"}'];
+        yield 'path not a string' => ['{"package":"kinetis/fixture","path":["composer.json"]}'];
+        yield 'path empty' => ['{"package":"kinetis/fixture","path":""}'];
+        yield 'path too long' => ['{"package":"kinetis/fixture","path":"src/' . str_repeat('a', 253) . '"}'];
+        yield 'startLine zero' => ['{"package":"kinetis/fixture","path":"composer.json","startLine":0}'];
+        yield 'startLine negative' => ['{"package":"kinetis/fixture","path":"composer.json","startLine":-5}'];
+        yield 'startLine not an integer' => ['{"package":"kinetis/fixture","path":"composer.json","startLine":"2"}'];
+        yield 'startLine fractional' => ['{"package":"kinetis/fixture","path":"composer.json","startLine":1.5}'];
+        yield 'lineCount zero' => ['{"package":"kinetis/fixture","path":"composer.json","lineCount":0}'];
+        yield 'lineCount past the maximum' => ['{"package":"kinetis/fixture","path":"composer.json","lineCount":201}'];
+        yield 'lineCount not an integer' => ['{"package":"kinetis/fixture","path":"composer.json","lineCount":null}'];
+        yield 'unknown member' => ['{"package":"kinetis/fixture","path":"composer.json","encoding":"utf-8"}'];
+    }
+
+    /**
+     * Every member, type, range, length and unknown key is decided in
+     * the adapter, so a client that ignored the published schema still
+     * cannot reach the reader with something outside it. These are
+     * protocol errors, not refusal documents: the call was never one the
+     * schema admits.
+     */
+    #[DataProvider('invalidArgumentsProvider')]
+    public function test_arguments_outside_the_schema_are_invalid_params(string $arguments): void
+    {
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":' . $arguments . '}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertArrayNotHasKey('result', $frame);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function limitLengthPathProvider(): iterable
+    {
+        yield 'ascii' => ['src/' . str_repeat('a', 252)];
+
+        // 252 two-byte characters: 256 characters, 508 bytes. A length
+        // check counting bytes would refuse this path, which the
+        // published maxLength of 256 characters admits.
+        yield 'two-byte characters' => ['src/' . str_repeat('é', 252)];
+
+        // 252 four-byte characters, so 1012 bytes behind the same 256.
+        yield 'four-byte characters' => ['src/' . str_repeat('𝍔', 252)];
+    }
+
+    /**
+     * A path of exactly the published maximum reaches the reader, which
+     * then reports it missing — the adapter counts the characters JSON
+     * Schema counts, not the bytes they happen to occupy.
+     *
+     * @throws JsonException
+     */
+    #[DataProvider('limitLengthPathProvider')]
+    public function test_a_path_at_the_character_limit_is_admitted_by_the_adapter(string $path): void
+    {
+        $document = $this->call((string) json_encode(
+            ['package' => self::PACKAGE, 'path' => $path],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+        ));
+
+        self::assertSame('source_missing', $document['code'], 'the path reached the reader');
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function overlongPathProvider(): iterable
+    {
+        yield 'ascii' => ['src/' . str_repeat('a', 253)];
+        yield 'two-byte characters' => ['src/' . str_repeat('é', 253)];
+        yield 'four-byte characters' => ['src/' . str_repeat('𝍔', 253)];
+    }
+
+    /**
+     * One character past the maximum is refused in every encoding, so
+     * the bound is a real one rather than a byte budget a multi-byte
+     * path could slip under or be caught by early.
+     *
+     * @throws JsonException
+     */
+    #[DataProvider('overlongPathProvider')]
+    public function test_a_path_one_character_past_the_limit_is_invalid_params(string $path): void
+    {
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":' . json_encode(
+                ['package' => self::PACKAGE, 'path' => $path],
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+            ) . '}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertStringContainsString('256 characters', $frame['error']['message']);
+    }
+
+    /**
+     * The order matters: validation happens before the package is looked
+     * up and before anything is resolved, so an install root that is not
+     * on disk cannot turn a malformed call into filesystem work.
+     */
+    public function test_invalid_params_are_refused_before_a_missing_install_root_is_reached(): void
+    {
+        $this->packageRoot = $this->project->path('gone');
+
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":{"package":"' . self::PACKAGE . '","path":"composer.json","lineCount":9999}}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertStringContainsString('lineCount', $frame['error']['message']);
+    }
+
+    /**
+     * The tool that takes arguments must not have loosened the other
+     * four: each of them still refuses any argument at all.
+     */
+    public function test_the_document_tools_still_take_no_arguments(): void
+    {
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"orbitron_inspect",'
+            . '"arguments":{"package":"kinetis/framework"}}}',
+        ])[0];
+
+        self::assertSame(-32602, $frame['error']['code']);
+        self::assertStringContainsString('takes no arguments', $frame['error']['message']);
+    }
+
+    /**
+     * The document one source call concluded with.
+     *
+     * @return array<string, mixed>
+     * @throws JsonException
+     */
+    private function call(string $arguments): array
+    {
+        $frame = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' . OrbitronMcpApplication::SOURCE_TOOL
+            . '","arguments":' . $arguments . '}}',
+        ])[0];
+
+        self::assertArrayHasKey('result', $frame, 'the call was refused: ' . json_encode($frame));
+
+        /** @var array<string, mixed> */
+        return json_decode($frame['result']['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    /**
      * kinetis/mcp-docs' real application, over a client that answers from
      * {@see $responses} and records what it was asked for. Only the
      * transport is a stand-in: the catalogue, the URL, the bounds and the
@@ -476,7 +746,14 @@ final class OrbitronMcpApplicationTest extends TestCase
         $output = fopen('php://memory', 'r+');
         self::assertIsResource($output);
 
-        $application = new OrbitronMcpApplication($this->project->root, $this->docs(), $this->documents());
+        $application = new OrbitronMcpApplication(
+            $this->project->root,
+            $this->docs(),
+            $this->documents(),
+            new PackageSourceReader(new InstalledPackages([
+                new PackageFact(self::PACKAGE, '3.1.4', $this->packageRoot),
+            ])),
+        );
 
         new StdioLoop()->run(new McpServer($application->serverInfo(), $application), $input, $output);
 
