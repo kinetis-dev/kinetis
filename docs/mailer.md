@@ -58,13 +58,12 @@ discovers whichever bridge classes are installed.
 ```{important}
 Only the API-based transports are non-blocking. SMTP opens a raw socket
 directly (`stream_socket_client()`), with no Fiber-yield point — sending
-over SMTP blocks the worker for as long as the send takes. A queue
-visibility timeout or shutdown grace greater than
-`default_socket_timeout` still cannot guarantee it encloses the whole
-send; at-least-once handling must remain safe if a reservation expires
-or a process is killed. See
-[Queueing mail](#queueing-mail) below for the practical fix, whichever
-transport you choose.
+over SMTP blocks the worker for as long as the send takes. Neither a
+queue visibility timeout nor a shutdown grace period can be set high
+enough to guarantee an SMTP send finished inside it, so at-least-once
+handling must stay safe when a reservation expires or the process is
+killed. See [Queueing mail](#queueing-mail) below for the practical fix,
+whichever transport you choose.
 ```
 
 ```{warning}

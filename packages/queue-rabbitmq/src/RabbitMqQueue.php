@@ -212,8 +212,8 @@ final class RabbitMqQueue implements ClearableQueueInterface
      * $delaySeconds sends that replacement through the same delay ladder
      * a delayed push() uses, by the same publishWithDelay() call, so a
      * retry waits on broker-side TTL and dead-lettering with nothing held
-     * in this process. The confirm-then-nack order is unchanged and so is
-     * its duplicate window: the ladder publication is confirmed before
+     * in this process. The order and its duplicate window are an
+     * undelayed release's: the ladder publication is confirmed before
      * the original is discarded, so a failure to confirm leaves the
      * original unacked and redeliverable rather than losing the job.
      */

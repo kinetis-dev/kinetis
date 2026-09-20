@@ -176,7 +176,7 @@ final readonly class InstalledPackages
      * an installed package as one that is not on disk. `install_path`
      * alone carries one further, Composer-documented meaning for
      * present-and-null: a metapackage, which is installed but has no
-     * files of its own to install path names. `$nullable` admits that
+     * files of its own for a path to name. `$nullable` admits that
      * one value for that one field; `pretty_version` never passes it, so
      * a present null there still fails, matching Composer giving no such
      * allowance to versions.

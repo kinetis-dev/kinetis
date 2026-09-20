@@ -65,8 +65,8 @@ function runQueueChecks(string $backend, QueueInterface $queue): void
     $queue->ack($second);
 
     // A delayed release is held by the backend's own durable primitive,
-    // which only a real server can prove: the job must be genuinely
-    // unpoppable while the delay runs and poppable once it has.
+    // which only a real server can prove: the job must be unpoppable
+    // while the delay runs and poppable once it has.
     $queue->push(new IntegrationTestJob('back-off'), maxAttempts: 3);
     $delayed = $queue->pop(timeoutSeconds: 5);
     $queue->release($delayed, 3);

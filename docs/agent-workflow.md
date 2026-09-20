@@ -37,9 +37,9 @@ Before a version-sensitive claim governs a decision:
    and read a window around a line it reports. Derive the file from the
    class and that package's own `composer.json` autoload map, or search
    the package's `README.md` for the option or term to find the file;
-   neither tool lists a directory or searches a package, so an unknown
-   file is not something either can refuse. Only when neither yields a
-   file, or a call is refused, open the file under the project's own
+   neither tool lists a directory or searches across a package, so
+   locating the file is the caller's own work. Only when neither yields
+   a file, or a call is refused, open the file under the project's own
    `vendor/kinetis/<package>` directly — as a shell-only agent does in
    every case. Documentation and interfaces alone do not prove installed
    behavior; the installed source does.

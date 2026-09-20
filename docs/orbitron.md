@@ -449,8 +449,8 @@ back: continue with `startLine` set to the last reported line plus one.
    file to go to next.
 3. Only when neither yields a file, or a call is refused, read
    `vendor/kinetis/<package>` directly and record why. Neither tool
-   lists a directory or searches a package, so an unknown file is not
-   something either of them can refuse.
+   lists a directory or searches across a package, so locating the file
+   is the caller's own work.
 
 ## The workflow
 
@@ -621,8 +621,8 @@ exec docker compose --project-directory "$project_directory" \
     vendor/bin/kinetis-orbitron-mcp
 ```
 
-Save it as `bin/orbitron-mcp`, `chmod +x` it, and commit it. Each flag is
-load-bearing:
+Save it as `bin/orbitron-mcp`, `chmod +x` it, and commit it. Every part
+of it is load-bearing:
 
 - the project directory comes from the script's own location, so the
   checked-in configuration works in any clone, at any path, and carries
@@ -632,8 +632,8 @@ load-bearing:
   or rebuilding `app` does not disconnect an established session. Docker
   itself stopping, and the client ending this script's process, always
   do. A complete `docker compose down` is outside that guarantee either
-  way: on the probed Compose v5.5.1, a live one-off still holds the
-  project network, so `down` can remove `app`, leave the session alive,
+  way: on Compose v5.5.1, a live one-off still holds the project
+  network, so `down` can remove `app`, leave the session alive,
   and still exit nonzero over that network being in use;
 - `--rm` removes that one-off container when the process ends;
 - `--no-deps` starts only this one container, not a generic project's
@@ -646,8 +646,8 @@ load-bearing:
 
 `docker compose up --build -d` must have completed at least once, so
 the image is available and its vendor volume is populated with
-dependencies. Before that, this command still runs, but honestly fails:
-Compose can build the image and create the volume itself, but
+dependencies. Before that, this command still runs and fails: Compose
+can build the image and create the volume itself, but
 `vendor/bin/kinetis-orbitron-mcp` does not exist inside it, because
 nothing has run the entrypoint's `composer install`. The client reports
 the server as unavailable, and the agent is expected to say so rather
@@ -805,10 +805,10 @@ the handshake.
    script's process, always end an Orbitron session; an `app` restart,
    recreation or rebuild does not, because the launcher no longer runs
    inside that container. A complete `docker compose down` is outside
-   that guarantee either way: on the probed Compose v5.5.1, a live
-   session keeps the project network in use, so `down` can remove `app`,
-   leave the session alive, and still exit nonzero over that network
-   being in use — end the session first when you need a complete
+   that guarantee either way: on Compose v5.5.1, a live session keeps
+   the project network in use, so `down` can remove `app`, leave the
+   session alive, and still exit nonzero over that network being in
+   use — end the session first when you need a complete
    teardown.
 3. **Approve the project-local `orbitron` server**, under the client's
    own policy above.

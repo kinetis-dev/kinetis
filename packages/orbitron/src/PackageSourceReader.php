@@ -56,7 +56,7 @@ final readonly class PackageSourceReader
     /** The three directories a call may read beneath. */
     private const array DIRECTORIES = ['src', 'bin', 'resources'];
 
-    public function __construct(private InstalledPackages $packages = new InstalledPackages()) {}
+    public function __construct(private InstalledPackages $packages) {}
 
     /**
      * The window, or the refusal. Both are documents; the refusal is the

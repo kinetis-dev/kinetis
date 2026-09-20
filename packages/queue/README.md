@@ -25,9 +25,9 @@ API-first applications, developed in the
 One `Kinetis\Queue\QueueInterface` — push a job from application code, a
 separate `kinetis queue:work` worker process pops and runs it. Named,
 priority-ordered queues, bounded retries (`maxAttempts`, defaulting to
-no retries at all) with exponential backoff the backend holds the job
-for, and named connections come built in. A job given up
-on is logged with its arguments, minus any constructor parameter marked
+no retries at all) with an exponential backoff the backend holds the job
+through, and named connections come built in. A job given up on is
+logged with its arguments, minus any constructor parameter marked
 `Kinetis\Queue\Attributes\Sensitive`. Every backend — Redis
 ([`kinetis/queue-redis`](https://github.com/kinetis-dev/queue-redis)), SQL ([`kinetis/queue-sql`](https://github.com/kinetis-dev/queue-sql)), Amazon SQS
 ([`kinetis/queue-sqs`](https://github.com/kinetis-dev/queue-sqs)), and RabbitMQ ([`kinetis/queue-rabbitmq`](https://github.com/kinetis-dev/queue-rabbitmq)) — lives in

@@ -103,8 +103,8 @@ final class SqlQueueFactoryTest extends TestCase
      * The declared return type, not merely the object that comes back:
      * an application binding `SqlQueue::class` to this result, and the
      * callers typed against that binding, reach `pushOn()` through the
-     * signature alone. Widening this back to an interface would leave
-     * every assertInstanceOf() above passing while putting a runtime
+     * signature alone. Widening this to an interface would leave every
+     * assertInstanceOf() above passing while putting a runtime
      * narrowing check between a caller and the one API it named this
      * backend for.
      */
@@ -117,7 +117,7 @@ final class SqlQueueFactoryTest extends TestCase
     }
 
     /**
-     * Narrowing the return type takes nothing away: the queue this
+     * The concrete return type takes nothing away: the queue this
      * builds still satisfies the contracts `QueueFactory` and
      * `PackageBootstrap` hand out, and its enlisted push runs on the
      * transaction it is given rather than the connection built here —

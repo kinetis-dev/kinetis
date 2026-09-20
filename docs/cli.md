@@ -144,6 +144,48 @@ MCP tools and resources (see {doc}`mcp`) and HTTP routes (see
 {doc}`routing-validation`) work the same way — discovered anywhere under
 your own PSR-4 roots, with no directory convention required.
 
+## Long-running commands and signals
+
+A command's `int` return is the only thing Kinetis carries out of a
+command; there is no signal, cancellation or shutdown abstraction behind
+it. A command that runs long enough for a deploy to reach it — a
+backfill, a drain, a poll loop — owns that itself. `queue:work` is the
+one Kinetis ships, and [Deploys and restarts](queue.md#deploys-and-restarts)
+is where the stop signal a supervisor actually sends and the grace
+period it allows are settled; both apply to a command you write.
+
+A command that promises graceful `SIGTERM`/`SIGINT` handling:
+
+- **Requires `ext-pcntl`.** It is CLI-only and the official PHP images do
+  not load it. Without it the process cannot observe a signal at all, and
+  the supervisor's kill lands wherever the command happens to be.
+- **Installs its own handlers** — `pcntl_async_signals(true)`, then one
+  `pcntl_signal()` per signal it accepts.
+- **Sets one flag in the handler and does nothing else.** The flag belongs
+  to this invocation — a local variable the handler captures by reference,
+  or a property of a per-invocation object — never a static or a global.
+  I/O, transaction work, logging or disposal inside a handler runs at an
+  arbitrary point inside whatever was already executing.
+- **Reads that flag only at checkpoints it chooses** — between items,
+  between batches, after a unit of work has settled — and nowhere else.
+
+A signal cancels nothing already in flight. An async request or an open
+transaction runs until it completes or its own deadline expires, so every
+such wait needs a finite deadline whether or not the command handles
+signals, and the command documents which outcome an operator gets: the
+atomic unit in progress completes, or it is left untouched.
+
+When an in-flight operation fails, read the flag before classifying the
+exit. A request that exhausted its deadline while a stop was already
+pending is a shutdown, and reporting it as a timeout hides the operator's
+signal.
+
+The exit code is the command's own contract. `130` for an observed
+`SIGINT` and `143` for an observed `SIGTERM` follow the shell's
+`128 + signal` convention and are worth adopting when the command says so;
+a command that treats a signalled stop as an ordinary completion returns
+`0`. The disposal rules above apply on top of whichever code it returns.
+
 ## `kinetis build`
 
 ```{code-block} bash

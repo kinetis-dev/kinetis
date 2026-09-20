@@ -154,8 +154,7 @@ final class PusherBroadcasterTest extends TestCase
     /**
      * The configured deadline must reach the wire: the transport gets
      * what is left of the two-second budget, not the HTTP client's own
-     * 30-second default that a package silently keeping `new Http()`
-     * unchanged would hand it.
+     * 30-second default.
      */
     public function test_from_config_bounds_a_trigger_with_the_configured_timeout(): void
     {

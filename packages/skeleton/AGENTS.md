@@ -47,10 +47,10 @@ hold, say so and wait rather than working around it.
    stopping, and the client's own termination, always end an Orbitron
    session; an `app` restart, recreation or rebuild does not, because the
    launcher no longer runs inside that container. A complete `docker
-   compose down` is outside that guarantee either way: on the probed
-   Compose v5.5.1, a live session keeps the project network in use, so
-   `down` can remove `app`, leave the session alive, and still exit
-   nonzero over that network being in use. End the client session before
+   compose down` is outside that guarantee either way: on Compose
+   v5.5.1, a live session keeps the project network in use, so `down`
+   can remove `app`, leave the session alive, and still exit nonzero
+   over that network being in use. End the client session before
    running a complete `down` — you cannot reconnect the server process
    you are running inside, and reading this file adds no server to a
    session that is already running.
@@ -124,10 +124,10 @@ Once Orbitron is ready, every task runs the same way:
      `startLine` set to `endLine + 1` for a window, or to the last
      reported match line plus one for a search, until the needed
      evidence is in view or `hasMore` is `false`.
-   - Neither tool lists a directory or searches a whole package, so an
-     unknown file is not something either of them can refuse. Read
-     `vendor/kinetis/<package>` inside the container only when neither
-     step above yields a file, or when a call returns an exact refusal —
+   - Neither tool lists a directory or searches across a package, so
+     locating the file is your own work. Read `vendor/kinetis/<package>`
+     inside the container only when neither step above yields a file, or
+     when a call returns an exact refusal —
      a `status: error` result naming why, such as `package_unknown` —
      that cannot serve the needed evidence; when that happens, record
      what you tried and why before falling back.

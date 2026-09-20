@@ -271,8 +271,8 @@ final class InstalledPackagesTest extends TestCase
 
     /**
      * The concrete defect this reader must not have: a metapackage is
-     * installed, at a real version, but has no files of its own to
-     * install a path under, and Composer reports that as an explicit
+     * installed, at a real version, but installs no files of its own and
+     * so has no install path, which Composer reports as an explicit
      * `null` `install_path` rather than a string — the one value
      * `install_path` carries that `pretty_version` never does. A real
      * inventory carries one beside genuine Kinetis entries, and the read

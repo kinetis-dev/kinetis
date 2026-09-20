@@ -231,7 +231,7 @@ mechanism that backend gives a delayed `push()`:
 |---|---|---|
 | Redis | The replacement is written into the `delayed` sorted set with a due score instead of onto `pending`, chosen inside the same fenced script | None |
 | SQL | The one `UPDATE` also sets `available_at` to `now + $delaySeconds` | None |
-| SQS | The delay *is* the new `VisibilityTimeout` | 43200 seconds — `ChangeMessageVisibility`'s request field, wider than `DelaySeconds`'; SQS refuses one beyond the message's own remaining 12 hours |
+| SQS | The delay *is* the new `VisibilityTimeout` | 43200 seconds — `ChangeMessageVisibility`'s request field, wider than `DelaySeconds`; SQS refuses one beyond the message's own remaining 12 hours |
 | RabbitMQ | The replacement is published into the [delay ladder](#rabbitmq) rather than onto the real queue, confirmed before the original is nacked | 4,194,303 seconds — the ladder's |
 
 Every backend validates `$delaySeconds` through
@@ -331,8 +331,8 @@ worker's own attempt failed.
 
 The worker computes the delay only on the retrying path — `fail()` takes
 none — and never sleeps or retains the job's request scope while the
-delay runs. `Events\JobReleased` is unchanged and carries no delay
-field; the failure log line and its `job` context report it instead:
+delay runs. `Events\JobReleased` carries no delay field; the failure
+log line and its `job` context report it instead:
 
 ```{code-block} text
 Job "App\SendWelcomeEmail" failed (attempt 2), retrying in 10s: Connection refused
@@ -680,7 +680,7 @@ Between empty attempts `pop()` suspends for up to one second through
 
 `ack()` and `fail()` delete the row; `release()` clears the reservation,
 increments `attempts` and sets `available_at` to `now + $delaySeconds`,
-the same column and format a delayed `push()` writes. Each is
+the same column and format a delayed `push()` writes. Each matches
 `WHERE id = ? AND reserved_token = ?`. An affected-row count other than
 one raises `StaleJobHandleException`, so a late settlement can neither
 delete, unreserve nor credit an attempt against a reservation another
@@ -768,7 +768,7 @@ requeue. `release()` publishes a replacement carrying the incremented
 original without requeue. A `release()` carrying a delay publishes that
 replacement into the delay ladder below instead of onto the real queue —
 the same publication path a delayed `push()` takes — and the
-confirm-then-nack order is unchanged. AMQP 0-9-1 has no cross-message
+confirm-then-nack order is the same. AMQP 0-9-1 has no cross-message
 transaction:
 
 - A failure before the confirmation leaves the original unacked, and

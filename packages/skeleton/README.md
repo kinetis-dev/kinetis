@@ -76,10 +76,10 @@ That initialization follows the order starting the server needs:
    agent can do from inside that session brings it back. An `app`
    restart, recreation or rebuild does not end it: the server does not
    run inside that container. A complete `docker compose down` is
-   outside that guarantee either way: on the probed Compose v5.5.1, a
-   live session keeps the project network in use, so `down` can remove
-   `app`, leave the session alive, and still exit nonzero over that
-   network being in use — end the client session first when you need a
+   outside that guarantee either way: on Compose v5.5.1, a live
+   session keeps the project network in use, so `down` can remove `app`,
+   leave the session alive, and still exit nonzero over that network
+   being in use — end the client session first when you need a
    complete teardown.
 3. **Approve the project-local `orbitron` server** under your client's
    own policy; see [Trust and approval](#trust-and-approval).

@@ -594,9 +594,9 @@ final class QueueWorkerTest extends TestCase
     }
 
     /**
-     * 0 is a real choice, not "unset": a deployment that wants the old
-     * immediate-retry behavior asks for it and gets it, with no delay
-     * ever reaching a backend.
+     * 0 is a real choice, not "unset": a deployment that wants immediate
+     * retries asks for them and gets them, with no delay ever reaching a
+     * backend.
      */
     public function test_a_retry_base_delay_of_zero_keeps_every_retry_immediate(): void
     {

@@ -431,8 +431,9 @@ Use them together: derive a file from the class and that package's own
 `composer.json` autoload map, or find it by searching the package's
 `README.md` for the option or term, then search the file and read a
 window around a reported line. Neither tool lists a directory or
-searches a package, so an unknown file is not something either of them
-can refuse — read `vendor/kinetis/<package>` directly for that.
+searches across a package, so locating the file is the caller's own
+work — read `vendor/kinetis/<package>` directly when neither route
+finds it.
 
 ### The documentation resources
 

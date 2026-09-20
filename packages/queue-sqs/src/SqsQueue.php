@@ -31,7 +31,7 @@ use Throwable;
  * A delayed release() is that same native invisibility: release()'s
  * $delaySeconds is passed straight through as ChangeMessageVisibility's
  * VisibilityTimeout, whose request field accepts 0 to 43200 seconds — a
- * wider limit than DelaySeconds', and this backend raises against it
+ * wider limit than DelaySeconds, and this backend raises against it
  * separately. Being in range is not the same as being accepted: SQS
  * refuses a timeout longer than the time left in that received
  * message's own 12-hour maximum, and that refusal propagates. See

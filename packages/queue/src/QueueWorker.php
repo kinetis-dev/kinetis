@@ -415,9 +415,10 @@ final class QueueWorker
      * The job's one durable transition, followed by the telemetry that
      * closes its span. $releaseDelaySeconds is the backoff the release
      * path holds the job for and is ignored by the other two, neither of
-     * which leaves anything to become available again. Returns whether the backend actually settled it:
-     * a transition rejected as stale wrote nothing, so no completion
-     * event may follow it — reportSettlementLost() takes over instead.
+     * which leaves anything to become available again. Returns whether
+     * the backend actually settled it: a transition rejected as stale
+     * wrote nothing, so no completion event may follow it —
+     * reportSettlementLost() takes over instead.
      * Every other exception from ack()/release()/fail() propagates.
      */
     private function transition(

@@ -118,8 +118,8 @@ final class RabbitMqQueueTest extends TestCase
      * release() carries the ladder ceiling push() does, and checks it in
      * the same place: before any I/O. The gate is what this proves —
      * reaching the broker at all would raise a connection failure from
-     * this deliberately unreachable client instead, so an
-     * InvalidArgumentException here can only have come from ahead of it.
+     * this unreachable client instead, so an InvalidArgumentException
+     * here can only have come from ahead of it.
      */
     public function test_release_rejects_a_delay_beyond_the_ladder_ceiling_before_ever_touching_the_channel(): void
     {
