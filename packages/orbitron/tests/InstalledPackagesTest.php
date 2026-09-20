@@ -301,6 +301,63 @@ final class InstalledPackagesTest extends TestCase
     }
 
     /**
+     * A server outlives a Composer dependency change and reads the same
+     * project root again for every operation, so a second read reports
+     * the set that is on disk then, not the one the first read saw.
+     *
+     * The distinction lives in the include form. Every case above writes
+     * its own root, so a `_once` include satisfies them all; read twice
+     * from one root it returns `true` rather than the inventory, which
+     * this reader refuses as a shape it does not recognize. Changing the
+     * file under one root is what separates the two.
+     */
+    public function test_it_rereads_one_projects_inventory_after_it_changes(): void
+    {
+        $root = $this->project([
+            'root' => ['name' => 'orbitron/consumer'],
+            'versions' => [
+                'kinetis/framework' => [
+                    'pretty_version' => '1.12.2',
+                    'install_path' => '/app/vendor/kinetis/framework',
+                ],
+            ],
+        ]);
+
+        self::assertSame(
+            [['name' => 'kinetis/framework', 'version' => '1.12.2']],
+            InstalledPackages::fromProject($root)->records(),
+        );
+
+        self::writeInventory($root, [
+            'root' => ['name' => 'orbitron/consumer'],
+            'versions' => [
+                'kinetis/framework' => [
+                    'pretty_version' => '1.13.0',
+                    'install_path' => '/app/vendor/kinetis/framework',
+                ],
+                'kinetis/queue' => [
+                    'pretty_version' => '1.3.2',
+                    'install_path' => '/app/vendor/kinetis/queue',
+                ],
+            ],
+        ]);
+
+        $reread = InstalledPackages::fromProject($root);
+
+        self::assertSame(
+            [
+                ['name' => 'kinetis/framework', 'version' => '1.13.0'],
+                ['name' => 'kinetis/queue', 'version' => '1.3.2'],
+            ],
+            $reread->records(),
+        );
+        self::assertSame(
+            ['version' => '1.3.2', 'root' => '/app/vendor/kinetis/queue'],
+            $reread->source('kinetis/queue'),
+        );
+    }
+
+    /**
      * A project with no generated inventory has no installed set to
      * report, and saying so is the only truthful answer: a server that
      * fell back to whatever it read earlier would report a set that is no
@@ -433,12 +490,23 @@ final class InstalledPackagesTest extends TestCase
         $this->roots[] = $root;
 
         if ($inventory !== null) {
-            file_put_contents(
-                $root . '/vendor/composer/installed.php',
-                '<?php return ' . var_export($inventory, true) . ';',
-            );
+            self::writeInventory($root, $inventory);
         }
 
         return $root;
+    }
+
+    /**
+     * Puts the generated file where Composer writes it, replacing one
+     * already there.
+     *
+     * @param array<string, mixed> $inventory
+     */
+    private static function writeInventory(string $root, array $inventory): void
+    {
+        file_put_contents(
+            $root . '/vendor/composer/installed.php',
+            '<?php return ' . var_export($inventory, true) . ';',
+        );
     }
 }
