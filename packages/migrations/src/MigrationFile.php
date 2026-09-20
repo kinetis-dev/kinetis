@@ -28,8 +28,11 @@ final readonly class MigrationFile
      */
     public function load(): Migration
     {
+        // require, not require_once: a persistent worker may load() the
+        // same migration file more than once across requests, and
+        // require_once would return true instead of the Migration.
         /** @var Migration */
-        return require $this->path;
+        return require $this->path; // NOSONAR
     }
 
     /**

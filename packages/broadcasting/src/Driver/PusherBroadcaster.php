@@ -116,8 +116,10 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
         // HMAC-SHA256 signature sign() computes below. Every Pusher-
         // protocol server (Soketi, Reverb, Pusher's own) expects exactly
         // this, so there's no algorithm to swap.
+        $bodyMd5 = md5($body); // NOSONAR
+
         $this->http
-            ->send('POST', $this->baseUrl() . $this->signedQuery('POST', $path, ['body_md5' => md5($body)]), [
+            ->send('POST', $this->baseUrl() . $this->signedQuery('POST', $path, ['body_md5' => $bodyMd5]), [
                 'body' => $body,
                 'headers' => ['Content-Type' => 'application/json'],
             ])

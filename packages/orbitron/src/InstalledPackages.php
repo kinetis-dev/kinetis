@@ -132,8 +132,11 @@ final readonly class InstalledPackages
             throw new RuntimeException("No Composer inventory was found at {$inventory}.");
         }
 
+        // require, not require_once: fromProject() may be called more
+        // than once per process for a changed inventory, and
+        // require_once would return true instead of the array.
         /** @var mixed $data */
-        $data = require $inventory;
+        $data = require $inventory; // NOSONAR
 
         if (!\is_array($data)
             || !\is_string($data['root']['name'] ?? null)

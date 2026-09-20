@@ -44,8 +44,11 @@ final class RoutesFile
         $bootstrapClasses = $packageBootstraps ?? PackageDiscovery::bootstrapClasses($projectRoot);
 
         $path = $projectRoot . '/bootstrap.php';
+        // require, not require_once: loadBootstrap() may be called more
+        // than once per process, and require_once would return true
+        // instead of the callable bootstrap.php returns.
         $appBootstrap = is_file($path)
-            ? require $path
+            ? require $path // NOSONAR
             : static function (): void {
                 // No bootstrap.php at the project root — nothing to register.
             };
