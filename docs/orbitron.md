@@ -606,7 +606,8 @@ itself, `./vendor/bin/kinetis-orbitron-mcp`, and this step is already
 done.
 
 When the project runs in Docker — the skeleton's case — the server lives
-in the container next to the code it reports on, and a one-file bridge
+next to the code it reports on, in a disposable container derived from
+the application service rather than inside it, and a one-file bridge
 relays it:
 
 ```sh
@@ -616,20 +617,41 @@ set -e
 project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 exec docker compose --project-directory "$project_directory" \
-    exec -T app php vendor/bin/kinetis-orbitron-mcp
+    run --rm -T --no-deps --entrypoint php app \
+    vendor/bin/kinetis-orbitron-mcp
 ```
 
-Save it as `bin/orbitron-mcp`, `chmod +x` it, and commit it. Three
-properties are load-bearing:
+Save it as `bin/orbitron-mcp`, `chmod +x` it, and commit it. Each flag is
+load-bearing:
 
 - the project directory comes from the script's own location, so the
   checked-in configuration works in any clone, at any path, and carries
   no absolute user path;
+- `run` starts a one-off container that shares the `app` service's image
+  and mounts, but not its process lifecycle, so restarting, recreating
+  or rebuilding `app` does not disconnect an established session. Docker
+  itself stopping, and the client ending this script's process, always
+  do. A complete `docker compose down` is outside that guarantee either
+  way: on the probed Compose v5.5.1, a live one-off still holds the
+  project network, so `down` can remove `app`, leave the session alive,
+  and still exit nonzero over that network being in use;
+- `--rm` removes that one-off container when the process ends;
+- `--no-deps` starts only this one container, not a generic project's
+  other services;
+- `--entrypoint php` bypasses the application entrypoint's unconditional
+  `composer install`, which this container must not repeat or race
+  against the `app` container's own;
 - `-T` is required: an allocated TTY would rewrite the
-  newline-delimited JSON-RPC frames the protocol depends on;
-- the container must already be up. When it is not, `docker compose
-  exec` fails, the client reports the server as unavailable, and the
-  agent is expected to say so rather than proceed.
+  newline-delimited JSON-RPC frames the protocol depends on.
+
+`docker compose up --build -d` must have completed at least once, so
+the image is available and its vendor volume is populated with
+dependencies. Before that, this command still runs, but honestly fails:
+Compose can build the image and create the volume itself, but
+`vendor/bin/kinetis-orbitron-mcp` does not exist inside it, because
+nothing has run the entrypoint's `composer install`. The client reports
+the server as unavailable, and the agent is expected to say so rather
+than proceed.
 
 Name the service to match your own Compose file if it is not `app`.
 
@@ -759,25 +781,35 @@ it. The contract says so rather than letting an agent claim otherwise.
 
 ### 7. Start it, in this order
 
-Starting the server has an order, because it runs inside the project's
-`app` container, the client launches one server process per session, and
-the client's own approval sits between the two. The first three are
-preconditions; only the fourth is the handshake.
+Starting the server has an order, because it runs in a disposable
+container derived from the project's `app` service, the client launches
+one server process per session, and the client's own approval sits
+between the two. The first three are preconditions; only the fourth is
+the handshake.
 
-1. **Bring the stack up.** `bin/orbitron-mcp` reaches the server through
-   `docker compose exec`, which fails while `app` is down:
+1. **Complete the stack's initial setup.** `bin/orbitron-mcp` launches a
+   disposable container built from the `app` service's image, sharing
+   its project and vendor mounts. `docker compose up --build -d` must
+   have completed at least once, so the image is available and its
+   vendor mount is populated with dependencies:
 
    ```console
    docker compose ps
-   docker compose up -d
+   docker compose up --build -d
    ```
 
 2. **Reload, restart or reconnect the client** — when the MCP
-   configuration arrived or changed after the session started, when an
-   earlier launch failed while the stack was down, or when the
-   containers were recreated. `docker compose up --build`, a `down`, or
-   any recreation kills the `docker compose exec` process the client is
-   holding, and the client does not relaunch it.
+   configuration arrived or changed after the session started, or when
+   an earlier launch was attempted before the stack's initial setup
+   completed. Docker itself stopping, and the client ending this
+   script's process, always end an Orbitron session; an `app` restart,
+   recreation or rebuild does not, because the launcher no longer runs
+   inside that container. A complete `docker compose down` is outside
+   that guarantee either way: on the probed Compose v5.5.1, a live
+   session keeps the project network in use, so `down` can remove `app`,
+   leave the session alive, and still exit nonzero over that network
+   being in use — end the session first when you need a complete
+   teardown.
 3. **Approve the project-local `orbitron` server**, under the client's
    own policy above.
 4. **Run the handshake** from [3. The
@@ -797,8 +829,9 @@ agent there. These failures cover what actually happens:
 
 | Symptom | What it means | What to do |
 |---|---|---|
-| The server fails to start | `docker compose exec` had no running container | `docker compose up -d`, then restart the client |
-| The server was there and is gone | The containers were recreated, killing the `docker compose exec` process the client held | Restart or reconnect the client; the stack itself is healthy |
+| The server fails to start | The stack has not completed its initial setup — the `app` image is not built, or its vendor volume has no dependencies installed | `docker compose up --build -d`, then restart the client |
+| The server was there and is gone | Docker stopped, or the client itself ended | Restart or reconnect the client; an `app` restart, recreation or rebuild alone does not cause this |
+| `docker compose down` exits nonzero over a network still in use | A live Orbitron session keeps its one-off container attached to the project network, so `down` removed `app` but cannot remove the network yet | End or close the client session, then run `down` again; relaunch the client once the stack is back up |
 | The server shows as disconnected | The bridge or the client, not yet distinguished | Run the launcher by hand (below). A handshake reply puts it on the client side: its trust or approval policy, or a tool catalog that has not refreshed |
 | `orbitron_verify` reports `error` | `composer.json` is outside [the layout Orbitron admits](#the-layout-it-admits) | Read the `code` on each failed check |
 | A `kinetis://docs/*` read fails | The fetch to the documentation origin failed, timed out, or returned something unusable | Read the server's stderr in the client's log for the URL and reason; every other document is local and unaffected |

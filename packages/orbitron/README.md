@@ -470,10 +470,18 @@ that already exists, the checked-in form of the registration above is:
   is `stable` will not take those siblings' `dev-main` from Packagist;
 - `bin/orbitron-mcp`, executable. For a project that runs in Docker it
   is a one-file bridge that resolves its own project directory and
-  `exec`s `docker compose --project-directory "$dir" exec -T app php
-  vendor/bin/kinetis-orbitron-mcp`; `-T` is required, because an
-  allocated TTY would rewrite the protocol's newline-delimited frames.
-  With PHP on the host there is no bridge — the launcher is
+  `run`s a disposable container from the `app` service's own image —
+  `docker compose --project-directory "$dir" run --rm -T --no-deps
+  --entrypoint php app vendor/bin/kinetis-orbitron-mcp` — sharing
+  `app`'s mounts but not its process lifecycle, so restarting,
+  recreating or rebuilding `app` does not disconnect an established
+  session. `--entrypoint php` skips the application entrypoint's
+  `composer install`; `--no-deps` starts only this one container; `-T`
+  is required, because an allocated TTY would rewrite the protocol's
+  newline-delimited frames. The stack's initial `docker compose up
+  --build -d` must have completed at least once, so the image is
+  available and its vendor volume is populated with dependencies. With
+  PHP on the host there is no bridge — the launcher is
   `./vendor/bin/kinetis-orbitron-mcp` itself;
 - `AGENTS.md`, the one place the agent contract is written: on the first
   application task of a session, confirm the `orbitron` tools, read
