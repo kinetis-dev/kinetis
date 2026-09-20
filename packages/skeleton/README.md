@@ -64,14 +64,23 @@ rather than from recalled framework trivia.
 
 That initialization follows the order starting the server needs:
 
-1. **Bring the stack up** — `docker compose up -d`, with the `app`
-   service running. The MCP server lives in that container.
+1. **Complete the stack's initial setup** — `docker compose up --build
+   -d`, so the `app` image is built and its shared vendor volume is
+   populated. The MCP server runs in a disposable container derived from
+   that image, not in `app` itself.
 2. **Reload, restart or reconnect the client** when this configuration
-   arrived or changed after the session started, when an earlier launch
-   failed while the stack was down, or when the containers were
-   recreated. A client launches one server process per session, and
-   `docker compose exec` dies with the container it entered — nothing
-   the agent can do from inside that session brings it back.
+   arrived or changed after the session started, or when an earlier
+   launch was attempted before the stack's initial setup completed. A
+   client launches one server process per session, and Docker itself
+   stopping or the client's own termination always end it — nothing the
+   agent can do from inside that session brings it back. An `app`
+   restart, recreation or rebuild does not end it: the server does not
+   run inside that container. A complete `docker compose down` is
+   outside that guarantee either way: on Compose v5.5.1, a live
+   session keeps the project network in use, so `down` can remove `app`,
+   leave the session alive, and still exit nonzero over that network
+   being in use — end the client session first when you need a
+   complete teardown.
 3. **Approve the project-local `orbitron` server** under your client's
    own policy; see [Trust and approval](#trust-and-approval).
 4. The agent confirms the `orbitron` tools and resources, reads
@@ -100,20 +109,36 @@ Already correct for whatever path you cloned into:
   `.codex/config.toml` and `.gemini/settings.json`. Each registers one
   stdio MCP server named `orbitron`, launched as `./bin/orbitron-mcp`.
 
-`bin/orbitron-mcp` runs `docker compose exec -T app php
-vendor/bin/kinetis-orbitron-mcp` against this project's own directory.
-The server lives in the container next to the code it reports on, so
-your host still needs no PHP and no Composer, and the agent needs no
-absolute path.
+`bin/orbitron-mcp` runs `docker compose run --rm -T --no-deps
+--entrypoint php app vendor/bin/kinetis-orbitron-mcp` against this
+project's own directory: a disposable container built from `app`'s own
+image, sharing its project and vendor mounts but not its process
+lifecycle, so restarting, recreating or rebuilding `app` does not
+disconnect an established session. `--entrypoint php` skips the
+skeleton entrypoint's `composer install`, and `--no-deps` keeps a
+generic project from starting services it does not need. The server
+still lives next to the code it reports on, so your host still needs no
+PHP and no Composer, and the agent needs no absolute path.
 
 That one server is the whole registration. The Kinetis documentation
 pages arrive on the same connection as `kinetis://docs/*` resources,
 fetched by [`kinetis/mcp-docs`](https://kinetis.dev/docs/mcp-docs.html)
 from inside it — there is no second server to configure, and
 `kinetis://docs/agent-workflow` is where the agent starts. Those pages
-are published from Kinetis `main`, so `orbitron_inspect` and the
-installed source under `vendor/kinetis/` stay the authority for anything
-version-sensitive.
+are published from Kinetis `main`, so `orbitron_inspect` and the two
+installed-source tools — `orbitron_read_package_source` for a bounded
+line window of one installed `kinetis/*` package's own file, and
+`orbitron_search_package_source` for the lines of one such file that
+contain a literal string, both read live over that same connection —
+stay the authority for anything version-sensitive. A `hasMore: true` is
+a success, not a refusal: the agent continues from `endLine + 1`, or
+from the last reported match line plus one, before treating the file as
+exhausted. An agent with that MCP connection searches the file to find
+the line and reads a window around it, and reaches
+`vendor/kinetis/<package>` only when neither yields a file or a call is
+refused — `vendor/` is a Docker volume, so that means reading it inside
+the container. A shell-only agent has no such call to make and reads it
+in the container from the start.
 
 ### What you get from the archive
 
@@ -199,21 +224,41 @@ every document's shape and exit code.
 
 ### Diagnostics
 
-**The container is not running.** `bin/orbitron-mcp` fails immediately
-with a `docker compose exec` error, and the client shows the server as
-failed to start. Bring the stack up from this directory and restart the
-client:
+**The stack has not completed its initial setup.** `bin/orbitron-mcp`
+launches a disposable container from the `app` service's image, so a
+first attempt before that image exists, or before its vendor volume is
+populated, fails — Compose can build the image and create the volume,
+but `vendor/bin/kinetis-orbitron-mcp` does not exist inside it yet. Bring
+the stack up from this directory and restart the client:
 
 ```sh
-docker compose up -d
+docker compose up --build -d
 docker compose ps
 ```
 
-**The containers were recreated.** `docker compose up --build`,
-`down`, or any change that recreates `app` kills the `docker compose
-exec` process your client is holding, and the client does not relaunch
-it. The stack is healthy and the server is gone: restart or reconnect
-the client.
+**An `app` restart, recreation or rebuild does not disconnect
+Orbitron.** The MCP process runs in its own disposable container, not
+inside `app`, so `docker compose restart app`, `docker compose up
+--build -d app`, or any `app` recreation leaves an established session
+connected. There is nothing to do here.
+
+**The server was there and is gone.** A Docker shutdown, or the client
+itself ending its own process, removes the one-off container and
+requires the client to launch or connect again. The stack itself can
+still be healthy.
+
+**`docker compose down` exits nonzero over a network still in use.** A
+live Orbitron session keeps its one-off container attached to the
+project network, so `down` can remove `app` and then fail on the
+network:
+
+```text
+Network <project>_default Resource is still in use
+```
+
+End or close the client session so its one-off container is disposed,
+then run `down` again — it completes once nothing still holds the
+network. Relaunch the client once the stack is back up.
 
 **The server shows as disconnected.** Run the launcher yourself — it is
 an ordinary command, and a working server answers a handshake on stdin:
@@ -228,16 +273,18 @@ server are both fine, and what remains is client-side: its trust and
 approval policy, or a tool catalog that has not picked the server up
 since the configuration arrived.
 
-**The reported packages are stale.** Orbitron reads Composer's installed
-inventory once per server process, and your client launches one server
-per session. So after a dependency change —
+**A dependency change needs no restart.** Orbitron reads this project's
+generated inventory again for every package-aware call, so after a
+successful dependency change —
 
 ```sh
 docker compose exec app composer require kinetis/orm
 ```
 
-— restart the client. That launches a fresh server, which reads the new
-inventory.
+— the next `orbitron_inspect`, `orbitron_verify`, or installed-source
+call already sees it. This is not one of the restart cases above: those
+are new or changed MCP configuration, a launch attempted before the
+stack's initial setup completed, and Docker itself stopping.
 
 **`orbitron_verify` reports an error.** The `code` in each failed check
 names the outcome. This project ships the layout Orbitron admits — one
@@ -268,14 +315,21 @@ and published from it; `kinetis-dev/skeleton` is the split mirror the
 commands above install from. Inside the monorepo, `composer.json` still
 carries the `path` repositories that resolve `kinetis/framework`,
 `kinetis/orbitron`, `kinetis/mcp-docs` and `kinetis/mcp-protocol` from
-sibling checkouts, so the stack needs the override that mounts them:
+sibling checkouts, so the stack needs the override that mounts them.
+`bin/orbitron-mcp` runs a plain `docker compose run` with no `-f` of its
+own, so put the override in this clone's local `.env` instead of passing
+it on the command line:
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.monorepo.yml up --build
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.monorepo.yml' >> .env
+docker compose up --build
 ```
 
 Container paths are `/app` either way — that override adds mounts and
-changes nothing else.
+changes nothing else. `docker-compose.monorepo.yml` is one of the three
+files `composer create-project` leaves out of a released skeleton, so
+this is monorepo contributor setup only: never add this override to
+`bin/orbitron-mcp` or to the released `.env.example`.
 
 ## License
 

@@ -10,6 +10,13 @@ composer require kinetis/migrations
 It requires `kinetis/framework`, `kinetis/persistence` and
 `kinetis/database-bridge`, and installing it registers the `migrate*`
 commands on `vendor/bin/kinetis` (see {doc}`cli`).
+
+The commands always hold one PDO session for their advisory lock, whatever
+`DB_DRIVER` says. Install `ext-pdo_mysql` for `DB_CONNECTION=mysql`, or
+`ext-pdo_pgsql` for `DB_CONNECTION=pgsql`. An application that selects the
+native driver for request work still needs the matching PDO extension for
+migrations. Declare that extension in the application's `composer.json` and
+install it in the runtime or migration image.
 ````
 
 A thin runner for versioned schema changes: raw SQL `up()`/`down()`
@@ -83,6 +90,22 @@ DB_HOST=127.0.0.1
 DB_NAME=app
 DB_USER=app
 DB_PASSWORD=secret
+```
+
+For example, a PostgreSQL image whose request path uses native `ext-pgsql`
+needs both clients because migrations use PDO:
+
+```{code-block} dockerfile
+RUN docker-php-ext-install pgsql pdo_pgsql
+```
+
+Its application manifest declares both platform requirements:
+
+```{code-block} json
+"require": {
+    "ext-pdo_pgsql": "*",
+    "ext-pgsql": "*"
+}
 ```
 
 They run without the application's bootstrap, so they work in CI or an

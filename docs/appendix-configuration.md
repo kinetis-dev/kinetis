@@ -261,7 +261,8 @@ leaving `QUEUE_CONNECTION` unset leaves core's inline default in place
 |---|---|---|
 | `QUEUE_CONNECTION` | *(unset: no queue)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). Gates on the key being absent, not blank. |
 | `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
-| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only — retries are immediate, with no backoff (see {doc}`queue`). |
+| `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only; `QUEUE_RETRY_BASE_DELAY_SECONDS` sets how long each retry waits (see {doc}`queue`). |
+| `QUEUE_RETRY_BASE_DELAY_SECONDS` | `5` | Seconds the first retry of a failed job waits, doubling per attempt up to a fixed 15-minute ceiling: `min(900, base * 2 ** (attempt - 1))`. Admitted range `0`–`900`; `0` selects immediate retries. The backend holds the job — the worker never sleeps (see {doc}`queue`). |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a positive integer, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |
 | `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | `300` | `kinetis/queue-redis` and `kinetis/queue-sql`: reclaim a crashed worker's reserved job after this long. Must be a positive integer; set it above the slowest job you expect. |
 | `QUEUE_SQS_REGION` | *(required for sqs)* | AWS region. |
@@ -311,7 +312,7 @@ The gate below is on the unscoped `MAILER_DSN`; both keys are scoped when
 | Key | Default | Purpose |
 |---|---|---|
 | `MAILER_DSN` | *(unset: no mailer)* | Symfony Mailer transport DSN (`smtp://...`, `sendgrid+api://...`, ...). |
-| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it and carries its own timeouts from the DSN. |
+| `MAILER_TIMEOUT` | `30` | Seconds per API send — idle and total. Must be positive. SMTP ignores it; Symfony instead inherits PHP's per-operation `default_socket_timeout`, which is not a total-send deadline. |
 
 ### Search (`kinetis/search-opensearch`, `kinetis/search-elasticsearch`) — scoped
 
@@ -382,6 +383,7 @@ the default connection.
 | `BROADCAST_HOST` | `api.pusherapp.com` | Server host the backend publishes to. |
 | `BROADCAST_PORT` | `443` | Server port; must be a valid TCP port (1–65535). |
 | `BROADCAST_TLS` | `true` | Connect over TLS. |
+| `BROADCAST_TIMEOUT` | `30.0` | The whole budget for one trigger request, in seconds; must be above zero. A non-positive value fails at worker boot and names the scoped key. `PusherBroadcaster::fromConfig()` applies it even to an injected `Http`. |
 | `BROADCAST_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact `Origin` values this route's own guard admits on `POST /broadcasting/auth`, on top of the request's own origin, which always passes. Requests without an `Origin` header (server-side clients) pass too; any other origin is `403`. Not a CORS policy: a cross-origin browser request must also be allowed by the global `CorsMiddleware`. Not connection-scoped — the endpoint is one route. See {doc}`broadcasting`'s "Securing the endpoint". |
 
 The keys above address the server your *backend* publishes to. Where the

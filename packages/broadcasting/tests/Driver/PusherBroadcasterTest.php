@@ -6,6 +6,7 @@ namespace Kinetis\Broadcasting\Tests\Driver;
 
 use Kinetis\Broadcasting\Driver\PusherBroadcaster;
 use Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException;
+use Kinetis\Config\Config;
 use Kinetis\RevoltHttpClient\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -142,11 +143,56 @@ final class PusherBroadcasterTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('BROADCAST_PORT must be a valid TCP port');
 
-        PusherBroadcaster::fromConfig(new \Kinetis\Config\Config([
+        PusherBroadcaster::fromConfig(new Config([
             'BROADCAST_APP_ID' => '12345',
             'BROADCAST_KEY' => self::KEY,
             'BROADCAST_SECRET' => self::SECRET,
             'BROADCAST_PORT' => '0',
+        ]), new Http(new MockHttpClient()));
+    }
+
+    /**
+     * The configured deadline must reach the wire: the transport gets
+     * what is left of the two-second budget, not the HTTP client's own
+     * 30-second default.
+     */
+    public function test_from_config_bounds_a_trigger_with_the_configured_timeout(): void
+    {
+        $captured = null;
+        $transport = new MockHttpClient(static function (string $method, string $url, array $options) use (&$captured): MockResponse {
+            $captured = $options;
+
+            return new MockResponse('{}');
+        });
+
+        $broadcaster = PusherBroadcaster::fromConfig(new Config([
+            'BROADCAST_APP_ID' => '12345',
+            'BROADCAST_KEY' => self::KEY,
+            'BROADCAST_SECRET' => self::SECRET,
+            'BROADCAST_TIMEOUT' => '2.0',
+        ]), new Http($transport));
+
+        $broadcaster->broadcast('orders', 'order.updated', []);
+
+        self::assertIsArray($captured);
+        self::assertIsFloat($captured['timeout']);
+        // A bound, not equality: the client hands each attempt what is
+        // left of the one operation budget, already spent down a little.
+        self::assertGreaterThan(0.0, $captured['timeout']);
+        self::assertLessThanOrEqual(2.0, $captured['timeout']);
+        self::assertLessThan(Http::DEFAULT_TIMEOUT_SECONDS, $captured['timeout']);
+    }
+
+    public function test_from_config_rejects_a_timeout_that_is_not_above_zero(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('BROADCAST_TIMEOUT must be a number of seconds above zero');
+
+        PusherBroadcaster::fromConfig(new Config([
+            'BROADCAST_APP_ID' => '12345',
+            'BROADCAST_KEY' => self::KEY,
+            'BROADCAST_SECRET' => self::SECRET,
+            'BROADCAST_TIMEOUT' => '0',
         ]), new Http(new MockHttpClient()));
     }
 

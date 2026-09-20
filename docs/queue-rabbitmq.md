@@ -167,8 +167,11 @@ delay ladder and its ceiling.
 
 ## Retries and giving up
 
-Retries follow {doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS`, and
-immediate release.
+Retries follow {doc}`queue`: `maxAttempts`, `QUEUE_MAX_ATTEMPTS` and
+`QUEUE_RETRY_BASE_DELAY_SECONDS`. A delayed retry publishes its
+replacement into the same delay ladder a delayed push uses, subject to
+the same ceiling, and is still confirmed before the original delivery is
+discarded.
 
 ## See also
 

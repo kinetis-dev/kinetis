@@ -94,6 +94,32 @@ Call `Broadcaster::event()` explicitly, typically from inside the
 `#[Listener]` method that would otherwise dispatch a queued job for the
 same event.
 
+### What a trigger outcome means
+
+`PusherBroadcaster::broadcast()` returns once the broker answered `2xx`,
+meaning the trigger was accepted for fan-out. It is not a delivery
+receipt: nothing here waits for, or hears about, a subscriber.
+
+`BROADCAST_TIMEOUT` is the whole budget for one trigger, 30 seconds by
+default. Running past it, losing the connection, or meeting a non-2xx
+status raises `Kinetis\RevoltHttpClient\Exception\HttpRequestException`,
+the classified failure every call through `kinetis/revolt-http-client`
+raises; {doc}`revolt-http-client`'s "When a request fails" is the
+authority for what each `category` means.
+
+Two of those categories leave the outcome unknown. A `Timeout` or a
+`Transport` failure means no complete answer arrived, and the broker may
+have accepted the trigger before the answer was lost. The driver makes
+one wire attempt and never repeats it, so re-sending the same event
+after either failure can fan it out twice.
+
+An unencodable payload raises PHP's own `JsonException` before anything
+reaches the wire.
+
+`Broadcaster::event()` triggers the channels `broadcastOn()` names in
+order and catches nothing, so the first channel that fails ends the
+call and the channels after it are never attempted.
+
 ## Authorizing private and presence channels
 
 A client subscribing to a `private-*` or `presence-*` channel calls
@@ -330,6 +356,7 @@ BROADCAST_SECRET=your-secret
 BROADCAST_HOST=soketi.example.com
 BROADCAST_PORT=6001
 BROADCAST_TLS=false
+BROADCAST_TIMEOUT=2.0
 BROADCAST_ALLOWED_ORIGINS=https://app.example
 ```
 
@@ -346,6 +373,15 @@ on whichever one happens to broadcast first. Every key is
 `BROADCAST_ALLOWED_ORIGINS` is the one key the driver never reads: it
 belongs to the auth endpoint's own origin check above, so it applies
 whichever driver is configured and takes no connection scope.
+
+`BROADCAST_TIMEOUT` bounds one trigger, in seconds, and must be above
+zero. A non-positive value fails at worker boot and names the scoped key. It
+defaults to 30, the HTTP client's own default budget, which is rarely
+what a request-path trigger wants: a broker that stops answering holds
+the request for that long. The deadline belongs to the package, so
+`PusherBroadcaster::fromConfig()` applies it even to an `Http` the
+caller injects; construct `PusherBroadcaster` directly to keep a client
+exactly as configured.
 
 `BROADCAST_HOST` defaults to `api.pusherapp.com`, with port `443` and
 TLS on. There is no cluster selector: a Pusher account outside the

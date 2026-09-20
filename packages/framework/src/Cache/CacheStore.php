@@ -84,8 +84,12 @@ final class CacheStore
         }
 
         try {
+            // require, not require_once: a persistent worker's boot must
+            // re-evaluate this artifact on every load(), and a repeated
+            // include of the same path would return true instead of the
+            // array.
             /** @var mixed $data */
-            $data = require $path;
+            $data = require $path; // NOSONAR
         } catch (ParseError) {
             // Caught by type, and only this one: a persisted artifact's
             // intrinsic failure mode is that its PHP is malformed, which

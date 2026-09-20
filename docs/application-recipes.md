@@ -88,15 +88,20 @@ rather than restating it — read those before writing code. Start at
 - **Security/integrity**: delivery is at least once, so a handler that
   is not safe to run twice needs a unique key recorded in the same
   transaction as its effect, per {doc}`queue`'s "A job can run more than
-  once".
+  once". On the pushing side, `QueueInterface::push()` is not enlisted in
+  a transaction the caller has open: the job is enqueued even if that
+  transaction rolls back. `kinetis/queue-sql`'s `SqlQueue::pushOn()` is
+  the one backend API that places the row on a transaction the caller
+  supplies, so the enqueue commits with the work — see {doc}`queue-sql`.
 - **Verification**: run the handler twice with the same identifier and
   assert one effect, and exercise the permanent-failure path at
   `maxAttempts`.
 - **Non-goal**: treating delivery as exactly-once. Leaving `maxAttempts`
   unset defers to the worker's `QUEUE_MAX_ATTEMPTS`, which defaults to
   `0` and gives up after the first failed attempt — no setting retries a
-  job forever, and a released job is retried immediately with no
-  backoff.
+  job forever. A released job is held by the backend for the
+  exponentially-backed-off delay `QUEUE_RETRY_BASE_DELAY_SECONDS`
+  produces, so a retry lands later rather than at once.
 
 ## Outbound HTTP integration with deadline/cancellation/uncertain-write semantics
 

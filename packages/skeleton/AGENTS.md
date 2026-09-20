@@ -20,32 +20,40 @@ Do this once per session, on the first request that would read, plan or
 change application code. A question about this file, about Docker, or
 about the setup itself does not need it.
 
-The order matters, because starting the server has one: it runs inside
-this project's `app` container, the client launches one server process
-per session, and the client's own approval sits between the two. Steps 1
-to 3 are preconditions. Step 1 is yours to do; steps 2 and 3 are the
-user's, so when one of those does not hold, say so and wait rather than
-working around it.
+The order matters, because starting the server has one: it runs in a
+disposable container derived from this project's `app` service, the
+client launches one server process per session, and the client's own
+approval sits between the two. Steps 1 to 3 are preconditions. Step 1 is
+yours to do; steps 2 and 3 are the user's, so when one of those does not
+hold, say so and wait rather than working around it.
 
-1. **The Compose stack is running.** `bin/orbitron-mcp` reaches the
-   server through `docker compose exec`, which fails while the `app`
-   container is down. Confirm `app` is running, and start the stack from
-   this directory when it is not:
+1. **The stack has completed its initial setup.** `bin/orbitron-mcp`
+   launches a disposable container built from the `app` service's own
+   image, sharing its project and vendor mounts but not its process
+   lifecycle. `docker compose up --build -d` must have completed at
+   least once, so the image is available and its vendor mount is
+   populated with dependencies. Confirm the stack is up, and run that
+   command from this directory when it is not:
 
    ```sh
    docker compose ps
-   docker compose up -d
+   docker compose up --build -d
    ```
 
 2. **The client connected after that.** Ask the user to reload, restart
    or reconnect their client when the MCP configuration arrived or
-   changed after their session started, when an earlier launch failed
-   while the stack was down, or when the containers were recreated — a
-   `docker compose up --build`, a `down`, or any recreation kills the
-   live `docker compose exec` process the client is talking to, and the
-   client does not relaunch it on its own. You cannot reconnect the
-   server process you are running inside, and reading this file adds no
-   server to a session that is already running.
+   changed after their session started, or when an earlier launch was
+   attempted before the stack's initial setup completed. Docker itself
+   stopping, and the client's own termination, always end an Orbitron
+   session; an `app` restart, recreation or rebuild does not, because the
+   launcher no longer runs inside that container. A complete `docker
+   compose down` is outside that guarantee either way: on Compose
+   v5.5.1, a live session keeps the project network in use, so `down`
+   can remove `app`, leave the session alive, and still exit nonzero
+   over that network being in use. End the client session before
+   running a complete `down` — you cannot reconnect the server process
+   you are running inside, and reading this file adds no server to a
+   session that is already running.
 
 3. **The server is approved.** Project trust and approval of the
    project-local `orbitron` server are the user's decision, in their
@@ -95,11 +103,34 @@ Once Orbitron is ready, every task runs the same way:
 1. Route the task through the Orbitron documentation resource that
    covers it. `kinetis://docs/agent-workflow` names the routes;
    `resources/list` names every page.
-2. Read the installed source under `vendor/kinetis/` for anything
-   version-sensitive — a signature, a default, a config key, a failure
-   code. Those pages are published from Kinetis `main` and can describe
-   behavior newer than this project has installed; `orbitron_inspect`
-   and the installed source are what is true here.
+2. Call the installed-source tools for anything version-sensitive — a
+   signature, a default, a config key, a failure code — rather than
+   searching for the same fact under `vendor/kinetis/`. Those pages are
+   published from Kinetis `main` and can describe behavior newer than
+   this project has installed; `orbitron_inspect` and the installed
+   source are what is true here. `vendor/` is a Docker volume rather
+   than a directory on the host, so the tools are also the way to reach
+   it at all.
+
+   - **Known class or symbol.** Derive its file from the class name and
+     that package's own `composer.json` autoload map — itself a
+     readable path — then call `orbitron_search_package_source` for the
+     symbol and `orbitron_read_package_source` for a window around a
+     line it reports.
+   - **Known package, unknown file.** Search that package's `README.md`
+     for the option, setting or term; it names the class or file to go
+     to next.
+   - A success reporting `hasMore: true` is not a refusal. Continue with
+     `startLine` set to `endLine + 1` for a window, or to the last
+     reported match line plus one for a search, until the needed
+     evidence is in view or `hasMore` is `false`.
+   - Neither tool lists a directory or searches across a package, so
+     locating the file is your own work. Read `vendor/kinetis/<package>`
+     inside the container only when neither step above yields a file, or
+     when a call returns an exact refusal —
+     a `status: error` result naming why, such as `package_unknown` —
+     that cannot serve the needed evidence; when that happens, record
+     what you tried and why before falling back.
 3. Make the smallest change that satisfies the task.
 4. Run focused verification in the container:
 

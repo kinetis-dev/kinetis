@@ -45,6 +45,25 @@ final class PackageBootstrapTest extends TestCase
         new PackageBootstrap()->register(new AppScope(), new Config(['BROADCAST_DRIVER' => 'pusher']));
     }
 
+    /**
+     * The normal binding — `new Http()`, no injected client — is what
+     * reads `BROADCAST_TIMEOUT`, so a deadline that cannot bound
+     * anything stops the worker at boot instead of reaching a request.
+     */
+    public function test_a_non_positive_broadcast_timeout_fails_at_registration(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('BROADCAST_TIMEOUT');
+
+        new PackageBootstrap()->register(new AppScope(), new Config([
+            'BROADCAST_DRIVER' => 'pusher',
+            'BROADCAST_APP_ID' => '12345',
+            'BROADCAST_KEY' => 'key',
+            'BROADCAST_SECRET' => 'secret',
+            'BROADCAST_TIMEOUT' => '0',
+        ]));
+    }
+
     public function test_an_unknown_driver_throws_at_registration_naming_the_valid_set(): void
     {
         $this->expectException(BroadcastingException::class);

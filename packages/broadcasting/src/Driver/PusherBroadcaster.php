@@ -41,6 +41,16 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
         private bool $useTls = true,
     ) {}
 
+    /**
+     * The trigger deadline belongs to this factory, not to $http: the
+     * configured `BROADCAST_TIMEOUT` is applied over whatever budget an
+     * injected client already carried, so every trigger built here runs
+     * under the deadline the configuration names. Construct this class
+     * directly to keep a caller's own `Http` exactly as it is.
+     *
+     * @throws InvalidArgumentException when `BROADCAST_PORT` is outside
+     *     the TCP range or `BROADCAST_TIMEOUT` is not above zero
+     */
     public static function fromConfig(Config $config, Http $http, string $connection = 'default'): self
     {
         $portKey = Config::scopedKey('BROADCAST_PORT', $connection);
@@ -50,8 +60,15 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
             throw new InvalidArgumentException("{$portKey} must be a valid TCP port (1-65535), got {$port}.");
         }
 
+        $timeoutKey = Config::scopedKey('BROADCAST_TIMEOUT', $connection);
+        $timeout = $config->float($timeoutKey, Http::DEFAULT_TIMEOUT_SECONDS);
+
+        if ($timeout <= 0.0) {
+            throw new InvalidArgumentException("{$timeoutKey} must be a number of seconds above zero, got {$timeout}.");
+        }
+
         return new self(
-            $http,
+            $http->withTimeout($timeout),
             $config->required(Config::scopedKey('BROADCAST_APP_ID', $connection)),
             $config->required(Config::scopedKey('BROADCAST_KEY', $connection)),
             $config->required(Config::scopedKey('BROADCAST_SECRET', $connection)),
@@ -61,6 +78,23 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
         );
     }
 
+    /**
+     * Returns once the broker answered 2xx: the trigger was accepted for
+     * fan-out, never proof that a subscriber received the event.
+     *
+     * One wire attempt, not repeated here. A `Timeout` or `Transport`
+     * failure leaves the outcome unknown — the broker may have accepted
+     * the trigger before its answer was lost — so a caller that sends
+     * the event again can fan it out twice.
+     *
+     * @param array<string, mixed> $payload
+     * @throws \Kinetis\RevoltHttpClient\Exception\HttpRequestException
+     *     when an attempted request does not produce a 2xx response;
+     *     {@link https://kinetis.dev/docs/revolt-http-client.html}'s
+     *     "When a request fails" is the authority for what each
+     *     `category` means.
+     * @throws \JsonException when $payload cannot be JSON-encoded.
+     */
     #[\Override]
     public function broadcast(string $channel, string $event, array $payload): void
     {
@@ -82,8 +116,10 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
         // HMAC-SHA256 signature sign() computes below. Every Pusher-
         // protocol server (Soketi, Reverb, Pusher's own) expects exactly
         // this, so there's no algorithm to swap.
+        $bodyMd5 = md5($body); // NOSONAR
+
         $this->http
-            ->send('POST', $this->baseUrl() . $this->signedQuery('POST', $path, ['body_md5' => md5($body)]), [
+            ->send('POST', $this->baseUrl() . $this->signedQuery('POST', $path, ['body_md5' => $bodyMd5]), [
                 'body' => $body,
                 'headers' => ['Content-Type' => 'application/json'],
             ])

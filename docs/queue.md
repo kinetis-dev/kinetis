@@ -230,9 +230,29 @@ is given up on.**
 QUEUE_MAX_ATTEMPTS=5
 ```
 
-Retries are immediate. A released job is available to the next `pop()`
-straight away and there is no backoff, so a job failing against a
-dependency that is down spends its attempts as fast as workers take it.
+A retry is delayed, not immediate. The worker asks the backend to hold
+the job for `min(900, QUEUE_RETRY_BASE_DELAY_SECONDS * 2 ** (attempt -
+1))` seconds, doubling per failed attempt up to fifteen minutes, so a
+job failing against a dependency that is down does not spend every
+attempt in milliseconds before that dependency comes back. With the
+default base of `5` and four attempts, the retries fall at 5, 10 and 20
+seconds and the fourth failure is final.
+
+```{code-block} text
+QUEUE_RETRY_BASE_DELAY_SECONDS=5
+```
+
+The base accepts `0` through `900`; `0` selects immediate retries. The
+15-minute ceiling is worker policy and is not configurable.
+
+The worker never sleeps and holds nothing while a job waits: each
+backend holds a delayed retry with the same durable mechanism a delayed
+`push()` uses — a later `available_at` on SQL, a due score in Redis's
+delayed set, an SQS visibility timeout, a RabbitMQ delay-ladder
+publication — and the worker goes straight back to polling. Like a
+delayed `push()`, the delay is a floor rather than a wall-clock
+schedule.
+
 No setting retries a job forever. `maxAttempts` is checked only after
 `handle()` throws, so it cannot stop a job whose process dies each time
 it runs.

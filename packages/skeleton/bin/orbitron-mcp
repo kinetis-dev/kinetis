@@ -1,23 +1,44 @@
 #!/bin/sh
-# Launches the Orbitron stdio MCP server inside this project's `app`
-# container and relays it to whatever started this script, so an
-# MCP-capable client on the host reaches the server without PHP or
-# Composer existing on the host. Configured in .mcp.json,
-# .codex/config.toml and .gemini/settings.json.
+# Launches the Orbitron stdio MCP server in a disposable container
+# derived from this project's `app` service, and relays it to whatever
+# started this script, so an MCP-capable client on the host reaches the
+# server without PHP or Composer existing on the host. Configured in
+# .mcp.json, .codex/config.toml and .gemini/settings.json.
 #
 # The project directory is derived from this script's own location, so
 # the checked-in configuration works in any clone, at any path, from any
 # client working directory.
 #
+# `run` starts a one-off container that shares the `app` service's image
+# and mounts, but not its process lifecycle: restarting, recreating or
+# rebuilding `app` does not disconnect an established session. Docker
+# itself stopping, and this script's own process ending, always do.
+#
+# A complete `docker compose down` is outside that guarantee either way:
+# on Compose v5.5.1, a live one-off still holds the project network,
+# so `down` can remove `app`, leave this session alive, and still exit
+# nonzero over that network being in use. End this session
+# before running a complete `down`.
+#
+# --rm removes the one-off container when this script's process ends.
+# --no-deps starts only this one container, not the rest of the stack.
+# --entrypoint php bypasses the skeleton entrypoint's unconditional
+# `composer install`, which this container must not repeat or race
+# against the `app` container's own.
 # -T is required, not cosmetic: an allocated TTY would rewrite the
 # newline-delimited JSON-RPC frames the protocol depends on.
 #
-# The container must already be up. When it is not, `docker compose
-# exec` fails and the client reports the server as unavailable — which is
-# the honest outcome, and the one AGENTS.md tells the agent to act on.
+# The stack's initial `docker compose up --build -d` must have
+# completed at least once, so the image is available and its shared
+# vendor volume is populated with dependencies. Before that, this
+# command still runs and can build the image itself, but fails — the
+# entrypoint's `composer install` has never populated the volume,
+# so `vendor/bin/kinetis-orbitron-mcp` does not exist — which is the
+# outcome AGENTS.md tells the agent to act on.
 set -e
 
 project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 exec docker compose --project-directory "$project_directory" \
-    exec -T app php vendor/bin/kinetis-orbitron-mcp
+    run --rm -T --no-deps --entrypoint php app \
+    vendor/bin/kinetis-orbitron-mcp

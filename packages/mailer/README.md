@@ -81,7 +81,12 @@ total budget, and follows no redirects, so the provider endpoint the DSN
 names is the only one contacted.
 
 SMTP is not non-blocking — it opens a raw socket directly, with no
-Fiber-yield point. Send mail from a [`kinetis/queue`](https://github.com/kinetis-dev/queue) job (constructor-inject
+Fiber-yield point. Symfony inherits PHP's `default_socket_timeout` for
+the connection and each blocking stream operation; one SMTP exchange
+performs several operations, so that setting is an inactivity bound, not
+a total-send deadline. Account for that distinction when choosing a
+queue visibility timeout and worker shutdown grace. Send mail from a
+[`kinetis/queue`](https://github.com/kinetis-dev/queue) job (constructor-inject
 `Symfony\Component\Mailer\MailerInterface` in `handle()` — no extra code
 needed in either package) if that matters for your app.
 
