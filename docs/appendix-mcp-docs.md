@@ -2,17 +2,18 @@
 
 The mechanics behind {doc}`mcp-docs`: how the setup script decides it
 may write to a directory, how installs and updates share that directory,
-the methods and errors the server answers, and how a page fetch is
-bounded. The wire itself belongs to `kinetis/mcp-protocol` and is
-described in {doc}`appendix-mcp`. For setup and use, see {doc}`mcp-docs`.
+the methods and errors the server answers, the bounds on a page window,
+and how a page fetch is bounded. The wire itself belongs to
+`kinetis/mcp-protocol` and is described in {doc}`appendix-mcp`. For
+setup and use, see {doc}`mcp-docs`.
 
 "The install directory", "Install, verify and register" and "Updates"
 describe `setup.sh`, which is how this package is registered as a server
-of its own. The catalogue, protocol and fetch sections below hold for
-either way it is reached: {doc}`orbitron` composes the same
-`DocsApplication` in its own process, publishing these resources beside
-its own and delegating every read to it, with no installer, no update
-lock and no registration of its own.
+of its own. The catalogue, protocol, window and fetch sections below
+hold for either way it is reached: {doc}`orbitron` composes the same
+`DocsApplication` in its own process, publishing these resources and
+that tool beside its own and delegating every read to it, with no
+installer, no update lock and no registration of its own.
 
 ## The install directory
 
@@ -85,24 +86,27 @@ The server speaks MCP `2025-06-18` and no other revision, over
 `kinetis/mcp-protocol`; {doc}`appendix-mcp`'s "Protocol revision" and
 "Stdio framing" are the wire contract, shared with the application MCP
 server. `initialize` always answers with `2025-06-18`, whichever revision
-the client asked for. Its result declares an empty `resources` capability
-— no `tools`, since the catalogue has none, and no `listChanged` or
-`subscribe` — names the server `kinetis-mcp-docs` at the package's
-version, and carries `instructions` telling the agent to read these pages
-rather than answer from memory, naming `kinetis://docs/agent-workflow` as
-the starting resource and warning that a served page can describe
-behavior newer than the client's installed release. No method depends on
-an earlier `initialize`.
+the client asked for. Its result declares empty `tools` and `resources`
+capabilities — no `listChanged` and no `subscribe` — names the server
+`kinetis-mcp-docs` at the package's version, and carries `instructions`
+telling the agent to read these pages rather than answer from memory,
+naming `kinetis://docs/agent-workflow` as the starting resource,
+pointing at `kinetis_read_doc` for a page the client cannot take whole,
+and warning that a served page can describe behavior newer than the
+client's installed release. No method depends on an earlier
+`initialize`.
 
 | Method | Behavior |
 |---|---|
-| `initialize` | Selects `2025-06-18` and declares the `resources` capability. |
+| `initialize` | Selects `2025-06-18` and declares the `tools` and `resources` capabilities. |
 | `notifications/initialized` | Accepted and answered with nothing, as every notification is. |
 | `ping` | An empty result. |
+| `tools/list` | The one tool, `kinetis_read_doc`, with its schema and annotations. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
+| `tools/call` | Runs `kinetis_read_doc`; see "The page window" below. An unknown tool name is `-32602`. |
 | `resources/list` | The whole catalogue in one response, each entry with `uri`, `name`, `description` and `mimeType` `text/markdown`. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
 | `resources/read` | Requires a non-empty string `uri`, and returns one `contents` entry with that `uri`, `mimeType` `text/markdown` and the page's markdown as `text`. |
 
-There are no tools, prompts or subscriptions.
+There is one tool and no prompts or subscriptions.
 
 ### Errors
 
@@ -111,9 +115,13 @@ There are no tools, prompts or subscriptions.
 | `-32700` | The line is not valid JSON. |
 | `-32600` | The JSON is not an object — a top-level array (a batch) included — or `jsonrpc` is not `"2.0"`, `method` is missing or empty, or `id` is not a string or an integer. |
 | `-32601` | The method is not in the table, including `notifications/initialized` sent with an `id`. |
-| `-32602` | `params` is present and not an object — an array, a scalar or `null` — or `initialize` lacks a valid `protocolVersion`, `capabilities` or `clientInfo`, `resources/read` lacks `uri`, or `resources/list` carries `cursor`. |
+| `-32602` | `params` is present and not an object — an array, a scalar or `null` — or `initialize` lacks a valid `protocolVersion`, `capabilities` or `clientInfo`, `resources/read` lacks `uri`, `tools/call` names an unknown tool or arguments outside the window tool's schema, or a list request carries `cursor`. |
 | `-32002` | `resources/read` names a URI outside the catalogue; `error.data.uri` carries it. No fetch is made. |
 | `-32603` | The page could not be fetched or is not valid UTF-8. The message is `Could not read "<uri>".`; the URL and the real reason go to stderr. |
+
+A window the tool ran and refused is not an error code: it is an
+ordinary result carrying `isError: true` and the document described
+below, so the reason stays readable.
 
 A parse error, a batch and an unreadable `id` answer under `id: null`;
 any other error answers under the request's own `id`.
@@ -134,6 +142,77 @@ only `\r`/`\n` stripped, and every frame written whole. A write that
 makes no progress ends this binary with exit code `1` and a message on
 stderr rather than leaving a truncated frame. End of input ends the loop
 and the process exits `0`. Nothing but JSON-RPC frames reaches stdout.
+
+## The page window
+
+`kinetis_read_doc` returns one bounded line window of one catalogue
+page, for a client whose tool-result budget a whole page would overflow.
+It is annotated read-only, non-destructive, idempotent and open-world:
+it changes nothing, and it reaches the documentation origin on every
+call.
+
+Its schema is closed — `additionalProperties: false` — and admits three
+members:
+
+| Argument | Contract |
+|---|---|
+| `uri` | Required, a non-empty string naming a catalogue page. |
+| `startLine` | Optional integer from 1, default 1. The first line returned, counting from 1. |
+| `lineCount` | Optional integer from 1 to 200, default 200. The most lines returned. |
+
+A missing, misspelled, mistyped or out-of-range argument is `-32602`,
+decided before any page is fetched. The server validates the whole
+schema itself rather than relying on the client having done so.
+
+A success is one JSON text document:
+
+```{code-block} json
+{
+    "status": "ok",
+    "uri": "kinetis://docs/appendix-routing-validation",
+    "startLine": 1,
+    "endLine": 118,
+    "hasMore": true,
+    "content": "# Appendix: Routing & Validation\n..."
+}
+```
+
+`endLine` is the last line the response actually carries, and `hasMore`
+says whether the page continues past it. Both describe that one
+response. A caller reads on by repeating the call with `startLine` set
+to `endLine + 1`; there is no cursor, token or byte offset, and none is
+needed, because the line numbers are the page's own.
+
+The page is split after every newline, so each line carries its own
+terminator: CRLF survives, a blank line is a line, and a page whose
+last line has no newline keeps it that way. Concatenating successive
+windows of one page therefore reproduces it byte for byte, as long as
+the page has not changed on `main` between the calls — each call
+fetches it again, with no snapshot held across them; see below.
+
+Two bounds end a window, whichever comes first: `lineCount` lines, and
+32,768 bytes of `content`. A line that would carry the response past
+the byte ceiling ends the window before it rather than being split, so
+`endLine` can fall short of the lines asked for — some pages carry
+single lines of several kilobytes, which is why a line count alone does
+not bound a response. The first line of a window is always returned,
+whatever its size: a window carrying nothing would leave a caller no
+line to continue from, so a single line longer than the ceiling is
+served whole, and that is the only case a response exceeds it.
+
+A refusal is the same shape, carrying a stable code and nothing else:
+
+| Code | Refused when |
+|---|---|
+| `resource_unknown` | `uri` is well-formed but names no catalogue page. No fetch is made. |
+| `line_out_of_range` | `startLine` is past the last line of the page. |
+
+Every call fetches the page again, under the same bounds as a resource
+read. Nothing is cached, retained or snapshotted between calls, so two
+windows of one page can come from two different states of `main`, and
+`hasMore` is only ever a statement about the response carrying it. A
+fetch or UTF-8 failure answers `-32603` exactly as a resource read
+does.
 
 ## Page fetch
 

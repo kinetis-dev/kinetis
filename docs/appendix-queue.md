@@ -552,6 +552,56 @@ event's serialized constructor arguments, so:
   its own event object while the worker holds a rebuilt copy. A listener
   that must stop propagation runs inline.
 
+### Connection ownership
+
+A queue backend lives for the whole worker, so the connection behind it
+is application-scoped: opened once, and closed once when that worker
+ends. `Kinetis\Queue\DisposableQueueInterface` is where that lives —
+`dispose()`, extending `QueueInterface`, declared by `SqlQueue`,
+`RedisQueue` and `RabbitMqQueue`. `Kinetis\QueueSqs\SqsQueue` does not
+declare it: its transport is an HTTP client with no queue-owned
+connection to close.
+
+Ownership travels with construction, not with the type:
+
+- **A backend's factory** opens the client or link it hands the queue,
+  so it hands over the operation that closes it too.
+  `SqlQueueFactory::fromConfig()` gives the queue its link's `close()`,
+  `RedisQueueFactory::fromConfig()` the `Kinetis\Redis\Client`'s
+  (`Amp\Redis\RedisClient` is a command facade with no close of its
+  own), and `RabbitMqQueueFactory::fromConfig()` the
+  `Thesis\Amqp\Client`'s `disconnect()`.
+- **A constructor called directly** receives a client or link the caller
+  already owns and closes none of it. `dispose()` is then a no-op, and
+  closing that transport stays with whoever opened it — which is what
+  keeps a link shared with the rest of the application usable after the
+  queue is finished with it. A caller that wants the queue to own what
+  it passed supplies the closing operation as the constructor's last
+  argument.
+
+`dispose()` is idempotent and safe before the queue's first I/O: a
+worker that never popped anything still disposes cleanly, and a second
+call does nothing.
+
+With `QUEUE_CONNECTION` set, this package's bootstrap registers
+`dispose()` on the application scope for the backend it builds, at the
+moment something first injects the queue. It registers nothing for a
+queue an application's own `bootstrap.php` bound, since that connection
+belongs to whoever opened it. An application that builds a backend
+itself registers the disposal itself:
+
+```{code-block} php
+use Kinetis\Queue\QueueInterface;
+use Kinetis\QueueSql\SqlQueue;
+use Kinetis\QueueSql\SqlQueueFactory;
+
+$queue = SqlQueueFactory::fromConfig($config);
+
+$app->instance(SqlQueue::class, $queue);
+$app->instance(QueueInterface::class, $queue);
+$app->onDispose($queue->dispose(...));
+```
+
 ### Multiple backends
 
 Different queues can live on different backends — a `RedisQueue` for
@@ -565,9 +615,17 @@ use Kinetis\QueueRedis\RedisQueueFactory;
 use Kinetis\QueueSql\SqlQueue;
 use Kinetis\QueueSql\SqlQueueFactory;
 
-$app->instance(RedisQueue::class, RedisQueueFactory::fromConfig($config, 'fast'));
-$app->instance(SqlQueue::class, SqlQueueFactory::fromConfig($config, 'ledger'));
+$fast = RedisQueueFactory::fromConfig($config, 'fast');
+$ledger = SqlQueueFactory::fromConfig($config, 'ledger');
+
+$app->instance(RedisQueue::class, $fast);
+$app->instance(SqlQueue::class, $ledger);
+$app->onDispose($fast->dispose(...));
+$app->onDispose($ledger->dispose(...));
 ```
+
+Each connection was opened here, so each is closed here — see
+[Connection ownership](#connection-ownership).
 
 Each factory reads its own keys under the connection name it is given —
 `REDIS_FAST_*` and `QUEUE_FAST_VISIBILITY_TIMEOUT_SECONDS` for the first,
@@ -575,7 +633,8 @@ Each factory reads its own keys under the connection name it is given —
 second. Constructing a backend directly means supplying its transport:
 `SqlQueue` takes a `Kinetis\Persistence\Contract\SqlLink`, and
 `RedisQueue` takes an `Amp\Redis\RedisClient` built over {doc}`redis`'s
-client as `new RedisClient($client->link())`.
+client as `new RedisClient($client->link())`. A transport supplied that
+way stays the caller's to close.
 
 Code that pushes to one backend injects its concrete class:
 

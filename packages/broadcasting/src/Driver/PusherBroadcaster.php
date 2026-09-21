@@ -88,6 +88,9 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
      * the event again can fan it out twice.
      *
      * @param array<string, mixed> $payload
+     * @throws \Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException
+     *     when $channel doesn't match the Pusher protocol's own
+     *     grammar — raised before anything is encoded or sent.
      * @throws \Kinetis\RevoltHttpClient\Exception\HttpRequestException
      *     when an attempted request does not produce a 2xx response;
      *     {@link https://kinetis.dev/docs/revolt-http-client.html}'s
@@ -98,6 +101,13 @@ final readonly class PusherBroadcaster implements BroadcasterInterface
     #[\Override]
     public function broadcast(string $channel, string $event, array $payload): void
     {
+        // A broker can answer 2xx for channel names the protocol's own
+        // grammar rejects — a healthy-looking publish to a channel no
+        // conforming subscription could ever be authorized for. The
+        // trigger boundary is held to the same rule the signing
+        // methods enforce.
+        PusherProtocol::assertValidChannelName($channel);
+
         // The wire format encodes `data` as a JSON string nested inside
         // the outer JSON body, not a raw nested object — confirmed
         // against the real SDK's make_event(), which always

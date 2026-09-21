@@ -25,6 +25,13 @@ use Psr\Http\Message\UploadedFileInterface;
  * error refused at construction: no file could satisfy either, so the
  * declaration is wrong rather than the request.
  *
+ * This bounds one multipart part, not the request. `maxBytes` must leave
+ * enough headroom below the application's `MAX_BODY_SIZE` for the
+ * complete encoded request — the whole form plus multipart framing.
+ * Otherwise the declared maximum is unreachable: the framing exhausts the
+ * body cap first, and `413` wins before this constraint's `422` ever
+ * runs. See the routing and validation guide's "File uploads" section.
+ *
  * {@see schema()} publishes nothing. JSON Schema's string keywords
  * measure a string's own characters, and this measures the bytes of a
  * multipart part a `{type: string, format: binary}` schema stands for —

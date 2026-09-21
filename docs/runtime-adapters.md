@@ -176,9 +176,12 @@ server {
 }
 ```
 
-`docker/kinetis.ini` is the file shown under FrankenPHP. `kinetis/skeleton`
-ships this setup with a `docker-compose.yml` that mounts the project at
-`/app` in both containers and names the PHP-FPM service `app`.
+`docker/kinetis.ini` carries the `enable_post_data_reading=0` shown
+under FrankenPHP. `kinetis/skeleton` ships this setup with a
+`docker-compose.yml` that mounts the project at `/app` in both
+containers and names the PHP-FPM service `app`. Its copy of the ini also
+turns PHP's error display off, so a diagnostic reaches the container log
+rather than the response body.
 
 nginx answers a body over `client_max_body_size` with its own `413`
 before PHP runs. Its default is 1 MiB, under the 2 MiB `MAX_BODY_SIZE`

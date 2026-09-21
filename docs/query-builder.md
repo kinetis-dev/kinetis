@@ -324,7 +324,7 @@ $id = new Query($db)->table('articles')->insertGetId(['title' => $title, 'slug' 
 // int|string|null — a string for a MySQL id beyond PHP_INT_MAX
 
 $inserted = new Query($db)->table('favorites')->insertOrIgnore(['user_id' => $userId, 'article_id' => $articleId]);
-// int: 1 when the row was written, 0 when a unique key already held it
+// int: 1 when the row was written, 0 when a conflicting row already held it
 
 new Query($db)->table('article_stats')->upsert(
     ['article_id' => $id, 'views' => $views, 'updated_at' => $now],
@@ -339,8 +339,11 @@ $deleted = new Query($db)->table('articles')->where('status', '=', 'spam')->dele
 
 - `insert()` takes one `column => value` row or a list of rows naming the
   same columns in the same order, and runs one statement.
-- `insertOrIgnore()` skips a row that conflicts with a unique key; every
-  other error, such as a `NOT NULL` violation, still fails the statement.
+- `insertOrIgnore()` skips a conflicting row; every other error, such as
+  a `NOT NULL` violation, still fails the statement. MySQL and MariaDB
+  skip a unique-key conflict; PostgreSQL also skips an
+  exclusion-constraint conflict
+  ({ref}`query-builder-reference-insert-or-ignore`).
 - `upsert()` inserts each row, and a row that conflicts sets the `$update`
   columns of the existing row instead. On MySQL and MariaDB a conflict on
   any unique key of the table triggers the update, and the affected-row

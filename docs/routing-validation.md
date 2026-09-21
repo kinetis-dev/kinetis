@@ -460,6 +460,19 @@ check the content where your code reads it, and do not use the client
 filename as a storage path.
 ```
 
+```{warning}
+`#[FileSize]` bounds one uploaded part. `MAX_BODY_SIZE` (see [Request body
+limits](middleware.md#request-body-limits)) bounds the complete encoded
+request that carries it — every field and file, plus the multipart framing
+between them, including the boundary the client chose. That framing has no
+fixed size, so a `#[FileSize(maxBytes: ...)]` declared without enough
+headroom below `MAX_BODY_SIZE` can be unreachable: the envelope pushes the
+request over the body cap first, and the request is refused with `413`
+before routing runs, not with `FileSize`'s `422`. Leave enough headroom
+below `MAX_BODY_SIZE` for the rest of the form and for an envelope whose
+exact size you do not control.
+```
+
 - A file control the user left empty counts as an omitted field: required,
   defaulted, `null` or `Absent::Value`, exactly as for a text field.
 - An upload that failed in transfer is one `upload_failed` violation, and

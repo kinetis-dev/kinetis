@@ -46,6 +46,13 @@ way. Configuring Redis (`REDIS_HOST`/
 error naming the package to install, not a silent fallback to
 `NullSimpleCache`.
 
+Redis transport and serialization failures arrive as
+`Kinetis\SimpleCache\Exception\CacheException`, which implements
+`Psr\SimpleCache\CacheException` and names the operation, never the key.
+A value the serializer cannot encode, and a stored value it cannot
+decode, are failures like any other: `get()` reports one rather than
+returning a miss or the default, and leaves the entry where it is.
+
 ## Configuration
 
 Read from the environment (or `.env`) via `Kinetis\Config`. Every key

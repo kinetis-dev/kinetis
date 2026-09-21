@@ -33,6 +33,17 @@ commas, connect to whichever answers first:
 QUEUE_RABBITMQ_URL=amqp://guest:guest@rabbit-a:5672,rabbit-b:5672/
 ```
 
+Username, password and vhost are percent-decoded, so a value carrying a
+URI delimiter is written encoded — `%40` for `@`, `%2F` for `/`:
+
+```{code-block} text
+QUEUE_RABBITMQ_URL=amqp://guest:p%40ssword@rabbit:5672/%2Fstaging
+```
+
+That authenticates as `guest` with the password `p@ssword` against the
+vhost `/staging`. An empty path, the trailing `/` in every example
+above, is the default vhost `/`.
+
 `QUEUE_RABBITMQ_QUEUE_PREFIX` (optional) is prepended to every queue
 name, so staging and production can share one broker without both using
 `default`. Named connections scope both keys:
@@ -129,6 +140,17 @@ so the choice is which error to take:
 
 A counter written inside the effect's own transaction is neither: it
 rolls back with the effect it was meant to count.
+
+## Connection lifetime
+
+`RabbitMqQueueFactory::fromConfig()` builds the queue's
+`Thesis\Amqp\Client` and hands the queue that client's `disconnect()`,
+which closes this instance's channel and the connection. With
+`QUEUE_CONNECTION=rabbitmq` that runs when the worker ends, with no
+wiring of yours; build the backend yourself and registering
+`$app->onDispose($queue->dispose(...))` is yours too. A `RabbitMqQueue`
+constructed around a client you built disconnects nothing — see
+{doc}`appendix-queue`'s "Connection ownership".
 
 ## Clearing a queue
 

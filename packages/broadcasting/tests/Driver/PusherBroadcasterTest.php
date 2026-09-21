@@ -128,6 +128,44 @@ final class PusherBroadcasterTest extends TestCase
         self::assertSame($expectedSignature, $query['auth_signature']);
     }
 
+    /**
+     * @return list<array{0: string}>
+     */
+    public static function brokerAcceptedButUngrammaticalChannelProvider(): array
+    {
+        // Soketi 1.6.1 answers 2xx for a trigger naming any of these,
+        // while the protocol grammar — and so every conforming
+        // subscription path — rejects them.
+        return [
+            'slash' => ['private-tenant.acme/eu'],
+            'space' => ['private-tenant.acme eu'],
+            'colon' => ['private-tenant.acme:eu'],
+        ];
+    }
+
+    #[DataProvider('brokerAcceptedButUngrammaticalChannelProvider')]
+    public function test_broadcast_rejects_an_ungrammatical_channel_before_reaching_the_transport(string $channel): void
+    {
+        $attempts = 0;
+        $transport = new MockHttpClient(static function () use (&$attempts): MockResponse {
+            $attempts++;
+
+            return new MockResponse('{}');
+        });
+        $broadcaster = new PusherBroadcaster(new Http($transport), '12345', self::KEY, self::SECRET);
+
+        try {
+            $broadcaster->broadcast($channel, 'order.updated', ['status' => 'shipped']);
+            self::fail('A channel name the protocol grammar rejects must not be triggered.');
+        } catch (InvalidPusherProtocolValueException) {
+            // Expected. The assertion below is the other half: the
+            // rejection came before the wire, not after the 2xx a
+            // broker would have answered for this name.
+        }
+
+        self::assertSame(0, $attempts, 'No trigger request may reach the transport.');
+    }
+
     public function test_broadcast_throws_on_a_non_2xx_response(): void
     {
         $transport = new MockHttpClient(static fn (): MockResponse => new MockResponse('{"error":"nope"}', ['http_code' => 401]));

@@ -375,9 +375,6 @@ column in either that is not inserted.
   only on a conflict with exactly `$uniqueBy`'s constraint.
 - The affected-row count is 1 per inserted row, 2 per updated row and 0
   per row left unchanged. PostgreSQL counts 1 per row.
-- `insertOrIgnore()` assigns a column to itself instead of using
-  `INSERT IGNORE`, which also turns other errors into warnings and writes
-  the row.
 
 (query-builder-reference-locks)=
 ## Locks
@@ -410,7 +407,26 @@ transaction (see {doc}`appendix-database`).
 | `insertGetId()` | the driver's last insert id | `RETURNING` the key |
 | `IN` subquery with `limit()`/`offset()` | refused | compiled |
 
-Everything else compiles identically.
+Everything else compiles identically. The two `insertOrIgnore()` spellings
+do not skip the same conflicts.
+
+(query-builder-reference-insert-or-ignore)=
+### Which conflicts `insertOrIgnore()` skips
+
+- MySQL and MariaDB resolve a conflict on any unique key of the table and
+  nothing else. The spelling assigns a column to itself instead of using
+  `INSERT IGNORE`, which also turns other errors into warnings and writes
+  the row.
+- PostgreSQL names no conflict target, so `ON CONFLICT DO NOTHING` skips
+  a conflict on any unique constraint and on an exclusion constraint as
+  well — an overlapping `tstzrange` under `EXCLUDE USING gist`, which
+  `insert()` raises as SQLSTATE `23P01`.
+- The returned count is rows inserted; it does not say which constraint
+  held a row back. Use `insert()` when the conflict must be observable:
+  it raises a `QueryException` whose `getSqlState()` can be inspected.
+
+On both families every other error still fails the whole statement and
+writes nothing.
 
 (query-builder-reference-values)=
 ## How values reach the database

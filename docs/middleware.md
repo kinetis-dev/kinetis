@@ -442,6 +442,13 @@ the `FormLimits` ceilings, is refused before routing:
 }
 ```
 
+For a `multipart/form-data` request, "the body" is the complete encoded
+request: every field and file, plus the multipart framing between them,
+including the boundary the client chose. It is not just the uploaded
+bytes. A per-file `#[FileSize]` ceiling (see [File
+uploads](routing-validation.md#file-uploads)) must leave headroom under
+`MAX_BODY_SIZE` for that framing.
+
 A form body that cannot be parsed is a `400` with the fixed message
 `The request body could not be parsed.`
 

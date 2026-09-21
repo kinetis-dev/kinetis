@@ -7,9 +7,10 @@ is installed as a development dependency so that you can read this
 project's own facts instead of assuming them: the Kinetis context
 document, the `kinetis/*` versions actually installed here, a
 deterministic check of the project layout, and the current Kinetis
-documentation pages as `kinetis://docs/*` resources on that same
-connection. Orbitron is the whole registration — there is no second
-documentation server to set up.
+documentation pages on that same connection — as `kinetis://docs/*`
+resources, and as bounded line windows through `kinetis_read_doc`.
+Orbitron is the whole registration — there is no second documentation
+server to set up.
 
 This file is the whole agent contract for this project. `CLAUDE.md` and
 `GEMINI.md` import it and add nothing.
@@ -100,33 +101,43 @@ one.
 
 Once Orbitron is ready, every task runs the same way:
 
-1. Route the task through the Orbitron documentation resource that
-   covers it. `kinetis://docs/agent-workflow` names the routes;
-   `resources/list` names every page.
+1. Route the task through the Orbitron documentation page that covers
+   it. `kinetis://docs/agent-workflow` names the routes;
+   `resources/list` names every page. Prefer `kinetis_read_doc` for a
+   page's content — it takes the same `uri` and returns at most 200
+   lines and 32 KiB per call, continuing from `endLine + 1` — and read
+   the `kinetis://docs/*` resource when you want the page whole and the
+   client can take it.
 2. Call the installed-source tools for anything version-sensitive — a
    signature, a default, a config key, a failure code — rather than
-   searching for the same fact under `vendor/kinetis/`. Those pages are
+   searching for the same fact under `vendor/`. Those pages are
    published from Kinetis `main` and can describe behavior newer than
    this project has installed; `orbitron_inspect` and the installed
    source are what is true here. `vendor/` is a Docker volume rather
    than a directory on the host, so the tools are also the way to reach
-   it at all.
+   it at all. They accept any package this project installed, not only
+   `kinetis/*`, so an exact third-party dependency's behavior is settled
+   the same way; `orbitron_inspect` names the `kinetis/*` packages and
+   `composer.lock` names every other.
 
    - **Known class or symbol.** Derive its file from the class name and
      that package's own `composer.json` autoload map — itself a
      readable path — then call `orbitron_search_package_source` for the
      symbol and `orbitron_read_package_source` for a window around a
      line it reports.
-   - **Known package, unknown file.** Search that package's `README.md`
-     for the option, setting or term; it names the class or file to go
-     to next.
+   - **Known package, unknown file.** Call
+     `orbitron_list_package_source` for the direct children of `src`,
+     `bin` or `resources`, or of a directory beneath one, and list the
+     directory the task is about; or search that package's `README.md`
+     for the option, setting or term, which names the class or file to
+     go to next.
    - A success reporting `hasMore: true` is not a refusal. Continue with
      `startLine` set to `endLine + 1` for a window, or to the last
      reported match line plus one for a search, until the needed
      evidence is in view or `hasMore` is `false`.
-   - Neither tool lists a directory or searches across a package, so
-     locating the file is your own work. Read `vendor/kinetis/<package>`
-     inside the container only when neither step above yields a file, or
+   - No tool searches across a package, so choosing the file is your
+     own work. Read `vendor/<vendor>/<package>` inside the container only
+     when no step above yields a file, or
      when a call returns an exact refusal —
      a `status: error` result naming why, such as `package_unknown` —
      that cannot serve the needed evidence; when that happens, record

@@ -1,6 +1,6 @@
 {
     "name": "kinetis/mcp-docs",
-    "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
+    "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio, with one tool that returns a bounded line window of a page for a client that cannot take it whole. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
     "type": "library",
     "license": "MIT",
     "authors": [

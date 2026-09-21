@@ -81,6 +81,17 @@ the job may run again. `Kinetis\Redis\Exception\ConnectionFailed` means
 the command never reached Redis. Raised inside `queue:work`, either
 exception stops the worker.
 
+## Connection lifetime
+
+The queue opens a `Kinetis\Redis\Client` of its own rather than sharing
+the cache's, and `RedisQueueFactory::fromConfig()` hands the queue that
+client's `close()`. With `QUEUE_CONNECTION=redis` the connection is
+closed when the worker ends, with no wiring of yours; build the backend
+yourself and registering `$app->onDispose($queue->dispose(...))` is
+yours too. A `RedisQueue` constructed around an `Amp\Redis\RedisClient`
+you built closes nothing — see {doc}`appendix-queue`'s "Connection
+ownership".
+
 ## Clearing a queue
 
 `RedisQueue` declares `ClearableQueueInterface` (see {doc}`queue`'s

@@ -54,6 +54,14 @@ it will run them in.)
 The project is yours from that point on. `docker-compose.yml` mounts it
 at `/app`, and every path the containers read is inside it.
 
+PHP errors are logged rather than displayed, so a response stays the
+framework's own document with its own status code. The diagnostic is in
+the `app` container's log:
+
+```sh
+docker compose logs -f app
+```
+
 ## Building it with an AI coding agent
 
 Start the stack, open your agent in this directory, and describe what
@@ -124,21 +132,29 @@ That one server is the whole registration. The Kinetis documentation
 pages arrive on the same connection as `kinetis://docs/*` resources,
 fetched by [`kinetis/mcp-docs`](https://kinetis.dev/docs/mcp-docs.html)
 from inside it — there is no second server to configure, and
-`kinetis://docs/agent-workflow` is where the agent starts. Those pages
-are published from Kinetis `main`, so `orbitron_inspect` and the two
+`kinetis://docs/agent-workflow` is where the agent starts. The same
+package's `kinetis_read_doc` tool reads one bounded line window of a
+page, for a page longer than the client takes in one tool result; the
+whole-page resources stay available either way. Those pages
+are published from Kinetis `main`, so `orbitron_inspect` and the three
 installed-source tools — `orbitron_read_package_source` for a bounded
-line window of one installed `kinetis/*` package's own file, and
+line window of one installed package's own file,
 `orbitron_search_package_source` for the lines of one such file that
-contain a literal string, both read live over that same connection —
-stay the authority for anything version-sensitive. A `hasMore: true` is
-a success, not a refusal: the agent continues from `endLine + 1`, or
-from the last reported match line plus one, before treating the file as
-exhausted. An agent with that MCP connection searches the file to find
-the line and reads a window around it, and reaches
-`vendor/kinetis/<package>` only when neither yields a file or a call is
-refused — `vendor/` is a Docker volume, so that means reading it inside
-the container. A shell-only agent has no such call to make and reads it
-in the container from the start.
+contain a literal string, and `orbitron_list_package_source` for the
+direct children of one directory of such a package, all read live over
+that same connection — stay the authority for anything
+version-sensitive. Any package this project installed is readable that
+way, so the same three calls settle a third-party dependency's exact
+behavior as well as a `kinetis/*` one; `orbitron_inspect` names the
+`kinetis/*` packages, and `composer.lock` names every other. A `hasMore: true` is a success, not a refusal: the
+agent continues from `endLine + 1`, or from the last reported match line
+plus one, before treating the file as exhausted. An agent with that MCP
+connection lists the directory to find the file, searches the file to
+find the line and reads a window around it, and reaches
+`vendor/<vendor>/<package>` only when none of those yields a file or a
+call is refused — `vendor/` is a Docker volume, so that means reading it
+inside the container. A shell-only agent has no such call to make and
+reads it in the container from the start.
 
 ### What you get from the archive
 

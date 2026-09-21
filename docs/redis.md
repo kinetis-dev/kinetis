@@ -70,7 +70,10 @@ final readonly class ArticleSummaries
   `REDIS_CACHE_NAMESPACE` (letters, digits, underscores and dashes;
   `default` unless set). A failure names the operation, never the key, so
   a key holding a session identifier or token hash stays out of logs and
-  error pages.
+  error pages. A value the serializer cannot encode, and a stored value
+  it cannot decode, are failures like any other: they raise
+  `CacheException` rather than returning a miss or the default, and
+  `get()` leaves the entry where it is.
 - **Several keys.** Prefer `getMultiple()` and `deleteMultiple()` to a
   loop of single calls ({ref}`redis-reference-batching`).
 - **`clear()`** deletes this namespace's keys and nothing else, by

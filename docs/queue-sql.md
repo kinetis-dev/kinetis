@@ -96,12 +96,20 @@ $queue = SqlQueueFactory::fromConfig($config);
 
 $app->instance(SqlQueue::class, $queue);
 $app->instance(QueueInterface::class, $queue);
+$app->onDispose($queue->dispose(...));
 ```
 
 Ordinary `QueueInterface` consumers and `pushOn()` callers then share
 one backend instance and its one connection pool. Binding only
 `SqlQueue::class` leaves the default `QueueInterface` binding in place,
 and it builds a second `SqlQueue` with a pool of its own.
+
+The factory opened that connection, so the queue owns it and the
+`onDispose()` line is what closes it when the worker ends — the same
+registration the default `QueueInterface` binding makes for the backend
+it builds. See {doc}`appendix-queue`'s "Connection ownership", which
+also covers a `SqlQueue` constructed directly around a link the
+application already has.
 
 {doc}`appendix-queue`'s "Multiple backends" shows the same registration
 where several backends run side by side. `pushOn()` takes a raw

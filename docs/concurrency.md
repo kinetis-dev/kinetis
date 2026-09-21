@@ -26,16 +26,26 @@ final readonly class OrderController
     #[Get('/orders/{id}/summary')]
     public function summary(int $id): array
     {
-        [$order, $itemCount, $views] = concurrently([
+        /** @var array{object|array|null, int, mixed} $result */
+        $result = concurrently([
             fn () => new Query($this->db)->table('orders')->where('id', '=', $id)->first(),
             fn () => new Query($this->db)->table('order_items')->where('order_id', '=', $id)->count(),
             fn () => $this->cache->get("order.views.{$id}"),
         ]);
+        [$order, $itemCount, $views] = $result;
 
         return ['order' => $order, 'itemCount' => $itemCount, 'views' => (int) $views];
     }
 }
 ```
+
+`concurrently()` is declared `@template T` / `@param list<callable(): T>
+$tasks` / `@return list<T>`: one shared type parameter across every task.
+Given heterogeneous closures, PHPStan resolves `T` to the union of all three
+return types and reports every destructured element as that same union,
+not as its own position's type. The `array{...}` shape above states the
+tuple PHPStan can't infer on its own, so `$order`, `$itemCount` and
+`$views` keep their real per-position types after destructuring.
 
 Each closure is a task. Results come back in task order, whatever order
 the tasks finish in. `MysqlLink` is bound by `kinetis/database-bridge`
