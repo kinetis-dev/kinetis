@@ -380,11 +380,17 @@ Arguments:
 | `startLine` | integer | Optional, at least 1, default 1. |
 | `lineCount` | integer | Optional, 1 to 200, default 200. |
 
-`path` must resolve to exact `composer.json`, exact `README.md`, or a file
-beneath `src/`, `bin/` or `resources/`. The resolved target — a symlink
-included — must stay inside that same admitted location, must be a
-regular file, must be at most 1 MiB, and must be UTF-8 text with no NUL
-byte. A call outside the schema — an unknown argument, a wrong type, or a
+`path` is any file under that package's install root: a class the
+autoload map points at the root itself, `src/`, `lib/`, a generated or
+classmap directory, the package's own tests, `composer.json` and
+`README.md` alike. It is relative and `/`-separated, with no empty
+segment, no segment beginning with `.` — which refuses `.`, `..` and a
+hidden name such as `.git` or `.env` — and no first segment of `vendor`,
+which keeps the read inside the named package rather than its dependency
+tree; a `vendor` directory deeper down is that package's own content. The
+resolved target — a symlink included, re-admitted against those same
+rules — must stay under that root, must be a regular file, must be at
+most 1 MiB, and must be UTF-8 text with no NUL byte. A call outside the schema — an unknown argument, a wrong type, or a
 value out of range — is a JSON-RPC `-32602` protocol error before any
 lookup runs, not a refusal document.
 
@@ -395,7 +401,7 @@ A success reports `status: "ok"`, `package`, `version`, `path`,
 | `code` | Meaning |
 |---|---|
 | `package_unknown` | `package` is not a real installed, non-root package. |
-| `path_not_admitted` | `path` does not name an admitted location, or a symlink resolves to a different, unserved location still inside the package. |
+| `path_not_admitted` | `path` is outside the admitted syntax, or a symlink resolves to a name this tool does not serve still inside the package. |
 | `source_missing` | The resolved target does not exist. |
 | `source_unreadable` | The resolved target lies outside the package, is not a regular file, or could not be opened or read. |
 | `source_oversize` | The file is larger than 1 MiB. |
@@ -407,9 +413,9 @@ generated one, read again for every call, so a completed dependency
 change is visible to the next one and an edit to an already-installed
 source file is visible on the very next call. This tool never reads the
 application's own controllers, tests, configuration or credentials, and
-never reads the Composer root project or anything in an installed
-package outside the five admitted locations, that package's own tests
-included; that boundary is [Trust boundary](#trust-boundary).
+never reads the Composer root project, a hidden name, or that package's
+own top-level `vendor/`; that boundary is [Trust
+boundary](#trust-boundary).
 
 (search-installed-package-source)=
 
@@ -469,12 +475,12 @@ Arguments:
 | `package` | string | Required, non-empty, a real installed, non-root package name. |
 | `path` | string | Required, non-empty, at most 256 Unicode code points, relative with `/` separators. |
 
-`path` must name `src`, `bin` or `resources` itself, or a directory
-beneath one of them; the package root and its two readable root files
-are not listable. There is no recursion, pattern, filter or paging
-argument: a subdirectory is listed by naming it in the next call, and a
-call outside the schema is the same JSON-RPC `-32602` before any lookup
-runs.
+`path` is any directory under that package's install root, under the
+same syntax the window takes, or the single literal `.` for the root
+itself — which is where to start when the layout is unknown. There is no
+recursion, pattern, filter or paging argument: a subdirectory is listed
+by naming it in the next call, and a call outside the schema is the same
+JSON-RPC `-32602` before any lookup runs.
 
 A success reports `status: "ok"`, `package`, `version`, `path` and
 `entries`. `entries` is the direct children, each as exactly a `name`
@@ -482,17 +488,18 @@ and a `type` of `"file"` or `"directory"`, in bytewise name order —
 uppercase before lowercase, and never a locale's order. An empty
 directory is a success with `entries: []`, not a refusal.
 
-A child is reported only when its resolved target is a regular file or a
-directory that still lies in the same admitted location, which is the
-rule a read of that name would apply: a link out of the package, a link
-into a part of it this tool does not serve, a dangling link, and a
-socket, device or fifo are absent rather than offered as something to
-read next. No resolved path is reported either way.
+A child is reported only when its own name and the target it resolves to
+are both admitted under the same install root, which is the rule a read
+of that name would apply: a hidden entry, the package's own top-level
+`vendor/`, a link onto either of those, a link out of the package, a
+dangling link, and a socket, device or fifo are absent rather than
+offered as something to read next. No resolved path is reported either
+way.
 
 | `code` | Meaning |
 |---|---|
 | `package_unknown` | `package` is not a real installed, non-root package. |
-| `path_not_admitted` | `path` does not name a listable directory — the package root and a root file included — or a symlink resolves to a different, unserved location still inside the package. |
+| `path_not_admitted` | `path` is outside the admitted syntax, `.` excepted as the package root, or a symlink resolves to a name this tool does not serve still inside the package. |
 | `source_missing` | The resolved target does not exist. |
 | `source_unreadable` | The resolved target lies outside the package, the directory could not be opened, or a child's name is not valid UTF-8. |
 | `source_not_directory` | The admitted path resolves to a regular file. |
@@ -993,13 +1000,12 @@ Orbitron reads three things on this machine: Composer's
 installed-package metadata, the project's own `composer.json`, and — for
 `orbitron:scaffold` — the existence and symlink state of four fixed
 directories and two fixed paths. Over MCP only, it also reads a bounded
-line window of one real installed, non-root package's own
-`composer.json`, `README.md`, or a file beneath `src/`, `bin/` or
-`resources/`, searches one such file for a literal string, and lists the
-direct children of `src/`, `bin/` or `resources/` or of a directory
-beneath one — never the Composer root project, meaning the application
-itself, or anything outside those admitted locations. No application
-source, no configuration, no credentials. It starts no process.
+line window of any file under one real installed, non-root package's
+install root, searches one such file for a literal string, and lists any
+directory under that same root — never the Composer root project,
+meaning the application itself, a hidden name, or that package's own
+top-level `vendor/`. No application source, no configuration, no
+credentials. It starts no process.
 
 It writes two files: the scaffold's fixed targets, only on
 `orbitron:scaffold --apply` or `orbitron_scaffold_apply`, each through a
@@ -1010,9 +1016,9 @@ path to either write target — the root comes from
 constant — and nothing creates a directory.
 `orbitron_read_package_source`, `orbitron_search_package_source` and
 `orbitron_list_package_source` are the only calls that take a
-caller-supplied path, and only for reading — admitted against the fixed
-locations above, with the resolved target re-admitted, before anything
-reaches the filesystem.
+caller-supplied path, and only for reading — admitted by the syntax above
+against that one install root, with the resolved target re-admitted,
+before anything reaches the filesystem.
 
 One operation leaves this machine, and only over MCP: reading a
 `kinetis://docs/*` resource, which `kinetis/mcp-docs` fetches over HTTPS
@@ -1034,10 +1040,9 @@ under the detected project root — no message can name it. Beyond that one
 file, the commands and every MCP tool but three reach nothing else under
 `vendor/`; only `orbitron_read_package_source`,
 `orbitron_search_package_source` and `orbitron_list_package_source` read
-further, and only inside the one admitted location — `composer.json`,
-`README.md`, `src/`, `bin/` or `resources/` — of the one real
-installed, non-root package a call names, as bounded in [Read installed
-package source](#read-installed-package-source).
+further, and only under the install root of the one real installed,
+non-root package a call names, as bounded in [Read installed package
+source](#read-installed-package-source).
 
 The project manifest is the one fixed name `composer.json` under the
 root `Kinetis\Runtime\ProjectRoot::detect()` reports, so no path a
