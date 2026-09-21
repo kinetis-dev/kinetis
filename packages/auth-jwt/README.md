@@ -79,6 +79,12 @@ token's own `kid` selects among — kids carried and matched as the exact
 strings the document published, every key validated before the value
 exists.
 
+The middleware also describes itself to Kinetis's OpenAPI generator, so
+every route it guards publishes `security: [{"bearerJwt": []}]` and the
+matching HTTP bearer scheme without any further declaration. The name
+and the definition are fixed: they describe the wire mechanism, not the
+issuer, audience or keys a deployment verifies with.
+
 Need opaque Bearer-token validation against your own storage instead?
 See [`kinetis/auth`](https://github.com/kinetis-dev/auth).
 

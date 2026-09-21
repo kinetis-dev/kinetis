@@ -48,6 +48,12 @@ final readonly class OrderController
 }
 ```
 
+The middleware also describes itself to Kinetis's OpenAPI generator, so
+every route it guards publishes `security: [{"bearerToken": []}]` and
+the matching HTTP bearer scheme without any further declaration. The
+name and the definition are fixed: they describe the wire mechanism, not
+a deployment's tokens.
+
 Need stateless JWT verification instead of your own token storage? See
 [`kinetis/auth-jwt`](https://github.com/kinetis-dev/auth-jwt).
 

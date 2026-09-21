@@ -7,6 +7,8 @@ namespace Kinetis\AuthJwt;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\Auth\AuthorizationToken68Parser;
 use Kinetis\Http\CurrentUserInterface;
+use Kinetis\OpenApi\SecurityDescriberInterface;
+use Kinetis\OpenApi\SecurityDescription;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -44,14 +46,41 @@ use Psr\Http\Server\RequestHandlerInterface;
  * an otherwise empty subclass) requires one. That is the whole
  * supported extension: this class's own state is private and readonly,
  * and configuration is changed by registering a different
- * JwtAuthenticator, never by a subclass constructor.
+ * JwtAuthenticator, never by a subclass constructor. Such a subclass
+ * inherits openApiSecurity() with it, so a route reaching this
+ * middleware through a group is documented exactly as one naming the
+ * class directly.
+ *
+ * openApiSecurity() describes the wire mechanism every deployment of
+ * this class enforces: a JWT in the `Authorization` header. The issuer,
+ * audience, algorithm and keys JwtAuthenticator checks are a
+ * deployment's own and no part of the published document.
  */
-class JwtAuthMiddleware implements MiddlewareInterface
+class JwtAuthMiddleware implements MiddlewareInterface, SecurityDescriberInterface
 {
+    /**
+     * The scheme name this middleware publishes. Stable and distinct
+     * from kinetis/auth's, because the two definitions differ: a
+     * document naming both would otherwise have to publish one of them
+     * as the other.
+     */
+    public const string SCHEME = 'bearerJwt';
+
     public function __construct(
         private readonly JwtAuthenticator $authenticator,
         private readonly RequestScope $scope,
     ) {}
+
+    #[\Override]
+    public static function openApiSecurity(): SecurityDescription
+    {
+        return SecurityDescription::scheme(self::SCHEME, [
+            'type' => 'http',
+            'scheme' => 'bearer',
+            'bearerFormat' => 'JWT',
+            'description' => 'A signed JWT, sent as "Authorization: Bearer <token>".',
+        ]);
+    }
 
     #[\Override]
     public function process(

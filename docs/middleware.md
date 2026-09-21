@@ -235,6 +235,12 @@ runs only where a route references it, and a reference to a group no class
 declares stops the application at startup. `kinetis routes:list` prints
 each route's groups expanded into the classes that run (see {doc}`cli`).
 
+A member that describes its own OpenAPI security documents every route
+referencing the group, and a thin subclass carrying
+`#[AsMiddlewareGroup]` inherits that description from the middleware it
+extends — which is how {doc}`auth` and {doc}`auth-jwt` reach a grouped
+endpoint. See {ref}`openapi-security`.
+
 ### Groups for framework and package endpoints
 
 Endpoints that Kinetis and its packages ship reference named groups, so

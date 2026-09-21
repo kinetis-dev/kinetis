@@ -7,6 +7,8 @@ namespace Kinetis\Auth;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\Auth\AuthorizationToken68Parser;
 use Kinetis\Http\CurrentUserInterface;
+use Kinetis\OpenApi\SecurityDescriberInterface;
+use Kinetis\OpenApi\SecurityDescription;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -45,14 +47,39 @@ use Psr\Http\Server\RequestHandlerInterface;
  * RateLimitMiddleware are not: an attribute only attaches to a class by
  * declaring it there, so joining a middleware group
  * (#[AsMiddlewareGroup('mcp')] on an otherwise empty subclass) requires
- * one.
+ * one. Such a subclass inherits openApiSecurity() with it, so a route
+ * reaching this middleware through a group is documented exactly as one
+ * naming the class directly.
+ *
+ * openApiSecurity() describes the wire mechanism every deployment of
+ * this class enforces: an opaque bearer token in the `Authorization`
+ * header. Which tokens exist and who they resolve to belongs to the
+ * UserProviderInterface and to no part of the published document.
  */
-readonly class BearerAuthMiddleware implements MiddlewareInterface
+readonly class BearerAuthMiddleware implements MiddlewareInterface, SecurityDescriberInterface
 {
+    /**
+     * The scheme name this middleware publishes. Stable and distinct
+     * from kinetis/auth-jwt's, because the two definitions differ: a
+     * document naming both would otherwise have to publish one of them
+     * as the other.
+     */
+    public const string SCHEME = 'bearerToken';
+
     public function __construct(
         private UserProviderInterface $users,
         private RequestScope $scope,
     ) {}
+
+    #[\Override]
+    public static function openApiSecurity(): SecurityDescription
+    {
+        return SecurityDescription::scheme(self::SCHEME, [
+            'type' => 'http',
+            'scheme' => 'bearer',
+            'description' => 'An opaque token issued by this application, sent as "Authorization: Bearer <token>".',
+        ]);
+    }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface

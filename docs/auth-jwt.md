@@ -131,6 +131,36 @@ use Kinetis\Http\Attributes\AsMiddlewareGroup;
 final class BroadcastJwtAuthMiddleware extends JwtAuthMiddleware {}
 ```
 
+## The document says which routes it guards
+
+`JwtAuthMiddleware` describes itself to the OpenAPI generator, so a
+route it wraps publishes the requirement with nothing further to write:
+
+```{code-block} json
+"security": [{"bearerJwt": []}]
+```
+
+```{code-block} json
+:caption: components/securitySchemes
+
+"bearerJwt": {
+    "type": "http",
+    "scheme": "bearer",
+    "bearerFormat": "JWT",
+    "description": "A signed JWT, sent as \"Authorization: Bearer <token>\"."
+}
+```
+
+The name `bearerJwt` and the definition are fixed. They describe the
+wire mechanism this middleware enforces, not the issuer, audience,
+algorithm or keys a deployment verifies with, and a client generated
+from the document reads the name. A subclass — the one that joins a
+middleware group — publishes the same description.
+
+{ref}`openapi-security` has the composition rules, and
+`#[OpenApiSecurity]` for an operation whose authentication this
+inference cannot see.
+
 ## Choose a key
 
 | Deployment | Algorithm | Issuer signs with | Verifier checks with |

@@ -142,6 +142,34 @@ On success it does the same thing a hand-written auth middleware would
 section) — `$scope->instance(CurrentUserInterface::class, $user)` — so any
 controller constructor-injecting `CurrentUserInterface` receives it.
 
+## The document says which routes it guards
+
+`BearerAuthMiddleware` describes itself to the OpenAPI generator, so a
+route it wraps publishes the requirement with nothing further to write:
+
+```{code-block} json
+"security": [{"bearerToken": []}]
+```
+
+```{code-block} json
+:caption: components/securitySchemes
+
+"bearerToken": {
+    "type": "http",
+    "scheme": "bearer",
+    "description": "An opaque token issued by this application, sent as \"Authorization: Bearer <token>\"."
+}
+```
+
+The name `bearerToken` and the definition are fixed. They describe the
+wire mechanism this middleware enforces, not a deployment's own tokens,
+and a client generated from the document reads the name. A subclass —
+the one that joins a middleware group — publishes the same description.
+
+{ref}`openapi-security` has the composition rules, and
+`#[OpenApiSecurity]` for an operation whose authentication this
+inference cannot see.
+
 ## `TokenGenerator`
 
 ```{code-block} php

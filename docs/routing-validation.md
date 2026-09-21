@@ -665,6 +665,109 @@ In development the document is rebuilt on every request; in production
 it is built once per process. The schema mapping is in [OpenAPI
 generation](appendix-routing-validation.md#openapi-generation).
 
+(openapi-security)=
+
+### Authentication in the document
+
+Middleware that implements `Kinetis\OpenApi\SecurityDescriberInterface`
+states the authentication it enforces, and the document is built from
+that. The middleware in {doc}`auth` and {doc}`auth-jwt` already does;
+your own adds one static method:
+
+```{code-block} php
+use Kinetis\OpenApi\SecurityDescriberInterface;
+use Kinetis\OpenApi\SecurityDescription;
+
+final class ApiKeyMiddleware implements MiddlewareInterface, SecurityDescriberInterface
+{
+    public static function openApiSecurity(): SecurityDescription
+    {
+        return SecurityDescription::scheme('apiKey', [
+            'type' => 'apiKey',
+            'in' => 'header',
+            'name' => 'X-Api-Key',
+        ]);
+    }
+
+    // process() as usual.
+}
+```
+
+The method is read without the middleware being constructed, so it must
+be pure: no I/O, no request, no container, no configuration. It
+describes the wire mechanism the class implements, which a deployment's
+own credentials and policy do not change. The definition is a raw
+OpenAPI 3.1 security scheme; its `type` must be one of `apiKey`, `http`,
+`mutualTLS`, `oauth2` and `openIdConnect`.
+
+Where the middleware runs decides where the requirement lands:
+
+- global middleware becomes the document's root `security`, which every
+  operation inherits;
+- a route's own `#[Middleware]` — a class, or a `@group` reference
+  expanded exactly as it is for dispatch — becomes that operation's
+  `security`, published where it differs from the root;
+- a subclass inherits the description, so the thin class that carries
+  `#[AsMiddlewareGroup]` documents every route referencing that group.
+
+Middleware that does not implement the interface leaves the document
+unchanged, and nothing is inferred from a controller's own body.
+
+Middleware in sequence is AND: two describers around one route produce
+one requirement object naming both schemes. One description holding
+several requirement objects is OR, and an empty requirement object is an
+alternative that carries no credential at all — a route that answers
+anonymous and authenticated requests alike publishes both:
+
+```{code-block} json
+"security": [{"apiKey": []}, {}]
+```
+
+Two classes may publish the same scheme name only when they define it
+identically — the order the members are written in is not a difference.
+Two different definitions under one name fail generation, naming the
+scheme and both classes.
+
+### Declaring an operation's security yourself
+
+`#[OpenApiSecurity]` on a controller class or a route method replaces
+the inference for that operation:
+
+```{code-block} php
+use Kinetis\Http\Attributes\OpenApiSecurity;
+
+#[Get('/reports/{id}')]
+#[OpenApiSecurity(ApiKeyMiddleware::class)]
+public function show(int $id): array { /* ... */ }
+```
+
+A method declaration wins over a class one, and a class one wins over
+inference; neither is read from a parent class. Each argument is a
+provider class, and several are required together — alternatives belong
+inside one provider's description, not in a second attribute.
+
+With no argument it publishes `security: []`, which drops the root
+security the operation would otherwise inherit:
+
+```{code-block} php
+#[Get('/health')]
+#[OpenApiSecurity]
+public function health(): array { /* ... */ }
+```
+
+The attribute changes the document and nothing else. Every middleware
+still runs exactly as declared, so a no-argument declaration describes a
+route whose pipeline already admits an unauthenticated request — it does
+not make a guarded route reachable, and a middleware that answers `401`
+still does. Use it where inference cannot see the truth: a controller
+that authenticates in its own body, and middleware that describes a
+requirement it does not impose on this route.
+
+No response status follows from any of this. A `401` or `403` a route
+can answer with is documented by `#[Response]`, like every other status.
+The composition and validation rules are in
+[Security](appendix-routing-validation.md#security).
+
 ## Grouping routes under a prefix
 
 `#[RoutePrefix]` prepends a path to every route of a controller. Combined
