@@ -112,16 +112,25 @@ $rows = new Query($db)
     ->table('articles', as: 'a')
     ->join('users', 'u.id', '=', 'a.author_id', as: 'u')
     ->select('a.id', 'a.title', 'u.username')
+    ->selectAs('a.published_at', 'publishedAt')
     ->selectRaw('LENGTH(a.body) > ? AS is_long', [2000])
     ->get();
 ```
 
 `select()` replaces the column list, which defaults to `*`; each
 dot-separated segment is quoted, and a trailing `.*` stays a wildcard.
-`table()`'s and `join()`'s `as:` quote an alias. `selectRaw()` appends an
-expression and binds its `?` placeholders, and `distinct()` compiles
-`SELECT DISTINCT`. `value()` and `pluck()` read a column by its result
-name, so a selected `articles.slug` is read as `'slug'`.
+`table()`'s and `join()`'s `as:` quote an alias. `selectAs($column, $as)`
+selects one column under a different result name, quoting both sides;
+`selectRaw()` appends an expression and binds its `?` placeholders, and
+`distinct()` compiles `SELECT DISTINCT`. Every expression follows the
+listed columns in call order, and one on its own drops the default `*`.
+
+A value is read back by its result name: `value()`, `pluck()` and a DTO
+constructor parameter all take it, so a selected `articles.slug` is read
+as `'slug'`. An alias replaces that name, which is what
+`selectAs('a.published_at', 'publishedAt')` above is for — a DTO
+parameter named `$publishedAt` reads the column under its own name
+instead of falling back to its default.
 
 ## Filtering
 

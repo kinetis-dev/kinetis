@@ -81,10 +81,16 @@ describes the value only by its type, never by its contents.
 
 ## Selecting and filtering
 
-- `select()` takes column names only; name a computed or renamed column
-  with `selectRaw()`. Once `selectRaw()`, `selectSub()` or
-  `selectExists()` is used without `select()`, the default `*` is
-  dropped.
+- `select()` takes column names only. `selectAs(string $column, string $as)`
+  renames one, quoting the column and the alias as identifiers; name a
+  computed column with `selectRaw()`. Once `selectAs()`, `selectRaw()`,
+  `selectSub()` or `selectExists()` is used without `select()`, the
+  default `*` is dropped, and the expressions follow the listed columns
+  in call order.
+- An alias decides the result name, which is what `value()`, `pluck()`
+  and a DTO parameter read. Quoting it keeps its case on PostgreSQL,
+  which folds an unquoted `AS processedAt` to `processedat`. `selectAs()`
+  neither validates the alias nor detects one already in use.
 - `value()` and `pluck()` read the column from each row by its result
   name and leave the projection as you built it. A qualified column
   (`articles.slug`) arrives under its last segment. A name missing from
@@ -318,10 +324,11 @@ return new Query($this->db)
 ```
 
 A qualified column without an alias, or an alias equal to a column you
-listed in `select()`, throws `InvalidPaginationException`. An alias that
-a wildcard's columns already use cannot be detected: that column is
-replaced in the returned rows, so pick a name nothing in the projection
-uses.
+listed in `select()`, throws `InvalidPaginationException`. Two names
+cannot be checked: a wildcard's columns, and the result name of a
+`selectAs()`, `selectRaw()`, `selectSub()` or `selectExists()`
+expression. A cursor alias colliding with either replaces that value in
+the returned rows, so pick a name nothing in the projection uses.
 
 `InvalidPaginationException` is an `InvalidArgumentException` naming the
 argument it refuses.
@@ -332,7 +339,10 @@ argument it refuses.
   more than 65,535 values throws `InvalidArgumentException`; split it
   yourself, knowing each call is its own statement.
 - `insertGetId(array $values, string $primaryKey = 'id')` inserts one row
-  and returns its generated key.
+  and returns its generated key. On PostgreSQL `$primaryKey` is the
+  column the statement returns, so name it when the table's key is not
+  `id`; the MySQL family reads the driver's last insert id and ignores
+  the argument.
 - `upsert(array $values, array $uniqueBy, array $update)` takes a row or
   a batch, and returns the server's affected-row count.
 - `increment()` and `decrement()` take an `int|float` amount (1 by
@@ -357,7 +367,7 @@ $inserted = new Query($db)->table('notifications')->insertUsing(
 
 | Write | Refuses |
 | --- | --- |
-| `update()`, `increment()`, `decrement()`, `delete()` | no where predicate; `with()`, a table alias, `fromSub()`, `distinct()`, `select()`/`selectRaw()`/`selectSub()`/`selectExists()`, any join, grouping, `having`, set operations, ordering, `limit()`, `offset()`, a lock |
+| `update()`, `increment()`, `decrement()`, `delete()` | no where predicate; `with()`, a table alias, `fromSub()`, `distinct()`, `select()`/`selectAs()`/`selectRaw()`/`selectSub()`/`selectExists()`, any join, grouping, `having`, set operations, ordering, `limit()`, `offset()`, a lock |
 | `insert()`, `insertGetId()`, `insertUsing()`, `insertOrIgnore()`, `upsert()` | all of the above, and any where predicate |
 
 `increment()` also refuses assigning its own column through its extra
@@ -404,7 +414,7 @@ transaction (see {doc}`appendix-database`).
 | `lockForShare()` | `LOCK IN SHARE MODE` | `FOR SHARE` |
 | `insertOrIgnore()` | `ON DUPLICATE KEY UPDATE first_column = first_column` | `ON CONFLICT DO NOTHING` |
 | `upsert()` | `ON DUPLICATE KEY UPDATE col = VALUES(col)` | `ON CONFLICT (unique columns) DO UPDATE SET col = EXCLUDED.col` |
-| `insertGetId()` | the driver's last insert id | `RETURNING` the key |
+| `insertGetId()` | the driver's last insert id; `$primaryKey` unused | `RETURNING $primaryKey` |
 | `IN` subquery with `limit()`/`offset()` | refused | compiled |
 
 Everything else compiles identically. The two `insertOrIgnore()` spellings
