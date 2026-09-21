@@ -120,20 +120,6 @@ final class Kernel
                 : OpenApiAccess::disabled(),
         };
 
-        // Built here, from this Kernel's own Router, so the document can
-        // only ever describe the route table this process dispatches
-        // against — a deployment brings a new Kernel and with it a new
-        // provider, which is the whole invalidation story. A scope that
-        // was never booted has no AppEnvironment to consult, the same
-        // case that leaves both paths closed above; Production is the
-        // side AppEnvironment itself lands an unrecognized name on.
-        $this->openApiDocuments = new OpenApiDocumentProvider(
-            $this->router,
-            $app->has(AppEnvironment::class) && ($environment = $app->get(AppEnvironment::class)) instanceof AppEnvironment
-                ? $environment
-                : AppEnvironment::Production,
-        );
-
         // The built-in `openapi` group: what discovery found, plus this
         // application's own AppScope::openApiMiddleware() registrations,
         // which discovery cannot see. Always defined even when empty —
@@ -152,6 +138,28 @@ final class Kernel
         // wraps the entire request, including before any RequestScope
         // exists.
         $order = GlobalMiddlewareOrder::resolve($this->app->middlewares(), $this->discoveredGlobalMiddleware);
+
+        // Built here, from this Kernel's own Router, so the document can
+        // only ever describe the route table this process dispatches
+        // against — a deployment brings a new Kernel and with it a new
+        // provider, which is the whole invalidation story. A scope that
+        // was never booted has no AppEnvironment to consult, the same
+        // case that leaves both paths closed above; Production is the
+        // side AppEnvironment itself lands an unrecognized name on.
+        //
+        // The global order and the group map are the ones this Kernel
+        // dispatches against, as class-strings: what protects a route is
+        // read from the classes, never from an instance, so describing
+        // the document constructs no middleware.
+        $this->openApiDocuments = new OpenApiDocumentProvider(
+            $this->router,
+            $app->has(AppEnvironment::class) && ($environment = $app->get(AppEnvironment::class)) instanceof AppEnvironment
+                ? $environment
+                : AppEnvironment::Production,
+            $order,
+            $this->groups,
+        );
+
         $globalMiddleware = array_map($this->app->get(...), $order);
 
         $this->globalPipeline = new MiddlewarePipeline(
@@ -233,40 +241,6 @@ final class Kernel
                 }
             }
         }
-    }
-
-    /**
-     * Expands a route's declared middleware list, replacing each `@name`
-     * group reference with that group's own members in place — so a
-     * group's position in the running pipeline is exactly where the
-     * reference was declared, keeping route middleware's
-     * declaration-order rule intact whether an entry is one class or a
-     * whole group.
-     *
-     * @param list<class-string|string> $references
-     * @return list<class-string>
-     */
-    private function expandMiddlewareGroups(array $references): array
-    {
-        $expanded = [];
-
-        foreach ($references as $reference) {
-            if (!str_starts_with($reference, Middleware::GROUP_PREFIX)) {
-                /** @var class-string $reference */
-                $expanded[] = $reference;
-
-                continue;
-            }
-
-            // Guaranteed present by assertMiddlewareGroupsExist().
-            $group = substr($reference, strlen(Middleware::GROUP_PREFIX));
-
-            foreach ($this->groups[$group] as $middlewareClass) {
-                $expanded[] = $middlewareClass;
-            }
-        }
-
-        return $expanded;
     }
 
     private function dispatchCore(ServerRequestInterface $request): ResponseInterface
@@ -413,7 +387,10 @@ final class Kernel
             // the kind likely to need a per-request dependency (a resolved
             // "current user", TransactionGuard, ...), so it gets the same
             // fresh-per-request container a controller would.
-            $routeMiddleware = array_map($scope->get(...), $this->expandMiddlewareGroups($match->route->middleware));
+            $routeMiddleware = array_map(
+                $scope->get(...),
+                Middleware::expandGroups($match->route->middleware, $this->groups),
+            );
             $routePipeline = new MiddlewarePipeline(
                 $routeMiddleware,
                 new CallableRequestHandler(

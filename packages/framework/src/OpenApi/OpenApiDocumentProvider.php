@@ -25,6 +25,11 @@ use Kinetis\Runtime\AppEnvironment;
  *
  * The memo is per-instance rather than static: a Kernel belongs to one
  * worker thread, so this is per-thread state that dies with it.
+ *
+ * The global middleware order and the group map come from the same
+ * Kernel and are class-strings, which is all
+ * {@see \Kinetis\OpenApi\SecurityDescriberInterface} needs: the security
+ * a route's pipeline describes is read without constructing any of it.
  */
 final class OpenApiDocumentProvider
 {
@@ -34,6 +39,10 @@ final class OpenApiDocumentProvider
     public function __construct(
         private readonly Router $router,
         private readonly AppEnvironment $environment,
+        /** @var list<class-string> the effective global middleware pipeline, in order */
+        private readonly array $globalMiddleware = [],
+        /** @var array<string, list<class-string>> every `@name` middleware group, the built-in `openapi` one included */
+        private readonly array $middlewareGroups = [],
     ) {}
 
     /**
@@ -42,9 +51,21 @@ final class OpenApiDocumentProvider
     public function document(): array
     {
         if (!$this->environment->isProduction()) {
-            return new OpenApiGenerator($this->router)->generate();
+            return $this->generate();
         }
 
-        return $this->memoized ??= new OpenApiGenerator($this->router)->generate();
+        return $this->memoized ??= $this->generate();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function generate(): array
+    {
+        return new OpenApiGenerator(
+            $this->router,
+            globalMiddleware: $this->globalMiddleware,
+            middlewareGroups: $this->middlewareGroups,
+        )->generate();
     }
 }

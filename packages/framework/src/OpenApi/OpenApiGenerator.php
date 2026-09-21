@@ -6,6 +6,8 @@ namespace Kinetis\OpenApi;
 
 use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Hidden;
+use Kinetis\Http\Attributes\Middleware;
+use Kinetis\Http\Attributes\OpenApiSecurity;
 use Kinetis\Http\Attributes\PaginatedItem;
 use Kinetis\Http\Attributes\Query;
 use Kinetis\Http\Attributes\Response;
@@ -22,6 +24,7 @@ use ReflectionNamedType;
 use ReflectionParameter;
 use ReflectionType;
 use ReflectionUnionType;
+use stdClass;
 
 /**
  * Builds an OpenAPI 3.1 document from a Router's registered routes — no
@@ -68,6 +71,18 @@ use ReflectionUnionType;
  * holds, so reflecting the return type alone can't recover the item shape.
  * #[PaginatedItem(SomeClass::class)] on the method names it explicitly;
  * see paginatedResponseSchema().
+ *
+ * Security is read the same second-hand way, from the middleware that
+ * already protects each route: $globalMiddleware is the pipeline every
+ * request runs and becomes the document's root `security`, and a route's
+ * own #[Middleware] list — groups expanded exactly as dispatch expands
+ * them — is composed onto it. Only a middleware implementing
+ * Kinetis\OpenApi\SecurityDescriberInterface contributes, and only as
+ * class-strings: nothing here constructs a middleware. #[OpenApiSecurity]
+ * on a controller or a route method replaces that inference outright;
+ * see operationSecurity().
+ *
+ * @phpstan-import-type SecurityRequirement from SecurityDescription
  */
 final class OpenApiGenerator
 {
@@ -77,11 +92,19 @@ final class OpenApiGenerator
     /** @var array<string, array<string, mixed>> */
     private array $componentSchemas = [];
 
+    private SecurityComposition $security;
+
     public function __construct(
         private readonly Router $router,
         private readonly string $title = 'Kinetis API',
         private readonly string $version = '1.0.0',
-    ) {}
+        /** @var list<class-string> the effective global middleware pipeline, in order */
+        private readonly array $globalMiddleware = [],
+        /** @var array<string, list<class-string>> every `@name` middleware group, the built-in `openapi` one included */
+        private readonly array $middlewareGroups = [],
+    ) {
+        $this->security = new SecurityComposition();
+    }
 
     /**
      * @return array<string, mixed>
@@ -90,6 +113,12 @@ final class OpenApiGenerator
     {
         $this->schemaNamesByClass = [];
         $this->componentSchemas = [];
+        $this->security = new SecurityComposition();
+
+        $globalDescribers = SecurityComposition::describersIn($this->globalMiddleware);
+        // Composed before any route, so the schemes global middleware
+        // defines are registered even for a document with no path at all.
+        $rootSecurity = $globalDescribers === [] ? null : $this->security->compose($globalDescribers);
 
         $paths = [];
 
@@ -98,7 +127,8 @@ final class OpenApiGenerator
                 continue;
             }
 
-            $paths[$route->pathTemplate][strtolower($route->httpMethod)] = $this->describeOperation($route);
+            $paths[$route->pathTemplate][strtolower($route->httpMethod)]
+                = $this->describeOperation($route, $globalDescribers, $rootSecurity);
         }
 
         $document = [
@@ -110,8 +140,24 @@ final class OpenApiGenerator
             'paths' => $paths,
         ];
 
+        if ($rootSecurity !== null) {
+            $document['security'] = SecurityComposition::publish($rootSecurity);
+        }
+
+        $components = [];
+
         if ($this->componentSchemas !== []) {
-            $document['components'] = ['schemas' => $this->componentSchemas];
+            $components['schemas'] = $this->componentSchemas;
+        }
+
+        $schemes = $this->security->schemes();
+
+        if ($schemes !== []) {
+            $components['securitySchemes'] = $schemes;
+        }
+
+        if ($components !== []) {
+            $document['components'] = $components;
         }
 
         return $document;
@@ -179,9 +225,11 @@ final class OpenApiGenerator
      *     (via schemaRefFor(), transitively through describeRequestBody()/
      *     describeDefaultResponse()) — annotated so PHPStan doesn't assume
      *     generate()'s $this->componentSchemas is still `[]` after this runs.
+     * @param list<class-string> $globalDescribers
+     * @param list<SecurityRequirement>|null $rootSecurity
      * @return array<string, mixed>
      */
-    private function describeOperation(Route $route): array
+    private function describeOperation(Route $route, array $globalDescribers, ?array $rootSecurity): array
     {
         $method = new ReflectionMethod($route->controllerClass, $route->controllerMethod);
         ['parameters' => $parameters, 'requestBody' => $requestBody] = $this->describeParameters($method, $route);
@@ -215,7 +263,85 @@ final class OpenApiGenerator
             $operation['requestBody'] = $requestBody;
         }
 
+        $security = $this->operationSecurity($route, $method, $globalDescribers, $rootSecurity);
+
+        if ($security !== null) {
+            $operation['security'] = $security;
+        }
+
         return $operation;
+    }
+
+    /**
+     * This operation's `security`, or null where it has none of its own.
+     *
+     * An #[OpenApiSecurity] declaration is the whole answer and is always
+     * published, the empty list a no-argument declaration produces
+     * included: it removes the inherited root security from the document
+     * and leaves the middleware untouched. Otherwise the security is
+     * inferred from the middleware that runs — the global pipeline
+     * first, then the route's own, which is sequential and therefore
+     * AND — and published only where it differs from the root security
+     * the operation already inherits, so an ordinary route under global
+     * authentication adds nothing to the document.
+     *
+     * @param list<class-string> $globalDescribers
+     * @param list<SecurityRequirement>|null $rootSecurity
+     * @return list<SecurityRequirement|stdClass>|null
+     */
+    private function operationSecurity(
+        Route $route,
+        ReflectionMethod $method,
+        array $globalDescribers,
+        ?array $rootSecurity,
+    ): ?array {
+        $explicit = self::explicitProviders($route, $method);
+
+        if ($explicit !== null) {
+            return SecurityComposition::publish($explicit === [] ? [] : $this->security->compose($explicit));
+        }
+
+        $describers = [
+            ...$globalDescribers,
+            ...SecurityComposition::describersIn(
+                Middleware::expandGroups($route->middleware, $this->middlewareGroups),
+            ),
+        ];
+
+        if ($describers === []) {
+            return null;
+        }
+
+        $inferred = $this->security->compose($describers);
+
+        // Both sides are canonical, so this compares the requirements
+        // themselves rather than how they were written.
+        return $inferred === $rootSecurity ? null : SecurityComposition::publish($inferred);
+    }
+
+    /**
+     * The #[OpenApiSecurity] declaration governing this operation, or
+     * null when neither the method nor its controller carries one. A
+     * method declaration replaces the class one outright.
+     *
+     * The class attribute is read from the controller the route was
+     * registered on, which PHP never lets a parent supply, and the
+     * method from the one that class declares — Router refuses a routed
+     * method reached through a parent. Both readings are therefore
+     * scoped to the concrete controller; see
+     * Kinetis\Reflection\AttributeScope.
+     *
+     * @return list<string>|null
+     */
+    private static function explicitProviders(Route $route, ReflectionMethod $method): ?array
+    {
+        $declared = $method->getAttributes(OpenApiSecurity::class);
+
+        if ($declared === []) {
+            $declared = new ReflectionClass($route->controllerClass)->getAttributes(OpenApiSecurity::class);
+        }
+
+        return $declared === [] ? null : $declared[0]->newInstance()->providers;
     }
 
     /**

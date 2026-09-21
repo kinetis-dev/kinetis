@@ -81,7 +81,10 @@ list. Group references are validated when `Kernel` is constructed: a
 reference to a group no class declares throws
 `UnknownMiddlewareGroupException`, naming the group and the route, at
 startup rather than on the first request to that route. Group membership
-alone never runs a middleware.
+alone never runs a middleware. The OpenAPI generator expands a route's
+references through the same `Http\Attributes\Middleware::expandGroups()`,
+so what a route is documented as running is what it runs — see
+{ref}`openapi-security`.
 
 All of a route's middleware are constructed before the first one runs.
 A controller can constructor-inject what a middleware registered, because

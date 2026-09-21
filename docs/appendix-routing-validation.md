@@ -1887,6 +1887,74 @@ its full namespace) when nothing else has claimed it; two distinct classes
 that share a short name fall back to the fully-qualified name instead of
 overwriting one schema with the other's.
 
+### Security
+
+A middleware class describes security by implementing
+`Kinetis\OpenApi\SecurityDescriberInterface`, whose one static method
+returns a `SecurityDescription`: the schemes it defines, and the
+requirements it enforces in disjunctive normal form — the outer list is
+OR, the schemes named inside one requirement object are AND, and each
+value is that scheme's required scopes. `SecurityDescription::scheme()`
+builds the usual one-scheme description, and its `TYPES` names the five
+`type` values OpenAPI 3.1 defines. {ref}`openapi-security` has the shape
+and the purity rule; this section is what the generator does with it.
+
+The pipeline a route runs under is read as class-strings, so nothing is
+constructed to describe it: `Kernel` hands the generator the effective
+global middleware order and the group map it dispatches against, `@name`
+references expand through the same
+`Kinetis\Http\Attributes\Middleware::expandGroups()` dispatch uses, and
+the classes implementing the interface — a subclass included — are the
+describers. A hidden route is discarded before any of this, so it
+publishes neither an operation nor a scheme.
+
+Describers apply in pipeline order, global first, and sequence is AND,
+so composing them is the Cartesian product of their alternatives: two
+alternatives on each of two describers produce four. Merging one
+alternative into another unions the scopes of a scheme both name. Every
+composed requirement object is canonical — scheme names sorted, each
+scope list sorted and deduplicated — and alternatives stating the same
+requirement collapse into one.
+
+Global describers alone compose the document's root `security`. An
+operation publishes its own only where the composition differs from that
+root, so a route that adds no describer of its own adds nothing to the
+document. An empty requirement object survives composition and is
+published as `{}`: a requirement object with no string key is published
+as a JSON object, never as the `[]` a PHP array would encode to.
+
+`components/securitySchemes` holds every definition reached this way,
+beside `components/schemas`; neither overwrites the other. Two providers
+may share a scheme name only when they define it identically, compared
+with every map's keys sorted at any depth — the order members are
+written in is not part of what a definition means, while a list's order
+is. The definition published is the one the first provider wrote.
+
+`#[OpenApiSecurity]` replaces inference for one operation. Its arguments
+are provider classes composed as AND, and it is read from the method
+first and then from the controller class the route was registered on —
+never from a parent, which is the ordinary rule for [where attributes
+are read from](cli.md#where-attributes-are-read-from). With no argument
+it publishes `security: []`. An explicit declaration does not combine
+with global or route inference, and it shares scheme definitions with
+everything else in the document like any other provider. It reaches the
+document alone: the middleware pipeline is unchanged, so a no-argument
+declaration describes a route that already answers an unauthenticated
+request rather than making a guarded one reachable.
+
+`Kinetis\OpenApi\Exception\OpenApiSecurityException` fails generation
+for a provider that does not implement the interface, a scheme with an
+empty name or a definition that is not an array, a `type` outside
+OpenAPI 3.1's five, requirements that are not a non-empty list of
+requirement objects, a requirement naming a scheme its own description
+does not declare or holding anything but scope strings, and two
+providers declaring one scheme name differently — the last naming the
+scheme and both classes. Nothing else in a definition is checked: it is
+the provider's own contract.
+
+No response status is derived from any of this. `#[Response]` remains
+the only way a `401` or `403` enters the document.
+
 ### How the documentation routes resolve
 
 `/openapi.json` and `/openapi` are served by an ordinary controller the

@@ -38,4 +38,42 @@ final readonly class Middleware
     public function __construct(
         public string $middlewareClass,
     ) {}
+
+    /**
+     * Expands a declared middleware list, replacing each `@name`
+     * reference with that group's own members in place — so a group runs
+     * exactly where the reference sits, and one entry being a whole
+     * group leaves the declaration order around it intact.
+     *
+     * Owned here because request dispatch and OpenAPI generation must
+     * read one pipeline: a document expanding groups differently would
+     * describe middleware the request does not run.
+     *
+     * An unknown group name expands to nothing; `Kernel` rejects one
+     * when it is constructed, so a running application never reaches
+     * that.
+     *
+     * @param list<class-string|string> $references
+     * @param array<string, list<class-string>> $groups
+     * @return list<class-string>
+     */
+    public static function expandGroups(array $references, array $groups): array
+    {
+        $expanded = [];
+
+        foreach ($references as $reference) {
+            if (!str_starts_with($reference, self::GROUP_PREFIX)) {
+                /** @var class-string $reference */
+                $expanded[] = $reference;
+
+                continue;
+            }
+
+            foreach ($groups[substr($reference, strlen(self::GROUP_PREFIX))] ?? [] as $middlewareClass) {
+                $expanded[] = $middlewareClass;
+            }
+        }
+
+        return $expanded;
+    }
 }

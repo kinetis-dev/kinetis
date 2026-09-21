@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.12.3",
+            "version": "1.13.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -203,7 +203,7 @@
             "description": "Bearer/opaque-token authentication middleware for Kinetis, built entirely on interfaces core already requires (PSR-7/PSR-15). See kinetis/auth-jwt for stateless JWT verification instead.",
             "namespace": "Kinetis\\Auth\\",
             "testNamespace": "Kinetis\\Auth\\Tests\\",
-            "version": "1.2.2",
+            "version": "1.3.0",
             "requires": [
                 "framework"
             ],
@@ -219,7 +219,7 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.4.1",
+            "version": "1.5.0",
             "requires": [
                 "framework"
             ],
@@ -307,7 +307,7 @@
             "description": "A development-only application construction harness for Kinetis: a CLI and a standalone MCP server that hand any coding agent a portable Kinetis context document, the Kinetis documentation pages as MCP resources and as bounded line windows, the installed kinetis/* package inventory, a bounded live read of one installed package's own source, a literal search inside one such file and a listing of one directory of such a package (MCP only), a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no model of its own.",
             "namespace": "Kinetis\\Orbitron\\",
             "testNamespace": "Kinetis\\Orbitron\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.5.0",
             "bin": [
                 "bin/kinetis-orbitron-mcp"
             ],

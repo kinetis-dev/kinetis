@@ -535,9 +535,13 @@ directory under `vendor/<vendor>/<package>` when one is that large.
    `orbitron_list_package_source` and the line with
    `orbitron_search_package_source`; a shell-only agent reads
    `vendor/<vendor>/<package>` directly instead.
-6. Before calling the change done, work through
+6. Document authentication from the middleware that enforces it, and
+   reach for `#[OpenApiSecurity]` only where no middleware states the
+   truth — it changes the document, not the pipeline;
+   {ref}`openapi-security`.
+7. Before calling the change done, work through
    {doc}`agent-correctness` and run the project's own test suite.
-7. Run one suite at a time against a shared database, broker or object
+8. Run one suite at a time against a shared database, broker or object
    store — {ref}`testing-serialized-shared-state`.
 
 An MCP client runs the same steps as tool and resource reads; see
