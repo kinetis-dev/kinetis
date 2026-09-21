@@ -132,12 +132,13 @@ That one server is the whole registration. The Kinetis documentation
 pages arrive on the same connection as `kinetis://docs/*` resources,
 fetched by [`kinetis/mcp-docs`](https://kinetis.dev/docs/mcp-docs.html)
 from inside it — there is no second server to configure, and
-`kinetis://docs/agent-workflow` is where the agent starts. The same
-package's `kinetis_read_doc` tool reads one bounded line window of a
-page, for a page longer than the client takes in one tool result; the
-whole-page resources stay available either way. Those pages
-are published from Kinetis `main`, so `orbitron_inspect` and the three
-installed-source tools — `orbitron_read_package_source` for a bounded
+`kinetis://docs/agent-workflow` is where the agent starts. It reads a
+page with the same package's `kinetis_read_doc` tool from line 1,
+continuing only while the section it was routed to is unresolved; the
+whole-page resources stay available for when a complete page is what it
+needs. Those pages are published from Kinetis `main`, so
+`orbitron_inspect` and the three installed-source tools —
+`orbitron_read_package_source` for a bounded
 line window of one installed package's own file,
 `orbitron_search_package_source` for the lines of one such file that
 contain a literal string, and `orbitron_list_package_source` for the

@@ -163,7 +163,7 @@
             "description": "A thin, parameterized SQL query builder over kinetis/persistence's MySQL and Postgres drivers, with portable row-to-DTO mapping and pagination envelopes. Usable standalone. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.6.0",
+            "version": "1.7.0",
             "requires": [
                 "persistence"
             ],
@@ -287,10 +287,10 @@
         },
         "mcp-docs": {
             "name": "kinetis/mcp-docs",
-            "description": "A standalone Model Context Protocol server exposing the Kinetis documentation as MCP resources over stdio, with one tool that returns a bounded line window of a page for a client that cannot take it whole. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
+            "description": "A standalone Model Context Protocol server exposing the Kinetis documentation over stdio: one tool that returns a bounded line window of a page, which is how a page is read, and the same pages whole as MCP resources. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.5.0",
+            "version": "1.5.1",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],
@@ -307,7 +307,7 @@
             "description": "A development-only application construction harness for Kinetis: a CLI and a standalone MCP server that hand any coding agent a portable Kinetis context document, the Kinetis documentation pages as MCP resources and as bounded line windows, the installed kinetis/* package inventory, a bounded live read of one installed package's own source, a literal search inside one such file and a listing of one directory of such a package (MCP only), a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no model of its own.",
             "namespace": "Kinetis\\Orbitron\\",
             "testNamespace": "Kinetis\\Orbitron\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.4.0",
             "bin": [
                 "bin/kinetis-orbitron-mcp"
             ],
@@ -690,7 +690,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.5.0",
+            "version": "1.5.1",
             "type": "project",
             "requires": [
                 "framework"

@@ -33,9 +33,9 @@ because a shell-only agent already has the project's `vendor/` tree to
 read directly.
 
 Over MCP that one server is also the whole project-local registration.
-Alongside Orbitron's own context and tools it publishes these
-documentation pages as `kinetis://docs/*` resources, and the
-`kinetis_read_doc` tool that reads one bounded window of a page, both
+Alongside Orbitron's own context and tools it publishes the
+`kinetis_read_doc` tool that reads one bounded window of a page, and
+these documentation pages whole as `kinetis://docs/*` resources, both
 served by {doc}`mcp-docs` from inside the same process — so an agent
 reads the current guidance on the connection it is already on, and there
 is no second server to configure or to skip.
@@ -523,11 +523,12 @@ directory under `vendor/<vendor>/<package>` when one is that large.
 3. `vendor/bin/kinetis orbitron:verify` — the project layout.
 4. `vendor/bin/kinetis orbitron:scaffold` — the health-endpoint plan,
    then `--apply` when the plan is what you want.
-5. Route the task through {doc}`agent-workflow` — over MCP, the
-   `kinetis://docs/agent-workflow` resource, or `kinetis_read_doc` with
-   that URI when the whole page is more than the client takes at once —
-   then follow the matching recipe in {doc}`application-recipes`. Over
-   MCP, read installed
+5. Route the task through {doc}`agent-workflow` — over MCP, read it
+   with `kinetis_read_doc` from line 1, taking the next window only
+   while the section the recipe named, or a named unknown, is still
+   unresolved, and the `kinetis://docs/agent-workflow` resource when
+   the whole page is what you need — then follow the matching recipe in
+   {doc}`application-recipes`. Over MCP, read installed
    source with `orbitron_read_package_source` when a guide and the
    installed version could differ, or when an exact dependency's
    behavior is what the change turns on, locating the file first with
@@ -627,16 +628,18 @@ framework-agnostic and separately installable: a project that wants the
 documentation without the harness registers `vendor/bin/kinetis-mcp-docs`
 on its own instead.
 
-A page can be read whole, as its `kinetis://docs/<page>` resource, or a
-window at a time with `kinetis_read_doc`: that tool takes the same URI
-plus an optional `startLine` and `lineCount`, returns at most 200 lines
-and 32 KiB of content per call, and reports the `endLine` it reached and
-whether the page continues — so a page longer than one tool result is
-read in order, without a cursor, and its windows concatenate back into
-the page exactly, as long as the page has not changed on `main` between
+A page is read a window at a time with `kinetis_read_doc`: that tool
+takes the page URI plus an optional `startLine` and `lineCount`, returns
+at most 200 lines and 32 KiB of content per call, and reports the
+`endLine` it reached and whether the page continues — so a page is read
+in order, without a cursor, and its windows concatenate back into the
+page exactly, as long as the page has not changed on `main` between
 calls: every call fetches it again, with no snapshot held across them.
-{doc}`appendix-mcp-docs` holds that tool's full argument, bound and
-refusal contract.
+Take the next window only while the section you were routed to, or a
+named unknown, is still unresolved; read the whole page as its
+`kinetis://docs/<page>` resource when the complete page is what you
+need. {doc}`appendix-mcp-docs` holds that tool's full argument, bound
+and refusal contract.
 
 Reading a page, either way, is the one Orbitron operation that leaves
 the machine. The page is fetched when it is read, from the fixed

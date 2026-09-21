@@ -203,6 +203,12 @@ two requests can both find a value free. Catch the violation outside
 not retried and the error is not suppressed. The
 {ref}`repository cookbook <query-builder-cookbook>` shows the pattern.
 
+After an unknown write outcome, a retry can meet its own earlier row. If
+it raises a unique violation, reread through the injected link after the
+outer transaction has rolled back and compare the stored normalized
+request with the retry before deciding idempotent replay versus genuine
+conflict.
+
 ## Driver selection
 
 `DB_DRIVER=auto`, the default, picks the driver from the runtime, and

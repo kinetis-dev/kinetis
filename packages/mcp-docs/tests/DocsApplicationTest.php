@@ -129,6 +129,31 @@ final class DocsApplicationTest extends TestCase
         self::assertStringContainsString('is not valid UTF-8', (string) stream_get_contents($diagnostics));
     }
 
+    /**
+     * The initialize instructions and tool description both make a
+     * bounded window the normal read and reserve the whole resource for
+     * callers that need the complete page.
+     */
+    public function test_the_server_teaches_the_bounded_window_as_the_way_to_read_a_page(): void
+    {
+        $instructions = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",'
+            . '"capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.273"}}}',
+        ])[0]['result']['instructions'];
+
+        self::assertStringContainsString(DocsApplication::READ_TOOL . ' with a page URI from line 1', $instructions);
+        self::assertStringContainsString('only while what you came to the page for is unresolved', $instructions);
+        self::assertStringContainsString('resources/read when the whole page is what you need', $instructions);
+        self::assertStringNotContainsString('more than the client can take at once', $instructions);
+
+        $description = $this->frames(
+            ['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'],
+        )[0]['result']['tools'][0]['description'];
+
+        self::assertStringContainsString('the way to read a page, starting at line 1', $description);
+        self::assertStringNotContainsString('too large to take whole', $description);
+    }
+
     public function test_the_window_tool_is_published_with_its_bounds_and_annotations(): void
     {
         $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
