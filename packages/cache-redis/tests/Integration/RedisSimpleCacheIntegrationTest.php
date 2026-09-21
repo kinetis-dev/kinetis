@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\SimpleCache\Tests\Integration;
 
+use Amp\Serialization\SerializationException;
 use Kinetis\Config\Config;
+use Kinetis\SimpleCache\Exception\CacheException;
 use Kinetis\SimpleCache\RedisSimpleCache;
 use PHPUnit\Framework\TestCase;
 
@@ -228,6 +230,70 @@ final class RedisSimpleCacheIntegrationTest extends TestCase
     }
 
     /**
+     * The fixture serializes normally but refuses to hydrate, so it puts
+     * a valid payload in Redis that the installed serializer cannot
+     * decode. The failure is reported under the one
+     * PSR-16 vocabulary this cache promises, and the entry stays where
+     * it is: a miss, a default, or a delete would each hide it.
+     */
+    public function test_get_reports_a_stored_value_it_cannot_decode(): void
+    {
+        $key = 'undecodable-' . \bin2hex(\random_bytes(6));
+        $this->cache->set($key, new UndecodableCacheValue(), 60);
+
+        try {
+            $this->cache->get($key, 'fallback');
+            self::fail('get() returned instead of reporting a value it cannot decode');
+        } catch (CacheException $e) {
+            self::assertStringContainsString('Redis "get" failed', $e->getMessage());
+            self::assertInstanceOf(SerializationException::class, $e->getPrevious());
+        }
+
+        self::assertTrue($this->cache->has($key), 'the entry must survive a decode failure');
+    }
+
+    /**
+     * consume() decodes inside the same boundary. Its own GET+DEL script
+     * has already removed the key by then, which is the operation doing
+     * its job rather than the failure being hidden.
+     */
+    public function test_consume_reports_a_stored_value_it_cannot_decode(): void
+    {
+        $key = 'undecodable-consume-' . \bin2hex(\random_bytes(6));
+        $this->cache->set($key, new UndecodableCacheValue(), 60);
+
+        try {
+            $this->cache->consume($key, 'fallback');
+            self::fail('consume() returned instead of reporting a value it cannot decode');
+        } catch (CacheException $e) {
+            self::assertStringContainsString('Redis "consume" failed', $e->getMessage());
+            self::assertInstanceOf(SerializationException::class, $e->getPrevious());
+        }
+    }
+
+    /**
+     * Every member of a batch is decoded inside the boundary, so one
+     * undecodable entry among sound ones fails the call rather than
+     * escaping as Amp's own exception.
+     */
+    public function test_get_multiple_reports_a_stored_value_it_cannot_decode(): void
+    {
+        $key = 'undecodable-batch-' . \bin2hex(\random_bytes(6));
+        $this->cache->set('decodable', 'value');
+        $this->cache->set($key, new UndecodableCacheValue(), 60);
+
+        try {
+            $this->cache->getMultiple(['decodable', $key]);
+            self::fail('getMultiple() returned instead of reporting a value it cannot decode');
+        } catch (CacheException $e) {
+            self::assertStringContainsString('Redis "getMultiple" failed', $e->getMessage());
+            self::assertInstanceOf(SerializationException::class, $e->getPrevious());
+        }
+
+        self::assertTrue($this->cache->has($key), 'the entry must survive a decode failure');
+    }
+
+    /**
      * The property AtomicConsumeInterface exists for, mirroring
      * test_concurrent_increments_each_receive_a_distinct_value() above: a
      * get() then a separate delete() lets concurrent callers both read
@@ -250,5 +316,20 @@ final class RedisSimpleCacheIntegrationTest extends TestCase
         self::assertSame(1, \count(\array_filter($values, static fn ($v) => $v === 'the-only-copy')), 'exactly one caller must receive the value');
         self::assertSame(24, \count(\array_filter($values, static fn ($v) => $v === 'missed-it')), 'every other caller must receive the default');
         self::assertFalse($this->cache->has($key));
+    }
+}
+
+final class UndecodableCacheValue
+{
+    /** @return array{} */
+    public function __serialize(): array
+    {
+        return [];
+    }
+
+    /** @param array{} $data */
+    public function __unserialize(array $data): void
+    {
+        throw new \RuntimeException('fixture refuses hydration');
     }
 }

@@ -1030,7 +1030,7 @@ final class DispatcherTest extends TestCase
         $request = new ServerRequest('POST', '/plain-array-field', self::JSON_HEADERS, body: json_encode(['tags' => 'not-an-array']));
         $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(['must be an array, value given.'], $errors['tags']);
+        self::assertSame(['must be an array, string given.'], $errors['tags']);
     }
 
     public function test_a_correctly_shaped_plain_array_body_field_dispatches_normally(): void
@@ -1250,7 +1250,7 @@ final class DispatcherTest extends TestCase
     {
         $errors = $this->failedDispatch(fn (): ResponseInterface => $this->formEncodedFlag('yes'))->grouped();
 
-        self::assertSame(['must be a boolean, value given.'], $errors['flag']);
+        self::assertSame(['must be a boolean, string given.'], $errors['flag']);
     }
 
     /**
@@ -1268,7 +1268,7 @@ final class DispatcherTest extends TestCase
         $request = new ServerRequest('POST', '/builtin-coverage', self::JSON_HEADERS, body: '{"tags": [], "items": [], "flag": "true"}');
         $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(['must be a boolean, value given.'], $errors['flag']);
+        self::assertSame(['must be a boolean, string given.'], $errors['flag']);
     }
 
     // The same #[Body] DTO class binds either encoding on the same
@@ -1292,7 +1292,7 @@ final class DispatcherTest extends TestCase
         self::assertCount(1, $violations);
         self::assertSame(['items', 0, 'quantity'], $violations[0]->path);
         self::assertSame('type_mismatch', $violations[0]->code);
-        self::assertSame(['expected' => 'integer', 'given' => 'value'], $violations[0]->parameters);
+        self::assertSame(['expected' => 'integer', 'given' => 'string'], $violations[0]->parameters);
     }
 
     public function test_a_form_encoded_body_binds_a_numeric_string_for_the_same_int_field(): void
@@ -1363,7 +1363,7 @@ final class DispatcherTest extends TestCase
         ]));
         $errors = $this->validationFailure($match, $request);
 
-        self::assertSame(['must be an array, value given.'], $errors['items']);
+        self::assertSame(['must be an array, string given.'], $errors['items']);
     }
 
     // A #[Query]/path value is a raw string, never an already-decoded JSON
@@ -1399,7 +1399,7 @@ final class DispatcherTest extends TestCase
     {
         $errors = $this->failedDispatch(fn (): ResponseInterface => $this->queryFlag('yes'))->grouped();
 
-        self::assertSame(['must be a boolean, value given.'], $errors['flag']);
+        self::assertSame(['must be a boolean, string given.'], $errors['flag']);
     }
 
     public function test_an_omitted_query_boolean_uses_its_default(): void

@@ -65,13 +65,13 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
 - Orbitron (`kinetis/orbitron`), the development-only harness that hands
   your own coding agent this project's Kinetis context, its installed
   package inventory, a layout verification and one previewable scaffold —
-  from a shell or, over MCP, also the exact installed `kinetis/*` package
-  source. See {doc}`orbitron`.
-- These docs as MCP resources, so an agent reads the framework's
-  documentation instead of recalling it. Orbitron serves them on its own
-  connection, and `kinetis/mcp-docs` — which owns the catalogue and the
-  fetch — installs on its own for documentation without the harness. See
-  {doc}`mcp-docs`.
+  from a shell or, over MCP, also the exact source of any package this
+  project has installed. See {doc}`orbitron`.
+- These docs as MCP resources, whole or as bounded line windows, so an
+  agent reads the framework's documentation instead of recalling it.
+  Orbitron serves them on its own connection, and `kinetis/mcp-docs` —
+  which owns the catalogue and the fetch — installs on its own for
+  documentation without the harness. See {doc}`mcp-docs`.
 
 ## Long-running or classic, same code
 

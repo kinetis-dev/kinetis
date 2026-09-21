@@ -128,8 +128,11 @@ read unscoped. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
 A trigger returns once the broker answered `2xx` — accepted for fan-out,
-not a delivery receipt. An unencodable payload raises `JsonException`
-before a request; an attempted request that does not produce `2xx` raises
+not a delivery receipt. A channel name outside the Pusher protocol's own
+grammar raises
+`Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException`, and
+an unencodable payload raises `JsonException`, both before a request; an
+attempted request that does not produce `2xx` raises
 `Kinetis\RevoltHttpClient\Exception\HttpRequestException`. A
 `Timeout` or `Transport` failure leaves it unknown whether the broker
 took the event, so the driver never repeats the attempt. See

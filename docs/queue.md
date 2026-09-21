@@ -39,6 +39,11 @@ binding in your own `bootstrap.php` wins. Selecting a backend whose
 package is not installed raises
 `Kinetis\Queue\Exception\QueueUnavailableException`, naming the package.
 
+The backend built that way owns the connection its factory opened, and
+this package closes it once the worker ends. A backend you build
+yourself carries the same `dispose()` and its registration is yours —
+see {doc}`appendix-queue`'s "Connection ownership".
+
 `QUEUE_CONNECTION_NAME` selects a named connection of that backend,
 `default` when unset — see {doc}`config`, which also lists every queue
 key.

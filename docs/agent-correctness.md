@@ -58,6 +58,12 @@ These hold regardless of adapter, driver, or use case.
   do not infer protection from the presence of `Set-Cookie`, TLS, or a
   referrer policy, and do not disable caching globally when public
   responses contain nothing sensitive.
+- **Credential transport and logging.** A bearer credential is not put in
+  a URL path or query string unless every proxy and application access log
+  that can retain the request target has an explicit, verified redaction
+  policy. Prefer a header or request body at the exchange boundary, and
+  account for browser history and referrer propagation as well as
+  application logs; TLS does not remove any of those copies.
 - **Compiled-cache freshness.** A change to a route, an MCP tool or
   resource, a command, an event listener, or a validation plan needs
   `kinetis build` before a production deploy that pre-warms
@@ -115,6 +121,12 @@ specific choice in the project.
   throughout. When a change depends on that boundary, read the installed
   driver's source rather than inferring it from `MysqlLink`.
   {doc}`persistence`, {doc}`concurrency`.
+- **Read installed source to settle a fact, not to inventory a package.**
+  Use Orbitron's directory listing, literal search, and bounded window for
+  the exact version-sensitive signature, default, failure code, or vendor
+  behavior that governs the change. Once that fact is established, return
+  to the application; continuing through unrelated source adds review cost
+  without strengthening the evidence. {doc}`agent-workflow`.
 - **Prove overlap where overlap is the requirement.** `concurrently()`
   running without error is not evidence that anything overlapped — a
   blocking call inside it still serializes the whole loop. Where

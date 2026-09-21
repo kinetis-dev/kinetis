@@ -4,19 +4,23 @@ declare(strict_types=1);
 
 namespace Kinetis\SimpleCache\Tests;
 
+use Amp\Serialization\SerializationException;
 use Kinetis\Config\Config;
 use Kinetis\Redis\Client;
 use Kinetis\Redis\ClientOptions;
 use Kinetis\Redis\Endpoint;
+use Kinetis\SimpleCache\Exception\CacheException;
 use Kinetis\SimpleCache\Exception\InvalidArgumentException;
 use Kinetis\SimpleCache\RedisSimpleCache;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Key policy and configuration selection. Construction opens no
- * connection and an invalid key is refused before any command is built,
- * so every case here runs with no Redis server reachable. Storage
- * behaviour is proven against a real server in tests/Integration.
+ * Key policy, configuration selection, and the encode half of the
+ * serializer boundary. Construction opens no connection, an invalid key
+ * is refused before any command is built, and a value the serializer
+ * cannot encode fails before one is sent, so every case here runs with
+ * no Redis server reachable. Storage behaviour, and the decode half of
+ * that boundary, are proven against a real server in tests/Integration.
  */
 final class RedisSimpleCacheTest extends TestCase
 {
@@ -111,6 +115,35 @@ final class RedisSimpleCacheTest extends TestCase
     public function test_delete_multiple_with_no_keys_returns_true_without_touching_the_network(): void
     {
         self::assertTrue($this->cache()->deleteMultiple([]));
+    }
+
+    /**
+     * A closure is the value `Amp\Serialization\NativeSerializer`
+     * refuses, and the serializer contract declares
+     * `SerializationException` for it. Callers are promised one failure
+     * vocabulary, so it must reach them as the PSR-16 exception naming
+     * the operation.
+     */
+    public function test_set_reports_a_value_it_cannot_encode(): void
+    {
+        try {
+            $this->cache()->set('unencodable', static fn (): int => 1);
+            self::fail('set() accepted a value the serializer cannot encode');
+        } catch (CacheException $e) {
+            self::assertStringContainsString('Redis "set" failed', $e->getMessage());
+            self::assertInstanceOf(SerializationException::class, $e->getPrevious());
+        }
+    }
+
+    public function test_replace_reports_a_value_it_cannot_encode(): void
+    {
+        try {
+            $this->cache()->replace('unencodable', static fn (): int => 1, 60);
+            self::fail('replace() accepted a value the serializer cannot encode');
+        } catch (CacheException $e) {
+            self::assertStringContainsString('Redis "replace" failed', $e->getMessage());
+            self::assertInstanceOf(SerializationException::class, $e->getPrevious());
+        }
     }
 
     private function cache(): RedisSimpleCache

@@ -17,7 +17,7 @@ middleware, request scopes, the `/mcp` route and the package bootstrap —
 and adapts them to that wire through `Kinetis\Mcp\KinetisMcpApplication`.
 `kinetis/mcp-docs` and `kinetis/orbitron` are the other two consumers of
 the same protocol package, and Orbitron composes `kinetis/mcp-docs` to
-publish its resources too; neither depends on `kinetis/mcp`, whose
+publish its resources and its page-window tool too; neither depends on `kinetis/mcp`, whose
 installation would register a bootstrap and a discovery plugin in the
 consumer application.
 

@@ -388,7 +388,7 @@ final class HydratorTest extends TestCase
             self::assertSame([['customerName'], ['shippingAddress']], array_column($e->violations, 'path'));
             self::assertSame(['required', 'type_mismatch'], array_column($e->violations, 'code'));
             self::assertSame([], $e->violations[0]->parameters);
-            self::assertSame(['expected' => 'object', 'given' => 'value'], $e->violations[1]->parameters);
+            self::assertSame(['expected' => 'object', 'given' => 'string'], $e->violations[1]->parameters);
         }
     }
 
@@ -727,7 +727,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(PlainArrayFieldRequest::class, ['tags' => 'not-an-array']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['tags' => ['must be an array, value given.']], $e->grouped());
+            self::assertSame(['tags' => ['must be an array, string given.']], $e->grouped());
         }
     }
 
@@ -1008,7 +1008,7 @@ final class HydratorTest extends TestCase
             Hydrator::hydrate(IterableFieldRequest::class, ['items' => 'not-an-array']);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items' => ['must be an array, value given.']], $e->grouped());
+            self::assertSame(['items' => ['must be an array, string given.']], $e->grouped());
         }
     }
 
@@ -1097,7 +1097,7 @@ final class HydratorTest extends TestCase
             ]);
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
-            self::assertSame(['items.1' => ['must be an object, value given.']], $e->grouped());
+            self::assertSame(['items.1' => ['must be an object, string given.']], $e->grouped());
         }
     }
 
@@ -1470,6 +1470,17 @@ final class HydratorTest extends TestCase
             self::fail('Expected a ValidationException.');
         } catch (ValidationException $e) {
             self::assertSame(['count' => ['must be an integer, boolean given.']], $e->grouped());
+        }
+    }
+
+    public function test_a_json_string_for_an_int_field_names_the_type_it_was_given(): void
+    {
+        try {
+            Hydrator::hydrate(BoundlessIntFieldRequest::class, ['count' => '1500'], null, InputSource::Json);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['count' => ['must be an integer, string given.']], $e->grouped());
+            self::assertSame(['expected' => 'integer', 'given' => 'string'], $e->violations[0]->parameters);
         }
     }
 

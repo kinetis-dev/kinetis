@@ -113,8 +113,14 @@ have accepted the trigger before the answer was lost. The driver makes
 one wire attempt and never repeats it, so re-sending the same event
 after either failure can fan it out twice.
 
-An unencodable payload raises PHP's own `JsonException` before anything
-reaches the wire.
+A channel name outside the Pusher protocol's own grammar raises
+`Kinetis\Broadcasting\Exception\InvalidPusherProtocolValueException`
+before anything reaches the wire. A trigger endpoint can answer `2xx`
+for names no conforming subscription could ever be authorized for, so
+the driver enforces the grammar itself, holding a trigger and the auth
+endpoint below to the identical rule. An
+unencodable payload raises PHP's own `JsonException`, also before a
+request.
 
 `Broadcaster::event()` triggers the channels `broadcastOn()` names in
 order and catches nothing, so the first channel that fails ends the
@@ -143,12 +149,13 @@ Both fields must also match the Pusher protocol's own grammar —
 `channel_name` an optional leading `#` followed by one or more of
 `-a-zA-Z0-9_=@,.;` — checked by `Kinetis\Broadcasting\PusherProtocol`
 before anything else about the request is looked at, including whether
-an authorizer is even registered for the channel: a value that can't
-possibly reach a real Pusher/Soketi/Reverb broker never runs application
+an authorizer is even registered for the channel: a value no conforming
+Pusher/Soketi/Reverb client could subscribe to never runs application
 authorization code at all, and gets a `422` instead.
-`PusherBroadcaster`'s own public signing methods enforce the identical
-grammar, so a direct call bypassing this controller entirely is held to
-the same rule.
+`PusherBroadcaster` enforces the identical grammar on its own public
+methods — signing a subscription and triggering an event alike — so a
+direct call bypassing this controller entirely is held to the same
+rule.
 
 Authorize a channel with one attributed method:
 

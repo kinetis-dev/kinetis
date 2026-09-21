@@ -6,6 +6,7 @@ namespace Kinetis\SimpleCache;
 
 use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
+use Amp\Serialization\SerializationException;
 use Amp\Serialization\Serializer;
 use DateInterval;
 use DateTimeImmutable;
@@ -127,9 +128,12 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     public function get(string $key, mixed $default = null): mixed
     {
         $physical = $this->physical($key);
-        $value = $this->guard('get', fn (): mixed => $this->client->executeKeyed($physical, 'GET', $physical));
 
-        return is_string($value) ? $this->serializer->unserialize($value) : $default;
+        return $this->guard('get', function () use ($physical, $default): mixed {
+            $value = $this->client->executeKeyed($physical, 'GET', $physical);
+
+            return is_string($value) ? $this->serializer->unserialize($value) : $default;
+        });
     }
 
     /**
@@ -142,13 +146,15 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     {
         $physical = $this->physical($key);
 
-        $value = $this->guard('consume', fn (): mixed => $this->client->script(
-            $physical,
-            "local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v",
-            [$physical],
-        ));
+        return $this->guard('consume', function () use ($physical, $default): mixed {
+            $value = $this->client->script(
+                $physical,
+                "local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v",
+                [$physical],
+            );
 
-        return is_string($value) ? $this->serializer->unserialize($value) : $default;
+            return is_string($value) ? $this->serializer->unserialize($value) : $default;
+        });
     }
 
     #[\Override]
@@ -161,9 +167,9 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
             return $this->delete($key);
         }
 
-        $payload = $this->serializer->serialize($value);
+        $this->guard('set', function () use ($physical, $value, $seconds): void {
+            $payload = $this->serializer->serialize($value);
 
-        $this->guard('set', function () use ($physical, $payload, $seconds): void {
             $seconds !== null
                 ? $this->client->executeKeyed($physical, 'SET', $physical, $payload, 'EX', $seconds)
                 : $this->client->executeKeyed($physical, 'SET', $physical, $payload);
@@ -184,13 +190,12 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     public function replace(string $key, mixed $value, int $ttlSeconds): bool
     {
         $physical = $this->physical($key);
-        $payload = $this->serializer->serialize($value);
 
         return $this->guard('replace', fn (): mixed => $this->client->executeKeyed(
             $physical,
             'SET',
             $physical,
-            $payload,
+            $this->serializer->serialize($value),
             'EX',
             $ttlSeconds,
             'XX',
@@ -257,14 +262,16 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
             ));
         }
 
-        $result = [];
+        return $this->guard('getMultiple', function () use ($keys, $values, $default): array {
+            $result = [];
 
-        foreach ($keys as $index => $key) {
-            $value = $values[$index] ?? null;
-            $result[$key] = is_string($value) ? $this->serializer->unserialize($value) : $default;
-        }
+            foreach ($keys as $index => $key) {
+                $value = $values[$index] ?? null;
+                $result[$key] = is_string($value) ? $this->serializer->unserialize($value) : $default;
+            }
 
-        return $result;
+            return $result;
+        });
     }
 
     /**
@@ -358,6 +365,11 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     }
 
     /**
+     * The one failure boundary every operation runs inside: a transport
+     * failure and a value the serializer cannot encode or decode both
+     * leave this class as the PSR-16 exception, so no serializer call
+     * belongs outside it.
+     *
      * A cache key can be a session identifier or a token hash, so the
      * failure names the operation and never the key.
      *
@@ -369,7 +381,7 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
     {
         try {
             return $operation();
-        } catch (RedisException $e) {
+        } catch (RedisException | SerializationException $e) {
             throw CacheException::forOperation($name, $e);
         }
     }

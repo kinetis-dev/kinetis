@@ -274,5 +274,6 @@ each code, and "HTTP status codes" its status.
 - {doc}`routing-validation` — the validation tool arguments share with
   HTTP request bodies.
 - {doc}`caching` — tools and resources in the compiled cache.
-- {doc}`mcp-docs` — Kinetis's own documentation as MCP resources, from
-  that package's server or from {doc}`orbitron`.
+- {doc}`mcp-docs` — Kinetis's own documentation as MCP resources and
+  bounded page windows, from that package's server or from
+  {doc}`orbitron`.

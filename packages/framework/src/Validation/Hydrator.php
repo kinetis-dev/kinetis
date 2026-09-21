@@ -2127,6 +2127,7 @@ final class Hydrator
             is_bool($value) => 'boolean',
             is_float($value) => 'float',
             is_int($value) => 'integer',
+            is_string($value) => 'string',
             is_object($value) => 'object',
             default => 'value',
         };
