@@ -55,13 +55,14 @@ final readonly class ShippingTools
 }
 ```
 
-Put the class under any PSR-4 root in your `composer.json`. Discovery
-finds every public method carrying either attribute, with no directory
-convention and nothing to register. The class resolves from the
-request's container like a controller, so it constructor-injects the
-services it needs. A tool's return value reaches the agent JSON-encoded
-as text. A resource that returns a string is served as-is, and anything
-else is JSON-encoded, under its `mimeType` (`text/plain` by default).
+Put the class under any production `autoload.psr-4` root in your
+`composer.json`. Discovery finds every public method carrying either
+attribute, with no directory convention and nothing to register. The
+class resolves from the request's container like a controller, so it
+constructor-injects the services it needs. A tool's return value
+reaches the agent JSON-encoded as text. A resource that returns a
+string is served as-is, and anything else is JSON-encoded, under its
+`mimeType` (`text/plain` by default).
 Tool names and resource URIs are unique across the application and its
 packages; a duplicate fails registration with
 `DuplicateDefinitionException`. {doc}`cli`'s "Restricting discovery"

@@ -60,13 +60,16 @@ final readonly class MaintenanceController
 
 Any class anywhere under one of your own PSR-4 roots is picked up
 automatically — `App\Console\...`, `App\Domain\Orders\...`, wherever you
-keep it. There's no required directory or namespace convention to follow;
-organize commands however the rest of your application is organized.
-Discovery reaches a class through its PSR-4 file path, so the standard
-autoloading layout is what makes a class findable: one class per file,
-the file named for the class. A second class declared inside an existing
-file isn't PSR-4-autoloadable, so discovery never sees it. There's
-nothing to register.
+keep it. Those are your project's production `autoload.psr-4` roots in
+`composer.json`; `autoload-dev.psr-4` (typically your `tests/` mapping)
+is never scanned, so a command class living only there is not
+discovered. There's no required directory or namespace convention to
+follow beyond that; organize commands however the rest of your
+application is organized. Discovery reaches a class through its PSR-4
+file path, so the standard autoloading layout is what makes a class
+findable: one class per file, the file named for the class. A second
+class declared inside an existing file isn't PSR-4-autoloadable, so
+discovery never sees it. There's nothing to register.
 
 Abstract classes, interfaces, traits and enums are skipped: none of them
 can be instantiated as a command, controller, tool or listener. And an

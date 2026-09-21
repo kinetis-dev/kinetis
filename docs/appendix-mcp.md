@@ -430,11 +430,11 @@ in the same class or in two packages — throw
 `Kinetis\Mcp\Exception\DuplicateDefinitionException` naming both
 `Class::method()` pairs, so the schema from `tools/list` is always the
 one `tools/call` invokes. Registering the same class twice is a no-op.
-Discovery scans the application's PSR-4 roots and every installed
-package's `extra.kinetis` scan roots; `MCP_DISCOVERY_PATHS` restricts the
-application scan (see {doc}`cli`'s "Restricting discovery"), and a
-production build compiles the registry into the cache (see
-{doc}`caching`).
+Discovery scans the application's production `autoload.psr-4` roots and
+every installed package's `extra.kinetis` scan roots;
+`MCP_DISCOVERY_PATHS` restricts the application scan (see {doc}`cli`'s
+"Restricting discovery"), and a production build compiles the registry
+into the cache (see {doc}`caching`).
 
 ## See also
 

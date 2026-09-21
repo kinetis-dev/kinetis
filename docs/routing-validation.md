@@ -41,10 +41,11 @@ final readonly class ArticleController
 `ArticleRepository` and `ArticleResponse` are application classes;
 `CreateArticleRequest` is defined in [Validating input](#validating-input).
 
-Nothing registers this controller. Any class under one of your project's
-PSR-4 roots joins the route table as soon as one of its methods carries a
-route attribute; {doc}`cli` covers restricting that scan in a large
-application. Methods without a route attribute are ordinary helpers.
+Nothing registers this controller. Any class under one of your
+project's production `autoload.psr-4` roots joins the route table as
+soon as one of its methods carries a route attribute; {doc}`cli` covers
+restricting that scan in a large application. Methods without a route
+attribute are ordinary helpers.
 
 `#[Get]`, `#[Post]`, `#[Put]`, `#[Patch]` and `#[Delete]` each take a path
 and an optional `status`, which defaults to `200`. A controller that
@@ -761,7 +762,12 @@ route whose pipeline already admits an unauthenticated request — it does
 not make a guarded route reachable, and a middleware that answers `401`
 still does. Use it where inference cannot see the truth: a controller
 that authenticates in its own body, and middleware that describes a
-requirement it does not impose on this route.
+requirement it does not impose on this route. A controller parsing the
+`Authorization` header itself should read it through
+`Kinetis\Http\Auth\AuthorizationToken68Parser`
+({ref}`auth-reference-authorization-header`) — the same public parser
+both bearer middleware packages use — rather than reimplementing the
+grammar.
 
 No response status follows from any of this. A `401` or `403` a route
 can answer with is documented by `#[Response]`, like every other status.
