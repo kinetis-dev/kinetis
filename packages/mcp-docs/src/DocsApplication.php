@@ -24,11 +24,11 @@ use stdClass;
  * change: listing, reading and windowing are the whole surface, and the
  * protocol around them belongs to kinetis/mcp-protocol.
  *
- * A resource read returns a page whole; {@see READ_TOOL} returns a
- * window of one, for a client whose tool-result budget a whole page
- * would overflow. Both fetch the page on every call, so a window is
- * bounded output, not a stored, cursored or snapshotted read: nothing
- * about one call survives into the next.
+ * {@see READ_TOOL} returns one bounded window of a page, which is how
+ * a page is read; a resource read returns the whole page, for a caller
+ * that needs all of it. Both fetch the page on every call, so a window
+ * is bounded output, not a stored, cursored or snapshotted read:
+ * nothing about one call survives into the next.
  *
  * A fetch that fails is reported to the process's own diagnostic stream
  * and answered with a generic protocol error. The URL, the transport's
@@ -42,7 +42,7 @@ final class DocsApplication implements McpApplication
     public const string SERVER_NAME = 'kinetis-mcp-docs';
 
     /** Paired against this package's manifest version by the suite. */
-    public const string SERVER_VERSION = '1.5.0';
+    public const string SERVER_VERSION = '1.5.1';
 
     /**
      * The documentation-window tool's name. Exported because
@@ -64,11 +64,11 @@ final class DocsApplication implements McpApplication
 
     private const string INSTRUCTIONS = 'Resources are Kinetis documentation pages, served as published '
         . 'markdown from main — read them instead of answering about Kinetis from memory. Call resources/list, '
-        . 'then resources/read with a page URI; start at kinetis://docs/agent-workflow. Call ' . self::READ_TOOL
-        . ' with that URI instead when a whole page is more than the client can take at once, and continue from '
-        . 'the line it reports. A page can describe behavior newer than the release installed in this project: '
-        . 'establish the installed package versions and inspect matching installed source before treating a '
-        . 'version-sensitive claim as settled.';
+        . 'then ' . self::READ_TOOL . ' with a page URI from line 1; start at kinetis://docs/agent-workflow. '
+        . 'Continue from the line it reports only while what you came to the page for is unresolved. Read the '
+        . 'same URI with resources/read when the whole page is what you need. A page can describe behavior newer '
+        . 'than the release installed in this project: establish the installed package versions and inspect '
+        . 'matching installed source before treating a version-sensitive claim as settled.';
 
     private readonly DocsFetcher $fetcher;
 
@@ -120,8 +120,8 @@ final class DocsApplication implements McpApplication
     {
         return new ToolDescription(
             self::READ_TOOL,
-            'Reports one line window of one Kinetis documentation page as a JSON document, for a page that is '
-            . 'too large to take whole. Takes the page URI, as resources/list reports it, and an optional window. '
+            'Reports one line window of one Kinetis documentation page as a JSON document — the way to read a '
+            . 'page, starting at line 1. Takes the page URI, as resources/list reports it, and an optional window. '
             . 'A success reports "status", "uri", "startLine", "endLine", "hasMore" and "content"; continue by '
             . 'calling again with "startLine" set to the reported "endLine" plus one, and successive windows '
             . 'reconstruct the page exactly as long as it has not changed on the remote between calls — every '
@@ -129,7 +129,8 @@ final class DocsApplication implements McpApplication
             . self::MAX_CONTENT_BYTES . ' bytes of content, whichever comes first, so "endLine" can fall short of '
             . 'what was asked for; it always carries at least one line, which is the only case a window exceeds '
             . 'that size. A refusal reports "status": "error" and one of "resource_unknown", "line_out_of_range". '
-            . 'Reading the same URI as a resource returns the whole page instead. Writes nothing.',
+            . 'Reading the same URI as a resource returns the whole page instead, when that is what is '
+            . 'needed. Writes nothing.',
             [
                 'type' => 'object',
                 'properties' => [

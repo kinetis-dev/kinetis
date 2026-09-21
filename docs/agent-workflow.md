@@ -12,8 +12,9 @@ Orbitron's own context and tools; a client that registers
 {doc}`mcp-docs` on its own reaches the same resources from that server.
 Either way `kinetis/mcp-docs` owns the catalogue and the fetch, the
 resource URIs are identical, and the same `kinetis_read_doc` tool reads
-one bounded line window of a page — the way to read a page longer than
-the client takes in one tool result.
+one bounded line window of a page — the way to read a page. The
+whole-page resources are there for when the complete page is what you
+need.
 
 ## The version boundary
 
@@ -81,12 +82,18 @@ server does that.
    satellites the task needs, such as a queue backend, the database
    bridge, or the HTTP client. {doc}`application-recipes` routes common
    tasks to their packages and pages directly.
-3. **Read the current guidance** on those pages through `resources/list`
-   and `resources/read`, rather than answering from memory.
+3. **Read the current guidance** on those pages rather than answering
+   from memory: call `resources/list`, then `kinetis_read_doc` with a
+   page URI from line 1, and continue from the line it reports only
+   while the section the recipe named, or a named unknown, is still
+   unresolved. Read a page whole with `resources/read` when the
+   complete page is what you need.
 4. **Inspect the matching installed source** for anything
    version-sensitive, as above.
 5. **Make the smallest change** that satisfies the task under the
-   guidance just read.
+   guidance just read. Once the recipe's required contracts and the
+   installed versions are established, implement — any further read
+   must answer a named unknown.
 6. **Run focused verification** — the project's own tests and whatever
    test client the framework provides, scoped to what changed.
 7. **Review the change** against {doc}`agent-correctness` before calling

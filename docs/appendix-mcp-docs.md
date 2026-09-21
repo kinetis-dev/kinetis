@@ -90,10 +90,10 @@ the client asked for. Its result declares empty `tools` and `resources`
 capabilities — no `listChanged` and no `subscribe` — names the server
 `kinetis-mcp-docs` at the package's version, and carries `instructions`
 telling the agent to read these pages rather than answer from memory,
-naming `kinetis://docs/agent-workflow` as the starting resource,
-pointing at `kinetis_read_doc` for a page the client cannot take whole,
-and warning that a served page can describe behavior newer than the
-client's installed release. No method depends on an earlier
+naming `kinetis://docs/agent-workflow` as the starting page, pointing at
+`kinetis_read_doc` as the way to read one and at `resources/read` for a
+whole page, and warning that a served page can describe behavior newer
+than the client's installed release. No method depends on an earlier
 `initialize`.
 
 | Method | Behavior |
@@ -146,10 +146,10 @@ and the process exits `0`. Nothing but JSON-RPC frames reaches stdout.
 ## The page window
 
 `kinetis_read_doc` returns one bounded line window of one catalogue
-page, for a client whose tool-result budget a whole page would overflow.
-It is annotated read-only, non-destructive, idempotent and open-world:
-it changes nothing, and it reaches the documentation origin on every
-call.
+page, which is how a page is read; `resources/read` returns the whole
+page, for when that is what is needed. It is annotated read-only,
+non-destructive, idempotent and open-world: it changes nothing, and it
+reaches the documentation origin on every call.
 
 Its schema is closed — `additionalProperties: false` — and admits three
 members:

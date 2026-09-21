@@ -23,14 +23,13 @@ API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that
-serves every page of the Kinetis documentation as a resource — and one
-tool that returns a bounded line window of a page, for a client that
-cannot take a long one whole — so an agent working in any codebase can
-read the framework's own docs instead of answering from training data.
-It is framework-agnostic: the only
-Kinetis package it depends on is `kinetis/mcp-protocol`, which is PHP-only
-and registers nothing, and the pages are fetched as published markdown
-from the monorepo's `main` branch.
+serves every page of the Kinetis documentation: one tool that returns a
+bounded line window of a page, and the same pages whole as resources — so
+an agent working in any codebase can read the framework's own docs
+instead of answering from training data. It is framework-agnostic: the
+only Kinetis package it depends on is `kinetis/mcp-protocol`, which is
+PHP-only and registers nothing, and the pages are fetched as published
+markdown from the monorepo's `main` branch.
 
 For a server that exposes *your own* application's tools and resources,
 install [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) instead.
@@ -67,9 +66,10 @@ The binary speaks JSON-RPC over stdin and stdout, one message per line:
 server as a subprocess. Read `kinetis://docs/agent-workflow` first — the
 entry point and routing table for the rest of the catalogue.
 
-Read a page whole as a resource, or call the `kinetis_read_doc` tool
-with its URI for one bounded window of it: at most 200 lines and 32 KiB
-per call, continuing from the `endLine` each result reports.
+Read a page by calling the `kinetis_read_doc` tool with its URI from
+line 1: at most 200 lines and 32 KiB per call, continuing from the
+`endLine` each result reports while what you came for is unresolved.
+Read the same URI as a resource when the whole page is what you need.
 
 Requires PHP 8.4+. Full documentation:
 [kinetis.dev/docs/mcp-docs.html](https://kinetis.dev/docs/mcp-docs.html).

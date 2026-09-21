@@ -90,9 +90,9 @@ the list is refused.
 
 ## Reading a page in windows
 
-Some pages run to a few thousand lines of markdown, which is more than
-some agent clients accept in one tool result. `kinetis_read_doc`
-returns one bounded window of a page instead of the whole thing:
+`kinetis_read_doc` returns one bounded window of a page, which is how a
+page is read — some pages run to a few thousand lines of markdown, and
+a window keeps a read to the part the task is about:
 
 ```{code-block} sh
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kinetis_read_doc","arguments":{"uri":"kinetis://docs/appendix-routing-validation","startLine":1,"lineCount":200}}}' \
@@ -103,9 +103,10 @@ It takes the page `uri`, an optional `startLine` (from 1, default 1)
 and an optional `lineCount` (1 to 200, default 200). The result is one
 JSON document reporting `status`, `uri`, `startLine`, `endLine`,
 `hasMore` and `content`. Read on by calling again with `startLine` set
-to the reported `endLine` plus one; concatenating the windows of one
-page reproduces it byte for byte, as long as the page has not changed
-on `main` between your calls.
+to the reported `endLine` plus one, and only while what you came to the
+page for is still unresolved; concatenating the windows of one page
+reproduces it byte for byte, as long as the page has not changed on
+`main` between your calls.
 
 A window ends at `lineCount` lines or 32 KiB of content, whichever
 comes first, so `endLine` can fall short of what you asked for — read
@@ -114,8 +115,8 @@ you got. Every call fetches the page again, so they describe that call
 alone: nothing is cached, and no cursor or snapshot is held between
 calls.
 
-Reading the same URI as a resource returns the page whole, which stays
-the simpler path for a page your client can take in one piece.
+Reading the same URI as a resource returns the page whole, for when the
+complete page is what you need.
 
 The full argument, refusal and bound contract is in
 {doc}`appendix-mcp-docs`.
