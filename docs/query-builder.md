@@ -117,13 +117,21 @@ $rows = new Query($db)
     ->get();
 ```
 
-`select()` replaces the column list, which defaults to `*`; each
-dot-separated segment is quoted, and a trailing `.*` stays a wildcard.
+`select()` appends the columns it is given: a later call extends the
+projection instead of replacing it, so code layered over a query can add
+to a projection it did not choose. Each argument is one identifier —
+`select('a, b')` names a column of that spelling, `select('a', 'b')` two
+columns — each dot-separated segment is quoted, and a trailing `.*`
+stays a wildcard. A projection nothing has touched compiles as `*`; a
+different projection is a new `Query`.
+
 `table()`'s and `join()`'s `as:` quote an alias. `selectAs($column, $as)`
 selects one column under a different result name, quoting both sides;
 `selectRaw()` appends an expression and binds its `?` placeholders, and
 `distinct()` compiles `SELECT DISTINCT`. Every expression follows the
-listed columns in call order, and one on its own drops the default `*`.
+listed columns in call order, and one on an otherwise untouched query
+drops the implicit `*` — a `select('*')` of your own is a listed column
+and stays.
 
 A value is read back by its result name: `value()`, `pluck()` and a DTO
 constructor parameter all take it, so a selected `articles.slug` is read

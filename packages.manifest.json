@@ -163,7 +163,7 @@
             "description": "A thin, parameterized SQL query builder over kinetis/persistence's MySQL and Postgres drivers, with portable row-to-DTO mapping and pagination envelopes. Usable standalone. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.7.0",
+            "version": "1.8.0",
             "requires": [
                 "persistence"
             ],

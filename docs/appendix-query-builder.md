@@ -81,12 +81,18 @@ describes the value only by its type, never by its contents.
 
 ## Selecting and filtering
 
-- `select()` takes column names only. `selectAs(string $column, string $as)`
-  renames one, quoting the column and the alias as identifiers; name a
-  computed column with `selectRaw()`. Once `selectAs()`, `selectRaw()`,
-  `selectSub()` or `selectExists()` is used without `select()`, the
-  default `*` is dropped, and the expressions follow the listed columns
-  in call order.
+- `select()` takes column names only and appends them: every call adds
+  to the projection in call order, nothing is deduplicated, a call
+  without arguments adds nothing, and each argument is one identifier —
+  `select('a, b')` names a column of that spelling. A different
+  projection is a new `Query`.
+- `selectAs(string $column, string $as)` renames one column, quoting the
+  column and the alias as identifiers; name a computed column with
+  `selectRaw()`. The expressions follow the listed columns in call
+  order. `*` is the projection nothing has touched, so `selectAs()`,
+  `selectRaw()`, `selectSub()` or `selectExists()` used without
+  `select()` drops it — while a `select('*')` or `select('orders.*')`
+  you listed yourself is an ordinary column that stays.
 - An alias decides the result name, which is what `value()`, `pluck()`
   and a DTO parameter read. Quoting it keeps its case on PostgreSQL,
   which folds an unquoted `AS processedAt` to `processedat`. `selectAs()`
