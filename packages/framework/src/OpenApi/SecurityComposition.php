@@ -78,12 +78,25 @@ final class SecurityComposition
      */
     public static function publish(array $alternatives): array
     {
-        return array_map(
-            static fn (array $alternative): array|stdClass => array_is_list($alternative)
-                ? (object) $alternative
-                : $alternative,
-            $alternatives,
-        );
+        $published = [];
+
+        foreach ($alternatives as $alternative) {
+            if (!array_is_list($alternative)) {
+                $published[] = $alternative;
+
+                continue;
+            }
+
+            $requirement = new stdClass();
+
+            foreach ($alternative as $name => $scopes) {
+                $requirement->{(string) $name} = $scopes;
+            }
+
+            $published[] = $requirement;
+        }
+
+        return $published;
     }
 
     /**
