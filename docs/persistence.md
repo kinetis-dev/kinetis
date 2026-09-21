@@ -140,10 +140,13 @@ the callback. When the callback returns, it commits and returns the
 callback's result; when the callback throws, it rolls back and rethrows.
 The work is committed only once `transaction()` has returned.
 
-- **Run every statement on `$tx`**, `new Query($tx)` included. A
-  statement the Fiber holding the transaction sends on `$db` is refused
-  with `Exception\TransactionException` instead of running outside the
-  transaction.
+- **Run every statement on `$tx`**, `new Query($tx)` included. A PDO
+  link has one connection, so it refuses every client-level query,
+  execute or second transaction while its transaction is open. A native
+  pooled link refuses those client-level calls only from the Fiber that
+  holds the transaction; another Fiber can borrow another connection.
+  This prevents the owner from accidentally running outside its
+  transaction without serializing unrelated work.
 - **Type the callback `SqlTransaction`.** A `MysqlLink` still passes a
   `MysqlTransaction`, and the query builder reads the dialect from that
   object.

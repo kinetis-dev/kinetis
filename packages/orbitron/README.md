@@ -542,7 +542,10 @@ that already exists, the checked-in form of the registration above is:
   `kinetis://orbitron/context` and `kinetis://docs/agent-workflow`, call
   `orbitron_inspect`, call `orbitron_verify`, and then either one
   readiness line beginning `Orbitron ready` or no application change at
-  all and the exact failure;
+  all and the exact failure. Its milestone check updates
+  application-specific README claims made false by the work while
+  preserving reusable Kinetis and Orbitron setup reference unless that
+  setup itself changed;
 - `CLAUDE.md` and `GEMINI.md` containing `@AGENTS.md` and nothing else;
 - `.mcp.json`, `.codex/config.toml` and `.gemini/settings.json`, each
   naming one stdio server `orbitron` launched as `./bin/orbitron-mcp`,

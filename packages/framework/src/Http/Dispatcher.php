@@ -13,6 +13,7 @@ use Kinetis\Http\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Exception\UnresolvableParameterException;
 use Kinetis\Http\Exception\UnsupportedBodyMediaTypeException;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Http\Responses\JsonResponse;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
 use Kinetis\Reflection\ParameterDefault;
@@ -24,7 +25,6 @@ use Kinetis\Validation\Hydrator;
 use Kinetis\Validation\InputSource;
 use Kinetis\Validation\JsonObject;
 use Kinetis\Validation\JsonTree;
-use Nyholm\Psr7\Response;
 use Kinetis\Container\Autowire;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
@@ -183,7 +183,7 @@ final class Dispatcher
         $encodeToken = $telemetry->responseEncodingStarted();
 
         try {
-            return $this->json($result, $route->status);
+            return JsonResponse::create($result, $route->status);
         } finally {
             $telemetry->responseEncodingEnded($encodeToken);
         }
@@ -964,14 +964,5 @@ final class Dispatcher
         }
 
         return $value;
-    }
-
-    private function json(mixed $data, int $status): ResponseInterface
-    {
-        return new Response(
-            status: $status,
-            headers: ['Content-Type' => 'application/json'],
-            body: json_encode($data, JSON_THROW_ON_ERROR),
-        );
     }
 }

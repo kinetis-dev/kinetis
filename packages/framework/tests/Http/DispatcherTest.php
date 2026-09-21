@@ -128,6 +128,10 @@ final class DispatcherTest extends TestCase
         self::assertSame(201, $response->getStatusCode());
         self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
         self::assertSame(
+            '{"name":"Alon","email":"alon@example.com"}',
+            (string) $response->getBody(),
+        );
+        self::assertSame(
             ['name' => 'Alon', 'email' => 'alon@example.com'],
             json_decode((string) $response->getBody(), true),
         );

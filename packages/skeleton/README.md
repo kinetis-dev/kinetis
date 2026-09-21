@@ -188,7 +188,9 @@ persistent-worker correctness. `AGENTS.md` asks for a closing pass by
 hand as well — request-scoped state stays request-scoped, waits yield,
 credentials stay where they belong, and the documentation still matches
 the behavior — and, at a material milestone, a re-read of this README's
-framing for claims the work made false.
+framing for application-specific claims the work made false. The reusable
+Kinetis and Orbitron setup reference stays unless the implementation
+actually invalidated it.
 
 ### Trust and approval
 

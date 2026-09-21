@@ -163,8 +163,11 @@ Once Orbitron is ready, every task runs the same way:
 
 At a material milestone — a feature finished, a dependency added, a
 route or contract changed — re-read this project's `README.md` framing
-and correct claims the work made demonstrably false. That is a
-correctness pass, not permission to rewrite it for style.
+and correct application-specific claims the work made demonstrably false,
+such as its routes, dependencies or runtime behavior. Preserve the
+reusable Kinetis and Orbitron setup reference unless the implementation
+invalidated it. This is a correctness pass, not permission to rewrite it
+for style.
 
 ## Scaffolding
 

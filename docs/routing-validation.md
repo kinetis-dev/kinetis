@@ -556,15 +556,24 @@ An exception can carry its own status instead; see [Mapping your own
 exceptions to a
 status](middleware.md#mapping-your-own-exceptions-to-a-status).
 
-### HTML, text, files and redirects
+### JSON, HTML, text, files and redirects
 
 ```{code-block} php
 use Kinetis\Http\Attributes\Get;
-use Kinetis\Http\Responses\{FileResponse, HtmlResponse, PlainTextResponse, RedirectResponse};
+use Kinetis\Http\Responses\{FileResponse, HtmlResponse, JsonResponse, PlainTextResponse, RedirectResponse};
 use Psr\Http\Message\ResponseInterface;
 
 final readonly class PagesController
 {
+    #[Get('/status')]
+    public function status(): ResponseInterface
+    {
+        return JsonResponse::create(
+            ['ready' => true],
+            headers: ['Cache-Control' => 'no-store'],
+        );
+    }
+
     #[Get('/welcome')]
     public function welcome(): ResponseInterface
     {
@@ -594,6 +603,20 @@ final readonly class PagesController
     }
 }
 ```
+
+`JsonResponse::create(mixed $data, int $status = 200, array $headers = [])`
+uses the same strict JSON encoding as an array or DTO returned directly
+from a controller. Invalid UTF-8, an unsupported value or a failing
+`JsonSerializable` throws before a response exists; Kinetis does not
+silently replace application data. `Content-Type: application/json`
+always replaces a caller-supplied content type, including a differently
+cased header name.
+
+Use the helper when the runtime status or headers belong to the result.
+A returned `ResponseInterface` passes through untouched, so OpenAPI
+cannot infer its body. Keep the DTO in the method's return union for the
+route's default response, and describe each alternate response with
+`#[Response(..., body: YourResponse::class)]`.
 
 `HtmlResponse` does not escape anything: escape user input yourself, or
 render through {doc}`views`.
