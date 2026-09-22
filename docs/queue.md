@@ -394,10 +394,13 @@ Write every handler so that running it twice, or twice at once, has no
 duplicate effect:
 
 - Pass an identifier for the work — an order ID, or a key generated when
-  you push — and record it under a unique constraint in the same database
-  transaction as the job's effect. A later run finds it and skips the
-  work; a concurrent run fails on the constraint instead of writing
-  twice.
+  you push — and record it in the same atomic operation as the job's effect.
+  In a database, use a unique constraint in the same transaction. When one
+  Redis node owns both values, use one Lua script that writes the marker and
+  effect together; {doc}`appendix-redis` shows the `script()` transport call.
+  A later or concurrent run then observes the marker and skips the effect.
+  This makes the handler's effect idempotent; it does not make queue
+  acceptance and that later effect one transaction.
 - Prefer writes that converge, such as setting a status or upserting a
   row, over writes that accumulate, such as incrementing a counter or
   appending a row.

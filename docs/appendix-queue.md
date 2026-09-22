@@ -207,6 +207,12 @@ Each row describes a worker that stopped renewing. A reservation a live
 worker holds is extended while its job runs — see
 [Reservation renewal](#reservation-renewal).
 
+For Redis, the old envelope remains in `leased` after its worker dies and
+until a later `pop()` reclaims it. A non-empty leased set therefore proves
+neither that a live worker owns the job nor that redelivery happened. Reclaim
+replaces that envelope with one carrying the same `id` and `pushedAt`, an
+incremented `attempts`, and a different handle string.
+
 `QueuedJob::$attempts` is the attempt number the current delivery
 represents, starting at 1. Redis, SQL and RabbitMQ store the number of
 completed attempts and add one on `pop()`.
