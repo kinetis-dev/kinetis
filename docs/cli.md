@@ -180,7 +180,7 @@ A command that promises graceful `SIGTERM`/`SIGINT` handling:
   attach a fix: give it a checkpoint method that calls
   `pcntl_signal_dispatch()` before returning the flag, annotated
   `@phpstan-impure`. The dispatch call is what clears the narrowing — a
-  genuine observable side effect, which the annotation alone on a plain
+  observable side effect, which the annotation alone on a plain
   getter does not establish and strict purity analysis rejects:
 
   ```{code-block} php
@@ -206,7 +206,7 @@ A command that promises graceful `SIGTERM`/`SIGINT` handling:
   `pcntl_signal(SIGTERM, $stop->handler(...))` registers it; each
   checkpoint calls `$stop->isSet()`. With `pcntl_async_signals(true)`
   already enabled, explicit dispatch is not required for normal delivery
-  here — the call's purpose is to give the checkpoint method a genuine
+  here — the call's purpose is to give the checkpoint method an
   observable side effect the analyzer must account for, not to make the
   handler run.
 
