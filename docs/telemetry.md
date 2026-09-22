@@ -53,15 +53,22 @@ request end under PHP-FPM, worker exit under a persistent worker. The
 export runs inside the request that ends the triggering span, through
 `kinetis/revolt-http-client`'s Fiber-suspending transport.
 
+One export is one wire attempt under a fixed budget: up to ten seconds
+to reach the collector and up to ten more to exchange the batch. A
+collector that accepts the request and never answers it costs the
+triggering request that much and no more, whether the trigger is a full
+batch or the shutdown flush. There is no setting for it.
+
 ```{warning}
-A failed export is retried with a blocking sleep between attempts — a
-jittered backoff starting at 50–100 ms and doubling, or a longer
-`Retry-After` the collector sends. While a collector is failing, a
-request that triggers an export blocks its worker for each delay. Keep
-the collector close to the application and healthy.
+A batch whose export budget runs out is dropped, not resent. The
+collector may already have stored it, so the outcome is unknown and a
+second POST could duplicate the spans; the SDK logs the failure and the
+batch is gone. Later spans are unaffected, and each subsequent batch
+pays the same bound again while the collector stays stalled — keep the
+collector close to the application and healthy.
 ```
 
-{doc}`appendix-observability` gives the batch and retry parameters and
+{doc}`appendix-observability` gives the batch and export parameters and
 the resource attributes the OpenTelemetry SDK reads from the environment.
 
 ## Spans you get without wiring
