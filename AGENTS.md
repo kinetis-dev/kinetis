@@ -73,9 +73,11 @@ Before opening an issue or assigning a lane, answer:
    the fix add?
 6. Is the result simpler overall?
 
-Prefer existing language and vendor primitives. Add an abstraction only
-when at least two real consumers need it or it protects a core
-invariant. Do not add configuration, compatibility, or policy for a
+Prefer existing language and vendor primitives. Add an internal
+abstraction only when at least two real consumers within Kinetis need it
+or it protects a core invariant. This gate applies to internal reuse,
+not to public framework capabilities justified by supported application
+use cases. Do not add configuration, compatibility, or policy for a
 hypothetical future consumer.
 
 “Technically correct” is not enough. Reject negligible or speculative
