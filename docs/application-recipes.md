@@ -158,6 +158,38 @@ rather than restating it — read those before writing code. Start at
   page catalogue, whether reached directly or through Orbitron; an
   application's own tools and resources are `kinetis/mcp`'s job.
 
+## Application on a non-default runtime adapter
+
+- **Guides**: {doc}`runtime-adapters` — "Choose a runtime", "Choose an
+  adapter explicitly"; {doc}`container`; {doc}`persistence` — "Driver
+  selection"; {doc}`testing` — "Conformance-testing a runtime adapter";
+  {doc}`appendix-testing` — "What each run proves".
+- **Lifecycle/I-O**: `RequestScope` resolves fresh on every invocation
+  under every adapter, persistent ones (FrankenPHP worker mode,
+  RoadRunner, Lambda) included — request identity, request data and
+  callbacks belong there and nowhere else. `AppScope` bindings, and any
+  other state a process keeps outside `RequestScope` (a static, a
+  global, a resident Fiber), can outlive one request on a persistent
+  adapter and must never carry a request's identity, callbacks or data —
+  see {doc}`container`'s `AppScope`/`RequestScope` split.
+- **Security/integrity**: `DB_DRIVER=auto` selects the driver the chosen
+  runtime supports — see {doc}`persistence`'s "Driver selection". Do not
+  infer or force a driver value observed under one runtime onto another;
+  let the runtime choose it, or set it deliberately per that section's
+  two documented exceptions.
+- **Verification**: {ref}`testing-reference-conformance`'s "What each
+  run proves" states each adapter's own proof limit — Lambda's shared
+  conformance run is in-process and proves the event conversion alone,
+  RoadRunner's runs against a real spawned `rr serve` process, and
+  FrankenPHP's and PHP-FPM's run under their real SAPI in CI. When the
+  open question is process lifecycle itself — whether `RequestScope`
+  actually resets between invocations on the chosen adapter — drive one
+  bounded real invocation or request sequence through that adapter's own
+  runtime rather than the in-process driver call; the conformance suite
+  alone does not establish that for every adapter.
+- **Non-goal**: treating a local or single-process run as proof of a
+  managed platform's own process lifecycle guarantees.
+
 ## See also
 
 - {doc}`agent-workflow` — establishing installed versions and routing a
