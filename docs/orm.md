@@ -649,6 +649,42 @@ an application table.
 The README's "Transaction sessions" and "When a session fails" give the
 complete contract.
 
+An outbox row for {doc}`queue-sql` follows the same rule:
+`$entities->builder()` runs a statement when called, on this
+transaction, while a pending entity's INSERT is emitted only by the
+closing `flush()` above. A builder row whose foreign key names a
+still-pending entity fails regardless of how its id is assigned — the
+referenced row is not there yet on this connection. A generated
+identifier is additionally unavailable until `COMMIT` returns, since it
+reaches the object only then.
+
+Map the outbox row as an entity instead, with a `#[BelongsTo]` naming
+the entity it depends on, and persist both:
+
+```{code-block} php
+$order = new Order();
+// ...
+
+$outbox = new OutboxRow();
+$outbox->order = $order;   // #[BelongsTo] — order_id
+
+$entities->persist($order);
+$entities->persist($outbox);
+$entities->flush();        // INSERT order, then outbox, one transaction
+```
+
+Entities persisted separately need no ordering of their own: `flush()`
+orders every pending row by its foreign keys and inserts the entity a
+`#[BelongsTo]` names before the row that references it, on every
+supported backend — the README's "Aggregates" is the complete contract.
+
+`QueueInterface::push()` inside the callback is wrong here: it runs on
+the queue's own connection rather than this one, so it is not enlisted
+in the transaction and a rollback does not undo it. Publish the pending
+outbox rows once `transaction()` returns and mark them sent; [A job can
+run more than once](queue.md#a-job-can-run-more-than-once) owns replay
+and idempotency for that step.
+
 ## Without a database
 
 With `kinetis/orm` installed and `DB_CONNECTION` unset, the application
