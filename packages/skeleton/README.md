@@ -86,10 +86,16 @@ for the complete build and artifact contract.
 ## Building it with an AI coding agent
 
 Start the stack, open your agent in this directory, and describe what
-you want built. `AGENTS.md` is the contract it works to: its first
-application task in a session begins by initializing Orbitron, so it
-works from this project's real installed versions and verified layout
-rather than from recalled framework trivia.
+you want built. `AGENTS.md` is the contract it works to: on the
+earliest turn where the `orbitron` tools and resources are listed —
+the first turn, or a later one, once the stack is up, the client has
+reconnected, and the server is approved — it initializes Orbitron
+before anything else, so it works from this project's real installed
+versions and verified layout rather than from recalled framework
+trivia. It cannot initialize between turns, so it checks again on every
+turn until they are listed. A question about setup or these
+instructions can still be answered while that connection comes up;
+every other request, application work included, waits for it.
 
 That initialization follows the order starting the server needs:
 
@@ -259,8 +265,8 @@ docker compose exec app vendor/bin/kinetis orbitron:scaffold
 
 `orbitron:scaffold` previews; `orbitron:scaffold --apply` is the only
 one of them that writes anything, and what it writes is two fixed files.
-See the [Orbitron guide](https://kinetis.dev/docs/orbitron.html) for
-every document's shape and exit code.
+See [Appendix: Orbitron](https://kinetis.dev/docs/appendix-orbitron.html)
+for every document's shape and exit code.
 
 ### Diagnostics
 
@@ -330,9 +336,9 @@ stack's initial setup completed, and Docker itself stopping.
 names the outcome. This project ships the layout Orbitron admits — one
 `autoload.psr-4` prefix mapped to `src/`, one `autoload-dev.psr-4`
 prefix mapped to `tests/` — so an error here means `composer.json` has
-moved away from it. The
-[Orbitron guide](https://kinetis.dev/docs/orbitron.html) lists every
-code.
+moved away from it.
+[Appendix: Orbitron](https://kinetis.dev/docs/appendix-orbitron.html#orbitron-verify)
+lists every code.
 
 ## Using this as a starting point
 

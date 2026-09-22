@@ -1,8 +1,10 @@
 # Agent Workflow
 
-This is the entry point for an AI agent working in a project that uses
-Kinetis. Start here, then follow the routes below into the guide each
-task actually needs.
+Operating and routing guidance for an AI coding agent working in a
+project that uses Kinetis — not a human tutorial. This is the entry
+point for that agent: start here, then follow the routes below into the
+guide each task actually needs. A human developer wants
+{doc}`tutorial` or {doc}`core-concepts` instead.
 
 ## Where these pages come from
 

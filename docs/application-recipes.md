@@ -1,9 +1,12 @@
 # Application Recipes
 
-Compact routes for tasks that recur across Kinetis applications. Each
-recipe names the pages that hold the actual contract and routes to them
-rather than restating it — read those before writing code. Start at
-{doc}`agent-workflow` if a task does not match one of these.
+Routing guidance for an AI coding agent: compact routes for tasks that
+recur across Kinetis applications. Each recipe names the pages that hold
+the actual contract and routes to them rather than restating it — read
+those before writing code. Start at {doc}`agent-workflow` if a task does
+not match one of these. A human developer wants the linked guides
+directly — {doc}`routing-validation`, {doc}`session`,
+{doc}`query-builder`, and the rest each recipe below routes through.
 
 ## JSON HTTP endpoint with request DTO validation
 
