@@ -116,6 +116,16 @@ final class ContextTest extends TestCase
         );
     }
 
+    public function test_the_workflow_names_vendor_failures_and_terminal_queue_recovery(): void
+    {
+        $workflow = implode("\n", self::context()->toArray()['workflow']);
+
+        self::assertStringContainsString('concrete vendor client', $workflow);
+        self::assertStringContainsString('exceptions mapped by a Kinetis adapter', $workflow);
+        self::assertStringContainsString('exhausted queue attempts', $workflow);
+        self::assertStringContainsString('permanent-failure recovery', $workflow);
+    }
+
     /**
      * The three installed-source tools are named and their
      * argument-taking contract is stated in both the tool entries and

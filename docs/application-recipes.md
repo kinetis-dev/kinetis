@@ -98,7 +98,9 @@ rather than restating it — read those before writing code. Start at
   see {doc}`queue-sql`.
 - **Verification**: run the handler twice with the same identifier and
   assert one effect, and exercise the permanent-failure path at
-  `maxAttempts`.
+  `maxAttempts`. If the work must eventually complete, verify the recovery,
+  dead-letter or reconciliation path as well; retry exhaustion alone loses
+  the queue's ability to make further progress.
 - **Non-goal**: treating delivery as exactly-once. Leaving `maxAttempts`
   unset defers to the worker's `QUEUE_MAX_ATTEMPTS`, which defaults to
   `0` and gives up after the first failed attempt — no setting retries a

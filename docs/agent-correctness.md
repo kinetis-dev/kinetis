@@ -42,8 +42,10 @@ These hold regardless of adapter, driver, or use case.
   is unknown — a dropped connection, a failed `COMMIT`, a `Transport` or
   `Timeout` HTTP failure — is looked up rather than blindly resent, and a
   handler that can run more than once, which includes every queue job,
-  has no duplicate effect. {doc}`persistence`, {doc}`revolt-http-client`,
-  {doc}`queue`.
+  has no duplicate effect. Exhausting `maxAttempts` is a terminal outcome,
+  not eventual delivery; when correctness depends on completion, the design
+  includes a permanent-failure recovery, dead-letter or reconciliation path.
+  {doc}`persistence`, {doc}`revolt-http-client`, {doc}`queue`.
 - **Direct dependencies.** A new dependency points toward the contract
   it consumes; application code does not reach past that contract into
   an optional or runtime-specific implementation it does not need. Every
@@ -121,6 +123,11 @@ specific choice in the project.
   throughout. When a change depends on that boundary, read the installed
   driver's source rather than inferring it from `MysqlLink`.
   {doc}`persistence`, {doc}`concurrency`.
+- **Catch failures from the object actually called.** A Kinetis adapter's
+  mapped exceptions govern calls through that adapter. Code that calls a
+  concrete vendor client directly must use that client's own failure
+  vocabulary, verified against its installed source. {doc}`agent-workflow`,
+  {doc}`appendix-search`.
 - **Read installed source to settle a fact, not to inventory a package.**
   Use Orbitron's directory listing, literal search, and bounded window for
   the exact version-sensitive signature, default, failure code, or vendor
