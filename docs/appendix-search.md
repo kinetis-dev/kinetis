@@ -113,15 +113,17 @@ final readonly class Articles
 }
 ```
 
-- `index(string $index, ?string $id, array $document, bool $refresh = false): array`
+- `index(string $index, ?string $id, array $document, bool $refresh = false, ?WriteCondition $condition = null): array`
   writes a document, letting the cluster assign an id when `$id` is null,
   and answers the write envelope (`_id`, `_version`, `result`).
 - `get(string $index, string $id): ?array` answers the document envelope
   — the document itself is `$envelope['_source']`, and `_version`,
-  `_seq_no` and `_primary_term` are there for an optimistic-concurrency
-  write — or `null` when the index or the id holds nothing.
-- `delete(string $index, string $id, bool $refresh = false): bool` answers
-  `true` when it deleted, `false` when there was nothing to delete.
+  `_seq_no` and `_primary_term` are what a
+  {ref}`write condition <search-reference-conditions>` is built from — or
+  `null` when the index or the id holds nothing.
+- `delete(string $index, string $id, bool $refresh = false, ?WriteCondition $condition = null): bool`
+  answers `true` when it deleted, `false` when there was nothing to
+  delete.
 - `search(string $index, array $body): array` takes the engine's own
   search body and answers the search envelope, so
   `$result['hits']['total']['value']` and `$result['hits']['hits']` mean
@@ -134,6 +136,10 @@ final readonly class Articles
 costs a refresh per call and belongs in a test or a read-your-write path,
 not in bulk ingestion.
 
+`$condition` applies the write only to a document the engine already
+finds in the state that condition names — {ref}`conditional writes
+<search-reference-conditions>` below.
+
 This is a call and result contract, not a query language. A search body
 travels through untouched: the two engines agree on the common ground —
 `match`, `term`, `range`, `bool`, `aggs`, `from`, `size`, `sort` — and
@@ -145,6 +151,53 @@ ES|QL, point-in-time readers, an engine's own bulk helper — is reached
 through the engine client, which each package binds unwrapped beside this
 one. Injecting `OpenSearch\Client` or `Elastic\Elasticsearch\Client`
 gives you the whole library, exactly as its own documentation describes.
+
+(search-reference-conditions)=
+
+### Conditional writes
+
+`Kinetis\Search\WriteCondition` carries the condition parameters both
+engines take on a write that names one document. It has three forms:
+
+- `WriteCondition::external(int $version)` applies the write only when
+  `$version` is newer than the version the document holds, and stores
+  `$version` as the new one.
+- `WriteCondition::externalOrEqual(int $version)` applies it when
+  `$version` is newer than or equal to the stored version.
+- `WriteCondition::ifUnchanged(int $sequenceNumber, int $primaryTerm)`
+  applies it only while the document still sits at exactly the `_seq_no`
+  and `_primary_term` a `get()` envelope reported, which is what fences a
+  read-modify-write against a concurrent writer.
+
+A version and a sequence number are zero or greater and a primary term is
+one or greater; anything else is an `InvalidArgumentException` from the
+named constructor. A condition names one document, so a conditional
+`index()` requires an explicit `$id` and refuses a null one with an
+`InvalidArgumentException` before anything is sent.
+
+```{code-block} php
+use Kinetis\Search\WriteCondition;
+
+// The authority's own revision number, carried by an at-least-once
+// delivery: a replayed or reordered message cannot move the index back
+// to an older row.
+$search->index('articles', $id, $row, condition: WriteCondition::external($row['revision']));
+```
+
+A refused write is a `SearchRequestException` carrying `409` on a direct
+call, and that item's own `409` inside a `200` on a bulk one — the same
+vocabulary every other conflict uses. Neither client retries one.
+
+Two properties decide which form a projection wants. `external_gte`
+admits a write at the version already stored, which is what makes a
+duplicate delivery harmless — and what requires the document to be a
+deterministic function of that version, since an equal version overwrites
+what is there.
+
+A versioned delete fences a later stale write only while the engine still
+holds the deleted document's version, which it discards once
+`index.gc_deletes` has passed. A projection that must stay fenced beyond
+that writes a versioned tombstone document rather than deleting one.
 
 (bulk-operations)=
 
@@ -167,6 +220,12 @@ if ($result['errors']) {
 `index` replaces whatever the id held, `create` fails if the id already
 exists, `update` merges a partial document into it, and `delete` removes
 it. `index` and `create` take a null id to let the cluster assign one.
+
+`BulkOperation::index()` and `BulkOperation::delete()` take a trailing
+`?WriteCondition $condition = null`, whose parameters join that
+operation's action metadata. `create` needs none — it is already
+conditional on the id being free — and `update` takes only one of the
+three forms, so the whole value is not offered there.
 
 A bulk request answers `200` with its failures inside it, so a caller
 that ignores `errors` silently drops writes. Deleting a document that

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Search\Tests;
 
+use InvalidArgumentException;
 use Kinetis\Search\BulkOperation;
+use Kinetis\Search\WriteCondition;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -55,5 +57,40 @@ final class BulkOperationTest extends TestCase
             [['delete' => ['_index' => 'articles', '_id' => '1']]],
             BulkOperation::delete('articles', '1')->lines(),
         );
+    }
+
+    /**
+     * A condition's parameters go in the action line's own metadata,
+     * beside the target, rather than anywhere near the document line.
+     */
+    public function test_a_condition_joins_the_action_metadata_of_an_index(): void
+    {
+        self::assertSame(
+            [
+                ['index' => ['_index' => 'articles', '_id' => '1', 'version' => 7, 'version_type' => 'external']],
+                ['title' => 'Kinetis'],
+            ],
+            BulkOperation::index('articles', '1', ['title' => 'Kinetis'], WriteCondition::external(7))->lines(),
+        );
+    }
+
+    public function test_a_condition_joins_the_action_metadata_of_a_delete(): void
+    {
+        self::assertSame(
+            [['delete' => ['_index' => 'articles', '_id' => '1', 'if_seq_no' => 4, 'if_primary_term' => 2]]],
+            BulkOperation::delete('articles', '1', WriteCondition::ifUnchanged(4, 2))->lines(),
+        );
+    }
+
+    /**
+     * The same rule a direct conditional index follows: a condition
+     * names one document, and a cluster-assigned id is not one.
+     */
+    public function test_a_conditional_index_without_an_id_is_refused(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A conditional index names the document it writes; $id is null.');
+
+        BulkOperation::index('articles', null, ['title' => 'Kinetis'], WriteCondition::externalOrEqual(7));
     }
 }

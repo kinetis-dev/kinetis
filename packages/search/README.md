@@ -81,6 +81,18 @@ isn't there; a search body is the engine's own query DSL, passed through
 untouched. Anything outside these five calls is reached through the
 engine client itself.
 
+`index()`, `delete()` and their `BulkOperation` counterparts take a
+`WriteCondition`: what a document must already be true of for the write
+to apply. `external()` and `externalOrEqual()` carry an authority's own
+revision number as an external version, and `ifUnchanged()` carries the
+`_seq_no` and `_primary_term` a `get()` answered. A projection fed by an
+at-least-once delivery uses one so that a replayed or reordered message
+cannot move the index back to an older row. A refused write is a
+`SearchRequestException` carrying `409`, or that item's own `409` inside
+a bulk `200`; neither client retries it. The correctness properties of
+each form are in
+[kinetis.dev/docs/appendix-search.html](https://kinetis.dev/docs/appendix-search.html#conditional-writes).
+
 ## Configuration
 
 Every key is spelled with the engine's own prefix. Full reference:

@@ -92,6 +92,10 @@ document ID before repeating it. The clients do not replay a failed
 request automatically. The full failure contract is in
 {ref}`search-reference-failures`.
 
+Where a replay or a reordered delivery could overwrite newer data, pass
+a `WriteCondition` to `index()` or `delete()` and let the engine refuse
+the stale write with a `409` — {ref}`search-reference-conditions`.
+
 ## More than one engine or connection
 
 If both engine packages are installed, both bind `SearchClient`; the

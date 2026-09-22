@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Search;
 
+use InvalidArgumentException;
+
 /**
  * One write inside a {@see SearchClient::bulk()} request, as the action
  * line and optional document line both engines read. Building those
@@ -14,6 +16,14 @@ namespace Kinetis\Search;
  * An update carries a partial document and merges it into what the id
  * already holds; a create fails when the id already exists, where an
  * index replaces it.
+ *
+ * An index or a delete takes a {@see WriteCondition}, whose parameters
+ * join the action line's own. A create needs none — it is already
+ * conditional on the id being free — and an update takes only one of the
+ * three forms, so offering the whole value there would admit a pairing
+ * neither engine applies. A rejected condition is reported as that
+ * item's own failure inside a `200`, the way every other bulk rejection
+ * is.
  *
  * Every document here carries at least one field, for the reason
  * {@see SearchClient::index()} gives: a write of nothing is not an
@@ -38,15 +48,24 @@ final readonly class BulkOperation
         private string $index,
         private ?string $id,
         private ?array $document,
+        private ?WriteCondition $condition = null,
     ) {
     }
 
     /**
      * @param non-empty-array<string, mixed> $document
+     *
+     * @throws InvalidArgumentException
      */
-    public static function index(string $index, ?string $id, array $document): self
+    public static function index(string $index, ?string $id, array $document, ?WriteCondition $condition = null): self
     {
-        return new self(self::INDEX, $index, $id, $document);
+        if ($id === null && $condition !== null) {
+            // The condition is about one document, and neither engine
+            // accepts one on a write that asks the cluster for an id.
+            throw new InvalidArgumentException('A conditional index names the document it writes; $id is null.');
+        }
+
+        return new self(self::INDEX, $index, $id, $document, $condition);
     }
 
     /**
@@ -65,9 +84,9 @@ final readonly class BulkOperation
         return new self(self::UPDATE, $index, $id, $partialDocument);
     }
 
-    public static function delete(string $index, string $id): self
+    public static function delete(string $index, string $id, ?WriteCondition $condition = null): self
     {
-        return new self(self::DELETE, $index, $id, null);
+        return new self(self::DELETE, $index, $id, null, $condition);
     }
 
     /**
@@ -103,6 +122,10 @@ final readonly class BulkOperation
 
         if ($this->id !== null) {
             $target['_id'] = $this->id;
+        }
+
+        if ($this->condition !== null) {
+            $target = [...$target, ...$this->condition->parameters];
         }
 
         $action = [[$this->action => $target]];
