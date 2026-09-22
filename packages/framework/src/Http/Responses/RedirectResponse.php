@@ -9,11 +9,14 @@ use Psr\Http\Message\ResponseInterface;
 
 final class RedirectResponse
 {
-    public static function to(string $url, int $status = 302): ResponseInterface
+    /**
+     * @param array<string, string> $headers
+     */
+    public static function to(string $url, int $status = 302, array $headers = []): ResponseInterface
     {
-        return new Response(
+        return (new Response(
             status: $status,
-            headers: ['Location' => $url],
-        );
+            headers: $headers,
+        ))->withHeader('Location', $url);
     }
 }

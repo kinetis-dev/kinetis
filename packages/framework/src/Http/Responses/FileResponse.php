@@ -10,18 +10,26 @@ use Psr\Http\Message\ResponseInterface;
 
 final class FileResponse
 {
-    public static function fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null): ResponseInterface
+    /**
+     * @param array<string, string> $headers
+     */
+    public static function fromContents(
+        string $contents,
+        string $contentType,
+        int $status = 200,
+        ?string $downloadFilename = null,
+        array $headers = [],
+    ): ResponseInterface
     {
-        $headers = [
-            'Content-Type' => $contentType,
-            'Content-Length' => (string) strlen($contents),
-        ];
+        $response = (new Response(status: $status, headers: $headers, body: $contents))
+            ->withHeader('Content-Type', $contentType)
+            ->withHeader('Content-Length', (string) strlen($contents));
 
         if ($downloadFilename !== null) {
-            $headers['Content-Disposition'] = self::contentDisposition($downloadFilename);
+            $response = $response->withHeader('Content-Disposition', self::contentDisposition($downloadFilename));
         }
 
-        return new Response(status: $status, headers: $headers, body: $contents);
+        return $response;
     }
 
     /**

@@ -42,8 +42,10 @@ These hold regardless of adapter, driver, or use case.
   is unknown — a dropped connection, a failed `COMMIT`, a `Transport` or
   `Timeout` HTTP failure — is looked up rather than blindly resent, and a
   handler that can run more than once, which includes every queue job,
-  has no duplicate effect. {doc}`persistence`, {doc}`revolt-http-client`,
-  {doc}`queue`.
+  has no duplicate effect. Exhausting `maxAttempts` is a terminal outcome,
+  not eventual delivery; when correctness depends on completion, the design
+  includes a permanent-failure recovery, dead-letter or reconciliation path.
+  {doc}`persistence`, {doc}`revolt-http-client`, {doc}`queue`.
 - **Direct dependencies.** A new dependency points toward the contract
   it consumes; application code does not reach past that contract into
   an optional or runtime-specific implementation it does not need. Every
@@ -64,6 +66,13 @@ These hold regardless of adapter, driver, or use case.
   policy. Prefer a header or request body at the exchange boundary, and
   account for browser history and referrer propagation as well as
   application logs; TLS does not remove any of those copies.
+- **MCP identity is transport-specific.** The HTTP `mcp` middleware group
+  and its identity guard do not run over stdio. A tool that depends on an
+  authenticated caller injects `CurrentUserInterface` even when it also
+  needs a concrete user for provider-specific claims: without
+  authentication the interface is unresolvable and fails closed, while an
+  autowirable concrete user can become a new, disconnected object.
+  {doc}`mcp`, {doc}`auth-jwt`.
 - **Compiled-cache freshness.** A change to a route, an MCP tool or
   resource, a command, an event listener, or a validation plan needs
   `kinetis build` before a production deploy that pre-warms
@@ -121,12 +130,23 @@ specific choice in the project.
   throughout. When a change depends on that boundary, read the installed
   driver's source rather than inferring it from `MysqlLink`.
   {doc}`persistence`, {doc}`concurrency`.
+- **Catch failures from the object actually called.** A Kinetis adapter's
+  mapped exceptions govern calls through that adapter. Code that calls a
+  concrete vendor client directly must use that client's own failure
+  vocabulary, verified against its installed source. {doc}`agent-workflow`,
+  {doc}`appendix-search`.
 - **Read installed source to settle a fact, not to inventory a package.**
   Use Orbitron's directory listing, literal search, and bounded window for
   the exact version-sensitive signature, default, failure code, or vendor
   behavior that governs the change. Once that fact is established, return
   to the application; continuing through unrelated source adds review cost
   without strengthening the evidence. {doc}`agent-workflow`.
+- **Test at the boundary that owns the behavior.** `TestClient` dispatches
+  after the runtime adapter and `send()` preserves a hand-built PSR-7 request
+  exactly. It can test application behavior against the post-adapter shape,
+  but it cannot prove how repeated wire headers, cookies or request identity
+  are converted. Use a runtime-conformance driver or one bounded request
+  through the real adapter for that claim. {doc}`appendix-testing`.
 - **Prove overlap where overlap is the requirement.** `concurrently()`
   running without error is not evidence that anything overlapped — a
   blocking call inside it still serializes the whole loop. Prove a wait

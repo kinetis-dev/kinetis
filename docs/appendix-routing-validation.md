@@ -1695,22 +1695,22 @@ per request, which a captured default cannot do.
 
 ### Response builders
 
-- `HtmlResponse::create(string $html, int $status = 200)` sets
-  `Content-Type: text/html`.
-- `PlainTextResponse::create(string $text, int $status = 200)` sets
-  `Content-Type: text/plain`.
+- `HtmlResponse::create(string $html, int $status = 200, array $headers = [])`
+  sets `Content-Type: text/html`.
+- `PlainTextResponse::create(string $text, int $status = 200, array $headers = [])`
+  sets `Content-Type: text/plain`.
 - `JsonResponse::create(mixed $data, int $status = 200, array $headers = [])`
   encodes the value with `JSON_THROW_ON_ERROR` and sets
   `Content-Type: application/json`, replacing any caller-supplied content
   type case-insensitively. An encoding failure, including invalid UTF-8,
   raises `JsonException` before a response exists; an exception thrown by
   the value's own `JsonSerializable::jsonSerialize()` propagates unchanged.
-- `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
+- `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null, array $headers = [])`
   builds a response around bytes you already hold — a generated CSV,
   image or PDF — and adds a `Content-Disposition: attachment` header when
   `$downloadFilename` is given.
-- `RedirectResponse::to(string $url, int $status = 302)` sets a `Location`
-  header.
+- `RedirectResponse::to(string $url, int $status = 302, array $headers = [])`
+  sets a `Location` header.
 - `ErrorResponse::create(int $status, string $message, array $headers = [])`
   builds `{"error": "..."}` at the given status, the same shape Kinetis's
   own 404/405/500 responses use — a 405 (a path matches, but not this
@@ -1720,6 +1720,11 @@ per request, which a captured default cannot do.
 All six live in `Kinetis\Http\Responses`. No response builder takes a
 filesystem path: reading one synchronously holds the worker for the
 length of the I/O, and core carries no asynchronous filesystem client.
+
+Every builder accepts caller-supplied headers. Headers derived from its
+semantic arguments — such as `Content-Type`, `Content-Length`, `Location`
+or a generated attachment disposition — replace caller-supplied values
+with any casing; the remaining headers pass through unchanged.
 
 ### Download filenames are treated as untrusted
 

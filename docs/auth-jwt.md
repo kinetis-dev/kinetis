@@ -336,7 +336,11 @@ reading its header — to decide who the caller is: those bytes are
 unverified until `JwtAuthenticator` accepts the token. On a route without
 the middleware, `CurrentUserInterface` cannot be resolved, and `JwtUser`
 autowires as an empty object whose every `claim()` is `null` and whose
-`id()` throws.
+`id()` throws. The same distinction matters for a `kinetis/mcp` tool,
+because its stdio transport runs no HTTP middleware: inject
+`CurrentUserInterface` as well as `JwtUser` when the tool needs JWT claims,
+so the unauthenticated transport fails during resolution instead of
+receiving a disconnected user.
 ```
 
 A token that arrives some other way than the `Authorization` header goes

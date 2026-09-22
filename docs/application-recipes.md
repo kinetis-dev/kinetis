@@ -81,21 +81,26 @@ rather than restating it — read those before writing code. Start at
 
 - **Guides**: {doc}`queue`, the installed backend's own page
   ({doc}`queue-redis`, {doc}`queue-sql`, {doc}`queue-sqs`,
-  {doc}`queue-rabbitmq`), {doc}`appendix-queue`.
+  {doc}`queue-rabbitmq`), {doc}`appendix-queue`, and
+  {doc}`appendix-redis` when Redis owns the effect.
 - **Lifecycle/I-O**: a job's constructor arguments are its whole state —
   nothing request-scoped from the code that pushed it survives to the
   worker that runs it.
 - **Security/integrity**: delivery is at least once, so a handler that
-  is not safe to run twice needs a unique key recorded in the same
-  transaction as its effect, per {doc}`queue`'s "A job can run more than
-  once". On the pushing side, `QueueInterface::push()` is not enlisted in
-  a transaction the caller has open: the job is enqueued even if that
-  transaction rolls back. `kinetis/queue-sql`'s `SqlQueue::pushOn()` is
-  the one backend API that places the row on a transaction the caller
-  supplies, so the enqueue commits with the work — see {doc}`queue-sql`.
+  is not safe to run twice records its idempotency key and effect in one
+  atomic operation. In a database, use a unique key in the same transaction.
+  When one Redis node owns both values, use one Lua script that writes the
+  marker and effect together. On the pushing side, `QueueInterface::push()`
+  is not enlisted in a transaction the caller has open: the job is enqueued
+  even if that transaction rolls back. `kinetis/queue-sql`'s
+  `SqlQueue::pushOn()` is the one backend API that places the row on a
+  transaction the caller supplies, so the enqueue commits with the work —
+  see {doc}`queue-sql`.
 - **Verification**: run the handler twice with the same identifier and
   assert one effect, and exercise the permanent-failure path at
-  `maxAttempts`.
+  `maxAttempts`. If the work must eventually complete, verify the recovery,
+  dead-letter or reconciliation path as well; retry exhaustion alone loses
+  the queue's ability to make further progress.
 - **Non-goal**: treating delivery as exactly-once. Leaving `maxAttempts`
   unset defers to the worker's `QUEUE_MAX_ATTEMPTS`, which defaults to
   `0` and gives up after the first failed attempt — no setting retries a

@@ -42,6 +42,15 @@ PSR-7 request exactly as handed over and completes nothing: a request
 that needs cookies read sets `withCookieParams()` alongside its `Cookie`
 header. Every other method builds a request and calls `send()`.
 
+`TestClient` starts at the Kernel boundary, after a runtime adapter would
+have converted a wire request into PSR-7. It therefore cannot prove an
+adapter's conversion rules. In particular, a hand-built request with two
+values for one header reaches the Kernel with those two values unchanged,
+while the shipped adapters expose an ordinary repeated header as one
+comma-joined value. Use that joined value when testing application behavior
+after conversion. Use the runtime-conformance driver or a bounded request
+through the real adapter when the conversion itself is what must be proved.
+
 (testing-reference-loop-liveness)=
 ## Proving a path keeps the loop responsive
 

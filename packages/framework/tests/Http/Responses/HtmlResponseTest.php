@@ -24,4 +24,15 @@ final class HtmlResponseTest extends TestCase
 
         self::assertSame(410, $response->getStatusCode());
     }
+
+    public function test_accepts_custom_headers_but_keeps_its_content_type(): void
+    {
+        $response = HtmlResponse::create(
+            '<h1>Private</h1>',
+            headers: ['Cache-Control' => 'no-store', 'content-type' => 'text/plain'],
+        );
+
+        self::assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(['text/html; charset=utf-8'], $response->getHeader('Content-Type'));
+    }
 }
