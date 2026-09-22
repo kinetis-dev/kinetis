@@ -126,11 +126,12 @@ Once Orbitron is ready, every task runs the same way:
      symbol and `orbitron_read_package_source` for a window around a
      line it reports.
    - **Known package, unknown file.** Call
-     `orbitron_list_package_source` for the direct children of `src`,
-     `bin` or `resources`, or of a directory beneath one, and list the
-     directory the task is about; or search that package's `README.md`
-     for the option, setting or term, which names the class or file to
-     go to next.
+     `orbitron_list_package_source` with `.` for the package's install
+     root, then list the directory the task is about, working down from
+     what that listing shows; it refuses a hidden entry and the
+     package's own top-level `vendor/`. Or search that package's
+     `README.md` for the option, setting or term, which names the class
+     or file to go to next.
    - A success reporting `hasMore: true` is not a refusal. Continue with
      `startLine` set to `endLine + 1` for a window, or to the last
      reported match line plus one for a search, until the needed
@@ -163,8 +164,11 @@ Once Orbitron is ready, every task runs the same way:
 
 At a material milestone — a feature finished, a dependency added, a
 route or contract changed — re-read this project's `README.md` framing
-and correct claims the work made demonstrably false. That is a
-correctness pass, not permission to rewrite it for style.
+and correct application-specific claims the work made demonstrably false,
+such as its routes, dependencies or runtime behavior. Preserve the
+reusable Kinetis and Orbitron setup reference unless the implementation
+invalidated it. This is a correctness pass, not permission to rewrite it
+for style.
 
 ## Scaffolding
 

@@ -76,12 +76,12 @@ final readonly class RequestIdMiddleware implements MiddlewareInterface
 }
 ```
 
-Any class under one of your project's PSR-4 roots that carries
-`#[AsGlobalMiddleware]` joins the global pipeline, and so does a class an
-installed package offers through its `extra.kinetis` scan roots (see
-{doc}`cli`). Nothing else registers it. `MIDDLEWARE_DISCOVERY_PATHS`
-restricts the scan in a large application, as {doc}`cli` describes for
-routes.
+Any class under one of your project's production `autoload.psr-4` roots
+that carries `#[AsGlobalMiddleware]` joins the global pipeline, and so
+does a class an installed package offers through its `extra.kinetis`
+scan roots (see {doc}`cli`). Nothing else registers it.
+`MIDDLEWARE_DISCOVERY_PATHS` restricts the scan in a large application,
+as {doc}`cli` describes for routes.
 
 When discovered middleware must run in a particular order, give each a
 `priority` from `0` to `100`, such as `#[AsGlobalMiddleware(priority: 90)]`.

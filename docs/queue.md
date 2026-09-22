@@ -383,7 +383,9 @@ again when:
 
 - a worker dies after the job's work and before the backend records the
   result;
-- a job outlives its visibility timeout and a second worker starts it;
+- a job outlives its visibility timeout — because its worker died, or
+  because it never yielded long enough to be renewed — and a second
+  worker starts it;
 - a RabbitMQ retry stops between publishing the replacement and
   discarding the original;
 - you push again after a `push()` whose outcome was unknown.
@@ -411,12 +413,53 @@ another worker if the first never settles it:
 |---|---|---|
 | `kinetis/queue-redis` | Redelivered once its lease passes the timeout, by any worker's next `pop()` | `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, default `300` |
 | `kinetis/queue-sql` | Reclaimed once its reservation passes the timeout | `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, default `300` |
-| `kinetis/queue-sqs` | Redelivered when the message's visibility timeout expires | The queue's visibility timeout, configured in AWS |
+| `kinetis/queue-sqs` | Redelivered when the message's visibility timeout expires | `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, default `300`, sent on every receive and overriding the queue's own attribute |
 | `kinetis/queue-rabbitmq` | Redelivered as soon as the worker's connection drops | Nothing to configure |
 
-Set the timeout above your slowest job. It is not extended while a job
-runs: too short, and a slow job runs alongside its redelivered copy; too
-long, and a crashed worker's job waits that long to come back.
+The timeout sizes how long a *crashed* worker's job waits to come back,
+not how long a job may take: the worker extends it while the job runs.
+Too long, and a crashed worker's job waits that long.
+
+### Reservation renewal
+
+On Redis, SQL and SQS the worker renews the reservation of the job it is
+running, at half the visibility timeout, for as long as the handler
+runs. A job that legitimately takes longer than the window keeps its
+delivery instead of being handed to a second worker. Nothing is
+configured and nothing is exposed to a job: renewal is the worker's, and
+a job never sees its own receipt.
+
+`kinetis/queue-rabbitmq` needs none — the channel holds the
+unacknowledged delivery for as long as the connection lives — and
+`SyncQueue` has no reservation.
+
+Delivery is still at least once. Renewal stops when:
+
+- **the worker dies.** That is the point: nothing renews, the window
+  expires, and the job comes back.
+- **the handler never yields.** A CPU-bound loop that never suspends
+  gives the event loop no chance to run the renewal, so the window
+  expires under it. Break long computation with I/O, or set the timeout
+  above it.
+- **SQS reaches a message's 12-hour maximum**, which AWS counts from the
+  receive rather than from the last renewal.
+
+A renewal the backend refuses does not fail the job, settle it, or stop
+the worker. The worker keeps trying for the rest of the job — a refused
+call says nothing about whether the next one will be refused — and, once
+it has attempted the job's own settlement, logs one `error` naming how
+many renewals failed and the last exception. Read it as "this job may
+have been handed to another worker as well" — the same thing an
+idempotent handler already tolerates.
+
+A renewal the worker cannot *wait out* before settling is the one that
+stops it, and the delivery is left unsettled. A renewal still able to
+resume could overwrite the backoff a delayed `release()` had just
+written, so nothing is acked, released or failed; the visibility timeout
+brings the job back instead.
+
+[Reservation renewal](appendix-queue.md#reservation-renewal) carries the
+per-backend operations, the fences and the worker's watcher rules.
 
 ### When a settlement is lost
 
@@ -426,8 +469,9 @@ writes nothing, dispatches `Kinetis\Queue\Events\JobSettlementLost`
 instead of the success or failure event, logs a warning, and continues.
 Read it as "another worker may be running, or may already have run, this
 job". An idempotent handler needs nothing more; frequent occurrences mean
-the visibility timeout is shorter than the job. SQS and RabbitMQ settle
-without that check, so a lost delivery there is not reported as one.
+renewal is not keeping up — a handler that never yields, or workers
+being killed. SQS and RabbitMQ settle without that check, so a lost
+delivery there is not reported as one.
 
 Any other exception from settling a job — a dropped connection, a
 backend refusing writes — stops the worker, and its supervisor should

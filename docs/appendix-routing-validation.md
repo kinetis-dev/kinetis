@@ -1699,6 +1699,12 @@ per request, which a captured default cannot do.
   `Content-Type: text/html`.
 - `PlainTextResponse::create(string $text, int $status = 200)` sets
   `Content-Type: text/plain`.
+- `JsonResponse::create(mixed $data, int $status = 200, array $headers = [])`
+  encodes the value with `JSON_THROW_ON_ERROR` and sets
+  `Content-Type: application/json`, replacing any caller-supplied content
+  type case-insensitively. An encoding failure, including invalid UTF-8,
+  raises `JsonException` before a response exists; an exception thrown by
+  the value's own `JsonSerializable::jsonSerialize()` propagates unchanged.
 - `FileResponse::fromContents(string $contents, string $contentType, int $status = 200, ?string $downloadFilename = null)`
   builds a response around bytes you already hold — a generated CSV,
   image or PDF — and adds a `Content-Disposition: attachment` header when
@@ -1711,7 +1717,7 @@ per request, which a captured default cannot do.
   method) carries an RFC 9110 `Allow` header listing every method the
   path supports, via this same `$headers` parameter.
 
-All five live in `Kinetis\Http\Responses`. No response builder takes a
+All six live in `Kinetis\Http\Responses`. No response builder takes a
 filesystem path: reading one synchronously holds the worker for the
 length of the I/O, and core carries no asynchronous filesystem client.
 

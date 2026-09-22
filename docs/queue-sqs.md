@@ -26,13 +26,14 @@ the exception — see [Credentials](#credentials).
 
 ## Configuring
 
-`QUEUE_SQS_REGION` is required. Four settings are optional:
+`QUEUE_SQS_REGION` is required. Five settings are optional:
 
 ```{code-block} text
 QUEUE_SQS_QUEUE_PREFIX=myapp-
 QUEUE_SQS_ENDPOINT=http://localstack:4566
 QUEUE_SQS_PLAINTEXT=true
 QUEUE_SQS_TIMEOUT=30
+QUEUE_VISIBILITY_TIMEOUT_SECONDS=300
 ```
 
 `QUEUE_SQS_QUEUE_PREFIX` is prepended to every queue name, so staging and
@@ -58,6 +59,29 @@ across a `pop()` that makes several requests. Keep it above five seconds:
 a worker's long poll holds a request open for up to that long, and a
 shorter budget aborts an idle poll as a failure. A request is one
 attempt, with no retry and no redirect followed.
+
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` (default `300`, `1` to `43200`) is
+the window every `ReceiveMessage` asks for and every renewal restores.
+It is sent explicitly on each receive, so it **overrides the queue's own
+`VisibilityTimeout` attribute** for the messages this application takes;
+the remote attribute still governs anything else receiving from that
+queue. A value outside the range is refused when the backend is built,
+before any AWS client exists.
+
+## Visibility timeout
+
+`queue:work` renews a message's invisibility automatically while the job
+runs, at half `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, so that setting sizes
+how long a *crashed* worker's message waits to be redelivered rather
+than how long a job may take. A handler that never yields to the event
+loop cannot be renewed, and neither can one whose worker has died.
+
+AWS counts a message's own **12-hour maximum from the receive, not from
+the last renewal**. A job still running at that point is redelivered
+whatever the worker sends, and the `ChangeMessageVisibility` that would
+have extended it past the limit is refused by SQS — an error that
+propagates the same way every other SQS failure here does, reported
+after the worker has attempted the job's settlement (see {doc}`queue`).
 
 ## Credentials
 
@@ -87,9 +111,10 @@ one with Terraform, CloudFormation, the AWS CLI or the console before
 pushing or popping. FIFO queues (names ending in `.fifo`) are not
 supported.
 
-Set each queue's visibility timeout above your slowest job. A message a
-worker has not settled by then is delivered again — which is also how a
-worker that died mid-job has its message redelivered.
+The queue's own `VisibilityTimeout` attribute governs anything else
+receiving from it; this application's workers send
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS` on every receive instead (see
+[Visibility timeout](#visibility-timeout)).
 
 ## Delivery caveats
 
@@ -101,6 +126,9 @@ worker that died mid-job has its message redelivered.
 - A settlement that arrives after the visibility timeout is not reported
   as a lost delivery: if SQS rejects it, its error stops the worker, and
   if SQS accepts it, nothing reports it.
+- A renewal is fenced by the receipt handle SQS itself scopes to the
+  receive, and reports nothing back: a refused renewal is logged once
+  after the settlement attempt, never raised as a lost delivery.
 - A worker watching several queues checks each once, then long-polls
   only the highest-priority queue for up to five seconds, so a job
   arriving on a lower-priority queue can wait that long.

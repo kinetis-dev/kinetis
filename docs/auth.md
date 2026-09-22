@@ -166,6 +166,19 @@ wire mechanism this middleware enforces, not a deployment's own tokens,
 and a client generated from the document reads the name. A subclass —
 the one that joins a middleware group — publishes the same description.
 
+`BearerAuthMiddleware` is `readonly`, and PHP requires a class extending
+a readonly class to be declared `readonly` too, so the wrapper is both
+`final` (nothing beyond `#[AsMiddlewareGroup]` belongs on it) and
+`readonly`:
+
+```{code-block} php
+use Kinetis\Auth\BearerAuthMiddleware;
+use Kinetis\Http\Attributes\AsMiddlewareGroup;
+
+#[AsMiddlewareGroup('api')]
+final readonly class ApiAuthMiddleware extends BearerAuthMiddleware {}
+```
+
 {ref}`openapi-security` has the composition rules, and
 `#[OpenApiSecurity]` for an operation whose authentication this
 inference cannot see.

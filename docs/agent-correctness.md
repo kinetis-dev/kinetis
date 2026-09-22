@@ -129,12 +129,14 @@ specific choice in the project.
   without strengthening the evidence. {doc}`agent-workflow`.
 - **Prove overlap where overlap is the requirement.** `concurrently()`
   running without error is not evidence that anything overlapped — a
-  blocking call inside it still serializes the whole loop. Where
-  concurrency is a property the change has to deliver, measure it:
-  `Kinetis\Testing\LoopLiveness::turnedDuring()` for whether a wait
-  yields, and a real timed probe against the real backend for whether
-  two operations actually ran side by side. {doc}`concurrency`,
-  {doc}`testing`.
+  blocking call inside it still serializes the whole loop. Prove a wait
+  yields with `Kinetis\Testing\LoopLiveness::turnedDuring()`. Prove
+  backend overlap with observable simultaneous backend state or a causal
+  barrier against the real service; elapsed time can corroborate that
+  evidence but is not proof by itself. For MySQL, a test-only session can
+  hold a table lock while `information_schema.PROCESSLIST` confirms every
+  expected query is waiting at once, then release the lock in bounded
+  cleanup. {doc}`concurrency`, {doc}`testing`.
 - **Run one suite at a time against one backend.** Overlapping runs
   against a shared database, broker or object store interleave their
   writes and produce failures that name the code under test but belong
@@ -157,10 +159,12 @@ specific choice in the project.
 - **At a material milestone, re-read the top-level framing.** When a
   feature lands, a dependency is added, or a route or contract changes,
   scan the project's own `README.md` and the package READMEs the change
-  touched for claims it made demonstrably false — a capability described
-  as absent that now exists, a count, a list, a setup step. Correct
-  those. This is a correctness pass, not permission to rewrite prose
-  that is merely not how you would have put it.
+  touched for application-specific claims it made demonstrably false — a
+  capability described as absent that now exists, a count, a list, a
+  setup step. Preserve reusable framework and tooling setup reference
+  unless the change invalidated it. This is a correctness pass, not
+  permission to rewrite prose that is merely not how you would have put
+  it.
 
 ## See also
 

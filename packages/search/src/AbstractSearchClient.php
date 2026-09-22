@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Search;
 
+use InvalidArgumentException;
 use Kinetis\Search\Exception\SearchNetworkException;
 use Kinetis\Search\Exception\SearchRequestException;
 
@@ -21,21 +22,34 @@ use Kinetis\Search\Exception\SearchRequestException;
  * Both engines take the same parameter keys for these five calls, which
  * is why the assembly is shared rather than written twice: `index` and
  * `id` name the target, `body` carries the document, the search body or
- * the bulk lines, and `refresh` is a query parameter added only when it
- * is asked for, so an ordinary write takes the cluster's own default.
+ * the bulk lines, `refresh` is a query parameter added only when it is
+ * asked for, so an ordinary write takes the cluster's own default, and a
+ * {@see WriteCondition}'s own parameters join it on the two calls that
+ * write one document.
  */
 abstract readonly class AbstractSearchClient implements SearchClient
 {
     #[\Override]
-    public function index(string $index, ?string $id, array $document, bool $refresh = false): array
-    {
+    public function index(
+        string $index,
+        ?string $id,
+        array $document,
+        bool $refresh = false,
+        ?WriteCondition $condition = null,
+    ): array {
+        if ($id === null && $condition !== null) {
+            // The condition is about one document, and neither engine
+            // accepts one on a write that asks the cluster for an id.
+            throw new InvalidArgumentException('A conditional index names the document it writes; $id is null.');
+        }
+
         $params = ['index' => $index, 'body' => $document];
 
         if ($id !== null) {
             $params['id'] = $id;
         }
 
-        return $this->send(SearchCall::Index, self::refreshing($params, $refresh));
+        return $this->send(SearchCall::Index, self::conditional(self::refreshing($params, $refresh), $condition));
     }
 
     #[\Override]
@@ -45,9 +59,13 @@ abstract readonly class AbstractSearchClient implements SearchClient
     }
 
     #[\Override]
-    public function delete(string $index, string $id, bool $refresh = false): bool
-    {
-        $params = self::refreshing(['index' => $index, 'id' => $id], $refresh);
+    public function delete(
+        string $index,
+        string $id,
+        bool $refresh = false,
+        ?WriteCondition $condition = null,
+    ): bool {
+        $params = self::conditional(self::refreshing(['index' => $index, 'id' => $id], $refresh), $condition);
 
         return $this->sendAllowingAbsence(SearchCall::Delete, $params) !== null;
     }
@@ -113,5 +131,14 @@ abstract readonly class AbstractSearchClient implements SearchClient
         }
 
         return $params;
+    }
+
+    /**
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    private static function conditional(array $params, ?WriteCondition $condition): array
+    {
+        return $condition === null ? $params : [...$params, ...$condition->parameters];
     }
 }

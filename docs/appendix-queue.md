@@ -28,7 +28,9 @@ time, and the same job body reaches a worker again when:
   a settlement whose transport failed;
 - a reservation expires while its job is still running (a Redis lease,
   an SQL reservation, an SQS visibility timeout), so a second worker
-  runs the job alongside the first;
+  runs the job alongside the first — which the worker's own renewal
+  prevents only while it keeps running and the handler keeps yielding
+  (see [Reservation renewal](#reservation-renewal));
 - SQS delivers a message again on its own, even within its visibility
   timeout;
 - a RabbitMQ `release()` stops between publishing the replacement and
@@ -201,13 +203,78 @@ job's own failure.
 | SQS | The message is hidden, on a best-effort basis, for the queue's visibility timeout | Redelivered by SQS once that timeout expires | SQS's `ApproximateReceiveCount`, incremented per receive and documented by AWS as approximate |
 | RabbitMQ | An unacked `basic.get` delivery | Requeued by the broker as soon as the connection drops | Unchanged: only `release()` writes the count |
 
-No reservation is renewed while its job runs. A job that outlasts its
-lease, reservation or visibility timeout can run concurrently with its
-redelivered copy.
+Each row describes a worker that stopped renewing. A reservation a live
+worker holds is extended while its job runs — see
+[Reservation renewal](#reservation-renewal).
 
 `QueuedJob::$attempts` is the attempt number the current delivery
 represents, starting at 1. Redis, SQL and RabbitMQ store the number of
 completed attempts and add one on `pop()`.
+
+### Reservation renewal
+
+A backend that can extend a live reservation declares
+`Kinetis\Queue\RenewableQueueInterface`, which adds
+`visibilityTimeoutSeconds()` and `renew(QueuedJob $job)` to
+`QueueInterface`. `QueueWorker` resolves the capability once, in its
+constructor, and drives renewal itself: application jobs never see their
+receipt and get no API of their own.
+
+| Backend | Renewal | Fence |
+|---|---|---|
+| Redis | One Lua script reading Redis `TIME` and resetting the leased member's expiry with `ZADD ... XX` | The exact leased envelope; `XX` never adds a member back |
+| SQL | One `UPDATE` restamping `reserved_at` with the worker's `time()` | `WHERE id = ? AND reserved_token = ?` |
+| SQS | One `ChangeMessageVisibility` restoring the full `QUEUE_VISIBILITY_TIMEOUT_SECONDS` | The `ReceiptHandle`, which SQS scopes to the receive |
+| RabbitMQ | None. The channel holds the unacknowledged delivery for as long as the connection lives | — |
+| `SyncQueue` | None. The job runs inline with no reservation | — |
+
+**`renew()` claims nothing about whether the delivery was still
+current.** MySQL and Redis both report zero changed rows or members for
+a write that stores the value already there, which a renewal at
+one-second resolution routinely does, so zero cannot mean stale. There
+is no `StaleJobHandleException` here and no `JobSettlement` case:
+renewal settles nothing and consumes no attempt. Transport and backend
+errors propagate as they do from any other operation, and `QueueWorker`
+contains them.
+
+Repeating a renewal is supported, and one failure says nothing about
+whether a later attempt will fail — but it is not idempotent: every
+successful call moves the reservation window forward from that call.
+`renew()` may return synchronously when it needs no I/O; I/O must
+suspend its Fiber rather than block the event-loop thread, bounded by
+the backend or client's own operation timeout, since the worker joins a
+call still in flight and cannot abandon one.
+
+While a job runs, the worker owns one Revolt repeat watcher at half the
+backend's window. It is unreferenced, so it never keeps the event loop
+alive on its own — a referenced one would hide the empty-loop condition
+`Kinetis\Async\ConcurrentBatch` reads as a task deadlock. At most one
+renewal is in flight: a tick arriving while the previous call has not
+answered is dropped rather than opening a second request against the
+same receipt.
+
+Before the delivery is settled the worker cancels the watcher and waits
+out any renewal still in flight, bounded by that adapter's own operation
+timeout. The wait is not optional: SQS renews and releases with the same
+`ChangeMessageVisibility` call, so a renewal landing after a delayed
+`release()` would replace the retry backoff. A failure of that wait is
+not a renewal failure and is not contained: the renewal is still
+suspended and can resume, so the error propagates and no `ack()`,
+`release()` or `fail()` is attempted at all. The delivery is left to the
+backend's own timeout, which is the outcome the worker can still
+account for.
+
+A failed renewal call is counted, not acted on. Later ticks keep trying,
+because one refused write does not mean the rest of the lease is
+unextendable. Once the settlement has been attempted — and its
+lifecycle event dispatched, when it succeeded — the worker logs one
+`error` carrying the failure count and the last exception, still logged
+when the settlement itself threw and never in place of that exception.
+No event, no exception, no retry policy and no worker restart follow
+from it.
+
+A handler that never yields to the event loop cannot be renewed: nothing
+in the worker can interrupt running PHP.
 
 ### `release()` across backends
 
@@ -293,20 +360,27 @@ refuses to run without `--force`, and clears each queue in turn.
    every registered request-scope initializer runs on it (see
    {doc}`container`).
 3. Start job telemetry.
-4. Rebuild the job with `JobSerializer::deserializeJob()` and invoke
+4. Start the reservation heartbeat when the backend declares
+   `Kinetis\Queue\RenewableQueueInterface` (see
+   [Reservation renewal](#reservation-renewal)).
+5. Rebuild the job with `JobSerializer::deserializeJob()` and invoke
    `handle()`, resolving each parameter from the scope. An untyped or
    scalar `handle()` parameter raises
    `Kinetis\Queue\Exception\UnresolvableJobParameterException`. Any
    throwable from this step is the job's failure.
-5. Settle the delivery, then report the outcome.
-6. Dispose the scope and run `gc_collect_cycles()`.
+6. Stop the heartbeat: cancel the watcher and wait out any renewal still
+   in flight, so nothing of it survives into the settlement. A wait that
+   fails propagates from here, and step 7 never runs.
+7. Settle the delivery, then report the outcome — a renewal failure
+   included, after the settlement attempt and never instead of it.
+8. Dispose the scope and run `gc_collect_cycles()`.
 
 `run()` repeats `processNext()` until stopped. `processNext()` is public
 so a test or a process-N-then-exit script can drive single iterations.
 
 ### One transition per delivery
 
-Only step 4 decides the outcome. A job that returns is acked. A job that
+Only step 5 decides the outcome. A job that returns is acked. A job that
 throws is failed when `QueuedJob::$attempts` has reached the effective
 cap — the job's own `maxAttempts`, else the worker's default — and
 released otherwise. The default is `QueueWorker`'s `$defaultMaxAttempts`
@@ -681,6 +755,11 @@ script, which Redis executes as an indivisible unit:
   indivisible as an immediate one. Two sweepers racing, or a sweep
   racing a settlement, produce one winner; the loser writes nothing.
 - **Promotion** moves due envelopes from `delayed` to `pending`.
+- **Renewal** resets the exact leased envelope's expiry to Redis `TIME`
+  plus `QUEUE_VISIBILITY_TIMEOUT_SECONDS` with `ZADD ... XX`, so a
+  member the leased set no longer holds is never added back. The changed
+  count is not read: `ZADD` answers 0 for a score it did not change,
+  which a renewal inside the same second produces.
 
 `ack()` and `fail()` remove the exact envelope with `ZREM` and read back
 the count, and `release()` reads the script's result. Because a reclaim
@@ -746,6 +825,12 @@ delete, unreserve nor credit an attempt against a reservation another
 worker now holds. That bounds a late settlement; it does not stop the
 job running twice.
 
+Renewal is one `UPDATE` setting `reserved_at = ?` under the same
+`WHERE id = ? AND reserved_token = ?` predicate, touching neither
+`attempts` nor `available_at`. Its affected-row count is not read:
+MySQL reports 0 for an `UPDATE` that writes the value already stored,
+which a renewal inside the same second does.
+
 The malformed-row removal uses the same fenced `DELETE`. When a reclaim
 lands between reserving an undecodable row and deleting it, the row
 belongs to the new holder and `pop()` raises `StaleJobHandleException`
@@ -768,7 +853,11 @@ whose `reserved_at` is null.
   attribute, since SQS caps a message at ten attributes.
 - `pop()` probes every queue with `WaitTimeSeconds: 0`, then long-polls
   the highest-priority queue for five seconds, or for what is left of
-  the deadline rounded up to a whole second.
+  the deadline rounded up to a whole second. Every `ReceiveMessage`
+  carries `VisibilityTimeout: QUEUE_VISIBILITY_TIMEOUT_SECONDS`
+  (default 300, admitted range 1 to 43200, validated before any client
+  is built), which overrides the queue's own attribute for the messages
+  this application takes.
 - `QueuedJob::$attempts` is the message's `ApproximateReceiveCount`; a
   message without it is malformed.
 - `ack()` and `fail()` call `DeleteMessage`. `release()` calls
@@ -784,6 +873,10 @@ whose `reserved_at` is null.
   resolves at its call site, so that refusal — like any service or
   network failure — fails the queue operation itself with nothing
   settled.
+- `renew()` calls `ChangeMessageVisibility` with that same configured
+  window, counted from the call. AWS counts a message's own 12-hour
+  maximum from the receive rather than from the last renewal, so a job
+  running past it is redelivered whatever the worker sends.
 - `QueuedJob::$handle` is the `ReceiptHandle`. The backend cannot tell
   SQS's answer to an expired handle from any other API error, so it
   raises no `StaleJobHandleException`. If SQS rejects the settlement, its

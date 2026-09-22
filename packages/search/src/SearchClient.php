@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Search;
 
+use InvalidArgumentException;
 use Kinetis\Search\Exception\SearchNetworkException;
 use Kinetis\Search\Exception\SearchRequestException;
 
@@ -47,19 +48,36 @@ interface SearchClient
      * empty one where a JSON object belongs, so writing nothing is not
      * an operation either of them offers.
      *
+     * $condition is a precondition the engine evaluates for $id before
+     * applying the write, and a refused write is a
+     * {@see SearchRequestException} carrying 409. What each form admits
+     * is {@see WriteCondition}'s own contract — an external version
+     * creates a document that is not there yet, where
+     * {@see WriteCondition::ifUnchanged()} requires an existing one. A
+     * condition names the document it applies to, so $id is required
+     * with one and a null id is an InvalidArgumentException before
+     * anything is sent.
+     *
      * @param non-empty-array<string, mixed> $document
      * @return array<string, mixed> the write envelope: `_id`, `_version`, `result`, `_shards`
      *
+     * @throws InvalidArgumentException
      * @throws SearchRequestException
      * @throws SearchNetworkException
      */
-    public function index(string $index, ?string $id, array $document, bool $refresh = false): array;
+    public function index(
+        string $index,
+        ?string $id,
+        array $document,
+        bool $refresh = false,
+        ?WriteCondition $condition = null,
+    ): array;
 
     /**
      * The document envelope, or null when the index or the id holds
      * nothing. The document itself is `$envelope['_source']`; the
      * envelope also carries `_version`, `_seq_no` and `_primary_term`,
-     * which is what an optimistic-concurrency write needs.
+     * which is what {@see WriteCondition::ifUnchanged()} is built from.
      *
      * @return array<string, mixed>|null
      *
@@ -72,10 +90,21 @@ interface SearchClient
      * True when this call deleted the document, false when the index or
      * the id held nothing.
      *
+     * $condition deletes only a document the engine finds in the state
+     * that condition names, and answers a conflict as a
+     * {@see SearchRequestException} carrying 409. A versioned delete
+     * fences a later stale write only for as long as
+     * {@see WriteCondition} describes.
+     *
      * @throws SearchRequestException
      * @throws SearchNetworkException
      */
-    public function delete(string $index, string $id, bool $refresh = false): bool;
+    public function delete(
+        string $index,
+        string $id,
+        bool $refresh = false,
+        ?WriteCondition $condition = null,
+    ): bool;
 
     /**
      * $index is one index, alias, or comma-separated list of either.

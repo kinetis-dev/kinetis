@@ -8,6 +8,7 @@ use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Hidden;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Http\Responses\JsonResponse;
 use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\OpenApi\OpenApiDocumentProvider;
 use Kinetis\OpenApi\SwaggerUiPage;
@@ -46,11 +47,7 @@ final readonly class DocumentationController
             return $this->closed($request);
         }
 
-        return new Response(
-            status: 200,
-            headers: ['Content-Type' => 'application/json'],
-            body: json_encode($this->documents->document(), JSON_THROW_ON_ERROR),
-        );
+        return JsonResponse::create($this->documents->document());
     }
 
     #[Get('/openapi')]

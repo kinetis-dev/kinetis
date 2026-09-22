@@ -125,15 +125,19 @@ older than this, with its attempt count increased. Constructing
 `SqlQueue` directly takes the same value as its `visibilityTimeoutSeconds`
 argument.
 
-A reservation is never renewed. Set the timeout above your slowest job:
-a job still running when its reservation expires runs again beside the
-first. The first worker's late settlement is rejected rather than
-touching the new reservation, and the worker reports it as a lost
-settlement (see {doc}`queue`'s "When a settlement is lost").
+`queue:work` renews the reservation automatically while the job runs, at
+half this window, so the setting sizes how long a *crashed* worker's row
+waits to come back rather than how long a job may take. A handler that
+never yields to the event loop cannot be renewed, and neither can one
+whose worker has died. Should a reservation lapse anyway, the first
+worker's late settlement is rejected rather than touching the new
+reservation, and the worker reports it as a lost settlement (see
+{doc}`queue`'s "When a settlement is lost").
 
 Reservation times are written and compared with each worker's own
-clock, not the database's, so keep worker clocks synchronized: skew makes
-a reservation expire early or late by the difference.
+clock, not the database's — a renewal included — so keep worker clocks
+synchronized: skew makes a reservation expire early or late by the
+difference.
 
 ## Clearing a queue
 

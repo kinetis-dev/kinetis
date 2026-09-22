@@ -80,12 +80,12 @@ types and every mapping refusal. Create the table with a migration
 
 The bridge declares `Kinetis\DatabaseBridge\OrmMetadata` as its
 `extra.kinetis` discovery class (see {doc}`cli`). Its compile step scans
-the project's PSR-4 roots and every installed package's `scan` roots,
-keeps the classes carrying `#[Entity]`, and maps exactly those with
-`MetadataRegistry`. The result is one section of the AOT artifact
-({doc}`caching`): development discovers entities live at each boot, and
-production reads what `kinetis build` compiled. No environment key
-narrows the scan.
+the project's production `autoload.psr-4` roots and every installed
+package's `scan` roots, keeps the classes carrying `#[Entity]`, and maps
+exactly those with `MetadataRegistry`. The result is one section of the
+AOT artifact ({doc}`caching`): development discovers entities live at
+each boot, and production reads what `kinetis build` compiled. No environment
+key narrows the scan.
 
 An entity the mapper refuses fails `kinetis build`, or a development
 boot, with its `MappingException`. A cached section that no longer

@@ -41,10 +41,11 @@ final readonly class ArticleController
 `ArticleRepository` and `ArticleResponse` are application classes;
 `CreateArticleRequest` is defined in [Validating input](#validating-input).
 
-Nothing registers this controller. Any class under one of your project's
-PSR-4 roots joins the route table as soon as one of its methods carries a
-route attribute; {doc}`cli` covers restricting that scan in a large
-application. Methods without a route attribute are ordinary helpers.
+Nothing registers this controller. Any class under one of your
+project's production `autoload.psr-4` roots joins the route table as
+soon as one of its methods carries a route attribute; {doc}`cli` covers
+restricting that scan in a large application. Methods without a route
+attribute are ordinary helpers.
 
 `#[Get]`, `#[Post]`, `#[Put]`, `#[Patch]` and `#[Delete]` each take a path
 and an optional `status`, which defaults to `200`. A controller that
@@ -555,15 +556,24 @@ An exception can carry its own status instead; see [Mapping your own
 exceptions to a
 status](middleware.md#mapping-your-own-exceptions-to-a-status).
 
-### HTML, text, files and redirects
+### JSON, HTML, text, files and redirects
 
 ```{code-block} php
 use Kinetis\Http\Attributes\Get;
-use Kinetis\Http\Responses\{FileResponse, HtmlResponse, PlainTextResponse, RedirectResponse};
+use Kinetis\Http\Responses\{FileResponse, HtmlResponse, JsonResponse, PlainTextResponse, RedirectResponse};
 use Psr\Http\Message\ResponseInterface;
 
 final readonly class PagesController
 {
+    #[Get('/status')]
+    public function status(): ResponseInterface
+    {
+        return JsonResponse::create(
+            ['ready' => true],
+            headers: ['Cache-Control' => 'no-store'],
+        );
+    }
+
     #[Get('/welcome')]
     public function welcome(): ResponseInterface
     {
@@ -593,6 +603,20 @@ final readonly class PagesController
     }
 }
 ```
+
+`JsonResponse::create(mixed $data, int $status = 200, array $headers = [])`
+uses the same strict JSON encoding as an array or DTO returned directly
+from a controller. Invalid UTF-8, an unsupported value or a failing
+`JsonSerializable` throws before a response exists; Kinetis does not
+silently replace application data. `Content-Type: application/json`
+always replaces a caller-supplied content type, including a differently
+cased header name.
+
+Use the helper when the runtime status or headers belong to the result.
+A returned `ResponseInterface` passes through untouched, so OpenAPI
+cannot infer its body. Keep the DTO in the method's return union for the
+route's default response, and describe each alternate response with
+`#[Response(..., body: YourResponse::class)]`.
 
 `HtmlResponse` does not escape anything: escape user input yourself, or
 render through {doc}`views`.
@@ -761,7 +785,12 @@ route whose pipeline already admits an unauthenticated request — it does
 not make a guarded route reachable, and a middleware that answers `401`
 still does. Use it where inference cannot see the truth: a controller
 that authenticates in its own body, and middleware that describes a
-requirement it does not impose on this route.
+requirement it does not impose on this route. A controller parsing the
+`Authorization` header itself should read it through
+`Kinetis\Http\Auth\AuthorizationToken68Parser`
+({ref}`auth-reference-authorization-header`) — the same public parser
+both bearer middleware packages use — rather than reimplementing the
+grammar.
 
 No response status follows from any of this. A `401` or `403` a route
 can answer with is documented by `#[Response]`, like every other status.
