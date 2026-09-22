@@ -151,6 +151,19 @@ true` leaves it to the database — a MySQL/MariaDB `AUTO_INCREMENT` or a
 PostgreSQL identity column — and requires the property typed `?int`,
 holding null until the entity's insert commits.
 
+The ORM assigns that `?int` through reflection once the insert commits,
+which PHPStan cannot see: it reports `property.unusedType` on the type
+the mapping requires. `kinetis/orm` ships an extension that settles it
+for exactly `#[Id(generated: true)]`, registered by hand — there is no
+extension installer:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+includes:
+    - vendor/kinetis/orm/extension.neon
+```
+
 ### `#[Version]`
 
 ```{code-block} php
@@ -545,7 +558,11 @@ and deletion in one transaction:
 - **It throws before `COMMIT`: nothing kept.** The database kept nothing
   of the flush, and every pending change is still pending, so `flush()`
   can run again once the cause is fixed. It never retries by itself.
-  `RollbackFailedException` closes the manager instead.
+  `RollbackFailedException` closes the manager instead. The driver's own
+  failure arrives unwrapped, so `flush()` throws
+  `Kinetis\Persistence\Exception\SqlException`; to settle a race on a
+  unique key, catch `QueryException` and ask `isUniqueViolation()`
+  ({doc}`persistence`).
 - **`UnknownFlushOutcomeException`: unknown.** `COMMIT` was sent and the
   call failed. The database may or may not hold the work, and the manager
   is closed.
