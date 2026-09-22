@@ -1498,12 +1498,15 @@ methods.
 
 ## Static analysis
 
-The ORM reads every mapped property through reflection: it hydrates a
-column, assigns a generated identifier once the insert commits, and
-resolves a relationship owner while it plans a flush. PHPStan sees none
-of that and reports a property only the ORM reads as
-`property.onlyWritten`. Registering this package's extension tells it
-that every non-static property of an `#[Entity]` class is read:
+The ORM accesses every mapped property through reflection: it reads a
+column's and a relationship owner's value while it plans and flushes,
+and it writes a hydrated column, a generated identifier once the insert
+commits, and a loaded relationship. PHPStan sees none of that hidden use
+and reports a property the application only writes as
+`property.onlyWritten`. `isAlwaysRead()` is the only extension answer
+that clears that false positive, so registering this package's
+extension tells PHPStan that every non-static property of an
+`#[Entity]` class is read:
 
 ```yaml
 # phpstan.neon

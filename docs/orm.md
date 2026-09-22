@@ -125,11 +125,12 @@ unnamed, the table is the class's short name in snake case, singular
 (`ArticleCategory` maps to `article_category`). A dot separates a schema
 from the table (`table: 'reporting.articles'`).
 
-The ORM maps every non-static property of an entity and reads each one
-through reflection — hydrating a column, assigning a generated identifier
-once the insert commits, resolving a relationship owner while it plans a
-flush. PHPStan sees none of that, so register this package's extension to
-tell it that every mapped property is read:
+The ORM maps every non-static property of an entity and accesses each
+one through reflection: it reads a column's and a relationship owner's
+value while it plans and flushes, and it writes a hydrated column, a
+generated identifier once the insert commits, and a loaded relationship.
+PHPStan sees none of that hidden use, so register this package's
+extension to tell it that every mapped property is read:
 
 ```{code-block} yaml
 :caption: phpstan.neon

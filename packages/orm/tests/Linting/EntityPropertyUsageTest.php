@@ -33,6 +33,18 @@ final class EntityPropertyUsageTest extends RuleTestCase
         $this->analyse([__DIR__ . '/Fixtures/MappedEntity.php'], []);
     }
 
+    public function test_a_static_property_on_an_entity_keeps_its_report(): void
+    {
+        $this->analyse([__DIR__ . '/Fixtures/StaticGuardEntity.php'], [
+            [
+                'Static property Kinetis\Orm\Tests\Linting\Fixtures\StaticGuardEntity::$cache is never read, only '
+                . 'written.',
+                17,
+                'See: https://phpstan.org/developing-extensions/always-read-written-properties',
+            ],
+        ]);
+    }
+
     public function test_an_ordinary_class_keeps_its_reports(): void
     {
         $this->analyse([__DIR__ . '/Fixtures/UnmappedMirror.php'], [
