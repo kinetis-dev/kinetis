@@ -125,6 +125,22 @@ unnamed, the table is the class's short name in snake case, singular
 (`ArticleCategory` maps to `article_category`). A dot separates a schema
 from the table (`table: 'reporting.articles'`).
 
+The ORM maps every non-static property of an entity and reads each one
+through reflection — hydrating a column, assigning a generated identifier
+once the insert commits, resolving a relationship owner while it plans a
+flush. PHPStan sees none of that, so register this package's extension to
+tell it that every mapped property is read:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+includes:
+    - vendor/kinetis/orm/extension.neon
+```
+
+The README's "Static analysis" is the complete contract, including what
+registering it costs.
+
 ### `#[Column]`
 
 ```{code-block} php
@@ -150,19 +166,6 @@ the application assigns the identifier before `persist()`. `generated:
 true` leaves it to the database — a MySQL/MariaDB `AUTO_INCREMENT` or a
 PostgreSQL identity column — and requires the property typed `?int`,
 holding null until the entity's insert commits.
-
-The ORM assigns that `?int` through reflection once the insert commits,
-which PHPStan cannot see: it reports `property.unusedType` on the type
-the mapping requires. `kinetis/orm` ships an extension that settles it
-for exactly `#[Id(generated: true)]`, registered by hand — there is no
-extension installer:
-
-```{code-block} yaml
-:caption: phpstan.neon
-
-includes:
-    - vendor/kinetis/orm/extension.neon
-```
 
 ### `#[Version]`
 

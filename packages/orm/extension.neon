@@ -1,5 +1,5 @@
 services:
     -
-        class: Kinetis\Orm\Linting\GeneratedIdentifierPropertyExtension
+        class: Kinetis\Orm\Linting\EntityPropertyExtension
         tags:
             - phpstan.properties.readWriteExtension

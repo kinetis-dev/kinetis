@@ -7,21 +7,16 @@ namespace Kinetis\Orm\Tests\Linting\Fixtures;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Attributes\Id;
 
+/**
+ * The entity `MappedEntity`'s `#[BelongsTo]` property points at. Neither
+ * rule analyses this file; it exists so that owner property has a real
+ * entity type.
+ */
 #[Entity(table: 'tickets')]
-final class GeneratedIdentifierEntity
+final class MappedOwner
 {
     #[Id(generated: true)]
     private ?int $id = null;
 
     public function __construct(private string $subject) {}
-
-    public function id(): ?int
-    {
-        return $this->id;
-    }
-
-    public function subject(): string
-    {
-        return $this->subject;
-    }
 }

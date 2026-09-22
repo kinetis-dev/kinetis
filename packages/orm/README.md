@@ -1498,12 +1498,12 @@ methods.
 
 ## Static analysis
 
-A generated identifier is written by the ORM through reflection, so
-PHPStan sees `private ?int $id = null` assigned nothing and reports
-`property.unusedType` on the `?int` the mapping requires. Registering
-this package's extension settles that for exactly
-`#[Id(generated: true)]`, and leaves every other property — an assigned
-identifier included — reported as before:
+The ORM reads every mapped property through reflection: it hydrates a
+column, assigns a generated identifier once the insert commits, and
+resolves a relationship owner while it plans a flush. PHPStan sees none
+of that and reports a property only the ORM reads as
+`property.onlyWritten`. Registering this package's extension tells it
+that every non-static property of an `#[Entity]` class is read:
 
 ```yaml
 # phpstan.neon
@@ -1513,6 +1513,12 @@ includes:
 
 There is no extension installer to do it: add the `includes:` entry by
 hand.
+
+That exempts those properties from `property.unusedType` as well, a
+generated identifier's `?int` included: PHPStan stops checking a
+property's type as soon as an extension calls it always read, and offers
+no narrower answer. The exemption reaches nothing but `#[Entity]`
+classes, and a static property on one stays reported.
 
 ## Installation
 
