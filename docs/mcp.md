@@ -100,6 +100,13 @@ The process runs with the application's configuration and belongs to
 whoever launched it, so give the command only to a client you trust with
 the application.
 
+HTTP middleware does not run on this transport. A tool that requires an
+authenticated caller must therefore constructor-inject
+`CurrentUserInterface`, even if it also injects a concrete user for
+provider-specific claims. Without authentication the interface cannot be
+resolved and the tool fails closed; a concrete autowirable user by itself
+can instead become a new, disconnected object.
+
 ## Serve over HTTP
 
 `POST /mcp` is an ordinary route of your application, served by the
@@ -136,7 +143,10 @@ signed JWTs (see {doc}`auth-jwt`), or join the group with a middleware of
 your own that registers `CurrentUserInterface`; registering only a
 concrete user class leaves the endpoint closed. A tool
 constructor-injects `CurrentUserInterface` and receives the caller of
-that message.
+that message. If the tool also needs claims from `auth-jwt`, inject
+`JwtUser` alongside the interface rather than replacing it; the interface
+keeps the same tool closed when it is reached over stdio, where this
+middleware group does not run.
 
 With that middleware in place, a request carries a token your
 `UserProviderInterface` resolves, plus the protocol-version header:

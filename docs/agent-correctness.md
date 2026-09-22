@@ -66,6 +66,13 @@ These hold regardless of adapter, driver, or use case.
   policy. Prefer a header or request body at the exchange boundary, and
   account for browser history and referrer propagation as well as
   application logs; TLS does not remove any of those copies.
+- **MCP identity is transport-specific.** The HTTP `mcp` middleware group
+  and its identity guard do not run over stdio. A tool that depends on an
+  authenticated caller injects `CurrentUserInterface` even when it also
+  needs a concrete user for provider-specific claims: without
+  authentication the interface is unresolvable and fails closed, while an
+  autowirable concrete user can become a new, disconnected object.
+  {doc}`mcp`, {doc}`auth-jwt`.
 - **Compiled-cache freshness.** A change to a route, an MCP tool or
   resource, a command, an event listener, or a validation plan needs
   `kinetis build` before a production deploy that pre-warms

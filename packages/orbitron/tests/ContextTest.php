@@ -126,6 +126,16 @@ final class ContextTest extends TestCase
         self::assertStringContainsString('permanent-failure recovery', $workflow);
     }
 
+    public function test_the_workflow_keeps_authenticated_mcp_tools_closed_over_stdio(): void
+    {
+        $workflow = implode("\n", self::context()->toArray()['workflow']);
+
+        self::assertStringContainsString('`Kinetis\\Http\\CurrentUserInterface`', $workflow);
+        self::assertStringContainsString('HTTP `mcp` middleware group does not run over stdio', $workflow);
+        self::assertStringContainsString('autowirable concrete user', $workflow);
+        self::assertStringContainsString('HTTP identity guard as protection for the stdio transport', $workflow);
+    }
+
     /**
      * The three installed-source tools are named and their
      * argument-taking contract is stated in both the tool entries and

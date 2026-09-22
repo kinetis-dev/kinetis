@@ -80,6 +80,11 @@ recovery, dead-letter or reconciliation path. It ends with the rule that
 keeps an agent's evidence honest: run any test or command that mutates a
 shared database, broker or object store one at a time. Two overlapping
 runs mutate the same state and report failures the code does not have.
+For an authenticated MCP tool it also requires
+`CurrentUserInterface`, even when the tool needs a concrete user's
+provider-specific claims: HTTP middleware does not run over stdio, and
+an autowirable concrete user can otherwise become a new, disconnected
+object instead of failing closed.
 
 ## `orbitron:inspect`
 
