@@ -127,6 +127,12 @@ specific choice in the project.
   behavior that governs the change. Once that fact is established, return
   to the application; continuing through unrelated source adds review cost
   without strengthening the evidence. {doc}`agent-workflow`.
+- **Test at the boundary that owns the behavior.** `TestClient` dispatches
+  after the runtime adapter and `send()` preserves a hand-built PSR-7 request
+  exactly. It can test application behavior against the post-adapter shape,
+  but it cannot prove how repeated wire headers, cookies or request identity
+  are converted. Use a runtime-conformance driver or one bounded request
+  through the real adapter for that claim. {doc}`appendix-testing`.
 - **Prove overlap where overlap is the requirement.** `concurrently()`
   running without error is not evidence that anything overlapped — a
   blocking call inside it still serializes the whole loop. Prove a wait
