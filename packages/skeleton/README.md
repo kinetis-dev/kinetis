@@ -22,9 +22,13 @@ Part of [Kinetis](https://kinetis.dev/), a non-blocking PHP framework for
 API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
-One controller, one route, a welcome page — nginx + PHP-FPM, so a code
-change takes effect on your very next request with no container
-restart. Meant to be copied and grown from, not run as-is.
+One controller, one route, a welcome page — nginx + PHP-FPM. Meant to
+be copied and grown from, not run as-is.
+
+In the development stack this skeleton ships (`docker compose up`,
+below), a code change takes effect on your very next request with no
+container restart. Production does not rediscover source on every
+request that way — see [Deploying it](#deploying-it).
 
 It also arrives ready for AI-driven development. There is no generic
 dashboard and no prebuilt scaffold to grow out of: instead
@@ -61,6 +65,23 @@ the `app` container's log:
 ```sh
 docker compose logs -f app
 ```
+
+## Deploying it
+
+The development stack above is not a deployment. Build the release or
+image in this order:
+
+```sh
+composer install --no-dev --optimize-autoloader
+php vendor/bin/kinetis build
+```
+
+then start workers against the generated artifact. The compiled cache
+must be created in the built release or image itself — an existing
+valid `.kinetis-cache/compiled.php` is used as-is and is not checked
+against the source that produced it. See
+[kinetis.dev/docs/caching.html](https://kinetis.dev/docs/caching.html)
+for the complete build and artifact contract.
 
 ## Building it with an AI coding agent
 

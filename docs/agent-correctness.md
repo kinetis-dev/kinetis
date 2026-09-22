@@ -75,8 +75,12 @@ These hold regardless of adapter, driver, or use case.
   {doc}`mcp`, {doc}`auth-jwt`.
 - **Compiled-cache freshness.** A change to a route, an MCP tool or
   resource, a command, an event listener, or a validation plan needs
-  `kinetis build` before a production deploy that pre-warms
-  `.kinetis-cache/`. {doc}`caching`.
+  `kinetis build` before a production deploy whenever `.kinetis-cache/`
+  is shipped with the release or image, or persists across production
+  boots — whether pre-warmed or lazily compiled and published on an
+  earlier boot. Do not rely on lazy compilation to refresh an existing
+  valid artifact: while a structurally valid artifact remains, production
+  loads it without comparing it against current source. {doc}`caching`.
 - **Validation, authorization, CSRF, concurrency control, and
   transactions.** Every mutating boundary validates its input,
   authorizes the actor, checks CSRF where a browser session is involved,
