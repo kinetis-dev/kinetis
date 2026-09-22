@@ -29,6 +29,26 @@ final class FileResponseTest extends TestCase
         self::assertSame('attachment; filename="report.bin"', $response->getHeaderLine('Content-Disposition'));
     }
 
+    public function test_accepts_custom_headers_but_keeps_headers_derived_from_the_contents(): void
+    {
+        $response = FileResponse::fromContents(
+            'hello',
+            'text/plain',
+            downloadFilename: 'report.txt',
+            headers: [
+                'Cache-Control' => 'no-store',
+                'content-type' => 'text/html',
+                'content-length' => '999',
+                'content-disposition' => 'inline',
+            ],
+        );
+
+        self::assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(['text/plain'], $response->getHeader('Content-Type'));
+        self::assertSame(['5'], $response->getHeader('Content-Length'));
+        self::assertSame(['attachment; filename="report.txt"'], $response->getHeader('Content-Disposition'));
+    }
+
     /**
      * The name a user gave the file when uploading it reaches this
      * header, so it is treated as untrusted. Unescaped, the quote and

@@ -9,12 +9,15 @@ use Psr\Http\Message\ResponseInterface;
 
 final class HtmlResponse
 {
-    public static function create(string $html, int $status = 200): ResponseInterface
+    /**
+     * @param array<string, string> $headers
+     */
+    public static function create(string $html, int $status = 200, array $headers = []): ResponseInterface
     {
-        return new Response(
+        return (new Response(
             status: $status,
-            headers: ['Content-Type' => 'text/html; charset=utf-8'],
+            headers: $headers,
             body: $html,
-        );
+        ))->withHeader('Content-Type', 'text/html; charset=utf-8');
     }
 }

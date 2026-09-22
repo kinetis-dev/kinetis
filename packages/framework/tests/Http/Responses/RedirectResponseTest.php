@@ -23,4 +23,15 @@ final class RedirectResponseTest extends TestCase
 
         self::assertSame(301, $response->getStatusCode());
     }
+
+    public function test_accepts_custom_headers_but_keeps_its_location(): void
+    {
+        $response = RedirectResponse::to(
+            '/new-page',
+            headers: ['Cache-Control' => 'no-store', 'location' => '/wrong-page'],
+        );
+
+        self::assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(['/new-page'], $response->getHeader('Location'));
+    }
 }
