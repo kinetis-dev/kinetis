@@ -1,21 +1,12 @@
+includes:
+    - vendor/kinetis/orm/extension.neon
+
 parameters:
     level: 8
     paths:
         - src
         - bootstrap.php
         - public/index.php
-    # kinetis/orm reads and writes a mapped property through reflection:
-    # it hydrates a loaded row without running a constructor, and fills a
-    # generated #[Id] from the INSERT. No PHP code reads these, and
-    # accessors that exist only to be read here would be code kept for an
-    # analyzer rather than for the application.
-    ignoreErrors:
-        -
-            identifier: property.onlyWritten
-            path: src/Entities/*.php
-        -
-            identifier: property.unusedType
-            path: src/Entities/*.php
 
 services:
     -
