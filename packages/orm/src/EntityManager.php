@@ -22,6 +22,7 @@ use Kinetis\Persistence\Contract\MysqlTransaction;
 use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Persistence\Contract\PostgresTransaction;
 use Kinetis\Persistence\Contract\SqlTransaction;
+use Kinetis\Persistence\Exception\SqlException;
 use Kinetis\QueryBuilder\Query;
 use Throwable;
 use WeakMap;
@@ -325,6 +326,10 @@ final class EntityManager
      * @throws MappingException for a property value its type does not admit
      * @throws OptimisticLockException
      * @throws RollbackFailedException
+     * @throws SqlException as the driver threw it, for every persistence
+     *         failure before COMMIT: a QueryException, a ConnectionException,
+     *         or a TransactionException from BEGIN or from a transaction the
+     *         server already ended
      * @throws UnknownFlushOutcomeException
      */
     public function flush(): void

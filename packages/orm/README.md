@@ -1123,7 +1123,7 @@ session fails the session instead: see "When a session fails".
 | Failure | Afterwards | Pending work | Throws |
 |---|---|---|---|
 | Validation, or `beginTransaction()` | open | kept | that exception |
-| Anything before COMMIT, with the rollback returning | open, unless `close()` ran | kept | that exception, unwrapped: `OptimisticLockException`, or a driver `QueryException` or `ConnectionException` as the driver threw it |
+| Anything before COMMIT, with the rollback returning | open, unless `close()` ran | kept | that exception, unwrapped: `OptimisticLockException`, or a driver `SqlException` as the driver threw it — a `QueryException`, a `ConnectionException`, or a `TransactionException` from a transaction the server already ended |
 | Anything before COMMIT, with the rollback throwing | closed | abandoned | `RollbackFailedException`: `getPrevious()` is the first failure, `$rollbackFailure` the rollback's |
 | COMMIT | closed | abandoned | `UnknownFlushOutcomeException`: `getPrevious()` is the COMMIT failure |
 
@@ -1135,6 +1135,13 @@ after correcting the cause, such as a unique key conflict, sends the
 whole flush again in a new transaction. `flush()` never retries by
 itself. After `RollbackFailedException` the manager is closed; the work
 can be redone with a new one.
+
+`flush()`'s `@throws` names `Kinetis\Persistence\Exception\SqlException`
+for that whole unwrapped family, so a caller may catch any member of it.
+To recover from a unique key conflict, catch `QueryException` and ask
+`isUniqueViolation()`, which
+[`kinetis/persistence`](https://github.com/kinetis-dev/persistence)'s
+README defines for every driver.
 
 `UnknownFlushOutcomeException` means COMMIT was sent and the call failed:
 the database may or may not have applied the flush, and no entity was
@@ -1488,6 +1495,33 @@ custom value converters, UUID generation,
 composite identifiers, inheritance, partial entities, transient
 properties, schema validation, CLI commands, streaming, or static model
 methods.
+
+## Static analysis
+
+The ORM accesses every mapped property through reflection: it reads a
+column's and a relationship owner's value while it plans and flushes,
+and it writes a hydrated column, a generated identifier once the insert
+commits, and a loaded relationship. PHPStan sees none of that hidden use
+and reports a property the application only writes as
+`property.onlyWritten`. `isAlwaysRead()` is the only extension answer
+that clears that false positive, so registering this package's
+extension tells PHPStan that every non-static property of an
+`#[Entity]` class is read:
+
+```yaml
+# phpstan.neon
+includes:
+    - vendor/kinetis/orm/extension.neon
+```
+
+There is no extension installer to do it: add the `includes:` entry by
+hand.
+
+That exempts those properties from `property.unusedType` as well, a
+generated identifier's `?int` included: PHPStan stops checking a
+property's type as soon as an extension calls it always read, and offers
+no narrower answer. The exemption reaches nothing but `#[Entity]`
+classes, and a static property on one stays reported.
 
 ## Installation
 

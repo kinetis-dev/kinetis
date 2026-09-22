@@ -125,6 +125,23 @@ unnamed, the table is the class's short name in snake case, singular
 (`ArticleCategory` maps to `article_category`). A dot separates a schema
 from the table (`table: 'reporting.articles'`).
 
+The ORM maps every non-static property of an entity and accesses each
+one through reflection: it reads a column's and a relationship owner's
+value while it plans and flushes, and it writes a hydrated column, a
+generated identifier once the insert commits, and a loaded relationship.
+PHPStan sees none of that hidden use, so register this package's
+extension to tell it that every mapped property is read:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+includes:
+    - vendor/kinetis/orm/extension.neon
+```
+
+The README's "Static analysis" is the complete contract, including what
+registering it costs.
+
 ### `#[Column]`
 
 ```{code-block} php
@@ -545,7 +562,11 @@ and deletion in one transaction:
 - **It throws before `COMMIT`: nothing kept.** The database kept nothing
   of the flush, and every pending change is still pending, so `flush()`
   can run again once the cause is fixed. It never retries by itself.
-  `RollbackFailedException` closes the manager instead.
+  `RollbackFailedException` closes the manager instead. The driver's own
+  failure arrives unwrapped, so `flush()` throws
+  `Kinetis\Persistence\Exception\SqlException`; to settle a race on a
+  unique key, catch `QueryException` and ask `isUniqueViolation()`
+  ({doc}`persistence`).
 - **`UnknownFlushOutcomeException`: unknown.** `COMMIT` was sent and the
   call failed. The database may or may not hold the work, and the manager
   is closed.
@@ -627,6 +648,42 @@ an application table.
 
 The README's "Transaction sessions" and "When a session fails" give the
 complete contract.
+
+An outbox row for {doc}`queue-sql` follows the same rule:
+`$entities->builder()` runs a statement when called, on this
+transaction, while a pending entity's INSERT is emitted only by the
+closing `flush()` above. A builder row whose foreign key names a
+still-pending entity fails regardless of how its id is assigned — the
+referenced row is not there yet on this connection. A generated
+identifier is additionally unavailable until `COMMIT` returns, since it
+reaches the object only then.
+
+Map the outbox row as an entity instead, with a `#[BelongsTo]` naming
+the entity it depends on, and persist both:
+
+```{code-block} php
+$order = new Order();
+// ...
+
+$outbox = new OutboxRow();
+$outbox->order = $order;   // #[BelongsTo] — order_id
+
+$entities->persist($order);
+$entities->persist($outbox);
+$entities->flush();        // INSERT order, then outbox, one transaction
+```
+
+Entities persisted separately need no ordering of their own: `flush()`
+orders every pending row by its foreign keys and inserts the entity a
+`#[BelongsTo]` names before the row that references it, on every
+supported backend — the README's "Aggregates" is the complete contract.
+
+`QueueInterface::push()` inside the callback is wrong here: it runs on
+the queue's own connection rather than this one, so it is not enlisted
+in the transaction and a rollback does not undo it. Publish the pending
+outbox rows once `transaction()` returns and mark them sent; [A job can
+run more than once](queue.md#a-job-can-run-more-than-once) owns replay
+and idempotency for that step.
 
 ## Without a database
 

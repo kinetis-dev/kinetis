@@ -171,6 +171,44 @@ A command that promises graceful `SIGTERM`/`SIGINT` handling:
   arbitrary point inside whatever was already executing.
 - **Reads that flag only at checkpoints it chooses** — between items,
   between batches, after a unit of work has settled — and nowhere else.
+  Under the skeleton's strict PHPStan level, both documented forms are
+  flow-narrowed when read directly: a by-reference local to whatever it
+  held before the handler could plausibly run, a property read straight
+  off the object to the value its constructor set. Either way a second
+  checkpoint reports `if.alwaysFalse`, because the analyzer has no model
+  of asynchronous signal mutation. Only the object form has anywhere to
+  attach a fix: give it a checkpoint method that calls
+  `pcntl_signal_dispatch()` before returning the flag, annotated
+  `@phpstan-impure`. The dispatch call is what clears the narrowing — a
+  observable side effect, which the annotation alone on a plain
+  getter does not establish and strict purity analysis rejects:
+
+  ```{code-block} php
+  final class StopRequested
+  {
+      private bool $flag = false;
+
+      public function handler(): void
+      {
+          $this->flag = true;
+      }
+
+      /** @phpstan-impure */
+      public function isSet(): bool
+      {
+          pcntl_signal_dispatch();
+
+          return $this->flag;
+      }
+  }
+  ```
+
+  `pcntl_signal(SIGTERM, $stop->handler(...))` registers it; each
+  checkpoint calls `$stop->isSet()`. With `pcntl_async_signals(true)`
+  already enabled, explicit dispatch is not required for normal delivery
+  here — the call's purpose is to give the checkpoint method an
+  observable side effect the analyzer must account for, not to make the
+  handler run.
 
 A signal cancels nothing already in flight. An async request or an open
 transaction runs until it completes or its own deadline expires, so every

@@ -204,7 +204,9 @@ two requests can both find a value free. Catch the violation outside
 `getSqlState()` returns the SQLSTATE the server or driver reported, or
 `null`. Classifying a failure changes nothing about it: the statement is
 not retried and the error is not suppressed. The
-{ref}`repository cookbook <query-builder-cookbook>` shows the pattern.
+{ref}`repository cookbook <query-builder-cookbook>` shows the pattern,
+and the package README's "Failures" is the complete exception vocabulary
+behind it.
 
 After an unknown write outcome, a retry can meet its own earlier row. If
 it raises a unique violation, reread through the injected link after the
