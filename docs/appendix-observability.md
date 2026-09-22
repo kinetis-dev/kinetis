@@ -24,18 +24,34 @@ batch when:
   persistent worker.
 
 The export runs inside the `end()` call that triggers it, so the request
-ending that span waits for the export. A failed export is retried up to
-three times. The delay before each retry is a blocking
-`time_nanosleep()`, chosen at random between half and all of
-100 ms doubled per retry (50–100 ms, then 100–200 ms, then 200–400 ms),
-or a longer `Retry-After` the collector sends. A retried export therefore
-blocks the worker for each delay.
+ending that span waits for the export — under a bound the package owns.
+`TracerFactory` builds the Amp client with `timeout` and `max_duration`
+both at 10.0 seconds and creates the transport with `maxRetries: 0`.
 
-The client is built with `max_redirects` set to 0, so an export request
-and its `OTEL_EXPORTER_OTLP_HEADERS` go only to the configured endpoint.
-A redirect response is neither a success nor a non-retryable client
-error, so the exporter retries it against the same endpoint and reports
-an export failure once the retry limit is reached.
+The Amp adapter applies `timeout` to the TCP connect and the TLS
+handshake and `max_duration` to the transfer. The bound is therefore up
+to ten seconds to reach the collector plus up to ten seconds to exchange
+the batch — two deadlines, not one strict ten-second total. Both are
+needed: Amp reads a transfer timeout of 0 as no timeout, so without
+`max_duration` a collector that accepts a request and never answers it
+holds the exporting request open until the SAPI's own execution limit
+ends it, or indefinitely on the CLI.
+
+`maxRetries: 0` makes one export one wire attempt, so OpenTelemetry's
+retry loop — whose delay between attempts is a blocking
+`time_nanosleep()` — is never entered. Every failure is terminal on the
+first attempt: the exporter logs it and the batch is dropped. A POST
+that timed out may already have been stored by the collector, so its
+outcome is unknown and resending it could duplicate the spans. Spans
+that ended after the dropped batch are unaffected, and each later batch
+trigger, including the shutdown flush, pays the same bound again while
+the collector stays stalled. None of this is configurable.
+
+The client is also built with `max_redirects` set to 0, so an export
+request and its `OTEL_EXPORTER_OTLP_HEADERS` go only to the configured
+endpoint. A redirect response is neither a success nor a non-retryable
+client error, so it takes that same terminal path and is reported as an
+export failure.
 
 The OpenTelemetry SDK also reads `OTEL_RESOURCE_ATTRIBUTES` and
 `OTEL_PHP_DETECTORS` from the process environment directly, not through

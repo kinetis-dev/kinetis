@@ -449,9 +449,11 @@ on its spans.
 - `Kinetis\Telemetry\TracerFactory::fromConfig(Config): ?TracerProvider` —
   a `BatchSpanProcessor` over the OTLP/HTTP exporter, whose transport
   is `Symfony\Component\HttpClient\Psr18Client` wrapping
-  `AmpHttpClientFactory::create(['max_redirects' => 0])`, so each export
-  request suspends rather than blocks; the exporter's delay between
-  retries is a blocking sleep. `null` when no endpoint is configured.
+  `AmpHttpClientFactory::create()` with `max_redirects` 0 and `timeout`
+  and `max_duration` both 10.0, and the transport is created with
+  `maxRetries: 0` — so each export request suspends rather than blocks
+  and is one bounded wire attempt that is never replayed; see
+  {doc}`appendix-observability`. `null` when no endpoint is configured.
 - `Kinetis\Telemetry\Middleware\RequestSpanMiddleware` —
   `#[AsGlobalMiddleware(priority: 90)]`, a server span per request:
   the method as the span name, `http.response.status_code`,
