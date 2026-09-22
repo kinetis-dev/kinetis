@@ -72,19 +72,10 @@ command may change, the launcher behavior below, and the installed
 `kinetis/*` package facts. `--format` accepts `markdown` (the default)
 and `json`; both render the same document from the same facts.
 
-The workflow it prints also guards two easy boundary mistakes. Exceptions
-mapped by a Kinetis adapter do not describe a direct call to the concrete
-vendor client, and exhausted queue attempts are terminal: an application
-that requires eventual completion needs an explicit permanent-failure
-recovery, dead-letter or reconciliation path. It ends with the rule that
-keeps an agent's evidence honest: run any test or command that mutates a
-shared database, broker or object store one at a time. Two overlapping
-runs mutate the same state and report failures the code does not have.
-For an authenticated MCP tool it also requires
-`CurrentUserInterface`, even when the tool needs a concrete user's
-provider-specific claims: HTTP middleware does not run over stdio, and
-an autowirable concrete user can otherwise become a new, disconnected
-object instead of failing closed.
+The workflow routes four review checks to their authoritative guides:
+concrete-client failure vocabularies, terminal queue failures,
+transport-specific MCP identity, and serialization of probes that mutate
+shared state.
 
 ## `orbitron:inspect`
 
