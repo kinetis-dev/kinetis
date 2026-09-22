@@ -136,8 +136,8 @@ final readonly class Articles
 costs a refresh per call and belongs in a test or a read-your-write path,
 not in bulk ingestion.
 
-`$condition` applies the write only to a document the engine already
-finds in the state that condition names — {ref}`conditional writes
+`$condition` is a precondition the engine evaluates for the named
+document before applying the write — {ref}`conditional writes
 <search-reference-conditions>` below.
 
 This is a call and result contract, not a query language. A search body
@@ -156,18 +156,23 @@ gives you the whole library, exactly as its own documentation describes.
 
 ### Conditional writes
 
-`Kinetis\Search\WriteCondition` carries the condition parameters both
-engines take on a write that names one document. It has three forms:
+`Kinetis\Search\WriteCondition` carries the precondition parameters both
+engines evaluate for the named document before applying a write. It has
+three forms, and each defines exactly what it admits:
 
-- `WriteCondition::external(int $version)` applies the write only when
+- `WriteCondition::external(int $version)` applies the write when
   `$version` is newer than the version the document holds, and stores
-  `$version` as the new one.
+  `$version` as the new one. A document that is not there holds no
+  version, so the write creates it.
 - `WriteCondition::externalOrEqual(int $version)` applies it when
-  `$version` is newer than or equal to the stored version.
+  `$version` is newer than or equal to the stored version, and creates an
+  absent document the same way.
 - `WriteCondition::ifUnchanged(int $sequenceNumber, int $primaryTerm)`
   applies it only while the document still sits at exactly the `_seq_no`
   and `_primary_term` a `get()` envelope reported, which is what fences a
-  read-modify-write against a concurrent writer.
+  read-modify-write against a concurrent writer. Nothing else satisfies
+  it: a document something wrote in between, and a document that is not
+  there at all, are both conflicts.
 
 A version and a sequence number are zero or greater and a primary term is
 one or greater; anything else is an `InvalidArgumentException` from the

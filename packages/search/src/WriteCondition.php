@@ -7,10 +7,11 @@ namespace Kinetis\Search;
 use InvalidArgumentException;
 
 /**
- * What a document must already be true of for a write to apply: the
- * condition parameters both engines take on a direct index or delete and
- * inside a bulk action line, assembled once here rather than spelled out
- * at each call site.
+ * The precondition a write carries: the condition parameters both
+ * engines evaluate for the named document before applying a direct
+ * index or delete, or a bulk action line, assembled once here rather
+ * than spelled out at each call site. Each named constructor defines
+ * exactly what it admits, a document that is not there yet included.
  *
  * A projection fed by an at-least-once delivery is what needs this. The
  * authority's own revision number travels with the document as an
@@ -35,63 +36,82 @@ use InvalidArgumentException;
 final readonly class WriteCondition
 {
     /**
-     * @param array{version: int, version_type: 'external'|'external_gte'}|array{if_seq_no: int, if_primary_term: int} $parameters
+     * @param array{version: non-negative-int, version_type: 'external'|'external_gte'}|array{if_seq_no: non-negative-int, if_primary_term: positive-int} $parameters
      */
     private function __construct(public array $parameters)
     {
     }
 
     /**
-     * Applies the write only when $version is newer than the version the
-     * document holds, and stores $version as the new one.
+     * Applies the write when $version is newer than the version the
+     * document holds, and stores $version as the new one. A document
+     * that is not there holds no version, so the write creates it.
      *
      * @throws InvalidArgumentException
      */
     public static function external(int $version): self
     {
         return new self([
-            'version' => self::atLeast($version, 0, 'An external version'),
+            'version' => self::nonNegative($version, 'An external version'),
             'version_type' => 'external',
         ]);
     }
 
     /**
      * Applies the write when $version is newer than or equal to the
-     * version the document holds.
+     * version the document holds, and creates one that is not there the
+     * same way {@see self::external()} does.
      *
      * @throws InvalidArgumentException
      */
     public static function externalOrEqual(int $version): self
     {
         return new self([
-            'version' => self::atLeast($version, 0, 'An external version'),
+            'version' => self::nonNegative($version, 'An external version'),
             'version_type' => 'external_gte',
         ]);
     }
 
     /**
-     * Applies the write only when the document still sits at exactly the
-     * $sequenceNumber and $primaryTerm a {@see SearchClient::get()}
-     * envelope reported, so a concurrent write in between refuses it.
+     * Applies the write only while the document still sits at exactly
+     * the $sequenceNumber and $primaryTerm a {@see SearchClient::get()}
+     * envelope reported. Nothing else satisfies it: a document something
+     * wrote in between, and a document that is not there at all, are
+     * both conflicts.
      *
      * @throws InvalidArgumentException
      */
     public static function ifUnchanged(int $sequenceNumber, int $primaryTerm): self
     {
         return new self([
-            'if_seq_no' => self::atLeast($sequenceNumber, 0, 'A sequence number'),
-            'if_primary_term' => self::atLeast($primaryTerm, 1, 'A primary term'),
+            'if_seq_no' => self::nonNegative($sequenceNumber, 'A sequence number'),
+            'if_primary_term' => self::positive($primaryTerm, 'A primary term'),
         ]);
     }
 
     /**
-     * The domains both engines share. A version and a sequence number
-     * start at zero; a primary term starts at one.
+     * A version and a sequence number start at zero on both engines.
+     *
+     * @return non-negative-int
      */
-    private static function atLeast(int $value, int $minimum, string $name): int
+    private static function nonNegative(int $value, string $name): int
     {
-        if ($value < $minimum) {
-            throw new InvalidArgumentException("{$name} is {$minimum} or greater; {$value} given.");
+        if ($value < 0) {
+            throw new InvalidArgumentException("{$name} is 0 or greater; {$value} given.");
+        }
+
+        return $value;
+    }
+
+    /**
+     * A primary term starts at one on both engines.
+     *
+     * @return positive-int
+     */
+    private static function positive(int $value, string $name): int
+    {
+        if ($value < 1) {
+            throw new InvalidArgumentException("{$name} is 1 or greater; {$value} given.");
         }
 
         return $value;

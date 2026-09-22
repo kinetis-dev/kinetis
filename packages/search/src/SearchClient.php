@@ -48,11 +48,15 @@ interface SearchClient
      * empty one where a JSON object belongs, so writing nothing is not
      * an operation either of them offers.
      *
-     * $condition applies the write only to a document the engine finds
-     * in the state that condition names, and answers a conflict as a
-     * {@see SearchRequestException} carrying 409. It names the document
-     * it is conditional on, so $id is required with one and a null id is
-     * an InvalidArgumentException before anything is sent.
+     * $condition is a precondition the engine evaluates for $id before
+     * applying the write, and a refused write is a
+     * {@see SearchRequestException} carrying 409. What each form admits
+     * is {@see WriteCondition}'s own contract — an external version
+     * creates a document that is not there yet, where
+     * {@see WriteCondition::ifUnchanged()} requires an existing one. A
+     * condition names the document it applies to, so $id is required
+     * with one and a null id is an InvalidArgumentException before
+     * anything is sent.
      *
      * @param non-empty-array<string, mixed> $document
      * @return array<string, mixed> the write envelope: `_id`, `_version`, `result`, `_shards`

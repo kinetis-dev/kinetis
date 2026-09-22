@@ -82,10 +82,12 @@ untouched. Anything outside these five calls is reached through the
 engine client itself.
 
 `index()`, `delete()` and their `BulkOperation` counterparts take a
-`WriteCondition`: what a document must already be true of for the write
-to apply. `external()` and `externalOrEqual()` carry an authority's own
-revision number as an external version, and `ifUnchanged()` carries the
-`_seq_no` and `_primary_term` a `get()` answered. A projection fed by an
+`WriteCondition`: a precondition the engine evaluates for the named
+document before applying the write. `external()` and `externalOrEqual()`
+carry an authority's own revision number as an external version, and
+create a document that is not there yet; `ifUnchanged()` carries the
+`_seq_no` and `_primary_term` a `get()` answered, and requires the
+document it names to still sit at them. A projection fed by an
 at-least-once delivery uses one so that a replayed or reordered message
 cannot move the index back to an older row. A refused write is a
 `SearchRequestException` carrying `409`, or that item's own `409` inside
