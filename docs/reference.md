@@ -44,6 +44,8 @@ failure behavior or advanced wiring.
   lifecycle for application tools and resources.
 - {doc}`appendix-mcp-docs` — documentation server install, update,
   protocol and fetch contracts.
+- {doc}`appendix-orbitron` — Orbitron's command schemas, installed-source
+  tools, MCP catalogue, project wiring and trust boundary.
 
 ## Runtime and verification
 
@@ -60,3 +62,15 @@ failure behavior or advanced wiring.
 - {doc}`appendix-packages` — satellite package layout.
 - {doc}`appendix-ci` — what the CI jobs verify.
 - {doc}`appendix-contributing` — working in the monorepo.
+
+## AI agent guidance
+
+Operating instructions for an AI coding agent, not human tutorials —
+each routes to the guide that holds the actual contract.
+
+- {doc}`agent-workflow` — the entry point: the current-main/installed-version
+  boundary, and where to route a task.
+- {doc}`application-recipes` — compact routes for recurring application
+  tasks.
+- {doc}`agent-correctness` — the review checklist to run before calling
+  a change done.

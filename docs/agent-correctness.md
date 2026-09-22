@@ -1,8 +1,10 @@
 # Agent Correctness Review
 
-A checklist to run over a change before calling it done. Each item names
-what to look for and routes to the page that holds its actual contract,
-rather than restating it — read the linked page before deciding.
+Review guidance for an AI coding agent: a checklist to run over a change
+before calling it done. Each item names what to look for and routes to
+the page that holds its actual contract, rather than restating it — read
+the linked page before deciding. A human reviewer runs the same review
+by reading those same linked pages.
 
 ## Unconditional Kinetis invariants
 

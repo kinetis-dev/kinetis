@@ -251,9 +251,6 @@ aws-sigv4
 mcp
 mcp-docs
 orbitron
-agent-workflow
-application-recipes
-agent-correctness
 ```
 
 ```{toctree}
@@ -281,8 +278,12 @@ appendix-http-client
 appendix-aws-sigv4
 appendix-mcp
 appendix-mcp-docs
+appendix-orbitron
 appendix
 appendix-packages
 appendix-ci
 appendix-contributing
+agent-workflow
+application-recipes
+agent-correctness
 ```

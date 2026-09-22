@@ -15,11 +15,22 @@ server to set up.
 This file is the whole agent contract for this project. `CLAUDE.md` and
 `GEMINI.md` import it and add nothing.
 
-## Initialize Orbitron before the first application task
+## Initialize Orbitron on the earliest turn it is available
 
-Do this once per session, on the first request that would read, plan or
-change application code. A question about this file, about Docker, or
-about the setup itself does not need it.
+Check, at the start of every turn, whether the `orbitron` tools and
+resources are listed. This file cannot act between turns — it cannot
+initialize the moment the connection appears, only when a turn next
+runs — so the earliest turn on which they are listed is the trigger,
+whichever turn of the session that turns out to be: the first, or a
+later one, once the user has finished the stack's setup, reconnected
+the client, or granted approval. Do this before anything else on that
+turn.
+
+While they are not yet listed, a request for setup help or to read
+these instructions may still be answered from this file and the
+project's `README.md`; every other request, and all application work,
+stays blocked, and the next turn checks again before going any
+further — do not assume a prior turn's absence still holds.
 
 The order matters, because starting the server has one: it runs in a
 disposable container derived from this project's `app` service, the

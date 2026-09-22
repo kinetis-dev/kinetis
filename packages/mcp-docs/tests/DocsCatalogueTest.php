@@ -105,6 +105,20 @@ final class DocsCatalogueTest extends TestCase
         self::assertStringContainsString('kinetis/orbitron', $page->description);
     }
 
+    /**
+     * The full Orbitron contract is a public MCP resource: an agent must
+     * find the same appendix a human reads at
+     * kinetis.dev/docs/appendix-orbitron.html.
+     */
+    public function test_the_appendix_orbitron_page_is_catalogued(): void
+    {
+        $page = DocsCatalogue::find(DocsCatalogue::URI_PREFIX . 'appendix-orbitron');
+
+        self::assertInstanceOf(DocsPage::class, $page);
+        self::assertSame('Appendix: Orbitron', $page->name);
+        self::assertStringContainsStringIgnoringCase('trust boundary', $page->description);
+    }
+
     public function test_a_page_builds_its_own_uri_and_source_url_from_its_slug(): void
     {
         $page = new DocsPage('routing-validation', 'Routing & Validation', 'Attribute-based routes');
