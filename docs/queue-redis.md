@@ -65,10 +65,14 @@ settling a job, any worker's next `pop()` on that queue takes the job
 back once the lease expires, with its attempt count increased. No
 separate reaper process runs.
 
-A lease is never renewed. Set the timeout above your slowest job: a job
-still running when its lease expires runs again beside the first.
+`queue:work` renews the lease automatically while the job runs, at half
+this window, so the setting sizes how long a *crashed* worker's job
+waits to come back rather than how long a job may take. A handler that
+never yields to the event loop cannot be renewed, and neither can one
+whose worker has died — delivery stays at-least-once either way.
 [Redis mechanisms](appendix-queue.md#redis) describes the lease
-algorithm.
+algorithm and [Reservation renewal](queue.md#reservation-renewal) what
+the worker does with it.
 
 ## When a Redis command fails
 
