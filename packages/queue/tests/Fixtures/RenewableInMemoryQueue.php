@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Kinetis\Queue\Tests\Fixtures;
 
+use Fiber;
 use Kinetis\Queue\Job;
 use Kinetis\Queue\JobSerializer;
 use Kinetis\Queue\QueuedJob;
 use Kinetis\Queue\RenewableQueueInterface;
+use Revolt\EventLoop;
 use RuntimeException;
 
 /**
@@ -33,6 +35,9 @@ use RuntimeException;
  * the way a real backend's round trip does. $renewShouldFail makes every
  * renewal throw, each with its own message, so "the last exception was
  * kept" is provable rather than merely plausible.
+ * $renewNeverReturns breaks the interface's own async boundary on
+ * purpose, which is the only way to reach the worker's fail-closed join;
+ * releaseParkedRenewal() is how the test that uses it cleans up.
  */
 final class RenewableInMemoryQueue implements RenewableQueueInterface
 {
@@ -57,6 +62,25 @@ final class RenewableInMemoryQueue implements RenewableQueueInterface
     public int $overlappingRenewals = 0;
 
     public bool $renewShouldFail = false;
+
+    /**
+     * Makes renew() suspend with nothing scheduled to resume it — a
+     * deliberate violation of RenewableQueueInterface's requirement that
+     * I/O be bounded by the backend's own operation timeout. A real
+     * adapter cannot renew forever; this fixture can, which is what lets
+     * a test reach the join the worker cannot complete.
+     */
+    public bool $renewNeverReturns = false;
+
+    /**
+     * The Fiber a $renewNeverReturns renewal parked on, held so it stays
+     * parked. Revolt abandons a callback Fiber that suspends with
+     * anything but its own marker and creates a replacement, so an
+     * abandoned one is collected and force-closed — which unwinds
+     * DeliveryHeartbeat::tick(), resumes the worker's joiner, and makes
+     * a join that never completed look like one that did.
+     */
+    private ?Fiber $parkedRenewal = null;
 
     /**
      * Makes ack() throw the way a backend refusing writes does, so the
@@ -140,6 +164,15 @@ final class RenewableInMemoryQueue implements RenewableQueueInterface
         $this->renewals[] = $job->handle;
         $this->recorder->record('renew:start');
 
+        if ($this->renewNeverReturns) {
+            // Outside the try below: this call never returns, so it never
+            // records an end or clears $renewing either — it stays in
+            // flight, which is the state the worker has to join.
+            $this->parkedRenewal = Fiber::getCurrent();
+
+            EventLoop::getSuspension()->suspend();
+        }
+
         try {
             if ($this->renewSeconds > 0.0) {
                 LoopDelay::seconds($this->renewSeconds);
@@ -152,5 +185,16 @@ final class RenewableInMemoryQueue implements RenewableQueueInterface
             $this->renewing = false;
             $this->recorder->record('renew:end');
         }
+    }
+
+    /**
+     * Unwinds a renewal parked by $renewNeverReturns, so no suspended
+     * Fiber of this fixture's making outlives the test that created it.
+     */
+    public function releaseParkedRenewal(): void
+    {
+        $this->parkedRenewal = null;
+
+        gc_collect_cycles();
     }
 }

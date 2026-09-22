@@ -50,8 +50,16 @@ interface RenewableQueueInterface extends QueueInterface
      * do from every other operation. QueueWorker contains them — see
      * that class for what a failed renewal does to a job in flight.
      *
-     * Idempotent: calling it twice for the same delivery leaves the same
-     * window, so a caller that lost an answer may simply call again.
+     * Repeated calls are supported, and a failure says nothing about
+     * whether a later attempt will fail — but this is not idempotent:
+     * every successful call moves the reservation window forward from
+     * that call.
+     *
+     * May return synchronously when no I/O is needed. Any I/O must
+     * suspend its Fiber rather than block the event-loop thread, and
+     * must be bounded by the backend or client's own operation timeout:
+     * QueueWorker joins a call still in flight before it settles the
+     * delivery, and cannot safely abandon one.
      */
     public function renew(QueuedJob $job): void;
 }

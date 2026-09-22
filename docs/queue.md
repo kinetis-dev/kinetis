@@ -445,11 +445,18 @@ Delivery is still at least once. Renewal stops when:
   receive rather than from the last renewal.
 
 A renewal the backend refuses does not fail the job, settle it, or stop
-the worker. The worker keeps trying for the rest of the job and, once
-the job's own outcome is recorded, logs one `error` naming how many
-renewals failed and the last exception. Read it as "this job may have
-been handed to another worker as well" — the same thing an idempotent
-handler already tolerates.
+the worker. The worker keeps trying for the rest of the job — a refused
+call says nothing about whether the next one will be refused — and, once
+it has attempted the job's own settlement, logs one `error` naming how
+many renewals failed and the last exception. Read it as "this job may
+have been handed to another worker as well" — the same thing an
+idempotent handler already tolerates.
+
+A renewal the worker cannot *wait out* before settling is the one that
+stops it, and the delivery is left unsettled. A renewal still able to
+resume could overwrite the backoff a delayed `release()` had just
+written, so nothing is acked, released or failed; the visibility timeout
+brings the job back instead.
 
 [Reservation renewal](appendix-queue.md#reservation-renewal) carries the
 per-backend operations, the fences and the worker's watcher rules.

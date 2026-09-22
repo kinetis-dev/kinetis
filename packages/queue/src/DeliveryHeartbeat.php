@@ -14,9 +14,9 @@ use Throwable;
  * window is not handed to a second worker while the first is still
  * working on it.
  *
- * One repeat watcher, at half the backend's window, so a renewal that
- * is late by a whole interval still lands inside the window it is
- * extending. The watcher is unreferenced the instant it exists: a
+ * One repeat watcher, at half the backend's window, which leaves half a
+ * window as the margin an ordinary renewal round trip has to finish in.
+ * The watcher is unreferenced the instant it exists: a
  * referenced one would keep the event loop alive by itself, and
  * {@see \Kinetis\Async\ConcurrentBatch} reads "the loop ran out of
  * watchers" as the signal that a task deadlocked — a heartbeat holding
@@ -30,22 +30,24 @@ use Throwable;
  * due; $renewing suppresses that tick rather than opening a second
  * request against the same receipt.
  *
- * **A renewal never decides anything about the job.** It cannot fail
- * the handler, settle the delivery or stop the loop: every throwable
- * is caught here, and later ticks keep trying, because renewal is
- * idempotent and one refused write must not surrender the rest of a
- * lease that may still be extendable. What survives is a count and the
- * last exception, which {@see QueueWorker} logs once after the job's
- * own outcome is recorded.
+ * **A renewal call never decides anything about the job.** It cannot
+ * fail the handler, settle the delivery or stop the loop: every
+ * throwable from the call is caught here, and later ticks keep trying,
+ * because one refused write says nothing about the next and must not
+ * surrender the rest of a lease that may still be extendable. What
+ * survives is a count and the last exception, which
+ * {@see QueueWorker} logs once after it has attempted the settlement.
  *
- * **stop() joins.** SQS renews and releases with the same
- * `ChangeMessageVisibility` call, so a renewal still in flight when the
- * worker released the job for a retry could overwrite the backoff the
- * release just set. stop() therefore cancels the watcher and then waits
- * out whatever is already running, bounded by the adapter's own
- * operation timeout, before the worker settles anything. A handler that
- * never yields to the event loop — a CPU-bound loop — is never renewed
- * at all: nothing here can interrupt it.
+ * **stop() joins, and fails closed.** SQS renews and releases with the
+ * same `ChangeMessageVisibility` call, so a renewal still in flight when
+ * the worker released the job for a retry could overwrite the backoff
+ * the release just set. stop() therefore cancels the watcher and then
+ * waits out whatever is already running, bounded by the adapter's own
+ * operation timeout, before the worker settles anything. A failure of
+ * that wait is not a renewal failure: the renewal is still suspended and
+ * can resume, so the failure propagates and the worker settles nothing.
+ * A handler that never yields to the event loop — a CPU-bound loop — is
+ * never renewed at all: nothing here can interrupt it.
  *
  * @internal QueueWorker owns the whole lifecycle; nothing else
  *     constructs one.
@@ -102,10 +104,14 @@ final class DeliveryHeartbeat
 
     /**
      * Cancels the watcher and joins an in-flight renewal, after which
-     * nothing this object started is still running or scheduled. Never
-     * throws: a failed join is recorded as a renewal failure like any
-     * other, since it leaves the same thing unknown — whether the window
-     * was extended.
+     * nothing this object started is still running or scheduled.
+     *
+     * A failure of the join propagates. It is not an ordinary renewal
+     * failure: the renewal is still suspended and can resume — on SQS,
+     * over a delayed release()'s own visibility timeout — so the
+     * quiescence the caller is about to settle on was never established,
+     * and nothing may be settled. An ordinary throwable from
+     * queue->renew() is contained by tick() instead.
      */
     public function stop(): void
     {
@@ -125,8 +131,6 @@ final class DeliveryHeartbeat
             // renewal can never observe a joiner that has not parked yet.
             $this->joiner = EventLoop::getSuspension();
             $this->joiner->suspend();
-        } catch (Throwable $e) {
-            $this->recordFailure($e);
         } finally {
             $this->joiner = null;
         }

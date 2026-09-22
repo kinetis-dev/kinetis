@@ -237,6 +237,14 @@ renewal settles nothing and consumes no attempt. Transport and backend
 errors propagate as they do from any other operation, and `QueueWorker`
 contains them.
 
+Repeating a renewal is supported, and one failure says nothing about
+whether a later attempt will fail — but it is not idempotent: every
+successful call moves the reservation window forward from that call.
+`renew()` may return synchronously when it needs no I/O; I/O must
+suspend its Fiber rather than block the event-loop thread, bounded by
+the backend or client's own operation timeout, since the worker joins a
+call still in flight and cannot abandon one.
+
 While a job runs, the worker owns one Revolt repeat watcher at half the
 backend's window. It is unreferenced, so it never keeps the event loop
 alive on its own — a referenced one would hide the empty-loop condition
@@ -249,16 +257,21 @@ Before the delivery is settled the worker cancels the watcher and waits
 out any renewal still in flight, bounded by that adapter's own operation
 timeout. The wait is not optional: SQS renews and releases with the same
 `ChangeMessageVisibility` call, so a renewal landing after a delayed
-`release()` would replace the retry backoff.
+`release()` would replace the retry backoff. A failure of that wait is
+not a renewal failure and is not contained: the renewal is still
+suspended and can resume, so the error propagates and no `ack()`,
+`release()` or `fail()` is attempted at all. The delivery is left to the
+backend's own timeout, which is the outcome the worker can still
+account for.
 
-A failed renewal is counted, not acted on. Later ticks keep trying,
-because renewal is idempotent and one refused write does not mean the
-rest of the lease is unextendable. Once the job's own outcome is
-recorded and its lifecycle event dispatched, the worker logs one `error`
-carrying the failure count and the last exception — still logged when
-the settlement itself threw, and never in place of that exception. No
-event, no exception, no retry policy and no worker restart follow from
-it.
+A failed renewal call is counted, not acted on. Later ticks keep trying,
+because one refused write does not mean the rest of the lease is
+unextendable. Once the settlement has been attempted — and its
+lifecycle event dispatched, when it succeeded — the worker logs one
+`error` carrying the failure count and the last exception, still logged
+when the settlement itself threw and never in place of that exception.
+No event, no exception, no retry policy and no worker restart follow
+from it.
 
 A handler that never yields to the event loop cannot be renewed: nothing
 in the worker can interrupt running PHP.
@@ -356,9 +369,10 @@ refuses to run without `--force`, and clears each queue in turn.
    `Kinetis\Queue\Exception\UnresolvableJobParameterException`. Any
    throwable from this step is the job's failure.
 6. Stop the heartbeat: cancel the watcher and wait out any renewal still
-   in flight, so nothing of it survives into the settlement.
+   in flight, so nothing of it survives into the settlement. A wait that
+   fails propagates from here, and step 7 never runs.
 7. Settle the delivery, then report the outcome — a renewal failure
-   included, after the outcome and never instead of it.
+   included, after the settlement attempt and never instead of it.
 8. Dispose the scope and run `gc_collect_cycles()`.
 
 `run()` repeats `processNext()` until stopped. `processNext()` is public

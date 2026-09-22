@@ -200,9 +200,11 @@ Delivery is still at least once. Nothing renews once the worker dies —
 which is the point — and a handler that never yields to the event loop
 cannot be renewed either, because nothing in the worker can interrupt
 running PHP. A renewal the backend refuses neither fails nor settles the
-job: the worker keeps trying for the rest of the job and, after the
-job's own outcome, logs one `error` with the failure count and the last
-exception.
+job: the worker keeps trying for the rest of the job and, after it has
+attempted the job's own settlement, logs one `error` with the failure
+count and the last exception. A renewal the worker cannot wait out
+before settling is the exception — it stops the worker with the delivery
+unsettled, rather than settling one a suspended renewal can still reach.
 
 ## Configuration
 

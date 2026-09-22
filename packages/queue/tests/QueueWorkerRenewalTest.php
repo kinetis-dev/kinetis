@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Queue\Tests;
 
+use Error;
 use Kinetis\Async\Exception\DeadlockException;
 use Kinetis\Container\AppScope;
 use Kinetis\Instrumentation\NullTelemetry;
@@ -182,9 +183,63 @@ final class QueueWorkerRenewalTest extends TestCase
     }
 
     /**
-     * Renewal is idempotent, so one refused call says nothing about the
-     * next: the heartbeat keeps trying for the rest of the job rather
-     * than surrendering a lease that may still be extendable.
+     * The same join, against a queue that breaks renew()'s async
+     * boundary: the fixture parks with nothing scheduled to resume it,
+     * so the event loop runs dry underneath stop()'s own suspension.
+     * That is a lifecycle failure rather than a renewal failure — the
+     * renewal is still suspended and could resume over a settlement's
+     * own write — so it propagates instead of being contained, and the
+     * delivery is left for the backend's timeout rather than settled
+     * against a reservation the worker can no longer account for. No
+     * renewal report either: there was no settlement to report after.
+     */
+    public function test_a_renewal_that_cannot_be_joined_propagates_and_settles_nothing(): void
+    {
+        [$app, $recorder, $logger] = $this->app();
+        $queue = new RenewableInMemoryQueue($recorder);
+        $queue->renewNeverReturns = true;
+        $queue->push(new YieldingJob(0.6));
+
+        $before = EventLoop::getIdentifiers();
+
+        try {
+            (new QueueWorker($app, $queue))->processNext();
+            self::fail('a renewal the worker could not join must not be followed by a settlement');
+        } catch (Error $e) {
+            self::assertStringContainsString(
+                'Event loop terminated without resuming',
+                $e->getMessage(),
+                'the failure reported is the join that never completed',
+            );
+        } finally {
+            // Unwind the parked renewal inside the test that parked it.
+            $queue->releaseParkedRenewal();
+        }
+
+        self::assertSame(
+            ['renew:start', 'job:done'],
+            $recorder->messages,
+            'the renewal was still in flight when the handler returned, and nothing was settled after it',
+        );
+        self::assertSame([], $queue->acked);
+        self::assertSame([], $queue->released);
+        self::assertSame([], $queue->failed);
+        self::assertSame(
+            [],
+            $this->entriesMatching($logger, 'Renewing the reservation'),
+            'the renewal report follows a settlement attempt, and there was none',
+        );
+        self::assertSame(
+            $before,
+            EventLoop::getIdentifiers(),
+            'the watcher was cancelled before the join, so nothing of the heartbeat is left armed',
+        );
+    }
+
+    /**
+     * One refused call says nothing about the next, so the heartbeat
+     * keeps trying for the rest of the job rather than surrendering a
+     * lease that may still be extendable.
      */
     public function test_renewal_failures_are_contained_counted_and_logged_after_the_settlement(): void
     {

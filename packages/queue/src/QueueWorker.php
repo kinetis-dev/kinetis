@@ -55,9 +55,12 @@ use Throwable;
  * its delivery instead of being handed to a second worker. Delivery
  * stays at-least-once: a worker that dies stops renewing and the window
  * still expires. A handler that never yields to the event loop is never
- * renewed, because nothing can interrupt it. Renewal decides nothing —
- * failures are counted, the last one is logged once after the job's own
- * outcome, and the loop carries on.
+ * renewed, because nothing can interrupt it. A failed renewal call
+ * decides nothing — failures are counted, the last one is logged once
+ * after the settlement attempt, and the loop carries on. An in-flight
+ * renewal the worker cannot join is the one exception: quiescence was
+ * never established, so that failure propagates and the delivery is not
+ * settled at all.
  *
  * A throwing job does not stop or escape the loop — the same "one bad
  * unit of work must not crash a long-running process" reasoning behind
@@ -315,7 +318,10 @@ final class QueueWorker
             // settled, so the delivery this worker is about to ack,
             // release or fail is still the one it holds — and so no
             // renewal can land after a delayed release and undo its
-            // backoff. Nothing of it outlives this block.
+            // backoff. Nothing of it outlives this block: stop() either
+            // establishes that or throws, and a throw from it skips the
+            // settlement below rather than settling a delivery a
+            // suspended renewal can still reach.
             $heartbeat = $this->renewableQueue !== null
                 ? DeliveryHeartbeat::start($this->renewableQueue, $queuedJob)
                 : null;
@@ -344,7 +350,8 @@ final class QueueWorker
             } finally {
                 // In a finally so a settlement that throws still leaves
                 // the renewal trouble on the record — reported after the
-                // job's own outcome, and never in place of it.
+                // settlement attempt, and never in place of its own
+                // exception.
                 $this->reportRenewalFailures($heartbeat, $queuedJob, $scope);
             }
         } finally {
@@ -556,14 +563,18 @@ final class QueueWorker
     }
 
     /**
-     * The one line a failed renewal produces, after the job's own
-     * outcome has been recorded and its lifecycle event dispatched. A
-     * renewal failure is not a job failure and not a settlement
-     * failure: the handler ran, the delivery was settled or the
-     * settlement's own exception is already propagating, and all this
-     * adds is that the reservation may have lapsed while the job ran —
-     * which is why it is a log line rather than an event, an exception
-     * or a retry policy.
+     * The one line a failed renewal call produces, written after the
+     * settlement attempt — and after the lifecycle event too, when that
+     * settlement succeeded. A renewal failure is not a job failure and
+     * not a settlement failure: the handler ran, the delivery was
+     * settled or the settlement's own exception is already propagating,
+     * and all this adds is that the reservation may have lapsed while
+     * the job ran — which is why it is a log line rather than an event,
+     * an exception or a retry policy.
+     *
+     * A heartbeat the worker could not join never reaches this: that
+     * failure propagates from DeliveryHeartbeat::stop() ahead of any
+     * settlement, and is the exception the worker's supervisor sees.
      *
      * The last exception is the test for "anything failed": the
      * heartbeat records the two together, so a non-null one is exactly a

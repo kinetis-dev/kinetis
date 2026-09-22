@@ -80,8 +80,8 @@ AWS counts a message's own **12-hour maximum from the receive, not from
 the last renewal**. A job still running at that point is redelivered
 whatever the worker sends, and the `ChangeMessageVisibility` that would
 have extended it past the limit is refused by SQS — an error that
-propagates the same way every other SQS failure here does, after the
-job's own outcome is recorded (see {doc}`queue`).
+propagates the same way every other SQS failure here does, reported
+after the worker has attempted the job's settlement (see {doc}`queue`).
 
 ## Credentials
 
@@ -128,7 +128,7 @@ receiving from it; this application's workers send
   if SQS accepts it, nothing reports it.
 - A renewal is fenced by the receipt handle SQS itself scopes to the
   receive, and reports nothing back: a refused renewal is logged once
-  after the job's outcome, never raised as a lost delivery.
+  after the settlement attempt, never raised as a lost delivery.
 - A worker watching several queues checks each once, then long-polls
   only the highest-priority queue for up to five seconds, so a job
   arriving on a lower-priority queue can wait that long.
