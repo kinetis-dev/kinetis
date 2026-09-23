@@ -125,6 +125,13 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
                 $event = self::decodeInvocationEvent($rawBody);
                 $this->postResponse($requestId, self::handleEvent($event, $handler));
             } catch (Throwable $e) {
+                // The type only, never the message: a message may carry
+                // event content, a request-specific identifier or
+                // application internals. The message goes to the Runtime
+                // API below, not to the function's log. get_debug_type(),
+                // not ::class: an anonymous class's name embeds its
+                // declaring file path.
+                error_log('Lambda invocation failed: ' . get_debug_type($e));
                 $this->postError($requestId, $e);
             }
         }
@@ -143,8 +150,8 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
      * into a response. A body this adapter cannot decode — a
      * `isBase64Encoded` payload that is not valid base64 — is the
      * client's mistake, answered with the same 400 every other adapter
-     * gives, not an invocation error (which API Gateway renders as a
-     * 502, with the real message in CloudWatch only). Anything else
+     * gives, not an invocation error, which API Gateway renders as a
+     * 502 and for which run() logs one type-only line. Anything else
      * escapes to run()'s postError().
      *
      * What a body *contains* is not judged here at all: the request goes

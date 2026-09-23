@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 /**
  * Real-backend coverage for S3FilesystemFactory against LocalStack:
- * write, read, list, copy, move and recursive delete, over the plain-HTTP
- * endpoint the FILESYSTEM_S3_PLAINTEXT opt-in exists for. The bucket is
- * never auto-created by the factory (a deliberate design choice, matching
- * SqsQueue's identical stance on queues), so this script creates it
- * directly first.
+ * write, stream write, read, list, copy, move and recursive delete, over
+ * the plain-HTTP endpoint the FILESYSTEM_S3_PLAINTEXT opt-in exists for.
+ * The bucket is never auto-created by the factory (a deliberate design
+ * choice, matching SqsQueue's identical stance on queues), so this script
+ * creates it directly first.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -60,6 +60,16 @@ $storage->write('greetings/hello.txt', 'Hello from Kinetis');
 check('write() + exists() round-trip', $storage->fileExists('greetings/hello.txt'));
 check('read() returns exactly what was written', $storage->read('greetings/hello.txt') === 'Hello from Kinetis');
 check('fileSize() matches the real byte count', $storage->fileSize('greetings/hello.txt') === strlen('Hello from Kinetis'));
+
+$streamed = str_repeat('Kinetis stream ', 10_000);
+$resource = fopen('php://memory', 'w+b');
+fwrite($resource, $streamed);
+$storage->writeStream('streams/body.txt', $resource);
+check('writeStream() leaves the resource open', is_resource($resource));
+fclose($resource);
+check('writeStream() + read() round-trip', $storage->read('streams/body.txt') === $streamed);
+check('fileSize() matches the streamed byte count', $storage->fileSize('streams/body.txt') === strlen($streamed));
+$storage->delete('streams/body.txt');
 
 $storage->write('greetings/other.txt', 'Another file');
 $listed = [];

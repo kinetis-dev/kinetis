@@ -422,6 +422,7 @@ target is request smuggling looking for somewhere to land.
   cookies together would produce a value no client could parse back into
   distinct cookies.
 
+(runtime-reference-lambda-failures)=
 ### Streaming and Runtime API failures
 
 A controller returning a `Kinetis\Runtime\StreamableResponseInterface`
@@ -437,6 +438,17 @@ A poll or a response POST that fails outright (connection refused, a
 non-2xx status) throws instead of being treated as an empty response —
 there is no invocation to serve and nothing meaningful to fall back to,
 so the function erroring, visible in CloudWatch, is the outcome.
+
+An invocation error posts the throwable's class and message to
+`.../invocation/{id}/error`, while PHP's error log receives only its
+type: `Lambda invocation failed: ` followed by `get_debug_type()` of the
+throwable — the class name, or `Parent@anonymous` for an anonymous class,
+whose own name embeds its declaring file. A message may carry event
+content, a request-specific identifier or application internals, so it
+never reaches the log. Under the `bref/php-84` image PHP runs as the
+CLI with no `error_log` set, so the log is stderr, which Lambda forwards
+to CloudWatch. A direct invoker sees the Runtime API error payload; API
+Gateway exposes only a `502`.
 
 ## RoadRunner
 

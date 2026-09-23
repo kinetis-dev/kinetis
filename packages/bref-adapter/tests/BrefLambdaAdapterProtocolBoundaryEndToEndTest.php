@@ -5,17 +5,19 @@ declare(strict_types=1);
 namespace Kinetis\BrefAdapter\Tests;
 
 use Kinetis\BrefAdapter\BrefLambdaAdapter;
+use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use ReflectionClassConstant;
+use RuntimeException;
 use Throwable;
 
 /**
- * Two Runtime API protocol-boundary behaviors, each needing its own
+ * Runtime API protocol-boundary behaviors, each needing its own
  * server/state directory per test (unlike
- * BrefLambdaAdapterEndToEndTest's single shared one) since both hinge on
+ * BrefLambdaAdapterEndToEndTest's single shared one) since they hinge on
  * per-route response timing and event content that a shared counter-file
  * fixture can't isolate across test methods — real per-test setUp()/
  * tearDown() instead of setUpBeforeClass()/tearDownAfterClass().
@@ -28,6 +30,9 @@ use Throwable;
  * - A malformed or non-object invocation event body must be posted to
  *   the invocation error endpoint, not silently downgraded into an
  *   empty, plausible-looking GET / that reaches application routing.
+ * - Every invocation error writes exactly one line to PHP's error log,
+ *   naming the throwable's type and nothing from its message or source
+ *   path.
  */
 final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
 {
@@ -318,30 +323,55 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
     }
 
     /**
+     * Runs the adapter for the fixture's one invocation with `error_log`
+     * pointed at a file in this test's state directory, and returns what
+     * was written to it — one entry per line, PHP's own leading timestamp
+     * stripped, since what the adapter controls is the message.
+     *
+     * @param callable(ServerRequestInterface): ResponseInterface $handler
+     *
+     * @return list<string>
+     */
+    private function runCapturingTheLog(callable $handler): array
+    {
+        $log = $this->stateDir . '/error.log';
+        $previous = ini_set('error_log', $log);
+
+        try {
+            (new BrefLambdaAdapter(self::HOST))->run($handler);
+        } catch (BrefAdapterException) {
+            // The fixture's second poll answers 500, which ends the loop.
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+        }
+
+        $written = is_file($log) ? (string) file_get_contents($log) : '';
+
+        return array_map(
+            static fn (string $entry): string => (string) preg_replace('/^\[[^\]]*\] /', '', $entry),
+            array_values(array_filter(explode(PHP_EOL, $written), static fn (string $entry): bool => $entry !== '')),
+        );
+    }
+
+    /**
      * Runs the adapter against whatever event.json this test already
-     * wrote, asserting the handler is never invoked and the failure is
+     * wrote, asserting the handler is never invoked, the failure is
      * reported to the invocation error endpoint rather than merely
-     * thrown into the void — the shared assertions every "this event
-     * must be rejected before routing" test in this class needs.
+     * thrown into the void, and the log carries the type alone — the
+     * shared assertions every "this event must be rejected before
+     * routing" test in this class needs.
      *
      * @return array<string,mixed> the decoded error payload
      */
     private function runAndAssertEventRejectedBeforeRouting(): array
     {
-        $adapter = new BrefLambdaAdapter(self::HOST);
         $handlerWasCalled = false;
 
-        try {
-            $adapter->run(function (ServerRequestInterface $request) use (&$handlerWasCalled): ResponseInterface {
-                $handlerWasCalled = true;
+        $entries = $this->runCapturingTheLog(function (ServerRequestInterface $request) use (&$handlerWasCalled): ResponseInterface {
+            $handlerWasCalled = true;
 
-                return new Response(204);
-            });
-
-            self::fail('run() should not return normally — the fixture is expected to stop it via the second poll\'s 500.');
-        } catch (Throwable) {
-            // Same loop-terminating mechanism as every other test here.
-        }
+            return new Response(204);
+        });
 
         self::assertFalse($handlerWasCalled, 'a rejected event must never reach application routing');
         self::assertFileDoesNotExist($this->stateDir . '/response-test-request-1.json');
@@ -352,8 +382,53 @@ final class BrefLambdaAdapterProtocolBoundaryEndToEndTest extends TestCase
         /** @var array<string,mixed> $errorPayload */
         $errorPayload = json_decode((string) file_get_contents($errorFile), associative: true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('Kinetis\BrefAdapter\Exception\BrefAdapterException', $errorPayload['errorType']);
+        self::assertSame(['Lambda invocation failed: ' . BrefAdapterException::class], $entries);
 
         return $errorPayload;
+    }
+
+    /**
+     * A throwable the adapter does not own reaches the log by its type
+     * alone, while its message still reaches the Runtime API's error
+     * payload for a direct invoker.
+     */
+    public function test_a_foreign_throwable_is_posted_to_the_error_endpoint_and_logged_by_type_only(): void
+    {
+        $this->writeEvent($this->minimalEvent());
+
+        $entries = $this->runCapturingTheLog(
+            static fn (ServerRequestInterface $request): ResponseInterface => throw new RuntimeException('foreign-marker'),
+        );
+
+        self::assertFileDoesNotExist($this->stateDir . '/response-test-request-1.json');
+
+        $errorFile = $this->stateDir . '/error-test-request-1.json';
+        self::assertFileExists($errorFile, 'the handler failure must have been reported via postError()');
+
+        /** @var array<string,mixed> $errorPayload */
+        $errorPayload = json_decode((string) file_get_contents($errorFile), associative: true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(RuntimeException::class, $errorPayload['errorType']);
+        self::assertSame('foreign-marker', $errorPayload['errorMessage']);
+        self::assertSame(['Lambda invocation failed: RuntimeException'], $entries);
+        self::assertStringNotContainsString('foreign-marker', implode(PHP_EOL, $entries));
+    }
+
+    /**
+     * An anonymous class's own name embeds the file that declares it;
+     * the log carries PHP's bounded `Parent@anonymous` label instead.
+     */
+    public function test_an_anonymous_throwable_is_logged_by_its_bounded_type_label(): void
+    {
+        $this->writeEvent($this->minimalEvent());
+
+        $entries = $this->runCapturingTheLog(
+            static fn (ServerRequestInterface $request): ResponseInterface => throw new class ('anonymous-marker') extends RuntimeException {},
+        );
+
+        self::assertFileExists($this->stateDir . '/error-test-request-1.json', 'the handler failure must have been reported via postError()');
+        self::assertSame(['Lambda invocation failed: RuntimeException@anonymous'], $entries);
+        self::assertStringNotContainsString('anonymous-marker', implode(PHP_EOL, $entries));
+        self::assertStringNotContainsString(__FILE__, implode(PHP_EOL, $entries));
     }
 
     public function test_a_malformed_event_body_is_reported_to_the_error_endpoint_not_routed_as_a_request(): void

@@ -37,7 +37,7 @@ Before a version-sensitive claim governs a decision:
 
 1. **Establish the installed version.** Call `orbitron_inspect` where
    Orbitron is registered, and before editing confirm that its
-   `projectRoot` equals `pwd -P` in the checkout you edit — a mismatch
+   `checkoutRoot` equals `pwd -P` in the checkout you edit — a mismatch
    means the session reads another checkout; see Orbitron's
    {ref}`agent contract <the-instructions>`. Otherwise read the
    project's own `composer.lock` or run

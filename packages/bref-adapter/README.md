@@ -46,7 +46,10 @@ platform's own 6 MB invocation payload limit, before this package runs.
 There's nothing to configure or call directly: install the package, and
 `RuntimeDetector` picks it up automatically the moment `AWS_LAMBDA_RUNTIME_API`
 is set in the environment, alongside the two adapters that already ship in
-core.
+core. The one PHP process a Lambda container runs must execute
+`public/index.php` directly; a `bref/php-84` image runs Bref's own runtime
+by default and needs its `/var/runtime/bootstrap` replaced — see
+[Replacing the runtime bootstrap](https://kinetis.dev/docs/runtime-adapters.html#replacing-the-runtime-bootstrap).
 
 ```sh
 composer require kinetis/bref-adapter

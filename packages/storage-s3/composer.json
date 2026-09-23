@@ -13,6 +13,7 @@
         "kinetis/framework": "dev-main",
         "kinetis/storage": "dev-main",
         "kinetis/revolt-http-client": "dev-main",
+        "amphp/http-client": "^5.3.6",
         "async-aws/core": "^1.29.2",
         "async-aws/s3": "^3.4.1",
         "league/flysystem": "^3.35.2",

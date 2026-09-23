@@ -366,6 +366,15 @@ An `\Error` is not a driver failure either and is never relabeled: a
 programmer error reaches the caller as itself, and so does anything a
 `writeStream()` producer raises that is none of the types above.
 
+## S3 stream writes
+
+On S3, `writeStream()` sends one `PutObject` whose `Content-Length` is
+the resource's full size. The body is read from the resource's start,
+whatever its current position, in bounded chunks as the request is
+written, so the whole object is never held in memory. The resource is
+left open. A resource that is not seekable is refused with
+`UnableToWriteFile` before any request is sent.
+
 ## S3 failure reporting
 
 S3 answers some failures with HTTP 200 and an error document: a copy that

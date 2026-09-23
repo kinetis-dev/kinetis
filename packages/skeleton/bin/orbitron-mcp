@@ -7,7 +7,15 @@
 #
 # The project directory is derived from this script's own location, so
 # the checked-in configuration works in any clone, at any path, from any
-# client working directory.
+# client working directory. It stays the logical path the script was
+# reached through: Compose derives the project name from it, and that
+# name selects the image and the vendor volume this server shares with
+# `app`. Resolving a symlink here could select another project's.
+#
+# The server sees this checkout as /app. The physical host path is
+# handed to it separately, as KINETIS_ORBITRON_CHECKOUT_ROOT, and
+# `orbitron_inspect` reports it back as `checkoutRoot` for the agent to
+# compare with `pwd -P`. The server never reads through that path.
 #
 # `run` starts a one-off container that shares the `app` service's image
 # and mounts, but not its process lifecycle: restarting, recreating or
@@ -38,7 +46,9 @@
 set -e
 
 project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+checkout_root=$(CDPATH='' cd -- "$project_directory" && pwd -P)
 
 exec docker compose --project-directory "$project_directory" \
-    run --rm -T --no-deps --entrypoint php app \
+    run --rm -T --no-deps --entrypoint php \
+    -e KINETIS_ORBITRON_CHECKOUT_ROOT="$checkout_root" app \
     vendor/bin/kinetis-orbitron-mcp

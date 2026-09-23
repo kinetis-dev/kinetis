@@ -120,7 +120,8 @@ That initialization follows the order starting the server needs:
    own policy; see [Trust and approval](#trust-and-approval).
 4. The agent confirms the `orbitron` tools and resources, reads
    `kinetis://orbitron/context` and `kinetis://docs/agent-workflow`,
-   calls `orbitron_inspect` and calls `orbitron_verify`.
+   calls `orbitron_inspect`, confirms the `checkoutRoot` it reports is
+   this checkout's `pwd -P`, and calls `orbitron_verify`.
 5. It reports readiness in one line and gets on with your request:
 
    ```
@@ -145,15 +146,18 @@ Already correct for whatever path you cloned into:
   stdio MCP server named `orbitron`, launched as `./bin/orbitron-mcp`.
 
 `bin/orbitron-mcp` runs `docker compose run --rm -T --no-deps
---entrypoint php app vendor/bin/kinetis-orbitron-mcp` against this
-project's own directory: a disposable container built from `app`'s own
-image, sharing its project and vendor mounts but not its process
-lifecycle, so restarting, recreating or rebuilding `app` does not
-disconnect an established session. `--entrypoint php` skips the
-skeleton entrypoint's `composer install`, and `--no-deps` keeps a
-generic project from starting services it does not need. The server
-still lives next to the code it reports on, so your host still needs no
-PHP and no Composer, and the agent needs no absolute path.
+--entrypoint php -e KINETIS_ORBITRON_CHECKOUT_ROOT=<checkout> app
+vendor/bin/kinetis-orbitron-mcp` against this project's own directory:
+a disposable container built from `app`'s own image, sharing its project
+and vendor mounts but not its process lifecycle, so restarting,
+recreating or rebuilding `app` does not disconnect an established
+session. `--entrypoint php` skips the skeleton entrypoint's `composer
+install`, and `--no-deps` keeps a generic project from starting services
+it does not need. The container sees every checkout as `/app`, so
+`<checkout>` is this checkout's physical host path, which
+`orbitron_inspect` reports back as `checkoutRoot`. The server still
+lives next to the code it reports on, so your host still needs no PHP
+and no Composer, and the agent needs no absolute path.
 
 That one server is the whole registration. The Kinetis documentation
 pages arrive on the same connection as `kinetis://docs/*` resources,
@@ -265,6 +269,9 @@ docker compose exec app vendor/bin/kinetis orbitron:scaffold
 
 `orbitron:scaffold` previews; `orbitron:scaffold --apply` is the only
 one of them that writes anything, and what it writes is two fixed files.
+Inside the container, `orbitron:inspect` reports `/app` as both
+`projectRoot` and `checkoutRoot`: it names the container's view, not
+the host checkout.
 See [Appendix: Orbitron](https://kinetis.dev/docs/appendix-orbitron.html)
 for every document's shape and exit code.
 

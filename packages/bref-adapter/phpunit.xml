@@ -11,12 +11,13 @@
     </testsuites>
     <php>
         <!--
-            BrefLambdaAdapter::handleEvent() logs a malformed request body
-            through error_log() — STDERR by default — on the way to its
-            400, and the conformance suite exercises exactly that path.
-            Infection's InitialTestsRunner stops the baseline PHPUnit run
-            on the first byte it sees on STDERR, so that expected line
-            would kill every Infection run here. This redirect affects
+            BrefLambdaAdapter logs through error_log() — STDERR by
+            default: handleEvent() writes a fixed line for a malformed
+            request body on the way to its 400, and run() writes one
+            type-only line for every invocation error. This suite
+            exercises both paths. Infection's InitialTestsRunner stops
+            the baseline PHPUnit run on the first byte it sees on STDERR,
+            so those expected lines would kill every Infection run here. This redirect affects
             this PHPUnit run only; a real deployment's error_log()
             destination is its own runtime's business.
         -->
