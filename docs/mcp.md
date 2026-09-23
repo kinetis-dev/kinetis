@@ -60,9 +60,10 @@ Put the class under any production `autoload.psr-4` root in your
 attribute, with no directory convention and nothing to register. The
 class resolves from the request's container like a controller, so it
 constructor-injects the services it needs. A tool's return value
-reaches the agent JSON-encoded as text. A resource that returns a
-string is served as-is, and anything else is JSON-encoded, under its
-`mimeType` (`text/plain` by default).
+reaches the agent JSON-encoded as text, except a `ToolResult`, which
+reaches it as built (see [Error handling](#error-handling)). A resource
+that returns a string is served as-is, and anything else is
+JSON-encoded, under its `mimeType` (`text/plain` by default).
 Tool names and resource URIs are unique across the application and its
 packages; a duplicate fails registration with
 `DuplicateDefinitionException`. {doc}`cli`'s "Restricting discovery"
@@ -269,6 +270,37 @@ Any other exception a tool throws returns the fixed text
 logger (see {doc}`logging`). A resource method that throws answers the
 JSON-RPC error `-32603` with the message `Internal error.`, also logged.
 No exception message reaches the client.
+
+A tool reports a deliberate refusal by returning
+`Kinetis\McpProtocol\ToolResult::error()` itself. The result reaches the
+agent unchanged and is not logged, so its text must already be safe for
+the client. An `AuthorizationException` message is written for the
+client (see {doc}`authorization`), so a tool can catch the denial and
+return it:
+
+```{code-block} php
+use Kinetis\Authorization\Exception\AuthorizationException;
+use Kinetis\Mcp\Attributes\McpTool;
+use Kinetis\McpProtocol\ToolResult;
+
+// A method on a tool class whose constructor injects $gate,
+// $user (CurrentUserInterface), $postPolicy and $posts.
+#[McpTool(name: 'publish_post', description: 'Publish a draft post')]
+public function publish(int $id): array|ToolResult
+{
+    $post = $this->posts->find($id);
+
+    try {
+        $this->gate->authorize($this->user, $this->postPolicy->publish(...), $post);
+    } catch (AuthorizationException $e) {
+        return ToolResult::error($e->getMessage());
+    }
+
+    $this->posts->publish($post->id);
+
+    return ['id' => $post->id];
+}
+```
 
 Problems with the request itself — invalid JSON, an unknown method, an
 unregistered tool name or resource URI, a malformed parameter — are
