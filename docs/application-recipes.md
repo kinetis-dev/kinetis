@@ -111,6 +111,31 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Non-goal**: one transaction across both databases. Each connection
   commits on its own.
 
+## Application with more than one search engine or connection
+
+- **Guides**: {doc}`search-engines` — "More than one engine or
+  connection"; {doc}`appendix-search` — "Named connections", "Why the
+  client is short-lived", and "OpenSearch client internals";
+  {doc}`bootstrapping`; {doc}`container`.
+- **Lifecycle/I-O**: construct each named connection with its engine factory
+  and bind it under an application-owned identity in `AppScope`. Follow the
+  engine-specific client lifetime in {doc}`appendix-search`: the two engines
+  do not have the same sharing contract. Dropping those application bindings
+  when `AppScope` is disposed releases the transports they own.
+- **Security/integrity**: inject the exact application identity into each
+  repository. Keep its connection name, endpoint, credentials, timeout and
+  index together; an index name is not a connection identity. When both
+  engine packages are installed, do not let their competing `SearchClient`
+  bindings or package-bootstrap order select a repository's engine.
+- **Verification**: run the package bootstraps in both orders and assert that
+  only the unused default `SearchClient` changes. Against the two real
+  engines, write distinct markers through each repository and assert each
+  marker and index is absent from the other engine. Rejecting an invalid
+  timeout under each named prefix proves the two configuration scopes do not
+  collapse.
+- **Non-goal**: a connection registry, request-selected endpoint, cross-engine
+  transaction, failover policy or translated query language.
+
 ## Queue job with retry/idempotency considerations
 
 - **Guides**: {doc}`queue`, the installed backend's own page
