@@ -88,7 +88,9 @@ final readonly class Documents
         $physicalRoot = realpath($projectRoot);
 
         if ($physicalRoot === false) {
-            throw new RuntimeException("The project root {$projectRoot} does not resolve to a physical path.");
+            throw new RuntimeException( // NOSONAR(php:S112) framework-detected root, no caller-specific recovery
+                "The project root {$projectRoot} does not resolve to a physical path.",
+            );
         }
 
         return new Document([
