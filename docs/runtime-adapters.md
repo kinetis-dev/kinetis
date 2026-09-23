@@ -293,11 +293,51 @@ composer require kinetis/bref-adapter
 ```
 ````
 
-The adapter polls the Lambda Runtime API itself, with no `bref/bref`
-handler. Deploy the application with a PHP 8.4 runtime or container image
-whose process runs `php public/index.php`; Lambda sets
-`AWS_LAMBDA_RUNTIME_API` for that process, which selects the adapter.
-Kinetis does not ship the runtime layer or the deployment template.
+`BrefLambdaAdapter` polls the Lambda Runtime API itself, with no
+`bref/bref` handler in between: the one PHP process a Lambda container
+runs must execute `public/index.php` directly, and it is that process
+for which Lambda sets `AWS_LAMBDA_RUNTIME_API`, which the adapter reads
+to select itself.
+
+A `bref/php-84` image does not do that on its own. Its `CMD` is a
+handler string, not a command — the image's entrypoint reads `CMD` into
+`_HANDLER` and then runs `/var/runtime/bootstrap`, which starts Bref's
+own runtime and never reaches Kinetis's front controller.
+
+### Replacing the runtime bootstrap
+
+Replace `/var/runtime/bootstrap` so it runs `public/index.php` instead:
+
+```{code-block} dockerfile
+:caption: docker/lambda/Dockerfile
+
+FROM bref/php-84:3
+COPY . /var/task
+COPY docker/lambda/bootstrap /var/runtime/bootstrap
+RUN chmod 0755 /var/runtime/bootstrap
+CMD ["public/index.php"]
+```
+
+```{code-block} sh
+:caption: docker/lambda/bootstrap
+
+#!/bin/sh
+exec /opt/bin/php /var/task/public/index.php
+```
+
+`CMD` still satisfies the entrypoint's one required argument, but
+Kinetis reads no `_HANDLER` and ignores it. `exec` replaces the shell
+with PHP, so PHP itself becomes the container's runtime process. The
+entrypoint itself is unchanged, and the Runtime Interface Emulator it
+embeds for local invocations runs this same replacement bootstrap. Pin
+`bref/php-84` by tag or digest: this recipe relies on
+`/var/runtime/bootstrap` and `/opt/bin/php` existing at those exact
+paths.
+
+The image must already contain `vendor/` and, in production,
+`.kinetis-cache/compiled.php` — see {doc}`caching`. Lambda's `/var/task`
+is read-only. `COPY` copies only what `.dockerignore` permits, and the
+skeleton's own `.dockerignore` excludes both directories.
 
 - **Invoke it through an HTTP API or a Function URL.** The adapter reads
   payload format 2.0 only. ALB events, REST API (payload format 1.0)
