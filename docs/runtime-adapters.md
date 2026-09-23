@@ -342,7 +342,9 @@ skeleton's own `.dockerignore` excludes both directories.
 - **Invoke it through an HTTP API or a Function URL.** The adapter reads
   payload format 2.0 only. ALB events, REST API (payload format 1.0)
   events, and any event that fails validation are reported to Lambda as
-  invocation errors and never reach a route.
+  invocation errors and never reach a route; see
+  {ref}`runtime-reference-lambda-failures` for what an invocation error
+  logs and returns.
 - **Databases use PDO.** `DB_DRIVER=auto` selects a blocking PDO
   connection. {doc}`persistence`'s "Driver selection" covers when to
   select `DB_DRIVER=native` on Lambda.
@@ -362,7 +364,8 @@ What Lambda does not support:
   invocation rather than being buffered. Lambda response streaming is a
   different invocation model this adapter does not implement.
 - **An unreachable Runtime API.** A failed poll or response post throws,
-  and the function reports an error in CloudWatch.
+  and the function reports an error in CloudWatch — see
+  {ref}`runtime-reference-lambda-failures`.
 
 {ref}`runtime-reference-lambda` lists every validated event field, how
 the request's host, port and target are derived, and how each field maps

@@ -20,8 +20,9 @@ use RuntimeException;
  * API, and the distinction decides what the client sees:
  * {@see \Kinetis\BrefAdapter\BrefLambdaAdapter::handleEvent()} answers
  * this with a plain 400, whereas a Runtime API failure is posted as an
- * invocation error (a 502 from API Gateway). The message is logged and
- * never returned: it can echo a fragment of the input.
+ * invocation error (a 502 from API Gateway). Invalid base64 produces the
+ * fixed `Malformed request body: invalid-base64` log line; neither this
+ * exception's message nor the body is logged or returned.
  */
 final class MalformedRequestBodyException extends RuntimeException
 {
