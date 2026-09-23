@@ -1,3 +1,10 @@
+---
+orphan: true
+myst:
+  html_meta:
+    robots: noindex
+---
+
 # Application Recipes
 
 Routing guidance for an AI coding agent: compact routes for tasks that

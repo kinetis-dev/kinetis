@@ -94,6 +94,11 @@ ogp_image = "_static/og-image.png"
 # Written to sitemap.xml at the build root; html_baseurl above is all it
 # needs. robots.txt (docs/_extra/robots.txt) points crawlers at it.
 sitemap_url_scheme = "{link}"
+sitemap_excludes = [
+    "agent-workflow.html",
+    "application-recipes.html",
+    "agent-correctness.html",
+]
 
 html_theme_options = {
     # The logo's own secondary-title color (.brand-sub, "FRAMEWORK" in

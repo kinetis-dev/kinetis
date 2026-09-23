@@ -284,7 +284,4 @@ appendix
 appendix-packages
 appendix-ci
 appendix-contributing
-agent-workflow
-application-recipes
-agent-correctness
 ```
