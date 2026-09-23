@@ -48,6 +48,11 @@ final class TelemetryHooksTest extends TestCase
         $response->assertOk();
 
         $calls = array_column($this->recording->calls, 0);
+        // The request pair encloses everything else the request reports.
+        self::assertSame('requestStarted', $calls[0]);
+        [$lastHook, [$requestToken, $outcome]] = end($this->recording->calls);
+        self::assertSame(['requestEnded', 1], [$lastHook, $requestToken]);
+        self::assertSame(200, $outcome->getStatusCode());
         self::assertContains('routeMatchStarted', $calls);
         self::assertContains('routeMatchEnded', $calls);
         self::assertContains('controllerInvoked', $calls);

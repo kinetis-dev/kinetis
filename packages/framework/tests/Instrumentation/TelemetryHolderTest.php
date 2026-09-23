@@ -6,10 +6,13 @@ namespace Kinetis\Tests\Instrumentation;
 
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Instrumentation\TelemetryInterface;
+use Nyholm\Psr7\ServerRequest;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\ServerRequestInterface;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
+use ReflectionUnionType;
 use RuntimeException;
 
 /**
@@ -47,12 +50,14 @@ final class TelemetryHolderTest extends TestCase
             $name = $type instanceof ReflectionNamedType ? $type->getName() : 'mixed';
 
             $arguments[] = match ($name) {
+                ServerRequestInterface::class => new ServerRequest('GET', '/probe'),
                 'string' => 'probe',
                 'int' => 1,
                 'float' => 1.0,
                 'bool' => true,
                 'array' => [],
-                default => $parameter->allowsNull() ? null : 'probe',
+                // requestEnded()'s ResponseInterface|Throwable outcome.
+                default => $type instanceof ReflectionUnionType ? new RuntimeException('probe') : ($parameter->allowsNull() ? null : 'probe'),
             };
         }
 

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Instrumentation;
 
 use Kinetis\Instrumentation\TelemetryInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
 use Throwable;
 
@@ -30,6 +32,18 @@ final class ThrowingTelemetry implements TelemetryInterface
 
     #[\Override]
     public function phase(string $name, float $startedAt, float $endedAt): void
+    {
+        $this->fail();
+    }
+
+    #[\Override]
+    public function requestStarted(ServerRequestInterface $request): mixed
+    {
+        $this->fail();
+    }
+
+    #[\Override]
+    public function requestEnded(mixed $token, ResponseInterface|Throwable $outcome): void
     {
         $this->fail();
     }

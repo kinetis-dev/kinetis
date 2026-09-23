@@ -163,11 +163,24 @@ try {
         "Command \"{commandName}\" failed: {message}",
         ['commandName' => $commandName, 'message' => $e->getMessage(), 'exception' => $e],
     );
-    // $commandName is guaranteed a string here: $definition (resolved
-    // above from $commandName) would already have triggered the earlier
-    // exit(1) if $commandName were null.
-    $scope->get(EventDispatcher::class)->dispatch(new CommandFailed($commandName, $e));
     $exitCode = 1;
+
+    // Secondary reporting: resolving the dispatcher (a package can bind
+    // its listener invoker, as kinetis/queue does) or running a listener
+    // can throw, and neither may replace exit 1 or skip the disposals
+    // below. $commandName is guaranteed a string here: $definition
+    // (resolved above from $commandName) would already have triggered
+    // the earlier exit(1) if $commandName were null.
+    try {
+        $scope->get(EventDispatcher::class)->dispatch(new CommandFailed($commandName, $e));
+    } catch (Throwable $dispatchFailure) {
+        SafeLogger::logFrom(
+            fn (): LoggerInterface => $app->get(LoggerInterface::class),
+            LogLevel::ERROR,
+            "CommandFailed dispatch failed after command \"{commandName}\" failed: {message}",
+            ['commandName' => $commandName, 'message' => $dispatchFailure->getMessage(), 'exception' => $dispatchFailure],
+        );
+    }
 }
 
 // Both disposals are deliberately outside the try/catch/finally above:

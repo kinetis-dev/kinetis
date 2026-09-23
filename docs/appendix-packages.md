@@ -422,9 +422,7 @@ Separate Composer package, not part of `kinetis/framework` core.
 ## `packages/telemetry` (`kinetis/telemetry`)
 
 Separate Composer package, not part of `kinetis/framework` core.
-Participates in `extra.kinetis`: a scan root covering
-`Kinetis\Telemetry\Middleware\` (so `RequestSpanMiddleware` is
-discovered as global middleware on install) and a `PackageBootstrap`.
+Participates in `extra.kinetis` through a `PackageBootstrap`.
 
 Every decorator and hook below routes an operation's own inputs through
 one `@internal` policy class, `Kinetis\Telemetry\Redaction`, with no
@@ -454,17 +452,6 @@ on its spans.
   `maxRetries: 0` — so each export request suspends rather than blocks
   and is one bounded wire attempt that is never replayed; see
   {doc}`appendix-observability`. `null` when no endpoint is configured.
-- `Kinetis\Telemetry\Middleware\RequestSpanMiddleware` —
-  `#[AsGlobalMiddleware(priority: 90)]`, a server span per request:
-  the method as the span name, `http.response.status_code`,
-  `php.memory.usage`, error status on 5xx or an exception,
-  `traceparent` extraction for distributed traces. No form of the
-  request target travels on it — a path's segments are the identifiers
-  a request is addressed by, and the route template that would replace
-  them belongs to the router, which runs inside the handler this
-  middleware wraps; the hooks below put that template on `route.match`,
-  a child span, as `http.route`. The span is active while the handler
-  runs — the parent for everything below.
 - `Kinetis\Telemetry\HttpClient\TracingHttpClient`/`TracingResponse` —
   a client span per outgoing request, carrying `http.request.method`
   from the method vocabulary, `url.scheme`/`server.address`/`server.port`
@@ -513,7 +500,16 @@ on its spans.
 - `Kinetis\Telemetry\Instrumentation\OtelTelemetry` — implements core's
   `Kinetis\Instrumentation\TelemetryInterface`, turning the framework's
   hooks into spans; `PackageBootstrap` swaps it into
-  `Telemetry::global()` whenever the OTLP endpoint is configured. It is
+  `Telemetry::global()` whenever the OTLP endpoint is configured.
+  `requestStarted()`/`requestEnded()` produce the server span per
+  request, around `Kernel::handle()`'s complete global pipeline: the
+  method as the span name, `http.response.status_code`,
+  `php.memory.usage`, error status on 5xx or an escaping exception,
+  `traceparent` extraction for distributed traces. No form of the
+  request target travels on it — a path's segments are the identifiers
+  a request is addressed by. The span is active until the response
+  leaves the pipeline — the parent for everything below — and a
+  streamed body is emitted after it ends. It is
   the whole of Kinetis-owned SQL, transaction and queue tracing: a
   client span per query named by the statement's opening keyword and
   carrying `db.system.name`, `db.operation.name` and
@@ -532,10 +528,11 @@ on its spans.
   load-bearing choice. The nested, same-Fiber pairs activate on the
   context their Fiber already carries — middleware, controller,
   event/listener, the `concurrently()` batch, MCP tool calls.
-  `taskStarted()` and `jobStarted()` activate on a parent context they
-  name themselves — the batch span reached through the batch token
-  `taskStarted()` is handed, the propagated or root context for a job —
-  because each begins on a Fiber that carries no context of its own.
+  `requestStarted()`, `taskStarted()` and `jobStarted()` activate on a
+  parent context they name themselves — the propagated or root context
+  for a request or a job, the batch span reached through the batch token
+  `taskStarted()` is handed — because each begins on a Fiber that may
+  carry no context of its own.
   Query spans never activate: they overlap within one Fiber, and
   activating them would interleave that Fiber's own stack.
   `jobPushMetadata()` injects a `traceparent` carrier the backend

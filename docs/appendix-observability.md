@@ -88,12 +88,15 @@ detached before the task that opened it returns — see
 
 ### Request spans
 
-`RequestSpanMiddleware` is global middleware, and its span is active
-while the request runs, which is what parents every other span under it.
-It extracts an incoming `traceparent` against the root context rather
-than whatever the Fiber carries. The route template belongs to the
-router, which runs inside the handler this middleware wraps, so the
-template surfaces on the `route.match` child span as `http.route`.
+The framework's request hook pair opens the span in `Kernel::handle()`,
+around the complete global middleware pipeline, and the span is active
+while the request runs, which is what parents every other span under it
+— each global middleware, the framework's fixed ones included. It
+extracts an incoming `traceparent` against the root context rather than
+whatever the Fiber carries. The span ends when the response leaves the
+pipeline, with its status or the escaping failure: a streamed body's
+emission, and an emitter failure, happen after it ends. The matched
+route template surfaces on the `route.match` child span as `http.route`.
 
 ### Query and transaction spans
 

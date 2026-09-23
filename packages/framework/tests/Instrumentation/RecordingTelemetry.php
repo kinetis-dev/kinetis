@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Instrumentation;
 
 use Kinetis\Instrumentation\TelemetryInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Throwable;
 
 /** Records every hook call, with an incrementing int as its token. */
@@ -33,6 +35,20 @@ final class RecordingTelemetry implements TelemetryInterface
     public function phase(string $name, float $startedAt, float $endedAt): void
     {
         $this->calls[] = ['phase', [$name, $startedAt, $endedAt]];
+    }
+
+    #[\Override]
+    public function requestStarted(ServerRequestInterface $request): mixed
+    {
+        $this->calls[] = ['requestStarted', [$request]];
+
+        return $this->nextToken++;
+    }
+
+    #[\Override]
+    public function requestEnded(mixed $token, ResponseInterface|Throwable $outcome): void
+    {
+        $this->calls[] = ['requestEnded', [$token, $outcome]];
     }
 
     #[\Override]

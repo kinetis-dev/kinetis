@@ -118,20 +118,28 @@ attach Fiber-local state that outlives the task — see
 
 ## Timers and sockets
 
-`Timer::delay()` suspends the current task without blocking the process,
-which makes it a deterministic way to show overlap in a test: three 50 ms
-delays through `concurrently()` finish in well under 100 ms.
+`Timer::delay()` and `Kinetis\Async\Socket` suspend the current Fiber
+without blocking the process. Call them inside a Fiber, such as a
+`concurrently()` task: outside one there is nothing to resume, and PHP
+throws `FiberError`.
+
+`Timer::delay()` is a deterministic way to show overlap in a test: three
+50 ms delays through `concurrently()` finish in well under 100 ms.
 
 ```{code-block} php
 use Kinetis\Async\Timer;
 
-Timer::delay(0.05);
+use function Kinetis\Async\concurrently;
+
+concurrently([
+    fn () => Timer::delay(0.05),
+    fn () => Timer::delay(0.05),
+    fn () => Timer::delay(0.05),
+]);
 ```
 
-`Kinetis\Async\Socket` is a non-blocking TCP client. `connect()`,
-`read()` and `write()` suspend the current task while the stream is not
-ready. Call them inside a `concurrently()` task: outside a Fiber there is
-nothing to resume, and PHP throws `FiberError`.
+`Socket` is a non-blocking TCP client. `connect()`, `read()` and
+`write()` suspend the current task while the stream is not ready.
 
 ```{code-block} php
 use Kinetis\Async\Socket;
@@ -182,7 +190,7 @@ naming the replacement for its category:
 
 | Category | Reported | Use instead |
 |---|---|---|
-| Sleep | `sleep()`, `usleep()`, `time_nanosleep()`, `time_sleep_until()` | `Kinetis\Async\Timer::delay()` |
+| Sleep | `sleep()`, `usleep()`, `time_nanosleep()`, `time_sleep_until()` | `Kinetis\Async\Timer::delay()` inside a Fiber, such as a `concurrently()` task |
 | Sockets | `fsockopen()`, `pfsockopen()`, `stream_socket_client()` | `Kinetis\Async\Socket` or another Revolt-aware socket; {doc}`revolt-http-client` for HTTP |
 | curl waits | `curl_exec()`, `curl_multi_select()` | {doc}`revolt-http-client` |
 | Database connections | `new PDO`, `new mysqli`, `mysqli_connect()`, `pg_connect()`, `pg_pconnect()` | an injected `SqlLink`, `MysqlLink`, or `PostgresLink` — see {doc}`persistence` |

@@ -68,10 +68,17 @@ final class BinKinetisDisposalTest extends TestCase
 
             use Kinetis\Config\Config;
             use Kinetis\Container\AppScope;
+            use Kinetis\Events\ListenerInvokerInterface;
             use Psr\Log\AbstractLogger;
             use Psr\Log\LoggerInterface;
 
             return static function (AppScope $app, Config $config): void {
+                if (getenv('DISPOSAL_TEST_THROWING_LISTENER_INVOKER') !== false) {
+                    // What kinetis/queue's bootstrap does, with a factory
+                    // that fails: resolving EventDispatcher resolves this.
+                    $app->bind(ListenerInvokerInterface::class, static fn (): ListenerInvokerInterface => throw new RuntimeException('listener invoker factory failed'), shared: false);
+                }
+
                 if (getenv('DISPOSAL_TEST_THROWING_LOGGER') !== false) {
                     // Every resolution throws — bin/kinetis's own subprocess
                     // environment resolves LoggerInterface only from this
@@ -344,6 +351,58 @@ final class BinKinetisDisposalTest extends TestCase
         self::assertTrue(
             array_any($entries, static fn (array $e): bool => $e['contextMessage'] === 'dispose callback failed'),
             'the disposal failure is logged separately',
+        );
+    }
+
+    /**
+     * Dispatching CommandFailed is secondary reporting: a listener
+     * invoker binding that throws while the dispatcher is resolved must
+     * leave the command's exit(1) and both disposals intact, and is
+     * logged next to the command's own failure.
+     */
+    public function test_a_failing_command_failed_dispatch_keeps_exit_1_and_disposes_both_scopes(): void
+    {
+        $this->writeCommand('ThrowingDisposingCommand.php', <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            namespace App;
+
+            use Kinetis\Console\Attributes\Command;
+            use Kinetis\Container\RequestScope;
+            use RuntimeException;
+
+            final readonly class ThrowingDisposingCommand
+            {
+                public function __construct(private RequestScope $scope) {}
+
+                #[Command(name: 'throws-and-disposes', bootstrap: true)]
+                public function run(): never
+                {
+                    $this->scope->onDispose(static function (): void {
+                        fwrite(STDOUT, "REQUEST_SCOPE_DISPOSED\n");
+                    });
+                    $this->scope->appScope()->onDispose(static function (): void {
+                        fwrite(STDOUT, "APP_SCOPE_DISPOSED\n");
+                    });
+
+                    throw new RuntimeException('the command itself failed');
+                }
+            }
+            PHP);
+
+        $logFile = $this->projectDir . '/log.jsonl';
+        $result = $this->runBinKinetis('throws-and-disposes', $logFile, ['DISPOSAL_TEST_THROWING_LISTENER_INVOKER' => '1']);
+
+        self::assertSame(1, $result['exitCode'], $result['stderr']);
+        self::assertSame(
+            ['REQUEST_SCOPE_DISPOSED', 'APP_SCOPE_DISPOSED'],
+            array_values(array_filter(explode("\n", $result['stdout']))),
+        );
+        self::assertSame(
+            ['the command itself failed', 'listener invoker factory failed'],
+            array_column($this->readLog($logFile), 'contextMessage'),
         );
     }
 

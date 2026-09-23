@@ -173,15 +173,23 @@ final class Kernel
     {
         $this->releaseUnsettledStream();
 
+        // Around the whole global pipeline, so the request's telemetry
+        // encloses the fixed global middleware too. The facade contains a
+        // backend failure, so neither call can change the outcome.
+        $telemetry = Telemetry::global();
+        $requestToken = $telemetry->requestStarted($request);
+
         try {
             $response = $this->globalPipeline->handle($request);
         } catch (Throwable $e) {
             $this->settlePendingStream(null);
+            $telemetry->requestEnded($requestToken, $e);
 
             throw $e;
         }
 
         $this->settlePendingStream($response);
+        $telemetry->requestEnded($requestToken, $response);
 
         return $response;
     }

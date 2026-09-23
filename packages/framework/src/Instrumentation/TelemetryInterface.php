@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Instrumentation;
 
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Throwable;
 
 /**
@@ -39,6 +41,16 @@ interface TelemetryInterface
      * timestamps (microtime(true) values).
      */
     public function phase(string $name, float $startedAt, float $endedAt): void;
+
+    /**
+     * One HTTP request through `Kernel::handle()`, enclosing the complete
+     * global middleware pipeline. $outcome is the response leaving that
+     * pipeline or the Throwable escaping it. A streamed body is written
+     * after the request ends, so its emission is outside the pair.
+     */
+    public function requestStarted(ServerRequestInterface $request): mixed;
+
+    public function requestEnded(mixed $token, ResponseInterface|Throwable $outcome): void;
 
     public function routeMatchStarted(string $method, string $path): mixed;
 
