@@ -421,13 +421,14 @@
             "description": "S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3 — every S3 call travels on a Revolt-native HTTP transport.",
             "namespace": "Kinetis\\StorageS3\\",
             "testNamespace": "Kinetis\\StorageS3\\Tests\\",
-            "version": "1.1.2",
+            "version": "1.1.3",
             "requires": [
                 "framework",
                 "storage",
                 "revolt-http-client"
             ],
             "require": {
+                "amphp/http-client": "^5.3.6",
                 "async-aws/core": "^1.29.2",
                 "async-aws/s3": "^3.4.1",
                 "league/flysystem": "^3.35.2",

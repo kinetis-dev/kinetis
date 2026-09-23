@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\StorageS3;
 
+use Amp\Http\Client\PooledHttpClient;
 use AsyncAws\Core\Configuration;
 use AsyncAws\Core\Credentials\ConfigurationProvider;
 use AsyncAws\Core\Credentials\ContainerProvider;
@@ -25,7 +26,11 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * over its own S3Client, with
  * Kinetis\RevoltHttpClient\AmpHttpClientFactory::create() injected as the
  * client's transport, so an S3 call suspends the calling Fiber instead of
- * blocking the worker. Credentials are not read from Kinetis\Config:
+ * blocking the worker. The transport's connection pool carries
+ * DeclaredContentLength, so a writeStream() body goes out with the
+ * `Content-Length` AsyncAws declared for it rather than chunked.
+ *
+ * Credentials are not read from Kinetis\Config:
  * AsyncAws resolves them from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY,
  * the shared credentials and config files, or an IAM role on its own,
  * the standard AWS SDK convention, and a second source of truth for the
@@ -61,7 +66,10 @@ final class S3FilesystemFactory
         $region = $config->required(Config::scopedKey('FILESYSTEM_S3_REGION', $connection));
         $prefix = $config->string(Config::scopedKey('FILESYSTEM_S3_PREFIX', $connection), '');
 
-        $transport = AmpHttpClientFactory::create(self::transportOptions($config, $connection));
+        $transport = AmpHttpClientFactory::create(
+            self::transportOptions($config, $connection),
+            static fn (PooledHttpClient $pool): PooledHttpClient => $pool->intercept(new DeclaredContentLength()),
+        );
         $configuration = self::configuration($config, $connection, $region);
 
         $client = new S3Client($configuration, self::credentialProvider($transport), $transport);
