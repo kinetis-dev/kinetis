@@ -108,6 +108,18 @@ recalled Kinetis knowledge while the handshake is broken is the failure
 this contract exists to prevent, and a partial handshake is a broken
 one.
 
+## Stay in the checkout the session started in
+
+The `orbitron` server reads the checkout its client was launched from,
+for the whole session. After the handshake, do not switch to or create
+another checkout or worktree for application work: a different checkout
+is a different Orbitron project. To work there, end the session, launch
+the client from that checkout, and repeat the handshake — context,
+inspect, verify — before editing. The `kinetis/*` versions
+`orbitron_inspect` reports must match the active checkout's
+`composer.lock`; when they differ, the session is reading another
+checkout, and no application change begins.
+
 ## Working on the application
 
 Once Orbitron is ready, every task runs the same way:

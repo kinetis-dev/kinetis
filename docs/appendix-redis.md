@@ -307,6 +307,23 @@ PHP-FPM a process handles exactly one request at a time, so there is
 nothing to amortize against and every cache operation pays the full
 per-wakeup cost; batching is the lever that matters there.
 
+(redis-reference-cache-ownership)=
+### Who closes the connection
+
+`RedisSimpleCache` implements core's
+`Kinetis\SimpleCache\DisposableCacheInterface`. `fromConfig()` opens its
+own executor and hands the cache that executor's `close()`, so
+`dispose()` closes it. A cache constructed directly around an executor
+the caller holds borrows it, and `dispose()` closes nothing unless the
+constructor's `disposer` argument hands over that executor's
+`close(...)` too. `dispose()` is idempotent and opens no connection, so
+a worker that never used the cache disposes it cleanly.
+
+`AppScope::boot()` registers `dispose()` on `AppScope::onDispose()` for
+the default cache it builds, and for no other: a cache the application
+binds itself, including one it wraps in a decorator, is the
+application's to dispose.
+
 (redis-reference-batching)=
 ### Batched reads and deletes
 
@@ -350,6 +367,7 @@ use Psr\SimpleCache\CacheInterface;
 return static function (AppScope $app, Config $config): void {
     $cache = RedisSimpleCache::fromConfig($config, 'sessions')
         ?? throw new RuntimeException('No REDIS_SESSIONS_* connection is configured.');
+    $app->onDispose($cache->dispose(...));
 
     $app->instance(CacheInterface::class, $cache);
 };
@@ -357,6 +375,10 @@ return static function (AppScope $app, Config $config): void {
 
 `fromConfig()` returns `null` when the connection sets none of
 `REDIS_URL`, `REDIS_HOST` or `REDIS_CLUSTER=true`.
+
+The `onDispose()` line closes that connection when the worker ends,
+since a cache the application binds is its own to dispose
+({ref}`redis-reference-cache-ownership`).
 
 ## Not in scope
 

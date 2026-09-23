@@ -32,11 +32,14 @@ re-sends a command whose reply it did not receive.
 [Redis Cluster](redis.md#redis-cluster)), and `kinetis/cache-redis`
 uses it under `REDIS_CLUSTER=true` (see {doc}`appendix-packages`).
 **This queue backend's supported connection is a
-single Redis node.** It does not read `REDIS_CLUSTER` or
-`REDIS_CLUSTER_SEEDS`, it requires `REDIS_URL` or `REDIS_HOST`, and it
-follows no cluster redirect, so point it at a standalone Redis server,
-not at a cluster. An application whose cache uses a cluster gives the
-queue its own server through a named connection:
+single Redis node.** Its scripts name several keys with no shared hash
+tag, so it reads its connection's `REDIS_CLUSTER` and rejects `true`
+with an `InvalidArgumentException` naming that key, before any client is
+built. It requires `REDIS_URL` or `REDIS_HOST` and follows no cluster
+redirect, so point it at a standalone Redis server, not at a cluster.
+The check reads only the queue connection's own key: an application
+whose cache uses a cluster gives the queue its own server through a
+named connection, whose `REDIS_JOBS_CLUSTER` is unset and so `false`:
 
 ```{code-block} text
 REDIS_CLUSTER=true

@@ -75,7 +75,8 @@ logger in development, `Psr\Log\NullLogger` in production (see
 built from that `Config`, standing in for an entry point that registered
 neither of its own (see {doc}`appendix`);
 `Psr\SimpleCache\CacheInterface` → a Redis-backed cache when one's
-configured, else a null one that always misses (see {doc}`redis`);
+configured, whose connection `dispose()` below closes, else a null one
+that always misses (see {doc}`redis`);
 `Kinetis\Events\ListenerInvokerInterface` → a synchronous invoker (see
 {doc}`events`); and `AppScope::class` → the exact instance that's
 booting. That last one means `$app->get(AppScope::class) === $app` is

@@ -17,6 +17,7 @@ use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Instrumentation\TelemetryInterface;
 use Kinetis\Logging\ErrorLogLogger;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\SimpleCache\DisposableCacheInterface;
 use Kinetis\SimpleCache\NullSimpleCache;
 use Kinetis\SimpleCache\UnavailableSimpleCache;
 use Closure;
@@ -163,7 +164,9 @@ final class AppScope implements ContainerInterface
      *   no amphp/redis dependency. Redis configured with that package
      *   absent binds `Kinetis\SimpleCache\UnavailableSimpleCache`, whose
      *   every operation throws naming `kinetis/cache-redis` — see that
-     *   class for why the failure lands at usage rather than boot.
+     *   class for why the failure lands at usage rather than boot. A
+     *   default cache implementing `DisposableCacheInterface` has its
+     *   dispose() registered on this scope's onDispose().
      * - `Kinetis\Events\ListenerInvokerInterface` →
      *   `SynchronousListenerInvoker` — a `ShouldQueue` listener with no
      *   real queue package installed still runs, just inline.
@@ -229,7 +232,16 @@ final class AppScope implements ContainerInterface
         if (!$this->has(CacheInterface::class)) {
             /** @var Config $config */
             $config = $this->get(Config::class);
-            $this->instance(CacheInterface::class, self::buildDefaultCache($config));
+            $cache = self::buildDefaultCache($config);
+
+            // This scope built the default cache, so it closes what that
+            // cache opened. A cache the application bound itself never
+            // reaches this branch and stays the application's to close.
+            if ($cache instanceof DisposableCacheInterface) {
+                $this->onDispose($cache->dispose(...));
+            }
+
+            $this->instance(CacheInterface::class, $cache);
         }
 
         if (!$this->has(ListenerInvokerInterface::class)) {

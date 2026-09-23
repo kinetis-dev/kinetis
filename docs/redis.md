@@ -91,6 +91,11 @@ when applying it twice is harmless.
 A cache on named `REDIS_*` keys instead of the default ones is
 {ref}`redis-reference-named-cache`.
 
+The cache `AppScope::boot()` binds closes its connection when the
+application scope is disposed. A cache the application builds and binds
+itself registers `$app->onDispose($cache->dispose(...))`; see
+{ref}`redis-reference-cache-ownership`.
+
 ## TLS
 
 Add `REDIS_TLS=true` to a single-node or cluster connection:
@@ -122,7 +127,8 @@ Several seeds let the client discover the cluster's layout while one
 seed is down. Every key is routed to the node that owns it, and
 `REDIS_PASSWORD` and `REDIS_TLS` apply to every node. Redis Cluster
 serves database 0 only, so there is no `REDIS_DATABASE`.
-`kinetis/queue-redis` is single-node, so it ignores `REDIS_CLUSTER`.
+`kinetis/queue-redis` supports standalone Redis only, so it rejects its
+connection's `REDIS_CLUSTER=true` (see {doc}`queue-redis`).
 
 A seed is `host:port`, or `[address]:port` for an IPv6 node:
 

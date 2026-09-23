@@ -33,8 +33,10 @@ package supplies the real thing once you actually want it.
 ```php
 use Kinetis\SimpleCache\RedisSimpleCache;
 
-$cache = RedisSimpleCache::fromConfig($config); // REDIS_URL or REDIS_HOST
+$cache = RedisSimpleCache::fromConfig($config)
+    ?? throw new RuntimeException('No Redis cache connection is configured.');
 $cache->set('key', 'value', ttl: 60);
+$cache->dispose(); // closes the connection fromConfig() opened
 ```
 
 `Kinetis\Container\AppScope::boot()` picks this up automatically once
@@ -45,6 +47,14 @@ way. Configuring Redis (`REDIS_HOST`/
 `REDIS_CLUSTER`) without this package installed is a clear, immediate
 error naming the package to install, not a silent fallback to
 `NullSimpleCache`.
+
+The cache `fromConfig()` returns owns the Redis connection it opened,
+and `dispose()` closes it. `AppScope::boot()` registers that for the
+cache it binds; a cache you build and bind yourself is yours to
+dispose, with `$app->onDispose($cache->dispose(...))`. A cache
+constructed directly around your own executor borrows it and closes
+nothing. Ownership in full:
+[kinetis.dev/docs/appendix-redis.html#redis-reference-cache-ownership](https://kinetis.dev/docs/appendix-redis.html#redis-reference-cache-ownership).
 
 Redis transport and serialization failures arrive as
 `Kinetis\SimpleCache\Exception\CacheException`, which implements

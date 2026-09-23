@@ -664,6 +664,17 @@ an agent with a shell can do; reconnecting the client and approving the
 server are the user's, and an agent that cannot do either must say so
 and wait rather than work around it.
 
+Require the session to stay in one checkout. The server reads the
+checkout its client was launched from, for the whole session, so after
+the handshake no application work switches to or creates another
+checkout or worktree: a different checkout is a different Orbitron
+project. Working there means ending the session, launching the client
+from that checkout, and repeating the handshake — context, inspect,
+verify — before any edit. `orbitron_inspect` is the check: the
+`kinetis/*` versions it reports must match the active checkout's
+`composer.lock`, and a mismatch means the session is reading another
+checkout.
+
 Require an `orbitron_scaffold_plan` call before any
 `orbitron_scaffold_apply`, and require explicit user intent for the
 apply. It is the only tool that writes.
