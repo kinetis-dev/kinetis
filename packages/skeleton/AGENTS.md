@@ -78,9 +78,10 @@ hold, say so and wait rather than working around it.
 
    - read `kinetis://orbitron/context`;
    - read `kinetis://docs/agent-workflow`;
-   - call `orbitron_inspect`, and treat the versions it reports as the
-     installed ones, in preference to any documentation describing
-     Kinetis `main`;
+   - call `orbitron_inspect`, confirm the `checkoutRoot` it reports
+     equals `pwd -P` in this directory, and treat the versions it
+     reports as the installed ones, in preference to any documentation
+     describing Kinetis `main`;
    - call `orbitron_verify`.
 
 5. **Report readiness and continue.** When every step succeeded and
@@ -115,10 +116,14 @@ for the whole session. After the handshake, do not switch to or create
 another checkout or worktree for application work: a different checkout
 is a different Orbitron project. To work there, end the session, launch
 the client from that checkout, and repeat the handshake — context,
-inspect, verify — before editing. The `kinetis/*` versions
-`orbitron_inspect` reports must match the active checkout's
-`composer.lock`; when they differ, the session is reading another
-checkout, and no application change begins.
+inspect, verify — before editing. The `checkoutRoot` `orbitron_inspect`
+reports is the physical host path of the checkout whose
+`bin/orbitron-mcp` started the server, and it must equal `pwd -P` in the
+checkout you are editing; when they differ, the session is reading
+another checkout, and no application change begins. The `projectRoot`
+it reports is `/app`, the server's own view of every checkout, and
+`orbitron:inspect` run inside the container reports `/app` for both
+roots: neither identifies the host checkout.
 
 ## Working on the application
 

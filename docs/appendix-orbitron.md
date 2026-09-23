@@ -51,25 +51,42 @@ writing `--format=json` are the same invocation.
 
 ```json
 {
-    "schemaVersion": 2,
-    "orbitronVersion": "1.9.0",
+    "schemaVersion": 3,
+    "orbitronVersion": "1.10.0",
     "projectRoot": "/home/dev/shop",
+    "checkoutRoot": "/home/dev/shop",
     "packages": [
         {"name": "kinetis/framework", "version": "1.12.0"},
         {"name": "kinetis/mcp-docs", "version": "1.4.0"},
         {"name": "kinetis/mcp-protocol", "version": "1.0.0"},
-        {"name": "kinetis/orbitron", "version": "1.9.0"}
+        {"name": "kinetis/orbitron", "version": "1.10.0"}
     ]
 }
 ```
 
 `projectRoot` is the canonical absolute physical path of the detected
-project root: every symlink segment is resolved, so two checkouts with
-the same installed set still report different roots. It is the checkout
-this process reads, never a path a caller chose — the command takes no
+project root: every symlink segment is resolved. It is the root this
+process reads, never a path a caller chose — the command takes no
 argument and `orbitron_inspect` takes no member that could name one. A
 detected root that does not resolve fails the command instead of being
 reported as written.
+
+`checkoutRoot` names the checkout in the view of whatever launched the
+process. The command runs in its own process view and reports its
+`projectRoot` again — `/app` when it runs inside the skeleton's
+container. Over MCP, a launcher that runs the server in a container sets
+`KINETIS_ORBITRON_CHECKOUT_ROOT` to the checkout's absolute physical
+path on the host, and `orbitron_inspect` reports that value exactly as
+given: the server never resolves it, requires it to exist, or reads
+through it. Every read, verification and write still goes through
+`projectRoot`. Without the variable, `checkoutRoot` equals
+`projectRoot`. An empty or relative value stops the server before it
+answers anything: one line on stderr, exit `1`, and nothing on stdout.
+
+Comparing `checkoutRoot` with `pwd -P` in the checkout being edited
+checks an MCP session's identity, and tells apart two checkouts with the
+same installed set. The command's own `checkoutRoot` is comparable only
+with `pwd -P` run in the same process view.
 
 `packages` carries every installed package under the `kinetis/` vendor,
 ordered by name, one entry per name. A name Composer lists only because
@@ -437,8 +454,10 @@ vendor/bin/kinetis-orbitron-mcp
 A stdio MCP server speaking `2025-06-18`, for any client that launches a
 server as a subprocess. Register the launcher as a stdio server named
 `orbitron`, the way that client registers any other: the server takes no
-argument, needs no environment and reads nothing from the registration
-but the command to run. {ref}`Equip an existing project <equip-an-existing-project>`
+argument and reads nothing from the registration but the command to
+run. The one environment variable it reads,
+`KINETIS_ORBITRON_CHECKOUT_ROOT`, is set by a containerized launcher;
+see {ref}`orbitron-inspect`. {ref}`Equip an existing project <equip-an-existing-project>`
 is the same registration checked in, so every developer on the project
 gets it without running anything — and that is where the per-client
 configuration paths and discovery differences are.
@@ -593,9 +612,11 @@ relays it:
 set -e
 
 project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+checkout_root=$(CDPATH='' cd -- "$project_directory" && pwd -P)
 
 exec docker compose --project-directory "$project_directory" \
-    run --rm -T --no-deps --entrypoint php app \
+    run --rm -T --no-deps --entrypoint php \
+    -e KINETIS_ORBITRON_CHECKOUT_ROOT="$checkout_root" app \
     vendor/bin/kinetis-orbitron-mcp
 ```
 
@@ -604,7 +625,14 @@ of it is load-bearing:
 
 - the project directory comes from the script's own location, so the
   checked-in configuration works in any clone, at any path, and carries
-  no absolute user path;
+  no absolute user path. It stays the logical path the script was
+  reached through: Compose names the project after that directory, and
+  the name selects the image and vendor volume shared with `app`, so a
+  symlink-resolved path could select another project's;
+- `-e KINETIS_ORBITRON_CHECKOUT_ROOT` hands the server the checkout's
+  physical host path, which `orbitron_inspect` reports as
+  `checkoutRoot`. Inside the container every checkout is `/app`, so this
+  is the only way a session names the checkout it serves;
 - `run` starts a one-off container that shares the `app` service's image
   and mounts, but not its process lifecycle, so restarting, recreating
   or rebuilding `app` does not disconnect an established session. Docker
@@ -680,7 +708,7 @@ checkout or worktree: a different checkout is a different Orbitron
 project. Working there means ending the session, launching the client
 from that checkout, and repeating the handshake — context, inspect,
 verify — before any edit. `orbitron_inspect` is the check: before
-editing, its `projectRoot` must equal `pwd -P` in the checkout being
+editing, its `checkoutRoot` must equal `pwd -P` in the checkout being
 edited. A mismatch means the session is reading another checkout: stop,
 launch the MCP client and its server from the intended checkout, and
 rerun context, inspect and verify.
