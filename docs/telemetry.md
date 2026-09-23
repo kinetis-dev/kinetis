@@ -177,17 +177,23 @@ use Kinetis\Telemetry\SimpleCache\TracingSimpleCache;
 use OpenTelemetry\API\Trace\TracerProviderInterface;
 use Psr\SimpleCache\CacheInterface;
 
-// fromConfig() returns null when neither REDIS_URL nor REDIS_HOST is
-// set — the same "Redis is optional" case AppScope::boot() itself
-// falls back to NullSimpleCache for.
+// fromConfig() returns null when none of REDIS_URL, REDIS_HOST or
+// REDIS_CLUSTER is set — the same "Redis is optional" case
+// AppScope::boot() itself falls back to NullSimpleCache for.
 $redis = RedisSimpleCache::fromConfig($config)
-    ?? throw new RuntimeException('REDIS_HOST/REDIS_URL must be set to trace the cache.');
+    ?? throw new RuntimeException('No Redis cache connection is configured.');
+$app->onDispose($redis->dispose(...));
 
 $app->instance(CacheInterface::class, new TracingSimpleCache(
     $redis,
     $app->get(TracerProviderInterface::class),
 ));
 ```
+
+The `onDispose()` line closes the Redis connection when the worker ends.
+`TracingSimpleCache` disposes nothing it wraps: the application built the
+inner cache, so its disposal is the application's
+({ref}`redis-reference-cache-ownership`).
 
 Each PSR-16 method gets a span named by the operation, carrying a
 `kinetis.cache.key_fingerprint` over the keys it touched and

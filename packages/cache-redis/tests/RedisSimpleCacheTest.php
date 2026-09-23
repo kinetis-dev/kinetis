@@ -13,10 +13,12 @@ use Kinetis\SimpleCache\Exception\CacheException;
 use Kinetis\SimpleCache\Exception\InvalidArgumentException;
 use Kinetis\SimpleCache\RedisSimpleCache;
 use PHPUnit\Framework\TestCase;
+use ReflectionProperty;
 
 /**
- * Key policy, configuration selection, and the encode half of the
- * serializer boundary. Construction opens no connection, an invalid key
+ * Key policy, configuration selection, executor ownership, and the
+ * encode half of the serializer boundary. Construction opens no
+ * connection, building a link does not dial it, an invalid key
  * is refused before any command is built, and a value the serializer
  * cannot encode fails before one is sent, so every case here runs with
  * no Redis server reachable. Storage behaviour, and the decode half of
@@ -144,6 +146,52 @@ final class RedisSimpleCacheTest extends TestCase
             self::assertStringContainsString('Redis "replace" failed', $e->getMessage());
             self::assertInstanceOf(SerializationException::class, $e->getPrevious());
         }
+    }
+
+    public function test_a_supplied_disposer_runs_exactly_once(): void
+    {
+        $closes = 0;
+        $cache = new RedisSimpleCache($this->client(), disposer: static function () use (&$closes): void {
+            ++$closes;
+        });
+
+        $cache->dispose();
+        $cache->dispose();
+
+        self::assertSame(1, $closes);
+    }
+
+    /**
+     * The caller lent the executor and kept its close, so disposal ends
+     * nothing: the link the caller's client already built survives.
+     */
+    public function test_a_directly_constructed_cache_without_a_disposer_closes_nothing(): void
+    {
+        $client = $this->client();
+        $client->link();
+        $cache = new RedisSimpleCache($client);
+
+        $cache->dispose();
+
+        self::assertNotNull(self::link($client));
+    }
+
+    public function test_from_config_hands_the_cache_its_executors_close(): void
+    {
+        $cache = RedisSimpleCache::fromConfig(new Config(['REDIS_HOST' => 'localhost']));
+        self::assertNotNull($cache);
+        $client = new ReflectionProperty(RedisSimpleCache::class, 'client')->getValue($cache);
+        self::assertInstanceOf(Client::class, $client);
+        $client->link();
+
+        $cache->dispose();
+
+        self::assertNull(self::link($client), 'disposal closed the executor fromConfig() opened');
+    }
+
+    private static function link(Client $client): mixed
+    {
+        return new ReflectionProperty(Client::class, 'link')->getValue($client);
     }
 
     private function cache(): RedisSimpleCache

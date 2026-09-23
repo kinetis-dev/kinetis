@@ -1,3 +1,10 @@
+---
+orphan: true
+myst:
+  html_meta:
+    robots: noindex
+---
+
 # Agent Correctness Review
 
 Review guidance for an AI coding agent: a checklist to run over a change

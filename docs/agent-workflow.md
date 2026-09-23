@@ -1,3 +1,10 @@
+---
+orphan: true
+myst:
+  html_meta:
+    robots: noindex
+---
+
 # Agent Workflow
 
 Operating and routing guidance for an AI coding agent working in a

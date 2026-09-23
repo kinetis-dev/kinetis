@@ -230,7 +230,7 @@ the three set, Redis is off — see {doc}`persistence` for what
 
 | Key | Default | Purpose |
 |---|---|---|
-| `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. Supported by the cache; `kinetis/queue-redis` is single-node only. |
+| `REDIS_CLUSTER` | `false` | Use Redis Cluster mode. Supported by the cache; `kinetis/queue-redis` supports standalone Redis only and rejects `true`. |
 | `REDIS_CLUSTER_SEEDS` | *(required for cluster)* | Comma-separated seed nodes for Cluster bootstrap — `host:port`, or `[ipv6-address]:port` for an IPv6 node. |
 | `REDIS_URL` | — | Full `redis://` URI. |
 | `REDIS_HOST` | — | Server host. |

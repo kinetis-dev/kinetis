@@ -8,6 +8,7 @@ use Amp\Redis\RedisException;
 use Amp\Serialization\NativeSerializer;
 use Amp\Serialization\SerializationException;
 use Amp\Serialization\Serializer;
+use Closure;
 use DateInterval;
 use DateTimeImmutable;
 use Kinetis\Config\Config;
@@ -39,8 +40,18 @@ use function Kinetis\Async\concurrently;
  * `AppScope::boot()` binds `NullSimpleCache` otherwise. Construction
  * opens no connection, so a configured but momentarily unreachable
  * server fails at the first cache call rather than at boot.
+ *
+ * The executor is borrowed unless construction hands over its close:
+ * fromConfig() opens its own and passes `close(...)` as the disposer,
+ * while a directly constructed cache without one leaves the executor to
+ * whoever passed it. See {@see DisposableCacheInterface} for who
+ * registers dispose().
  */
-final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, AtomicConsumeInterface
+final class RedisSimpleCache implements
+    CacheInterface,
+    AtomicCounterInterface,
+    AtomicConsumeInterface,
+    DisposableCacheInterface
 {
     /**
      * Enough per round trip to keep a large keyspace scan moving without
@@ -54,10 +65,14 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
 
     private readonly string $prefix;
 
+    /**
+     * @param ?Closure(): void $disposer closes $client; null borrows it
+     */
     public function __construct(
         private readonly RoutedExecutor $client,
         string $namespace = self::DEFAULT_NAMESPACE,
         private readonly Serializer $serializer = new NativeSerializer(),
+        private ?Closure $disposer = null,
     ) {
         if (preg_match('/^[A-Za-z0-9_-]+$/', $namespace) !== 1) {
             throw new InvalidArgumentException(
@@ -91,7 +106,21 @@ final class RedisSimpleCache implements CacheInterface, AtomicCounterInterface, 
         return new self(
             $client,
             $config->string(Config::scopedKey('REDIS_CACHE_NAMESPACE', $connection), self::DEFAULT_NAMESPACE),
+            disposer: $client->close(...),
         );
+    }
+
+    /**
+     * Closes the executor this cache owns, if it was given one to own.
+     * The disposer is dropped before it runs, so a second call closes
+     * nothing a second time.
+     */
+    #[\Override]
+    public function dispose(): void
+    {
+        $disposer = $this->disposer;
+        $this->disposer = null;
+        $disposer?->__invoke();
     }
 
     /**
