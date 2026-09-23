@@ -471,13 +471,20 @@ rolling back on a session that is gone. The next query's dispatch does
 fail immediately, and *that* is retried transparently on a fresh
 connection.
 
+(database-reference-pdo-sessions)=
 ### PDO sessions
 
 A PDO client holds one connection at a time and opens it lazily. A
 session it can carry no more work on — abandoned by a transaction, ended
-by a terminal MySQL lock failure (1205/1213), or left in a result state
-that could not be cleared — goes back to the server, and the next call
-opens a fresh one. `close()` is the separate, final ending: it takes the
+by a terminal MySQL lock failure (1205/1213), left in a result state
+that could not be cleared, or failed by a statement or
+`beginTransaction()` on the client itself — goes back to the server, and
+the next call opens a fresh one. PDO reports a session the server
+terminated and an ordinary statement error the same way, so every such
+failure gives the session up. The failure still reaches the caller as
+`Exception\QueryException`, and the failed statement is never sent
+again. An error carried by a later MySQL result set is read to the end
+of the result and keeps the session. `close()` is the separate, final ending: it takes the
 client itself out of service, and every later call throws
 `Exception\ConnectionException`. The two differ wherever a process
 outlives one session, which under `auto` is every process that is not a
@@ -490,7 +497,9 @@ persistent worker — a `queue:work` CLI worker included.
 `ConnectionFactory::singleSession()` over a connection's `DB_*` keys —
 builds the other policy: a PDO client, whatever the definition's driver
 says, pinned to the session it opens, closing rather than reconnecting if
-that session is discarded. It is for work that lives in the session
+that session is discarded. A failed statement or `beginTransaction()`
+does not discard it: the client keeps its session and the caller gets
+the failure. It is for work that lives in the session
 itself — a session-scoped advisory lock, a temporary table — where a
 replacement is a different session holding none of it, and running on
 one quietly would be worse than stopping. `kinetis/migrations`' commands

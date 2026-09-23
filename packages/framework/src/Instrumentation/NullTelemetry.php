@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Instrumentation;
 
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Throwable;
 
 /**
@@ -15,6 +17,15 @@ final class NullTelemetry implements TelemetryInterface
 {
     #[\Override]
     public function phase(string $name, float $startedAt, float $endedAt): void {}
+
+    #[\Override]
+    public function requestStarted(ServerRequestInterface $request): mixed
+    {
+        return null;
+    }
+
+    #[\Override]
+    public function requestEnded(mixed $token, ResponseInterface|Throwable $outcome): void {}
 
     #[\Override]
     public function routeMatchStarted(string $method, string $path): mixed

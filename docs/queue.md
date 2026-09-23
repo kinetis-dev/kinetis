@@ -283,7 +283,10 @@ is logged with them:
 ```
 
 That log entry is the only persistent record of a job given up on; there
-is no dead-letter queue. `QueueWorker` dispatches
+is no dead-letter queue. The production default `NullLogger` discards
+it, so a permanent failure leaves no durable record unless the
+application binds a durable logger ({doc}`logging`) or handles
+`JobFailedPermanently`. `QueueWorker` dispatches
 `Kinetis\Queue\Events\JobFailedPermanently` at the same moment with the
 same data, so a listener can alert someone or write your own dead-letter
 row. `JobSucceeded` and `JobReleased` report the other outcomes — see
@@ -359,12 +362,15 @@ stands, mid-job included. Decide four things:
   Docker images do not load it: add `docker-php-ext-install pcntl` to
   your image. Without it `queue:work` prints a warning at startup, and a
   deploy interrupts whatever job is running.
-- **Job changes across the deploy.** Jobs pushed by the old code run on
-  the new code. Add constructor parameters as optional, and keep a
-  removed parameter or job class until the jobs pushed with it have
-  drained. Otherwise those jobs fail with
-  `Kinetis\Queue\Exception\JobReconstructionException`, which counts as a
-  failed attempt.
+- **Job changes across the deploy.** While old and new workers run side
+  by side, jobs cross in both directions: new workers receive jobs the
+  old code pushed, and old workers receive jobs the new code pushed. A
+  job whose constructor arguments the receiving code does not accept
+  fails with `Kinetis\Queue\Exception\JobReconstructionException`, which
+  counts as a failed attempt. Keep a job's constructor shape identical
+  across the rollout, or drain its queue before publishing the changed
+  shape. Keep a removed job class until the jobs pushed with it have
+  drained.
 
 ## A job can run more than once
 

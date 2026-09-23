@@ -20,7 +20,8 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 final class NoBlockingIoRuleTest extends RuleTestCase
 {
     private const string SLEEP = '%s blocks the worker and its whole event loop until it returns. '
-        . 'Use Kinetis\Async\Timer::delay(), which suspends only the calling Fiber.';
+        . 'Use Kinetis\Async\Timer::delay() inside a Fiber, such as a concurrently() task; '
+        . 'outside one PHP throws FiberError.';
 
     private const string SOCKET = '%s opens a socket whose connect, reads, and writes block the worker and its '
         . 'whole event loop. Use Kinetis\Async\Socket or another Revolt-aware socket, or '

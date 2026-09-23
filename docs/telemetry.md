@@ -75,13 +75,14 @@ the resource attributes the OpenTelemetry SDK reads from the environment.
 
 ### Requests
 
-`RequestSpanMiddleware` is discovered as global middleware the moment
-the package is installed. Every request gets a server span carrying
-`http.request.method`, `http.response.status_code` and
-`php.memory.usage` — under a persistent worker, a slow upward drift of
-that last attribute across one worker's spans is the memory-leak
-detector. An incoming `traceparent` header makes the span a child of the
-caller's trace.
+Every request gets a server span carrying `http.request.method`,
+`http.response.status_code` and `php.memory.usage` — under a persistent
+worker, a slow upward drift of that last attribute across one worker's
+spans is the memory-leak detector. An incoming `traceparent` header makes
+the span a child of the caller's trace. The span encloses every global
+middleware, the framework's own included, and ends when the response
+leaves them; a streamed body is written after it ends, so neither its
+emission nor an emitter failure is on the span.
 
 The request span carries no form of the request path or query string. A
 path's segments are the user ids, email addresses, document ids and

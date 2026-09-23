@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Kinetis\Instrumentation;
 
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Throwable;
 
 /**
@@ -78,6 +80,20 @@ final class Telemetry implements TelemetryInterface
     {
         $this->guarded('phase', function () use ($name, $startedAt, $endedAt): void {
             $this->backend->phase($name, $startedAt, $endedAt);
+        });
+    }
+
+    #[\Override]
+    public function requestStarted(ServerRequestInterface $request): mixed
+    {
+        return $this->guarded('requestStarted', fn (): mixed => $this->backend->requestStarted($request));
+    }
+
+    #[\Override]
+    public function requestEnded(mixed $token, ResponseInterface|Throwable $outcome): void
+    {
+        $this->guarded('requestEnded', function () use ($token, $outcome): void {
+            $this->backend->requestEnded($token, $outcome);
         });
     }
 

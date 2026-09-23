@@ -97,7 +97,10 @@ command that can fail should say so with a non-zero return rather than
 only logging the problem. An uncaught exception is caught once, logged
 through whatever `Psr\Log\LoggerInterface` you've registered (see
 {doc}`logging`), dispatches `Kinetis\Console\Events\CommandFailed` (see
-{doc}`events`), and also produces exit code `1`.
+{doc}`events`), and also produces exit code `1`. A failure while
+dispatching `CommandFailed` — resolving the dispatcher or running a
+listener — is logged the same way and changes neither the exit code nor
+the disposal below.
 
 That exit code is retained even when the disposal that follows the
 command fails — the command's own `RequestScope` first, then the

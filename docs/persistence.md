@@ -175,7 +175,11 @@ fails, and the drivers never send it again:
   sat idle (`wait_timeout`, a `KILL`, a network drop) fails the first
   statement sent on it after that statement was dispatched, with
   `Exception\ConnectionException`, or `Exception\QueryException` where the
-  server answered. The next statement opens a fresh connection.
+  server answered. The next statement opens a fresh connection. A PDO
+  link gives up its session whenever a statement or
+  `beginTransaction()` on the link itself fails, and its next call opens
+  a fresh one; a single-session link keeps its session
+  ({ref}`database-reference-pdo-sessions`).
 - **A failed `COMMIT`.** A `COMMIT` that throws leaves the transaction's
   outcome unknown, and its connection is discarded.
 
