@@ -17,11 +17,19 @@ use Symfony\Component\HttpClient\Response\MockResponse;
  * The documentation catalogue as a real MCP server: driven through the
  * shared stdio loop, so what is asserted is the bytes a client reads.
  * The protocol's own rules are proved in kinetis/mcp-protocol; what
- * belongs here is this server's catalogue, its window tool, its fetch
- * failures, and its diagnostic policy.
+ * belongs here is this server's catalogue, its window and search tools,
+ * its fetch failures, and its diagnostic policy.
  */
 final class DocsApplicationTest extends TestCase
 {
+    /** What both tools are annotated with, as a client reads it. */
+    private const array ANNOTATIONS = [
+        'readOnlyHint' => true,
+        'destructiveHint' => false,
+        'idempotentHint' => true,
+        'openWorldHint' => true,
+    ];
+
     public function test_initialize_answers_the_one_supported_revision_and_this_servers_identity(): void
     {
         $result = $this->frames([
@@ -36,8 +44,8 @@ final class DocsApplicationTest extends TestCase
     }
 
     /**
-     * The server publishes the window tool and the catalogue, and
-     * nothing else: no prompts and no subscriptions to invite.
+     * The server publishes its two tools and the catalogue, and nothing
+     * else: no prompts and no subscriptions to invite.
      */
     public function test_initialize_advertises_tools_and_resources_and_nothing_else(): void
     {
@@ -154,24 +162,75 @@ final class DocsApplicationTest extends TestCase
         self::assertStringNotContainsString('too large to take whole', $description);
     }
 
+    /**
+     * A named unknown in a long page is located with one search and then
+     * read as one window around it, instead of window after window from
+     * line 1.
+     */
+    public function test_the_server_teaches_search_then_a_window_to_locate_a_named_term(): void
+    {
+        $instructions = $this->frames([
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",'
+            . '"capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.273"}}}',
+        ])[0]['result']['instructions'];
+
+        self::assertStringContainsString(
+            'To locate a named term in a known page, call ' . DocsApplication::SEARCH_TOOL
+            . ' with that URI and the literal term, then read a window around a line it reports.',
+            $instructions,
+        );
+        self::assertStringContainsString('last reported line plus one', DocsApplication::searchTool()->description);
+    }
+
     public function test_the_window_tool_is_published_with_its_bounds_and_annotations(): void
     {
         $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
 
-        self::assertCount(1, $tools);
-        self::assertSame(DocsApplication::READ_TOOL, $tools[0]['name']);
-        self::assertSame([
-            'readOnlyHint' => true,
-            'destructiveHint' => false,
-            'idempotentHint' => true,
-            'openWorldHint' => true,
-        ], $tools[0]['annotations']);
+        self::assertSame([DocsApplication::READ_TOOL, DocsApplication::SEARCH_TOOL], array_column($tools, 'name'));
+        self::assertSame(self::ANNOTATIONS, $tools[0]['annotations']);
 
         $schema = $tools[0]['inputSchema'];
         self::assertSame(['uri'], $schema['required']);
         self::assertFalse($schema['additionalProperties']);
         self::assertSame(['uri', 'startLine', 'lineCount'], array_keys($schema['properties']));
         self::assertSame(DocsApplication::MAX_LINE_COUNT, $schema['properties']['lineCount']['maximum']);
+    }
+
+    /**
+     * The whole search schema as a client validates against it: closed,
+     * the query bounded in characters, and annotated exactly as the
+     * window is, because it fetches the same page and changes nothing.
+     */
+    public function test_the_search_tool_is_published_with_its_closed_schema_and_annotations(): void
+    {
+        $tools = $this->frames(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}'])[0]['result']['tools'];
+
+        self::assertSame(DocsApplication::SEARCH_TOOL, $tools[1]['name']);
+        self::assertSame(self::ANNOTATIONS, $tools[1]['annotations']);
+        self::assertSame([
+            'type' => 'object',
+            'properties' => [
+                'uri' => [
+                    'type' => 'string',
+                    'minLength' => 1,
+                    'description' => 'A documentation page URI, as resources/list reports it.',
+                ],
+                'query' => [
+                    'type' => 'string',
+                    'minLength' => 1,
+                    'maxLength' => 256,
+                    'description' => 'The exact string a line must contain, matched case-sensitively.',
+                ],
+                'startLine' => [
+                    'type' => 'integer',
+                    'minimum' => 1,
+                    'default' => 1,
+                    'description' => 'The first line to scan, counting from 1.',
+                ],
+            ],
+            'required' => ['uri', 'query'],
+            'additionalProperties' => false,
+        ], $tools[1]['inputSchema']);
     }
 
     /**
@@ -386,6 +445,205 @@ final class DocsApplicationTest extends TestCase
     }
 
     /**
+     * Literal and case-sensitive: a pattern character is itself, and a
+     * line differing only in case does not match. Each match reports the
+     * page's own line number and the line without its terminator — a
+     * CRLF ending and the unterminated last line alike.
+     */
+    public function test_a_search_reports_each_literally_matching_line_without_its_terminator(): void
+    {
+        $page = "a.b first\r\nA.B upper\naxb pattern\n\nlast a.b";
+        $document = $this->search(['uri' => 'kinetis://docs/index', 'query' => 'a.b'], $page);
+
+        self::assertSame([
+            'status' => 'ok',
+            'uri' => 'kinetis://docs/index',
+            'query' => 'a.b',
+            'startLine' => 1,
+            'matches' => [
+                ['line' => 1, 'content' => 'a.b first'],
+                ['line' => 5, 'content' => 'last a.b'],
+            ],
+            'hasMore' => false,
+        ], $document);
+    }
+
+    /**
+     * Finding nothing is an answer, not a refusal. A query carrying a
+     * line terminator is compared against lines that no longer have
+     * one, so it matches nothing — the two lines it spans included.
+     */
+    public function test_a_search_finding_nothing_is_an_empty_success_and_a_newline_matches_nothing(): void
+    {
+        $page = "first\r\nsecond\nthird\n";
+
+        foreach (['absent', 'FIRST', "first\r\nsecond", "second\n", "\n"] as $query) {
+            $document = $this->search(['uri' => 'kinetis://docs/index', 'query' => $query], $page);
+
+            self::assertSame([], $document['matches'], json_encode($query, JSON_THROW_ON_ERROR));
+            self::assertFalse($document['hasMore']);
+        }
+    }
+
+    /**
+     * The distinguishing case for the cap: 120 matching lines among 240,
+     * three calls of at most 50, each continuing from the last reported
+     * line plus one, report every one exactly once, and only the last
+     * says nothing follows.
+     */
+    public function test_a_search_returns_at_most_fifty_matches_and_continues_from_the_last_line(): void
+    {
+        $page = '';
+
+        for ($line = 1; $line <= 240; $line++) {
+            $page .= $line % 2 === 0 ? "hit {$line}\n" : "miss {$line}\n";
+        }
+
+        $reported = [];
+        $calls = [];
+        $startLine = 1;
+
+        do {
+            $document = $this->search(
+                ['uri' => 'kinetis://docs/index', 'query' => 'hit', 'startLine' => $startLine],
+                $page,
+            );
+            $lines = array_column($document['matches'], 'line');
+            $calls[] = [$startLine, count($lines), $document['hasMore']];
+            $reported = [...$reported, ...$lines];
+            $startLine = (int) end($lines) + 1;
+
+            self::assertLessThan(10, count($calls), 'The continuation did not terminate.');
+        } while ($document['hasMore'] === true);
+
+        self::assertSame([[1, 50, true], [101, 50, true], [201, 20, false]], $calls);
+        self::assertSame(range(2, 240, 2), $reported);
+    }
+
+    /**
+     * Exactly 50 matches and nothing after them: the cap is reached but
+     * no later line matches, so the search is complete.
+     */
+    public function test_a_search_with_exactly_fifty_matches_has_no_more(): void
+    {
+        $document = $this->search(
+            ['uri' => 'kinetis://docs/index', 'query' => 'hit'],
+            str_repeat("hit\n", DocsApplication::MAX_MATCH_COUNT) . "miss\n",
+        );
+
+        self::assertCount(DocsApplication::MAX_MATCH_COUNT, $document['matches']);
+        self::assertFalse($document['hasMore']);
+    }
+
+    /**
+     * The query's bound is counted in characters, as JSON Schema's
+     * `maxLength` is: 256 three-byte characters are admitted, and one
+     * more is `-32602`.
+     */
+    public function test_a_search_query_is_bounded_in_characters_not_bytes(): void
+    {
+        $query = str_repeat('€', DocsApplication::MAX_QUERY_LENGTH);
+        $document = $this->search(['uri' => 'kinetis://docs/index', 'query' => $query], "{$query}\n");
+
+        self::assertSame([['line' => 1, 'content' => $query]], $document['matches']);
+
+        $frames = $this->frames([self::call(
+            ['uri' => 'kinetis://docs/index', 'query' => $query . '€'],
+            DocsApplication::SEARCH_TOOL,
+        )]);
+
+        self::assertSame(-32602, $frames[0]['error']['code']);
+    }
+
+    /**
+     * The window's refusal vocabulary, reached the same way: a URI
+     * outside the catalogue fetches nothing, and a first line past the
+     * page is refused rather than answered with no matches.
+     */
+    public function test_a_search_refuses_an_unknown_uri_and_a_start_past_the_page(): void
+    {
+        $unknown = $this->frames([self::call(
+            ['uri' => 'kinetis://docs/nope', 'query' => 'x'],
+            DocsApplication::SEARCH_TOOL,
+        )]);
+
+        self::assertTrue($unknown[0]['result']['isError']);
+        self::assertSame(['status' => 'error', 'code' => 'resource_unknown'], self::document($unknown[0]));
+
+        $past = $this->frames(
+            [self::call(
+                ['uri' => 'kinetis://docs/index', 'query' => 'x', 'startLine' => 4],
+                DocsApplication::SEARCH_TOOL,
+            )],
+            self::pageClient("one\ntwo\nthree\n"),
+        );
+
+        self::assertTrue($past[0]['result']['isError']);
+        self::assertSame(['status' => 'error', 'code' => 'line_out_of_range'], self::document($past[0]));
+    }
+
+    /**
+     * The search's own schema, not the window's: its query is required
+     * and bounded, and the window's `lineCount` is as unknown to it as
+     * any other member.
+     */
+    public function test_search_arguments_outside_the_published_schema_are_invalid_params(): void
+    {
+        $cases = [
+            'no query' => ['uri' => 'kinetis://docs/index'],
+            'empty query' => ['uri' => 'kinetis://docs/index', 'query' => ''],
+            'query of the wrong type' => ['uri' => 'kinetis://docs/index', 'query' => 7],
+            'query past the maximum' => [
+                'uri' => 'kinetis://docs/index',
+                'query' => str_repeat('x', DocsApplication::MAX_QUERY_LENGTH + 1),
+            ],
+            'no uri' => ['query' => 'x'],
+            'uri of the wrong type' => ['uri' => 7, 'query' => 'x'],
+            'unknown member' => ['uri' => 'kinetis://docs/index', 'query' => 'x', 'caseSensitive' => false],
+            'the window\'s line count' => ['uri' => 'kinetis://docs/index', 'query' => 'x', 'lineCount' => 5],
+            'start line below one' => ['uri' => 'kinetis://docs/index', 'query' => 'x', 'startLine' => 0],
+            'start line of the wrong type' => ['uri' => 'kinetis://docs/index', 'query' => 'x', 'startLine' => '2'],
+        ];
+
+        foreach ($cases as $label => $arguments) {
+            $frames = $this->frames([self::call($arguments, DocsApplication::SEARCH_TOOL)]);
+
+            self::assertArrayNotHasKey('result', $frames[0], $label);
+            self::assertSame(-32602, $frames[0]['error']['code'], $label);
+        }
+    }
+
+    /**
+     * A search fetches through the same path as a window and a resource
+     * read, so a failed fetch and a page that is not UTF-8 answer the
+     * same generic error, with the reason on the diagnostic stream.
+     */
+    public function test_a_failed_or_non_utf8_fetch_under_the_search_tool_answers_generically(): void
+    {
+        $responses = [
+            'got 404' => new MockResponse('nope', ['http_code' => 404]),
+            'is not valid UTF-8' => new MockResponse("\xC3\x28"),
+        ];
+
+        foreach ($responses as $reason => $response) {
+            $diagnostics = fopen('php://memory', 'r+');
+            self::assertIsResource($diagnostics);
+
+            $frames = $this->frames(
+                [self::call(['uri' => 'kinetis://docs/index', 'query' => 'x'], DocsApplication::SEARCH_TOOL)],
+                new MockHttpClient($response),
+                $diagnostics,
+            );
+
+            self::assertSame(-32603, $frames[0]['error']['code'], $reason);
+            self::assertSame('Could not read "kinetis://docs/index".', $frames[0]['error']['message'], $reason);
+
+            rewind($diagnostics);
+            self::assertStringContainsString($reason, (string) stream_get_contents($diagnostics));
+        }
+    }
+
+    /**
      * The handshake a real client opens with: the notification in the
      * middle is answered with nothing, so two frames come back for three
      * messages.
@@ -421,17 +679,34 @@ final class DocsApplicationTest extends TestCase
     }
 
     /**
-     * One `tools/call` message for the window tool.
+     * The search one call returns, for a catalogue page whose markdown
+     * is $page.
+     *
+     * @param array<string, mixed> $arguments
+     * @return array<string, mixed>
+     */
+    private function search(array $arguments, string $page): array
+    {
+        $frames = $this->frames([self::call($arguments, DocsApplication::SEARCH_TOOL)], self::pageClient($page));
+
+        self::assertFalse($frames[0]['result']['isError']);
+
+        return self::document($frames[0]);
+    }
+
+    /**
+     * One `tools/call` message, for the window tool unless $tool names
+     * the search.
      *
      * @param array<string, mixed> $arguments
      */
-    private static function call(array $arguments): string
+    private static function call(array $arguments, string $tool = DocsApplication::READ_TOOL): string
     {
         return json_encode([
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'tools/call',
-            'params' => ['name' => DocsApplication::READ_TOOL, 'arguments' => $arguments],
+            'params' => ['name' => $tool, 'arguments' => $arguments],
         ], JSON_THROW_ON_ERROR);
     }
 

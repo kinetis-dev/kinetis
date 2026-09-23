@@ -443,7 +443,8 @@ configuration paths and discovery differences are.
 | `orbitron_read_package_source` | See {ref}`orbitron_read_package_source <read-installed-package-source>`. Read-only. |
 | `orbitron_search_package_source` | See {ref}`orbitron_search_package_source <search-installed-package-source>`. Read-only. |
 | `orbitron_list_package_source` | See {ref}`orbitron_list_package_source <list-installed-package-source>`. Read-only. |
-| `kinetis_read_doc` | One line window of one page of this documentation — see {ref}`The documentation resources <the-documentation-resources>`. Read-only, and the one tool that reaches the network. |
+| `kinetis_read_doc` | One line window of one page of this documentation — see {ref}`The documentation resources <the-documentation-resources>`. Read-only, and one of the two tools that reach the network. |
+| `kinetis_search_doc` | The lines of one page of this documentation that contain a literal string — see {ref}`The documentation resources <the-documentation-resources>`. Read-only, and the other tool that reaches the network. |
 | `kinetis://orbitron/context` | The `orbitron:context` document, as Markdown. |
 | `kinetis://docs/<page>` | One page of this documentation, as Markdown. `resources/list` names every page; `kinetis://docs/agent-workflow` is where a task starts. |
 
@@ -462,11 +463,12 @@ take `package`, `path` and — for the first two — either a line window
 or a literal query: each schema is validated in full before the package
 lookup, and `path` is then admitted against a fixed set of locations,
 with the resolved target re-admitted, before anything reaches the
-filesystem. `kinetis_read_doc` takes a page URI from the fixed
-catalogue and an optional line window, and {doc}`mcp-docs` publishes,
-validates and answers it — Orbitron surfaces that tool unchanged rather
-than restating any of it. No message can otherwise name a project root,
-a source body, a URL, a template or a command: the project root comes
+filesystem. `kinetis_read_doc` and `kinetis_search_doc` take a page URI
+from the fixed catalogue and an optional line window or a literal query,
+and {doc}`mcp-docs` publishes, validates and answers both — Orbitron
+surfaces those tools unchanged rather than restating any of it. No
+message can otherwise name a project root, a source body, a URL, a
+template or a command: the project root comes
 from Composer's own bin proxy, exactly as it does for
 `vendor/bin/kinetis`, and every other name is a constant. The server
 never boots the Kinetis application, so running it registers no route,
@@ -489,11 +491,11 @@ nothing about one call survives into the next.
 (the-documentation-resources)=
 ### The documentation resources
 
-{doc}`mcp-docs` owns the page catalogue, the fetch and the window tool.
-Orbitron requires it, holds a `DocsApplication` and hands every
-`kinetis://docs/*` read and every `kinetis_read_doc` call straight to
-it, composing that server rather than copying it — so a page added to
-`kinetis/mcp-docs` appears here without a change in Orbitron, and
+{doc}`mcp-docs` owns the page catalogue, the fetch, and the window and
+search tools. Orbitron requires it, holds a `DocsApplication` and hands
+every `kinetis://docs/*` read and every `kinetis_read_doc` and
+`kinetis_search_doc` call straight to it, composing that server rather
+than copying it — so a page added to `kinetis/mcp-docs` appears here without a change in Orbitron, and
 registering Orbitron is the whole registration. The package stays
 framework-agnostic and separately installable: a project that wants the
 documentation without the harness registers `vendor/bin/kinetis-mcp-docs`
@@ -509,10 +511,13 @@ calls: every call fetches it again, with no snapshot held across them.
 Take the next window only while the section you were routed to, or a
 named unknown, is still unresolved; read the whole page as its
 `kinetis://docs/<page>` resource when the complete page is what you
-need. {doc}`appendix-mcp-docs` holds that tool's full argument, bound
-and refusal contract.
+need. To locate a named unknown in a page you already know, call
+`kinetis_search_doc` with its URI and the literal term: it reports up to
+50 matching lines per call, each with its line number, and a window
+around one of them reads the context. {doc}`appendix-mcp-docs` holds
+both tools' full argument, bound and refusal contracts.
 
-Reading a page, either way, is the one Orbitron operation that leaves
+Reading or searching a page is the one Orbitron operation that leaves
 the machine. The page is fetched when it is read, from the fixed
 main-branch origin built out of that package's own two constants —
 nothing in a message chooses an origin, a ref or a path:
@@ -552,8 +557,8 @@ composer require --dev kinetis/orbitron
 
 That one package brings the documentation with it: Orbitron requires
 `kinetis/mcp-docs`, which it composes to serve the `kinetis://docs/*`
-resources and the window tool. Nothing else is installed or registered
-for them.
+resources and the window and search tools. Nothing else is installed or
+registered for them.
 
 In a monorepo that resolves siblings through `path` repositories, add
 `kinetis/mcp-docs` and `kinetis/mcp-protocol` to `require-dev` as well,
@@ -886,7 +891,9 @@ against that one install root, with the resolved target re-admitted,
 before anything reaches the filesystem.
 
 One operation leaves this machine, and only over MCP: reading a
-`kinetis://docs/*` resource, which `kinetis/mcp-docs` fetches over HTTPS
+documentation page — as a `kinetis://docs/*` resource, a
+`kinetis_read_doc` window or a `kinetis_search_doc` search — which
+`kinetis/mcp-docs` fetches over HTTPS
 from its own fixed main-branch origin under the bounds described in
 {ref}`The documentation resources <the-documentation-resources>`. It
 carries no

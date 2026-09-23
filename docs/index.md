@@ -67,8 +67,9 @@ body[data-theme="dark"] article[role="main"] section > p > strong:only-child { c
   package inventory, a layout verification and one previewable scaffold —
   from a shell or, over MCP, also the exact source of any package this
   project has installed. See {doc}`orbitron`.
-- These docs as MCP resources, whole or as bounded line windows, so an
-  agent reads the framework's documentation instead of recalling it.
+- These docs as MCP resources, whole, as bounded line windows or through
+  a literal search of one page, so an agent reads the framework's
+  documentation instead of recalling it.
   Orbitron serves them on its own connection, and `kinetis/mcp-docs` —
   which owns the catalogue and the fetch — installs on its own for
   documentation without the harness. See {doc}`mcp-docs`.

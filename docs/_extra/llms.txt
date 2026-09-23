@@ -80,7 +80,7 @@ tutorial, then read whichever section you have reached.
 ## AI agents
 
 - [Model Context Protocol (MCP)](https://kinetis.dev/docs/mcp.html): kinetis/mcp: the native Model Context Protocol server — tools, resources, stdio and HTTP transports, on MCP 2025-06-18.
-- [MCP Documentation Server](https://kinetis.dev/docs/mcp-docs.html): kinetis/mcp-docs: a standalone, framework-agnostic MCP server serving these pages as resources, whole or as bounded line windows.
+- [MCP Documentation Server](https://kinetis.dev/docs/mcp-docs.html): kinetis/mcp-docs: a standalone, framework-agnostic MCP server serving these pages as resources, whole, as bounded line windows or through a literal search of one page.
 - [Orbitron](https://kinetis.dev/docs/orbitron.html): kinetis/orbitron: a development-only construction harness — a portable Kinetis context document, the installed kinetis/* package inventory, a project-layout verification and one previewable health-endpoint scaffold, from a shell or over its own MCP server.
 - [Agent Workflow](https://kinetis.dev/docs/agent-workflow.html): Entry point for an agent: the current-main/installed-version boundary, and where to route a task.
 - [Application Recipes](https://kinetis.dev/docs/application-recipes.html): Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each.

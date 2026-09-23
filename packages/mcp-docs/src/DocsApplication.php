@@ -18,17 +18,20 @@ use Kinetis\McpProtocol\ToolResult;
 use stdClass;
 
 /**
- * The Kinetis documentation as MCP resources, plus the one tool that
- * reads a bounded line window of a page. The catalogue is fixed, so
- * there are no prompts, no subscriptions, and nothing a client can
- * change: listing, reading and windowing are the whole surface, and the
- * protocol around them belongs to kinetis/mcp-protocol.
+ * The Kinetis documentation as MCP resources, plus two tools: one reads
+ * a bounded line window of a page, the other finds the lines of a page
+ * that contain a literal string. The catalogue is fixed, so there are
+ * no prompts, no subscriptions, and nothing a client can change:
+ * listing, reading, windowing and searching are the whole surface, and
+ * the protocol around them belongs to kinetis/mcp-protocol.
  *
  * {@see READ_TOOL} returns one bounded window of a page, which is how
- * a page is read; a resource read returns the whole page, for a caller
- * that needs all of it. Both fetch the page on every call, so a window
- * is bounded output, not a stored, cursored or snapshotted read:
- * nothing about one call survives into the next.
+ * a page is read; {@see SEARCH_TOOL} locates a term in one known page
+ * so a window can be read around it; a resource read returns the whole
+ * page, for a caller that needs all of it. All three fetch the page on
+ * every call, so a window or a search is bounded output, not a stored,
+ * cursored or snapshotted read: nothing about one call survives into
+ * the next.
  *
  * A fetch that fails is reported to the process's own diagnostic stream
  * and answered with a generic protocol error. The URL, the transport's
@@ -42,7 +45,7 @@ final class DocsApplication implements McpApplication
     public const string SERVER_NAME = 'kinetis-mcp-docs';
 
     /** Paired against this package's manifest version by the suite. */
-    public const string SERVER_VERSION = '1.6.0';
+    public const string SERVER_VERSION = '1.7.0';
 
     /**
      * The documentation-window tool's name. Exported because
@@ -51,6 +54,9 @@ final class DocsApplication implements McpApplication
      * second copy of the string.
      */
     public const string READ_TOOL = 'kinetis_read_doc';
+
+    /** The documentation-search tool's name, exported for the same reasons. */
+    public const string SEARCH_TOOL = 'kinetis_search_doc';
 
     /** The most lines one window returns, which is also the default. */
     public const int MAX_LINE_COUNT = 200;
@@ -62,13 +68,21 @@ final class DocsApplication implements McpApplication
      */
     public const int MAX_CONTENT_BYTES = 32768;
 
+    /** The longest query a search may name, counted in Unicode characters. */
+    public const int MAX_QUERY_LENGTH = 256;
+
+    /** The most matches one search returns. */
+    public const int MAX_MATCH_COUNT = 50;
+
     private const string INSTRUCTIONS = 'Resources are Kinetis documentation pages, served as published '
         . 'markdown from main — read them instead of answering about Kinetis from memory. Call resources/list, '
         . 'then ' . self::READ_TOOL . ' with a page URI from line 1; start at kinetis://docs/agent-workflow. '
-        . 'Continue from the line it reports only while what you came to the page for is unresolved. Read the '
-        . 'same URI with resources/read when the whole page is what you need. A page can describe behavior newer '
-        . 'than the release installed in this project: establish the installed package versions and inspect '
-        . 'matching installed source before treating a version-sensitive claim as settled.';
+        . 'Continue from the line it reports only while what you came to the page for is unresolved. To locate a '
+        . 'named term in a known page, call ' . self::SEARCH_TOOL . ' with that URI and the literal term, then '
+        . 'read a window around a line it reports. Read the same URI with resources/read when the whole page is '
+        . 'what you need. A page can describe behavior newer than the release installed in this project: '
+        . 'establish the installed package versions and inspect matching installed source before treating a '
+        . 'version-sensitive claim as settled.';
 
     private readonly DocsFetcher $fetcher;
 
@@ -101,7 +115,7 @@ final class DocsApplication implements McpApplication
     #[\Override]
     public function tools(): array
     {
-        return [self::readTool()];
+        return [self::readTool(), self::searchTool()];
     }
 
     /**
@@ -110,11 +124,6 @@ final class DocsApplication implements McpApplication
      * that re-publishes this tool — kinetis/orbitron — includes this
      * description rather than restating it, so no client sees two
      * accounts of one tool.
-     *
-     * Open-world because the page is fetched from the documentation
-     * origin on every call; read-only and idempotent because a call
-     * changes nothing and the same window of an unchanged page answers
-     * the same way.
      */
     public static function readTool(): ToolDescription
     {
@@ -156,8 +165,68 @@ final class DocsApplication implements McpApplication
                 'required' => ['uri'],
                 'additionalProperties' => false,
             ],
-            new ToolAnnotations(readOnly: true, destructive: false, idempotent: true, openWorld: true),
+            self::annotations(),
         );
+    }
+
+    /**
+     * The documentation-search tool as this server publishes it, authored
+     * here once for the same reason as {@see readTool()} and annotated
+     * the same way: it fetches the same page and changes nothing.
+     */
+    public static function searchTool(): ToolDescription
+    {
+        return new ToolDescription(
+            self::SEARCH_TOOL,
+            'Reports every line of one Kinetis documentation page that contains a literal string, as a JSON '
+            . 'document — the way to locate a named term in a known page, then read a window around a line it '
+            . 'reports with ' . self::READ_TOOL . '. Takes the page URI, as resources/list reports it, the exact '
+            . 'string to look for, and an optional first line. The search is case-sensitive and literal, with no '
+            . 'pattern, and compares each line without its line terminator, so a string spanning two lines '
+            . 'matches nothing; it searches the one page it is given, never the catalogue. A success reports '
+            . '"status", "uri", "query", "startLine", "matches" and "hasMore"; each match is a "line" number and '
+            . 'that line\'s "content", at most ' . self::MAX_MATCH_COUNT . ' of them, and no match is a success '
+            . 'with an empty "matches". "hasMore" means a later line matches too: continue with "startLine" set '
+            . 'to the last reported line plus one. Every call fetches the page again, and nothing is cached. A '
+            . 'refusal reports "status": "error" and one of "resource_unknown", "line_out_of_range". Writes '
+            . 'nothing.',
+            [
+                'type' => 'object',
+                'properties' => [
+                    'uri' => [
+                        'type' => 'string',
+                        'minLength' => 1,
+                        'description' => 'A documentation page URI, as resources/list reports it.',
+                    ],
+                    'query' => [
+                        'type' => 'string',
+                        'minLength' => 1,
+                        'maxLength' => self::MAX_QUERY_LENGTH,
+                        'description' => 'The exact string a line must contain, matched case-sensitively.',
+                    ],
+                    'startLine' => [
+                        'type' => 'integer',
+                        'minimum' => 1,
+                        'default' => 1,
+                        'description' => 'The first line to scan, counting from 1.',
+                    ],
+                ],
+                'required' => ['uri', 'query'],
+                'additionalProperties' => false,
+            ],
+            self::annotations(),
+        );
+    }
+
+    /**
+     * Open-world because the page is fetched from the documentation
+     * origin on every call; read-only and idempotent because a call
+     * changes nothing and the same call on an unchanged page answers the
+     * same way.
+     */
+    private static function annotations(): ToolAnnotations
+    {
+        return new ToolAnnotations(readOnly: true, destructive: false, idempotent: true, openWorld: true);
     }
 
     /**
@@ -181,11 +250,11 @@ final class DocsApplication implements McpApplication
     }
 
     /**
-     * The one tool this server publishes. The whole schema is validated
-     * here before the catalogue is consulted: an argument the schema has
-     * no reading of is a protocol error, not a refusal document, while a
-     * well-typed URI the catalogue does not carry is a tool that ran and
-     * refused.
+     * The two tools this server publishes. Each validates its whole
+     * schema before the catalogue is consulted: an argument the schema
+     * has no reading of is a protocol error, not a refusal document,
+     * while a well-typed URI the catalogue does not carry is a tool that
+     * ran and refused.
      *
      * @throws JsonException when the document cannot be encoded, which
      *         {@see \Kinetis\McpProtocol\McpServer} contains
@@ -198,35 +267,13 @@ final class DocsApplication implements McpApplication
         ?object $context,
     ): ToolResult {
         // The server resolves a name against tools() before calling, so
-        // this answers only a caller driving this class directly.
-        if ($name !== self::READ_TOOL) {
-            throw JsonRpcException::invalidParams("Unknown tool: \"{$name}\".");
-        }
-
-        [$uri, $startLine, $lineCount] = self::readArguments($arguments);
-        $page = DocsCatalogue::find($uri);
-
-        if ($page === null) {
-            return self::refuse('resource_unknown');
-        }
-
-        $lines = self::lines($this->text($page));
-        $total = count($lines);
-
-        if ($startLine > $total) {
-            return self::refuse('line_out_of_range');
-        }
-
-        [$content, $endLine] = self::window($lines, $startLine, $lineCount);
-
-        return ToolResult::text(self::document([
-            'status' => 'ok',
-            'uri' => $page->uri(),
-            'startLine' => $startLine,
-            'endLine' => $endLine,
-            'hasMore' => $endLine < $total,
-            'content' => $content,
-        ]));
+        // the default arm answers only a caller driving this class
+        // directly.
+        return match ($name) {
+            self::READ_TOOL => $this->window(...self::readArguments($arguments)),
+            self::SEARCH_TOOL => $this->search(...self::searchArguments($arguments)),
+            default => throw JsonRpcException::invalidParams("Unknown tool: \"{$name}\"."),
+        };
     }
 
     #[\Override]
@@ -242,10 +289,10 @@ final class DocsApplication implements McpApplication
     }
 
     /**
-     * The page's current markdown. A resource read and a window read
-     * share this, so both fetch live, bound the fetch identically, and
-     * answer a failure with the same generic error while the real reason
-     * goes to this server's own diagnostic stream.
+     * The page's current markdown. A resource read, a window and a
+     * search share this, so all three fetch live, bound the fetch
+     * identically, and answer a failure with the same generic error
+     * while the real reason goes to this server's own diagnostic stream.
      */
     private function text(DocsPage $page): string
     {
@@ -292,7 +339,8 @@ final class DocsApplication implements McpApplication
     }
 
     /**
-     * The window's content and the last line it carries.
+     * One window of the page: its content and the last line it carries,
+     * or the refusal.
      *
      * Two bounds end it: the requested line count, and the byte ceiling
      * that keeps a page of very long lines from returning megabytes for
@@ -304,13 +352,16 @@ final class DocsApplication implements McpApplication
      * continue from, so a single line longer than the ceiling is served
      * whole — the one case a response exceeds it.
      *
-     * @param list<string> $lines
-     * @param int $startLine one-based, and within $lines: the caller
-     *        refuses a start past the page before reaching this
-     * @return array{string, int}
+     * @throws JsonException
      */
-    private static function window(array $lines, int $startLine, int $lineCount): array
+    private function window(string $uri, int $startLine, int $lineCount): ToolResult
     {
+        $lines = $this->pageLines($uri, $startLine);
+
+        if ($lines instanceof ToolResult) {
+            return $lines;
+        }
+
         $content = $lines[$startLine - 1];
         $endLine = $startLine;
         $total = count($lines);
@@ -326,7 +377,101 @@ final class DocsApplication implements McpApplication
             $endLine = $line;
         }
 
-        return [$content, $endLine];
+        return ToolResult::text(self::document([
+            'status' => 'ok',
+            'uri' => $uri,
+            'startLine' => $startLine,
+            'endLine' => $endLine,
+            'hasMore' => $endLine < $total,
+            'content' => $content,
+        ]));
+    }
+
+    /**
+     * The lines from $startLine that contain $query, up to
+     * {@see MAX_MATCH_COUNT} of them, or the refusal. Finding none is a
+     * successful search with an empty list, not a refusal.
+     *
+     * The scan is literal and case-sensitive, and each line is compared
+     * as it is reported — without its terminator — so a query carrying
+     * a line ending matches nothing rather than the end of a line.
+     *
+     * Scanning stops at the first match past the cap. `hasMore` says
+     * another one exists; the caller continues from the last reported
+     * line plus one, which is why no cursor is returned.
+     *
+     * @throws JsonException
+     */
+    private function search(string $uri, string $query, int $startLine): ToolResult
+    {
+        $lines = $this->pageLines($uri, $startLine);
+
+        if ($lines instanceof ToolResult) {
+            return $lines;
+        }
+
+        /** @var list<array{line: int, content: string}> $matches */
+        $matches = [];
+        $hasMore = false;
+        $total = count($lines);
+
+        for ($line = $startLine; $line <= $total; $line++) {
+            $content = $lines[$line - 1];
+
+            // A line carries at most one terminator, at its end, because
+            // the split point follows it.
+            if (str_ends_with($content, "\n")) {
+                $content = substr($content, 0, str_ends_with($content, "\r\n") ? -2 : -1);
+            }
+
+            if (!str_contains($content, $query)) {
+                continue;
+            }
+
+            // The match past the cap is the only reason the scan runs on
+            // this far: it answers hasMore, and it is not reported.
+            if (count($matches) === self::MAX_MATCH_COUNT) {
+                $hasMore = true;
+
+                break;
+            }
+
+            $matches[] = ['line' => $line, 'content' => $content];
+        }
+
+        return ToolResult::text(self::document([
+            'status' => 'ok',
+            'uri' => $uri,
+            'query' => $query,
+            'startLine' => $startLine,
+            'matches' => $matches,
+            'hasMore' => $hasMore,
+        ]));
+    }
+
+    /**
+     * The lines of the catalogue page $uri names, fetched live, or the
+     * refusal both tools share: a URI outside the catalogue, for which
+     * nothing is fetched, or a start past the last line of the page.
+     *
+     * @return list<string>|ToolResult
+     * @throws JsonException
+     */
+    private function pageLines(string $uri, int $startLine): array|ToolResult
+    {
+        $page = DocsCatalogue::find($uri);
+
+        if ($page === null) {
+            return self::refuse('resource_unknown');
+        }
+
+        $lines = self::lines($this->text($page));
+
+        if ($startLine > count($lines)) {
+            return self::refuse('line_out_of_range');
+        }
+
+        return $lines;
     }
 
     /**
@@ -337,25 +482,7 @@ final class DocsApplication implements McpApplication
      */
     private static function readArguments(stdClass $arguments): array
     {
-        $values = get_object_vars($arguments);
-        $unknown = array_diff(array_keys($values), ['uri', 'startLine', 'lineCount']);
-
-        if ($unknown !== []) {
-            throw JsonRpcException::invalidParams('Unknown argument: "' . implode('", "', $unknown) . '".');
-        }
-
-        $uri = $values['uri'] ?? throw JsonRpcException::invalidParams('"uri" is required.');
-
-        if (!\is_string($uri) || $uri === '') {
-            throw JsonRpcException::invalidParams('"uri" must be a non-empty string.');
-        }
-
-        $startLine = \array_key_exists('startLine', $values) ? $values['startLine'] : 1;
-
-        if (!\is_int($startLine) || $startLine < 1) {
-            throw JsonRpcException::invalidParams('"startLine" must be an integer of at least 1.');
-        }
-
+        $values = self::members($arguments, ['uri', 'startLine', 'lineCount']);
         $lineCount = \array_key_exists('lineCount', $values) ? $values['lineCount'] : self::MAX_LINE_COUNT;
 
         if (!\is_int($lineCount) || $lineCount < 1 || $lineCount > self::MAX_LINE_COUNT) {
@@ -364,7 +491,91 @@ final class DocsApplication implements McpApplication
             );
         }
 
-        return [$uri, $startLine, $lineCount];
+        return [self::uri($values), self::startLine($values), $lineCount];
+    }
+
+    /**
+     * The search call's arguments, validated the same way and sharing
+     * the URI and first-line checks with the window call.
+     *
+     * JSON Schema counts maxLength in characters, so the query's length
+     * is counted in the same units: `strlen()` would refuse a query the
+     * published schema admits as soon as it carries a multi-byte
+     * character. `/./us` counts code points without requiring
+     * ext-mbstring, and returns false only for a subject that is not
+     * UTF-8 — which a decoded JSON string cannot be.
+     *
+     * @return array{string, string, int}
+     */
+    private static function searchArguments(stdClass $arguments): array
+    {
+        $values = self::members($arguments, ['uri', 'query', 'startLine']);
+        $query = $values['query'] ?? throw JsonRpcException::invalidParams('"query" is required.');
+
+        if (!\is_string($query) || $query === '') {
+            throw JsonRpcException::invalidParams('"query" must be a non-empty string.');
+        }
+
+        $length = preg_match_all('/./us', $query);
+
+        if ($length === false || $length > self::MAX_QUERY_LENGTH) {
+            throw JsonRpcException::invalidParams(
+                '"query" must be at most ' . self::MAX_QUERY_LENGTH . ' characters.',
+            );
+        }
+
+        return [self::uri($values), $query, self::startLine($values)];
+    }
+
+    /**
+     * The call's members, with every key the schema does not name
+     * refused.
+     *
+     * @param list<string> $known
+     * @return array<string, mixed>
+     */
+    private static function members(stdClass $arguments, array $known): array
+    {
+        $values = get_object_vars($arguments);
+        $unknown = array_diff(array_keys($values), $known);
+
+        if ($unknown !== []) {
+            throw JsonRpcException::invalidParams('Unknown argument: "' . implode('", "', $unknown) . '".');
+        }
+
+        return $values;
+    }
+
+    /**
+     * The required page URI, a non-empty string.
+     *
+     * @param array<string, mixed> $values
+     */
+    private static function uri(array $values): string
+    {
+        $uri = $values['uri'] ?? throw JsonRpcException::invalidParams('"uri" is required.');
+
+        if (!\is_string($uri) || $uri === '') {
+            throw JsonRpcException::invalidParams('"uri" must be a non-empty string.');
+        }
+
+        return $uri;
+    }
+
+    /**
+     * The optional first line both tools count from, defaulting to 1.
+     *
+     * @param array<string, mixed> $values
+     */
+    private static function startLine(array $values): int
+    {
+        $startLine = \array_key_exists('startLine', $values) ? $values['startLine'] : 1;
+
+        if (!\is_int($startLine) || $startLine < 1) {
+            throw JsonRpcException::invalidParams('"startLine" must be an integer of at least 1.');
+        }
+
+        return $startLine;
     }
 
     /**
