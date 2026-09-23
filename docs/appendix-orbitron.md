@@ -51,16 +51,25 @@ writing `--format=json` are the same invocation.
 
 ```json
 {
-    "schemaVersion": 1,
-    "orbitronVersion": "1.1.0",
+    "schemaVersion": 2,
+    "orbitronVersion": "1.9.0",
+    "projectRoot": "/home/dev/shop",
     "packages": [
         {"name": "kinetis/framework", "version": "1.12.0"},
         {"name": "kinetis/mcp-docs", "version": "1.4.0"},
         {"name": "kinetis/mcp-protocol", "version": "1.0.0"},
-        {"name": "kinetis/orbitron", "version": "1.1.0"}
+        {"name": "kinetis/orbitron", "version": "1.9.0"}
     ]
 }
 ```
+
+`projectRoot` is the canonical absolute physical path of the detected
+project root: every symlink segment is resolved, so two checkouts with
+the same installed set still report different roots. It is the checkout
+this process reads, never a path a caller chose — the command takes no
+argument and `orbitron_inspect` takes no member that could name one. A
+detected root that does not resolve fails the command instead of being
+reported as written.
 
 `packages` carries every installed package under the `kinetis/` vendor,
 ordered by name, one entry per name. A name Composer lists only because
@@ -670,10 +679,11 @@ the handshake no application work switches to or creates another
 checkout or worktree: a different checkout is a different Orbitron
 project. Working there means ending the session, launching the client
 from that checkout, and repeating the handshake — context, inspect,
-verify — before any edit. `orbitron_inspect` is the check: the
-`kinetis/*` versions it reports must match the active checkout's
-`composer.lock`, and a mismatch means the session is reading another
-checkout.
+verify — before any edit. `orbitron_inspect` is the check: before
+editing, its `projectRoot` must equal `pwd -P` in the checkout being
+edited. A mismatch means the session is reading another checkout: stop,
+launch the MCP client and its server from the intended checkout, and
+rerun context, inspect and verify.
 
 Require an `orbitron_scaffold_plan` call before any
 `orbitron_scaffold_apply`, and require explicit user intent for the

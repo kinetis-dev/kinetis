@@ -36,9 +36,12 @@ proof of the installed version's behavior.
 Before a version-sensitive claim governs a decision:
 
 1. **Establish the installed version.** Call `orbitron_inspect` where
-   Orbitron is registered; otherwise read the project's own
-   `composer.lock` or run `composer show kinetis/<package>`. Never
-   assume it matches `main`.
+   Orbitron is registered, and before editing confirm that its
+   `projectRoot` equals `pwd -P` in the checkout you edit — a mismatch
+   means the session reads another checkout; see Orbitron's
+   {ref}`agent contract <the-instructions>`. Otherwise read the
+   project's own `composer.lock` or run
+   `composer show kinetis/<package>`. Never assume it matches `main`.
 2. **Read the matching installed source** when the exact behavior
    matters — a signature, a default, a failure code, a config key. Where
    Orbitron is registered, call `orbitron_read_package_source` with the
