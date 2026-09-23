@@ -72,7 +72,7 @@ final class DocsCatalogue
             new DocsPage('search-elasticsearch', 'Search (Elasticsearch)', 'kinetis/search-elasticsearch: Elasticsearch client construction, non-blocking via kinetis/revolt-http-client'),
             new DocsPage('aws-sigv4', 'AWS request signing (SigV4)', 'Sign requests for one trusted AWS origin, including Amazon OpenSearch Service'),
             new DocsPage('mcp', 'Model Context Protocol (MCP)', 'Expose application tools and resources over stdio or guarded HTTP'),
-            new DocsPage('mcp-docs', 'MCP Documentation Server', 'Install the standalone server and read Kinetis pages as MCP resources, whole or as bounded line windows'),
+            new DocsPage('mcp-docs', 'MCP Documentation Server', 'Install the standalone server and read Kinetis pages as MCP resources, whole, as bounded line windows or through a literal search of one page'),
             new DocsPage('orbitron', 'Orbitron', 'kinetis/orbitron: a development-only construction harness — what it is, the skeleton quick start, and where the full command and MCP contract lives'),
             new DocsPage('agent-workflow', 'Agent Workflow', 'Entry point for an agent: the current-main/installed-version boundary, and where to route a task'),
             new DocsPage('application-recipes', 'Application Recipes', 'Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each'),

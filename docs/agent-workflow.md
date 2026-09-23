@@ -14,9 +14,10 @@ Orbitron's own context and tools; a client that registers
 {doc}`mcp-docs` on its own reaches the same resources from that server.
 Either way `kinetis/mcp-docs` owns the catalogue and the fetch, the
 resource URIs are identical, and the same `kinetis_read_doc` tool reads
-one bounded line window of a page — the way to read a page. The
-whole-page resources are there for when the complete page is what you
-need.
+one bounded line window of a page — the way to read a page — while
+`kinetis_search_doc` finds the lines of one page that contain a literal
+string. The whole-page resources are there for when the complete page is
+what you need.
 
 ## The version boundary
 
@@ -56,8 +57,8 @@ Before a version-sensitive claim governs a decision:
    alone do not prove installed behavior; the installed source does.
 
 Neither documentation server reads application code. `mcp-docs` has no
-file access at all: its one tool reads a window of the same published
-page its resources serve. Orbitron's `orbitron_inspect` and
+file access at all: its two tools read a window of, or search, the same
+published page its resources serve. Orbitron's `orbitron_inspect` and
 `orbitron_verify` report only Composer's installed metadata and the
 project's `composer.json`; its two scaffold tools additionally read the
 fixed scaffold paths, and `orbitron_scaffold_apply` writes them.
@@ -88,8 +89,10 @@ server does that.
    from memory: call `resources/list`, then `kinetis_read_doc` with a
    page URI from line 1, and continue from the line it reports only
    while the section the recipe named, or a named unknown, is still
-   unresolved. Read a page whole with `resources/read` when the
-   complete page is what you need.
+   unresolved. To locate a named unknown in a page you already know,
+   call `kinetis_search_doc` with its URI and the literal term, then
+   read a window around a line it reports. Read a page whole with
+   `resources/read` when the complete page is what you need.
 4. **Inspect the matching installed source** for anything
    version-sensitive, as above.
 5. **Make the smallest change** that satisfies the task under the

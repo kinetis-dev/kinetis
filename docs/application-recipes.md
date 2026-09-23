@@ -80,6 +80,30 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Non-goal**: several related writes left as separate, individually
   committed statements outside one `transaction()` call.
 
+## Application with a second database
+
+- **Guides**: {doc}`persistence` — "Options and more connections";
+  {doc}`appendix-database` — "Registering connections in
+  `bootstrap.php`"; {doc}`orm` — "Other connections"; {doc}`query-builder`
+  for a named link queried without the ORM.
+- **Lifecycle/I-O**: the bridge builds, injects and closes the default
+  connection, and opens and closes a request-scoped `EntityManager` for
+  the default ORM, and nothing else. A named link, and any `OrmFactory`
+  built on it, is explicit application wiring, down to who closes each
+  manager and link; {doc}`orm`'s "Other connections" states which
+  cleanup covers what.
+- **Security/integrity**: a named connection reads every key under its
+  own name — for `reporting`, `DB_REPORTING_DRIVER` rather than
+  `DB_DRIVER` — so nothing it needs comes from the default connection's
+  settings. Only the default is injected
+  by type: pass the named link or factory explicitly to the code that
+  runs on it.
+- **Verification**: an integration test against each real backend,
+  including one in which a unit of work on the named connection throws
+  and the next asserts that nothing from it committed or stayed open.
+- **Non-goal**: one transaction across both databases. Each connection
+  commits on its own.
+
 ## Queue job with retry/idempotency considerations
 
 - **Guides**: {doc}`queue`, the installed backend's own page

@@ -130,6 +130,7 @@ following {doc}`config`'s named-connection convention:
 
 ```{code-block} text
 DB_REPORTING_CONNECTION=pgsql
+DB_REPORTING_DRIVER=auto
 DB_REPORTING_HOST=reporting.internal
 DB_REPORTING_PASSWORD=secret
 ```

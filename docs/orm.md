@@ -700,6 +700,13 @@ link and a `MetadataRegistry`, and pair each `open()` with `close()` in
 the unit of work that uses it, as {ref}`database-reference-standalone`
 shows.
 
+The bridge's request-scoped cleanup covers the default ORM only: it
+closes the `EntityManager` it opened for each unit of work, and a named
+factory's managers get none of it. `OrmFactory::transaction()` begins
+and ends its own transaction on the factory's link, on every way out,
+so the request's `TransactionGuard` neither tracks nor needs to roll it
+back.
+
 ## See also
 
 - {ref}`testing-orm` — a new manager for each test unit and request that

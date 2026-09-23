@@ -1,8 +1,9 @@
 # MCP Documentation Server
 
 `kinetis/mcp-docs` owns the catalogue of this documentation and the
-fetch behind it, and serves every page as an MCP resource — plus one
-tool that returns a bounded line window of a page — so a coding agent
+fetch behind it, and serves every page as an MCP resource — plus a tool
+that returns a bounded line window of a page and one that finds the
+lines of a page containing a literal string — so a coding agent
 reads Kinetis's current documentation instead of answering from
 training data. It is framework-agnostic: `kinetis/mcp-protocol` is the
 only Kinetis package it depends on — not the framework, and not
@@ -12,7 +13,7 @@ an agent call your own application, see {doc}`mcp`.
 ```{note}
 A project that already registers {doc}`orbitron` has these pages
 already. Orbitron requires this package and publishes its
-`kinetis://docs/*` resources and its window tool from that one
+`kinetis://docs/*` resources and both its tools from that one
 connection, so there is no second server to configure. Install and register `kinetis/mcp-docs` on
 its own when you want the documentation without the harness — beside a
 client, for any project or none.
@@ -118,15 +119,35 @@ calls.
 Reading the same URI as a resource returns the page whole, for when the
 complete page is what you need.
 
+## Searching a page
+
+`kinetis_search_doc` finds the lines of one page that contain a literal
+string, so a named term in a long page is located with one call instead
+of window after window:
+
+```{code-block} sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kinetis_search_doc","arguments":{"uri":"kinetis://docs/appendix-database","query":"DB_REPORTING_DRIVER"}}}' \
+    | php vendor/bin/kinetis-mcp-docs
+```
+
+It takes the page `uri`, a `query` of 1 to 256 characters, and an
+optional `startLine` (from 1, default 1). The result is one JSON
+document reporting `status`, `uri`, `query`, `startLine`, `matches`
+and `hasMore`; each match is a `line` number and that line's `content`.
+Matching is literal and case-sensitive, and a call returns at most 50
+matches: while `hasMore` is true, call again with `startLine` set to the
+last reported line plus one. Then read a window around the line you
+need with `kinetis_read_doc`.
+
 The full argument, refusal and bound contract is in
 {doc}`appendix-mcp-docs`.
 
 ## How a page is read
 
-Every read — a whole resource or one window — fetches the page from the
-`main` branch of the `kinetis-dev/kinetis` repository over HTTPS and
-returns its MyST markdown source as published — not rendered HTML, not
-a summary. There is no source, branch or path to configure, no local
+Every read — a whole resource, one window or one search — fetches the
+page from the `main` branch of the `kinetis-dev/kinetis` repository over
+HTTPS and works on its MyST markdown source as published — not rendered
+HTML, not a summary. There is no source, branch or path to configure, no local
 copy, and no cache, so a read returns what `main` holds at that moment.
 That can describe behavior newer than the Kinetis release your project
 pins.

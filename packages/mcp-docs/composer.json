@@ -1,6 +1,6 @@
 {
     "name": "kinetis/mcp-docs",
-    "description": "A standalone Model Context Protocol server exposing the Kinetis documentation over stdio: one tool that returns a bounded line window of a page, which is how a page is read, and the same pages whole as MCP resources. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
+    "description": "A standalone Model Context Protocol server exposing the Kinetis documentation over stdio: a tool that returns a bounded line window of a page, which is how a page is read, a tool that reports the lines of one page containing a literal string, and the same pages whole as MCP resources. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
     "type": "library",
     "license": "MIT",
     "authors": [

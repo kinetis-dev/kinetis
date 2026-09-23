@@ -2,17 +2,17 @@
 
 The mechanics behind {doc}`mcp-docs`: how the setup script decides it
 may write to a directory, how installs and updates share that directory,
-the methods and errors the server answers, the bounds on a page window,
-and how a page fetch is bounded. The wire itself belongs to
+the methods and errors the server answers, the bounds on a page window
+and a page search, and how a page fetch is bounded. The wire itself belongs to
 `kinetis/mcp-protocol` and is described in {doc}`appendix-mcp`. For
 setup and use, see {doc}`mcp-docs`.
 
 "The install directory", "Install, verify and register" and "Updates"
 describe `setup.sh`, which is how this package is registered as a server
-of its own. The catalogue, protocol, window and fetch sections below
-hold for either way it is reached: {doc}`orbitron` composes the same
-`DocsApplication` in its own process, publishing these resources and
-that tool beside its own and delegating every read to it, with no
+of its own. The catalogue, protocol, window, search and fetch sections
+below hold for either way it is reached: {doc}`orbitron` composes the
+same `DocsApplication` in its own process, publishing these resources
+and both tools beside its own and delegating every read to it, with no
 installer, no update lock and no registration of its own.
 
 ## The install directory
@@ -91,8 +91,9 @@ capabilities — no `listChanged` and no `subscribe` — names the server
 `kinetis-mcp-docs` at the package's version, and carries `instructions`
 telling the agent to read these pages rather than answer from memory,
 naming `kinetis://docs/agent-workflow` as the starting page, pointing at
-`kinetis_read_doc` as the way to read one and at `resources/read` for a
-whole page, and warning that a served page can describe behavior newer
+`kinetis_read_doc` as the way to read one, at `kinetis_search_doc` to
+locate a named term in a known page, and at `resources/read` for a whole
+page, and warning that a served page can describe behavior newer
 than the client's installed release. No method depends on an earlier
 `initialize`.
 
@@ -101,12 +102,12 @@ than the client's installed release. No method depends on an earlier
 | `initialize` | Selects `2025-06-18` and declares the `tools` and `resources` capabilities. |
 | `notifications/initialized` | Accepted and answered with nothing, as every notification is. |
 | `ping` | An empty result. |
-| `tools/list` | The one tool, `kinetis_read_doc`, with its schema and annotations. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
-| `tools/call` | Runs `kinetis_read_doc`; see "The page window" below. An unknown tool name is `-32602`. |
+| `tools/list` | The two tools, `kinetis_read_doc` then `kinetis_search_doc`, with their schemas and annotations. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
+| `tools/call` | Runs `kinetis_read_doc` or `kinetis_search_doc`; see "The page window" and "The page search" below. An unknown tool name is `-32602`. |
 | `resources/list` | The whole catalogue in one response, each entry with `uri`, `name`, `description` and `mimeType` `text/markdown`. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
 | `resources/read` | Requires a non-empty string `uri`, and returns one `contents` entry with that `uri`, `mimeType` `text/markdown` and the page's markdown as `text`. |
 
-There is one tool and no prompts or subscriptions.
+There are two tools and no prompts or subscriptions.
 
 ### Errors
 
@@ -115,13 +116,13 @@ There is one tool and no prompts or subscriptions.
 | `-32700` | The line is not valid JSON. |
 | `-32600` | The JSON is not an object — a top-level array (a batch) included — or `jsonrpc` is not `"2.0"`, `method` is missing or empty, or `id` is not a string or an integer. |
 | `-32601` | The method is not in the table, including `notifications/initialized` sent with an `id`. |
-| `-32602` | `params` is present and not an object — an array, a scalar or `null` — or `initialize` lacks a valid `protocolVersion`, `capabilities` or `clientInfo`, `resources/read` lacks `uri`, `tools/call` names an unknown tool or arguments outside the window tool's schema, or a list request carries `cursor`. |
+| `-32602` | `params` is present and not an object — an array, a scalar or `null` — or `initialize` lacks a valid `protocolVersion`, `capabilities` or `clientInfo`, `resources/read` lacks `uri`, `tools/call` names an unknown tool or arguments outside that tool's schema, or a list request carries `cursor`. |
 | `-32002` | `resources/read` names a URI outside the catalogue; `error.data.uri` carries it. No fetch is made. |
 | `-32603` | The page could not be fetched or is not valid UTF-8. The message is `Could not read "<uri>".`; the URL and the real reason go to stderr. |
 
-A window the tool ran and refused is not an error code: it is an
-ordinary result carrying `isError: true` and the document described
-below, so the reason stays readable.
+A window or a search the tool ran and refused is not an error code: it
+is an ordinary result carrying `isError: true` and the document
+described below, so the reason stays readable.
 
 A parse error, a batch and an unreadable `id` answer under `id: null`;
 any other error answers under the request's own `id`.
@@ -213,6 +214,58 @@ windows of one page can come from two different states of `main`, and
 `hasMore` is only ever a statement about the response carrying it. A
 fetch or UTF-8 failure answers `-32603` exactly as a resource read
 does.
+
+## The page search
+
+`kinetis_search_doc` reports the lines of one catalogue page that
+contain a literal string, so a named term in a known page is located
+with one call and then read with a window around it. It carries the
+window's annotations and reaches the documentation origin the same way.
+
+Its schema is closed and admits three members:
+
+| Argument | Contract |
+|---|---|
+| `uri` | Required, a non-empty string naming a catalogue page. |
+| `query` | Required string of 1 to 256 characters, counted in Unicode code points as JSON Schema's `maxLength` counts them. |
+| `startLine` | Optional integer from 1, default 1. The first line scanned. |
+
+A missing, misspelled, mistyped or out-of-range argument — the window's
+`lineCount` included — is `-32602`, decided before any page is fetched.
+
+A success is one JSON text document:
+
+```{code-block} json
+{
+    "status": "ok",
+    "uri": "kinetis://docs/appendix-database",
+    "query": "DB_REPORTING_DRIVER",
+    "startLine": 1,
+    "matches": [
+        {
+            "line": 133,
+            "content": "DB_REPORTING_DRIVER=auto"
+        }
+    ],
+    "hasMore": false
+}
+```
+
+Matching is literal and case-sensitive, with no pattern syntax. Line
+numbers are the ones a window reports, and each line is compared
+without its terminator, `\n` or `\r\n`, so a match's `content` is the
+line without it and a query containing a line break matches nothing.
+
+A response carries at most 50 matches. `hasMore` says a later line
+matches too; continue with `startLine` set to the last reported `line`
+plus one. No match is a success with an empty `matches`. A match
+carries its whole line, so a response is bounded by the 50 matches and
+the fetch's own size cap.
+
+The refusals are the window's own, `resource_unknown` and
+`line_out_of_range`, under the same conditions. Every call fetches the
+page again, nothing is cached between calls, and a fetch or UTF-8
+failure answers `-32603` exactly as a resource read does.
 
 ## Page fetch
 

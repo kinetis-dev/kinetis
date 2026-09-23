@@ -23,8 +23,9 @@ API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that
-serves every page of the Kinetis documentation: one tool that returns a
-bounded line window of a page, and the same pages whole as resources — so
+serves every page of the Kinetis documentation: a tool that returns a
+bounded line window of a page, a tool that reports the lines of one page
+containing a literal string, and the same pages whole as resources — so
 an agent working in any codebase can read the framework's own docs
 instead of answering from training data. It is framework-agnostic: the
 only Kinetis package it depends on is `kinetis/mcp-protocol`, which is
@@ -69,7 +70,10 @@ entry point and routing table for the rest of the catalogue.
 Read a page by calling the `kinetis_read_doc` tool with its URI from
 line 1: at most 200 lines and 32 KiB per call, continuing from the
 `endLine` each result reports while what you came for is unresolved.
-Read the same URI as a resource when the whole page is what you need.
+To locate a named term in a known page, call `kinetis_search_doc` with
+its URI and the literal term — at most 50 matching lines per call — and
+read a window around a line it reports. Read the same URI as a resource
+when the whole page is what you need.
 
 Requires PHP 8.4+. Full documentation:
 [kinetis.dev/docs/mcp-docs.html](https://kinetis.dev/docs/mcp-docs.html).
