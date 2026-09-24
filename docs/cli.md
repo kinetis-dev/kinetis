@@ -316,7 +316,9 @@ The global middleware section lists the exact order requests run in —
 the three Kinetis always wires in first — `SecurityHeadersMiddleware`,
 `ExceptionHandlerMiddleware`, `RequestBodyMiddleware` — then your own
 explicitly-registered (`AppScope::middleware()`) and `#[AsGlobalMiddleware]`-discovered
-classes, deduplicated (see {doc}`middleware`).
+classes, deduplicated. A registered `CorsMiddleware` is listed second,
+directly after `SecurityHeadersMiddleware` (see
+[Global order](appendix-middleware.md#global-order)).
 
 Each route's `Where` column lists its route constraints, one
 `name: fragment` line per constrained placeholder in the order the
@@ -376,6 +378,12 @@ alone, and anything your `bootstrap.php` registers afterward wins over a
 package's binding for the same id. A package bootstrap should stay inert
 when its configuration is absent — wiring, not side effects.
 
+A package bootstrap that needs the application's project root resolves
+`Kinetis\Runtime\ProjectRoot` from `$app` and reads its `path`: the
+exact root the entry point resolved, bound before any bootstrap runs.
+Commands receive the same binding by constructor injection, including
+`#[Command(bootstrap: false)]` commands, which skip the bootstrap chain.
+
 `discovery` names a class implementing
 `Kinetis\Cache\CacheableDiscoveryInterface` — a package's own
 compile-time-discoverable data, folded into the shared AOT cache
@@ -387,6 +395,17 @@ reduced to plain data) and `fromArray(array $data): static`
 reconstructed instance into the container *before* any
 `PackageBootstrapInterface::register()` call runs, package bootstraps
 included. A package's own bootstrap never touches this data at all.
+
+Discovery reads these keys from Composer's installed-package record,
+`vendor/composer/installed.json`, not from the package's own
+`composer.json`. That record is written when Composer installs or
+updates the package, so after changing `extra.kinetis` in a package
+installed from a path repository, run a scoped update naming that
+package — `acme/reports` stands in for its Composer name:
+
+```{code-block} sh
+composer update acme/reports
+```
 
 Installing a package is what opts it in — there is no separate
 allow-list. If you install a package, you trust what it registers, the

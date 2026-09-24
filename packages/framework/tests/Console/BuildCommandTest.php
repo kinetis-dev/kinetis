@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Console;
 
+use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
+use Kinetis\Config\Config;
 use Kinetis\Console\BuildCommand;
+use Kinetis\Container\AppScope;
+use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
+use Kinetis\Runtime\ProjectRoot;
 use Kinetis\Tests\Cache\Fixtures\StrictPlugin\CountingCacheableDiscovery;
 use Kinetis\Tests\Cache\Fixtures\StrictPlugin\SelfRejectingCacheableDiscovery;
 use Kinetis\Validation\Hydrator;
@@ -35,12 +40,34 @@ final class BuildCommandTest extends TestCase
 
     public function test_writes_a_loadable_artifact_and_returns_success(): void
     {
-        $exitCode = new BuildCommand(projectRootOverride: $this->projectRoot)->run();
+        $exitCode = new BuildCommand(new ProjectRoot($this->projectRoot))->run();
 
         self::assertSame(0, $exitCode);
 
         $loaded = $this->cacheStore()->load();
         self::assertNotNull($loaded);
+    }
+
+    /**
+     * `build` skips the bootstrap chain, and the container still hands it
+     * the root BootSequence bound rather than one detected from this
+     * package's own location.
+     */
+    public function test_the_container_supplies_the_root_boot_sequence_bound(): void
+    {
+        $app = new AppScope();
+        BootSequence::run($app, $this->projectRoot, new Config([]), new EventListenerRegistry(), [], [], runBootstrap: false);
+        $app->boot();
+        $scope = $app->createRequestScope();
+
+        try {
+            self::assertSame(0, $scope->get(BuildCommand::class)->run());
+        } finally {
+            $scope->dispose();
+            $app->dispose();
+        }
+
+        self::assertNotNull($this->cacheStore()->load());
     }
 
     /**
@@ -50,7 +77,7 @@ final class BuildCommandTest extends TestCase
      */
     public function test_a_second_build_replaces_the_artifact_in_place(): void
     {
-        $command = new BuildCommand(projectRootOverride: $this->projectRoot);
+        $command = new BuildCommand(new ProjectRoot($this->projectRoot));
         $command->run();
 
         self::assertSame(0, $command->run());
@@ -73,7 +100,7 @@ final class BuildCommandTest extends TestCase
     {
         $namespace = $this->writeEnumDefaultFixture();
 
-        self::assertSame(0, new BuildCommand(projectRootOverride: $this->projectRoot)->run());
+        self::assertSame(0, new BuildCommand(new ProjectRoot($this->projectRoot))->run());
 
         $plan = $this->cacheStore()->load()?->http->hydrationPlans["{$namespace}\\SearchRequest"];
 
@@ -96,7 +123,7 @@ final class BuildCommandTest extends TestCase
      */
     public function test_a_failed_rebuild_leaves_the_published_artifact_loadable_and_unchanged(): void
     {
-        $command = new BuildCommand(projectRootOverride: $this->projectRoot);
+        $command = new BuildCommand(new ProjectRoot($this->projectRoot));
         $command->run();
 
         $before = $this->cacheStore()->load();
@@ -127,7 +154,7 @@ final class BuildCommandTest extends TestCase
      */
     public function test_a_plugin_rejecting_its_own_compiled_data_fails_the_build_and_publishes_nothing(): void
     {
-        $command = new BuildCommand(projectRootOverride: $this->projectRoot);
+        $command = new BuildCommand(new ProjectRoot($this->projectRoot));
         $command->run();
 
         $before = (string) file_get_contents($this->cacheStore()->path());
@@ -161,7 +188,7 @@ final class BuildCommandTest extends TestCase
 
         $this->installDiscoveryPackage(CountingCacheableDiscovery::class);
 
-        self::assertSame(0, new BuildCommand(projectRootOverride: $this->projectRoot)->run());
+        self::assertSame(0, new BuildCommand(new ProjectRoot($this->projectRoot))->run());
         self::assertSame(1, CountingCacheableDiscovery::$constructions);
     }
 

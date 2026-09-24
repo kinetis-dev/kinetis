@@ -39,20 +39,21 @@ final readonly class RoutesListCommand
      *     "resource" type and a readonly property requires one
      */
     public function __construct(
-        private ?string $projectRootOverride = null,
+        private ProjectRoot $projectRoot,
         private mixed $output = STDOUT,
     ) {}
 
     #[Command('routes:list', description: 'Displays every discovered route and the full global middleware pipeline', bootstrap: false)]
     public function run(): int
     {
-        // dirname(__DIR__) — see BuildCommand's own doc comment for why:
-        // this file lives one level deeper than bin/kinetis does.
-        $projectRoot = $this->projectRootOverride ?? ProjectRoot::detect(dirname(__DIR__));
+        $projectRoot = $this->projectRoot->path;
 
         $app = new AppScope();
         $config = Config::fromEnvironment();
         $app->instance(Config::class, $config);
+        // Bound as BootSequence::run() binds it, since this chain runs
+        // package bootstraps without it.
+        $app->instance(ProjectRoot::class, $this->projectRoot);
         RoutesFile::loadBootstrap($projectRoot)($app, $config);
         $app->boot();
 

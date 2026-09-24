@@ -13,9 +13,17 @@ namespace Kinetis\Runtime;
  * to <app>/vendor/bin before including this package's real bin/kinetis, so
  * __DIR__ inside this package resolves to the *package's own* bin directory,
  * not the consumer's).
+ *
+ * An instance carries the root an entry point passed to
+ * BootSequence::run(), which binds it on AppScope for package bootstraps
+ * and commands.
  */
-final class ProjectRoot
+final readonly class ProjectRoot
 {
+    public function __construct(
+        public string $path,
+    ) {}
+
     /**
      * $composerBinDir is accepted as an optional parameter for the same
      * testability reason as RuntimeDetector::detect()/AppEnvironment::detect()

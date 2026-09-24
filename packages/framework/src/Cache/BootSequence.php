@@ -11,6 +11,7 @@ use Kinetis\Console\CommandRegistry;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Runtime\ProjectRoot;
 
 /**
  * The one piece of assembly every framework-managed entry point
@@ -41,6 +42,10 @@ use Kinetis\Http\Routing\Router;
  * reconstruct live, right here" — the one case with no earlier
  * reconstruction to reuse.
  *
+ * `$projectRoot` is bound on `AppScope` as a {@see ProjectRoot} first, so
+ * every package bootstrap, the application's `bootstrap.php` and every
+ * command sees the exact root this entry point resolved.
+ *
  * `$runBootstrap` exists only for `bin/kinetis`'s `#[Command(bootstrap:
  * false)]` commands. `false` skips `RoutesFile::loadBootstrap()`
  * entirely — the whole package-then-application chain, every installed
@@ -49,8 +54,8 @@ use Kinetis\Http\Routing\Router;
  * operating only on the project's static shape must not require the
  * configuration any of those registrations might demand (a database
  * connection factory a package binds, say). `PluginDiscovery::
- * bindInstances()` and $listenerRegistry are unconditional regardless:
- * the discovered/cached registries always bind, `$runBootstrap` only
+ * bindInstances()`, $listenerRegistry and the ProjectRoot are
+ * unconditional regardless: they always bind, `$runBootstrap` only
  * gates the bootstrap chain on top of them. Every other caller leaves
  * this at its default, `true`, running package bootstraps first and the
  * application's own `bootstrap.php` last.
@@ -77,6 +82,7 @@ final class BootSequence
         ?array $packageBootstraps,
         bool $runBootstrap = true,
     ): void {
+        $app->instance(ProjectRoot::class, new ProjectRoot($projectRoot));
         PluginDiscovery::bindInstances(
             $app,
             $pluginInstances ?? PluginDiscovery::reconstruct(PluginDiscovery::discover($projectRoot)),

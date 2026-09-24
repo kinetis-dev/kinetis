@@ -6,9 +6,9 @@ namespace Kinetis\Http\Middleware;
 
 /**
  * Computes the real global-middleware order: SecurityHeadersMiddleware
- * first, then ExceptionHandlerMiddleware, then RequestBodyMiddleware,
- * then $explicit
- * (AppScope::middlewares()) as a group, then $discovered
+ * first, then CorsMiddleware when $explicit (AppScope::middlewares())
+ * names it, then ExceptionHandlerMiddleware, then RequestBodyMiddleware,
+ * then the rest of $explicit as a group, then $discovered
  * (GlobalMiddlewareDiscovery) minus anything already in $explicit.
  *
  * Returns plain class-strings, not resolved instances — the caller maps
@@ -24,15 +24,23 @@ final class GlobalMiddlewareOrder
      */
     public static function resolve(array $explicit, array $discovered): array
     {
+        // A registered CorsMiddleware is hoisted from its registered
+        // position so an allowed origin can read the error responses
+        // ExceptionHandlerMiddleware builds and the 400/413 that
+        // RequestBodyMiddleware returns without calling inward.
+        $cors = in_array(CorsMiddleware::class, $explicit, true) ? [CorsMiddleware::class] : [];
+
         return [
             // Outermost, so the headers reach the 500 that
             // ExceptionHandlerMiddleware itself produces. Safe there
             // because it cannot throw at request time — see its own
-            // docblock.
+            // docblock. CorsMiddleware shares that position and that
+            // guarantee.
             SecurityHeadersMiddleware::class,
+            ...$cors,
             ExceptionHandlerMiddleware::class,
             RequestBodyMiddleware::class,
-            ...self::merge($explicit, $discovered),
+            ...array_values(array_diff(self::merge($explicit, $discovered), $cors)),
         ];
     }
 

@@ -22,11 +22,11 @@ use Psr\Log\LogLevel;
 use Throwable;
 
 /**
- * Registered unconditionally as global middleware by Kernel, second only
- * to SecurityHeadersMiddleware (see GlobalMiddlewareOrder::resolve() for
- * the exact order). An uncaught exception from
- * anywhere in the pipeline — a controller, a route-level middleware,
- * application code in general — is caught here instead of propagating
+ * Registered unconditionally as global middleware by Kernel, inside only
+ * SecurityHeadersMiddleware and a registered CorsMiddleware (see
+ * GlobalMiddlewareOrder::resolve() for the exact order). An uncaught
+ * exception from anywhere in the pipeline — a controller, a route-level
+ * middleware, application code in general — is caught here instead of propagating
  * out of Kernel::handle() entirely: a Kinetis\Validation\Exception\ValidationException
  * becomes whatever $renderer answers with, one implementing
  * Kinetis\Http\Exception\HttpStatusExceptionInterface becomes the status

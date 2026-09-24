@@ -6,9 +6,11 @@ namespace Kinetis\Tests\Http\Middleware;
 
 use Kinetis\Container\AppScope;
 use Kinetis\Http\CallableRequestHandler;
+use Kinetis\Http\Form\FormLimits;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\CorsMiddleware;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Tests\Http\Fixtures\InvalidUtf8ThrowingController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Nyholm\Psr7\Response;
 use Nyholm\Psr7\ServerRequest;
@@ -385,6 +387,101 @@ final class CorsMiddlewareTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         new CorsMiddleware(allowedOriginPatterns: [$pattern]);
+    }
+
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function unsendableHeaderValues(): array
+    {
+        return [
+            'allowedMethods with CRLF' => ['allowedMethods', "GET\r\nX-Injected: 1"],
+            // Nyholm's single-string withHeader() form accepts this one.
+            'allowedHeaders with a trailing LF' => ['allowedHeaders', "X-Custom\n"],
+            'exposedHeaders with NUL' => ['exposedHeaders', "X-Total\0"],
+        ];
+    }
+
+    /**
+     * Registered CORS runs outside ExceptionHandlerMiddleware, where a
+     * throwing withHeader() would escape the request.
+     */
+    #[DataProvider('unsendableHeaderValues')]
+    public function test_a_header_value_that_cannot_be_sent_is_rejected_at_construction(string $parameter, string $value): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage("CorsMiddleware {$parameter} cannot be sent");
+
+        new CorsMiddleware(...[$parameter => [$value]]);
+    }
+
+    private function kernelWithCors(): Kernel
+    {
+        $app = new AppScope();
+        $app->middleware(CorsMiddleware::class);
+        $app->bind(CorsMiddleware::class, static fn () => new CorsMiddleware(allowedOrigins: ['https://example.com']));
+        $app->instance(FormLimits::class, new FormLimits(64));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(InvalidUtf8ThrowingController::class);
+
+        return new Kernel($app, $router);
+    }
+
+    /**
+     * @return array<string, array{int, string, string, array<string, string>, string}>
+     */
+    public static function frameworkBuiltErrors(): array
+    {
+        return [
+            'uncaught exception' => [500, 'GET', '/invalid-utf8-throws', [], ''],
+            'validation failure' => [422, 'POST', '/users', ['Content-Type' => 'application/json'], '{}'],
+            'body over the limit' => [413, 'POST', '/users', ['Content-Type' => 'application/json', 'Content-Length' => '65'], ''],
+        ];
+    }
+
+    /**
+     * @param array<string, string> $headers
+     */
+    #[DataProvider('frameworkBuiltErrors')]
+    public function test_kernel_lets_an_allowed_origin_read_framework_built_errors(
+        int $status,
+        string $method,
+        string $uri,
+        array $headers,
+        string $body,
+    ): void {
+        $response = $this->kernelWithCors()->handle(
+            new ServerRequest($method, $uri, ['Origin' => 'https://example.com', ...$headers], $body),
+        );
+
+        self::assertSame($status, $response->getStatusCode());
+        self::assertSame('https://example.com', $response->getHeaderLine('Access-Control-Allow-Origin'));
+        self::assertSame(['origin'], self::varyTokens($response));
+    }
+
+    /**
+     * @param array<string, string> $headers
+     */
+    #[DataProvider('frameworkBuiltErrors')]
+    public function test_kernel_gives_framework_built_errors_no_cors_headers_for_a_disallowed_or_absent_origin(
+        int $status,
+        string $method,
+        string $uri,
+        array $headers,
+        string $body,
+    ): void {
+        $kernel = $this->kernelWithCors();
+
+        foreach ([['Origin' => 'https://evil.example'], []] as $origin) {
+            $response = $kernel->handle(new ServerRequest($method, $uri, [...$origin, ...$headers], $body));
+
+            self::assertSame($status, $response->getStatusCode());
+            self::assertFalse($response->hasHeader('Access-Control-Allow-Origin'));
+            self::assertSame(['origin'], self::varyTokens($response));
+        }
     }
 
     public function test_works_as_global_middleware_and_answers_a_preflight_before_routing_would_404(): void

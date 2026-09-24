@@ -17,10 +17,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  * nothing's wrong, closes a real gap when something does" reasoning
  * RequestBodyMiddleware already uses.
  *
- * Outside ExceptionHandlerMiddleware rather than inside it, which is
- * the one deliberate exception to that class otherwise being outermost:
- * a 500 it generates is still a response a browser interprets, and
- * headers have to reach it too. Nothing here can throw at request time
+ * Outside ExceptionHandlerMiddleware rather than inside it, one of the
+ * two deliberate exceptions to that class otherwise being outermost
+ * (a registered CorsMiddleware is the other): a 500 it generates is
+ * still a response a browser interprets, and headers have to reach it
+ * too. Nothing here can throw at request time
  * — configuration is read once at construction and stripped of CR/LF
  * (a header value carrying either would both throw and be a header
  * injection), leaving process() unable to do anything but set headers.

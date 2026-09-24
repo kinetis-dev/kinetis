@@ -21,7 +21,9 @@ use Psr\Http\Server\RequestHandlerInterface;
  * The single place a request body becomes something a handler can use.
  * Registered unconditionally as global middleware by
  * {@see GlobalMiddlewareOrder}, inside ExceptionHandlerMiddleware and
- * outside every application middleware, so nothing downstream — a
+ * outside every application middleware except a registered
+ * {@see CorsMiddleware}, which never reads the body and runs outside so
+ * its headers reach this class's own 400 and 413. Nothing downstream — a
  * consumer's own middleware included — ever sees a body that has not
  * been through it.
  *
