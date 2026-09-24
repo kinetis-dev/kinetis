@@ -168,21 +168,28 @@ page with the same package's `kinetis_read_doc` tool from line 1,
 continuing only while the section it was routed to is unresolved; the
 whole-page resources stay available for when a complete page is what it
 needs. Those pages are published from Kinetis `main`, so
-`orbitron_inspect` and the three installed-source tools —
+`orbitron_inspect` and the four installed-source tools —
 `orbitron_read_package_source` for a bounded
 line window of one installed package's own file,
 `orbitron_search_package_source` for the lines of one such file that
-contain a literal string, and `orbitron_list_package_source` for the
+contain a literal string, `orbitron_search_package_source_tree` for the
+lines of a bounded directory tree of such a package that contain one,
+and `orbitron_list_package_source` for the
 direct children of one directory of such a package, all read live over
 that same connection — stay the authority for anything
 version-sensitive. Any package this project installed is readable that
-way, so the same three calls settle a third-party dependency's exact
+way, so the same four calls settle a third-party dependency's exact
 behavior as well as a `kinetis/*` one; `orbitron_inspect` names the
-`kinetis/*` packages, and `composer.lock` names every other. A `hasMore: true` is a success, not a refusal: the
-agent continues from `endLine + 1`, or from the last reported match line
-plus one, before treating the file as exhausted. An agent with that MCP
-connection lists the directory to find the file, searches the file to
-find the line and reads a window around it, and reaches
+`kinetis/*` packages, and `composer.lock` names every other. An agent
+with that MCP connection reads the package's own `composer.json` first.
+When the file is known, it searches that file and reads a window around
+a reported line. When only the package is known, it searches the
+package tree, narrows the query or path when `hasMore` is `true`, and
+narrows the path, most commonly to `src`, on a `package_search_oversize`
+refusal. It lists a directory when the layout itself is what it needs. A `hasMore: true`
+from a window or a file search is a success, not a refusal: the agent
+continues from `endLine + 1`, or from the last reported match line plus
+one, before treating the file as exhausted. It reaches
 `vendor/<vendor>/<package>` only when none of those yields a file or a
 call is refused — `vendor/` is a Docker volume, so that means reading it
 inside the container. A shell-only agent has no such call to make and

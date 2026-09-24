@@ -338,6 +338,13 @@ final readonly class McpServer implements MessageHandler
             return [
                 'content' => [['type' => 'text', 'text' => $result->text]],
                 'isError' => $result->isError,
+                // Cast because an empty document is a PHP list, which
+                // would encode as `[]` where the protocol requires an
+                // object; the text block stays for clients that read no
+                // structured output.
+                ...($result->structuredContent !== null
+                    ? ['structuredContent' => (object) $result->structuredContent]
+                    : []),
             ];
         }
 

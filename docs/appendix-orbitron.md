@@ -1,7 +1,7 @@
 # Appendix: Orbitron
 
 The complete `kinetis/orbitron` contract behind {doc}`orbitron`: the four
-commands and their document schemas, the three installed-source tools,
+commands and their document schemas, the four installed-source tools,
 the full MCP tool and resource catalogue, wiring an existing project,
 the launcher, trust and approval, diagnostics, exit codes, and the
 trust boundary. Read {doc}`orbitron` first for the short path; use this
@@ -293,7 +293,7 @@ suite after the scaffold says so. See {doc}`routing-validation`.
 
 ## Installed-source tools
 
-Three tools reach an installed package's own source, MCP-only: reading
+Four tools reach an installed package's own source, MCP-only: reading
 `vendor/<vendor>/<package>` directly is the shell equivalent, so no
 command duplicates them. Each re-reads the exact source this project
 has installed, live on every call — the published guides come from
@@ -373,7 +373,8 @@ is `line_out_of_range`. A call outside the schema is the same JSON-RPC
 The scan is literal and case-sensitive: no regular expression, no fuzzy
 or semantic matching, no ranking, no context-line option, no case mode
 and no result-count argument, and it searches the one file the call
-names — never a directory, never a whole package.
+names; {ref}`orbitron_search_package_source_tree <search-installed-package-tree>`
+searches a directory tree.
 
 A success reports `status: "ok"`, `package`, `version`, `path`, `query`,
 `startLine`, `matches` and `hasMore`. `matches` is a source-ordered list
@@ -384,13 +385,66 @@ not a refusal. `hasMore: true` means a later line matches as well: no
 cursor comes back, so continue with `startLine` set to the last
 reported line plus one.
 
+(search-installed-package-tree)=
+### `orbitron_search_package_source_tree`
+
+Answers *which file, and where in it*: reports the lines that contain a
+literal string in every file under one directory of one real installed,
+non-root package, so a file is found when the package is known and the
+file is not.
+
+| Argument | Type | Constraint |
+|---|---|---|
+| `package` | string | Required, non-empty, a real installed, non-root package name. |
+| `query` | string | Required, non-empty, at most 256 Unicode code points. |
+| `path` | string | Optional, non-empty, at most 256 Unicode code points, relative with `/` separators; default `.`. |
+
+`path` names any directory under that package's install root, under the
+syntax {ref}`orbitron_list_package_source <list-installed-package-source>`
+takes, or `.` for the root itself. The walk admits every file and
+directory under it by the rule a listing applies to a child, so a
+hidden entry, the package's own top-level `vendor/`, a link onto either
+of those and a link out of the package are never opened; a directory
+reachable by a link is walked once. A file larger than 1 MiB, or one
+that is not UTF-8 text with no NUL byte, is skipped rather than
+refusing the search, so an image or a generated asset beside the
+source does not stop it. A call outside the schema is the same JSON-RPC
+`-32602` before any lookup runs.
+
+The scan compares each line exactly as
+{ref}`orbitron_search_package_source <search-installed-package-source>`
+does: literal, case-sensitive, without the line's terminator.
+
+A success reports `status: "ok"`, `package`, `version`, `path`, `query`,
+`matches` and `hasMore`. `matches` is a list of
+`{"path": <string>, "line": <integer>, "content": <string>}` in bytewise
+order of `path` and then ascending `line`, at most 50 of them. Each
+`path` is relative to the package root and spelled by the names the
+walk took from the named `path`, a link's own name included, so it is
+the path a window of that file takes. Finding nothing is a success with `matches: []` and
+`hasMore: false`. There is no cursor: `hasMore: true` means a later
+file or line matches as well, and the caller narrows `query` or `path`.
+
+Two bounds hold before any file is opened. A tree holding more than 512
+reportable regular files, skipped files included, or more than 8 MiB
+across the files it would search, is refused whole — no partial match
+list comes back. Narrow `path`, most commonly to `src`.
+
+| `code` | Meaning |
+|---|---|
+| `package_unknown` | `package` is not a real installed, non-root package. |
+| `path_not_admitted` | `path` is outside the admitted syntax, `.` excepted as the package root, or a symlink resolves to a name this tool does not serve still inside the package. |
+| `source_missing` | The resolved target does not exist. |
+| `source_unreadable` | The resolved target lies outside the package, a directory or a file could not be opened or read, or a name under it is not valid UTF-8. |
+| `source_not_directory` | The admitted path resolves to a regular file. |
+| `package_search_oversize` | The tree holds more than 512 reportable files or more than 8 MiB of searchable files. |
+
 (list-installed-package-source)=
 ### `orbitron_list_package_source`
 
-Answers *which file*: reports the direct children of one directory of
-one real installed, non-root package, so a file is found when the
-package is known and the path is not. A package README is not a class
-index, and a guessed path is `source_missing`.
+Answers *what is here*: reports the direct children of one directory of
+one real installed, non-root package, for when the package's layout
+itself is what the task needs. A guessed path is `source_missing`.
 
 | Argument | Type | Constraint |
 |---|---|---|
@@ -432,18 +486,20 @@ directory under `vendor/<vendor>/<package>` when one is that large.
 
 **Finding the file:**
 
-1. For a known class or symbol, derive its file from the class name and
-   that package's own `composer.json` autoload map — itself an admitted
-   path — then search the file and read a window around a reported
-   line.
-2. For a known package but an unknown file, list `src` and then the
-   directory the task is about, or search that package's `README.md`
-   for the option, setting or term; either names the file to go to
-   next.
-3. Only when none of those yields a file, or a call is refused, read
-   `vendor/<vendor>/<package>` directly and record why. No tool here
-   searches across a package, so choosing the file is still the
-   caller's own work.
+1. Read the selected package's own `composer.json` — an admitted path —
+   for its description, requirements, PSR-4 roots and `extra.kinetis`.
+2. For a known class or symbol, derive its file from the class name and
+   that autoload map, then search the file and read a window around a
+   reported line.
+3. For a known package but an unknown file, search the package — or the
+   directory the task is about — with
+   `orbitron_search_package_source_tree`, then read a window around a
+   reported match. `hasMore: true` means narrow the query or the path;
+   `package_search_oversize` means narrow the path, most commonly to
+   `src`.
+4. List a directory when the package's layout itself is what you need.
+5. Only when none of those yields a file, or a call is refused, read
+   `vendor/<vendor>/<package>` directly and record why.
 
 ## Over MCP
 
@@ -470,6 +526,7 @@ configuration paths and discovery differences are.
 | `orbitron_scaffold_apply` | The `orbitron:scaffold --apply` document, and creates the two files. |
 | `orbitron_read_package_source` | See {ref}`orbitron_read_package_source <read-installed-package-source>`. Read-only. |
 | `orbitron_search_package_source` | See {ref}`orbitron_search_package_source <search-installed-package-source>`. Read-only. |
+| `orbitron_search_package_source_tree` | See {ref}`orbitron_search_package_source_tree <search-installed-package-tree>`. Read-only. |
 | `orbitron_list_package_source` | See {ref}`orbitron_list_package_source <list-installed-package-source>`. Read-only. |
 | `kinetis_read_doc` | One line window of one page of this documentation — see {ref}`The documentation resources <the-documentation-resources>`. Read-only, and one of the two tools that reach the network. |
 | `kinetis_search_doc` | The lines of one page of this documentation that contain a literal string — see {ref}`The documentation resources <the-documentation-resources>`. Read-only, and the other tool that reaches the network. |
@@ -486,12 +543,13 @@ refuses, because the targets exist by then.
 
 Four tools publish a closed, empty input schema and refuse a call that
 carries any argument at all. `orbitron_read_package_source`,
-`orbitron_search_package_source` and `orbitron_list_package_source`
-take `package`, `path` and — for the first two — either a line window
+`orbitron_search_package_source`, `orbitron_search_package_source_tree`
+and `orbitron_list_package_source` take `package`, `path` — optional
+for the tree search — and, except for the listing, either a line window
 or a literal query: each schema is validated in full before the package
-lookup, and `path` is then admitted against a fixed set of locations,
-with the resolved target re-admitted, before anything reaches the
-filesystem. `kinetis_read_doc` and `kinetis_search_doc` take a page URI
+lookup, and `path` is then admitted by its syntax under that package's
+install root, with the resolved target re-admitted, before anything
+reaches the filesystem. `kinetis_read_doc` and `kinetis_search_doc` take a page URI
 from the fixed catalogue and an optional line window or a literal query,
 and {doc}`mcp-docs` publishes, validates and answers both — Orbitron
 surfaces those tools unchanged rather than restating any of it. No
@@ -512,7 +570,7 @@ different inventories, and the snapshot is discarded with the
 response — nothing is watched, polled or cached between calls. An
 inventory that is absent or not the generated shape fails an operation
 that needs it rather than producing an answer from an older one. Every
-other document, and the file content and directory entries the three
+other document, and the file content and directory entries the four
 installed-source tools report, are re-read on each call too, and
 nothing about one call survives into the next.
 
@@ -810,8 +868,11 @@ it. The contract says so rather than letting an agent claim otherwise.
 Starting the server has an order, because it runs in a disposable
 container derived from the project's `app` service, the client launches
 one server process per session, and the client's own approval sits
-between the two. The first three are preconditions; only the fourth is
-the handshake.
+between the two. One connected MCP client launches and reuses one
+Orbitron server process for every call it makes; each manual launcher
+invocation, like the one under {ref}`Diagnostics <diagnostics>`, is a
+separate session. The first three are preconditions; only the fourth
+is the handshake.
 
 1. **Complete the stack's initial setup.** `bin/orbitron-mcp` launches a
    disposable container built from the `app` service's image, sharing
@@ -886,7 +947,7 @@ docker compose exec app vendor/bin/kinetis orbitron:scaffold
 
 Write the same handshake into `AGENTS.md` in terms of those commands and
 their exit codes. The contract is the requirement; MCP is one way to
-satisfy it. Neither installed-source tool has a command counterpart: a
+satisfy it. No installed-source tool has a command counterpart: a
 shell-only agent, or a project without Orbitron's MCP server registered,
 reads and searches `vendor/<vendor>/<package>` directly with its own
 file tools, or runs `composer show kinetis/<package>` for an installed
@@ -905,7 +966,10 @@ Kinetis version.
 The MCP server reports the same outcomes differently: a refusal or a
 failed write is an MCP result with `isError: true` still carrying the
 document, and the binary itself exits `0` at end of input and `1` when a
-write to stdout fails.
+write to stdout fails. Every tool result carries its document twice: as
+the JSON text content every client reads, and as the same object in
+`structuredContent` for a client that reads structured output. No
+output schema is published.
 
 A command's `CommandArguments` cannot enumerate options it never reads,
 so an option no command consumes is ignored rather than rejected.
@@ -920,8 +984,9 @@ installed-package metadata, the project's own `composer.json`, and — for
 `orbitron:scaffold` — the existence and symlink state of four fixed
 directories and two fixed paths. Over MCP only, it also reads a bounded
 line window of any file under one real installed, non-root package's
-install root, searches one such file for a literal string, and lists any
-directory under that same root — never the Composer root project,
+install root, searches one such file or one bounded directory tree
+under that root for a literal string, and lists any directory under
+that same root — never the Composer root project,
 meaning the application itself, a hidden name, or that package's own
 top-level `vendor/`. No application source, no configuration, no
 credentials. It starts no process.
@@ -933,9 +998,10 @@ whole write set. Neither a command line nor an MCP message supplies a
 path to either write target — the root comes from
 `Kinetis\Runtime\ProjectRoot::detect()` and every name below it is a
 constant — and nothing creates a directory.
-`orbitron_read_package_source`, `orbitron_search_package_source` and
-`orbitron_list_package_source` are the only calls that take a
-caller-supplied path, and only for reading — admitted by the syntax above
+`orbitron_read_package_source`, `orbitron_search_package_source`,
+`orbitron_search_package_source_tree` and `orbitron_list_package_source`
+are the only calls that take a caller-supplied path, and only for
+reading — admitted by the syntax above
 against that one install root, with the resolved target re-admitted,
 before anything reaches the filesystem.
 
@@ -948,7 +1014,7 @@ from its own fixed main-branch origin under the bounds described in
 carries no
 credential, sends nothing about the project, and no message can redirect
 it: the URL is built from that package's own constants. The four
-commands and Orbitron's own seven tools reach no network at all.
+commands and Orbitron's own eight tools reach no network at all.
 
 The MCP server is a local process the client launches, so that process
 and your filesystem permissions are the authority boundary. It has no
@@ -959,10 +1025,11 @@ The installed metadata is the one generated file
 inside `vendor/`: a command reads it through `Composer\InstalledVersions`,
 which loads it itself, and the MCP server evaluates that same fixed path
 under the detected project root — no message can name it. Beyond that one
-file, the commands and every MCP tool but three reach nothing else under
+file, the commands and every MCP tool but four reach nothing else under
 `vendor/`; only `orbitron_read_package_source`,
-`orbitron_search_package_source` and `orbitron_list_package_source` read
-further, and only under the install root of the one real installed,
+`orbitron_search_package_source`, `orbitron_search_package_source_tree`
+and `orbitron_list_package_source` read further, and only under the
+install root of the one real installed,
 non-root package a call names, as bounded in
 {ref}`Installed-source tools <read-installed-package-source>`.
 

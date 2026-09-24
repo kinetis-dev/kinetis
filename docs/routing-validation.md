@@ -175,6 +175,8 @@ input](#validating-input) shows. The body is read according to its
   `Content-Type`, is refused with `415`. A route that accepts arbitrary
   bytes — a signed webhook, a binary upload — takes a
   `ServerRequestInterface` parameter and reads the body itself.
+  Generic JSON is not placed in `getParsedBody()`: a route that bypasses
+  `#[Body]` decodes the staged body stream itself.
 - A JSON body that is not valid JSON, or not an object, is a `400`. An
   empty body counts as `{}`.
 - A body larger than `MAX_BODY_SIZE`, 2 MiB unless you change it, is

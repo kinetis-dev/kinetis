@@ -53,17 +53,22 @@ Before a version-sensitive claim governs a decision:
    a queue backend, say — as well as a `kinetis/*` one; `composer.lock`
    is where a non-Kinetis name comes from, since `orbitron_inspect`
    reports the `kinetis/*` inventory only.
+   Read the selected package's own `composer.json` first for its
+   description, requirements, PSR-4 roots and `extra.kinetis`.
    When the file is known but the line is not, call
    `orbitron_search_package_source` for a literal string in that file
-   and read a window around a line it reports. Derive the file from the
-   class and that package's own `composer.json` autoload map, list the
-   directory with `orbitron_list_package_source`, or search the
-   package's `README.md` for the option or term; `.` lists the package
-   root when the layout is unknown. No tool here searches across a
-   package, so choosing the file is the caller's own work. Only
-   when none of those yields a file, or a call is refused, open the file
-   under the project's own `vendor/<vendor>/<package>` directly — as a
-   shell-only agent does in every case. Documentation and interfaces
+   and read a window around a line it reports; derive the file from the
+   class and that autoload map. When the package is known but the file
+   is not, call `orbitron_search_package_source_tree` for a literal
+   string across the package, or a directory under it, and read a
+   window around a match it reports. Its `hasMore: true` means narrow
+   the query or the path; its `package_search_oversize` refusal means
+   narrow the path, most commonly to `src`. List a directory with
+   `orbitron_list_package_source` — `.` for the package root — when the
+   layout itself is what you need. Only when none of those yields a
+   file, or a call is refused, open the file under the project's own
+   `vendor/<vendor>/<package>` directly — as a shell-only agent does in
+   every case. Documentation and interfaces
    alone do not prove installed behavior; the installed source does.
 
 Neither documentation server reads application code. `mcp-docs` has no
@@ -75,9 +80,11 @@ fixed scaffold paths, and `orbitron_scaffold_apply` writes them.
 `orbitron_read_package_source` reads one bounded window of one real
 installed, non-root package's own source,
 `orbitron_search_package_source` searches one such file for a literal
-string, and `orbitron_list_package_source` lists the direct children of
-one directory of such a package; all three stay under the install root
-of one installed package, and none reaches anything else. No tool on
+string, `orbitron_search_package_source_tree` searches one bounded
+directory tree of such a package for a literal string, and
+`orbitron_list_package_source` lists the direct children of one
+directory of such a package; all four stay under the install root of
+one installed package, and none reaches anything else. No tool on
 either server reads
 the *application's* own source — its controllers, its tests, its
 configuration — so that inspection is still the calling agent's own,
