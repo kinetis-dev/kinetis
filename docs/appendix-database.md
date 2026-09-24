@@ -43,9 +43,10 @@ The bridge composes with each database package on that package's terms:
 
 With `DB_CONNECTION` set, the bridge's package bootstrap builds the
 default client, registers `close()` on `AppScope::onDispose()` and only
-then binds it under its dialect contract. Registering the close first is
-what makes a later bootstrap failure, or a failing `boot()`, still close
-a connection that is already open ({ref}`container-app-disposal`).
+then binds it under its dialect contract, `MysqlLink` or `PostgresLink`.
+Registering the close first is what makes a later bootstrap failure, or
+a failing `boot()`, still close a connection that is already open
+({ref}`container-app-disposal`).
 
 The callback holds that exact object, so ownership follows whoever built
 the link:
@@ -56,11 +57,18 @@ the link:
   the link the bridge built, if it built one; the replacement is
   application-owned and nothing here closes it. Register its own
   `onDispose()` if it needs one.
-- **No `DB_CONNECTION`.** No link is built, so there is nothing to
-  register and nothing to close. "No database" is a configuration, not
-  an error.
+- **No `DB_CONNECTION`.** No link is built and no link contract is
+  bound, so there is nothing to register and nothing to close. "No
+  database" is a configuration, not an error.
 - **A named connection.** Explicit application wiring throughout,
   including its lifetime.
+
+The bridge also binds the dialect-neutral `SqlLink` as an uncached alias
+that resolves the dialect contract on every lookup. Both types inject the
+same object; the alias opens no connection and registers no close of its
+own. A dialect link the application binds in `bootstrap.php` is what
+`SqlLink` returns from then on, even if `SqlLink` was resolved earlier,
+and an application's own `SqlLink` binding replaces the alias alone.
 
 Request-scoped cleanup is unchanged and separate: `TransactionGuard`'s
 `rollbackDangling()` and `EntityManager`'s `close()` are registered on
@@ -135,10 +143,10 @@ DB_REPORTING_HOST=reporting.internal
 DB_REPORTING_PASSWORD=secret
 ```
 
-Only the default connection is injected by its contract type. A named
-connection is retrieved by its id (`$app->get('db.reporting')`) and passed
-explicitly to whatever runs on it, such as `new Query($link)` or an
-`OrmFactory` ({doc}`orm`).
+Only the default connection is injected by its contract type, dialect
+or `SqlLink`. A named connection is retrieved by its id
+(`$app->get('db.reporting')`) and passed explicitly to whatever runs on
+it, such as `new Query($link)` or an `OrmFactory` ({doc}`orm`).
 
 (database-reference-standalone)=
 ## Without Kinetis

@@ -12,6 +12,7 @@ use Kinetis\DatabaseBridge\Tests\Fixtures\FakeSqlLink;
 use Kinetis\DatabaseBridge\Tests\Fixtures\RowsMysqlLink;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
 use Kinetis\Persistence\Driver\PdoPgsqlClient;
 use Kinetis\Persistence\TransactionGuard;
@@ -28,17 +29,33 @@ final class PackageBootstrapTest extends TestCase
 
         self::assertFalse($app->has(MysqlLink::class));
         self::assertFalse($app->has(PostgresLink::class));
+        self::assertFalse($app->has(SqlLink::class));
     }
 
-    public function test_the_default_connection_is_bound_under_its_dialect_contract(): void
+    public function test_the_default_connection_is_bound_under_its_dialect_contract_and_sql_link(): void
     {
         $mysql = self::bootedApp(['DB_CONNECTION' => 'mysql', 'DB_PASSWORD' => 'secret']);
         $postgres = self::bootedApp(['DB_CONNECTION' => 'pgsql', 'DB_PASSWORD' => 'secret']);
 
         self::assertInstanceOf(PdoMysqlClient::class, $mysql->get(MysqlLink::class));
+        self::assertSame($mysql->get(MysqlLink::class), $mysql->get(SqlLink::class));
         self::assertFalse($mysql->has(PostgresLink::class));
         self::assertInstanceOf(PdoPgsqlClient::class, $postgres->get(PostgresLink::class));
+        self::assertSame($postgres->get(PostgresLink::class), $postgres->get(SqlLink::class));
         self::assertFalse($postgres->has(MysqlLink::class));
+    }
+
+    public function test_resolving_sql_link_registers_no_second_close(): void
+    {
+        $app = self::bootedApp(['DB_CONNECTION' => 'mysql', 'DB_PASSWORD' => 'secret']);
+        /** @var PdoMysqlClient $link */
+        $link = $app->get(SqlLink::class);
+
+        self::assertCount(1, self::disposeCallbacks($app));
+
+        $app->dispose();
+
+        self::assertTrue($link->isClosed());
     }
 
     public function test_disposing_the_application_closes_the_connection_it_built(): void
@@ -115,6 +132,32 @@ final class PackageBootstrapTest extends TestCase
         $app->boot();
 
         self::assertSame($own, $app->get(MysqlLink::class));
+        self::assertSame($own, $app->get(SqlLink::class), 'SqlLink follows the replaced dialect binding');
+    }
+
+    public function test_sql_link_resolved_before_a_dialect_replacement_returns_the_replacement_afterwards(): void
+    {
+        $own = $this->createStub(MysqlLink::class);
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config(['DB_CONNECTION' => 'mysql', 'DB_PASSWORD' => 'secret']));
+        $built = $app->get(SqlLink::class);
+        $app->instance(MysqlLink::class, $own);
+        $app->boot();
+
+        self::assertInstanceOf(PdoMysqlClient::class, $built);
+        self::assertSame($own, $app->get(SqlLink::class));
+    }
+
+    public function test_an_application_sql_link_binding_wins_over_the_alias(): void
+    {
+        $own = new FakeSqlLink();
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config(['DB_CONNECTION' => 'mysql', 'DB_PASSWORD' => 'secret']));
+        $app->instance(SqlLink::class, $own);
+        $app->boot();
+
+        self::assertSame($own, $app->get(SqlLink::class));
+        self::assertInstanceOf(PdoMysqlClient::class, $app->get(MysqlLink::class));
     }
 
     /**

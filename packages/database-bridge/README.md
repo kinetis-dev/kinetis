@@ -34,7 +34,10 @@ composer require kinetis/database-bridge
 ```
 
 With `DB_CONNECTION` set, application code constructor-injects the
-connection and a `TransactionGuard` with no bootstrap code of its own:
+connection and a `TransactionGuard` with no bootstrap code of its own.
+Type the connection as its dialect contract (`MysqlLink` or
+`PostgresLink`) or as the dialect-neutral `SqlLink`; both resolve to the
+same link:
 
 ```php
 use Kinetis\Persistence\Contract\MysqlLink;
@@ -70,10 +73,14 @@ following automatically, through the `extra.kinetis` declaration in its
 - **Service binding**: with `DB_CONNECTION` set, the default connection
   is built and bound under its dialect contract
   (`Kinetis\Persistence\Contract\MysqlLink` or `Contract\PostgresLink`)
-  before your own `bootstrap.php` runs — your registration wins on the
-  same binding. The connection built here is closed when the application
-  scope is disposed; a link your own `bootstrap.php` binds stays yours to
-  close. No connection is built when `DB_CONNECTION` is unset.
+  before your own `bootstrap.php` runs, and
+  `Kinetis\Persistence\Contract\SqlLink` resolves whatever is bound
+  under that dialect contract. Your registration wins on the same
+  binding: a dialect link you bind is also what `SqlLink` returns, and a
+  `SqlLink` you bind replaces only that alias. The connection built here
+  is closed when the application scope is disposed; a link your own
+  `bootstrap.php` binds stays yours to close. No connection is built and
+  no link contract is bound when `DB_CONNECTION` is unset.
   Named connections stay explicit wiring:
   `Kinetis\DatabaseBridge\ConnectionFactory::fromConfig($config, 'reporting')`.
 - **Lazy transaction cleanup**: every request scope — an HTTP request, a
