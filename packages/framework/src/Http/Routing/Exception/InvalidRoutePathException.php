@@ -8,10 +8,11 @@ use RuntimeException;
 
 /**
  * A declared path can't be turned into a working route: it isn't
- * absolute, it carries a control character, or its `{...}` placeholder
- * syntax is malformed. Every case fails at registration, where the
- * mistake is, rather than as a silent permanent 404 on the route's first
- * real request.
+ * absolute, it carries a control character, its `{...}` placeholder
+ * syntax is malformed, or its `where` constraints don't compile into a
+ * working matcher. Every case fails at registration, where the mistake
+ * is, rather than as a silent permanent 404 on the route's first real
+ * request.
  */
 final class InvalidRoutePathException extends RuntimeException
 {
@@ -76,17 +77,60 @@ final class InvalidRoutePathException extends RuntimeException
     }
 
     /**
-     * A `{...}` expression that isn't a plain placeholder name. Routing
-     * describes URL structure only, so there is no inline syntax for
-     * constraining what a placeholder matches — the value's own shape is
-     * described where the value is consumed.
+     * A `{...}` expression that isn't a plain placeholder name. There is
+     * no inline pattern syntax: a route constrains what a placeholder
+     * admits through the verb attribute's `where` map instead.
      */
     public static function malformedPlaceholder(string $pathTemplate, string $expression): self
     {
         return new self(sprintf(
-            'Route "%s" declares "%s", which is not a placeholder — a placeholder is "{name}", where name is a plain identifier. Constrain what a path value may hold with the controller parameter\'s own type and validation attributes.',
+            'Route "%s" declares "%s", which is not a placeholder — a placeholder is "{name}", where name is a plain identifier. Constrain what a placeholder admits with the route attribute\'s where: map.',
             $pathTemplate,
             $expression,
+        ));
+    }
+
+    public static function unknownConstraintPlaceholder(string $pathTemplate, string $name): self
+    {
+        return new self(sprintf(
+            'Route "%s" declares a where: constraint for "{%s}", which is not a placeholder in that path.',
+            $pathTemplate,
+            $name,
+        ));
+    }
+
+    /**
+     * A `where` entry whose key isn't a string or whose value isn't a
+     * non-empty string free of control characters. A literal control
+     * byte is refused because the compiled pattern's delimiter is one.
+     */
+    public static function invalidConstraint(string $pathTemplate, int|string $key): self
+    {
+        return new self(sprintf(
+            'Route "%s" declares an invalid where: entry at key %s — each entry maps a placeholder name to a non-empty PCRE fragment with no control characters.',
+            $pathTemplate,
+            is_string($key) ? "\"{$key}\"" : (string) $key,
+        ));
+    }
+
+    /**
+     * $pcreError is `preg_last_error_msg()` from the construction probe.
+     *
+     * @param array<string,string> $where
+     */
+    public static function uncompilableConstraint(string $pathTemplate, array $where, string $pcreError): self
+    {
+        $constraints = [];
+
+        foreach ($where as $name => $fragment) {
+            $constraints[] = "{$name}: {$fragment}";
+        }
+
+        return new self(sprintf(
+            'Route "%s" does not compile with its where: constraints (%s): %s. Each constraint is a PCRE2 fragment written without delimiters or anchors.',
+            $pathTemplate,
+            implode(', ', $constraints),
+            $pcreError,
         ));
     }
 }

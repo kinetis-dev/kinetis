@@ -26,7 +26,7 @@ use Kinetis\Validation\Hydrator;
 final readonly class HttpCache
 {
     public function __construct(
-        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> */
+        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>,where:array<string,string>}> */
         public array $routes,
         /** @var array<string, list<HttpBindingPlan>> */
         public array $httpBindingPlans,
@@ -61,7 +61,7 @@ final readonly class HttpCache
     ];
 
     private const array ROUTE_ENTRY_KEYS = [
-        'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware',
+        'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware', 'where',
     ];
 
     private const string ARTIFACT_COMPONENT = 'HttpCache route';
@@ -95,7 +95,7 @@ final readonly class HttpCache
         Dispatcher::validateBindingPlans($httpBindingPlans);
         Hydrator::validatePlans($hydrationPlans);
 
-        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> $routes */
+        /** @var list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>,where:array<string,string>}> $routes */
         $routes = array_map(self::validateRouteEntry(...), $routes);
         /** @var array<string, list<HttpBindingPlan>> $httpBindingPlans */
         /** @var array<string, HydrationPlan> $hydrationPlans */
@@ -115,7 +115,7 @@ final readonly class HttpCache
 
     /**
      * @param array<array-key, mixed> $entry
-     * @return array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}
+     * @return array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>,where:array<string,string>}
      */
     private static function validateRouteEntry(array $entry): array
     {
@@ -127,6 +127,7 @@ final readonly class HttpCache
         $controllerMethod = ArtifactValidation::string($entry, self::ARTIFACT_COMPONENT, 'controllerMethod');
         $status = ArtifactValidation::int($entry, self::ARTIFACT_COMPONENT, 'status');
         $middleware = ArtifactValidation::listOfStrings($entry, self::ARTIFACT_COMPONENT, 'middleware');
+        $where = ArtifactValidation::mapOfStrings($entry, self::ARTIFACT_COMPONENT, 'where');
 
         /** @var class-string $controllerClass */
         return [
@@ -136,6 +137,7 @@ final readonly class HttpCache
             'controllerMethod' => $controllerMethod,
             'status' => $status,
             'middleware' => $middleware,
+            'where' => $where,
         ];
     }
 }

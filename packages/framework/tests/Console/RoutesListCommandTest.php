@@ -85,16 +85,16 @@ final class RoutesListCommandTest extends TestCase
         $output = $this->runCommand();
 
         self::assertMatchesRegularExpression(
-            '/GET\s+\/fixture-ping\s+200\s+Kinetis\\\\Tests\\\\Cache\\\\Fixtures\\\\Http\\\\DiscoveredPingController::ping/',
+            '/GET\s+\/fixture-ping\s+—\s+200\s+Kinetis\\\\Tests\\\\Cache\\\\Fixtures\\\\Http\\\\DiscoveredPingController::ping/',
             $output,
         );
     }
 
-    public function test_a_route_with_no_middleware_shows_a_placeholder(): void
+    public function test_a_route_with_no_constraints_or_middleware_shows_a_placeholder_in_each_column(): void
     {
         $output = $this->runCommand();
 
-        self::assertMatchesRegularExpression('/\/fixture-ping\s+200\s+\S+::ping\s+—/', $output);
+        self::assertMatchesRegularExpression('/\/fixture-ping\s+—\s+200\s+\S+::ping\s+—/', $output);
     }
 
     public function test_a_routes_middleware_prints_class_level_then_method_level_in_order(): void
@@ -108,9 +108,33 @@ final class RoutesListCommandTest extends TestCase
         self::assertStringEndsWith(RouteLevelMiddlewareA::class . ' ->', $lines[$firstLine]);
         self::assertStringEndsWith(RouteLevelMiddlewareB::class, $lines[$firstLine + 1]);
 
-        // The continuation line's other four columns are blank, not a
-        // repeat of the route's method/path/status/controller.
+        // The continuation line's other columns are blank, not a repeat
+        // of the route's method/path/status/controller.
         self::assertStringNotContainsString('/fixture-with-middleware', $lines[$firstLine + 1]);
+    }
+
+    /**
+     * The Where column lists one constraint per line in placeholder order,
+     * not declaration order, and the row grows to its tallest cell even
+     * when that cell is not Middleware.
+     */
+    public function test_a_routes_constraints_print_one_per_line_in_placeholder_order(): void
+    {
+        $lines = self::lines($this->runCommand());
+        $firstLine = self::lineIndexContaining($lines, '/fixture-archive/{year}/{slug}');
+
+        self::assertMatchesRegularExpression('/\{slug\}\s+year: \\\\d\{4\}\s+200\s+\S+::show\s+—$/', $lines[$firstLine]);
+        // The continuation line carries the second constraint alone.
+        self::assertSame('slug: [a-z-]+', trim($lines[$firstLine + 1]));
+    }
+
+    public function test_columns_after_the_where_placeholder_stay_aligned_with_the_header(): void
+    {
+        $lines = self::lines($this->runCommand());
+        $header = $lines[self::lineIndexContaining($lines, 'Method  Path')];
+        $pingLine = $lines[self::lineIndexContaining($lines, '/fixture-ping')];
+
+        self::assertSame(mb_strpos($header, 'Status'), mb_strpos($pingLine, '200'));
     }
 
     /**

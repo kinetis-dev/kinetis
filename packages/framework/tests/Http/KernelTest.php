@@ -25,6 +25,7 @@ use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Fixtures\ThrowingLogger;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
+use Kinetis\Tests\Http\Fixtures\ConstrainedRouteController;
 use Kinetis\Tests\Http\Fixtures\CurrentUserController;
 use Kinetis\Tests\Http\Fixtures\DiscoveredGlobalMiddleware;
 use Kinetis\Tests\Http\Fixtures\DisposalRecorder;
@@ -127,6 +128,56 @@ final class KernelTest extends TestCase
 
         self::assertSame(404, $response->getStatusCode());
         self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
+    }
+
+    /**
+     * A constraint decides routing; the controller parameter's type still
+     * decides binding. `1.5` passes the `[0-9.]+` constraint and then
+     * fails `int` binding, while `abc` never reaches the controller.
+     */
+    public function test_a_constraint_miss_is_a_404_and_a_post_match_binding_failure_stays_a_422(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(ConstrainedRouteController::class);
+        $kernel = new Kernel($app, $router);
+
+        self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/versions/abc'))->getStatusCode());
+        self::assertSame(422, $kernel->handle(new ServerRequest('GET', '/versions/1.5'))->getStatusCode());
+
+        $response = $kernel->handle(new ServerRequest('GET', '/files/docs/guide.md'));
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['path' => 'docs/guide.md'], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * A PCRE failure while matching is a server failure, never a false
+     * 404. The route's controller is never reached, so it need not exist.
+     */
+    public function test_a_pcre_failure_while_matching_becomes_a_500_rather_than_a_404(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $router = Router::fromArray([[
+            'httpMethod' => 'GET',
+            'pathTemplate' => '/pcre/{value}',
+            'controllerClass' => 'App\\Unreached',
+            'controllerMethod' => 'm',
+            'status' => 200,
+            'middleware' => [],
+            'where' => ['value' => '(?:a+)+[bc]'],
+        ]]);
+        $limit = ini_set('pcre.backtrack_limit', '1000');
+        self::assertNotFalse($limit);
+
+        try {
+            $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/pcre/' . str_repeat('a', 40)));
+        } finally {
+            ini_set('pcre.backtrack_limit', $limit);
+        }
+
+        self::assertSame(500, $response->getStatusCode());
     }
 
     public function test_returns_a_405_json_response_for_a_disallowed_method(): void

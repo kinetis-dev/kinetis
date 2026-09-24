@@ -9,9 +9,13 @@ use Attribute;
 #[Attribute(Attribute::TARGET_METHOD)]
 final readonly class Delete implements RouteAttribute
 {
+    /**
+     * @param array<string,string> $where see RouteAttribute::where()
+     */
     public function __construct(
         private string $path,
         private int $status = 200,
+        private array $where = [],
     ) {}
 
     #[\Override]
@@ -30,5 +34,11 @@ final readonly class Delete implements RouteAttribute
     public function status(): int
     {
         return $this->status;
+    }
+
+    #[\Override]
+    public function where(): array
+    {
+        return $this->where;
     }
 }

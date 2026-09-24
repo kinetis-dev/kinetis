@@ -311,10 +311,10 @@ final class Dispatcher
             // impossible, unconditionally — unlike #[Query] (a repeated
             // query key, ?tags=a&tags=b, works, see "Query and path
             // values are raw strings" in routing-validation.md), a route
-            // placeholder is always exactly one path segment, captured as
-            // a single string. There is no repetition (or any other)
-            // convention that could ever make a path segment become an
-            // array.
+            // placeholder always captures one string — which may contain
+            // `/` under a `where` constraint, but is still one string.
+            // There is no repetition (or any other) convention that could
+            // ever make a path value become an array.
             if (($scalarType === 'array' || $scalarType === 'iterable') && $source === 'path') {
                 throw UnresolvableParameterException::forImpossiblePathArray($name);
             }

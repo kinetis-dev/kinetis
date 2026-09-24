@@ -1620,7 +1620,7 @@ final class DispatcherTest extends TestCase
     }
 
     /**
-     * A route placeholder is always one string segment — an
+     * A route placeholder always captures one string — an
      * array/iterable-typed path parameter can never be satisfied by any
      * request, unlike a #[Query] array. Rejected the same way, at
      * registration.

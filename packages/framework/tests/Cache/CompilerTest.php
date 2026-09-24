@@ -8,9 +8,11 @@ use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Dispatcher;
+use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Tests\Http\Fixtures\Address;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
+use Kinetis\Tests\Http\Fixtures\ConstrainedRouteController;
 use Kinetis\Tests\Http\Fixtures\CreateOrderRequest;
 use Kinetis\Tests\Http\Fixtures\EnumDefaultParameterController;
 use Kinetis\Tests\Http\Fixtures\EnumParameterController;
@@ -155,6 +157,32 @@ final class CompilerTest extends TestCase
 
             $router = Router::fromArray($reloaded->routes);
             self::assertSame('index', $router->match('GET', '/v1/users')->route->controllerMethod);
+        } finally {
+            @unlink($store->path());
+            @rmdir($directory);
+        }
+    }
+
+    public function test_route_constraints_survive_the_full_compile_and_reload_round_trip(): void
+    {
+        $live = new Router();
+        $live->register(ConstrainedRouteController::class);
+
+        $directory = sys_get_temp_dir() . '/kinetis_constraint_cache_' . bin2hex(random_bytes(8));
+        $store = new CacheStore($directory);
+
+        try {
+            $store->write((new Compiler())->compile($live));
+            $reloaded = $store->load()?->http;
+
+            self::assertNotNull($reloaded);
+
+            $router = Router::fromArray($reloaded->routes);
+            self::assertSame($live->toArray(), $router->toArray());
+            self::assertSame(['path' => 'a/b'], $router->match('GET', '/files/a/b')->pathParams);
+
+            $this->expectException(RouteNotFoundException::class);
+            $router->match('GET', '/articles/123');
         } finally {
             @unlink($store->path());
             @rmdir($directory);

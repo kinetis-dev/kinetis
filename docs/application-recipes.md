@@ -31,6 +31,30 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Non-goal**: hand-written validation duplicating what a constraint
   attribute already expresses.
 
+## Constrained or catch-all route
+
+- **Guides**: {doc}`routing-validation`'s "Route constraints", then the
+  complete rules in {doc}`appendix-routing-validation`'s "Route
+  constraints".
+- **Lifecycle/I-O**: a route's `where` map is fixed at registration and
+  compiled once, like the rest of the route; nothing about it varies per
+  request.
+- **Security/integrity**: a `where` fragment decides whether the route
+  admits a path — a mismatch is a `404` and no controller runs — while
+  the parameter's type and validation attributes still decide the value,
+  whose failure is a `422`. A constraint never picks between two routes:
+  same method and path shape is a duplicate whatever the fragments say.
+  A catch-all such as `.*` captures raw text that may hold `//` or `..`;
+  validate and canonicalise it before any filesystem use.
+- **Verification**: a `TestClient` request the constraint admits, one it
+  rejects asserting the `404`, and, where the value is also validated,
+  an admitted request asserting the `422`. The generated document
+  carries the fragment as `x-kinetis-route-constraint` on the path
+  parameter; assert it there rather than expecting a JSON Schema
+  `pattern`.
+- **Non-goal**: using constraints to route one path shape to different
+  handlers, or relying on `/files/{path}` to answer `/files` itself.
+
 ## Browser form with session, CSRF, and validation errors
 
 - **Guides**: {doc}`session`, {doc}`routing-validation`, {doc}`middleware`,

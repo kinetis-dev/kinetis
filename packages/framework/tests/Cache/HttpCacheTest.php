@@ -14,7 +14,10 @@ final class HttpCacheTest extends TestCase
     public function test_to_array_from_array_round_trip_preserves_every_field_including_mixed_default_value_types(): void
     {
         $cache = new HttpCache(
-            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200, 'middleware' => []]],
+            routes: [
+                ['httpMethod' => 'GET', 'pathTemplate' => '/users', 'controllerClass' => 'App\\C', 'controllerMethod' => 'index', 'status' => 200, 'middleware' => [], 'where' => []],
+                ['httpMethod' => 'GET', 'pathTemplate' => '/files/{path}', 'controllerClass' => 'App\\C', 'controllerMethod' => 'file', 'status' => 200, 'middleware' => [], 'where' => ['path' => '.*']],
+            ],
             httpBindingPlans: [
                 'App\\C::index' => [
                     ['name' => 'page', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'enumClass' => null, 'hasDefault' => true, 'defaultValue' => 1, 'allowsNull' => false, 'constraints' => []],
@@ -51,6 +54,7 @@ final class HttpCacheTest extends TestCase
         $reconstructed = HttpCache::fromArray($cache->toArray());
 
         self::assertEquals($cache, $reconstructed);
+        self::assertSame(['path' => '.*'], $reconstructed->routes[1]['where']);
         self::assertTrue($reconstructed->hydrationPlans['App\\Dto']['parameters'][0]['absent'] === false);
         self::assertSame(
             [['class' => 'Kinetis\\Validation\\ObjectConstraints\\AtLeastOneProvided', 'args' => ['name']]],
@@ -96,7 +100,7 @@ final class HttpCacheTest extends TestCase
     private function validData(): array
     {
         return (new HttpCache(
-            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
+            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => [], 'where' => []]],
             httpBindingPlans: [
                 'App\\C::m' => [
                     ['name' => 'id', 'source' => 'query', 'dtoClass' => null, 'bodyRoot' => null, 'scalarType' => 'int', 'enumClass' => null, 'hasDefault' => false, 'defaultValue' => null, 'allowsNull' => false, 'constraints' => []],
@@ -135,6 +139,39 @@ final class HttpCacheTest extends TestCase
         $data['routes'][0]['extra'] = 'nope';
 
         $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    public function test_from_array_rejects_a_route_entry_missing_its_constraints(): void
+    {
+        $data = $this->validData();
+        unset($data['routes'][0]['where']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        HttpCache::fromArray($data);
+    }
+
+    /**
+     * @return iterable<string, array{mixed, string}>
+     */
+    public static function malformedRouteConstraints(): iterable
+    {
+        yield 'not an array' => ['.*', '"where"'];
+        yield 'a numeric key' => [['.*'], 'a non-string key in "where"'];
+        yield 'a numeric-looking string key' => [['1' => '.*'], 'a non-string key in "where"'];
+        yield 'a non-string value' => [['id' => 5], 'a non-string entry for "id" in "where"'];
+    }
+
+    #[DataProvider('malformedRouteConstraints')]
+    public function test_from_array_rejects_route_constraints_that_are_not_a_map_of_strings(mixed $where, string $message): void
+    {
+        $data = $this->validData();
+        $data['routes'][0]['where'] = $where;
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+        $this->expectExceptionMessage($message);
 
         HttpCache::fromArray($data);
     }

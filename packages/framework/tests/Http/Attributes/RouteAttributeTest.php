@@ -52,6 +52,7 @@ final class RouteAttributeTest extends TestCase
         self::assertSame($method, $attribute->httpMethod());
         self::assertSame('/orders', $attribute->path());
         self::assertSame($defaultStatus, $attribute->status());
+        self::assertSame([], $attribute->where());
     }
 
     /**
@@ -73,6 +74,17 @@ final class RouteAttributeTest extends TestCase
     public function test_the_status_can_be_overridden(string $class): void
     {
         self::assertSame(418, new $class('/teapot', status: 418)->status());
+    }
+
+    /**
+     * @param class-string<RouteAttribute> $class
+     */
+    #[DataProvider('verbClasses')]
+    public function test_reports_its_constraints_as_declared(string $class): void
+    {
+        $where = ['slug' => '[a-z]+', 'id' => '\d+'];
+
+        self::assertSame($where, new $class('/{id}/{slug}', where: $where)->where());
     }
 
     /**
