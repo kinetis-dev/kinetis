@@ -317,6 +317,18 @@ cover. The README's "Repositories and queries" and "Relationships" give
 the complete API. `EntityRepository` is final: an application repository
 wraps it and injects `EntityManager`, which makes it request-scoped too.
 
+A predicate naming a `#[BelongsTo]` property takes the related entity's
+identifier value, not the entity object:
+
+```{code-block} php
+$comments->query()
+    ->where('article', '=', $article->id())
+    ->get();
+```
+
+The value converts through the target's identifier type. Passing the related
+entity object throws `MappingException` before SQL runs.
+
 ## Write a whole aggregate
 
 An inverse relationship marked `owned` ties a parent and its children
