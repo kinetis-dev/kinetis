@@ -45,7 +45,7 @@ final class DocsApplication implements McpApplication
     public const string SERVER_NAME = 'kinetis-mcp-docs';
 
     /** Paired against this package's manifest version by the suite. */
-    public const string SERVER_VERSION = '1.7.0';
+    public const string SERVER_VERSION = '1.8.0';
 
     /**
      * The documentation-window tool's name. Exported because
@@ -377,14 +377,14 @@ final class DocsApplication implements McpApplication
             $endLine = $line;
         }
 
-        return ToolResult::text(self::document([
+        return self::document([
             'status' => 'ok',
             'uri' => $uri,
             'startLine' => $startLine,
             'endLine' => $endLine,
             'hasMore' => $endLine < $total,
             'content' => $content,
-        ]));
+        ], isError: false);
     }
 
     /**
@@ -439,14 +439,14 @@ final class DocsApplication implements McpApplication
             $matches[] = ['line' => $line, 'content' => $content];
         }
 
-        return ToolResult::text(self::document([
+        return self::document([
             'status' => 'ok',
             'uri' => $uri,
             'query' => $query,
             'startLine' => $startLine,
             'matches' => $matches,
             'hasMore' => $hasMore,
-        ]));
+        ], isError: false);
     }
 
     /**
@@ -585,22 +585,25 @@ final class DocsApplication implements McpApplication
      */
     private static function refuse(string $code): ToolResult
     {
-        return ToolResult::error(self::document(['status' => 'error', 'code' => $code]));
+        return self::document(['status' => 'error', 'code' => $code], isError: true);
     }
 
     /**
-     * One document per result: key order as built, slashes and unicode
-     * left as written, and a single trailing newline.
+     * One document per result, as text — key order as built, slashes and
+     * unicode left as written, and a single trailing newline — and as the
+     * same array for `structuredContent`, so the two cannot differ.
      *
      * @param array<string, mixed> $body
      * @throws JsonException
      */
-    private static function document(array $body): string
+    private static function document(array $body, bool $isError): ToolResult
     {
-        return json_encode(
+        $text = json_encode(
             $body,
             JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         ) . "\n";
+
+        return ToolResult::structured($text, $body, $isError);
     }
 
     private function reportDiagnostic(string $message): void

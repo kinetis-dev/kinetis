@@ -20,7 +20,9 @@ use stdClass;
  * tool, one that reports progress, one that refuses, one that throws a
  * protocol error, one that throws something unexpected, one that returns
  * bytes JSON cannot encode, one that raises a protocol error carrying
- * such bytes, an annotated tool, and resources that do the same.
+ * such bytes, structured results — a success, a refusal, an empty
+ * document and one JSON cannot encode — an annotated tool, and resources
+ * that do the same.
  *
  * Every call records what it received, so a test can assert the exact
  * argument tree and context the server passed through.
@@ -57,6 +59,10 @@ final class ProbeApplication implements McpApplication
             new ToolDescription('explode', 'Throws something unexpected.', []),
             new ToolDescription('unencodable', 'Returns bytes JSON cannot carry.', []),
             new ToolDescription('unencodable_error', 'Raises a protocol error JSON cannot carry.', []),
+            new ToolDescription('structured', 'Returns a document as text and as an object.', []),
+            new ToolDescription('structured_refusal', 'Refuses with a document as text and as an object.', []),
+            new ToolDescription('structured_empty', 'Returns an empty document.', []),
+            new ToolDescription('structured_unencodable', 'Returns an object JSON cannot carry.', []),
             new ToolDescription('annotated', 'Carries annotations.', [], new ToolAnnotations(
                 readOnly: false,
                 destructive: true,
@@ -95,6 +101,20 @@ final class ProbeApplication implements McpApplication
             // survive them.
             'unencodable' => ToolResult::text("\xFF secret-marker"),
             'unencodable_error' => throw JsonRpcException::invalidParams("\xFF secret-marker"),
+            'structured' => ToolResult::structured(
+                '{"status":"ok","matches":[]}',
+                ['status' => 'ok', 'matches' => []],
+                false,
+            ),
+            'structured_refusal' => ToolResult::structured(
+                '{"status":"error","code":"probe_refused"}',
+                ['status' => 'error', 'code' => 'probe_refused'],
+                true,
+            ),
+            'structured_empty' => ToolResult::structured('{}', [], false),
+            // The text encodes and the object does not, so the object is
+            // the only thing the boundary can be refusing.
+            'structured_unencodable' => ToolResult::structured('{}', ['value' => "\xFF secret-marker"], false),
             default => ToolResult::text(json_encode($arguments, JSON_THROW_ON_ERROR)),
         };
     }

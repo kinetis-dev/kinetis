@@ -711,7 +711,9 @@ final class DocsApplicationTest extends TestCase
     }
 
     /**
-     * The one text content block a result carries, decoded.
+     * The one text content block a result carries, decoded, after
+     * asserting that `structuredContent` is that same document — so every
+     * window, search and refusal asserted through here proves the parity.
      *
      * @param array<string, mixed> $frame
      * @return array<string, mixed>
@@ -722,8 +724,11 @@ final class DocsApplicationTest extends TestCase
         self::assertCount(1, $content);
         self::assertSame('text', $content[0]['type']);
 
-        /** @var array<string, mixed> */
-        return json_decode($content[0]['text'], associative: true, flags: JSON_THROW_ON_ERROR);
+        /** @var array<string, mixed> $document */
+        $document = json_decode($content[0]['text'], associative: true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame($document, $frame['result']['structuredContent']);
+
+        return $document;
     }
 
     /**

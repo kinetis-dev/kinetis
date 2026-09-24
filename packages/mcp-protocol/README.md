@@ -44,6 +44,11 @@ composer require kinetis/mcp-protocol
   and `[]` stay distinct all the way to a tool's arguments.
 - **`initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`,
   `resources/read`**, and the notification rules around them.
+- **Tool results.** One text content block and `isError`.
+  `ToolResult::structured($text, $document, $isError)` also sends the
+  associative array that text encodes as `structuredContent`, always a
+  JSON object, for clients that read structured output; the text block
+  stays for every other client. No output schema is published.
 - **Stdio framing.** Bounded reads, a 2 MiB payload cap, checked partial
   writes, and progress notifications ordered before the final response.
 

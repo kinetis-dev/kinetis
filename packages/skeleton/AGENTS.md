@@ -148,24 +148,27 @@ Once Orbitron is ready, every task runs the same way:
    the same way; `orbitron_inspect` names the `kinetis/*` packages and
    `composer.lock` names every other.
 
-   - **Known class or symbol.** Derive its file from the class name and
-     that package's own `composer.json` autoload map — itself a
-     readable path — then call `orbitron_search_package_source` for the
-     symbol and `orbitron_read_package_source` for a window around a
-     line it reports.
+   - **First.** Read the package's own `composer.json` for its
+     description, requirements, autoload roots and `extra.kinetis`.
+   - **Known file.** Derive it from the class name and that autoload
+     map, then call `orbitron_search_package_source` for the symbol and
+     `orbitron_read_package_source` for a window around a line it
+     reports.
    - **Known package, unknown file.** Call
-     `orbitron_list_package_source` with `.` for the package's install
-     root, then list the directory the task is about, working down from
-     what that listing shows; it refuses a hidden entry and the
-     package's own top-level `vendor/`. Or search that package's
-     `README.md` for the option, setting or term, which names the class
-     or file to go to next.
-   - A success reporting `hasMore: true` is not a refusal. Continue with
-     `startLine` set to `endLine + 1` for a window, or to the last
-     reported match line plus one for a search, until the needed
-     evidence is in view or `hasMore` is `false`.
-   - No tool searches across a package, so choosing the file is your
-     own work. Read `vendor/<vendor>/<package>` inside the container only
+     `orbitron_search_package_source_tree` for a literal string across
+     the package, or a directory under it, and read a window around a
+     match it reports. Its `hasMore: true` means narrow the query or the
+     path; its `package_search_oversize` refusal means narrow the path,
+     most commonly to `src`.
+   - **Layout.** Call `orbitron_list_package_source` — `.` for the
+     package's install root — when the directory layout itself is what
+     you need.
+   - For a window or a file search, a success reporting `hasMore: true`
+     is not a refusal. Continue with `startLine` set to `endLine + 1`
+     for a window, or to the last reported match line plus one for a
+     search, until the needed evidence is in view or `hasMore` is
+     `false`.
+   - Read `vendor/<vendor>/<package>` inside the container only
      when no step above yields a file, or
      when a call returns an exact refusal —
      a `status: error` result naming why, such as `package_unknown` —

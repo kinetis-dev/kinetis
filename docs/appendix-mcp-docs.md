@@ -103,7 +103,7 @@ than the client's installed release. No method depends on an earlier
 | `notifications/initialized` | Accepted and answered with nothing, as every notification is. |
 | `ping` | An empty result. |
 | `tools/list` | The two tools, `kinetis_read_doc` then `kinetis_search_doc`, with their schemas and annotations. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
-| `tools/call` | Runs `kinetis_read_doc` or `kinetis_search_doc`; see "The page window" and "The page search" below. An unknown tool name is `-32602`. |
+| `tools/call` | Runs `kinetis_read_doc` or `kinetis_search_doc`; see "The page window" and "The page search" below. The result carries the JSON document as one text content block and the same document as `structuredContent`. An unknown tool name is `-32602`. |
 | `resources/list` | The whole catalogue in one response, each entry with `uri`, `name`, `description` and `mimeType` `text/markdown`. No cursor is ever issued, and a request carrying `cursor` is `-32602`. |
 | `resources/read` | Requires a non-empty string `uri`, and returns one `contents` entry with that `uri`, `mimeType` `text/markdown` and the page's markdown as `text`. |
 

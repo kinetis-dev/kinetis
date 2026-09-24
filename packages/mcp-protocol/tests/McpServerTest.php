@@ -147,7 +147,7 @@ final class McpServerTest extends TestCase
         $response = self::server()->handle(self::request('tools/list'));
 
         self::assertNotNull($response);
-        self::assertCount(8, $response['result']['tools']);
+        self::assertCount(12, $response['result']['tools']);
     }
 
     public function test_tools_list_publishes_schemas_as_objects_and_annotations_only_where_declared(): void
@@ -240,6 +240,56 @@ final class McpServerTest extends TestCase
         self::assertSame('Refused.', $response['result']['content'][0]['text']);
     }
 
+    public function test_a_text_result_carries_no_structured_content(): void
+    {
+        $success = self::server()->handle(self::request('tools/call', ['name' => 'echo']));
+        $refusal = self::server()->handle(self::request('tools/call', ['name' => 'refuse']));
+
+        self::assertNotNull($success);
+        self::assertNotNull($refusal);
+        self::assertArrayNotHasKey('structuredContent', $success['result']);
+        self::assertArrayNotHasKey('structuredContent', $refusal['result']);
+    }
+
+    /**
+     * The object travels beside the text block, never instead of it: a
+     * client that reads no structured output still gets the same
+     * conclusion, and `isError` is the one the tool chose.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('structuredResults')]
+    public function test_a_structured_result_carries_the_object_beside_the_unchanged_text(
+        string $tool,
+        string $expectedResult,
+    ): void {
+        $response = self::server()->handle(self::request('tools/call', ['name' => $tool]));
+
+        self::assertNotNull($response);
+        self::assertSame($expectedResult, json_encode($response['result'], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function structuredResults(): array
+    {
+        return [
+            'a success' => [
+                'structured',
+                '{"content":[{"type":"text","text":"{\"status\":\"ok\",\"matches\":[]}"}],"isError":false,'
+                . '"structuredContent":{"status":"ok","matches":[]}}',
+            ],
+            'a refusal' => [
+                'structured_refusal',
+                '{"content":[{"type":"text","text":"{\"status\":\"error\",\"code\":\"probe_refused\"}"}],'
+                . '"isError":true,"structuredContent":{"status":"error","code":"probe_refused"}}',
+            ],
+            'an empty document, still an object' => [
+                'structured_empty',
+                '{"content":[{"type":"text","text":"{}"}],"isError":false,"structuredContent":{}}',
+            ],
+        ];
+    }
+
     public function test_a_consumer_protocol_error_reaches_the_client_and_an_unexpected_one_does_not(): void
     {
         $server = self::server();
@@ -287,6 +337,7 @@ final class McpServerTest extends TestCase
     {
         return [
             'a tool result' => [self::request('tools/call', ['name' => 'unencodable'], 3)],
+            'a structured tool result' => [self::request('tools/call', ['name' => 'structured_unencodable'], 3)],
             'a protocol error a tool raised' => [self::request('tools/call', ['name' => 'unencodable_error'], 3)],
             'a resource read' => [self::request('resources/read', ['uri' => 'probe://unencodable'], 3)],
         ];
