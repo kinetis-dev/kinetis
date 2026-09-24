@@ -101,26 +101,45 @@ final readonly class RoutesListCommand
             static fn (Route $a, Route $b): int => [$a->pathTemplate, $a->httpMethod] <=> [$b->pathTemplate, $b->httpMethod],
         );
 
-        $headers = ['Method', 'Path', 'Status', 'Controller', 'Middleware'];
+        $headers = ['Method', 'Path', 'Where', 'Status', 'Controller', 'Middleware'];
 
-        // The Middleware column is the one that can genuinely run long —
-        // a route stacking several classes would otherwise force a single
-        // very wide line. self::middlewareLines() instead gives each
-        // route's *own* middleware list one line each, "->" trailing every
-        // line but the last, with the other four columns left blank on
-        // every line after the first.
+        // Where and Middleware list one entry per line rather than forcing
+        // one very wide line; see printRouteRow().
         $rows = array_map(
             static fn (Route $route): array => [
-                $route->httpMethod,
-                $route->pathTemplate,
-                (string) $route->status,
-                "{$route->controllerClass}::{$route->controllerMethod}",
+                [$route->httpMethod],
+                [$route->pathTemplate],
+                self::whereLines($route->where),
+                [(string) $route->status],
+                ["{$route->controllerClass}::{$route->controllerMethod}"],
                 self::middlewareLines($route->middleware, $groups),
             ],
             $routes,
         );
 
         $this->printTable($headers, $rows);
+    }
+
+    /**
+     * One `name: fragment` line per constraint, in the placeholder order
+     * Route already stores them in.
+     *
+     * @param array<string,string> $where
+     * @return list<string>
+     */
+    private static function whereLines(array $where): array
+    {
+        if ($where === []) {
+            return ['—'];
+        }
+
+        $lines = [];
+
+        foreach ($where as $name => $fragment) {
+            $lines[] = "{$name}: {$fragment}";
+        }
+
+        return $lines;
     }
 
     /**
@@ -175,16 +194,16 @@ final readonly class RoutesListCommand
 
     /**
      * @param list<string> $headers
-     * @param list<array{0:string,1:string,2:string,3:string,4:list<string>}> $rows
+     * @param list<non-empty-list<list<string>>> $rows each cell is its own list of lines
      */
     private function printTable(array $headers, array $rows): void
     {
-        $widths = array_map(strlen(...), $headers);
+        $widths = array_map(self::width(...), $headers);
 
         foreach ($rows as $row) {
-            foreach ($row as $column => $value) {
-                foreach ((is_array($value) ? $value : [$value]) as $line) {
-                    $widths[$column] = max($widths[$column], strlen($line));
+            foreach ($row as $column => $lines) {
+                foreach ($lines as $line) {
+                    $widths[$column] = max($widths[$column], self::width($line));
                 }
             }
         }
@@ -198,22 +217,28 @@ final readonly class RoutesListCommand
     }
 
     /**
-     * @param array{0:string,1:string,2:string,3:string,4:list<string>} $row
+     * One route spans as many lines as its tallest cell; a shorter cell
+     * is left blank below its own last line.
+     *
+     * @param non-empty-list<list<string>> $row
      * @param array<int, int> $widths
      */
     private function printRouteRow(array $row, array $widths): void
     {
-        [$method, $path, $status, $controller, $middlewareLines] = $row;
+        $height = max(array_map(count(...), $row));
 
-        foreach ($middlewareLines as $index => $middlewareLine) {
+        for ($line = 0; $line < $height; $line++) {
             $this->printRow(
-                $index === 0 ? [$method, $path, $status, $controller, $middlewareLine] : ['', '', '', '', $middlewareLine],
+                array_map(static fn (array $lines): string => $lines[$line] ?? '', $row),
                 $widths,
             );
         }
     }
 
     /**
+     * Pads by self::width(), so the multibyte `—` placeholder keeps every
+     * later column aligned.
+     *
      * @param list<string> $columns
      * @param array<int, int> $widths
      */
@@ -222,10 +247,20 @@ final readonly class RoutesListCommand
         $padded = [];
 
         foreach ($columns as $index => $value) {
-            $padded[] = str_pad($value, $widths[$index]);
+            $padded[] = $value . str_repeat(' ', $widths[$index] - self::width($value));
         }
 
         $this->write(rtrim(implode('  ', $padded)) . "\n");
+    }
+
+    /**
+     * Counts UTF-8 characters with PCRE rather than mbstring, which the
+     * framework does not require. Text that is not valid UTF-8 counts
+     * bytes.
+     */
+    private static function width(string $text): int
+    {
+        return preg_match_all('/./su', $text) ?: strlen($text);
     }
 
     private function write(string $line): void

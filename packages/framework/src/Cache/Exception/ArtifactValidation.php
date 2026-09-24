@@ -164,6 +164,32 @@ final class ArtifactValidation
     }
 
     /**
+     * A string-keyed map of string values — the shape a route's `where`
+     * constraints use. A numeric key is refused, since PHP stores a
+     * numeric-looking string key as an int.
+     *
+     * @param array<array-key, mixed> $data
+     * @return array<string, string>
+     */
+    public static function mapOfStrings(array $data, string $type, string $field): array
+    {
+        $value = self::array($data, $type, $field);
+
+        foreach ($value as $key => $entry) {
+            if (!is_string($key)) {
+                throw InvalidCacheArtifactException::malformedEntry($type, "a non-string key in \"{$field}\"");
+            }
+
+            if (!is_string($entry)) {
+                throw InvalidCacheArtifactException::malformedEntry($type, "a non-string entry for \"{$key}\" in \"{$field}\"");
+            }
+        }
+
+        /** @var array<string, string> $value */
+        return $value;
+    }
+
+    /**
      * A string-keyed map whose every value is itself a `list<string>` —
      * the shape `HttpCache::$middlewareGroups` uses. Every key must be a
      * real string too, the same numeric-array-key footgun `listOfStrings()`'s

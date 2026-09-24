@@ -17,4 +17,14 @@ interface RouteAttribute
     public function path(): string;
 
     public function status(): int;
+
+    /**
+     * Admission constraints keyed by placeholder name: each value is a
+     * delimiterless PCRE2 fragment the captured text must match whole.
+     * A request whose placeholder text fails its fragment is a route
+     * miss, never a different handler — see Kinetis\Http\Routing\Route.
+     *
+     * @return array<string,string>
+     */
+    public function where(): array;
 }

@@ -10,7 +10,9 @@ reference it links to.
 ### Route attributes
 
 `#[Get]`, `#[Post]`, `#[Put]`, `#[Patch]` and `#[Delete]` implement one
-`RouteAttribute` interface (`httpMethod()`, `path()`, `status()`).
+`RouteAttribute` interface (`httpMethod()`, `path()`, `status()`,
+`where()`). Each takes `(string $path, int $status = 200, array $where =
+[])`; `where` is described in [Route constraints](#route-constraints).
 `Router` finds route attributes through that interface rather than by
 class name.
 
@@ -20,7 +22,9 @@ sharing that controller method and its middleware. Methods without a
 route attribute are skipped, so a controller can mix routed actions with
 plain helper methods. Each `{placeholder}` in a path template is compiled
 to a named regex capture group once, when the route is registered — not
-on every request.
+on every request. The whole template is anchored with `\A` and `\z`, so
+a request path is admitted only when every byte of it matches; a final
+newline is not ignored.
 
 ### Path rules
 
@@ -42,10 +46,9 @@ of the application.
 
 ### What a placeholder matches
 
-A path template describes URL structure and nothing else. `{id}` occupies
-one whole segment and matches any run of characters up to the next `/`;
-there is no inline syntax for narrowing that. What a captured value may
-hold is described where the value is consumed — by the controller
+A placeholder captures one string. `{id}` with no constraint matches one
+non-empty run of characters up to the next `/`. What a captured value
+means is described where the value is consumed — by the controller
 parameter's own type and its validation attributes:
 
 ```{code-block} php
@@ -66,13 +69,89 @@ map onto (see [Validation constraints](#validation-constraints)).
 A `{...}` expression that isn't a plain placeholder name — `{id:\d+}`,
 `{not a name}`, or an unclosed `{id` — is a mistake in the template, not
 literal text, and is rejected at registration with an
-`InvalidRoutePathException` naming the expression. Placeholder names
-follow PHP's identifier grammar restricted to ASCII, and the same name
-may appear only once in one template. Two placeholders may not sit
+`InvalidRoutePathException` naming the expression. There is no inline
+pattern syntax; a route constrains a placeholder through `where`. Placeholder
+names follow PHP's identifier grammar restricted to ASCII, and the same
+name may appear only once in one template. Two placeholders may not sit
 directly against each other either — `{first}{second}` gives nothing to
 split a segment on, so it is rejected the same way; separate them with
 literal text (`{first}-{second}`) or capture the segment as one
 placeholder.
+
+### Route constraints
+
+A route attribute's `where` map replaces a placeholder's default
+`[^/]+` with a PCRE2 fragment the captured text must match whole:
+
+```{code-block} php
+#[Get('/articles/{slug}', where: ['slug' => '[A-Za-z]+'])]
+public function show(string $slug): array { /* ... */ }
+
+#[Get('/files/{path}', where: ['path' => '.*'])]
+public function file(string $path): array { /* ... */ }
+```
+
+A constraint decides admission only. A request whose placeholder text
+fails its fragment is an ordinary route miss: `GET /articles/abc-2` is a
+`404` (or a `405` when a route for another method admits the path), and
+the controller is never reached. Text the constraint admits is then
+bound and validated exactly like any other path value, so
+`#[Get('/versions/{v}', where: ['v' => '[0-9.]+'])]` with `int $v`
+admits `/versions/1.5` and answers it with the binding `422`.
+
+The map's rules, checked when the route is built:
+
+- Each key names a placeholder in the finished template, after every
+  `#[RoutePrefix]` has been applied, so a route may constrain a
+  placeholder its prefix contributes. A key naming no placeholder, or a
+  key that is not a string, is rejected.
+- Each value is a non-empty string with no literal control byte.
+  Escaped text such as `\n` is ordinary regex syntax and is allowed.
+- A fragment carries no delimiters and no anchors; the route supplies
+  both. It is embedded verbatim as `(?P<name>(?:fragment))`, so
+  `\Q...\E` and character classes keep their PCRE meaning.
+- A fragment is self-contained. Compiled on its own, it must succeed,
+  close every group, character class, comment and `\Q...\E` quote it
+  opens, and close no group it did not open. It may not name a group
+  after a placeholder. `a))|((` fails: embedded, it would close the
+  placeholder's groups and leave the rest of the route in a separate
+  alternative. PCRE itself performs the check, so a parenthesis that is
+  escaped, quoted, commented or inside a class is text. A reference to
+  another placeholder's group fails the same way; numbered references
+  count every group in the route, so refer to a fragment's own groups
+  by name or by relative number (`\g{-1}`).
+- A fragment may not use `(*ACCEPT)`, which ends the match before the
+  rest of the route is tested. The same text escaped, quoted, commented
+  or inside a class is literal and allowed.
+- The compiled route is probed once when the route is built. Fragments
+  that compile alone but not together, such as two defining the same
+  group name, fail there, naming the template and every constraint.
+
+Every failure is an `InvalidRoutePathException` at registration, and
+registration stays all-or-nothing: none of the controller's routes are
+installed, and retrying fails the same way. Constraints are stored in
+the order their placeholders appear in the template, whatever order the
+attribute declared them in, so `Router::toArray()`, the compiled cache,
+`kinetis routes:list` and the OpenAPI document all carry one canonical
+map.
+
+A fragment may admit `/`. `.*` on `/files/{path}` captures `a/b` from
+`/files/a/b`. Two consequences follow:
+
+- The request path is normalised before matching, so `/files/` is
+  `/files`, which has no tail to capture. `/files/{path}` never matches
+  it; declare `/files` as its own route to serve the base path.
+- The capture is raw routing text. It can contain `//`, `.` or `..`
+  segments, and nothing canonicalises it. Validate and canonicalise it
+  before using it as a filesystem path.
+
+PCRE's own limits bound matching: PHP's `pcre.backtrack_limit`,
+`pcre.recursion_limit` and, with JIT enabled, the JIT stack. When PCRE
+reports an error instead of a result, such as an exhausted limit, the
+route neither admits nor rejects the path.
+`Route::matchPath()` throws `RouteMatchingException`, naming the template
+and PCRE's error message but not the request path, and the request is
+answered as a server error — never as a `404`.
 
 ### Which route wins
 
@@ -90,10 +169,18 @@ more specific match. `/users/self` alongside `/users/{id}`, or
 therefore both be registered, in either order, and the more specific one
 always wins for a path it also matches.
 
-A second route claiming *exactly* the same requests (the same method and
-path shape — placeholder names don't count, so `/users/{id}` and
-`/users/{userId}` collide) is rejected at registration with a
-`DuplicateRouteException`, since it could never run at all.
+Constraints take no part in this order. A constrained placeholder ranks
+exactly like an unconstrained one, including one whose fragment spans
+`/`: with `/files/readme`, `/files/{id}/meta` and a `.*` catch-all
+`/files/{path}` registered, `/files/readme` and `/files/x/meta` reach the
+first two, and `/files/a/b` reaches the catch-all.
+
+A second route with the same method and path shape is rejected at
+registration with a `DuplicateRouteException`, since it could never run
+at all. Placeholder names and constraints don't count: `/users/{id}` and
+`/users/{userId}` collide, and so do `/items/{id}` constrained to `\d+`
+and `/items/{slug}` constrained to `[a-z]+`. Constraints decide one
+route's admission; they never choose between routes.
 
 ### Registering a controller
 
@@ -360,10 +447,11 @@ content type says. Several consequences follow:
   the `T|Absent` presence union a DTO field may declare needs a member
   that is either present or absent, which a query key is not.
 - **An `array`/`iterable`-typed path parameter is rejected at
-  registration too, unconditionally.** A route placeholder is always
-  exactly one path segment — `Route::match()` captures it as a single
-  string — so move it to `#[Query]` (where an array-style parameter is
-  representable) or `#[Body]` instead.
+  registration too, unconditionally.** `Route::matchPath()` captures a
+  placeholder as one string — one that may contain `/` under a [route
+  constraint](#route-constraints), but never more than one value — so
+  move it to `#[Query]` (where an array-style parameter is representable)
+  or `#[Body]` instead.
 - **A `#[Query]` array-style parameter accepts OpenAPI 3.1's default
   query-array serialization** (`style: form`, `explode: true` — never
   stated explicitly in the generated document, since it is the spec
@@ -1831,7 +1919,27 @@ keyword listed in [Validation constraints](#validation-constraints).
 with the identical constraint-to-keyword mapping applied to their own
 `schema`; one typed as a [backed
 enum](#enum-path-and-query-parameters) publishes that enum's backing
-`type` and the exact `enum` of its case values. A controller method's
+`type` and the exact `enum` of its case values.
+
+A path parameter whose placeholder carries a [route
+constraint](#route-constraints) stays a normal required path parameter
+with the same schema. The fragment is PCRE2, not the ECMA-262 dialect
+JSON Schema's `pattern` holds, so it is published verbatim beside the
+schema, on the Parameter Object itself:
+
+```{code-block} json
+{
+    "name": "path",
+    "in": "path",
+    "required": true,
+    "schema": { "type": "string" },
+    "x-kinetis-route-constraint": { "dialect": "pcre2", "fragment": ".*" }
+}
+```
+
+Only a constrained placeholder carries the extension. It states the
+fragment and nothing inferred from it; whether it admits `/` is not
+classified. A controller method's
 declared return type becomes the default response's schema — `UserResponse` (or `?UserResponse`, or a union like
 `ResponseInterface|array` where `UserResponse` is one member) produces a
 `content` entry describing it; a bare `array`/`ResponseInterface`-only

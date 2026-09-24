@@ -58,7 +58,7 @@ final class BootSequenceCacheTest extends TestCase
     private function validCompiledCache(): CompiledCache
     {
         $http = new HttpCache(
-            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
+            routes: [['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => 'App\\C', 'controllerMethod' => 'm', 'status' => 200, 'middleware' => [], 'where' => []]],
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],

@@ -7,6 +7,7 @@ namespace Kinetis\Tests\OpenApi;
 use Kinetis\Http\Routing\Router;
 use Kinetis\OpenApi\OpenApiGenerator;
 use Kinetis\Tests\Http\Fixtures\BuiltinCoverageController;
+use Kinetis\Tests\Http\Fixtures\ConstrainedRouteController;
 use Kinetis\Tests\Http\Fixtures\ConstrainedParametersController;
 use Kinetis\Tests\Http\Fixtures\EnumParameterController;
 use Kinetis\Tests\Http\Fixtures\HiddenController;
@@ -200,6 +201,45 @@ final class OpenApiGeneratorTest extends TestCase
         self::assertSame('string', $parameters[0]['schema']['type']);
         self::assertSame(3, $parameters[0]['schema']['minLength']);
         self::assertArrayNotHasKey('pattern', $parameters[0]['schema']);
+    }
+
+    /**
+     * A route constraint is PCRE2 and decides routing, not the value's
+     * JSON Schema: it is published verbatim on the Parameter Object, and
+     * the schema stays whatever the controller parameter declares.
+     */
+    public function test_a_constrained_path_parameter_carries_the_route_constraint_extension(): void
+    {
+        $router = new Router();
+        $router->register(ConstrainedRouteController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $byName = array_column($spec['paths']['/archives/{year}/{slug}']['get']['parameters'], null, 'name');
+
+        self::assertSame(
+            [
+                'name' => 'year',
+                'in' => 'path',
+                'required' => true,
+                'schema' => ['type' => 'integer'],
+                'x-kinetis-route-constraint' => ['dialect' => 'pcre2', 'fragment' => '\d{4}'],
+            ],
+            $byName['year'],
+        );
+        self::assertSame(['name' => 'slug', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string']], $byName['slug']);
+    }
+
+    public function test_a_slash_spanning_constraint_is_published_the_same_way(): void
+    {
+        $router = new Router();
+        $router->register(ConstrainedRouteController::class);
+        $spec = (new OpenApiGenerator($router))->generate();
+
+        $parameter = $spec['paths']['/files/{path}']['get']['parameters'][0];
+
+        self::assertSame('path', $parameter['name']);
+        self::assertSame(['dialect' => 'pcre2', 'fragment' => '.*'], $parameter['x-kinetis-route-constraint']);
+        self::assertSame(['type' => 'string'], $parameter['schema']);
     }
 
     public function test_uses_the_route_configured_status_code_in_responses(): void
@@ -515,6 +555,7 @@ final class OpenApiGeneratorTest extends TestCase
             'controllerMethod' => 'fromParent',
             'status' => 200,
             'middleware' => [],
+            'where' => [],
         ]]);
 
         $document = new OpenApiGenerator($router)->generate();

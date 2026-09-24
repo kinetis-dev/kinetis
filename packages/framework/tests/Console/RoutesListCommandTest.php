@@ -85,16 +85,16 @@ final class RoutesListCommandTest extends TestCase
         $output = $this->runCommand();
 
         self::assertMatchesRegularExpression(
-            '/GET\s+\/fixture-ping\s+200\s+Kinetis\\\\Tests\\\\Cache\\\\Fixtures\\\\Http\\\\DiscoveredPingController::ping/',
+            '/GET\s+\/fixture-ping\s+—\s+200\s+Kinetis\\\\Tests\\\\Cache\\\\Fixtures\\\\Http\\\\DiscoveredPingController::ping/',
             $output,
         );
     }
 
-    public function test_a_route_with_no_middleware_shows_a_placeholder(): void
+    public function test_a_route_with_no_constraints_or_middleware_shows_a_placeholder_in_each_column(): void
     {
         $output = $this->runCommand();
 
-        self::assertMatchesRegularExpression('/\/fixture-ping\s+200\s+\S+::ping\s+—/', $output);
+        self::assertMatchesRegularExpression('/\/fixture-ping\s+—\s+200\s+\S+::ping\s+—/', $output);
     }
 
     public function test_a_routes_middleware_prints_class_level_then_method_level_in_order(): void
@@ -108,9 +108,81 @@ final class RoutesListCommandTest extends TestCase
         self::assertStringEndsWith(RouteLevelMiddlewareA::class . ' ->', $lines[$firstLine]);
         self::assertStringEndsWith(RouteLevelMiddlewareB::class, $lines[$firstLine + 1]);
 
-        // The continuation line's other four columns are blank, not a
-        // repeat of the route's method/path/status/controller.
+        // The continuation line's other columns are blank, not a repeat
+        // of the route's method/path/status/controller.
         self::assertStringNotContainsString('/fixture-with-middleware', $lines[$firstLine + 1]);
+    }
+
+    /**
+     * The Where column lists one constraint per line in placeholder order,
+     * not declaration order, and the row grows to its tallest cell even
+     * when that cell is not Middleware.
+     */
+    public function test_a_routes_constraints_print_one_per_line_in_placeholder_order(): void
+    {
+        $lines = self::lines($this->runCommand());
+        $firstLine = self::lineIndexContaining($lines, '/fixture-archive/{year}/{slug}');
+
+        self::assertMatchesRegularExpression('/\{slug\}\s+year: \\\\d\{4\}\s+200\s+\S+::show\s+—$/', $lines[$firstLine]);
+        // The continuation line carries the second constraint alone.
+        self::assertSame('slug: [a-z-]+', trim($lines[$firstLine + 1]));
+    }
+
+    public function test_columns_after_the_where_placeholder_stay_aligned_with_the_header(): void
+    {
+        $lines = self::lines($this->runCommand());
+        $header = $lines[self::lineIndexContaining($lines, 'Method  Path')];
+        $pingLine = $lines[self::lineIndexContaining($lines, '/fixture-ping')];
+
+        self::assertSame(mb_strpos($header, 'Status'), mb_strpos($pingLine, '200'));
+    }
+
+    /**
+     * Text that is not valid UTF-8 has no character count, so its cell
+     * pads by byte, even the valid `é` beside the stray byte, and the
+     * next column starts where the header's does, byte for byte.
+     */
+    public function test_a_constraint_that_is_not_valid_utf8_pads_by_byte(): void
+    {
+        $root = sys_get_temp_dir() . '/kinetis_routes_list_bytes_' . bin2hex(random_bytes(8));
+        mkdir($root . '/src/Http', recursive: true);
+
+        file_put_contents($root . '/composer.json', json_encode([
+            'autoload' => ['psr-4' => ['App\\' => 'src/']],
+        ]));
+
+        file_put_contents($root . '/src/Http/ByteConstraintController.php', <<<'PHP'
+            <?php
+            declare(strict_types=1);
+            namespace App\Http;
+            use Kinetis\Http\Attributes\Get;
+            final class ByteConstraintController
+            {
+                #[Get('/bytes/{raw}', where: ['raw' => "\u{e9}\xff+"])]
+                public function show(string $raw): string
+                {
+                    return $raw;
+                }
+            }
+            PHP);
+        // Discovery registers only classes that load; nothing autoloads
+        // this temporary project.
+        require $root . '/src/Http/ByteConstraintController.php';
+
+        try {
+            $lines = self::lines($this->runCommand($root));
+            $header = $lines[self::lineIndexContaining($lines, 'Method  Path')];
+            $bytesLine = $lines[self::lineIndexContaining($lines, '/bytes/{raw}')];
+
+            self::assertStringContainsString("raw: \u{e9}\xff+", $bytesLine);
+            self::assertSame(strpos($header, 'Status'), strpos($bytesLine, '200'));
+        } finally {
+            unlink($root . '/composer.json');
+            unlink($root . '/src/Http/ByteConstraintController.php');
+            rmdir($root . '/src/Http');
+            rmdir($root . '/src');
+            rmdir($root);
+        }
     }
 
     /**

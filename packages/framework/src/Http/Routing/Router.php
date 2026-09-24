@@ -15,6 +15,7 @@ use Kinetis\Http\Routing\Exception\ConflictingRegistrationContextException;
 use Kinetis\Http\Routing\Exception\DuplicateRouteException;
 use Kinetis\Http\Routing\Exception\InvalidRoutePathException;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
+use Kinetis\Http\Routing\Exception\RouteMatchingException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Reflection\AttributeScope;
 use ReflectionAttribute;
@@ -25,7 +26,7 @@ use Throwable;
 final class Router
 {
     private const array ROUTE_ENTRY_KEYS = [
-        'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware',
+        'httpMethod', 'pathTemplate', 'controllerClass', 'controllerMethod', 'status', 'middleware', 'where',
     ];
 
     private const string ARTIFACT_COMPONENT = 'Router route';
@@ -241,6 +242,7 @@ final class Router
                     controllerMethod: $method->getName(),
                     status: $routeAttribute->status(),
                     middleware: [...$classMiddleware, ...$methodMiddleware],
+                    where: $routeAttribute->where(),
                 );
 
                 // Dispatcher::derivePlan() is otherwise only ever called
@@ -349,7 +351,7 @@ final class Router
      * those regardless of provenance. Used by Kinetis\Cache\Compiler to
      * produce a var_export()-able artifact with no live objects in it.
      *
-     * @return list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}>
+     * @return list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>,where:array<string,string>}>
      */
     public function toArray(): array
     {
@@ -361,6 +363,7 @@ final class Router
                 'controllerMethod' => $route->controllerMethod,
                 'status' => $route->status,
                 'middleware' => $route->middleware,
+                'where' => $route->where,
             ],
             $this->routes,
         );
@@ -380,7 +383,7 @@ final class Router
      * bug; the identical throw while replaying data read back from a
      * cache file means the file itself is what's bad.
      *
-     * @param list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>}> $routes
+     * @param list<array{httpMethod:string,pathTemplate:string,controllerClass:class-string,controllerMethod:string,status:int,middleware:list<string>,where:array<string,string>}> $routes
      * @throws CacheArtifactExceptionInterface
      */
     public static function fromArray(array $routes): self
@@ -404,6 +407,7 @@ final class Router
             $controllerMethod = ArtifactValidation::string($route, self::ARTIFACT_COMPONENT, 'controllerMethod');
             $status = ArtifactValidation::int($route, self::ARTIFACT_COMPONENT, 'status');
             $middleware = ArtifactValidation::listOfStrings($route, self::ARTIFACT_COMPONENT, 'middleware');
+            $where = ArtifactValidation::mapOfStrings($route, self::ARTIFACT_COMPONENT, 'where');
 
             try {
                 /** @var class-string $controllerClass */
@@ -414,6 +418,7 @@ final class Router
                     controllerMethod: $controllerMethod,
                     status: $status,
                     middleware: $middleware,
+                    where: $where,
                 );
 
                 // Deliberately does NOT re-run register()'s own eager
@@ -476,6 +481,7 @@ final class Router
     /**
      * @throws RouteNotFoundException no route's path template matches $path
      * @throws MethodNotAllowedException a route matches $path but not $method
+     * @throws RouteMatchingException PCRE failed while testing a route; never reported as a miss
      */
     public function match(string $method, string $path): RouteMatch
     {

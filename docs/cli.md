@@ -297,11 +297,13 @@ Global middleware (outermost to innermost):
   3. Kinetis\Http\Middleware\RequestBodyMiddleware
   4. App\Http\Middleware\RequestIdMiddleware
 
-Method  Path     Status  Controller                       Middleware
-------  -------  ------  -------------------------------  ---------------------------------------
-GET     /orders  200     App\Http\OrderController::index  App\Http\Middleware\AuthMiddleware
-POST    /orders  201     App\Http\OrderController::store  App\Http\Middleware\AuthMiddleware ->
-                                                          App\Http\Middleware\RateLimitMiddleware
+Method  Path                   Where          Status  Controller                         Middleware
+------  ---------------------  -------------  ------  ---------------------------------  ---------------------------------------
+GET     /orders                —              200     App\Http\OrderController::index    App\Http\Middleware\AuthMiddleware
+POST    /orders                —              201     App\Http\OrderController::store    App\Http\Middleware\AuthMiddleware ->
+                                                                                         App\Http\Middleware\RateLimitMiddleware
+GET     /orders/{year}/{slug}  year: \d{4}    200     App\Http\OrderController::archive  App\Http\Middleware\AuthMiddleware
+                               slug: [a-z-]+
 ```
 
 A read-only display tool — it never touches `.kinetis-cache/` and never
@@ -314,22 +316,29 @@ The global middleware section lists the exact order requests run in —
 the three Kinetis always wires in first — `SecurityHeadersMiddleware`,
 `ExceptionHandlerMiddleware`, `RequestBodyMiddleware` — then your own
 explicitly-registered (`AppScope::middleware()`) and `#[AsGlobalMiddleware]`-discovered
-classes, deduplicated (see {doc}`middleware`). Each route's own
+classes, deduplicated (see {doc}`middleware`).
+
+Each route's `Where` column lists its route constraints, one
+`name: fragment` line per constrained placeholder in the order the
+placeholders appear in the path, whatever order the attribute declared
+them in (see [Route
+constraints](appendix-routing-validation.md#route-constraints)). Its
 `Middleware` column shows its `#[Middleware]` list in the same
 class-level-then-method-level order it actually runs in, one middleware
 per line — every line but the last ends with `->` to mark it continues on
-the next, so a route stacking several classes never forces one
-unreasonably wide line. A route with none shows `—`.
+the next. A route spans as many lines as its longest list, so neither
+column forces one unreasonably wide line. A column with nothing to list
+shows `—`.
 
 A `@name` middleware-group reference (see {doc}`middleware`) is shown
 already expanded into the classes that actually run, each annotated with
 the group it came from:
 
 ```{code-block} text
-Method  Path                    Status  Controller                        Middleware
-------  ----------------------  ------  --------------------------------  ------------------------------------------------
-GET     /orders/{id}/refund     200     App\Http\OrderController::refund  App\Http\Middleware\AuthMiddleware (@admin) ->
-                                                                         App\Http\Middleware\RequireAdminMiddleware (@admin)
+Method  Path                 Where  Status  Controller                        Middleware
+------  -------------------  -----  ------  --------------------------------  ---------------------------------------------------
+GET     /orders/{id}/refund  —      200     App\Http\OrderController::refund  App\Http\Middleware\AuthMiddleware (@admin) ->
+                                                                              App\Http\Middleware\RequireAdminMiddleware (@admin)
 ```
 
 ## Package-provided commands and services

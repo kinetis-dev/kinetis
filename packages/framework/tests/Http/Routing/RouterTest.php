@@ -10,7 +10,9 @@ use Kinetis\Http\Routing\Exception\DuplicateRouteException;
 use Kinetis\Http\Routing\Exception\MethodNotAllowedException;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Routing\Router;
+use Kinetis\Tests\Http\Fixtures\AtomicConstraintFailureController;
 use Kinetis\Tests\Http\Fixtures\AtomicRegistrationFailureController;
+use Kinetis\Tests\Http\Fixtures\ConstrainedRouteController;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerA;
 use Kinetis\Tests\Http\Fixtures\DuplicateRouteControllerB;
@@ -19,6 +21,8 @@ use Kinetis\Tests\Http\Fixtures\MiddlewareTestController;
 use Kinetis\Tests\Http\Fixtures\MixedAndExactSegmentController;
 use Kinetis\Tests\Http\Fixtures\MultiVerbController;
 use Kinetis\Tests\Http\Fixtures\PlaceholderBeforeStaticController;
+use Kinetis\Tests\Http\Fixtures\PrefixPlaceholderConstraintController;
+use Kinetis\Tests\Http\Fixtures\SameShapeConstraintConflictController;
 use Kinetis\Tests\Http\Fixtures\SameControllerConflictController;
 use Kinetis\Tests\Http\Fixtures\UserController;
 use Kinetis\Reflection\Exception\AttributeScopeException;
@@ -38,6 +42,7 @@ use Kinetis\Tests\Http\Fixtures\UnrootedPathController;
 use Kinetis\Tests\Http\Fixtures\UnrootedPrefixController;
 use Kinetis\Tests\Http\Fixtures\VersionedMiddleware;
 use Kinetis\Tests\Http\Fixtures\VersionPrefixedController;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase
@@ -548,11 +553,11 @@ final class RouterTest extends TestCase
     }
 
     /**
-     * @return array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>}
+     * @return array{httpMethod:string,pathTemplate:string,controllerClass:string,controllerMethod:string,status:int,middleware:list<string>,where:array<string,string>}
      */
     private function validRouteEntry(): array
     {
-        return ['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => UserController::class, 'controllerMethod' => 'index', 'status' => 200, 'middleware' => []];
+        return ['httpMethod' => 'GET', 'pathTemplate' => '/x', 'controllerClass' => UserController::class, 'controllerMethod' => 'index', 'status' => 200, 'middleware' => [], 'where' => []];
     }
 
     public function test_from_array_rejects_an_entry_with_an_unexpected_extra_field(): void
@@ -591,5 +596,163 @@ final class RouterTest extends TestCase
 
         self::assertSame('/x', $router->match('GET', '/x')->route->pathTemplate);
         self::assertSame('/y', $router->match('GET', '/y')->route->pathTemplate);
+    }
+
+    public function test_a_constraint_mismatch_is_a_route_miss(): void
+    {
+        $router = new Router();
+        $router->register(ConstrainedRouteController::class);
+
+        self::assertSame(['slug' => 'Kinetis'], $router->match('GET', '/articles/Kinetis')->pathParams);
+
+        $this->expectException(RouteNotFoundException::class);
+        $router->match('GET', '/articles/kinetis-2');
+    }
+
+    /**
+     * A constraint miss is a 405 only when another method's route admits
+     * the path; otherwise it is a 404.
+     */
+    public function test_a_constraint_miss_is_a_405_only_when_another_methods_route_admits_the_path(): void
+    {
+        $router = Router::fromArray([
+            [...$this->validRouteEntry(), 'pathTemplate' => '/items/{id}', 'where' => ['id' => '\d+']],
+            [...$this->validRouteEntry(), 'httpMethod' => 'DELETE', 'pathTemplate' => '/items/{id}', 'controllerMethod' => 'destroy', 'where' => ['id' => '[a-z]+']],
+        ]);
+
+        try {
+            $router->match('GET', '/items/abc');
+            self::fail('Expected a MethodNotAllowedException.');
+        } catch (MethodNotAllowedException $e) {
+            self::assertSame(['DELETE'], $e->allowedMethods);
+        }
+
+        $this->expectException(RouteNotFoundException::class);
+        $router->match('GET', '/items/ABC');
+    }
+
+    /**
+     * @return iterable<string, array{string, string, array<string, string>}>
+     */
+    public static function catchAllPrecedence(): iterable
+    {
+        yield 'a static route beats the catch-all' => ['/files/readme', 'readme', []];
+        yield 'a deeper route beats the catch-all' => ['/files/x/meta', 'meta', ['id' => 'x']];
+        yield 'the catch-all takes one segment' => ['/files/x', 'file', ['path' => 'x']];
+        yield 'the catch-all takes a slash-spanning tail' => ['/files/a/b/c', 'file', ['path' => 'a/b/c']];
+        yield 'the catch-all takes a tail ending in meta below the deeper route' => ['/files/a/b/meta', 'file', ['path' => 'a/b/meta']];
+    }
+
+    /**
+     * @param array<string, string> $params
+     */
+    #[DataProvider('catchAllPrecedence')]
+    public function test_a_catch_all_keeps_template_precedence_live_and_after_a_round_trip(string $path, string $method, array $params): void
+    {
+        $live = new Router();
+        $live->register(ConstrainedRouteController::class);
+        $reconstructed = Router::fromArray($live->toArray());
+
+        foreach ([$live, $reconstructed] as $router) {
+            $match = $router->match('GET', $path);
+
+            self::assertSame($method, $match->route->controllerMethod);
+            self::assertSame($params, $match->pathParams);
+        }
+    }
+
+    public function test_a_round_trip_carries_constraints_in_placeholder_order(): void
+    {
+        $live = new Router();
+        $live->register(ConstrainedRouteController::class);
+        $exported = $live->toArray();
+        $reconstructed = Router::fromArray($exported);
+
+        self::assertSame($exported, $reconstructed->toArray());
+
+        $byPath = array_column($exported, 'where', 'pathTemplate');
+        self::assertSame(['slug' => '[A-Za-z]+'], $byPath['/articles/{slug}']);
+        self::assertSame(['path' => '.*'], $byPath['/files/{path}']);
+        self::assertSame([], $byPath['/files/readme']);
+
+        $this->expectException(RouteNotFoundException::class);
+        $reconstructed->match('GET', '/articles/kinetis-2');
+    }
+
+    public function test_a_route_may_constrain_a_placeholder_its_prefix_contributes(): void
+    {
+        $router = new Router();
+        $router->register(PrefixPlaceholderConstraintController::class);
+
+        self::assertSame(['tenant' => 'acme'], $router->match('GET', '/tenants/acme/reports')->pathParams);
+
+        $this->expectException(RouteNotFoundException::class);
+        $router->match('GET', '/tenants/ACME/reports');
+    }
+
+    public function test_same_shape_routes_with_different_constraints_are_duplicates(): void
+    {
+        $this->expectException(DuplicateRouteException::class);
+
+        (new Router())->register(SameShapeConstraintConflictController::class);
+    }
+
+    public function test_from_array_rejects_same_shape_routes_with_different_constraints(): void
+    {
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        Router::fromArray([
+            [...$this->validRouteEntry(), 'pathTemplate' => '/items/{id}', 'where' => ['id' => '\d+']],
+            [...$this->validRouteEntry(), 'pathTemplate' => '/items/{slug}', 'controllerMethod' => 'show', 'where' => ['slug' => '[a-z]+']],
+        ]);
+    }
+
+    public function test_an_invalid_constraint_registers_none_of_the_controllers_routes_on_every_attempt(): void
+    {
+        $router = new Router();
+
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            try {
+                $router->register(AtomicConstraintFailureController::class);
+                self::fail("Expected an InvalidRoutePathException on attempt {$attempt}.");
+            } catch (InvalidRoutePathException $e) {
+                self::assertStringContainsString('does not compile', $e->getMessage());
+            }
+        }
+
+        self::assertSame([], $router->routes());
+    }
+
+    /**
+     * @return iterable<string, array{mixed}>
+     */
+    public static function malformedCachedConstraints(): iterable
+    {
+        yield 'not an array' => ['id'];
+        yield 'a numeric key' => [['[a-z]+']];
+        yield 'a non-string value' => [['id' => 5]];
+        yield 'an unknown placeholder' => [['slug' => '[a-z]+']];
+        yield 'an empty fragment' => [['id' => '']];
+        yield 'an uncompilable fragment' => [['id' => '[z-a]']];
+        yield 'a fragment detaching the rest of the route' => [['id' => 'a))|((']];
+        yield 'an accepting fragment' => [['id' => 'a(*ACCEPT)']];
+    }
+
+    #[DataProvider('malformedCachedConstraints')]
+    public function test_from_array_classifies_a_malformed_constraint_as_a_cache_artifact_failure(mixed $where): void
+    {
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        Router::fromArray([[...$this->validRouteEntry(), 'pathTemplate' => '/x/{id}', 'where' => $where]]);
+    }
+
+    public function test_from_array_rejects_an_entry_missing_its_constraints(): void
+    {
+        $entry = $this->validRouteEntry();
+        unset($entry['where']);
+
+        $this->expectException(CacheArtifactExceptionInterface::class);
+
+        Router::fromArray([$entry]);
     }
 }

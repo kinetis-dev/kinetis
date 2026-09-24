@@ -377,6 +377,7 @@ final class HttpStartupTest extends TestCase
                     'controllerMethod' => 'ping',
                     'status' => 200,
                     'middleware' => [],
+                    'where' => [],
                 ]],
                 httpBindingPlans: [],
                 hydrationPlans: [],

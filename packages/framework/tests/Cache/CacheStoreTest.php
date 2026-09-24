@@ -48,7 +48,7 @@ final class CacheStoreTest extends TestCase
     private function compiledCache(string $marker = 'a'): CompiledCache
     {
         $http = new HttpCache(
-            routes: [['httpMethod' => 'GET', 'pathTemplate' => "/{$marker}", 'controllerClass' => "App\\C{$marker}", 'controllerMethod' => 'm', 'status' => 200, 'middleware' => []]],
+            routes: [['httpMethod' => 'GET', 'pathTemplate' => "/{$marker}", 'controllerClass' => "App\\C{$marker}", 'controllerMethod' => 'm', 'status' => 200, 'middleware' => [], 'where' => []]],
             httpBindingPlans: [],
             hydrationPlans: [],
             globalMiddleware: [],

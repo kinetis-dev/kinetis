@@ -146,10 +146,11 @@ final class UnresolvableParameterException extends RuntimeException
      * An `array`/`iterable`-typed path parameter — genuinely unsatisfiable,
      * unconditionally, unlike a `#[Query]` array (`?tags=a&tags=b` works
      * there, see {doc}`routing-validation`'s "Query and path values are
-     * raw strings" section): a route placeholder is always exactly one
-     * path segment, captured by `Route::match()` as a single string —
-     * there is no repetition, comma, or any other convention that could
-     * ever let a path segment become an array. Thrown from the same
+     * raw strings" section): `Route::matchPath()` captures a route
+     * placeholder as one string — one that may contain `/` under a
+     * `where` constraint, but never more than one value — and there is no
+     * repetition, comma, or any other convention that could ever let a
+     * path value become an array. Thrown from the same
      * `Router::register()`-time boundary as
      * forUnsupportedBuiltinType().
      */
@@ -157,7 +158,7 @@ final class UnresolvableParameterException extends RuntimeException
     {
         return new self(
             "Controller parameter \"\${$name}\" is an array/iterable-typed path parameter — "
-            . 'this can never be satisfied: a path placeholder is always exactly one string segment, '
+            . 'this can never be satisfied: a path placeholder always captures one string, '
             . 'never an array, and there is no serialization convention that could make it one. '
             . 'Change its type, move it to #[Query] (where an array-style parameter is representable), '
             . 'or move it to #[Body].'

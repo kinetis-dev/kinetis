@@ -208,12 +208,24 @@ final class OpenApiGenerator
             }
 
             if (in_array($name, $route->pathParameterNames(), true)) {
-                $parameters[] = [
+                $pathParameter = [
                     'name' => $name,
                     'in' => 'path',
                     'required' => true,
                     'schema' => JsonSchema::schemaForScalar($parameter, $parameter->getType()),
                 ];
+
+                // A route constraint is PCRE2, not ECMA-262, so it is
+                // published verbatim beside the schema rather than as a
+                // JSON Schema `pattern` clients would evaluate differently.
+                if (array_key_exists($name, $route->where)) {
+                    $pathParameter['x-kinetis-route-constraint'] = [
+                        'dialect' => 'pcre2',
+                        'fragment' => $route->where[$name],
+                    ];
+                }
+
+                $parameters[] = $pathParameter;
             }
         }
 

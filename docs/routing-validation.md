@@ -47,8 +47,9 @@ soon as one of its methods carries a route attribute; {doc}`cli` covers
 restricting that scan in a large application. Methods without a route
 attribute are ordinary helpers.
 
-`#[Get]`, `#[Post]`, `#[Put]`, `#[Patch]` and `#[Delete]` each take a path
-and an optional `status`, which defaults to `200`. A controller that
+`#[Get]`, `#[Post]`, `#[Put]`, `#[Patch]` and `#[Delete]` each take a path,
+an optional `status`, which defaults to `200`, and optional
+[route constraints](#route-constraints). A controller that
 returns an array or an object is answered with it as JSON at that status;
 [Responses](#responses) covers returning anything else.
 
@@ -56,17 +57,53 @@ returns an array or an object is answered with it as JSON at that status;
   registers.
 - A trailing slash is ignored, in the declaration and in the request:
   `/articles/` reaches `/articles`.
-- `{id}` captures one whole path segment. There is no inline pattern such
-  as `{id:\d+}`; the parameter's type and constraints decide what the
+- Without a [route constraint](#route-constraints), `{id}` captures one
+  path segment. The parameter's type and constraints decide what the
   value may be, so `GET /articles/abc` reaches the route and fails with
-  `422` rather than `404`.
+  `422` rather than `404`. There is no inline pattern such as
+  `{id:\d+}`.
 - The most specific route wins whatever the declaration order:
   `/articles/latest` beats `/articles/{id}`. Two routes with the same
-  method and path shape are rejected at registration.
+  method and path shape are rejected at registration, whatever their
+  route constraints.
 
 `kinetis routes:list` prints the resulting table. Matching order, the
 placeholder grammar and registration failures are in [Route registration
 and matching](appendix-routing-validation.md#route-registration-and-matching).
+
+### Route constraints
+
+`where` decides what text a placeholder admits. Each entry maps a
+placeholder to a self-contained PCRE2 fragment, written without
+delimiters or anchors, that the placeholder's text must match whole:
+
+```{code-block} php
+#[Get('/articles/{slug}', where: ['slug' => '[a-z0-9-]+'])]
+public function show(string $slug): ArticleResponse
+
+#[Get('/docs/{page}', where: ['page' => '.*'])]
+public function page(string $page): HtmlResponse
+```
+
+- Text that fails a constraint is a route miss: `GET /articles/Hello!`
+  is a `404`, and no controller runs. Text that passes still binds and
+  validates as usual, so a type or validation failure stays a `422`.
+- A constraint may admit `/`: `.*` captures `guides/cli` from
+  `/docs/guides/cli`. `/docs/` is the same path as `/docs`, which has no
+  tail, so declare `/docs` separately if it needs an answer.
+- A captured tail is raw request text and may hold `//` or `..`.
+  Validate and canonicalise it before touching the filesystem.
+- A constraint changes neither which route wins nor what counts as a
+  duplicate.
+
+An invalid map fails when the route registers: a key naming no
+placeholder, an empty fragment, a fragment that does not compile on its
+own or leaves a group open or closes one it did not open, or one that
+uses `(*ACCEPT)`. The generated document
+publishes each fragment as an `x-kinetis-route-constraint` extension on
+its path parameter. [Route
+constraints](appendix-routing-validation.md#route-constraints) has the
+complete rules.
 
 ## Binding request values
 
@@ -79,7 +116,7 @@ claims it:
 | typed `UploadedFileInterface` | the uploaded file with the parameter's name |
 | `#[Body]` | a DTO hydrated and validated from the request body |
 | `#[Query]` | the query-string value with the parameter's name |
-| named like a `{placeholder}` | that path segment |
+| named like a `{placeholder}` | the text that placeholder captured |
 | any other class type | a service from the request container |
 
 Binding runs before the controller is constructed, so a request that
@@ -112,7 +149,8 @@ parameter. A missing query value takes the parameter's default, then
 `#[Query]` takes no arguments: the parameter name is the query key. An
 `array` parameter reads a repeated key, `?tag=php&tag=http`. PHP's
 bracket spelling, `?tag[]=php`, is a different key and does not bind. A
-path parameter is always a single segment, never an array. See [Query and
+path parameter is always one string, never an array, even when a route
+constraint lets it span `/`. See [Query and
 path values are raw
 strings](appendix-routing-validation.md#query-and-path-values-are-raw-strings).
 
