@@ -14,13 +14,13 @@ use Kinetis\Http\Routing\Exception\RouteMatchingException;
  *
  * A `{name}` placeholder captures one string. Unconstrained, it matches
  * any non-empty non-`/` run. A `$where` entry replaces that with a
- * delimiterless PCRE2 fragment the captured text must match whole, which
- * may admit `/` — so a constraint can hold a placeholder to a grammar or
- * let it capture a path tail. A constraint decides admission only: a
- * mismatch is a route miss, and duplicate detection and match ordering
- * ignore constraints entirely. What a captured value means is still
- * described where it is consumed, by the controller parameter's type and
- * validation attributes.
+ * delimiterless, self-contained PCRE2 fragment the captured text must
+ * match whole, which may admit `/` — so a constraint can hold a
+ * placeholder to a grammar or let it capture a path tail. A constraint
+ * decides admission only: a mismatch is a route miss, and duplicate
+ * detection and match ordering ignore constraints entirely. What a
+ * captured value means is still described where it is consumed, by the
+ * controller parameter's type and validation attributes.
  *
  * There is no inline constraint syntax, so a `{...}` expression that
  * isn't a plain placeholder name — or one written directly against
@@ -111,8 +111,8 @@ final class Route
         $this->where = self::canonicalConstraints($where, $this->paramNames, $this->pathTemplate);
         $this->pattern = self::compile($segments, $this->where);
 
-        // Probed once here, against the empty subject, where false can
-        // only mean the pattern itself does not compile.
+        // Each fragment compiles alone; this probes their combination,
+        // such as two fragments defining one group name.
         if (@preg_match($this->pattern, '') === false) {
             throw InvalidRoutePathException::uncompilableConstraint($this->pathTemplate, $this->where, preg_last_error_msg());
         }
@@ -122,7 +122,8 @@ final class Route
      * Validates the caller's `where` map against the template's own
      * placeholders and returns it in placeholder order. A literal control
      * byte is refused because the compiled pattern's delimiter is one;
-     * escaped text such as `\n` stays ordinary regex syntax.
+     * escaped text such as `\n` stays ordinary regex syntax. Each
+     * fragment must also pass assertContained().
      *
      * @param array<array-key, mixed> $where
      * @param list<string> $paramNames
@@ -141,6 +142,7 @@ final class Route
                 throw InvalidRoutePathException::unknownConstraintPlaceholder($pathTemplate, $name);
             }
 
+            self::assertContained($pathTemplate, $name, $fragment, $paramNames);
             $valid[$name] = $fragment;
         }
 
@@ -153,6 +155,49 @@ final class Route
         }
 
         return $canonical;
+    }
+
+    /**
+     * Proves with PCRE's own parser, rather than a second one, that a
+     * fragment cannot reach past its placeholder. The finished route
+     * alone cannot show this: `a))|((` closes the groups around it and
+     * reopens replacements, so the route compiles with its remaining
+     * literals and `\z` detached into another alternative.
+     *
+     * Compiled bare, a fragment fails if it closes a group it did not
+     * open or leaves a group, class or comment open. Compiled inside
+     * `(?:...)`, an unterminated `\Q` or `#` comment swallows that `)`
+     * and fails. The empty groups named after every placeholder, outside
+     * the fragment's option scope, fail if the fragment defines one of
+     * those names under `(?J)` to overwrite a placeholder's capture.
+     *
+     * An active `(*ACCEPT)` ends the whole match before the rest of the
+     * route is tested. Renaming every `(*ACCEPT` spelling leaves literal
+     * text (escaped, quoted, commented or inside a class) compiling, but
+     * turns an active verb into an unknown one that does not.
+     *
+     * @param list<string> $paramNames
+     */
+    private static function assertContained(string $pathTemplate, string $name, string $fragment, array $paramNames): void
+    {
+        $placeholderGroups = implode('', array_map(static fn (string $param): string => "(?<{$param}>)", $paramNames));
+
+        if (!self::compiles($fragment) || !self::compiles("(?:{$fragment}){$placeholderGroups}")) {
+            throw InvalidRoutePathException::uncontainedConstraint($pathTemplate, $name, $fragment);
+        }
+
+        if (str_contains($fragment, '(*ACCEPT') && !self::compiles(str_replace('(*ACCEPT', '(*XACCEPT', $fragment))) {
+            throw InvalidRoutePathException::acceptingConstraint($pathTemplate, $name, $fragment);
+        }
+    }
+
+    /**
+     * Probed against the empty subject, where false can only mean the
+     * expression does not compile or cannot run at all.
+     */
+    private static function compiles(string $regex): bool
+    {
+        return @preg_match(self::DELIMITER . $regex . self::DELIMITER, '') !== false;
     }
 
     /**
@@ -494,8 +539,9 @@ final class Route
     /**
      * `\A`/`\z` anchor the whole route, so a trailing newline is never
      * admitted. A constrained fragment sits in a non-capturing group
-     * inside its placeholder's named capture, so alternation in a
-     * self-contained fragment stays inside that capture.
+     * inside its placeholder's named capture; assertContained() has
+     * already proven it self-contained, so its alternation stays inside
+     * that capture.
      *
      * @param list<PathSegment> $segments
      * @param array<string,string> $where

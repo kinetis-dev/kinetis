@@ -42,7 +42,9 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Security/integrity**: a `where` fragment decides whether the route
   admits a path — a mismatch is a `404` and no controller runs — while
   the parameter's type and validation attributes still decide the value,
-  whose failure is a `422`. A constraint never picks between two routes:
+  whose failure is a `422`. Registration rejects a fragment that is not
+  self-contained or uses `(*ACCEPT)`, so a fragment cannot detach the
+  rest of the route. A constraint never picks between two routes:
   same method and path shape is a duplicate whatever the fragments say.
   A catch-all such as `.*` captures raw text that may hold `//` or `..`;
   validate and canonicalise it before any filesystem use.

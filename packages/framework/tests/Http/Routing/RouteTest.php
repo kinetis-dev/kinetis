@@ -399,8 +399,7 @@ final class RouteTest extends TestCase
         yield 'a non-string fragment' => [['id' => 5], 'invalid where: entry at key "id"'];
         yield 'a literal newline' => [['id' => "a\nb"], 'invalid where: entry at key "id"'];
         yield 'the delimiter byte' => [['id' => "a\x01b"], 'invalid where: entry at key "id"'];
-        yield 'an uncompilable fragment' => [['id' => '[z-a]'], 'does not compile with its where: constraints (id: [z-a])'];
-        yield 'an unbalanced group' => [['id' => '(a'], 'does not compile with its where: constraints (id: (a)'];
+        yield 'an uncompilable fragment' => [['id' => '[z-a]'], 'constraint "[z-a]" for "{id}", which does not compile as a self-contained PCRE2 fragment'];
     }
 
     /**
@@ -413,6 +412,74 @@ final class RouteTest extends TestCase
         $this->expectExceptionMessage($message);
 
         new Route('GET', '/users/{id}', 'C', 'm', 200, where: $where);
+    }
+
+    /**
+     * `a))|((` compiles inside the finished route by closing the
+     * placeholder's groups and reopening replacements, leaving `/tail`
+     * and `\z` in another alternative; `(*ACCEPT)` ends the match before
+     * `/tail` is tested. Both would admit `/v/a`. Every case fails the
+     * fragment's own check, before the route is assembled.
+     *
+     * @return iterable<string, array{string, string}>
+     */
+    public static function fragmentsReachingPastTheirPlaceholder(): iterable
+    {
+        $uncontained = 'which does not compile as a self-contained PCRE2 fragment';
+        $accepting = 'which uses (*ACCEPT)';
+
+        yield 'an unmatched closing group' => ['a))|((', $uncontained];
+        yield 'a closed and reopened group' => ['a)(?:b', $uncontained];
+        yield 'an escape swallowing a backslash' => ['a\\c\\)|(', $uncontained];
+        yield 'an unclosed group' => ['(a', $uncontained];
+        yield 'an unterminated quote' => ['\\Qa', $uncontained];
+        yield 'a duplicate capture name' => ['(?J)(?<id>a)', $uncontained];
+        yield 'accept' => ['a(*ACCEPT)', $accepting];
+        yield 'accept with a name' => ['a(*ACCEPT:done)', $accepting];
+        yield 'accept after a class whose leading ] is literal' => ['[\\E][](*ACCEPT)]', $accepting];
+    }
+
+    #[DataProvider('fragmentsReachingPastTheirPlaceholder')]
+    public function test_a_fragment_reaching_past_its_placeholder_is_rejected(string $fragment, string $message): void
+    {
+        $this->expectException(InvalidRoutePathException::class);
+        $this->expectExceptionMessage($message);
+
+        new Route('GET', '/v/{id}/tail', 'C', 'm', 200, where: ['id' => $fragment]);
+    }
+
+    /**
+     * Parentheses and verb text stay literal when escaped, quoted,
+     * commented or inside a class, and balanced groups stay admitted.
+     *
+     * @return iterable<string, array{string, string}>
+     */
+    public static function selfContainedFragments(): iterable
+    {
+        yield 'escaped parentheses' => ['\\(\\)', '()'];
+        yield 'parentheses in a class' => ['[()]+', ')('];
+        yield 'a POSIX class' => ['[[:alpha:]]+', 'abc'];
+        yield 'quoted verb text' => ['\\Q()(*ACCEPT)\\E', '()(*ACCEPT)'];
+        yield 'commented verb text' => ['(?#(*ACCEPT)a', 'a'];
+        yield 'a lookahead and a conditional' => ['(?=\\d)(?<d>\\d)(?(<d>)x|y)', '1x'];
+        yield 'a reference to its own group' => ['(?<c>[a-z])\\k<c>', 'aa'];
+    }
+
+    #[DataProvider('selfContainedFragments')]
+    public function test_a_self_contained_fragment_is_admitted(string $fragment, string $text): void
+    {
+        $route = new Route('GET', '/v/{id}/tail', 'C', 'm', 200, where: ['id' => $fragment]);
+
+        self::assertSame(['id' => $text], $route->matchPath("/v/{$text}/tail"));
+        self::assertNull($route->matchPath("/v/{$text}"));
+    }
+
+    public function test_fragments_that_compile_alone_but_not_together_are_rejected(): void
+    {
+        $this->expectException(InvalidRoutePathException::class);
+        $this->expectExceptionMessage('does not compile with its where: constraints (a: (?<n>x), b: (?<n>y))');
+
+        new Route('GET', '/v/{a}/{b}', 'C', 'm', 200, where: ['a' => '(?<n>x)', 'b' => '(?<n>y)']);
     }
 
     public function test_routes_differing_only_in_constraints_claim_the_same_shape(): void

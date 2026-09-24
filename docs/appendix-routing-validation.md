@@ -109,12 +109,23 @@ The map's rules, checked when the route is built:
   Escaped text such as `\n` is ordinary regex syntax and is allowed.
 - A fragment carries no delimiters and no anchors; the route supplies
   both. It is embedded verbatim as `(?P<name>(?:fragment))`, so
-  `\Q...\E` and character classes keep their PCRE meaning. Write it as
-  a self-contained expression — every group it opens closed, no `\Q`
-  left open — so it cannot reach past its own placeholder.
-- The compiled route is probed once when the route is built. A fragment
-  PCRE cannot compile fails there, naming the template and every
-  constraint.
+  `\Q...\E` and character classes keep their PCRE meaning.
+- A fragment is self-contained. Compiled on its own, it must succeed,
+  close every group, character class, comment and `\Q...\E` quote it
+  opens, and close no group it did not open. It may not name a group
+  after a placeholder. `a))|((` fails: embedded, it would close the
+  placeholder's groups and leave the rest of the route in a separate
+  alternative. PCRE itself performs the check, so a parenthesis that is
+  escaped, quoted, commented or inside a class is text. A reference to
+  another placeholder's group fails the same way; numbered references
+  count every group in the route, so refer to a fragment's own groups
+  by name or by relative number (`\g{-1}`).
+- A fragment may not use `(*ACCEPT)`, which ends the match before the
+  rest of the route is tested. The same text escaped, quoted, commented
+  or inside a class is literal and allowed.
+- The compiled route is probed once when the route is built. Fragments
+  that compile alone but not together, such as two defining the same
+  group name, fail there, naming the template and every constraint.
 
 Every failure is an `InvalidRoutePathException` at registration, and
 registration stays all-or-nothing: none of the controller's routes are
@@ -135,8 +146,9 @@ A fragment may admit `/`. `.*` on `/files/{path}` captures `a/b` from
   before using it as a filesystem path.
 
 PCRE's own limits bound matching: PHP's `pcre.backtrack_limit`,
-`pcre.recursion_limit` and, with JIT enabled, the JIT stack. A fragment
-that exhausts one on a request neither admits nor rejects the path.
+`pcre.recursion_limit` and, with JIT enabled, the JIT stack. When PCRE
+reports an error instead of a result, such as an exhausted limit, the
+route neither admits nor rejects the path.
 `Route::matchPath()` throws `RouteMatchingException`, naming the template
 and PCRE's error message but not the request path, and the request is
 answered as a server error — never as a `404`.

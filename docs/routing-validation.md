@@ -57,10 +57,11 @@ returns an array or an object is answered with it as JSON at that status;
   registers.
 - A trailing slash is ignored, in the declaration and in the request:
   `/articles/` reaches `/articles`.
-- `{id}` captures one path segment. The parameter's type and
-  constraints decide what the value may be, so `GET /articles/abc`
-  reaches the route and fails with `422` rather than `404`. There is no
-  inline pattern such as `{id:\d+}`.
+- Without a [route constraint](#route-constraints), `{id}` captures one
+  path segment. The parameter's type and constraints decide what the
+  value may be, so `GET /articles/abc` reaches the route and fails with
+  `422` rather than `404`. There is no inline pattern such as
+  `{id:\d+}`.
 - The most specific route wins whatever the declaration order:
   `/articles/latest` beats `/articles/{id}`. Two routes with the same
   method and path shape are rejected at registration, whatever their
@@ -73,8 +74,8 @@ and matching](appendix-routing-validation.md#route-registration-and-matching).
 ### Route constraints
 
 `where` decides what text a placeholder admits. Each entry maps a
-placeholder to a PCRE2 fragment, written without delimiters or anchors,
-that the placeholder's text must match whole:
+placeholder to a self-contained PCRE2 fragment, written without
+delimiters or anchors, that the placeholder's text must match whole:
 
 ```{code-block} php
 #[Get('/articles/{slug}', where: ['slug' => '[a-z0-9-]+'])]
@@ -95,8 +96,10 @@ public function page(string $page): HtmlResponse
 - A constraint changes neither which route wins nor what counts as a
   duplicate.
 
-An invalid map — a key naming no placeholder, an empty fragment, one PCRE
-cannot compile — fails when the route registers. The generated document
+An invalid map fails when the route registers: a key naming no
+placeholder, an empty fragment, a fragment that does not compile on its
+own or leaves a group open or closes one it did not open, or one that
+uses `(*ACCEPT)`. The generated document
 publishes each fragment as an `x-kinetis-route-constraint` extension on
 its path parameter. [Route
 constraints](appendix-routing-validation.md#route-constraints) has the

@@ -9,10 +9,10 @@ use RuntimeException;
 /**
  * A declared path can't be turned into a working route: it isn't
  * absolute, it carries a control character, its `{...}` placeholder
- * syntax is malformed, or its `where` constraints don't compile into a
- * working matcher. Every case fails at registration, where the mistake
- * is, rather than as a silent permanent 404 on the route's first real
- * request.
+ * syntax is malformed, or its `where` constraints are not self-contained
+ * fragments that compile into a working matcher. Every case fails at
+ * registration, where the mistake is, rather than as a silent permanent
+ * 404 on the route's first real request.
  */
 final class InvalidRoutePathException extends RuntimeException
 {
@@ -114,6 +114,39 @@ final class InvalidRoutePathException extends RuntimeException
     }
 
     /**
+     * A fragment that does not compile on its own, or that closes a group
+     * it did not open, leaves a group, class, comment or `\Q` quote open,
+     * or names a group after a placeholder. Embedded as written, it could
+     * detach the rest of the route from the match or overwrite another
+     * capture even when the finished route compiles.
+     */
+    public static function uncontainedConstraint(string $pathTemplate, string $name, string $fragment): self
+    {
+        return new self(sprintf(
+            'Route "%s" declares the where: constraint "%s" for "{%s}", which does not compile as a self-contained PCRE2 fragment. A fragment must compile on its own, close every group, character class, comment and \\Q...\\E quote it opens, close no group it did not open, and name no group after a placeholder.',
+            $pathTemplate,
+            $fragment,
+            $name,
+        ));
+    }
+
+    /**
+     * An active `(*ACCEPT)` ends the whole match where it runs, so the
+     * route's remaining literals and its `\z` anchor would never be tested.
+     */
+    public static function acceptingConstraint(string $pathTemplate, string $name, string $fragment): self
+    {
+        return new self(sprintf(
+            'Route "%s" declares the where: constraint "%s" for "{%s}", which uses (*ACCEPT). (*ACCEPT) ends the match before the rest of the path is tested, so a constraint cannot use it.',
+            $pathTemplate,
+            $fragment,
+            $name,
+        ));
+    }
+
+    /**
+     * Every fragment compiles alone, but the finished route does not —
+     * for example, two fragments define the same group name.
      * $pcreError is `preg_last_error_msg()` from the construction probe.
      *
      * @param array<string,string> $where

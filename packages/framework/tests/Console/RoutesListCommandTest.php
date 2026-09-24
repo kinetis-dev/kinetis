@@ -138,6 +138,54 @@ final class RoutesListCommandTest extends TestCase
     }
 
     /**
+     * Text that is not valid UTF-8 has no character count, so its cell
+     * pads by byte, even the valid `é` beside the stray byte, and the
+     * next column starts where the header's does, byte for byte.
+     */
+    public function test_a_constraint_that_is_not_valid_utf8_pads_by_byte(): void
+    {
+        $root = sys_get_temp_dir() . '/kinetis_routes_list_bytes_' . bin2hex(random_bytes(8));
+        mkdir($root . '/src/Http', recursive: true);
+
+        file_put_contents($root . '/composer.json', json_encode([
+            'autoload' => ['psr-4' => ['App\\' => 'src/']],
+        ]));
+
+        file_put_contents($root . '/src/Http/ByteConstraintController.php', <<<'PHP'
+            <?php
+            declare(strict_types=1);
+            namespace App\Http;
+            use Kinetis\Http\Attributes\Get;
+            final class ByteConstraintController
+            {
+                #[Get('/bytes/{raw}', where: ['raw' => "\u{e9}\xff+"])]
+                public function show(string $raw): string
+                {
+                    return $raw;
+                }
+            }
+            PHP);
+        // Discovery registers only classes that load; nothing autoloads
+        // this temporary project.
+        require $root . '/src/Http/ByteConstraintController.php';
+
+        try {
+            $lines = self::lines($this->runCommand($root));
+            $header = $lines[self::lineIndexContaining($lines, 'Method  Path')];
+            $bytesLine = $lines[self::lineIndexContaining($lines, '/bytes/{raw}')];
+
+            self::assertStringContainsString("raw: \u{e9}\xff+", $bytesLine);
+            self::assertSame(strpos($header, 'Status'), strpos($bytesLine, '200'));
+        } finally {
+            unlink($root . '/composer.json');
+            unlink($root . '/src/Http/ByteConstraintController.php');
+            rmdir($root . '/src/Http');
+            rmdir($root . '/src');
+            rmdir($root);
+        }
+    }
+
+    /**
      * A project with no controllers of its own still lists the two the
      * framework serves: DocumentationController is discovered like any
      * other, which is the point of it being a controller rather than

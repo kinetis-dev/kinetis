@@ -7,11 +7,12 @@ namespace Kinetis\Http\Routing\Exception;
 use RuntimeException;
 
 /**
- * PCRE failed while testing a request path against a route — a
- * configured backtrack, recursion, or JIT stack limit was exhausted.
- * The route neither admitted nor rejected the path, so this is a server
- * failure rather than a route miss. The message names the route, not the
- * request path.
+ * PCRE failed while testing a request path against a route, for example
+ * by exhausting the backtrack, recursion or JIT stack limit, and reported
+ * an error instead of a match result. The route neither admitted nor
+ * rejected the path, so this is a server failure rather than a route
+ * miss. The message names the route and PCRE's error, never the request
+ * path.
  */
 final class RouteMatchingException extends RuntimeException
 {

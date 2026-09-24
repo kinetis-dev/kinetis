@@ -194,16 +194,16 @@ final readonly class RoutesListCommand
 
     /**
      * @param list<string> $headers
-     * @param list<list<list<string>>> $rows each cell is its own list of lines
+     * @param list<non-empty-list<list<string>>> $rows each cell is its own list of lines
      */
     private function printTable(array $headers, array $rows): void
     {
-        $widths = array_map(mb_strlen(...), $headers);
+        $widths = array_map(self::width(...), $headers);
 
         foreach ($rows as $row) {
             foreach ($row as $column => $lines) {
                 foreach ($lines as $line) {
-                    $widths[$column] = max($widths[$column], mb_strlen($line));
+                    $widths[$column] = max($widths[$column], self::width($line));
                 }
             }
         }
@@ -220,7 +220,7 @@ final readonly class RoutesListCommand
      * One route spans as many lines as its tallest cell; a shorter cell
      * is left blank below its own last line.
      *
-     * @param list<list<string>> $row
+     * @param non-empty-list<list<string>> $row
      * @param array<int, int> $widths
      */
     private function printRouteRow(array $row, array $widths): void
@@ -236,8 +236,8 @@ final readonly class RoutesListCommand
     }
 
     /**
-     * Pads by character, not byte, so the multibyte `—` placeholder keeps
-     * every later column aligned.
+     * Pads by self::width(), so the multibyte `—` placeholder keeps every
+     * later column aligned.
      *
      * @param list<string> $columns
      * @param array<int, int> $widths
@@ -247,10 +247,20 @@ final readonly class RoutesListCommand
         $padded = [];
 
         foreach ($columns as $index => $value) {
-            $padded[] = $value . str_repeat(' ', $widths[$index] - mb_strlen($value));
+            $padded[] = $value . str_repeat(' ', $widths[$index] - self::width($value));
         }
 
         $this->write(rtrim(implode('  ', $padded)) . "\n");
+    }
+
+    /**
+     * Counts UTF-8 characters with PCRE rather than mbstring, which the
+     * framework does not require. Text that is not valid UTF-8 counts
+     * bytes.
+     */
+    private static function width(string $text): int
+    {
+        return preg_match_all('/./su', $text) ?: strlen($text);
     }
 
     private function write(string $line): void

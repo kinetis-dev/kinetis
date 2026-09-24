@@ -610,6 +610,28 @@ final class RouterTest extends TestCase
     }
 
     /**
+     * A constraint miss is a 405 only when another method's route admits
+     * the path; otherwise it is a 404.
+     */
+    public function test_a_constraint_miss_is_a_405_only_when_another_methods_route_admits_the_path(): void
+    {
+        $router = Router::fromArray([
+            [...$this->validRouteEntry(), 'pathTemplate' => '/items/{id}', 'where' => ['id' => '\d+']],
+            [...$this->validRouteEntry(), 'httpMethod' => 'DELETE', 'pathTemplate' => '/items/{id}', 'controllerMethod' => 'destroy', 'where' => ['id' => '[a-z]+']],
+        ]);
+
+        try {
+            $router->match('GET', '/items/abc');
+            self::fail('Expected a MethodNotAllowedException.');
+        } catch (MethodNotAllowedException $e) {
+            self::assertSame(['DELETE'], $e->allowedMethods);
+        }
+
+        $this->expectException(RouteNotFoundException::class);
+        $router->match('GET', '/items/ABC');
+    }
+
+    /**
      * @return iterable<string, array{string, string, array<string, string>}>
      */
     public static function catchAllPrecedence(): iterable
@@ -712,6 +734,8 @@ final class RouterTest extends TestCase
         yield 'an unknown placeholder' => [['slug' => '[a-z]+']];
         yield 'an empty fragment' => [['id' => '']];
         yield 'an uncompilable fragment' => [['id' => '[z-a]']];
+        yield 'a fragment detaching the rest of the route' => [['id' => 'a))|((']];
+        yield 'an accepting fragment' => [['id' => 'a(*ACCEPT)']];
     }
 
     #[DataProvider('malformedCachedConstraints')]

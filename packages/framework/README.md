@@ -68,7 +68,10 @@ framework itself.
   by a PHPStan rule that bans stray `static` state.
 - **Attribute-based routing, validation, and OpenAPI** — typed DTOs
   validated before your controller ever runs, with a zero-config Swagger
-  UI at `/openapi`.
+  UI at `/openapi`. A route's `where` map decides which text a
+  placeholder admits: `where: ['page' => '.*']` lets `{page}` capture a
+  path tail. See [Route
+  constraints](https://kinetis.dev/docs/routing-validation.html#route-constraints).
 - **Fiber-based concurrency** (`Kinetis\Async\concurrently()`) over Revolt,
   plus Revolt-native MySQL and Postgres drivers, and a Redis transport
   ([`kinetis/redis`](https://github.com/kinetis-dev/redis)) that never
