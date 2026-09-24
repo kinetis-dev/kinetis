@@ -7,10 +7,12 @@ namespace Kinetis\Tests\Console;
 use Kinetis\Console\RoutesListCommand;
 use Kinetis\Http\Middleware\ExceptionHandlerMiddleware;
 use Kinetis\Http\Middleware\SecurityHeadersMiddleware;
+use Kinetis\Runtime\ProjectRoot;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\HighPriorityMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\RouteLevelMiddlewareA;
 use Kinetis\Tests\Cache\Fixtures\Http\RouteLevelMiddlewareB;
+use Kinetis\Tests\Runtime\Fixtures\ProjectRootPackageBootstrap;
 use PHPUnit\Framework\TestCase;
 
 final class RoutesListCommandTest extends TestCase
@@ -27,7 +29,7 @@ final class RoutesListCommandTest extends TestCase
         $stream = fopen('php://memory', 'r+');
         self::assertNotFalse($stream);
 
-        $command = new RoutesListCommand($projectRoot ?? $this->projectRoot, $stream);
+        $command = new RoutesListCommand(new ProjectRoot($projectRoot ?? $this->projectRoot), $stream);
         $exitCode = $command->run();
         self::assertSame(0, $exitCode);
 
@@ -207,6 +209,37 @@ final class RoutesListCommandTest extends TestCase
             self::assertStringContainsString('—', $output);
         } finally {
             rmdir($emptyRoot);
+        }
+    }
+
+    /**
+     * The command runs the bootstrap chain on its own AppScope, so the
+     * root it was given has to be bound there before an installed
+     * package's bootstrap resolves it.
+     */
+    public function test_a_package_bootstrap_sees_the_root_the_command_was_given(): void
+    {
+        $root = sys_get_temp_dir() . '/kinetis_routes_list_package_' . bin2hex(random_bytes(8));
+        mkdir($root . '/vendor/composer', recursive: true);
+
+        file_put_contents($root . '/vendor/composer/installed.json', json_encode([
+            'packages' => [[
+                'name' => 'acme/root-reader',
+                'install-path' => '../acme/root-reader',
+                'extra' => ['kinetis' => ['bootstrap' => ProjectRootPackageBootstrap::class]],
+            ]],
+        ]));
+
+        try {
+            $this->runCommand($root);
+
+            self::assertSame($root, file_get_contents($root . '/' . ProjectRootPackageBootstrap::MARKER));
+        } finally {
+            @unlink($root . '/' . ProjectRootPackageBootstrap::MARKER);
+            unlink($root . '/vendor/composer/installed.json');
+            rmdir($root . '/vendor/composer');
+            rmdir($root . '/vendor');
+            rmdir($root);
         }
     }
 

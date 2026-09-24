@@ -34,8 +34,18 @@ use Psr\Http\Server\RequestHandlerInterface;
  * verifyCsrfToken() never generates anything and compares via
  * hash_equals(), so a byte-wise timing probe learns nothing about the
  * real token either.
+ *
+ * Not final, for the same reason {@see \Kinetis\Auth\BearerAuthMiddleware}
+ * and {@see \Kinetis\AuthJwt\JwtAuthMiddleware} are not: an attribute only
+ * attaches to a class by being declared on it, so the sole supported
+ * extension is an otherwise-empty subclass carrying
+ * `#[AsMiddlewareGroup]` to join this middleware to a discovered named
+ * group. `readonly` propagates to any subclass (PHP requires it), so
+ * that subclass is `final readonly` — nothing beyond the attribute
+ * belongs on it, and configuration stays on this class's own constructor
+ * dependencies.
  */
-final readonly class CsrfMiddleware implements MiddlewareInterface
+readonly class CsrfMiddleware implements MiddlewareInterface
 {
     private const array SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 

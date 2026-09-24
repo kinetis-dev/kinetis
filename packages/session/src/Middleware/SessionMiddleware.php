@@ -59,8 +59,18 @@ use Psr\Http\Server\RequestHandlerInterface;
  * unsatisfiable combination is refused at construction. The alternative
  * is a cookie the browser silently drops on every response, which
  * presents as sessions that never persist and says nothing about why.
+ *
+ * Not final, for the same reason {@see \Kinetis\Auth\BearerAuthMiddleware}
+ * and {@see \Kinetis\AuthJwt\JwtAuthMiddleware} are not: an attribute only
+ * attaches to a class by being declared on it, so the sole supported
+ * extension is an otherwise-empty subclass carrying
+ * `#[AsMiddlewareGroup]` to join this middleware to a discovered named
+ * group. `readonly` propagates to any subclass (PHP requires it), so
+ * that subclass is `final readonly` — nothing beyond the attribute
+ * belongs on it, and configuration stays on this class's own constructor
+ * dependencies.
  */
-final readonly class SessionMiddleware implements MiddlewareInterface
+readonly class SessionMiddleware implements MiddlewareInterface
 {
     private const string ID_PATTERN = '/^[a-f0-9]{32}$/';
 

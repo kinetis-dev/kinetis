@@ -22,6 +22,15 @@ use Psr\Http\Server\RequestHandlerInterface;
  * AppScope intercepts the preflight before routing runs at all, the same
  * reasoning ExceptionHandlerMiddleware already relies on.
  *
+ * GlobalMiddlewareOrder runs a registered instance directly inside
+ * SecurityHeadersMiddleware, outside ExceptionHandlerMiddleware and
+ * RequestBodyMiddleware, so an allowed origin can read the error
+ * responses those two build. Outside the exception boundary nothing here
+ * may throw at request time: every configured header value is checked
+ * at construction by the same Nyholm validation withHeader() applies,
+ * and every other value is fixed or comes from a request or response
+ * header that already passed that validation.
+ *
  * A request with no Origin header, or an Origin not on the allow list, is
  * passed through completely untouched — no CORS headers added, and no
  * error status returned either. This is deliberate, not a missing branch:
@@ -95,6 +104,27 @@ final readonly class CorsMiddleware implements MiddlewareInterface
                     . 'allow. Include the delimiters, as in #^https://[a-z0-9-]+\.example\.com$#.',
                 );
             }
+        }
+
+        self::assertHeaderValue('allowedMethods', 'Access-Control-Allow-Methods', implode(', ', $allowedMethods));
+        self::assertHeaderValue('allowedHeaders', 'Access-Control-Allow-Headers', implode(', ', $allowedHeaders));
+        self::assertHeaderValue('exposedHeaders', 'Access-Control-Expose-Headers', implode(', ', $exposedHeaders));
+    }
+
+    /**
+     * The array form of Nyholm's withHeader() validates each value with
+     * an end-anchored pattern, which the single-string form process()
+     * uses does not, so a value accepted here is accepted there.
+     */
+    private static function assertHeaderValue(string $parameter, string $header, string $value): void
+    {
+        try {
+            new Response()->withHeader($header, [$value]);
+        } catch (InvalidArgumentException) {
+            throw new InvalidArgumentException(
+                "CorsMiddleware {$parameter} cannot be sent as {$header}: it contains a character "
+                . 'no HTTP header value may carry, such as CR or LF.',
+            );
         }
     }
 

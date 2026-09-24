@@ -104,7 +104,8 @@ registering anything.
 
 Explicitly registered middleware runs outside every discovered class, in
 registration order. A class that is both registered and discovered runs
-once, at its registered position.
+once, at its registered position. A registered `CorsMiddleware` is the
+exception: it moves outside error handling, as [CORS](#cors) explains.
 
 (route-middleware)=
 ## Route middleware
@@ -266,9 +267,10 @@ Every request passes through this pipeline:
 
 ```{code-block} text
 SecurityHeadersMiddleware          always
+CorsMiddleware                     when registered with $app->middleware()
 ExceptionHandlerMiddleware         always
 RequestBodyMiddleware              always
-$app->middleware() registrations   in registration order
+other $app->middleware() entries   in registration order
 #[AsGlobalMiddleware] classes      by priority
   routing
     route middleware               class-level, then method-level
@@ -479,7 +481,10 @@ returns all of it, even after another middleware has read it.
 usually matches no route, and route middleware runs only after a match.
 Bind it with your configuration and register it in `bootstrap.php`, as
 [Registering global middleware](bootstrapping.md#registering-global-middleware)
-shows. Its constructor, with every default:
+shows. Wherever you register it, it runs directly inside
+`SecurityHeadersMiddleware`, so an allowed origin can also read the
+framework's error responses and the `400` or `413` for a rejected
+request body. Its constructor, with every default:
 
 ```{code-block} php
 new CorsMiddleware(
@@ -505,6 +510,9 @@ new CorsMiddleware(
   as `['#^https://[a-z0-9-]+\.example\.com$#']` for every subdomain. A
   pattern must match the whole `Origin`, and one that does not compile
   fails construction.
+- **`allowedMethods`, `allowedHeaders` and `exposedHeaders` must be valid
+  header values**; one containing CR, LF or another character a header
+  value cannot carry fails construction.
 
 ```{danger}
 **Escape literal dots in origin patterns.** `.+example\.com` matches

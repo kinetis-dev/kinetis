@@ -13,6 +13,7 @@ use Kinetis\Orm\EntityManager;
 use Kinetis\Orm\OrmFactory;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\TransactionGuard;
 use Psr\Log\LoggerInterface;
 
@@ -27,14 +28,17 @@ use Psr\Log\LoggerInterface;
  * resolves it constructs none.
  *
  * With DB_CONNECTION configured, the default connection is built and
- * bound under its dialect contract, so application code
- * constructor-injects MysqlLink/PostgresLink with no bootstrap code of
- * its own, and is closed when the application scope is disposed.
- * Without DB_CONNECTION no connection is built — "no database" is a
- * configuration, not an error. The application's bootstrap.php runs
+ * bound under its dialect contract, MysqlLink or PostgresLink, and is
+ * closed when the application scope is disposed. SqlLink is bound as an
+ * uncached alias that resolves the dialect contract on every lookup, so
+ * application code constructor-injects either type with no bootstrap
+ * code of its own and both return the same link. Without DB_CONNECTION
+ * no connection is built and no link contract is bound — "no database"
+ * is a configuration, not an error. The application's bootstrap.php runs
  * after this and wins on a shared binding, keeping ownership of the
- * link it binds; named (non-default) connections stay explicit
- * application wiring.
+ * link it binds: a replaced dialect binding is what SqlLink then
+ * returns, and an explicit SqlLink binding replaces the alias. Named
+ * (non-default) connections stay explicit application wiring.
  *
  * kinetis/orm is optional and detected with class_exists(). With it and
  * DB_CONNECTION, OrmFactory and a lazy request-scoped EntityManager are
@@ -67,6 +71,13 @@ final class PackageBootstrap implements PackageBootstrapInterface
         // one.
         $app->onDispose($link->close(...));
         $app->instance($contract, $link);
+        // Unshared and resolved through the dialect binding on every
+        // lookup, so a replacement of that binding is returned here even
+        // after SqlLink was already resolved once.
+        $app->bind(SqlLink::class, static function (AppScope $app) use ($contract): SqlLink {
+            /** @var MysqlLink|PostgresLink */
+            return $app->get($contract);
+        }, shared: false);
 
         if ($orm) {
             self::bindOrm($app, $contract);

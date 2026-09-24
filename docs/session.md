@@ -144,6 +144,11 @@ own; {doc}`views` covers escaping in each engine.
 - **Order.** Declare `SessionMiddleware` before `CsrfMiddleware`;
   declaration order is execution order. Reversed, every state-changing
   request answers `500` naming the mistake.
+- **Grouping.** Neither class is `final`, so a route can reach both
+  through one named middleware group instead of listing them — the same
+  extension {doc}`auth` and {doc}`auth-jwt` use, with the group's own
+  priority taking the place of declaration order. See {doc}`middleware`'s
+  "Middleware groups".
 - **Safe methods.** `GET`, `HEAD` and `OPTIONS` pass without a token
   check, so they must not change application state: another site can
   make a browser send them with the user's cookie. The only session

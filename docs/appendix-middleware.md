@@ -12,14 +12,21 @@ middleware; this page is the reference it links to.
 first:
 
 1. `SecurityHeadersMiddleware`
-2. `ExceptionHandlerMiddleware`
-3. `RequestBodyMiddleware`
-4. every `AppScope::middleware()` registration, in registration order
-5. every `#[AsGlobalMiddleware]` class not already registered explicitly
+2. `CorsMiddleware`, when `AppScope::middleware()` registered it
+3. `ExceptionHandlerMiddleware`
+4. `RequestBodyMiddleware`
+5. every other `AppScope::middleware()` registration, in registration
+   order
+6. every `#[AsGlobalMiddleware]` class not already registered explicitly
 
 A class present in both lists runs once, at its explicit position:
 discovery is for a class nobody registered by hand, not a second copy of
-one that was.
+one that was. A registered `CorsMiddleware` runs once, at position 2,
+wherever and however often it was registered, so its headers reach the
+error responses `ExceptionHandlerMiddleware` builds and the `400` and
+`413` that `RequestBodyMiddleware` returns. Middleware outside
+`ExceptionHandlerMiddleware` cannot throw at request time; see
+{ref}`CorsMiddleware construction <cors-construction>`.
 
 The pipeline wraps `Kernel::handle()`'s entire body. Its innermost
 handler creates the request's `RequestScope`, routes and dispatches (see
@@ -392,6 +399,17 @@ Kinetis's to bound — PHP's own `post_max_size`/`max_input_vars` never see
 it. See {doc}`runtime-adapters`.
 
 ## `CorsMiddleware`
+
+(cors-construction)=
+### Construction
+
+A registered `CorsMiddleware` runs outside `ExceptionHandlerMiddleware`,
+so it cannot throw at request time. The constructor checks the
+`allowedMethods`, `allowedHeaders` and `exposedHeaders` header values
+with the same validation Nyholm PSR-7 applies when a header is set, and
+throws `InvalidArgumentException` for a value it would refuse. Every
+other value it sends is fixed, or comes from a request or response
+header that already passed that validation.
 
 ### Preflights and pass-through
 

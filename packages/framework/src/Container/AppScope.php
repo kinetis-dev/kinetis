@@ -91,9 +91,11 @@ final class AppScope implements ContainerInterface
     /**
      * Registers a global middleware, run for every request — including
      * ones that never match a route — in registration order, outermost
-     * first. Locked after boot() for the same reason bind()/instance()
-     * are: the pipeline a request runs through must be fixed at server
-     * startup, not something that can quietly change mid-worker-lifetime.
+     * first, except that GlobalMiddlewareOrder::resolve() moves a
+     * registered CorsMiddleware outside error handling. Locked after
+     * boot() for the same reason bind()/instance() are: the pipeline a
+     * request runs through must be fixed at server startup, not something
+     * that can quietly change mid-worker-lifetime.
      *
      * @param class-string<MiddlewareInterface> $middlewareClass
      */
