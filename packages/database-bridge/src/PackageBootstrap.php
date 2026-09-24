@@ -32,9 +32,9 @@ use Psr\Log\LoggerInterface;
  * closed when the application scope is disposed. SqlLink is bound as an
  * uncached alias that resolves the dialect contract on every lookup, so
  * application code constructor-injects either type with no bootstrap
- * code of its own and both return the same link. Without DB_CONNECTION no connection is
- * built and no link contract is bound — "no database" is a
- * configuration, not an error. The application's bootstrap.php runs
+ * code of its own and both return the same link. Without DB_CONNECTION
+ * no connection is built and no link contract is bound — "no database"
+ * is a configuration, not an error. The application's bootstrap.php runs
  * after this and wins on a shared binding, keeping ownership of the
  * link it binds: a replaced dialect binding is what SqlLink then
  * returns, and an explicit SqlLink binding replaces the alias. Named

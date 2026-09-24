@@ -312,12 +312,12 @@ current source, regardless of `APP_ENV`, so it always reflects your code
 exactly as it stands right now, not whatever a stale compiled cache
 happens to hold.
 
-The global middleware section lists the exact order requests run in —
-the three Kinetis always wires in first — `SecurityHeadersMiddleware`,
-`ExceptionHandlerMiddleware`, `RequestBodyMiddleware` — then your own
-explicitly-registered (`AppScope::middleware()`) and `#[AsGlobalMiddleware]`-discovered
-classes, deduplicated. A registered `CorsMiddleware` is listed second,
-directly after `SecurityHeadersMiddleware` (see
+The global middleware section lists the exact order requests run in:
+`SecurityHeadersMiddleware`, a registered `CorsMiddleware`,
+`ExceptionHandlerMiddleware`, `RequestBodyMiddleware`, then every other
+explicitly registered (`AppScope::middleware()`) and
+`#[AsGlobalMiddleware]`-discovered class, deduplicated. CORS is therefore
+listed second when configured, directly after `SecurityHeadersMiddleware` (see
 [Global order](appendix-middleware.md#global-order)).
 
 Each route's `Where` column lists its route constraints, one

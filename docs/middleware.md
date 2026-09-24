@@ -270,7 +270,7 @@ SecurityHeadersMiddleware          always
 CorsMiddleware                     when registered with $app->middleware()
 ExceptionHandlerMiddleware         always
 RequestBodyMiddleware              always
-$app->middleware() registrations   in registration order
+other $app->middleware() entries   in registration order
 #[AsGlobalMiddleware] classes      by priority
   routing
     route middleware               class-level, then method-level
