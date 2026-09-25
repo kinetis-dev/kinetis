@@ -582,20 +582,25 @@ factory, which reads its own keys under it. The factory does not
 validate the name; code taking one from outside the application does.
 
 This package's bootstrap binds one connection to `QueueInterface`: the
-one `QUEUE_CONNECTION_NAME` names, `default` when unset. It stays inert
-while that connection's selector is unset, and core's synchronous
-listener invoker stands. The bootstrap wiring below applies only when it
-binds.
+one `QUEUE_CONNECTION_NAME` names, `default` when unset or blank. Any
+other value must follow the connection-name grammar below, or
+registration throws `InvalidArgumentException` naming
+`QUEUE_CONNECTION_NAME` — whether or not a selector is configured. With
+a valid name, it stays inert while that connection's selector is unset,
+and core's synchronous listener invoker stands. The bootstrap wiring
+below applies only when it binds.
 
 `queue:work` runs the bound `QueueInterface` — this bootstrap's or the
 application's own. `queue:work --connection=<name>` builds that
 connection through `QueueFactory` instead and never resolves the
 binding, so `--connection=default` runs the connection the unscoped
 keys describe, whatever the application bound and whatever
-`QUEUE_CONNECTION_NAME` says. A name is lowercase ASCII letters and
-digits, starting with a letter. A bare, empty or invalid value, like an
-invalid worker setting, fails before any queue is resolved or built and
-before any startup output.
+`QUEUE_CONNECTION_NAME` says. A connection name is lowercase ASCII
+letters and digits, starting with a letter (`^[a-z][a-z0-9]*$`), checked
+by `QueueContract::assertValidConnectionName()` for both the bootstrap
+and the worker. A bare, empty or invalid `--connection`, like an invalid
+worker setting, fails before any queue is resolved or built and before
+any startup output.
 
 ### Clearing from application code
 

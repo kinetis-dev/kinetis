@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Queue\Tests;
 
+use InvalidArgumentException;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\ListenerInvokerInterface;
@@ -155,6 +156,35 @@ final class PackageBootstrapTest extends TestCase
         self::assertFalse($app->has(QueueInterface::class));
         self::assertFalse($app->has(ClearableQueueInterface::class));
         self::assertInstanceOf(SynchronousListenerInvoker::class, $app->get(ListenerInvokerInterface::class));
+    }
+
+    /**
+     * Rejected at registration even with no selector configured: an
+     * unvalidated name would derive a key nobody set and leave queued
+     * listeners silently running inline.
+     */
+    public function test_a_malformed_connection_name_throws_before_the_gate(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage(
+            'Invalid connection name "Jobs" from QUEUE_CONNECTION_NAME: a connection name is lowercase ASCII '
+            . 'letters and digits, starting with a letter (^[a-z][a-z0-9]*$).',
+        );
+        new PackageBootstrap()->register(new AppScope(), new Config(['QUEUE_CONNECTION_NAME' => 'Jobs']));
+    }
+
+    public function test_a_blank_connection_name_binds_the_default_connection(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register(
+            $app,
+            new Config(['QUEUE_CONNECTION_NAME' => '', 'QUEUE_CONNECTION' => 'redis']),
+        );
+        $app->boot();
+
+        $this->expectException(QueueUnavailableException::class);
+        $this->expectExceptionMessage('Cannot use QUEUE_CONNECTION="redis"');
+        $app->get(QueueInterface::class);
     }
 
     public function test_registering_builds_no_backend_until_the_queue_is_resolved(): void

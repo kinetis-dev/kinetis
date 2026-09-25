@@ -10,6 +10,7 @@ use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
 use Kinetis\Container\RequestScope;
 use Kinetis\Queue\DisposableQueueInterface;
+use Kinetis\Queue\QueueContract;
 use Kinetis\Queue\QueueFactory;
 use Kinetis\Queue\QueueInterface;
 use Kinetis\Queue\QueueWorker;
@@ -42,12 +43,6 @@ use Kinetis\Queue\QueueWorker;
  */
 final readonly class WorkCommand
 {
-    /**
-     * No uppercase and no underscore, so no two names derive the same
-     * QUEUE_{NAME}_* keys — kinetis/migrations' connection-name grammar.
-     */
-    private const string CONNECTION = '/^[a-z][a-z0-9]*$/D';
-
     /**
      * @param resource $output mixed, not resource, since PHP has no native
      *     "resource" type and a readonly property requires one
@@ -123,12 +118,7 @@ final readonly class WorkCommand
             throw new InvalidArgumentException('--connection needs a value: --connection=<name>.');
         }
 
-        if (preg_match(self::CONNECTION, $name) !== 1) {
-            throw new InvalidArgumentException(
-                "Invalid connection name \"{$name}\" from --connection: a connection name is lowercase ASCII "
-                . 'letters and digits, starting with a letter (^[a-z][a-z0-9]*$).',
-            );
-        }
+        QueueContract::assertValidConnectionName($name, '--connection');
 
         return $name;
     }

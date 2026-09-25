@@ -15,13 +15,14 @@ use Psr\Container\ContainerInterface;
  * Declared via extra.kinetis in this package's composer.json and run by
  * the framework ahead of the application's own bootstrap.php: with the
  * selector of the connection QUEUE_CONNECTION_NAME names configured
- * (`QUEUE_CONNECTION` for `default`, the name's own default;
- * `QUEUE_JOBS_CONNECTION` for `jobs` — see {@see QueueFactory}),
+ * (`QUEUE_CONNECTION` for `default`, which an unset or blank name
+ * selects; `QUEUE_JOBS_CONNECTION` for `jobs` — see {@see QueueFactory}),
  * QueueInterface is bound to that connection's backend, so application
  * code constructor-injects it and push()es jobs with zero bootstrap code
  * of its own. Without that selector this stays inert — "no queue" is a
  * configuration, not an error, and core's own synchronous
- * ListenerInvokerInterface default stands.
+ * ListenerInvokerInterface default stands. A malformed name is an error
+ * and throws; see {@see QueueContract::assertValidConnectionName()}.
  *
  * All three bindings are factories, resolved on first use rather than
  * here, the same shape kinetis/storage's own bootstrap takes: an
@@ -63,7 +64,16 @@ final class PackageBootstrap implements PackageBootstrapInterface
     #[\Override]
     public function register(AppScope $app, Config $config): void
     {
-        $connection = $config->string('QUEUE_CONNECTION_NAME', 'default');
+        $connection = $config->string('QUEUE_CONNECTION_NAME', '');
+
+        // Validated before it derives the gate: a malformed name would
+        // otherwise read a selector nobody set and leave the queue
+        // silently unbound, running queued listeners inline.
+        if ($connection === '') {
+            $connection = 'default';
+        } else {
+            QueueContract::assertValidConnectionName($connection, 'QUEUE_CONNECTION_NAME');
+        }
 
         if ($config->get(Config::scopedKey('QUEUE_CONNECTION', $connection)) === null) {
             return;
