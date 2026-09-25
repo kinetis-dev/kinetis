@@ -216,10 +216,11 @@ final class JsonSchema
 
         $nullable = $absent !== null ? $absent[1] : ($type !== null && $type->allowsNull());
         // Asked of every parameter, not only the ones that reach the
-        // list branch below, so a #[ListOf]/#[Each] declaration Hydrator
-        // would refuse is refused here too — whatever else the parameter
-        // declares.
+        // list and object-map branches below, so a #[ListOf]/#[Each]/
+        // #[ObjectMap] declaration Hydrator would refuse is refused here
+        // too — whatever else the parameter declares.
         $listItem = Hydrator::listItem($parameter, $type);
+        $objectMap = Hydrator::objectMap($parameter, $type);
 
         if ($type !== null && $type->getName() === UploadedFileInterface::class) {
             // An UploadedFileInterface-typed #[Body] field is never a
@@ -239,7 +240,7 @@ final class JsonSchema
             $schema = self::withNullableSchema(['type' => 'string', 'format' => 'binary'], $nullable);
         } elseif ($type !== null && !$type->isBuiltin()) {
             $schema = self::schemaForNonBuiltin($parameter, $type, $classSchema, $dtoClass, $nullable);
-        } elseif (self::isObjectMap($parameter, $type)) {
+        } elseif ($objectMap) {
             // #[ObjectMap] is the one `array`-typed property whose
             // wire shape is a JSON object, so it is the one that
             // must not fall through to forType()'s `{type: array}`.
@@ -690,22 +691,6 @@ final class JsonSchema
         }
 
         return $schema;
-    }
-
-    /**
-     * Whether $parameter's value type is `array` and it carries
-     * #[ObjectMap] — the same attribute Kinetis\Validation\Hydrator reads
-     * to admit a JSON object there, read here so the schema and the
-     * hydration behavior it describes can never disagree about which
-     * properties are object maps. $type is the parameter's value type,
-     * already resolved through any presence union, for the same reason
-     * Hydrator resolves it before asking the same question.
-     */
-    private static function isObjectMap(ReflectionParameter $parameter, ?ReflectionType $type): bool
-    {
-        return $type instanceof ReflectionNamedType
-            && $type->getName() === 'array'
-            && $parameter->getAttributes(ObjectMap::class) !== [];
     }
 
     /**

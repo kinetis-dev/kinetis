@@ -64,7 +64,7 @@ use ReflectionUnionType;
  * - A parameter typed `array` carrying #[ObjectMap]: a JSON object of
  *   arbitrary keys, handed to the constructor as its plain array form.
  *   Unlike every other accepted shape, this one admits only a value
- *   carrying JsonObject provenance — see resolveObjectMapValue().
+ *   carrying JsonObject provenance — see resolveObjectMap().
  * - A nullable variant of any of the above.
  * - `T|Absent` or `T|null|Absent`, defaulted to exactly Absent::Value,
  *   where T is exactly one of the shapes above: the presence union an
@@ -140,6 +140,8 @@ use ReflectionUnionType;
  * file, whose transport status is checked before its rules are, and it
  * is equally shared: a #[Body] DTO field, a #[ListOf] element, and an
  * UploadedFileInterface-typed controller parameter all bind through it.
+ * resolveObjectMap() is the same one entry for an #[ObjectMap] value:
+ * a #[Body] DTO field and an MCP tool argument bind through it.
  * resolveDtoValue() is the DTO-typed counterpart for a caller holding one
  * member of a larger document: a #[Body('root')] parameter via
  * Kinetis\Http\Dispatcher. objectExpectedViolation(), requiredViolation()
@@ -503,7 +505,7 @@ final class Hydrator
         // and no more.
         $type = $absent !== null ? $absent[0] : $declared;
         [$enumScalarType, $enumClass, $dtoClass, $nestedPlan, $listItem] = self::compileNesting($type, $parameter, $class, $visiting);
-        $objectMap = self::compileObjectMap($type, $parameter, $class, $listItem !== null);
+        $objectMap = self::objectMap($parameter, $type);
         // A backed enum's wire value is the scalar its cases are
         // written in, so the field carries that type; every other
         // scalar is the declaration's own builtin. Both are int or
@@ -907,28 +909,34 @@ final class Hydrator
      * builtin `array`, since the attribute exists only to pick which
      * JSON shape an `array` field admits and no other type offers that
      * choice; and #[ListOf] on the same parameter, whose JSON array is
-     * precisely the shape #[ObjectMap] refuses. A union type is already
-     * rejected by compileNesting(), which runs first.
+     * precisely the shape #[ObjectMap] refuses.
      *
      * The boolean is the whole plan entry: the attribute takes no
      * options, so nothing else about it has to survive into an
      * artifact.
      *
-     * @param class-string $class
+     * Public for Kinetis\Validation\JsonSchema and
+     * Kinetis\Mcp\McpDispatcher, which describe and bind the same
+     * declaration: a schema, a DTO plan and a tool's binding plan agree
+     * on which parameters are object maps, and refuse the same
+     * declarations in the same words. $type is the parameter's value
+     * type, already resolved through any presence union, as for
+     * listItem().
+     *
      * @throws UnsupportedDtoDefinitionException
      */
-    private static function compileObjectMap(?ReflectionType $type, ReflectionParameter $parameter, string $class, bool $isList): bool
+    public static function objectMap(ReflectionParameter $parameter, ?ReflectionType $type): bool
     {
         if ($parameter->getAttributes(ObjectMap::class) === []) {
             return false;
         }
 
         if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
-            throw UnsupportedDtoDefinitionException::objectMapOnNonArrayParameter($class, $parameter->getName());
+            throw UnsupportedDtoDefinitionException::objectMapOnNonArrayParameter(self::owner($parameter), $parameter->getName());
         }
 
-        if ($isList) {
-            throw UnsupportedDtoDefinitionException::objectMapWithListOf($class, $parameter->getName());
+        if ($parameter->getAttributes(ListOf::class) !== []) {
+            throw UnsupportedDtoDefinitionException::objectMapWithListOf(self::owner($parameter), $parameter->getName());
         }
 
         return true;
@@ -1281,7 +1289,7 @@ final class Hydrator
 
             $resolved = self::resolveListValue($name, $value, $listItem, $source);
         } elseif ($parameter['objectMap']) {
-            $resolved = self::resolveObjectMapValue($name, $value);
+            return self::resolveObjectMap([$name], $value, $parameter['allowsNull'], $parameter['constraints']);
         } else {
             // The one shared raw-scalar path, which runs the field's own
             // constraints itself. Reached by every parameter #[ListOf]
@@ -1454,8 +1462,13 @@ final class Hydrator
     }
 
     /**
-     * The #[ObjectMap] branch of resolveParameterValue(): a JSON object,
-     * of any keys, unwrapped into the plain array the property receives.
+     * The one #[ObjectMap] resolution path: a JSON object, of any keys,
+     * unwrapped into the plain array the property receives, then checked
+     * against the field's own rules. Entered by a #[Body] DTO field via
+     * resolveParameterValue() and by an MCP tool argument via
+     * Kinetis\Mcp\McpDispatcher, so both report the same shape
+     * violations at the caller's own path. Null is decided first, as in
+     * resolveScalar(); presence stays with the caller.
      *
      * Provenance is the whole check. A JSON object and a JSON array
      * decode to the same PHP array — `{}` and `[]` most visibly — so
@@ -1470,15 +1483,23 @@ final class Hydrator
      * property as plain arrays too, exactly like a `mixed` field's own
      * contents.
      *
+     * @param list<string|int> $path the caller's own path to this value
+     * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
      * @return array{0: mixed, 1: list<Violation>}
      */
-    private static function resolveObjectMapValue(string $name, mixed $value): array
+    public static function resolveObjectMap(array $path, mixed $value, bool $allowsNull, array $constraints = []): array
     {
-        if (!$value instanceof JsonObject) {
-            return [null, [self::objectMapShapeViolation([$name], $value)]];
+        if ($value === null) {
+            return $allowsNull ? [null, []] : [null, [self::nullNotAllowedViolation($path)]];
         }
 
-        return [JsonTree::unwrap($value), []];
+        if (!$value instanceof JsonObject) {
+            return [null, [self::objectMapShapeViolation($path, $value)]];
+        }
+
+        $map = JsonTree::unwrap($value);
+
+        return [$map, self::constraintViolations($constraints, $map, $path)];
     }
 
     /**

@@ -403,6 +403,13 @@ body, and the one the tool's `inputSchema` promises. A parameter typed
   that argument's path.
 - An explicit `null` for a parameter whose type refuses it is
   `null_not_allowed`, for a DTO-typed parameter as much as a scalar.
+- An `#[ObjectMap] array` parameter, published as
+  `{type: object, additionalProperties: true}`, takes a JSON object of
+  any keys and receives it as a plain PHP array, nested objects
+  included. A JSON array is `not_a_json_object` and a scalar
+  `type_mismatch`, at that argument's path. `#[ObjectMap]` on a
+  parameter not typed `array`, or beside `#[ListOf]`, is refused at
+  registration and when the binding plan is derived.
 - The arguments object is closed, as the schema's
   `additionalProperties: false` says: a key naming no parameter is
   `unexpected_field` on its own path. A DTO-typed argument's object is

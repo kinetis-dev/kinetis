@@ -425,6 +425,41 @@ public function widget(): ResponseInterface
 }
 ```
 
+### A nonce for inline scripts
+
+A strict CSP blocks inline scripts unless each one carries the nonce the
+policy names. Write the literal `{nonce}` in `SECURITY_CSP` where the
+nonce belongs:
+
+```{code-block} text
+:caption: .env
+SECURITY_CSP=default-src 'self'; script-src 'self' 'nonce-{nonce}'; object-src 'none'
+```
+
+Every request then gets a fresh random base64 nonce, and every `{nonce}`
+in the policy becomes that same value. The controller reads it from the
+request attribute named by `SecurityHeadersMiddleware::NONCE_ATTRIBUTE`
+and puts it in the script's `nonce` attribute:
+
+```{code-block} php
+use Kinetis\Http\Middleware\SecurityHeadersMiddleware;
+use Psr\Http\Message\ServerRequestInterface;
+
+#[Get('/dashboard')]
+public function dashboard(ServerRequestInterface $request): ResponseInterface
+{
+    $nonce = $request->getAttribute(SecurityHeadersMiddleware::NONCE_ATTRIBUTE);
+
+    return HtmlResponse::create("<script nonce=\"{$nonce}\">startDashboard();</script>");
+}
+```
+
+The nonce belongs to one request and its response; the next request gets
+a new one. A policy without `{nonce}` is sent exactly as configured, and
+the request carries no nonce attribute. A response that sets its own
+`Content-Security-Policy` keeps it unchanged: `{nonce}` is replaced only
+in `SECURITY_CSP`.
+
 The Swagger UI page at `/openapi` sends its own Content-Security-Policy,
 so your policy does not need to allow its CDN. The appendix's
 {doc}`security headers section <appendix-middleware>` covers HSTS

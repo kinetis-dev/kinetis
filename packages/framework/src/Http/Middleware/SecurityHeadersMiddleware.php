@@ -21,10 +21,11 @@ use Psr\Http\Server\RequestHandlerInterface;
  * two deliberate exceptions to that class otherwise being outermost
  * (a registered CorsMiddleware is the other): a 500 it generates is
  * still a response a browser interprets, and headers have to reach it
- * too. Nothing here can throw at request time
- * — configuration is read once at construction and stripped of CR/LF
- * (a header value carrying either would both throw and be a header
- * injection), leaving process() unable to do anything but set headers.
+ * too. Configuration is read once at construction and stripped of
+ * CR/LF (a header value carrying either would both throw and be a
+ * header injection), so no configured value can make process() fail:
+ * it only sets headers, and a substituted base64 nonce carries neither
+ * character.
  *
  * Two tiers, split by what breaks when the value is wrong:
  *
@@ -55,11 +56,29 @@ use Psr\Http\Server\RequestHandlerInterface;
  *   It is the prerequisite for cross-origin isolation and the most
  *   disruptive of the three.
  *
+ * A configured Content-Security-Policy may carry the literal `{nonce}`.
+ * Each request then gets one fresh random nonce: every placeholder in
+ * the header becomes it, and the handler receives it as the
+ * NONCE_ATTRIBUTE request attribute to write into an inline script's
+ * `nonce` attribute. The nonce lives only in that request and its
+ * response; this application-scoped instance never holds one. A policy
+ * without the placeholder costs no randomness and adds no attribute.
+ *
  * A header already present on the response is never replaced, so a
  * single route can set its own policy and keep it.
  */
 final class SecurityHeadersMiddleware implements MiddlewareInterface
 {
+    /**
+     * The request attribute carrying this request's CSP nonce, present
+     * only when the configured policy contains NONCE_PLACEHOLDER.
+     */
+    public const string NONCE_ATTRIBUTE = 'kinetis.csp-nonce';
+
+    private const string NONCE_PLACEHOLDER = '{nonce}';
+
+    private const string CSP = 'Content-Security-Policy';
+
     /**
      * Any of the configurable values set to this — in any case, since
      * the valid values of these headers are conventionally uppercase
@@ -71,6 +90,8 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
     /** @var array<string, string> */
     private readonly array $headers;
 
+    private readonly bool $cspNonce;
+
     public function __construct(Config $config)
     {
         $headers = ['X-Content-Type-Options' => 'nosniff'];
@@ -78,7 +99,7 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
         $optional = [
             'X-Frame-Options' => $config->string('SECURITY_FRAME_OPTIONS', 'DENY'),
             'Referrer-Policy' => $config->string('SECURITY_REFERRER_POLICY', 'strict-origin-when-cross-origin'),
-            'Content-Security-Policy' => $config->string('SECURITY_CSP', ''),
+            self::CSP => $config->string('SECURITY_CSP', ''),
             'Permissions-Policy' => $config->string('SECURITY_PERMISSIONS_POLICY', ''),
             'Strict-Transport-Security' => self::hsts($config),
             'Cross-Origin-Opener-Policy' => $config->string('SECURITY_COOP', ''),
@@ -95,14 +116,23 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
         }
 
         $this->headers = $headers;
+        $this->cspNonce = \str_contains($headers[self::CSP] ?? '', self::NONCE_PLACEHOLDER);
     }
 
     #[\Override]
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        $headers = $this->headers;
+
+        if ($this->cspNonce) {
+            $nonce = \base64_encode(\random_bytes(16));
+            $headers[self::CSP] = \str_replace(self::NONCE_PLACEHOLDER, $nonce, $headers[self::CSP]);
+            $request = $request->withAttribute(self::NONCE_ATTRIBUTE, $nonce);
+        }
+
         $response = $handler->handle($request);
 
-        foreach ($this->headers as $name => $value) {
+        foreach ($headers as $name => $value) {
             if (!$response->hasHeader($name)) {
                 $response = $response->withHeader($name, $value);
             }

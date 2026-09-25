@@ -297,9 +297,10 @@ registered dispose callback runs, even if an earlier one throws.
 
 The middleware is the outermost global middleware, outside
 `ExceptionHandlerMiddleware`, so its headers reach the `500` that handler
-produces. It cannot throw at request time: configuration is read once at
-construction, and `process()` only sets headers. A header the response
-already carries is never replaced.
+produces. Configuration is read once at construction and stripped of
+CR/LF, so no configured value can make `process()` fail: it only sets
+headers, and a substituted nonce is base64, which carries neither
+character. A header the response already carries is never replaced.
 
 `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` are
 sent by default because nothing legitimate depends on content sniffing,
@@ -307,6 +308,18 @@ on being framed, or on leaking a full referrer to another origin.
 `SECURITY_FRAME_OPTIONS` and `SECURITY_REFERRER_POLICY` take any value,
 or `off` to send nothing. The opt-in policies have no default because a
 guessed one would break applications it did not describe.
+
+### The CSP nonce
+
+Construction records whether the sanitized `SECURITY_CSP` contains
+`{nonce}`. When it does, `process()` base64-encodes 16 bytes from
+`random_bytes()`, substitutes that value for every placeholder in this
+response's policy, and passes it downstream as the
+`SecurityHeadersMiddleware::NONCE_ATTRIBUTE` request attribute. The
+nonce lives on the request because one middleware instance serves every
+request of a worker, and the middleware runs before the request scope
+exists. A policy without the placeholder draws no random bytes. Usage is
+in {doc}`middleware`'s "A nonce for inline scripts".
 
 ### HSTS
 

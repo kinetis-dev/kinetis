@@ -26,6 +26,7 @@ use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Fixtures\ThrowingLogger;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\ConstrainedRouteController;
+use Kinetis\Tests\Http\Fixtures\CspNonceController;
 use Kinetis\Tests\Http\Fixtures\CurrentUserController;
 use Kinetis\Tests\Http\Fixtures\DiscoveredGlobalMiddleware;
 use Kinetis\Tests\Http\Fixtures\DisposalRecorder;
@@ -300,6 +301,25 @@ final class KernelTest extends TestCase
         // Every other route still gets the application's own policy.
         $route = $kernel->handle(new ServerRequest('GET', '/users/1'));
         self::assertSame("default-src 'self'; script-src 'self'", $route->getHeaderLine('Content-Security-Policy'));
+    }
+
+    /**
+     * The nonce reaches the controller through the whole pipeline — the
+     * outermost middleware sets it before the request scope exists — and
+     * the markup it writes matches the header the response is sent with.
+     */
+    public function test_a_controller_writes_the_csp_nonce_its_response_is_sent_with(): void
+    {
+        $app = new AppScope();
+        $app->instance(Config::class, new Config(['SECURITY_CSP' => "script-src 'nonce-{nonce}'"]));
+        $app->boot();
+
+        $router = new Router();
+        $router->register(CspNonceController::class);
+        $response = new Kernel($app, $router)->handle(new ServerRequest('GET', '/csp-nonce'));
+
+        self::assertSame(1, preg_match("~^script-src 'nonce-([^']+)'$~", $response->getHeaderLine('Content-Security-Policy'), $match));
+        self::assertSame("<script nonce=\"{$match[1]}\">start();</script>", (string) $response->getBody());
     }
 
     public function test_openapi_routes_can_be_disabled(): void

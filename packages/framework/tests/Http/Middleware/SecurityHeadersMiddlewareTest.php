@@ -171,6 +171,80 @@ final class SecurityHeadersMiddlewareTest extends TestCase
         );
     }
 
+    public function test_the_nonce_placeholder_is_replaced_with_the_nonce_the_handler_receives(): void
+    {
+        $seen = null;
+        $response = self::process(
+            ['SECURITY_CSP' => "script-src 'nonce-{nonce}'"],
+            handler: static function (ServerRequestInterface $request) use (&$seen): ResponseInterface {
+                $seen = $request->getAttribute(SecurityHeadersMiddleware::NONCE_ATTRIBUTE);
+
+                return new Response(200);
+            },
+        );
+
+        self::assertIsString($seen);
+        self::assertSame(16, \strlen((string) \base64_decode($seen, true)));
+        self::assertSame("script-src 'nonce-{$seen}'", $response->getHeaderLine('Content-Security-Policy'));
+    }
+
+    public function test_every_placeholder_in_one_policy_receives_the_same_nonce(): void
+    {
+        $response = self::process(['SECURITY_CSP' => "script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'"]);
+
+        self::assertMatchesRegularExpression(
+            "~^script-src 'nonce-([A-Za-z0-9+/]{22}==)'; style-src 'nonce-\\1'$~",
+            $response->getHeaderLine('Content-Security-Policy'),
+        );
+    }
+
+    /**
+     * One middleware instance serves every request of a persistent
+     * worker, so the nonce is drawn per request and never kept on it.
+     */
+    public function test_each_request_receives_a_fresh_nonce(): void
+    {
+        $middleware = new SecurityHeadersMiddleware(new Config(['SECURITY_CSP' => "script-src 'nonce-{nonce}'"]));
+        $nonces = [];
+        $handler = new CallableRequestHandler(static function (ServerRequestInterface $request) use (&$nonces): ResponseInterface {
+            $nonces[] = $request->getAttribute(SecurityHeadersMiddleware::NONCE_ATTRIBUTE);
+
+            return new Response(200);
+        });
+
+        $first = $middleware->process(new ServerRequest('GET', 'https://example.test/'), $handler);
+        $second = $middleware->process(new ServerRequest('GET', 'https://example.test/'), $handler);
+
+        self::assertNotSame($nonces[0], $nonces[1]);
+        self::assertSame("script-src 'nonce-{$nonces[0]}'", $first->getHeaderLine('Content-Security-Policy'));
+        self::assertSame("script-src 'nonce-{$nonces[1]}'", $second->getHeaderLine('Content-Security-Policy'));
+    }
+
+    public function test_a_policy_without_the_placeholder_attaches_no_nonce(): void
+    {
+        $attributes = null;
+        self::process(
+            ['SECURITY_CSP' => "script-src 'self'"],
+            handler: static function (ServerRequestInterface $request) use (&$attributes): ResponseInterface {
+                $attributes = $request->getAttributes();
+
+                return new Response(200);
+            },
+        );
+
+        self::assertSame([], $attributes);
+    }
+
+    public function test_a_response_policy_still_wins_over_a_nonce_policy(): void
+    {
+        $response = self::process(
+            ['SECURITY_CSP' => "script-src 'nonce-{nonce}'"],
+            handler: static fn (): ResponseInterface => new Response(200, ['Content-Security-Policy' => "default-src 'none'"]),
+        );
+
+        self::assertSame("default-src 'none'", $response->getHeaderLine('Content-Security-Policy'));
+    }
+
     /**
      * A CR or LF in a configured value would both throw inside
      * withHeader() and be a header injection. Stripped at construction,
