@@ -178,6 +178,34 @@ final class TimestampRelationship
     public DateTimeImmutable $publishedAt;
 }
 
+/** Shares its short name with Kinetis\Orm\Date and nothing else. */
+final class Date
+{
+}
+
+#[Entity]
+final class LookalikeDateProperty
+{
+    public int $id;
+
+    public Date $bookedOn;
+}
+
+#[Entity]
+final class DateIdentifier
+{
+    public \Kinetis\Orm\Date $id;
+}
+
+#[Entity]
+final class DateVersion
+{
+    public int $id;
+
+    #[Version]
+    public \Kinetis\Orm\Date $version;
+}
+
 #[Entity]
 final class MixedProperty
 {

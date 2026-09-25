@@ -8,6 +8,7 @@ use BackedEnum;
 use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
+use InvalidArgumentException;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Flush\Reference;
@@ -26,14 +27,16 @@ use ReflectionProperty;
  * "0" or "1"; a backed enum is a case or a backing value under its backing
  * type's rule; a timestamp is a DateTimeImmutable in any zone or a UTC
  * "Y-m-d H:i:s" string with up to six fraction digits, in UTC years 0001 to
- * 9999, and a string loads as a DateTimeImmutable in UTC; null only where
- * the property type allows it.
+ * 9999, and a string loads as a DateTimeImmutable in UTC; a date is a Date
+ * or its exact "Y-m-d" string, and a string loads as a Date; null only
+ * where the property type allows it.
  *
  * A database value is a converted value with a backed enum replaced by its
- * backing value and a DateTimeImmutable by its UTC "Y-m-d H:i:s.u" string.
- * Predicate parameters, snapshots and written rows all use it, so a loaded
- * value and the same value read back from the entity compare identical, and
- * one instant has one database value in every zone.
+ * backing value, a DateTimeImmutable by its UTC "Y-m-d H:i:s.u" string and
+ * a Date by its "Y-m-d" string. Predicate parameters, cursors, snapshots
+ * and written rows all use it, so a loaded value and the same value read
+ * back from the entity compare identical, and one instant has one database
+ * value in every zone.
  *
  * A #[BelongsTo] property is one of the mapped properties, over its
  * foreign-key column. Its converted and database value is the target's
@@ -246,20 +249,21 @@ final class EntityPlan
     }
 
     /**
-     * A page cursor for $property. A timestamp cursor is admitted like a
-     * predicate value and becomes its UTC database value, so an offset never
-     * reaches a server that would shift it through its session time zone.
-     * Any other cursor, and null, pass as given.
+     * A page cursor for $property. A timestamp or date cursor is admitted
+     * like a predicate value and becomes its database value, so a malformed
+     * one never reaches SQL and a timestamp offset never reaches a server
+     * that would shift it through its session time zone. Any other cursor,
+     * and null, pass as given.
      *
      * @throws MappingException
      */
     public function cursor(string $property, ?string $cursor): ?string
     {
-        if ($cursor === null || $this->property($property)['type'] !== 'timestamp') {
+        if ($cursor === null || !in_array($this->property($property)['type'], ['timestamp', 'date'], true)) {
             return $cursor;
         }
 
-        /** @var string a non-null timestamp's database value */
+        /** @var string a non-null timestamp's or date's database value */
         return $this->parameter($property, $cursor);
     }
 
@@ -491,6 +495,7 @@ final class EntityPlan
             'float' => self::float($value),
             'bool' => self::bool($value),
             'timestamp' => self::timestamp($value),
+            'date' => self::date($value),
         };
 
         if ($converted === null) {
@@ -508,10 +513,11 @@ final class EntityPlan
 
     private static function databaseValue(mixed $converted): null|bool|int|float|string
     {
-        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable $converted */
+        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable|Date $converted */
         return match (true) {
             $converted instanceof BackedEnum => $converted->value,
             $converted instanceof DateTimeImmutable => self::utc($converted),
+            $converted instanceof Date => (string) $converted,
             default => $converted,
         };
     }
@@ -573,6 +579,24 @@ final class EntityPlan
         return $timestamp !== false && DateTimeImmutable::getLastErrors() === false ? $timestamp : null;
     }
 
+    /** Date::fromString() alone decides which strings are dates. */
+    private static function date(mixed $value): ?Date
+    {
+        if ($value instanceof Date) {
+            return $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        try {
+            return Date::fromString($value);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+    }
+
     private static function utc(DateTimeImmutable $value): string
     {
         return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
@@ -589,6 +613,7 @@ final class EntityPlan
             'float' => 'a finite int, float or numeric string',
             'bool' => 'a bool, 0, 1, "0" or "1"',
             'timestamp' => 'a DateTimeImmutable, or a UTC "Y-m-d H:i:s" string with up to six fraction digits and no offset, in UTC years 0001 to 9999',
+            'date' => 'a ' . Date::class . ', or a "Y-m-d" string naming a day that exists in years 0001 to 9999',
         };
 
         if ($property['enum'] !== null) {
