@@ -90,7 +90,8 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
     /** @var array<string, string> */
     private readonly array $headers;
 
-    private readonly bool $cspNonce;
+    /** The configured policy, only when it contains NONCE_PLACEHOLDER. */
+    private readonly ?string $nonceCsp;
 
     public function __construct(Config $config)
     {
@@ -116,7 +117,8 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
         }
 
         $this->headers = $headers;
-        $this->cspNonce = \str_contains($headers[self::CSP] ?? '', self::NONCE_PLACEHOLDER);
+        $csp = $headers[self::CSP] ?? '';
+        $this->nonceCsp = \str_contains($csp, self::NONCE_PLACEHOLDER) ? $csp : null;
     }
 
     #[\Override]
@@ -124,9 +126,9 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
     {
         $headers = $this->headers;
 
-        if ($this->cspNonce) {
+        if ($this->nonceCsp !== null) {
             $nonce = \base64_encode(\random_bytes(16));
-            $headers[self::CSP] = \str_replace(self::NONCE_PLACEHOLDER, $nonce, $headers[self::CSP]);
+            $headers[self::CSP] = \str_replace(self::NONCE_PLACEHOLDER, $nonce, $this->nonceCsp);
             $request = $request->withAttribute(self::NONCE_ATTRIBUTE, $nonce);
         }
 
