@@ -137,24 +137,16 @@ start implementation.
 ## Model and context discipline
 
 Use the least expensive model that can reliably complete the bounded
-task. The default versions are:
+task. The default model roles are:
 
-- **Fable 5.1** (`claude-fable-5-1`) as the read-only architecture
-  reviewer, for brainstorming and adversarial design review.
-- **Opus 5.5** (`claude-opus-5-5`) as the builder and fixer for
-  substantive implementation, including concurrency, security,
-  lifecycle, public APIs, unfamiliar vendors, or cross-package
-  behavior.
-- **Sonnet 5** (`claude-sonnet-5`) for trivial, mechanical, low-risk
-  work: localized documentation, fixtures, mechanical cleanup, or other
+- **Fable** (`fable`) as the read-only architecture reviewer, for
+  brainstorming and adversarial design review.
+- **Opus** (`opus`) as the builder and fixer for substantive
+  implementation, including concurrency, security, lifecycle, public
+  APIs, unfamiliar vendors, or cross-package behavior.
+- **Sonnet** (`sonnet`) for trivial, mechanical, low-risk work:
+  localized documentation, fixtures, mechanical cleanup, or other
   clearly specified changes.
-
-The canonical version is the requirement. The Claude CLI's short aliases
-`fable`, `opus`, and `sonnet` are moving mappings to the latest model of
-each family, and literal version names such as `opus-5.5` are not
-accepted. Before launching with an alias, verify that the installed CLI
-resolves it to the required canonical version, for example from the
-model a short session reports in its response metadata.
 
 Start a fresh session for each independent task. Supply a prepared brief
 and only the relevant sources or a bounded diff. Exclude `vendor/`, lock
@@ -220,8 +212,7 @@ outside the repository so it cannot enter a commit.
 ### 4. Launch and monitor
 
 Launch the selected Claude model in the isolated clone with access to
-the task brief. For example, once `opus` is verified to resolve to
-`claude-opus-5-5`:
+the task brief. For example:
 
 ```sh
 claude --bg --model opus --effort high --add-dir "$TASK_ROOT" \
@@ -231,7 +222,7 @@ claude --bg --model opus --effort high --add-dir "$TASK_ROOT" \
 
 Use `sonnet` for mechanical lanes. Use `fable` in a read-only or
 planning session for architecture challenge, not as an unreviewed
-implementer. Each alias needs the same resolution check.
+implementer.
 
 Maintain one monitor for active sessions. Report starts, completions,
 blockers, and CI transitions; do not leave the human without a progress
