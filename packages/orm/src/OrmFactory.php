@@ -18,8 +18,8 @@ use Throwable;
 use WeakMap;
 
 /**
- * Request-neutral: the link and one runtime plan per entity, built once from
- * a MetadataRegistry. It holds no entity and no unit-of-work state, so it can
+ * Request-neutral: the link and one runtime plan per entity of one
+ * connection, built once from a MetadataRegistry. It holds no entity and no unit-of-work state, so it can
  * live for the whole process; open() gives each unit of work its own
  * EntityManager, and transaction() gives it one bound to a transaction. The
  * only state it changes is which Fibers are inside transaction(), cleared
@@ -44,12 +44,19 @@ final class OrmFactory
     }
 
     /**
+     * Maps the entities of $metadata that live on $connection, over $link:
+     * the client of that connection. A connection no entity names gives a
+     * factory that maps none.
+     *
      * @throws InvalidArgumentException for a transaction, which also carries
      *         a link's dialect marker: an EntityManager reads through the
      *         client, and every transaction it writes in begins there
      */
-    public static function create(MysqlLink|PostgresLink $link, MetadataRegistry $metadata): self
-    {
+    public static function create(
+        MysqlLink|PostgresLink $link,
+        MetadataRegistry $metadata,
+        string $connection = 'default',
+    ): self {
         if ($link instanceof SqlTransaction) {
             throw new InvalidArgumentException(
                 'OrmFactory::create() was given a transaction (' . $link::class . '). An EntityManager reads through '
@@ -61,7 +68,9 @@ final class OrmFactory
         $plans = [];
 
         foreach ($metadata->toArray()['entities'] as $mapping) {
-            $plans[$mapping['class']] = new EntityPlan($mapping);
+            if ($mapping['connection'] === $connection) {
+                $plans[$mapping['class']] = new EntityPlan($mapping);
+            }
         }
 
         return new self($link, $plans);
@@ -147,7 +156,7 @@ final class OrmFactory
 
         // close() has already ended the transaction, so nothing is committed.
         if ($manager->isClosed()) {
-            throw new ClosedEntityManagerException();
+            throw ClosedEntityManagerException::manager();
         }
 
         try {

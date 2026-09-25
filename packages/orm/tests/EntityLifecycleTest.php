@@ -84,7 +84,7 @@ final class EntityLifecycleTest extends TestCase
         yield 'an object of an unmapped class' => [
             static fn (): object => new Account(),
             InvalidEntityStateException::class,
-            Account::class . ' is not an entity in this OrmFactory\'s MetadataRegistry',
+            Account::class . ' is not an entity of this OrmFactory',
         ];
         yield 'an uninitialized property' => [
             static function (): object {

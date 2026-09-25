@@ -83,6 +83,14 @@ final class MappingException extends RuntimeException
         );
     }
 
+    public static function invalidConnection(string $class, string $connection): self
+    {
+        return new self(
+            "{$class} names the connection \"{$connection}\", which is not a connection name: lowercase ASCII letters "
+            . 'and digits, starting with a letter.',
+        );
+    }
+
     public static function invalidColumn(string $class, string $property, string $column): self
     {
         return new self(
@@ -115,7 +123,15 @@ final class MappingException extends RuntimeException
 
     public static function unknownEntity(string $class): self
     {
-        return new self("{$class} is not an entity in this OrmFactory's MetadataRegistry.");
+        return new self(
+            "{$class} is not an entity of this OrmFactory: it is not in the factory's MetadataRegistry, or it lives "
+            . 'on another connection.',
+        );
+    }
+
+    public static function unregisteredEntity(string $class): self
+    {
+        return new self("{$class} is not an entity in this MetadataRegistry.");
     }
 
     public static function unknownProperty(string $class, string $property): self

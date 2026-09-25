@@ -18,7 +18,7 @@ use ReflectionClass;
  * kinetis/orm's entity metadata as a discovery section of the AOT cache.
  * Declared via extra.kinetis, so the framework compiles it with the rest of
  * the artifact and binds the reconstructed instance before any package
- * bootstrap runs; PackageBootstrap builds the OrmFactory from it.
+ * bootstrap runs; PackageBootstrap builds the OrmFactoryRegistry from it.
  *
  * kinetis/orm is optional. Its classes are named here only where naming
  * loads nothing, and class_exists() is checked before any is used, so

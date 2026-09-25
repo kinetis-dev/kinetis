@@ -138,8 +138,8 @@ The two stay distinct: a request-scoped resource is registered on the
 scope that resolved it and closed at the end of that unit of work, while
 an application-scoped one is registered here and closed when the
 execution context ends. `kinetis/database-bridge` uses both — the
-default link it builds is closed on application disposal, and each
-scope's `TransactionGuard` and `EntityManager` on that scope's (see
+links it builds are closed on application disposal, and each scope's
+`TransactionGuard` and `EntityManagerRegistry` on that scope's (see
 {doc}`persistence`).
 
 Who calls it:

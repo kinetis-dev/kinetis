@@ -327,9 +327,10 @@ A test runs `kinetis/orm` code under the same unit-of-work lifecycle the
 application does (see {doc}`orm`):
 
 - **Each unit of work gets its own manager.** `PackageBootstrap::bindOrm()`
-  binds `EntityManager` lazily to each request scope, so a request through
-  `$this->client` that resolves it gets its own manager, and that manager
-  closes when the request's scope disposes at request end. Setup and
+  binds `EntityManagerRegistry` lazily to each request scope, and
+  `EntityManager` is its default-connection manager, so a request through
+  `$this->client` that resolves either gets its own managers, and they
+  close when the request's scope disposes at request end. Setup and
   assertions in the test body open their own from `OrmFactory` and close
   it. A manager kept across steps answers later loads from its identity
   map instead of the database.

@@ -99,7 +99,7 @@ README's "Optimistic locking" contract, and declares relationships with
 `#[ManyToMany]` under its "Relationships", "Aggregates" and
 "Many-to-many relationships" contracts; the bridge adds nothing
 to any of them. A relationship's target
-must be an entity the same scan finds. Every one of these attributes is
+must be an entity the same scan finds, on the same connection. Every one of these attributes is
 part of the compiled metadata, so run `kinetis build` again after
 adding, removing or moving one.
 
@@ -116,14 +116,18 @@ context.
 ### `#[Entity]`
 
 ```{code-block} php
-#[Entity(table: 'articles')]
+#[Entity(table: 'articles', connection: 'default')]
 final class Article
 ```
 
 Marks a class as an entity; required on every one. `table` is optional:
 unnamed, the table is the class's short name in snake case, singular
 (`ArticleCategory` maps to `article_category`). A dot separates a schema
-from the table (`table: 'reporting.articles'`).
+from the table (`table: 'reporting.articles'`). `connection` is optional
+too: unnamed, the entity lives on the default connection, and a name —
+lowercase ASCII letters and digits, starting with a letter — puts it on
+that named connection ([Entities on other
+connections](#entities-on-other-connections)).
 
 The ORM maps every non-static property of an entity and accesses each
 one through reflection: it reads a column's and a relationship owner's
@@ -279,19 +283,24 @@ final readonly class ArticleController
 }
 ```
 
-- `Kinetis\Orm\OrmFactory` is bound on `AppScope`, one per worker. It is
-  built on first use from the link bound under `MysqlLink` or
-  `PostgresLink` — an application's own binding of it in `bootstrap.php`
-  included — and the compiled metadata.
-- `Kinetis\Orm\EntityManager` is bound on every `RequestScope`: an HTTP
-  request, a queued job, an MCP message, a command. The first resolution
-  in a scope opens it, owned by the Fiber resolving it, and registers its
-  `close()` on that scope's disposal. A scope that never resolves it opens
-  none. Sequential and concurrent units of work never share a manager or
-  an entity.
-- `EntityManager` is never an `AppScope` service. Its constructor is not
-  public, so `AppScope` refuses to autowire one rather than keep a manager
-  for the life of the worker. Code that holds a manager is request-scoped.
+- `Kinetis\Orm\OrmFactory` is the default connection's factory of the
+  worker's `OrmFactoryRegistry`, which is bound on `AppScope` and built on
+  first use from the link bound under `MysqlLink` or `PostgresLink` — an
+  application's own binding of it in `bootstrap.php` included — and the
+  `OrmMetadata` bound then: the compiled metadata, or an application's
+  replacement.
+- `Kinetis\Orm\EntityManager` is the default connection's manager of the
+  `EntityManagerRegistry` bound on every `RequestScope`: an HTTP request,
+  a queued job, an MCP message, a command. The first resolution in a
+  scope creates that registry, owned by the Fiber resolving it, and
+  registers its `close()` on that scope's disposal; the registry opens
+  each connection's manager on first use. A scope that never resolves
+  either opens none. Sequential and concurrent units of work never share
+  a manager or an entity.
+- `EntityManager` and `EntityManagerRegistry` are never `AppScope`
+  services. Their constructors are not public, so `AppScope` refuses to
+  autowire one rather than keep a manager for the life of the worker.
+  Code that holds a manager is request-scoped.
 
 ### Repositories and queries
 
@@ -702,22 +711,96 @@ and idempotency for that step.
 With `kinetis/orm` installed and `DB_CONNECTION` unset, the application
 still boots. Resolving `OrmFactory` or `EntityManager` throws
 `Kinetis\DatabaseBridge\Exception\DatabaseNotConfiguredException`, which
-names `DB_CONNECTION`.
+names `DB_CONNECTION`; so does resolving either registry while an entity
+lives on the default connection. Entities that all live on named
+connections work through the registries alone.
 
-## Other connections
+## Entities on other connections
 
-The bridge wires the default connection only. For a named connection
-({ref}`database-reference-registration`), build a factory once from its
-link and a `MetadataRegistry`, and pair each `open()` with `close()` in
-the unit of work that uses it, as {ref}`database-reference-standalone`
-shows.
+An entity names the database it lives on, and the bridge wires every
+connection an entity names:
 
-The bridge's request-scoped cleanup covers the default ORM only: it
-closes the `EntityManager` it opened for each unit of work, and a named
-factory's managers get none of it. `OrmFactory::transaction()` begins
-and ends its own transaction on the factory's link, on every way out,
-so the request's `TransactionGuard` neither tracks nor needs to roll it
-back.
+```{code-block} php
+use Kinetis\Orm\Attributes\Entity;
+
+#[Entity(table: 'orders', connection: 'reporting')]
+final class Order
+{
+    private int $id;
+
+    private int $total;
+
+    public function total(): int
+    {
+        return $this->total;
+    }
+}
+```
+
+```{code-block} text
+:caption: .env
+
+DB_REPORTING_CONNECTION=pgsql
+DB_REPORTING_HOST=reporting.internal
+DB_REPORTING_NAME=reports
+DB_REPORTING_USER=reports
+DB_REPORTING_PASSWORD=secret
+```
+
+A request-scoped class injects `EntityManagerRegistry` and asks it for
+the manager of an entity's connection:
+
+```{code-block} php
+use Kinetis\Http\Attributes\Get;
+use Kinetis\Orm\EntityManagerRegistry;
+
+final readonly class OrderController
+{
+    public function __construct(private EntityManagerRegistry $entities) {}
+
+    #[Get('/orders/{id}')]
+    public function show(int $id): array
+    {
+        $order = $this->entities->managerFor(Order::class)->repository(Order::class)->findOrFail($id);
+
+        return ['total' => $order->total()];
+    }
+}
+```
+
+- **The link.** For each connection an entity names, the bridge uses the
+  application's `db.<name>` binding from `bootstrap.php` when there is
+  one: it must be a `MysqlLink` or `PostgresLink`, and it stays the
+  application's to close. Otherwise it builds the connection with
+  `ConnectionFactory::fromConfig($config, '<name>')` from the
+  `DB_<NAME>_*` keys ({ref}`database-reference-registration`) and closes
+  it when the application scope is disposed. With neither, resolving the
+  registry throws `DatabaseNotConfiguredException` naming
+  `DB_<NAME>_CONNECTION` — checked before any other key of that
+  connection is read.
+- **One registry for the worker.** `OrmFactoryRegistry` is built on
+  first use with every link at once, so each connection an entity names
+  must be configured or bound before any ORM service resolves,
+  `OrmFactory` and `EntityManager` included. It also holds a factory for
+  the default connection whenever `DB_CONNECTION` is set, whether or not
+  an entity lives there.
+- **One manager per connection per unit of work.** The request's
+  `EntityManagerRegistry` opens `manager('reporting')`, or
+  `managerFor(Order::class)`, once, and closes every manager it opened
+  when the scope is disposed, without flushing. Another Fiber is refused
+  with `CrossFiberAccessException`.
+- **Nothing spans two connections.** A relationship between entities on
+  two connections fails `kinetis build`, or a development boot, with a
+  `MappingException` naming both classes and both connections. Each
+  manager flushes one transaction on its own connection, and
+  `OrmFactoryRegistry::factory('reporting')->transaction()` runs on that
+  connection alone: a write to two databases is two units of work, and
+  the second can fail after the first committed.
+
+The package README's "Connections" is the complete contract.
+`OrmFactory::transaction()` begins and ends its own transaction on the
+factory's link, on every way out, so the request's `TransactionGuard`
+neither tracks nor needs to roll it back.
 
 ## See also
 

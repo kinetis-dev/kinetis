@@ -27,7 +27,8 @@ depends on no Kinetis package. This package connects it to a Kinetis
 application: the `DB_*` configuration keys, the default connection
 binding, SQL spans through Kinetis telemetry, a lazy request-scoped
 `TransactionGuard`, and, with [`kinetis/orm`](https://github.com/kinetis-dev/orm)
-installed, compiled entity metadata and a request-scoped `EntityManager`.
+installed, compiled entity metadata, one ORM factory per connection an
+entity names and request-scoped entity managers.
 
 ```sh
 composer require kinetis/database-bridge
@@ -80,9 +81,10 @@ following automatically, through the `extra.kinetis` declaration in its
   `SqlLink` you bind replaces only that alias. The connection built here
   is closed when the application scope is disposed; a link your own
   `bootstrap.php` binds stays yours to close. No connection is built and
-  no link contract is bound when `DB_CONNECTION` is unset.
-  Named connections stay explicit wiring:
-  `Kinetis\DatabaseBridge\ConnectionFactory::fromConfig($config, 'reporting')`.
+  no link contract is bound when `DB_CONNECTION` is unset. A named
+  connection is bound for SQL only by your own `bootstrap.php`, with
+  `Kinetis\DatabaseBridge\ConnectionFactory::fromConfig($config, 'reporting')`;
+  the ORM wiring below builds the ones entities name.
 - **Lazy transaction cleanup**: every request scope — an HTTP request, a
   queued job, an MCP message, a command — receives a lazy
   `Kinetis\Persistence\TransactionGuard` binding. Resolving it builds the
@@ -95,11 +97,20 @@ following automatically, through the `extra.kinetis` declaration in its
 - **ORM wiring**, once [`kinetis/orm`](https://github.com/kinetis-dev/orm)
   is installed alongside it (this package does not install it): classes
   marked `#[Entity]` under the project's PSR-4 roots are compiled into the
-  AOT cache with the rest of discovery, `Kinetis\Orm\OrmFactory` is bound
-  for the worker, and every request scope receives a lazy
-  `Kinetis\Orm\EntityManager`, opened on first resolution and closed with
-  that scope. Without `DB_CONNECTION`, resolving either throws
-  `Kinetis\DatabaseBridge\Exception\DatabaseNotConfiguredException`. See
+  AOT cache with the rest of discovery. `Kinetis\Orm\OrmFactoryRegistry`
+  is bound for the worker, with a factory for the default connection when
+  `DB_CONNECTION` is set and for every connection an entity names, and
+  every request scope receives a lazy `Kinetis\Orm\EntityManagerRegistry`,
+  created on first resolution and closed with that scope.
+  `Kinetis\Orm\OrmFactory` and the request's `Kinetis\Orm\EntityManager`
+  are the default connection's entries of the two; without
+  `DB_CONNECTION`, resolving either throws
+  `Kinetis\DatabaseBridge\Exception\DatabaseNotConfiguredException`. A
+  named connection's link is your `bootstrap.php`'s `db.<name>` binding,
+  which stays yours to close, or else one built from its `DB_<NAME>_*`
+  keys and closed with the application scope; with neither, resolving the
+  registry throws `DatabaseNotConfiguredException` naming
+  `DB_<NAME>_CONNECTION`. See
   [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
 
 [`kinetis/migrations`](https://github.com/kinetis-dev/migrations)

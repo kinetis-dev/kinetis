@@ -36,15 +36,22 @@ longer prefix splits at that same point: `FILESYSTEM_S3_BUCKET` becomes
 `FILESYSTEM_ARCHIVE_S3_BUCKET`, not `FILESYSTEM_S3_ARCHIVE_BUCKET`.
 
 `'default'` resolves to the plain, unprefixed key — a connection you
-never name behaves exactly as if this feature did not exist.
+never name behaves exactly as if this feature did not exist. A scoped key
+can coincide with a default one: a SQL connection named `app` reads its
+database name from `DB_APP_NAME`, which is also the default connection's
+Postgres application name. Name it otherwise.
 
 Every package bootstrap reads its own selector unscoped — `DB_CONNECTION`,
 `QUEUE_CONNECTION`, `FILESYSTEM_DRIVER`, `MAILER_DSN`,
 `SEARCH_OPENSEARCH_HOST`, `SEARCH_ELASTICSEARCH_HOST`, `SESSION_DRIVER`,
-`BROADCAST_DRIVER` — and wires the default connection alone. A named
-connection is never resolved automatically: build one explicitly in
-`bootstrap.php` and register it under an id of your own, or construct it
-where it is needed:
+`BROADCAST_DRIVER` — and wires the default connection alone. The one
+named connection resolved automatically is a SQL connection an ORM entity
+names with `#[Entity(connection: ...)]`: with `kinetis/orm` installed,
+`kinetis/database-bridge` builds it from its scoped `DB_*` keys, or takes
+the application's `db.<name>` binding, when the ORM first needs it — see
+{doc}`orm`'s "Entities on other connections". Any other named connection
+is built explicitly in `bootstrap.php` and registered under an id of your
+own, or constructed where it is needed:
 
 ```{code-block} text
 :caption: .env
@@ -195,7 +202,9 @@ does not.
 Read by `kinetis/database-bridge`'s `ConnectionFactory`.
 `DB_CONNECTION` is what the bridge's package bootstrap gates on, and it gates on
 the key being *absent*, not blank: `DB_CONNECTION=` activates the package
-and then fails on the dialect check.
+and then fails on the dialect check. A named connection's
+`DB_<NAME>_CONNECTION` is the key the ORM wiring checks for an entity's
+connection before it reads any other.
 
 | Key | Default | Purpose |
 |---|---|---|
