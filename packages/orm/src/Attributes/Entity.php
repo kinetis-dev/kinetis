@@ -13,8 +13,9 @@ use Attribute;
  * (`reporting.articles`).
  *
  * $connection names the database the entity lives on: lowercase ASCII
- * letters and digits, starting with a letter. Every relationship stays
- * on one connection, and each OrmFactory maps the entities of one.
+ * letters and digits, starting with a letter, and not the reserved `app`.
+ * Every relationship stays on one connection, and each OrmFactory maps the
+ * entities of one.
  */
 #[Attribute(Attribute::TARGET_CLASS)]
 final readonly class Entity

@@ -440,6 +440,7 @@ final class MetadataRegistryTest extends TestCase
         yield 'an uppercase connection' => [self::INVALID . 'UppercaseConnection', 'UppercaseConnection names the connection "Reporting", which is not a connection name: lowercase ASCII letters and digits, starting with a letter.'];
         yield 'a connection with an underscore' => [self::INVALID . 'UnderscoreConnection', 'UnderscoreConnection names the connection "report_ing", which is not a connection name'];
         yield 'a connection starting with a digit' => [self::INVALID . 'DigitFirstConnection', 'DigitFirstConnection names the connection "2nd", which is not a connection name'];
+        yield 'the reserved connection app' => [self::INVALID . 'AppConnection', 'AppConnection names the connection "app", which is reserved: its scoped DB_NAME key would be DB_APP_NAME, the default connection\'s application-name key. Name the connection otherwise.'];
         yield 'an empty connection' => [self::INVALID . 'EmptyConnection', 'EmptyConnection names the connection "", which is not a connection name'];
 
         $crossing = static fn (string $source, string $sourceConnection, string $target, string $targetConnection): string => "{$source} is on the \"{$sourceConnection}\" connection and {$target} on the \"{$targetConnection}\" connection, and a relationship never spans two connections.";

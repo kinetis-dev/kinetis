@@ -91,6 +91,14 @@ final class MappingException extends RuntimeException
         );
     }
 
+    public static function reservedConnection(string $class, string $connection): self
+    {
+        return new self(
+            "{$class} names the connection \"{$connection}\", which is reserved: its scoped DB_NAME key would be "
+            . 'DB_APP_NAME, the default connection\'s application-name key. Name the connection otherwise.',
+        );
+    }
+
     public static function invalidColumn(string $class, string $property, string $column): self
     {
         return new self(

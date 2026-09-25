@@ -849,6 +849,12 @@ final class EmptyConnection
     public int $id;
 }
 
+#[Entity(connection: 'app')]
+final class AppConnection
+{
+    public int $id;
+}
+
 #[Entity(connection: 'ledger')]
 final class CrossBelongsTo
 {

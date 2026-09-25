@@ -125,8 +125,8 @@ unnamed, the table is the class's short name in snake case, singular
 (`ArticleCategory` maps to `article_category`). A dot separates a schema
 from the table (`table: 'reporting.articles'`). `connection` is optional
 too: unnamed, the entity lives on the default connection, and a name —
-lowercase ASCII letters and digits, starting with a letter — puts it on
-that named connection ([Entities on other
+lowercase ASCII letters and digits, starting with a letter, other than
+the reserved `app` — puts it on that named connection ([Entities on other
 connections](#entities-on-other-connections)).
 
 The ORM maps every non-static property of an entity and accesses each

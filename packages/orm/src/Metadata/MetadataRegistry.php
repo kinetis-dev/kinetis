@@ -74,6 +74,12 @@ final readonly class MetadataRegistry
      */
     private const string CONNECTION = '/^[a-z][a-z0-9]*$/D';
 
+    /**
+     * The one name whose scoped DB_NAME key, DB_APP_NAME, is also a key of
+     * the default connection.
+     */
+    private const string RESERVED_CONNECTION = 'app';
+
     private const array SCALAR_TYPES = ['string', 'int', 'float', 'bool'];
 
     private const string CARRIES_ID = 'it also carries #[Id]';
@@ -354,6 +360,10 @@ final readonly class MetadataRegistry
 
         if (preg_match(self::CONNECTION, $entity->connection) !== 1) {
             throw MappingException::invalidConnection($name, $entity->connection);
+        }
+
+        if ($entity->connection === self::RESERVED_CONNECTION) {
+            throw MappingException::reservedConnection($name, $entity->connection);
         }
 
         /** @var array<string, PropertyMapping> $properties */

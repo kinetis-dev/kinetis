@@ -37,9 +37,12 @@ longer prefix splits at that same point: `FILESYSTEM_S3_BUCKET` becomes
 
 `'default'` resolves to the plain, unprefixed key — a connection you
 never name behaves exactly as if this feature did not exist. A scoped key
-can coincide with a default one: a SQL connection named `app` reads its
-database name from `DB_APP_NAME`, which is also the default connection's
-Postgres application name. Name it otherwise.
+can coincide with a default one: a SQL connection named `app` would read
+its database name from `DB_APP_NAME`, which is also the default
+connection's Postgres application name. `kinetis/orm` refuses `app` as an
+entity's connection for that reason, and its connection names are
+lowercase ASCII letters and digits starting with a letter, so no other
+two connection names share a key.
 
 Every package bootstrap reads its own selector unscoped — `DB_CONNECTION`,
 `QUEUE_CONNECTION`, `FILESYSTEM_DRIVER`, `MAILER_DSN`,

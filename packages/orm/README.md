@@ -93,7 +93,9 @@ final class Article
 - **Connection.** `#[Entity(connection: 'reporting')]` names the database
   the entity lives on; without it, the entity lives on `default`. A
   connection name is lowercase ASCII letters and digits, starting with a
-  letter. See "Connections".
+  letter; `app` is reserved, because a host deriving `DB_<NAME>_*` keys
+  would read its `DB_NAME` from `DB_APP_NAME`, the default connection's
+  application-name key. See "Connections".
 - **Columns.** Every non-static property is mapped, trait properties
   included, and every one but an inverse relationship maps a column (see
   "Relationships"). A column is the property name in snake case
@@ -127,8 +129,9 @@ type, an intersection, any other type (`mixed`, `array` without
 `DateTimeImmutable`, a unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
-`int`, an invalid name or connection name, a duplicate column, and each
-relationship refusal under "Relationships".
+`int`, an invalid name or connection name, the reserved connection name
+`app`, a duplicate column, and each relationship refusal under
+"Relationships".
 
 ## Identifiers
 
@@ -1606,7 +1609,10 @@ Requires PHP 8.4+ and the extension for the driver you use (see
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence)). In
 a Kinetis application,
 [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)
-compiles the entity metadata and binds a request-scoped `EntityManager`.
+compiles the entity metadata, binds an `OrmFactoryRegistry` for the worker
+and an `EntityManagerRegistry` for each request over every connection an
+entity names, and binds `OrmFactory` and the request's `EntityManager` as
+the default connection's entries of the two.
 Full documentation:
 [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
 

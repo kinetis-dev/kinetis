@@ -3360,14 +3360,13 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "11c21be62d3773b6ea070f566cb29845cec966ce"
+                "reference": "fbe77612b78b9c1b764247d2f1d42c167a9677d6"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "php": "^8.4",
                 "psr/container": "^2.0.2",
-                "psr/log": "^3.0.2",
-                "revolt/event-loop": "^1.0.9"
+                "psr/log": "^3.0.2"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
