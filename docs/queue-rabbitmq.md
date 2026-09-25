@@ -50,6 +50,7 @@ name, so staging and production can share one broker without both using
 
 ```{code-block} text
 QUEUE_CONNECTION_NAME=reports
+QUEUE_REPORTS_CONNECTION=rabbitmq
 QUEUE_REPORTS_RABBITMQ_URL=amqp://reports:secret@rabbitmq-reports:5672/reports
 QUEUE_REPORTS_RABBITMQ_QUEUE_PREFIX=myapp-reports-
 ```
@@ -145,9 +146,9 @@ rolls back with the effect it was meant to count.
 
 `RabbitMqQueueFactory::fromConfig()` builds the queue's
 `Thesis\Amqp\Client` and hands the queue that client's `disconnect()`,
-which closes this instance's channel and the connection. With
-`QUEUE_CONNECTION=rabbitmq` that runs when the worker ends, with no
-wiring of yours; build the backend yourself and registering
+which closes this instance's channel and the connection. For a queue
+the bootstrap binds, or one `queue:work --connection=<name>` builds,
+that runs when the worker ends, with no wiring of yours; build the backend yourself and registering
 `$app->onDispose($queue->dispose(...))` is yours too. A `RabbitMqQueue`
 constructed around a client you built disconnects nothing — see
 {doc}`appendix-queue`'s "Connection ownership".

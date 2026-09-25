@@ -79,8 +79,8 @@ rather than the later commit.
 rolls back, nests a transaction, or falls back to the connection the
 queue was built with. Addressing the database that holds
 `kinetis_queue_jobs` is therefore the caller's job —
-`QUEUE_CONNECTION_NAME` picks the connection behind `push()` and does not
-redirect a transaction you supply.
+the queue's connection name picks the connection behind `push()` and
+does not redirect a transaction you supply.
 
 The signature belongs to this package, not to `QueueInterface`, so a
 caller needs the `SqlQueue` itself rather than the `QueueInterface` the
@@ -166,13 +166,16 @@ delayed push does and needs no schema change.
 
 ```{code-block} text
 QUEUE_CONNECTION_NAME=reports
+QUEUE_REPORTS_CONNECTION=sql
 DB_REPORTS_CONNECTION=mysql
 DB_REPORTS_HOST=127.0.0.1
 ```
 
-`QUEUE_CONNECTION_NAME` picks which scoped block of `DB_*` keys a worker
-reads, and `default`, or leaving it unset, reads the plain keys. See
-{doc}`config`.
+A connection's name scopes its selector, its `DB_*` keys and
+`QUEUE_VISIBILITY_TIMEOUT_SECONDS`; `default` reads the plain keys.
+`QUEUE_CONNECTION_NAME` makes `reports` the bound `QueueInterface`, and
+`queue:work --connection=reports` runs it either way. See {doc}`queue`'s
+"Named connections" and {doc}`config`.
 
 ## See also
 

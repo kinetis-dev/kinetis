@@ -123,6 +123,40 @@ final class PackageBootstrapTest extends TestCase
         self::assertSame($invoker, $app->get(ListenerInvokerInterface::class));
     }
 
+    /**
+     * QUEUE_CONNECTION_NAME names the connection the binding builds, and
+     * that connection's own selector is the gate: reaching QueueFactory
+     * for the uninstalled backend, naming QUEUE_JOBS_CONNECTION, proves
+     * both the gate and the name passed through.
+     */
+    public function test_a_named_connection_gates_on_its_own_scoped_selector(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register(
+            $app,
+            new Config(['QUEUE_CONNECTION_NAME' => 'jobs', 'QUEUE_JOBS_CONNECTION' => 'redis']),
+        );
+        $app->boot();
+
+        $this->expectException(QueueUnavailableException::class);
+        $this->expectExceptionMessage('Cannot use QUEUE_JOBS_CONNECTION="redis"');
+        $app->get(QueueInterface::class);
+    }
+
+    public function test_a_named_connection_is_inert_with_only_the_global_selector(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register(
+            $app,
+            new Config(['QUEUE_CONNECTION_NAME' => 'jobs', 'QUEUE_CONNECTION' => 'redis']),
+        );
+        $app->boot();
+
+        self::assertFalse($app->has(QueueInterface::class));
+        self::assertFalse($app->has(ClearableQueueInterface::class));
+        self::assertInstanceOf(SynchronousListenerInvoker::class, $app->get(ListenerInvokerInterface::class));
+    }
+
     public function test_registering_builds_no_backend_until_the_queue_is_resolved(): void
     {
         $app = new AppScope();

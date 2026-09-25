@@ -13,18 +13,21 @@ use Psr\Container\ContainerInterface;
 
 /**
  * Declared via extra.kinetis in this package's composer.json and run by
- * the framework ahead of the application's own bootstrap.php: with
- * QUEUE_CONNECTION configured, QueueInterface is bound to the selected
- * backend, so application code constructor-injects it and push()es jobs
- * with zero bootstrap code of its own. Without QUEUE_CONNECTION this
- * stays inert — "no queue" is a configuration, not an error, and core's
- * own synchronous ListenerInvokerInterface default stands.
+ * the framework ahead of the application's own bootstrap.php: with the
+ * selector of the connection QUEUE_CONNECTION_NAME names configured
+ * (`QUEUE_CONNECTION` for `default`, the name's own default;
+ * `QUEUE_JOBS_CONNECTION` for `jobs` — see {@see QueueFactory}),
+ * QueueInterface is bound to that connection's backend, so application
+ * code constructor-injects it and push()es jobs with zero bootstrap code
+ * of its own. Without that selector this stays inert — "no queue" is a
+ * configuration, not an error, and core's own synchronous
+ * ListenerInvokerInterface default stands.
  *
  * All three bindings are factories, resolved on first use rather than
  * here, the same shape kinetis/storage's own bootstrap takes: an
  * application that never injects a queue never builds a backend, and an
  * application whose bootstrap.php binds its own QueueInterface never
- * builds the one QUEUE_CONNECTION names either.
+ * builds the one the selector names either.
  *
  * ClearableQueueInterface and ListenerInvokerInterface both resolve
  * through QueueInterface, so they always answer with the backend the
@@ -60,12 +63,14 @@ final class PackageBootstrap implements PackageBootstrapInterface
     #[\Override]
     public function register(AppScope $app, Config $config): void
     {
-        if ($config->get('QUEUE_CONNECTION') === null) {
+        $connection = $config->string('QUEUE_CONNECTION_NAME', 'default');
+
+        if ($config->get(Config::scopedKey('QUEUE_CONNECTION', $connection)) === null) {
             return;
         }
 
-        $app->bind(QueueInterface::class, static function (AppScope $app) use ($config): QueueInterface {
-            $queue = QueueFactory::fromConfig($config);
+        $app->bind(QueueInterface::class, static function (AppScope $app) use ($config, $connection): QueueInterface {
+            $queue = QueueFactory::fromConfig($config, $connection);
 
             // This binding opened the backend's connection, so this
             // binding closes it when the worker ends — registered

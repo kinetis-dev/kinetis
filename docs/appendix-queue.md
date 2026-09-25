@@ -545,7 +545,9 @@ propagates as the transport failure it is.
 |---|---|---|---|
 | `InvalidQueueArgumentException` | A queue name, queue list, delay, timeout or attempt count is invalid | Nothing was sent | Propagates to the caller |
 | `UnserializableJobException` | A constructor argument has no wire form, or a parameter has no same-named property | Nothing was sent | Propagates from `push()` |
-| `QueueUnavailableException` | `QUEUE_CONNECTION` names a backend whose package is not installed | — | Propagates when the queue is resolved |
+| `QueueUnavailableException` | A connection's selector names a backend whose package is not installed; the message names the selector | — | Propagates when the queue is resolved or built |
+| `Kinetis\Config\Exception\MissingConfigException` | The requested connection's selector is unset: `queue:work --connection=<name>` or a direct `QueueFactory` call | — | Propagates before any queue is built |
+| `InvalidArgumentException` | A selector names an unknown backend, or `queue:work` receives a bare, empty or invalid `--connection` | — | Propagates before any queue is built |
 | `QueueNotClearableException` | `ClearableQueueInterface` is resolved against a backend that cannot clear | — | Propagates when resolved |
 | `JobReconstructionException` | Stored class or arguments no longer match the code | The reserved delivery | Job failure: released or failed under the cap |
 | `UnresolvableJobParameterException` | A `handle()` parameter is untyped or scalar | The reserved delivery | Job failure |
@@ -568,11 +570,38 @@ their fields.
 
 ## Application wiring
 
+### Named connections
+
+Every queue connection has a name and its own backend selector,
+`Config::scopedKey('QUEUE_CONNECTION', $name)`: `QUEUE_CONNECTION` for
+`default`, `QUEUE_JOBS_CONNECTION` for `jobs`. A named selector never
+falls back to `QUEUE_CONNECTION`, and no selector has a default.
+`Kinetis\Queue\QueueFactory::fromConfig($config, $name)` builds the
+backend that selector names and passes the name to that backend's
+factory, which reads its own keys under it. The factory does not
+validate the name; code taking one from outside the application does.
+
+This package's bootstrap binds one connection to `QueueInterface`: the
+one `QUEUE_CONNECTION_NAME` names, `default` when unset. It stays inert
+while that connection's selector is unset, and core's synchronous
+listener invoker stands. The bootstrap wiring below applies only when it
+binds.
+
+`queue:work` runs the bound `QueueInterface` — this bootstrap's or the
+application's own. `queue:work --connection=<name>` builds that
+connection through `QueueFactory` instead and never resolves the
+binding, so `--connection=default` runs the connection the unscoped
+keys describe, whatever the application bound and whatever
+`QUEUE_CONNECTION_NAME` says. A name is lowercase ASCII letters and
+digits, starting with a letter. A bare, empty or invalid value, like an
+invalid worker setting, fails before any queue is resolved or built and
+before any startup output.
+
 ### Clearing from application code
 
 Application code that clears a queue names
-`Kinetis\Queue\ClearableQueueInterface` in its constructor. With
-`QUEUE_CONNECTION` set, this package's bootstrap binds it by resolving
+`Kinetis\Queue\ClearableQueueInterface` in its constructor. With a
+bound connection, this package's bootstrap binds it by resolving
 the application's `QueueInterface` — including a queue the application's
 own `bootstrap.php` bound — and returning that queue when it can clear,
 or raising `Kinetis\Queue\Exception\QueueNotClearableException`, naming
@@ -600,15 +629,15 @@ which extends `QueueInterface`, so one `implements` clause covers both.
 
 ### Queued event listeners
 
-With `QUEUE_CONNECTION` set, this package's bootstrap binds
+With a bound connection, this package's bootstrap binds
 `Kinetis\Events\ListenerInvokerInterface` to
 `Kinetis\Queue\QueuedListenerInvoker`, so a listener marked
-`Kinetis\Events\ShouldQueue` runs as a queued job. Without
-`QUEUE_CONNECTION`, core's synchronous invoker stands and the listener
-runs inline. The invoker resolves `QueueInterface` when a queued
-listener is first dispatched, so it pushes onto whichever queue the
-application ends up with. Binding either interface in the application's
-own `bootstrap.php` overrides this:
+`Kinetis\Events\ShouldQueue` runs as a queued job. Without one, core's
+synchronous invoker stands and the listener runs inline. The invoker
+resolves `QueueInterface` when a queued listener is first dispatched, so
+it pushes onto whichever queue the application ends up with. Binding
+either interface in the application's own `bootstrap.php` overrides
+this:
 
 ```{code-block} php
 use Kinetis\Events\ListenerInvokerInterface;
@@ -663,12 +692,13 @@ Ownership travels with construction, not with the type:
 worker that never popped anything still disposes cleanly, and a second
 call does nothing.
 
-With `QUEUE_CONNECTION` set, this package's bootstrap registers
-`dispose()` on the application scope for the backend it builds, at the
-moment something first injects the queue. It registers nothing for a
-queue an application's own `bootstrap.php` bound, since that connection
-belongs to whoever opened it. An application that builds a backend
-itself registers the disposal itself:
+This package's bootstrap registers `dispose()` on the application scope
+for the backend it builds, at the moment something first injects the
+queue, and `queue:work --connection=<name>` registers it for the backend
+it builds. Neither registers anything for a queue an application's own
+`bootstrap.php` bound, since that connection belongs to whoever opened
+it. The CLI disposes the application scope on every exit path. An
+application that builds a backend itself registers the disposal itself:
 
 ```{code-block} php
 use Kinetis\Queue\QueueInterface;
@@ -684,50 +714,82 @@ $app->onDispose($queue->dispose(...));
 
 ### Multiple backends
 
-Different queues can live on different backends — a `RedisQueue` for
-low-latency jobs beside a `SqlQueue` for jobs that ride along with a
-database's backups. Register each concrete class instead of binding
-`QueueInterface` to one of them:
+Different queues can live on different backends — Redis for
+low-latency jobs beside SQL for jobs that ride along with a database's
+backups. Give each its own named connection and selector, and let the
+bootstrap bind the one most code pushes to:
 
-```{code-block} php
-use Kinetis\QueueRedis\RedisQueue;
-use Kinetis\QueueRedis\RedisQueueFactory;
-use Kinetis\QueueSql\SqlQueue;
-use Kinetis\QueueSql\SqlQueueFactory;
-
-$fast = RedisQueueFactory::fromConfig($config, 'fast');
-$ledger = SqlQueueFactory::fromConfig($config, 'ledger');
-
-$app->instance(RedisQueue::class, $fast);
-$app->instance(SqlQueue::class, $ledger);
-$app->onDispose($fast->dispose(...));
-$app->onDispose($ledger->dispose(...));
+```{code-block} text
+QUEUE_CONNECTION_NAME=fast
+QUEUE_FAST_CONNECTION=redis
+REDIS_FAST_HOST=10.0.0.5
+QUEUE_LEDGER_CONNECTION=sql
+DB_LEDGER_CONNECTION=pgsql
+DB_LEDGER_HOST=10.0.0.6
+DB_LEDGER_NAME=ledger
 ```
 
-Each connection was opened here, so each is closed here — see
-[Connection ownership](#connection-ownership).
+Each backend reads its own keys under its connection name —
+`REDIS_FAST_*` and `QUEUE_FAST_VISIBILITY_TIMEOUT_SECONDS` for the
+first, `DB_LEDGER_*` and `QUEUE_LEDGER_VISIBILITY_TIMEOUT_SECONDS` for
+the second. `QueueInterface` resolves to the `fast` connection, with its
+disposal, clearing capability and queued listeners wired by the
+bootstrap.
 
-Each factory reads its own keys under the connection name it is given —
-`REDIS_FAST_*` and `QUEUE_FAST_VISIBILITY_TIMEOUT_SECONDS` for the first,
-`DB_LEDGER_*` and `QUEUE_LEDGER_VISIBILITY_TIMEOUT_SECONDS` for the
-second. Constructing a backend directly means supplying its transport:
-`SqlQueue` takes a `Kinetis\Persistence\Contract\SqlLink`, and
-`RedisQueue` takes an `Amp\Redis\RedisClient` built over {doc}`redis`'s
-client as `new RedisClient($client->link())`. A transport supplied that
-way stays the caller's to close.
-
-Code that pushes to one backend injects its concrete class:
+Code pushing to the second connection needs a type of its own. Give it
+an application class, and build its queue the way the bootstrap builds
+the first — on first use, through `QueueFactory`, registering the
+disposal of the connection it opened:
 
 ```{code-block} php
-final readonly class RegistrationController
+use Kinetis\Queue\QueueInterface;
+
+final readonly class LedgerQueue
 {
-    public function __construct(private RedisQueue $fastQueue) {}
+    public function __construct(public QueueInterface $queue) {}
 }
 ```
 
-Run a `kinetis queue:work` process per backend, with that backend's
-`QUEUE_CONNECTION`, `QUEUE_CONNECTION_NAME` and `--queue` matching the
-queues pushed to it.
+```{code-block} php
+use Kinetis\Container\AppScope;
+use Kinetis\Queue\DisposableQueueInterface;
+use Kinetis\Queue\QueueFactory;
+
+$app->bind(LedgerQueue::class, static function (AppScope $app) use ($config): LedgerQueue {
+    $queue = QueueFactory::fromConfig($config, 'ledger');
+
+    if ($queue instanceof DisposableQueueInterface) {
+        $app->onDispose($queue->dispose(...));
+    }
+
+    return new LedgerQueue($queue);
+});
+```
+
+```{code-block} php
+final readonly class SettlementController
+{
+    public function __construct(private LedgerQueue $ledger) {}
+}
+```
+
+Neither side names a backend: moving `ledger` to another one is a
+configuration change. A caller that needs one backend's own API, such
+as `SqlQueue::pushOn()`, calls that backend's own factory instead,
+which returns the concrete class. Constructing a backend directly means
+supplying its transport — `SqlQueue` takes a
+`Kinetis\Persistence\Contract\SqlLink`, and `RedisQueue` takes an
+`Amp\Redis\RedisClient` built over {doc}`redis`'s client as
+`new RedisClient($client->link())` — and a transport supplied that way
+stays the caller's to close.
+
+Run a worker per connection, with `--queue` matching the queues pushed
+to it:
+
+```{code-block} sh
+vendor/bin/kinetis queue:work --connection=fast --queue=high,default
+vendor/bin/kinetis queue:work --connection=ledger
+```
 
 ## Backend mechanisms
 

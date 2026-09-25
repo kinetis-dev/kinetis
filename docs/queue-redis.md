@@ -45,15 +45,16 @@ named connection, whose `REDIS_JOBS_CLUSTER` is unset and so `false`:
 REDIS_CLUSTER=true
 REDIS_CLUSTER_SEEDS=10.0.0.1:6379,10.0.0.2:6379,10.0.0.3:6379
 
-QUEUE_CONNECTION=redis
 QUEUE_CONNECTION_NAME=jobs
+QUEUE_JOBS_CONNECTION=redis
 REDIS_JOBS_HOST=queue-redis.internal
 ```
 
 ## Configuring
 
 Besides `QUEUE_VISIBILITY_TIMEOUT_SECONDS`, the backend reads the `REDIS_*`
-keys the cache reads, scoped by `QUEUE_CONNECTION_NAME`: `REDIS_URL`, or
+keys the cache reads, scoped by the queue connection's name (see
+{doc}`queue`'s "Named connections"): `REDIS_URL`, or
 `REDIS_HOST` with `REDIS_PORT` and `REDIS_DATABASE`; `REDIS_PASSWORD`;
 `REDIS_TIMEOUT`; and `REDIS_TLS`, `REDIS_TLS_VERIFY_PEER` and
 `REDIS_TLS_CA_FILE`. {doc}`config` lists their defaults. The queue opens
@@ -92,8 +93,9 @@ exception stops the worker.
 
 The queue opens a `Kinetis\Redis\Client` of its own rather than sharing
 the cache's, and `RedisQueueFactory::fromConfig()` hands the queue that
-client's `close()`. With `QUEUE_CONNECTION=redis` the connection is
-closed when the worker ends, with no wiring of yours; build the backend
+client's `close()`. A queue the bootstrap binds, or one
+`queue:work --connection=<name>` builds, has its connection closed when
+the worker ends, with no wiring of yours; build the backend
 yourself and registering `$app->onDispose($queue->dispose(...))` is
 yours too. A `RedisQueue` constructed around an `Amp\Redis\RedisClient`
 you built closes nothing — see {doc}`appendix-queue`'s "Connection

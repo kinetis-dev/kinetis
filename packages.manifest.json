@@ -331,7 +331,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.6.1",
+            "version": "1.7.0",
             "requires": [
                 "framework"
             ],

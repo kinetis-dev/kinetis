@@ -45,17 +45,22 @@ or `--connection` value, for that reason. Both take connection names of
 lowercase ASCII letters and digits starting with a letter, so no other
 two connection names share a key.
 
-Every package bootstrap reads its own selector unscoped — `DB_CONNECTION`,
-`QUEUE_CONNECTION`, `FILESYSTEM_DRIVER`, `MAILER_DSN`,
+Every package bootstrap except `kinetis/queue`'s reads its own selector
+unscoped — `DB_CONNECTION`, `FILESYSTEM_DRIVER`, `MAILER_DSN`,
 `SEARCH_OPENSEARCH_HOST`, `SEARCH_ELASTICSEARCH_HOST`, `SESSION_DRIVER`,
-`BROADCAST_DRIVER` — and wires the default connection alone. The one
-named connection resolved automatically is a SQL connection an ORM entity
-names with `#[Entity(connection: ...)]`: with `kinetis/orm` installed,
-`kinetis/database-bridge` builds it from its scoped `DB_*` keys, or takes
-the application's `db.<name>` binding, when the ORM first needs it — see
-{doc}`orm`'s "Entities on other connections". Any other named connection
-is built explicitly in `bootstrap.php` and registered under an id of your
-own, or constructed where it is needed:
+`BROADCAST_DRIVER` — and wires the default connection alone.
+`kinetis/queue`'s bootstrap wires the one queue connection
+`QUEUE_CONNECTION_NAME` names, `default` when unset, gated on that
+connection's own scoped `QUEUE_CONNECTION` selector;
+`queue:work --connection=<name>` builds any other (see "Queue" below).
+Beyond those, the one named connection resolved automatically is a SQL
+connection an ORM entity names with `#[Entity(connection: ...)]`: with
+`kinetis/orm` installed, `kinetis/database-bridge` builds it from its
+scoped `DB_*` keys, or takes the application's `db.<name>` binding, when
+the ORM first needs it — see {doc}`orm`'s "Entities on other
+connections". Any other named connection is built explicitly in
+`bootstrap.php` and registered under an id of your own, or constructed
+where it is needed:
 
 ```{code-block} text
 :caption: .env
@@ -259,22 +264,28 @@ the three set, Redis is off — see {doc}`persistence` for what
 
 ### Queue (`kinetis/queue` + backend packages)
 
-Read by `kinetis queue:work` and `kinetis/queue`'s package bootstrap; the
-backend-specific keys are scoped by `QUEUE_CONNECTION_NAME`. Setting
-`QUEUE_CONNECTION` does two things beyond selecting a backend. It decides
-which capabilities the bound backend has beyond `QueueInterface` —
-`redis`, `sql`, and `rabbitmq` can clear a queue and `sqs` cannot, so
-`kinetis queue:clear` refuses under `QUEUE_CONNECTION=sqs`, see
-{doc}`queue`'s "Clearing is a separate capability". And it is what makes
-a listener marked `Kinetis\Events\ShouldQueue` actually queue: the
-bootstrap binds `ListenerInvokerInterface` to the queued invoker, where
-leaving `QUEUE_CONNECTION` unset leaves core's inline default in place
-(see {doc}`events`).
+Read by `kinetis queue:work` and `kinetis/queue`'s package bootstrap.
+Each queue connection has its own backend selector —
+`QUEUE_CONNECTION` for `default`, `QUEUE_<NAME>_CONNECTION` for a named
+one, with no fallback between them — and the backend-specific keys below
+are scoped by the same name: `QUEUE_REPORTS_CONNECTION=sqs` reads
+`QUEUE_REPORTS_SQS_REGION`. The bootstrap binds the connection
+`QUEUE_CONNECTION_NAME` names; `queue:work --connection=<name>` runs any
+connection. {doc}`appendix-queue`'s "Named connections" is the
+contract. Setting the bound connection's selector does two things
+beyond selecting a backend. It decides which capabilities the bound
+backend has beyond `QueueInterface` — `redis`, `sql`, and `rabbitmq` can
+clear a queue and `sqs` cannot, so `kinetis queue:clear` refuses on an
+`sqs` connection, see {doc}`queue`'s "Clearing is a separate
+capability". And it is what makes a listener marked
+`Kinetis\Events\ShouldQueue` actually queue: the bootstrap binds
+`ListenerInvokerInterface` to the queued invoker, where leaving that
+selector unset leaves core's inline default in place (see {doc}`events`).
 
 | Key | Default | Purpose |
 |---|---|---|
-| `QUEUE_CONNECTION` | *(unset: no queue)* | `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). Gates on the key being absent, not blank. |
-| `QUEUE_CONNECTION_NAME` | `default` | Which named `REDIS_*`/`DB_*` block the worker uses. |
+| `QUEUE_CONNECTION` | *(unset: no queue)* | The `default` connection's backend: `redis` (needs `kinetis/queue-redis`), `sql` (needs `kinetis/queue-sql`), `sqs` (needs `kinetis/queue-sqs`), or `rabbitmq` (needs `kinetis/queue-rabbitmq`). A named connection reads `QUEUE_<NAME>_CONNECTION` instead. The bootstrap gates on the bound connection's selector being absent, not blank. |
+| `QUEUE_CONNECTION_NAME` | `default` | The connection the bootstrap binds to `QueueInterface`. `queue:work --connection=<name>` ignores it. |
 | `QUEUE_MAX_ATTEMPTS` | `0` | Worker-level default attempts cap (`0` = no retries, and must not be negative); a job's own `push(maxAttempts: ...)` wins. Bounds the attempt count only; `QUEUE_RETRY_BASE_DELAY_SECONDS` sets how long each retry waits (see {doc}`queue`). |
 | `QUEUE_RETRY_BASE_DELAY_SECONDS` | `5` | Seconds the first retry of a failed job waits, doubling per attempt up to a fixed 15-minute ceiling: `min(900, base * 2 ** (attempt - 1))`. Admitted range `0`–`900`; `0` selects immediate retries. The backend holds the job — the worker never sleeps (see {doc}`queue`). |
 | `QUEUE_POLL_TIMEOUT` | `5` | Seconds `queue:work` waits per poll; must be a positive integer, since a persistent worker needs a bounded wait to periodically check for a shutdown signal. |

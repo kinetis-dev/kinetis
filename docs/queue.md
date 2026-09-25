@@ -37,16 +37,37 @@ selected backend, built on first use, so a controller or job
 constructor-injects it with no `bootstrap.php` code. A `QueueInterface`
 binding in your own `bootstrap.php` wins. Selecting a backend whose
 package is not installed raises
-`Kinetis\Queue\Exception\QueueUnavailableException`, naming the package.
+`Kinetis\Queue\Exception\QueueUnavailableException`, naming the
+selector and the package.
 
 The backend built that way owns the connection its factory opened, and
 this package closes it once the worker ends. A backend you build
 yourself carries the same `dispose()` and its registration is yours —
 see {doc}`appendix-queue`'s "Connection ownership".
 
-`QUEUE_CONNECTION_NAME` selects a named connection of that backend,
-`default` when unset — see {doc}`config`, which also lists every queue
-key.
+### Named connections
+
+`QUEUE_CONNECTION` selects the `default` connection's backend. Any other
+connection has its own selector, and the backend reads its keys under
+the same name:
+
+```{code-block} text
+QUEUE_CONNECTION=redis
+REDIS_HOST=127.0.0.1
+QUEUE_LEDGER_CONNECTION=sql
+DB_LEDGER_CONNECTION=pgsql
+DB_LEDGER_HOST=ledger.internal
+```
+
+`QUEUE_CONNECTION_NAME` picks the connection the bootstrap binds,
+`default` when unset. `QUEUE_CONNECTION_NAME=ledger` binds the SQL
+connection above and needs `QUEUE_LEDGER_CONNECTION`; `QUEUE_CONNECTION`
+alone does not select it. Code that builds a connection by name calls
+`Kinetis\Queue\QueueFactory::fromConfig($config, 'ledger')`, and a
+worker runs one with `--connection` — see [Run a worker](#run-a-worker).
+{doc}`appendix-queue`'s "Named connections" is the contract, and its
+"Multiple backends" wires several connections into one application;
+{doc}`config` lists every queue key.
 
 ## Write a job
 
@@ -215,6 +236,16 @@ services registered on the application scope persist between jobs. A job
 whose `handle()` takes a `TransactionGuard` (see {doc}`persistence`) and
 leaves a transaction open has it rolled back when its scope is disposed,
 before the next job runs.
+
+Without options, the worker runs the queue `QueueInterface` resolves to
+— the bootstrap's connection or your own binding. `--connection=<name>`
+runs that named connection instead, built from its own selector;
+`--connection=default` runs the connection `QUEUE_CONNECTION` selects
+even when your `bootstrap.php` binds another queue:
+
+```{code-block} sh
+vendor/bin/kinetis queue:work --connection=ledger
+```
 
 Run as many `queue:work` processes as you need, on as many machines,
 against the same backend. They coordinate nothing beyond the queue names
@@ -567,7 +598,7 @@ needed while developing. It behaves like a real worker where it matters:
 Unlike a worker, it lets a failing job's exception propagate to the
 caller of `push()`, so you see the real error. It ignores `queue`,
 `delaySeconds` and `maxAttempts`, and it is registered in bootstrap code
-rather than selected through `QUEUE_CONNECTION`, since no worker has
+rather than selected through a queue connection, since no worker has
 anything to pop from it.
 
 ## See also
