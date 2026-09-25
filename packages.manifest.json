@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.20.0",
+            "version": "1.20.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -331,7 +331,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.6.1",
+            "version": "1.7.0",
             "requires": [
                 "framework"
             ],
@@ -353,7 +353,7 @@
             "description": "A Redis-backed queue implementation for kinetis/queue's QueueInterface — finite leases over pending/leased/delayed keys, so a crashed worker's job is redelivered rather than stranded.",
             "namespace": "Kinetis\\QueueRedis\\",
             "testNamespace": "Kinetis\\QueueRedis\\Tests\\",
-            "version": "1.8.0",
+            "version": "1.8.1",
             "requires": [
                 "framework",
                 "queue",
@@ -370,7 +370,7 @@
             "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for atomic reservation, token-fenced settlement, and a finite visibility timeout that redelivers a crashed worker's job.",
             "namespace": "Kinetis\\QueueSql\\",
             "testNamespace": "Kinetis\\QueueSql\\Tests\\",
-            "version": "1.6.2",
+            "version": "1.6.3",
             "requires": [
                 "framework",
                 "queue",

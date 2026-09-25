@@ -168,13 +168,15 @@ settlement failure here.
 
 ```{code-block} text
 QUEUE_CONNECTION_NAME=reports
+QUEUE_REPORTS_CONNECTION=sqs
 QUEUE_REPORTS_SQS_REGION=eu-west-1
 QUEUE_REPORTS_SQS_QUEUE_PREFIX=myapp-reports-
 ```
 
-`QUEUE_CONNECTION_NAME` picks which scoped block of `QUEUE_SQS_*` keys a
-worker reads, and `default`, or leaving it unset, reads the plain keys.
-See {doc}`config`.
+A connection's name scopes its selector and every `QUEUE_SQS_*` key;
+`default` reads the plain keys. `QUEUE_CONNECTION_NAME` makes `reports`
+the bound `QueueInterface`, and `queue:work --connection=reports` runs
+it either way. See {doc}`queue`'s "Named connections" and {doc}`config`.
 
 ## See also
 

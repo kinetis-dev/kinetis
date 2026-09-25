@@ -420,6 +420,7 @@ vendor/bin/kinetis migrate:rollback               # roll back the last one
 vendor/bin/kinetis migrate:status                 # applied/pending listing
 vendor/bin/kinetis migrate:make "create users"    # scaffold a migration file
 vendor/bin/kinetis queue:work --queue=high,default
+vendor/bin/kinetis queue:work --connection=ledger    # a named queue connection
 vendor/bin/kinetis queue:stats --queue=high,default
 vendor/bin/kinetis queue:clear --queue=default --force
 vendor/bin/kinetis session:gc                     # delete expired sessions
@@ -438,9 +439,11 @@ the `MIGRATE_CONNECTION_NAME` environment key when both are given;
 `migrate:rollback` requires one of the two once connection directories
 exist, and `migrate:make --connection=<name>` writes to that
 connection's directory. `queue:work` runs the worker loop against the
-backend `QUEUE_CONNECTION` selects, checking queues in the given
-priority order. `queue:clear` needs a backend that can clear, which
-`QUEUE_CONNECTION=sqs` is not — it names the backend and exits 1 there
+bound `QueueInterface`, checking queues in the given priority order;
+`queue:work --connection=<name>` runs that named queue connection
+instead, built from its own `QUEUE_{NAME}_CONNECTION` selector, or
+`QUEUE_CONNECTION` for `default`. `queue:clear` needs a backend that can
+clear, which `sqs` is not — it names the backend and exits 1 there
 instead. Full docs in {doc}`migrations`, {doc}`queue`, and
 {doc}`session`. The view commands come from `kinetis/views`, run the normal
 application bootstrap to resolve its configured adapter, and delegate the
