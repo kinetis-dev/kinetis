@@ -155,6 +155,16 @@ final class ConnectionFactoryTest extends TestCase
         ConnectionFactory::fromConfig($config, 'db2');
     }
 
+    public function test_a_wholly_missing_named_block_names_its_connection_key(): void
+    {
+        try {
+            ConnectionFactory::singleSession(new Config(['DB_CONNECTION' => 'mysql', 'DB_PASSWORD' => 'secret']), 'reporting');
+            self::fail('A missing named block must throw.');
+        } catch (MissingConfigException $e) {
+            self::assertSame('Missing required config value "DB_REPORTING_CONNECTION".', $e->getMessage());
+        }
+    }
+
     public function test_a_missing_password_throws_a_clear_error(): void
     {
         $this->expectException(MissingConfigException::class);

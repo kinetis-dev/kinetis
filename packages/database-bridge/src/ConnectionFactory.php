@@ -86,17 +86,19 @@ final class ConnectionFactory
         array $poolOptions,
         ?string $driver,
     ): ConnectionDefinition {
-        $host = $config->string(Config::scopedKey('DB_HOST', $connection), '127.0.0.1');
-        $database = $config->string(Config::scopedKey('DB_NAME', $connection), 'app');
-        $user = $config->string(Config::scopedKey('DB_USER', $connection), 'app');
-        $password = $config->required(Config::scopedKey('DB_PASSWORD', $connection));
-
+        // The dialect first: a connection whose block is missing entirely
+        // is reported by the key that declares it.
         $dialectKey = Config::scopedKey('DB_CONNECTION', $connection);
         $dialect = $config->required($dialectKey);
 
         if ($dialect !== 'mysql' && $dialect !== 'pgsql') {
             throw new InvalidArgumentException("{$dialectKey} must be \"mysql\" or \"pgsql\".");
         }
+
+        $host = $config->string(Config::scopedKey('DB_HOST', $connection), '127.0.0.1');
+        $database = $config->string(Config::scopedKey('DB_NAME', $connection), 'app');
+        $user = $config->string(Config::scopedKey('DB_USER', $connection), 'app');
+        $password = $config->required(Config::scopedKey('DB_PASSWORD', $connection));
 
         $driver ??= $config->string(Config::scopedKey('DB_DRIVER', $connection), 'auto');
 

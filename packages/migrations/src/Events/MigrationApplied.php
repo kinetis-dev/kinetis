@@ -9,10 +9,12 @@ namespace Kinetis\Migrations\Events;
  * actually ran, in the order they ran — nothing else observes a migration
  * running in production, since `kinetis migrate` is typically invoked
  * outside any request context (a deploy step, an init container).
+ * $connection names the connection whose database it ran on.
  */
 final readonly class MigrationApplied
 {
     public function __construct(
         public string $name,
+        public string $connection,
     ) {}
 }

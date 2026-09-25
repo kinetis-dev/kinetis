@@ -23,7 +23,7 @@ API-first applications, developed in the
 [kinetis-dev/kinetis](https://github.com/kinetis-dev/kinetis) monorepo.
 
 Raw SQL `up()`/`down()` migrations, tracked in a `kinetis_migrations`
-table, run through `migrate*` commands registered on
+table in each database, run through `migrate*` commands registered on
 `vendor/bin/kinetis`. No fluent
 DDL builder, no schema-diffing — the same "thin, not an ORM" shape as
 [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder).
@@ -62,13 +62,25 @@ vendor/bin/kinetis migrate:status                # lists applied/pending migrati
 vendor/bin/kinetis migrate:make "create orders"  # scaffolds a migration file
 ```
 
+The files directly in `migrations/` belong to the default connection, and
+each directory directly inside it, such as `migrations/reporting/`, to the
+named connection of that name, read from its `DB_REPORTING_*` keys.
+`migrate` and `migrate:status` cover every connection, default first,
+one database at a time and stopping at the first failure; with
+connection directories present they print `Connection: <name>` before
+each connection's lines. `--connection=<name>` narrows a command to one
+connection, and `migrate:rollback` requires it once connection
+directories exist. Give each connection its own database. See
+[Several databases](https://kinetis.dev/docs/migrations.html#several-databases)
+for the naming rules, the preflight check and the failure semantics.
+
 The ledger holds one row per applied migration: its name, the SHA-256 of
 the file that ran, and the order this database applied it in. Every
-command verifies that against the `migrations/` directory first — an
-applied migration whose file is gone, or whose contents no longer hash to
-what was recorded, throws `Exception\MigrationIntegrityException` before
-any `up()`, `down()` or ledger write, and restoring the deployed file is
-what clears it.
+command verifies that against the connection's directory first — an
+applied migration whose file is gone, moved to another connection's
+directory, or whose contents no longer hash to what was recorded, throws
+`Exception\MigrationIntegrityException` before any `up()`, `down()` or
+ledger write, and restoring the deployed file is what clears it.
 
 ## Provides
 
@@ -88,7 +100,8 @@ following automatically, through the `extra.kinetis` declaration in its
   that session.
 - **Events**: `Kinetis\Migrations\Events\MigrationApplied` and
   `MigrationRolledBack`, dispatched once per migration `migrate`/
-  `migrate:rollback` actually runs. See
+  `migrate:rollback` actually runs, each with the migration's `name` and
+  the `connection` it ran on. See
   [kinetis.dev/docs/events.html](https://kinetis.dev/docs/events.html)
   for the full list across every package.
 
@@ -105,7 +118,7 @@ package's own:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate; the `--connection=<name>` flag wins over it. |
+| `MIGRATE_CONNECTION_NAME` | — | When non-empty, narrows `migrate`, `migrate:status` and `migrate:rollback` to that one connection; the `--connection=<name>` flag wins over it. Unset, `migrate` and `migrate:status` cover every connection. |
 
 Full reference across every package:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).

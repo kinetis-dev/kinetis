@@ -10,7 +10,7 @@ use Kinetis\Migrations\MigrationScaffolder;
 
 final readonly class MakeCommand
 {
-    #[Command('migrate:make', description: 'Scaffold a migration file: migrate:make <description>', bootstrap: false)]
+    #[Command('migrate:make', description: 'Scaffold a migration file: migrate:make <description>. --connection=<name> writes it to migrations/<name>/.', bootstrap: false)]
     public function run(CommandArguments $arguments): int
     {
         $description = $arguments->get(0);
@@ -21,7 +21,7 @@ final readonly class MakeCommand
             return 1;
         }
 
-        $path = MigrationScaffolder::create(MigrationContext::detect()->migrationsPath, $description);
+        $path = MigrationScaffolder::create(MigrationContext::detect()->scaffoldPath($arguments), $description);
         fwrite(STDOUT, "Created {$path}\n");
 
         return 0;

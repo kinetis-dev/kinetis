@@ -40,7 +40,8 @@ never name behaves exactly as if this feature did not exist. A scoped key
 can coincide with a default one: a SQL connection named `app` would read
 its database name from `DB_APP_NAME`, which is also the default
 connection's Postgres application name. `kinetis/orm` refuses `app` as an
-entity's connection for that reason, and its connection names are
+entity's connection, and `kinetis/migrations` as a connection directory
+or `--connection` value, for that reason. Both take connection names of
 lowercase ASCII letters and digits starting with a letter, so no other
 two connection names share a key.
 
@@ -291,11 +292,13 @@ use AWS's own default credential provider chain.
 ### Migrations (`kinetis/migrations`)
 
 Read by the `migrate*` commands, which connect through the same `DB_*`
-keys as `kinetis/database-bridge`.
+keys as `kinetis/database-bridge`: the default block for the files in
+`migrations/`, and `DB_{NAME}_*` for each connection directory
+`migrations/<name>/` ({doc}`migrations`).
 
 | Key | Default | Purpose |
 |---|---|---|
-| `MIGRATE_CONNECTION_NAME` | `default` | Which named `DB_*` block to migrate; the `--connection=<name>` flag wins over it. |
+| `MIGRATE_CONNECTION_NAME` | — | When non-empty, narrows `migrate`, `migrate:status` and `migrate:rollback` to that one connection (`default` included); the `--connection=<name>` flag wins over it. Unset or empty, `migrate` and `migrate:status` cover every connection, and `migrate:rollback` needs `--connection=<name>` once connection directories exist. |
 
 ### File storage (`kinetis/storage` + `kinetis/storage-s3`)
 

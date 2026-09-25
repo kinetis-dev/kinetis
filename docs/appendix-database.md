@@ -518,7 +518,8 @@ the failure. It is for work that lives in the session
 itself — a session-scoped advisory lock, a temporary table — where a
 replacement is a different session holding none of it, and running on
 one quietly would be worse than stopping. `kinetis/migrations`' commands
-run every migration on one (see {doc}`migrations`).
+run each connection's migrations on one, closed before the next
+connection's opens (see {doc}`migrations`).
 
 (database-reference-statement-cache)=
 ### Prepared statements on PDO

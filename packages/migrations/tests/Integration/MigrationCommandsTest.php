@@ -17,6 +17,7 @@ use Kinetis\Migrations\Events\MigrationApplied;
 use Kinetis\Migrations\Events\MigrationRolledBack;
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
+use Kinetis\Persistence\Driver\PdoPgsqlClient;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -26,13 +27,19 @@ use PHPUnit\Framework\TestCase;
  * What each prints and the events it dispatches are the contract.
  *
  * Environment-gated on MYSQL_HOST, like every other real-backend test in
- * this repository.
+ * this repository; the reporting partition on Postgres additionally on
+ * POSTGRES_HOST.
  */
 final class MigrationCommandsTest extends TestCase
 {
     private const string MIGRATION = '20260101000000_create_bridge_widgets';
 
-    private const array ENVIRONMENT = ['DB_CONNECTION', 'DB_DRIVER', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'MIGRATE_CONNECTION_NAME'];
+    private const string REPORTING_MIGRATION = '20260101000001_create_bridge_reports';
+
+    private const array ENVIRONMENT = [
+        'DB_CONNECTION', 'DB_DRIVER', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'MIGRATE_CONNECTION_NAME',
+        'DB_REPORTING_CONNECTION', 'DB_REPORTING_HOST', 'DB_REPORTING_PORT', 'DB_REPORTING_NAME', 'DB_REPORTING_USER', 'DB_REPORTING_PASSWORD',
+    ];
 
     private string $projectRoot;
 
@@ -63,10 +70,12 @@ final class MigrationCommandsTest extends TestCase
             'DB_USER' => \getenv('MYSQL_USER') ?: 'testuser',
             'DB_PASSWORD' => \getenv('MYSQL_PASSWORD') ?: 'testpass',
             'MIGRATE_CONNECTION_NAME' => false,
+            'DB_REPORTING_CONNECTION' => false,
         ]);
 
         $link = self::client();
         $link->execute('DROP TABLE IF EXISTS bridge_widgets');
+        $link->execute('DROP TABLE IF EXISTS bridge_reports');
         $link->execute('DROP TABLE IF EXISTS kinetis_migrations');
         $link->close();
 
@@ -87,8 +96,12 @@ final class MigrationCommandsTest extends TestCase
         $GLOBALS['_composer_bin_dir'] = $this->composerBinDir;
         self::setEnvironment($this->originalEnvironment);
 
-        foreach (\glob($this->projectRoot . '/migrations/*.php') ?: [] as $file) {
+        foreach ([...\glob($this->projectRoot . '/migrations/reporting/*.php') ?: [], ...\glob($this->projectRoot . '/migrations/*.php') ?: []] as $file) {
             \unlink($file);
+        }
+
+        if (\is_dir($this->projectRoot . '/migrations/reporting')) {
+            \rmdir($this->projectRoot . '/migrations/reporting');
         }
 
         \rmdir($this->projectRoot . '/migrations');
@@ -115,9 +128,75 @@ final class MigrationCommandsTest extends TestCase
         self::assertSame([0, '[pending] ' . self::MIGRATION . "\n"], self::runStatus($scope));
 
         self::assertEquals(
-            [new MigrationApplied(self::MIGRATION), new MigrationRolledBack(self::MIGRATION)],
+            [new MigrationApplied(self::MIGRATION, 'default'), new MigrationRolledBack(self::MIGRATION, 'default')],
             $recorder->events,
         );
+    }
+
+    /**
+     * The root partition migrates the default MySQL database and
+     * migrations/reporting/ the Postgres one, and neither migration nor
+     * ledger row reaches the other database.
+     */
+    public function test_each_partition_migrates_its_own_database(): void
+    {
+        $host = \getenv('POSTGRES_HOST');
+
+        if ($host === false || $host === '') {
+            self::markTestSkipped('POSTGRES_HOST is not set — the reporting partition needs a real Postgres.');
+        }
+
+        self::setEnvironment([
+            'DB_REPORTING_CONNECTION' => 'pgsql',
+            'DB_REPORTING_HOST' => $host,
+            'DB_REPORTING_PORT' => \getenv('POSTGRES_PORT') ?: '5432',
+            'DB_REPORTING_NAME' => \getenv('POSTGRES_DATABASE') ?: 'testdb',
+            'DB_REPORTING_USER' => \getenv('POSTGRES_USER') ?: 'testuser',
+            'DB_REPORTING_PASSWORD' => \getenv('POSTGRES_PASSWORD') ?: 'testpass',
+        ]);
+
+        $postgres = self::postgres();
+        $postgres->execute('DROP TABLE IF EXISTS bridge_widgets');
+        $postgres->execute('DROP TABLE IF EXISTS bridge_reports');
+        $postgres->execute('DROP TABLE IF EXISTS kinetis_migrations');
+
+        [$scope, $recorder] = self::commandScope();
+        $this->writeMigration();
+        $this->writeMigration('reporting', self::REPORTING_MIGRATION, 'bridge_reports');
+
+        self::assertSame(
+            [0, "Connection: default\nMigrated: " . self::MIGRATION . "\nConnection: reporting\nMigrated: " . self::REPORTING_MIGRATION . "\n"],
+            self::runMigrate($scope),
+        );
+
+        $mysql = self::client();
+        self::assertSame([self::MIGRATION], self::column($mysql, 'SELECT migration FROM kinetis_migrations'));
+        self::assertSame([], self::column($mysql, "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'bridge_reports'"));
+        self::assertSame([self::REPORTING_MIGRATION], self::column($postgres, 'SELECT migration FROM kinetis_migrations'));
+        self::assertSame([], self::column($postgres, "SELECT table_name FROM information_schema.tables WHERE table_name = 'bridge_widgets'"));
+
+        // Without a selection, a rollback refuses to pick a database.
+        self::assertSame(1, OutputCapture::of(\STDERR, static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], [])))[0]);
+        self::assertSame(
+            [0, 'Rolled back: ' . self::REPORTING_MIGRATION . "\n"],
+            OutputCapture::of(\STDOUT, static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], ['connection' => 'reporting']))),
+        );
+
+        self::assertSame([self::MIGRATION], self::column($mysql, 'SELECT migration FROM kinetis_migrations'));
+        self::assertSame([], self::column($postgres, 'SELECT migration FROM kinetis_migrations'));
+        self::assertEquals(
+            [
+                new MigrationApplied(self::MIGRATION, 'default'),
+                new MigrationApplied(self::REPORTING_MIGRATION, 'reporting'),
+                new MigrationRolledBack(self::REPORTING_MIGRATION, 'reporting'),
+            ],
+            $recorder->events,
+        );
+
+        $mysql->execute('DROP TABLE bridge_widgets');
+        $mysql->close();
+        $postgres->execute('DROP TABLE IF EXISTS kinetis_migrations');
+        $postgres->close();
     }
 
     /** @return array{int, string} */
@@ -158,9 +237,15 @@ final class MigrationCommandsTest extends TestCase
         return [$app->createRequestScope(), $recorder];
     }
 
-    private function writeMigration(): void
+    private function writeMigration(string $directory = '', string $name = self::MIGRATION, string $table = 'bridge_widgets'): void
     {
-        \file_put_contents($this->projectRoot . '/migrations/' . self::MIGRATION . '.php', <<<'PHP'
+        $directory = \rtrim($this->projectRoot . '/migrations/' . $directory, '/');
+
+        if (!\is_dir($directory)) {
+            \mkdir($directory);
+        }
+
+        \file_put_contents("{$directory}/{$name}.php", \str_replace('bridge_widgets', $table, <<<'PHP'
             <?php
 
             declare(strict_types=1);
@@ -181,7 +266,7 @@ final class MigrationCommandsTest extends TestCase
                     $db->execute('DROP TABLE bridge_widgets');
                 }
             };
-            PHP);
+            PHP));
     }
 
     /** @param array<string, string|false> $variables false unsets */
@@ -190,6 +275,29 @@ final class MigrationCommandsTest extends TestCase
         foreach ($variables as $name => $value) {
             \putenv($value === false ? $name : "{$name}={$value}");
         }
+    }
+
+    /** @return list<mixed> */
+    private static function column(SqlLink $link, string $sql): array
+    {
+        $values = [];
+
+        foreach ($link->execute($sql) as $row) {
+            $values[] = \array_values($row)[0];
+        }
+
+        return $values;
+    }
+
+    private static function postgres(): SqlLink
+    {
+        return new PdoPgsqlClient(
+            (string) \getenv('DB_REPORTING_HOST'),
+            (string) \getenv('DB_REPORTING_USER'),
+            (string) \getenv('DB_REPORTING_PASSWORD'),
+            (string) \getenv('DB_REPORTING_NAME'),
+            (int) \getenv('DB_REPORTING_PORT'),
+        );
     }
 
     private static function client(): SqlLink
