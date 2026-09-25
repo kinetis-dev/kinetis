@@ -6,23 +6,38 @@ namespace Kinetis\Migrations\Console;
 
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Migrations\MigrationRunner;
 
 final readonly class StatusCommand
 {
-    #[Command('migrate:status', description: 'List applied and pending migrations. --connection=<name> targets a named DB_* block.', bootstrap: false)]
+    #[Command('migrate:status', description: 'List applied and pending migrations on every connection partition. --connection=<name> lists one.', bootstrap: false)]
     public function run(CommandArguments $arguments): int
     {
-        $status = MigrationContext::detect()->runner($arguments)->status();
+        return $this->runIn(MigrationContext::detect(), $arguments);
+    }
 
-        if ($status === []) {
-            fwrite(STDOUT, "No migrations found.\n");
+    /** @internal */
+    public function runIn(MigrationContext $context, CommandArguments $arguments): int
+    {
+        $partitions = $context->partitions($arguments);
 
-            return 0;
-        }
+        foreach ($partitions as $connection => $path) {
+            if (\count($partitions) > 1) {
+                fwrite(STDOUT, "Connection: {$connection}\n");
+            }
 
-        foreach ($status as $entry) {
-            $marker = $entry['applied'] ? '[applied]' : '[pending]';
-            fwrite(STDOUT, "{$marker} {$entry['name']}\n");
+            $status = $context->run($connection, $path, static fn (MigrationRunner $runner): array => $runner->status());
+
+            if ($status === []) {
+                fwrite(STDOUT, "No migrations found.\n");
+
+                continue;
+            }
+
+            foreach ($status as $entry) {
+                $marker = $entry['applied'] ? '[applied]' : '[pending]';
+                fwrite(STDOUT, "{$marker} {$entry['name']}\n");
+            }
         }
 
         return 0;

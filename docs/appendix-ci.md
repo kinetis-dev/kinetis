@@ -205,7 +205,9 @@ rather than which form it took.
   `MigrationRunner`/`SqlMigrationRepository`: migrate/status/rollback
   against a real fixture migration file, and the
   `migrate`/`migrate:status`/`migrate:rollback` commands run the way `bin/kinetis`
-  runs them — output and events — against MySQL.
+  runs them — output and events — against MySQL, and with a
+  `migrations/reporting/` partition on Postgres beside the MySQL default,
+  neither database receiving the other's migrations or ledger rows.
 - **`localstack`** (LocalStack: SQS + S3) — `SqsQueue`: push/pop/ack/
   release/fail, `maxAttempts`, priority queues; `S3FilesystemFactory`:
   write/read/exists/list/copy/move/delete/deleteDirectory over the

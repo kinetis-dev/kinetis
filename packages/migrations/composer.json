@@ -1,6 +1,6 @@
 {
     "name": "kinetis/migrations",
-    "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+    "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations for the default connection and named ones, no fluent DDL builder, no schema-diffing.",
     "type": "library",
     "license": "MIT",
     "authors": [

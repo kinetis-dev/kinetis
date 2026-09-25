@@ -428,9 +428,16 @@ vendor/bin/kinetis views:clear                     # empty the selected view cac
 ```
 
 The `migrate*` commands connect through the same `DB_*` keys as
-{doc}`persistence`; `--connection=<name>` targets a named `DB_{NAME}_*`
-connection block, winning over the `MIGRATE_CONNECTION_NAME` environment
-key when both are given. `queue:work` runs the worker loop against the
+{doc}`persistence`. The files in `migrations/` belong to the default
+connection, and each directory `migrations/<name>/` to the named
+`DB_{NAME}_*` connection. `migrate` and `migrate:status` cover every
+connection, default first, one database at a time.
+`--connection=<name>` narrows `migrate`, `migrate:status` and
+`migrate:rollback` to one connection, winning over
+the `MIGRATE_CONNECTION_NAME` environment key when both are given;
+`migrate:rollback` requires one of the two once connection directories
+exist, and `migrate:make --connection=<name>` writes to that
+connection's directory. `queue:work` runs the worker loop against the
 backend `QUEUE_CONNECTION` selects, checking queues in the given
 priority order. `queue:clear` needs a backend that can clear, which
 `QUEUE_CONNECTION=sqs` is not — it names the backend and exits 1 there

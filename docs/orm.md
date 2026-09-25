@@ -747,6 +747,10 @@ DB_REPORTING_USER=reports
 DB_REPORTING_PASSWORD=secret
 ```
 
+The `reporting` connection's tables come from migrations in
+`migrations/reporting/`, which `migrate` runs on that connection's
+database ({doc}`migrations`).
+
 A request-scoped class injects `EntityManagerRegistry` and asks it for
 the manager of an entity's connection:
 

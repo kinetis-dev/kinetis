@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.19.0",
+            "version": "1.19.1",
             "bin": [
                 "bin/kinetis"
             ],
@@ -80,7 +80,7 @@
             "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
             "namespace": "Kinetis\\DatabaseBridge\\",
             "testNamespace": "Kinetis\\DatabaseBridge\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework",
                 "persistence"
@@ -238,10 +238,10 @@
         },
         "migrations": {
             "name": "kinetis/migrations",
-            "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+            "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations for the default connection and named ones, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.3.1",
+            "version": "1.4.0",
             "requires": [
                 "framework",
                 "persistence",
