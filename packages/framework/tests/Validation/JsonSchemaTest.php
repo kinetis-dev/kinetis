@@ -17,6 +17,8 @@ use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableInFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectMapListOfRequest;
+use Kinetis\Tests\Validation\Fixtures\ObjectMapOnAStringRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
 use Kinetis\Tests\Validation\Fixtures\OrderWithItems;
 use Kinetis\Validation\Constraints\Date;
@@ -39,6 +41,7 @@ use Kinetis\Validation\Constraints\Regex;
 use Kinetis\Validation\Constraints\Url;
 use Kinetis\Validation\Constraints\Uuid;
 use Kinetis\Validation\Exception\JsonSchemaException;
+use Kinetis\Validation\Exception\UnsupportedDtoDefinitionException;
 use Kinetis\Validation\JsonSchema;
 use Kinetis\Validation\ListOf;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -531,6 +534,33 @@ final class JsonSchemaTest extends TestCase
 
         self::assertSame(['type' => 'object', 'additionalProperties' => true], $schema['properties']['meta']);
         self::assertSame(['name', 'meta'], $schema['required']);
+    }
+
+    /**
+     * A declaration Hydrator refuses is refused while its schema is
+     * built, in the same words, rather than published as a string or an
+     * open object no request could fill.
+     *
+     * @param class-string $class
+     */
+    #[DataProvider('invalidObjectMapProvider')]
+    public function test_an_object_map_declaration_hydrator_refuses_has_no_schema(string $class, string $message): void
+    {
+        $this->expectException(UnsupportedDtoDefinitionException::class);
+        $this->expectExceptionMessage($message);
+
+        JsonSchema::forClass($class);
+    }
+
+    /**
+     * @return array<string, array{class-string, string}>
+     */
+    public static function invalidObjectMapProvider(): array
+    {
+        return [
+            'non-array type' => [ObjectMapOnAStringRequest::class, '#[ObjectMap] only applies to a parameter typed array.'],
+            'with #[ListOf]' => [ObjectMapListOfRequest::class, '#[ObjectMap] admits a JSON object and #[ListOf] a JSON array'],
+        ];
     }
 
     public function test_a_nullable_object_map_property_is_widened_to_include_null(): void

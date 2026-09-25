@@ -238,5 +238,5 @@ jobs:
             curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 --output /usr/local/bin/pie.phar https://github.com/php/pie/releases/download/1.4.10/pie.phar || exit 1
             chmod +x /usr/local/bin/pie.phar
             php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
-            php -d memory_limit=512M vendor/bin/infection --initial-tests-php-options='-d error_log=/dev/null' --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 ${{ matrix.package.infectionFlags }}
+            php -d memory_limit=1024M vendor/bin/infection --initial-tests-php-options='-d error_log=/dev/null' --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 ${{ matrix.package.infectionFlags }}
           "

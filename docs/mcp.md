@@ -76,12 +76,14 @@ their constraint attributes — the ones an HTTP request body uses (see
 {doc}`routing-validation`) — so the agent sees `country` as one of three
 strings and `grams` as an integer above zero. Values keep their JSON
 types: `grams` accepts `2500`, not `"2500"`. A class-typed parameter
-receives a JSON object hydrated and validated as that DTO. A missing
-argument, an unknown key and a broken rule come back together in one
-tool result with `isError: true`, which the agent can correct its call
-from (see [Error handling](#error-handling)). A parameter declares one
-named type; a union is refused at registration. {doc}`appendix-mcp`'s
-"Argument binding" has the complete rules.
+receives a JSON object hydrated and validated as that DTO; an
+`#[ObjectMap] array` parameter accepts a JSON object of any keys as a
+plain PHP array. A missing argument, an unknown key and a broken rule
+come back together in one tool result with `isError: true`, which the
+agent can correct its call from (see [Error handling](#error-handling)).
+A parameter declares one named type; a union is refused at
+registration. {doc}`appendix-mcp`'s "Argument binding" has the complete
+rules.
 
 ## Run over stdio
 

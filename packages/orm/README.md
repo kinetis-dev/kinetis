@@ -112,7 +112,8 @@ final class Article
   (see "Optimistic locking"). A property merely named `version` is
   ordinary data.
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum,
-  `DateTimeImmutable` (see "Timestamps"), and the nullable form of each;
+  `DateTimeImmutable` (see "Timestamps"), `Kinetis\Orm\Date` (see
+  "Dates"), and the nullable form of each;
   on a `#[BelongsTo]` or `#[HasOne]` property, an
   entity class, and on a `#[HasMany]` or `#[ManyToMany]` property, `array`
   (see "Relationships" and "Many-to-many relationships").
@@ -342,6 +343,7 @@ Every entity query selects all mapped columns. Loading a row:
 | `bool` | a bool, `0`, `1`, `"0"` or `"1"` |
 | backed enum | a case, or a backing value admitted under its backing type's rule |
 | `DateTimeImmutable` | a `DateTimeImmutable`, or a UTC string `YYYY-MM-DD HH:MM:SS` with an optional `.` and one to six fraction digits, loaded in UTC (see "Timestamps") |
+| `Date` | a `Date`, or a string `YYYY-MM-DD` naming a day that exists, loaded as a `Date` (see "Dates") |
 | `?T` | also `null` |
 
 A message names the class, property and column, and describes a value by
@@ -390,8 +392,8 @@ spelling and the database returns the stored identifier.
   it requires an `orderBy()`;
 - `cursorPaginate(int $perPage, ?string $cursor, string $property = 'id')`
   — a `Kinetis\QueryBuilder\CursorPaginator` over the column the property
-  maps to, which must be unique and increasing; a timestamp cursor is
-  admitted as "Timestamps" describes.
+  maps to, which must be unique and increasing; a timestamp or date
+  cursor is admitted as "Timestamps" or "Dates" describes.
 
 A property name resolves to its column and a value converts through the
 property's type before either reaches the query builder, so an unknown
@@ -1396,6 +1398,71 @@ $entities->repository(Shipment::class)
   exist throws `MappingException` before SQL. A null cursor starts at
   the first page. A cursor on any other property is bound as given.
 
+## Dates
+
+```php
+use Kinetis\Orm\Attributes\Entity;
+use Kinetis\Orm\Date;
+
+#[Entity(table: 'bookings')]
+final class Booking
+{
+    public ?Date $cancelledOn = null; // cancelled_on DATE NULL
+
+    public function __construct(
+        private int $id,
+        private Date $arrivesOn, // arrives_on DATE NOT NULL
+    ) {}
+}
+
+new Date(2026, 9, 25);          // (string) '2026-09-25'
+Date::fromString('2024-02-29'); // ->year 2024, ->month 2, ->day 29
+
+$entities->repository(Booking::class)
+    ->query()
+    ->where('arrivesOn', '>=', new Date(2026, 9, 1))
+    ->get(); // arrives_on >= ?, bound as '2026-09-01'
+```
+
+- **Value.** `Kinetis\Orm\Date` is a final readonly calendar date: the
+  integer properties `year`, `month` and `day`, and no time, time zone or
+  instant. `new Date($year, $month, $day)` admits a day that exists in
+  the Gregorian calendar in years 0001 to 9999, leap days included, and
+  throws `InvalidArgumentException` for any other.
+  `Date::fromString($value)` admits exactly `YYYY-MM-DD`, each field
+  zero-padded, and nothing before or after it; a timestamp, an offset,
+  whitespace or a day the constructor refuses throws
+  `InvalidArgumentException`, whose message never quotes the string.
+  Casting a `Date` to string gives that same `YYYY-MM-DD` form.
+- **Mapping.** A property declared exactly `Date` or `?Date` maps a date
+  column, recorded in the metadata with the type `date`. It is never the
+  identifier or the version. The declared type alone decides it: a
+  `DateTimeImmutable` property stays a timestamp, and a class of another
+  namespace named `Date` is refused like any other object.
+- **Column.** A date column is SQL `DATE` on MySQL, MariaDB and
+  PostgreSQL, whose `DateStyle` must be `ISO`, the server default.
+  Nothing inspects the schema.
+- **Different from timestamps.** A `Date` names a day, not an instant:
+  it is never converted through a time zone, never becomes midnight, and
+  a timestamp property does not admit it, nor a date property a
+  `DateTimeImmutable`.
+- **Loading.** A driver value is `YYYY-MM-DD` and the property receives a
+  `Date`; a row value that already is a `Date` is admitted as it is.
+  Null is admitted where the property is nullable. A timestamp, an
+  offset, a `BC` suffix, surrounding whitespace, year 0000, a year of
+  more than four digits, a day that does not exist, such as February 30
+  or `0000-00-00`, or any other value throws `MappingException`, which
+  names the value's type and never the value.
+- **Writing and changes.** The database value is `YYYY-MM-DD`
+  (`2026-09-25`), bound as a string by `flush()`. The snapshot holds that
+  string, so assigning another `Date` of the same day is not a change.
+- **Predicates.** `where()`, `whereIn()` and `findBy()` take a `Date` or
+  a string the loading rule admits and bind its database value; anything
+  else throws `MappingException` before SQL.
+- **Cursors.** A `cursorPaginate()` cursor on a date property is
+  admitted and bound the same way, and a malformed one throws
+  `MappingException` before SQL.
+
 ## The query builder underneath
 
 `EntityQuery::builder()` returns a copy of the underlying
@@ -1566,7 +1633,7 @@ sessions or savepoints, more than one writing flush per session,
 provisional identifiers or versions, batched or bulk writes,
 automatic retries, flushing on `close()` or destruction, automatic
 timestamps, `DateTime` properties, `timestamptz` or MySQL `TIMESTAMP`
-columns, date-only or time-only values, time zone or precision options,
+columns, time-only values, date arithmetic, time zone or precision options,
 custom value converters, UUID generation,
 composite identifiers, inheritance, partial entities, transient
 properties, schema validation, CLI commands, streaming, or static model

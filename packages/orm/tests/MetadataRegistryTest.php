@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Orm\Tests;
 
 use ArrayIterator;
+use Kinetis\Orm\Date;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Orm\Tests\Fixtures\Account;
@@ -12,6 +13,7 @@ use Kinetis\Orm\Tests\Fixtures\Article;
 use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Author;
+use Kinetis\Orm\Tests\Fixtures\Booking;
 use Kinetis\Orm\Tests\Fixtures\Charter;
 use Kinetis\Orm\Tests\Fixtures\Comment;
 use Kinetis\Orm\Tests\Fixtures\Crate;
@@ -143,6 +145,21 @@ final class MetadataRegistryTest extends TestCase
                 ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                 ['name' => 'occurredAt', 'column' => 'occurred_at', 'type' => 'timestamp', 'nullable' => false, 'enum' => null, 'target' => null],
                 ['name' => 'archivedAt', 'column' => 'archived_at', 'type' => 'timestamp', 'nullable' => true, 'enum' => null, 'target' => null],
+            ],
+            $data['entities'][0]['properties'],
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_a_date_property_is_recorded_as_a_date_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Booking::class])->toArray();
+
+        self::assertSame(
+            [
+                ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'arrivesOn', 'column' => 'arrives_on', 'type' => 'date', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'cancelledOn', 'column' => 'cancelled_on', 'type' => 'date', 'nullable' => true, 'enum' => null, 'target' => null],
             ],
             $data['entities'][0]['properties'],
         );
@@ -349,11 +366,14 @@ final class MetadataRegistryTest extends TestCase
         yield 'a union type' => [self::INVALID . 'UnionProperty', 'UnionProperty::$code cannot be mapped: it declares the composite type'];
         yield 'an intersection type' => [self::INVALID . 'IntersectionProperty', 'IntersectionProperty::$items cannot be mapped: it declares the composite type'];
         yield 'an array' => [self::INVALID . 'ArrayProperty', 'ArrayProperty::$tags cannot be mapped: it declares array'];
-        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, DateTimeImmutable or a backed enum'];
+        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
         yield 'a DateTimeInterface' => [self::INVALID . 'DateInterfaceProperty', 'DateInterfaceProperty::$publishedAt cannot be mapped: it declares DateTimeInterface, which'];
         yield 'a DateTimeImmutable subclass' => [self::INVALID . 'DateSubclassProperty', 'DateSubclassProperty::$publishedAt cannot be mapped: it declares ' . self::INVALID . 'LocalDate, which'];
         yield 'a timestamp identifier' => [self::INVALID . 'TimestampIdentifier', 'TimestampIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
         yield 'a timestamp version' => [self::INVALID . 'TimestampVersion', 'TimestampVersion has no usable version: the version property "version" must be typed int'];
+        yield 'a class named Date in another namespace' => [self::INVALID . 'LookalikeDateProperty', 'LookalikeDateProperty::$bookedOn cannot be mapped: it declares ' . self::INVALID . 'Date, which'];
+        yield 'a date identifier' => [self::INVALID . 'DateIdentifier', 'DateIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
+        yield 'a date version' => [self::INVALID . 'DateVersion', 'DateVersion has no usable version: the version property "version" must be typed int'];
         yield 'a relationship typed DateTimeImmutable' => [self::INVALID . 'TimestampRelationship', 'TimestampRelationship::$publishedAt is not a usable #[BelongsTo] relationship: DateTimeImmutable is not an entity in this MetadataRegistry'];
         yield 'mixed' => [self::INVALID . 'MixedProperty', 'MixedProperty::$data cannot be mapped: it declares mixed'];
         yield 'a unit enum' => [self::INVALID . 'UnitEnumProperty', 'UnitEnumProperty::$suit cannot be mapped: it declares ' . self::INVALID . 'Suit'];
@@ -510,6 +530,15 @@ final class MetadataRegistryTest extends TestCase
         $timed['properties'][1]['type'] = 'timestamp';
         $untimed = MetadataRegistry::fromClasses([Event::class])->toArray()['entities'][0];
         $untimed['properties'][1]['type'] = 'string';
+        $dated = $category;
+        $dated['properties'][1]['type'] = 'date';
+        $booking = MetadataRegistry::fromClasses([Booking::class])->toArray()['entities'][0];
+        $undated = $booking;
+        $undated['properties'][1]['type'] = 'string';
+        $retimed = $booking;
+        $retimed['properties'][2]['type'] = 'timestamp';
+        $miscased = $booking;
+        $miscased['properties'][1]['type'] = 'Date';
         $reidentified = $account;
         $reidentified['id'] = 'id';
         $generated = $category;
@@ -586,6 +615,10 @@ final class MetadataRegistryTest extends TestCase
         yield 'a changed type' => [['entities' => [$account, $retyped]], ArticleCategory::class . ' does not match'];
         yield 'a string recorded as a timestamp' => [['entities' => [$account, $timed]], ArticleCategory::class . ' does not match'];
         yield 'a timestamp recorded as a string' => [['entities' => [$untimed]], Event::class . ' does not match'];
+        yield 'a string recorded as a date' => [['entities' => [$account, $dated]], ArticleCategory::class . ' does not match'];
+        yield 'a date recorded as a string' => [['entities' => [$undated]], Booking::class . ' does not match'];
+        yield 'a date recorded as a timestamp' => [['entities' => [$retimed]], Booking::class . ' does not match'];
+        yield 'a date type name in another case' => [['entities' => [$miscased]], Booking::class . ' does not match'];
         yield 'a changed nullability' => [['entities' => [$account, $nullable]], ArticleCategory::class . ' does not match'];
         yield 'a changed identifier' => [['entities' => [$reidentified, $category]], Account::class . ' does not match'];
         yield 'a changed identifier generation' => [['entities' => [$account, $generated]], ArticleCategory::class . ' does not match'];

@@ -160,16 +160,17 @@ default left, and reading it throws naming the key.
 ### Security headers (core)
 
 Each key below carries its header's value verbatim, except the three
-HSTS keys, which compose `Strict-Transport-Security` between them. For
-the verbatim keys, an empty value omits the header and the literal `off`
-— in any case — omits it too, so a header with a built-in default can be
-switched off without sending an invalid value. See {doc}`middleware`.
+HSTS keys, which compose `Strict-Transport-Security` between them, and
+the `{nonce}` placeholder in `SECURITY_CSP`. For the verbatim keys, an
+empty value omits the header and the literal `off` — in any case —
+omits it too, so a header with a built-in default can be switched off
+without sending an invalid value. See {doc}`middleware`.
 
 | Key | Default | Purpose |
 |---|---|---|
 | `SECURITY_FRAME_OPTIONS` | `DENY` | `X-Frame-Options` value. |
 | `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | `Referrer-Policy` value. |
-| `SECURITY_CSP` | — | `Content-Security-Policy` value. |
+| `SECURITY_CSP` | — | `Content-Security-Policy` value. Each literal `{nonce}` becomes the request's own nonce; see {doc}`middleware`'s "A nonce for inline scripts". |
 | `SECURITY_PERMISSIONS_POLICY` | — | `Permissions-Policy` value. |
 | `SECURITY_HSTS_MAX_AGE` | — | HSTS max-age in seconds. Unset means the header is not sent; an explicit `0` sends `max-age=0`, RFC 6797's withdrawal of a cached policy, and carries no directives; a negative value throws. |
 | `SECURITY_HSTS_INCLUDE_SUBDOMAINS` | `true` | Appends `includeSubDomains` to a positive max-age. |

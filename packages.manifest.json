@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.19.1",
+            "version": "1.20.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -180,7 +180,7 @@
             "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, factory-owned transaction sessions with locking entity reads, and per-entity connection affinity with one factory and one manager per connection. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "namespace": "Kinetis\\Orm\\",
             "testNamespace": "Kinetis\\Orm\\Tests\\",
-            "version": "1.10.0",
+            "version": "1.11.0",
             "requires": [
                 "persistence",
                 "query-builder"
@@ -267,7 +267,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.7.0",
+            "version": "1.7.1",
             "requires": [
                 "framework",
                 "mcp-protocol"
