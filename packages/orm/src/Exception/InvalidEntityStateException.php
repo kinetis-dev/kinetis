@@ -61,7 +61,10 @@ final class InvalidEntityStateException extends RuntimeException
 
     public static function unmapped(string $class): self
     {
-        return new self("{$class} is not an entity in this OrmFactory's MetadataRegistry, so it cannot be persisted.");
+        return new self(
+            "{$class} is not an entity of this OrmFactory: it is not in the factory's MetadataRegistry, or it lives "
+            . 'on another connection. It cannot be persisted here.',
+        );
     }
 
     public static function notHeld(string $class): self

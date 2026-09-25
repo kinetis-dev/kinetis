@@ -415,11 +415,11 @@ final class EntityManager
     public function assertUsable(): void
     {
         if ($this->closed) {
-            throw new ClosedEntityManagerException();
+            throw ClosedEntityManagerException::manager();
         }
 
         if (Fiber::getCurrent() !== $this->owner) {
-            throw new CrossFiberAccessException();
+            throw CrossFiberAccessException::manager();
         }
 
         if ($this->flushing) {
@@ -2026,7 +2026,7 @@ final class EntityManager
     private function assertOpen(): void
     {
         if ($this->closed) {
-            throw new ClosedEntityManagerException();
+            throw ClosedEntityManagerException::manager();
         }
     }
 

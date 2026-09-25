@@ -1,6 +1,6 @@
 {
     "name": "kinetis/database-bridge",
-    "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata and a lazy request-scoped EntityManager.",
+    "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -28,8 +28,11 @@
     },
     "suggest": {
         "kinetis/migrations": "Migration runner and migrate commands, connecting through this package's connection policy.",
-        "kinetis/orm": "Attributed entities, typed repositories and a request-scoped EntityManager over the link this package binds, with entity metadata compiled into the AOT cache.",
+        "kinetis/orm": "Attributed entities and typed repositories, with entity metadata compiled into the AOT cache: an OrmFactoryRegistry for the worker and a request-scoped EntityManagerRegistry over the default link and every named connection an entity declares, with OrmFactory and EntityManager as the default connection's entries.",
         "kinetis/query-builder": "Parameterized queries and row-to-DTO mapping over the MysqlLink/PostgresLink this package binds."
+    },
+    "conflict": {
+        "kinetis/orm": "<1.10.0"
     },
     "autoload": {
         "psr-4": {

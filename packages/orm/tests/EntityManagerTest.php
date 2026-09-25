@@ -488,7 +488,7 @@ final class EntityManagerTest extends TestCase
     public function test_an_entity_outside_the_metadata_is_refused(): void
     {
         $this->expectException(MappingException::class);
-        $this->expectExceptionMessage(Account::class . ' is not an entity in this OrmFactory\'s MetadataRegistry.');
+        $this->expectExceptionMessage(Account::class . ' is not an entity of this OrmFactory: it is not in the factory\'s MetadataRegistry, or it lives on another connection.');
 
         $this->factory->open()->repository(Account::class);
     }

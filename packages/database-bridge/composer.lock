@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a06db79ca4d4996268826d34f0b2a921",
+    "content-hash": "3cfe08593a528b3ed714199172aff556",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -3267,7 +3267,7 @@
             "dist": {
                 "type": "path",
                 "url": "../orm",
-                "reference": "52318541e8113d08b3a475e4fe667aabe897dc44"
+                "reference": "f7974c569aa917cb61499e695f7bfa22805ed845"
             },
             "require": {
                 "kinetis/persistence": "dev-main",
@@ -3303,7 +3303,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, and factory-owned transaction sessions with locking entity reads. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, factory-owned transaction sessions with locking entity reads, and per-entity connection affinity with one factory and one manager per connection. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "transport-options": {
                 "relative": true
             }

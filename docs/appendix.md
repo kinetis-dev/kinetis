@@ -246,7 +246,7 @@ The runtime adapter conformance suite — see {doc}`testing`.
 
 1. A `RuntimeAdapterInterface` receives the request and converts it to PSR-7.
 2. `Kernel::handle()` runs the global `MiddlewarePipeline`.
-3. Inside it: `AppScope::createRequestScope()`, which runs every initializer registered through `AppScope::onRequestScopeCreated()` — with `kinetis/database-bridge` installed, the lazy `TransactionGuard` binding whose first resolution registers `rollbackDangling()` on the scope's disposal, and with `kinetis/orm` also installed, the lazy `EntityManager` binding whose first resolution registers `close()` there.
+3. Inside it: `AppScope::createRequestScope()`, which runs every initializer registered through `AppScope::onRequestScopeCreated()` — with `kinetis/database-bridge` installed, the lazy `TransactionGuard` binding whose first resolution registers `rollbackDangling()` on the scope's disposal, and with `kinetis/orm` also installed, the lazy `EntityManagerRegistry` binding whose first resolution registers `close()` there — the request's `EntityManager` is its default-connection manager.
 4. `Router::match()` resolves a `Route`, or throws `RouteNotFoundException`/`MethodNotAllowedException` (→ 404/405).
 5. The route's `#[Middleware]` pipeline runs, wrapping `Dispatcher::dispatch()`.
 6. `Dispatcher` resolves parameters (via a compiled plan if `HttpCache` is present, live reflection otherwise), invokes the controller.

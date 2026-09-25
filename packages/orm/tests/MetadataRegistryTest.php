@@ -20,6 +20,9 @@ use Kinetis\Orm\Tests\Fixtures\Edition;
 use Kinetis\Orm\Tests\Fixtures\Event;
 use Kinetis\Orm\Tests\Fixtures\Invoice;
 use Kinetis\Orm\Tests\Fixtures\Item;
+use Kinetis\Orm\Tests\Fixtures\LedgerAccount;
+use Kinetis\Orm\Tests\Fixtures\LedgerEntry;
+use Kinetis\Orm\Tests\Fixtures\Metric;
 use Kinetis\Orm\Tests\Fixtures\Organization;
 use Kinetis\Orm\Tests\Fixtures\Parcel;
 use Kinetis\Orm\Tests\Fixtures\Part;
@@ -47,6 +50,7 @@ final class MetadataRegistryTest extends TestCase
             ['entities' => [[
                 'class' => ArticleCategory::class,
                 'table' => 'article_category',
+                'connection' => 'default',
                 'id' => 'id',
                 'generated' => false,
                 'version' => null,
@@ -67,6 +71,7 @@ final class MetadataRegistryTest extends TestCase
             ['entities' => [[
                 'class' => Account::class,
                 'table' => 'reporting.accounts',
+                'connection' => 'default',
                 'id' => 'uuid',
                 'generated' => false,
                 'version' => null,
@@ -88,6 +93,7 @@ final class MetadataRegistryTest extends TestCase
             ['entities' => [[
                 'class' => Ticket::class,
                 'table' => 'tickets',
+                'connection' => 'default',
                 'id' => 'id',
                 'generated' => true,
                 'version' => null,
@@ -110,6 +116,7 @@ final class MetadataRegistryTest extends TestCase
             ['entities' => [[
                 'class' => Invoice::class,
                 'table' => 'invoices',
+                'connection' => 'default',
                 'id' => 'id',
                 'generated' => false,
                 'version' => 'version',
@@ -273,6 +280,58 @@ final class MetadataRegistryTest extends TestCase
     /**
      * @return iterable<string, array{mixed, string}>
      */
+    public function test_every_connection_an_entity_names_is_listed_once_in_byte_order(): void
+    {
+        $classes = [Metric::class, LedgerEntry::class, ArticleCategory::class, LedgerAccount::class, Account::class];
+        $registry = MetadataRegistry::fromClasses($classes);
+
+        self::assertSame(['analytics', 'default', 'ledger'], $registry->connections());
+        self::assertSame($registry->connections(), MetadataRegistry::fromClasses(array_reverse($classes))->connections());
+        self::assertSame(['default'], MetadataRegistry::fromClasses([ArticleCategory::class, Account::class])->connections());
+        self::assertSame([], MetadataRegistry::fromClasses([])->connections());
+        self::assertSame('analytics', $registry->connectionFor(Metric::class));
+        self::assertSame('ledger', $registry->connectionFor(LedgerEntry::class));
+        self::assertSame('default', $registry->connectionFor(Account::class));
+    }
+
+    public function test_the_connection_of_a_class_outside_the_registry_is_refused(): void
+    {
+        $this->expectException(MappingException::class);
+        $this->expectExceptionMessage(Ticket::class . ' is not an entity in this MetadataRegistry.');
+
+        MetadataRegistry::fromClasses([Metric::class])->connectionFor(Ticket::class);
+    }
+
+    public function test_a_named_connection_and_a_relationship_on_it_round_trip(): void
+    {
+        $registry = MetadataRegistry::fromClasses([LedgerEntry::class, Metric::class, LedgerAccount::class]);
+        $entities = $registry->toArray()['entities'];
+
+        self::assertSame(
+            [LedgerAccount::class => 'ledger', LedgerEntry::class => 'ledger', Metric::class => 'analytics'],
+            array_column($entities, 'connection', 'class'),
+        );
+        self::assertSame(LedgerAccount::class, $entities[1]['properties'][2]['target']);
+        self::assertSame($registry->toArray(), MetadataRegistry::fromArray($registry->toArray())->toArray());
+    }
+
+    public function test_a_cross_connection_relationship_is_refused_whatever_order_the_classes_arrive_in(): void
+    {
+        $messages = [];
+
+        foreach ([[self::INVALID . 'CrossJoinInverse', self::INVALID . 'CrossJoinOwning'], [self::INVALID . 'CrossJoinOwning', self::INVALID . 'CrossJoinInverse']] as $classes) {
+            try {
+                MetadataRegistry::fromClasses($classes);
+                self::fail('A relationship across connections was mapped.');
+            } catch (MappingException $e) {
+                $messages[] = $e->getMessage();
+            }
+        }
+
+        self::assertSame($messages[0], $messages[1]);
+        self::assertStringStartsWith(self::INVALID . 'CrossJoinInverse::$owners is not a usable #[ManyToMany]', $messages[0]);
+    }
+
     public static function unmappableClasses(): iterable
     {
         yield 'a non-string entry' => [42, 'int is not an existing class'];
@@ -378,6 +437,35 @@ final class MetadataRegistryTest extends TestCase
             'JoinWrongDirection::$others' . $join . 'mappedBy names ' . self::INVALID . 'JoinElsewhere::$categories, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'JoinWrongDirection',
         ];
 
+        yield 'an uppercase connection' => [self::INVALID . 'UppercaseConnection', 'UppercaseConnection names the connection "Reporting", which is not a connection name: lowercase ASCII letters and digits, starting with a letter.'];
+        yield 'a connection with an underscore' => [self::INVALID . 'UnderscoreConnection', 'UnderscoreConnection names the connection "report_ing", which is not a connection name'];
+        yield 'a connection starting with a digit' => [self::INVALID . 'DigitFirstConnection', 'DigitFirstConnection names the connection "2nd", which is not a connection name'];
+        yield 'the reserved connection app' => [self::INVALID . 'AppConnection', 'AppConnection names the connection "app", which is reserved: its scoped DB_NAME key would be DB_APP_NAME, the default connection\'s application-name key. Name the connection otherwise.'];
+        yield 'an empty connection' => [self::INVALID . 'EmptyConnection', 'EmptyConnection names the connection "", which is not a connection name'];
+
+        $crossing = static fn (string $source, string $sourceConnection, string $target, string $targetConnection): string => "{$source} is on the \"{$sourceConnection}\" connection and {$target} on the \"{$targetConnection}\" connection, and a relationship never spans two connections.";
+
+        yield 'a #[BelongsTo] across connections' => [
+            self::INVALID . 'CrossBelongsTo',
+            self::INVALID . 'CrossBelongsTo::$category is not a usable #[BelongsTo] relationship: ' . $crossing(self::INVALID . 'CrossBelongsTo', 'ledger', ArticleCategory::class, 'default'),
+        ];
+        yield 'a #[HasMany] across connections' => [
+            [self::INVALID . 'CrossHasManyTarget', self::INVALID . 'CrossHasManyOwner'],
+            self::INVALID . 'CrossHasManyOwner::$targets' . $inverse . $crossing(self::INVALID . 'CrossHasManyOwner', 'ledger', self::INVALID . 'CrossHasManyTarget', 'default'),
+        ];
+        yield 'a #[HasOne] across connections' => [
+            [self::INVALID . 'CrossHasOneTarget', self::INVALID . 'CrossHasOneOwner'],
+            self::INVALID . 'CrossHasOneOwner::$target' . $inverse . $crossing(self::INVALID . 'CrossHasOneOwner', 'ledger', self::INVALID . 'CrossHasOneTarget', 'default'),
+        ];
+        yield 'an owning #[ManyToMany] across connections' => [
+            self::INVALID . 'CrossJoinOwner',
+            self::INVALID . 'CrossJoinOwner::$categories' . $join . $crossing(self::INVALID . 'CrossJoinOwner', 'ledger', ArticleCategory::class, 'default'),
+        ];
+        yield 'an inverse #[ManyToMany] across connections' => [
+            [self::INVALID . 'CrossJoinOwning', self::INVALID . 'CrossJoinInverse'],
+            self::INVALID . 'CrossJoinInverse::$owners' . $join . $crossing(self::INVALID . 'CrossJoinInverse', 'ledger', self::INVALID . 'CrossJoinOwning', 'default'),
+        ];
+
         yield 'a mappedBy of its own class referencing another class' => [
             self::INVALID . 'InverseWrongSelf',
             'InverseWrongSelf::$twin' . $inverse . 'mappedBy names ' . self::INVALID . 'InverseWrongSelf::$category, which references ' . ArticleCategory::class . ', not ' . self::INVALID . 'InverseWrongSelf',
@@ -428,6 +516,15 @@ final class MetadataRegistryTest extends TestCase
         $generated['generated'] = true;
         $retabled = $category;
         $retabled['table'] = 'categories';
+        $rerouted = $category;
+        $rerouted['connection'] = 'analytics';
+        $unrouted = $category;
+        unset($unrouted['connection']);
+        $metric = MetadataRegistry::fromClasses([Metric::class])->toArray()['entities'][0];
+        $defaulted = $metric;
+        $defaulted['connection'] = 'default';
+        $moved = $metric;
+        $moved['connection'] = 'ledger';
         $unversioned = $category;
         unset($unversioned['version']);
         $versioned = $category;
@@ -493,6 +590,10 @@ final class MetadataRegistryTest extends TestCase
         yield 'a changed identifier' => [['entities' => [$reidentified, $category]], Account::class . ' does not match'];
         yield 'a changed identifier generation' => [['entities' => [$account, $generated]], ArticleCategory::class . ' does not match'];
         yield 'a changed table' => [['entities' => [$account, $retabled]], ArticleCategory::class . ' does not match'];
+        yield 'a connection the source no longer declares' => [['entities' => [$account, $rerouted]], ArticleCategory::class . ' does not match'];
+        yield 'an entry without a connection field' => [['entities' => [$account, $unrouted]], ArticleCategory::class . ' does not match'];
+        yield 'the default connection for a source that names one' => [['entities' => [$defaulted]], Metric::class . ' does not match'];
+        yield 'a changed connection' => [['entities' => [$moved]], Metric::class . ' does not match'];
         yield 'an entry without a version field' => [['entities' => [$account, $unversioned]], ArticleCategory::class . ' does not match'];
         yield 'a version the source does not declare' => [['entities' => [$account, $versioned]], ArticleCategory::class . ' does not match'];
         yield 'a version the source declares left out' => [['entities' => [$dropped]], Invoice::class . ' does not match'];

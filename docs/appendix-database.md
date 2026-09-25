@@ -36,8 +36,10 @@ The bridge composes with each database package on that package's terms:
   statement over the bound link; a `Query` is never registered as a
   shared or request-scoped service.
 - `kinetis/orm` receives its entity metadata through the bridge's AOT
-  discovery section, one `OrmFactory` for the worker, and a lazy
-  request-scoped `EntityManager` closed with its scope ({doc}`orm`).
+  discovery section, one `OrmFactoryRegistry` for the worker with a
+  factory per connection, and a lazy request-scoped
+  `EntityManagerRegistry` closed with its scope; `OrmFactory` and
+  `EntityManager` are their default-connection entries ({doc}`orm`).
 
 ### The default link's lifetime
 
@@ -61,7 +63,9 @@ the link:
   bound, so there is nothing to register and nothing to close. "No
   database" is a configuration, not an error.
 - **A named connection.** Explicit application wiring throughout,
-  including its lifetime.
+  including its lifetime, except for a connection an entity names that
+  `bootstrap.php` does not bind as `db.<name>`: the ORM wiring builds that
+  one on first use and closes it when the application scope is disposed.
 
 The bridge also binds the dialect-neutral `SqlLink` as an uncached alias
 that resolves the dialect contract on every lookup. Both types inject the
@@ -71,7 +75,7 @@ own. A dialect link the application binds in `bootstrap.php` is what
 and an application's own `SqlLink` binding replaces the alias alone.
 
 Request-scoped cleanup is unchanged and separate: `TransactionGuard`'s
-`rollbackDangling()` and `EntityManager`'s `close()` are registered on
+`rollbackDangling()` and `EntityManagerRegistry`'s `close()` are registered on
 the scope that resolved them and run at the end of that unit of work,
 not at application disposal.
 
@@ -146,7 +150,10 @@ DB_REPORTING_PASSWORD=secret
 Only the default connection is injected by its contract type, dialect
 or `SqlLink`. A named connection is retrieved by its id
 (`$app->get('db.reporting')`) and passed explicitly to whatever runs on
-it, such as `new Query($link)` or an `OrmFactory` ({doc}`orm`).
+it, such as `new Query($link)`. Entities on `reporting` need no
+registration: the ORM wiring uses a `db.reporting` binding when there is
+one, and otherwise builds the connection from these keys itself
+({doc}`orm`'s "Entities on other connections").
 
 (database-reference-standalone)=
 ## Without Kinetis

@@ -90,6 +90,12 @@ final class Article
   class's short name in snake case, singular: `ArticleCategory` maps to
   `article_category`, so a plural table is named as above. A table name
   is one or more identifiers separated by dots (`reporting.articles`).
+- **Connection.** `#[Entity(connection: 'reporting')]` names the database
+  the entity lives on; without it, the entity lives on `default`. A
+  connection name is lowercase ASCII letters and digits, starting with a
+  letter; `app` is reserved, because a host deriving `DB_<NAME>_*` keys
+  would read its `DB_NAME` from `DB_APP_NAME`, the default connection's
+  application-name key. See "Connections".
 - **Columns.** Every non-static property is mapped, trait properties
   included, and every one but an inverse relationship maps a column (see
   "Relationships"). A column is the property name in snake case
@@ -123,8 +129,9 @@ type, an intersection, any other type (`mixed`, `array` without
 `DateTimeImmutable`, a unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
-`int`, an invalid name, a duplicate column, and each relationship
-refusal under "Relationships".
+`int`, an invalid name or connection name, the reserved connection name
+`app`, a duplicate column, and each relationship refusal under
+"Relationships".
 
 ## Identifiers
 
@@ -183,7 +190,9 @@ and flags, ordered by class, so the same classes always produce the same
 array. Each entity lists its column-mapped `properties` and, apart from
 them, its inverse relationships as `inverses` and its `#[ManyToMany]`
 relationships as `joins`, each carrying the join table and the two
-columns that end of it reads. `fromArray()` accepts only what
+columns that end of it reads, and its `connection`. `connections()` lists
+every connection an entity names, each once and in byte order, and
+`connectionFor($class)` returns one entity's. `fromArray()` accepts only what
 `toArray()` writes for those classes as they are declared now: a missing or extra field, a
 wrong type, an unknown class or a mapping the source no longer produces
 throws `MappingException`. It reflects the classes it names and nothing
@@ -220,7 +229,9 @@ try {
 
 `OrmFactory` takes a `MysqlLink` or `PostgresLink` client, never a
 transaction (see "Transaction sessions"), and holds no unit-of-work
-state, so one factory serves the whole process. `open()` returns a new
+state, so one factory serves the whole process. It maps the entities of
+one connection, `default` unless its third argument names another (see
+"Connections"). `open()` returns a new
 `EntityManager`, which belongs to one unit of work:
 
 - **Identity map.** An identity is the entity class and its identifier.
@@ -246,6 +257,65 @@ state, so one factory serves the whole process. `open()` returns a new
 A detached entity stays an ordinary PHP object, and nothing tracks its
 changes. Open a separate manager for each concurrent Fiber; managers
 never share identities.
+
+## Connections
+
+An application whose entities live on more than one database keeps one
+`MetadataRegistry` for all of them and one client per connection:
+
+```php
+use Kinetis\Orm\EntityManagerRegistry;
+use Kinetis\Orm\OrmFactoryRegistry;
+
+#[Entity(table: 'orders', connection: 'reporting')]
+final class Order
+{
+    // ...
+}
+
+// Once per process.
+$factories = OrmFactoryRegistry::create(['default' => $db, 'reporting' => $reportingDb], $metadata);
+
+// Once per request, job or command.
+$managers = EntityManagerRegistry::create($factories);
+
+try {
+    $order = $managers->managerFor(Order::class)->repository(Order::class)->findOrFail($id);
+    $article = $managers->manager('default')->repository(Article::class)->findOrFail($articleId);
+} finally {
+    $managers->close();
+}
+```
+
+`$reportingDb` is the reporting database's client, built as `$db` is
+above.
+
+- **One factory per connection.** `OrmFactory::create($link, $metadata,
+  'reporting')` maps the entities on `reporting` over `$link`, which is
+  that connection's client; a connection no entity names gives a factory
+  that maps none. Every other entity is refused by its managers as it is
+  by any factory's: `MappingException` from `repository()`,
+  `InvalidEntityStateException` from `persist()`.
+- **`OrmFactoryRegistry`** is request-neutral, like the factories it
+  holds. `create()` builds one factory per link, keyed by connection, and
+  throws `InvalidArgumentException` when a connection an entity names has
+  no link. `factory($connection)` and `factoryFor($class)` return one;
+  a connection without a link throws `InvalidArgumentException`, a class
+  outside the metadata `MappingException`.
+- **`EntityManagerRegistry`** belongs to one unit of work and to the
+  Fiber that created it. `manager($connection)` and `managerFor($class)`
+  open that connection's manager on first use and return the same one
+  after, so a unit of work holds at most one manager per connection.
+  Another Fiber is refused with `CrossFiberAccessException`. `close()`
+  closes every manager it opened, never flushes, leaves the links open
+  and is idempotent; any Fiber may call it, and later `manager()` and
+  `managerFor()` calls throw `ClosedEntityManagerException`. Create one
+  per unit of work: two registries share no manager and no identity.
+- **Nothing spans two connections.** Each manager holds one link, one
+  identity map and one unit of work: `flush()` writes one transaction on
+  its own connection, and `transaction()` belongs to one factory. Write to
+  two databases as two units of work, each flushed or committed on its
+  own; the second can fail after the first committed.
 
 ## Loading
 
@@ -474,6 +544,10 @@ $authors->data[0]->profile?->bio;
   `MetadataRegistry`, and one `#[BelongsTo]` property is named by at most
   one of them, so one mapping alone decides how a row is discovered and
   removed.
+- **One connection.** Both ends of every relationship, of any kind,
+  live on the same connection. A relationship between entities on two
+  connections is refused when the metadata is built, naming both classes
+  and both connections.
 - **Refusals.** `MappingException` refuses, when the metadata is built,
   for `#[BelongsTo]`: a type that is not a class, `#[Column]`, `#[Id]` or
   `#[Version]` on the same property, a default value, and a target the
@@ -1485,7 +1559,9 @@ collection objects or mutation APIs, lazy loading or proxies, joined
 eager loading, streamed, capped or partial collections, predicates on a
 target's properties, timestamp,
 string or database-generated versions, refreshing or merging an entity,
-conflict resolution, joining a transaction the application began, nested
+conflict resolution, relationships, flushes or transactions across
+connections, routing an entity to another connection at run time,
+replicas or sharding, joining a transaction the application began, nested
 sessions or savepoints, more than one writing flush per session,
 provisional identifiers or versions, batched or bulk writes,
 automatic retries, flushing on `close()` or destruction, automatic
@@ -1533,7 +1609,10 @@ Requires PHP 8.4+ and the extension for the driver you use (see
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence)). In
 a Kinetis application,
 [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)
-compiles the entity metadata and binds a request-scoped `EntityManager`.
+compiles the entity metadata, binds an `OrmFactoryRegistry` for the worker
+and an `EntityManagerRegistry` for each request over every connection an
+entity names, and binds `OrmFactory` and the request's `EntityManager` as
+the default connection's entries of the two.
 Full documentation:
 [kinetis.dev/docs/orm.html](https://kinetis.dev/docs/orm.html).
 

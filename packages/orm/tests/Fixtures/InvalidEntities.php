@@ -825,6 +825,112 @@ final class JoinElsewhere
     public array $categories;
 }
 
+#[Entity(connection: 'Reporting')]
+final class UppercaseConnection
+{
+    public int $id;
+}
+
+#[Entity(connection: 'report_ing')]
+final class UnderscoreConnection
+{
+    public int $id;
+}
+
+#[Entity(connection: '2nd')]
+final class DigitFirstConnection
+{
+    public int $id;
+}
+
+#[Entity(connection: '')]
+final class EmptyConnection
+{
+    public int $id;
+}
+
+#[Entity(connection: 'app')]
+final class AppConnection
+{
+    public int $id;
+}
+
+#[Entity(connection: 'ledger')]
+final class CrossBelongsTo
+{
+    public int $id;
+
+    #[BelongsTo]
+    public ArticleCategory $category;
+}
+
+#[Entity(connection: 'ledger')]
+final class CrossHasManyOwner
+{
+    public int $id;
+
+    /** @var list<CrossHasManyTarget> */
+    #[HasMany(target: CrossHasManyTarget::class, mappedBy: 'owner')]
+    public array $targets;
+}
+
+#[Entity]
+final class CrossHasManyTarget
+{
+    public int $id;
+
+    #[BelongsTo]
+    public CrossHasManyOwner $owner;
+}
+
+#[Entity(connection: 'ledger')]
+final class CrossHasOneOwner
+{
+    public int $id;
+
+    #[HasOne(mappedBy: 'owner')]
+    public ?CrossHasOneTarget $target;
+}
+
+#[Entity]
+final class CrossHasOneTarget
+{
+    public int $id;
+
+    #[BelongsTo]
+    public CrossHasOneOwner $owner;
+}
+
+#[Entity(connection: 'ledger')]
+final class CrossJoinOwner
+{
+    public int $id;
+
+    /** @var list<ArticleCategory> */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $categories;
+}
+
+#[Entity(connection: 'ledger')]
+final class CrossJoinInverse
+{
+    public int $id;
+
+    /** @var list<CrossJoinOwning> */
+    #[ManyToMany(target: CrossJoinOwning::class, mappedBy: 'inverses')]
+    public array $owners;
+}
+
+#[Entity]
+final class CrossJoinOwning
+{
+    public int $id;
+
+    /** @var list<CrossJoinInverse> */
+    #[ManyToMany(target: CrossJoinInverse::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array $inverses;
+}
+
 interface EntityInterface
 {
 }

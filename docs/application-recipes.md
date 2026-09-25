@@ -117,20 +117,22 @@ directly — {doc}`routing-validation`, {doc}`session`,
 
 - **Guides**: {doc}`persistence` — "Options and more connections";
   {doc}`appendix-database` — "Registering connections in
-  `bootstrap.php`"; {doc}`orm` — "Other connections"; {doc}`query-builder`
-  for a named link queried without the ORM.
+  `bootstrap.php`"; {doc}`orm` — "Entities on other connections";
+  {doc}`query-builder` for a named link queried without the ORM.
 - **Lifecycle/I-O**: the bridge builds, injects and closes the default
-  connection, and opens and closes a request-scoped `EntityManager` for
-  the default ORM, and nothing else. A named link, and any `OrmFactory`
-  built on it, is explicit application wiring, down to who closes each
-  manager and link; {doc}`orm`'s "Other connections" states which
-  cleanup covers what.
+  connection. With the ORM, it also wires every connection an entity
+  names with `#[Entity(connection: ...)]` and opens and closes one
+  request-scoped manager per connection through `EntityManagerRegistry`;
+  {doc}`orm`'s "Entities on other connections" states who closes each
+  link. A named link queried without the ORM is explicit application
+  wiring, down to who closes it.
 - **Security/integrity**: a named connection reads every key under its
   own name — for `reporting`, `DB_REPORTING_DRIVER` rather than
   `DB_DRIVER` — so nothing it needs comes from the default connection's
-  settings. Only the default is injected
-  by type: pass the named link or factory explicitly to the code that
-  runs on it.
+  settings. Only the default is injected by type: code on the named
+  connection asks `EntityManagerRegistry` for its manager, or is passed
+  the named link explicitly. No relationship, flush or transaction spans
+  the two databases.
 - **Verification**: an integration test against each real backend,
   including one in which a unit of work on the named connection throws
   and the next asserts that nothing from it committed or stayed open.

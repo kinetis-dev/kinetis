@@ -15,8 +15,10 @@ use Kinetis\DatabaseBridge\PackageBootstrap;
 use Kinetis\DatabaseBridge\Tests\Fixtures\OrmProject\Entities\Post;
 use Kinetis\DatabaseBridge\Tests\Fixtures\RowsMysqlLink;
 use Kinetis\Orm\EntityManager;
+use Kinetis\Orm\EntityManagerRegistry;
 use Kinetis\Orm\Exception\CrossFiberAccessException;
 use Kinetis\Orm\OrmFactory;
+use Kinetis\Orm\OrmFactoryRegistry;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\TransactionGuard;
 use PHPUnit\Framework\TestCase;
@@ -62,6 +64,22 @@ final class OrmWiringTest extends TestCase
 
         self::assertTrue($manager->isClosed());
         self::assertSame(0, $this->link->closeCalls);
+    }
+
+    public function test_the_default_aliases_resolve_the_registries_default_entries(): void
+    {
+        $app = $this->app();
+        $scope = $app->createRequestScope();
+        /** @var OrmFactoryRegistry $factories */
+        $factories = $app->get(OrmFactoryRegistry::class);
+        /** @var EntityManagerRegistry $managers */
+        $managers = $scope->get(EntityManagerRegistry::class);
+
+        self::assertSame($factories->factory('default'), $app->get(OrmFactory::class));
+        self::assertSame($factories->factoryFor(Post::class), $app->get(OrmFactory::class));
+        self::assertSame($managers->manager('default'), $scope->get(EntityManager::class));
+        self::assertSame($managers->managerFor(Post::class), $scope->get(EntityManager::class));
+        $scope->dispose();
     }
 
     public function test_sequential_scopes_never_share_a_manager_or_an_identity(): void
@@ -151,9 +169,10 @@ final class OrmWiringTest extends TestCase
     }
 
     /**
-     * EntityManager is bound per RequestScope only. On AppScope its
-     * non-public constructor makes autowiring refuse, every time, rather
-     * than build a manager that would outlive the request.
+     * EntityManager and EntityManagerRegistry are bound per RequestScope
+     * only. On AppScope their non-public constructors make autowiring
+     * refuse, every time, rather than build a manager that would outlive
+     * the request.
      */
     public function test_the_app_scope_never_builds_a_worker_lifetime_manager(): void
     {
@@ -161,7 +180,12 @@ final class OrmWiringTest extends TestCase
         $plain = new AppScope();
         $plain->boot();
 
-        foreach ([[$bridged, EntityManager::class], [$plain, EntityManager::class], [$plain, OrmFactory::class]] as [$app, $id]) {
+        foreach ([
+            [$bridged, EntityManager::class],
+            [$bridged, EntityManagerRegistry::class],
+            [$plain, EntityManager::class],
+            [$plain, OrmFactory::class],
+        ] as [$app, $id]) {
             for ($attempt = 0; $attempt < 2; $attempt++) {
                 try {
                     $app->get($id);
@@ -173,6 +197,7 @@ final class OrmWiringTest extends TestCase
         }
 
         self::assertFalse($bridged->has(EntityManager::class));
+        self::assertFalse($bridged->has(EntityManagerRegistry::class));
     }
 
     public function test_without_kinetis_orm_no_orm_binding_is_added_and_existing_wiring_holds(): void

@@ -46,6 +46,10 @@ use ReflectionProperty;
  * type timestamp; DateTime, DateTimeInterface and subclasses of
  * DateTimeImmutable are refused as declared types.
  *
+ * Every entity lives on one named connection, `default` unless #[Entity]
+ * names another, and a relationship of any kind joins two entities of the
+ * same connection: joins, loads and flushes never span databases.
+ *
  * An owned inverse relationship is the aggregate ownership edge to its
  * target. Each entity class is the target of at most one of them, so one
  * mapping alone decides how a row is discovered, removed and orphaned.
@@ -53,15 +57,28 @@ use ReflectionProperty;
  * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @phpstan-type JoinMapping array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
- * @phpstan-type EntityMapping array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
+ * @phpstan-type EntityMapping array{class: class-string, table: string, connection: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
  * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @psalm-type JoinMapping = array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
- * @psalm-type EntityMapping = array{class: class-string, table: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
+ * @psalm-type EntityMapping = array{class: class-string, table: string, connection: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
  */
 final readonly class MetadataRegistry
 {
     private const string IDENTIFIER = '[A-Za-z_][A-Za-z0-9_]*';
+
+    /**
+     * No uppercase and no underscore, so a host that derives uppercased,
+     * underscore-separated configuration keys from a name never derives
+     * the same keys from two names.
+     */
+    private const string CONNECTION = '/^[a-z][a-z0-9]*$/D';
+
+    /**
+     * The one name whose scoped DB_NAME key, DB_APP_NAME, is also a key of
+     * the default connection.
+     */
+    private const string RESERVED_CONNECTION = 'app';
 
     private const array SCALAR_TYPES = ['string', 'int', 'float', 'bool'];
 
@@ -118,6 +135,11 @@ final readonly class MetadataRegistry
                     $property['name'],
                     "{$property['target']} is not an entity in this MetadataRegistry",
                 );
+                $crossing = self::crossing($mapping, $target);
+
+                if ($crossing !== null) {
+                    throw MappingException::relationship($class, $property['name'], $crossing);
+                }
 
                 /** @var 'int'|'string' $type an identifier is typed int or string */
                 $type = array_column($target['properties'], 'type', 'name')[$target['id']];
@@ -133,7 +155,7 @@ final readonly class MetadataRegistry
                 );
                 $mappedBy = $inverse['mappedBy'];
                 $owning = array_column($target['properties'], null, 'name')[$mappedBy] ?? null;
-                $reason = match (true) {
+                $reason = self::crossing($mapping, $target) ?? match (true) {
                     $owning === null => "mappedBy names \"{$mappedBy}\", which is not a mapped property of {$target['class']}",
                     $owning['target'] === null => "mappedBy names {$target['class']}::\${$mappedBy}, which is not a #[BelongsTo] relationship",
                     $owning['target'] !== $class => "mappedBy names {$target['class']}::\${$mappedBy}, which references {$owning['target']}, not {$class}",
@@ -167,6 +189,12 @@ final readonly class MetadataRegistry
                     $join['name'],
                     "{$join['target']} is not an entity in this MetadataRegistry",
                 );
+                $crossing = self::crossing($mapping, $target);
+
+                if ($crossing !== null) {
+                    throw MappingException::join($class, $join['name'], $crossing);
+                }
+
                 $mappedBy = $join['mappedBy'];
 
                 if ($mappedBy === null) {
@@ -252,6 +280,51 @@ final readonly class MetadataRegistry
     }
 
     /**
+     * Every connection an entity declares, each once, in byte order.
+     *
+     * @return list<string>
+     */
+    public function connections(): array
+    {
+        $connections = array_unique(array_column($this->entities, 'connection'));
+        sort($connections, SORT_STRING);
+
+        return $connections;
+    }
+
+    /**
+     * @param class-string $class
+     * @throws MappingException when $class is not an entity in this registry
+     */
+    public function connectionFor(string $class): string
+    {
+        foreach ($this->entities as $mapping) {
+            if ($mapping['class'] === $class) {
+                return $mapping['connection'];
+            }
+        }
+
+        throw MappingException::unregisteredEntity($class);
+    }
+
+    /**
+     * Why a relationship from $source to $target is refused for crossing
+     * connections, or null when both live on one.
+     *
+     * @param EntityMapping $source
+     * @param EntityMapping $target
+     */
+    private static function crossing(array $source, array $target): ?string
+    {
+        if ($source['connection'] === $target['connection']) {
+            return null;
+        }
+
+        return "{$source['class']} is on the \"{$source['connection']}\" connection and {$target['class']} on the "
+            . "\"{$target['connection']}\" connection, and a relationship never spans two connections";
+    }
+
+    /**
      * @param ReflectionClass<object> $class
      * @return EntityMapping
      */
@@ -278,10 +351,19 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedEntity($name, $reason);
         }
 
-        $table = $attribute->newInstance()->table ?? self::snakeCase($class->getShortName());
+        $entity = $attribute->newInstance();
+        $table = $entity->table ?? self::snakeCase($class->getShortName());
 
         if (preg_match('/^' . self::IDENTIFIER . '(\.' . self::IDENTIFIER . ')*$/D', $table) !== 1) {
             throw MappingException::invalidTable($name, $table);
+        }
+
+        if (preg_match(self::CONNECTION, $entity->connection) !== 1) {
+            throw MappingException::invalidConnection($name, $entity->connection);
+        }
+
+        if ($entity->connection === self::RESERVED_CONNECTION) {
+            throw MappingException::reservedConnection($name, $entity->connection);
         }
 
         /** @var array<string, PropertyMapping> $properties */
@@ -375,6 +457,7 @@ final readonly class MetadataRegistry
         return [
             'class' => $name,
             'table' => $table,
+            'connection' => $entity->connection,
             'id' => $id,
             'generated' => $generated,
             'version' => $version,
