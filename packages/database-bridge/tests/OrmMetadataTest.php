@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\DatabaseBridge\Tests;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\PluginDiscovery;
 use Kinetis\DatabaseBridge\OrmMetadata;
@@ -21,7 +22,7 @@ final class OrmMetadataTest extends TestCase
     {
         self::assertSame(
             MetadataRegistry::fromClasses([Post::class, Tag::class])->toArray(),
-            OrmMetadata::compile(self::PROJECT),
+            OrmMetadata::compile(new DiscoveryContext(self::PROJECT)),
         );
     }
 
@@ -31,7 +32,7 @@ final class OrmMetadataTest extends TestCase
      */
     public function test_a_cached_entry_reconstructs_what_the_live_compile_produced(): void
     {
-        $live = OrmMetadata::compile(self::PROJECT);
+        $live = OrmMetadata::compile(new DiscoveryContext(self::PROJECT));
         $file = (string) tempnam(sys_get_temp_dir(), 'orm-metadata');
         file_put_contents($file, '<?php return ' . var_export([OrmMetadata::class => $live], true) . ';');
 

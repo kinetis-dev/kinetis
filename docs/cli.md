@@ -388,13 +388,65 @@ Commands receive the same binding by constructor injection, including
 `Kinetis\Cache\CacheableDiscoveryInterface` — a package's own
 compile-time-discoverable data, folded into the shared AOT cache
 alongside routes/commands/events (see {doc}`caching`). The package
-supplies only `compile(string $projectRoot): array` (live discovery,
-reduced to plain data) and `fromArray(array $data): static`
-(reconstruction); the framework owns everything else — calling
-`compile()` to build the cache, writing/loading it, and binding the
-reconstructed instance into the container *before* any
+supplies only `compile(DiscoveryContext $context): array` (live
+discovery, reduced to plain data) and `fromArray(array $data): static`
+(reconstruction); the framework owns everything else — compiling each
+section once per build or development boot, writing/loading the cache,
+and binding the reconstructed instance into the container *before* any
 `PackageBootstrapInterface::register()` call runs, package bootstraps
 included. A package's own bootstrap never touches this data at all.
+
+`Kinetis\Cache\DiscoveryContext` belongs to one discovery operation —
+a development HTTP or CLI boot, a `TestApplication` boot,
+`kinetis build`, a production fallback compile, or `routes:list` — and
+is dropped when that operation ends. `$context->projectRoot` is the project root.
+`projectClasses()`, `frameworkClasses()` and `packageClasses()` return
+the classes under the project's PSR-4 roots, one framework namespace
+segment, and installed packages' `scan` roots; each root is walked once
+per operation, however many discoverers and sections ask for it. A
+section that consumes another section's data reads it with
+`compiled()`:
+
+```{code-block} php
+namespace Acme\Reports;
+
+use Acme\Catalog\ProductCatalog;
+use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
+use Kinetis\Cache\Exception\InvalidCacheArtifactException;
+
+final class ReportIndex implements CacheableDiscoveryInterface
+{
+    private function __construct(public readonly array $products) {}
+
+    public static function compile(DiscoveryContext $context): array
+    {
+        // acme/catalog's own discovery section, as compiled data.
+        $catalog = $context->compiled(ProductCatalog::class);
+
+        return ['products' => array_keys($catalog['products'])];
+    }
+
+    public static function fromArray(array $data): static
+    {
+        if (!is_array($data['products'] ?? null)) {
+            throw InvalidCacheArtifactException::malformedEntry('ReportIndex', 'no products list');
+        }
+
+        return new self($data['products']);
+    }
+}
+```
+
+`compiled()` compiles the named section first if nothing has read it
+yet, and returns the same plain array to every later reader, so a
+dependency compiles once and before its consumer finishes, whatever
+order Composer installed them in. The compiled cache still lists
+sections in Composer's order. The named section must be the `discovery`
+class of an installed package, and two sections must not read each
+other; either mistake fails the compile — `kinetis build`, or a
+development boot — with an exception naming the sections involved. A
+consumer receives the compiled array, never the upstream instance.
 
 Discovery reads these keys from Composer's installed-package record,
 `vendor/composer/installed.json`, not from the package's own

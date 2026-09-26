@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Console;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\RoutesFile;
 use Kinetis\Config\Config;
 use Kinetis\Console\Attributes\Command;
@@ -18,8 +19,8 @@ use Kinetis\Runtime\ProjectRoot;
 /**
  * A read-only introspection tool: displays the route table (RouteDiscovery)
  * and the global middleware pipeline (GlobalMiddlewareDiscovery +
- * GlobalMiddlewareOrder::resolve()) via a fresh, live scan — never reads
- * or writes .kinetis-cache/.
+ * GlobalMiddlewareOrder::resolve()) via a fresh, live scan through its
+ * own DiscoveryContext — never reads or writes .kinetis-cache/.
  *
  * Constructs its own AppScope and runs bootstrap.php to read
  * AppScope::middlewares(): AppScope is never registered onto the
@@ -47,6 +48,7 @@ final readonly class RoutesListCommand
     public function run(): int
     {
         $projectRoot = $this->projectRoot->path;
+        $context = new DiscoveryContext($projectRoot);
 
         $app = new AppScope();
         $config = Config::fromEnvironment();
@@ -54,15 +56,15 @@ final readonly class RoutesListCommand
         // Bound as BootSequence::run() binds it, since this chain runs
         // package bootstraps without it.
         $app->instance(ProjectRoot::class, $this->projectRoot);
-        RoutesFile::loadBootstrap($projectRoot)($app, $config);
+        RoutesFile::loadBootstrap($projectRoot, $context->packageBootstraps())($app, $config);
         $app->boot();
 
         // Discovered before routes, not after: RouteDiscovery needs the
         // global middleware list to resolve any #[RoutePrefix] those
         // classes declare into each route's own displayed path — see
         // Router::register()'s own doc comment.
-        $discovered = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
-        $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discovered['global']);
+        $discovered = GlobalMiddlewareDiscovery::discoverAll($context);
+        $router = RouteDiscovery::discover($context, globalMiddleware: $discovered['global']);
         $globalMiddleware = GlobalMiddlewareOrder::resolve($app->middlewares(), $discovered['global']);
 
         $this->printGlobalMiddleware($globalMiddleware);

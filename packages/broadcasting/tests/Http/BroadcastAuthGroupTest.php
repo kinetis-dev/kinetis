@@ -15,6 +15,7 @@ use Kinetis\Broadcasting\Tests\Fixtures\OrderChannelAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\TrackedChannelAuthorizer;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
@@ -173,7 +174,7 @@ final class BroadcastAuthGroupTest extends TestCase
     public function test_the_compiled_artifact_carries_the_group_and_serves_the_route(): void
     {
         $store = new CacheStore($this->cacheDirectory);
-        $store->write(new Compiler()->compileProject(self::PROJECT_ROOT));
+        $store->write(new Compiler()->compileProject(new DiscoveryContext(self::PROJECT_ROOT)));
 
         $http = $store->load()?->http;
         self::assertNotNull($http);
@@ -202,7 +203,7 @@ final class BroadcastAuthGroupTest extends TestCase
      */
     private function discoveredGroup(): array
     {
-        return GlobalMiddlewareDiscovery::discoverAll(self::PROJECT_ROOT)['groups']['broadcasting'];
+        return GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(self::PROJECT_ROOT))['groups']['broadcasting'];
     }
 
     /**

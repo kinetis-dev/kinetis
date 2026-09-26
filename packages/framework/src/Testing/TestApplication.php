@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\Testing;
 
 use Kinetis\Cache\BootSequence;
+use Kinetis\Cache\DiscoveryContext;
+use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Container\AppScope;
@@ -82,25 +84,27 @@ final class TestApplication
             // override actually win, like every other key.
             $app->instance(AppEnvironment::class, AppEnvironment::detect($config->get('APP_ENV')));
 
+            // One context for this boot's whole discovery, never the
+            // compiled cache: a second boot gets its own and sees the
+            // source as it is then.
+            $context = new DiscoveryContext($projectRoot);
             // Discovered before routes, not after: RouteDiscovery needs the
             // global middleware list to resolve any #[RoutePrefix] those
             // classes declare into each route's own path — see
             // Router::register()'s own doc comment.
-            $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
-            $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
-            $listeners = EventListenerDiscovery::discover($projectRoot);
+            $middleware = GlobalMiddlewareDiscovery::discoverAll($context);
+            $router = RouteDiscovery::discover($context, globalMiddleware: $middleware['global']);
+            $listeners = EventListenerDiscovery::discover($context);
+            $pluginInstances = PluginDiscovery::reconstruct(PluginDiscovery::discover($context));
 
-            // PluginDiscovery::bindInstances() and the discovered
-            // EventListenerRegistry both have to be bound before the
-            // bootstrap chain runs — see BootSequence's own docblock, the one
-            // place this ordering lives, shared with HttpStartup and
-            // bin/kinetis. null pluginInstances means "discover and
-            // reconstruct live," since this never consults a compiled cache,
-            // the same choice every other discovery call above already
-            // makes. Package bootstraps run first inside it, then this
-            // application's own bootstrap.php — the same last-write-wins
-            // order every other entry point uses.
-            BootSequence::run($app, $projectRoot, $config, $listeners, null, null);
+            // The plugin instances and the discovered EventListenerRegistry
+            // both have to be bound before the bootstrap chain runs — see
+            // BootSequence's own docblock, the one place this ordering
+            // lives, shared with HttpStartup and bin/kinetis. Package
+            // bootstraps run first inside it, then this application's own
+            // bootstrap.php — the same last-write-wins order every other
+            // entry point uses.
+            BootSequence::run($app, $projectRoot, $config, $listeners, $pluginInstances, $context->packageBootstraps());
 
             // Last, so a double registered here replaces whatever
             // bootstrap.php bound under the same id.

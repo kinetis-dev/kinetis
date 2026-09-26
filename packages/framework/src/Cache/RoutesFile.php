@@ -24,9 +24,9 @@ use Kinetis\Container\PackageBootstrapInterface;
  * so the instance a bootstrap receives is the one the container holds;
  * AppScope::boot()'s own default only covers a scope booted without one.
  *
- * $packageBootstraps carries the pre-resolved class list out of the AOT
- * cache in production; null (the default) discovers it live — the same
- * null-means-live convention the discoverers' own $paths parameter uses.
+ * $packageBootstraps is the class list the entry point already resolved:
+ * out of the AOT cache in production, or from its own
+ * {@see DiscoveryContext::packageBootstraps()} when discovering live.
  *
  * HTTP routes are discovered by namespace instead — see
  * Kinetis\Http\Routing\RouteDiscovery, mirroring
@@ -36,13 +36,11 @@ use Kinetis\Container\PackageBootstrapInterface;
 final class RoutesFile
 {
     /**
-     * @param list<class-string>|null $packageBootstraps
+     * @param list<class-string> $packageBootstraps
      * @return callable(AppScope, Config): void
      */
-    public static function loadBootstrap(string $projectRoot, ?array $packageBootstraps = null): callable
+    public static function loadBootstrap(string $projectRoot, array $packageBootstraps): callable
     {
-        $bootstrapClasses = $packageBootstraps ?? PackageDiscovery::bootstrapClasses($projectRoot);
-
         $path = $projectRoot . '/bootstrap.php';
         // require, not require_once: loadBootstrap() may be called more
         // than once per process, and require_once would return true
@@ -54,8 +52,8 @@ final class RoutesFile
             };
 
         /** @var callable(AppScope, Config): void $appBootstrap */
-        return static function (AppScope $app, Config $config) use ($bootstrapClasses, $appBootstrap): void {
-            foreach ($bootstrapClasses as $class) {
+        return static function (AppScope $app, Config $config) use ($packageBootstraps, $appBootstrap): void {
+            foreach ($packageBootstraps as $class) {
                 // A stale production cache can name a bootstrap whose
                 // package has since been removed — skipped with a
                 // warning, the same tolerance PackageDiscovery gives a

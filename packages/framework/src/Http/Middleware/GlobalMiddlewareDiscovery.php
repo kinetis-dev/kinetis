@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Middleware;
 
-use Kinetis\Cache\NamespaceScanner;
-use Kinetis\Cache\PackageDiscovery;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Http\Attributes\AsGlobalMiddleware;
 use Kinetis\Http\Attributes\AsMiddlewareGroup;
 use Kinetis\Http\Attributes\AsOpenApiMiddleware;
@@ -71,21 +70,21 @@ final class GlobalMiddlewareDiscovery
      * @param list<string>|null $paths
      * @return list<class-string>
      */
-    public static function discover(string $projectRoot, ?array $paths = null): array
+    public static function discover(DiscoveryContext $context, ?array $paths = null): array
     {
-        return self::discoverAll($projectRoot, $paths)['global'];
+        return self::discoverAll($context, $paths)['global'];
     }
 
     /**
      * @param list<string>|null $paths
      * @return array{global: list<class-string>, openApi: list<class-string>, groups: array<string, list<class-string>>}
      */
-    public static function discoverAll(string $projectRoot, ?array $paths = null): array
+    public static function discoverAll(DiscoveryContext $context, ?array $paths = null): array
     {
         $candidates = [
-            ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
-            ...NamespaceScanner::classesUnderFrameworkSegment('Http'),
-            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
+            ...$context->projectClasses($paths ?? self::pathsFromEnv()),
+            ...$context->frameworkClasses('Http'),
+            ...$context->packageClasses(),
         ];
 
         /** @var array<class-string, int> $global */

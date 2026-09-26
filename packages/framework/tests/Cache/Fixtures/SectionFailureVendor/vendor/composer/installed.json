@@ -1,0 +1,68 @@
+{
+    "packages": [
+        {
+            "name": "acme/cycle-a",
+            "install-path": "../acme/cycle-a",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\CycleASection"
+                }
+            }
+        },
+        {
+            "name": "acme/cycle-b",
+            "install-path": "../acme/cycle-b",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\CycleBSection"
+                }
+            }
+        },
+        {
+            "name": "acme/orphan",
+            "install-path": "../acme/orphan",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\OrphanConsumerSection"
+                }
+            }
+        },
+        {
+            "name": "acme/skipped-reader",
+            "install-path": "../acme/skipped-reader",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\SkippedReaderSection"
+                }
+            }
+        },
+        {
+            "name": "acme/not-a-section",
+            "install-path": "../acme/not-a-section",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\NotASection"
+                }
+            }
+        },
+        {
+            "name": "acme/missing-class-reader",
+            "install-path": "../acme/missing-class-reader",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\MissingClassReaderSection"
+                }
+            }
+        },
+        {
+            "name": "acme/missing-section",
+            "install-path": "../acme/missing-section",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\DoesNotExistSection"
+                }
+            }
+        }
+    ],
+    "dev": true
+}

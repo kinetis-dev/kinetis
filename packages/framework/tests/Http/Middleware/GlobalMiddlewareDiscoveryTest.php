@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Http\Middleware;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware;
@@ -19,12 +20,12 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 {
     public function test_discovers_no_middleware_when_the_project_root_does_not_exist(): void
     {
-        self::assertSame([], GlobalMiddlewareDiscovery::discover(__DIR__ . '/does-not-exist'));
+        self::assertSame([], GlobalMiddlewareDiscovery::discover(new DiscoveryContext(__DIR__ . '/does-not-exist')));
     }
 
     public function test_discovers_a_projects_own_middleware_anywhere_under_its_psr4_root(): void
     {
-        $classes = GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures');
+        $classes = GlobalMiddlewareDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
         self::assertContains(DiscoveredGlobalMiddleware::class, $classes);
         self::assertContains(UnconventionalMiddleware::class, $classes);
@@ -32,7 +33,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_orders_by_priority_descending_with_class_name_as_a_tiebreak(): void
     {
-        $classes = GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures');
+        $classes = GlobalMiddlewareDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
         // Both DiscoveredGlobalMiddleware and UnconventionalMiddleware
         // default to priority 0 — their relative order must come from
@@ -51,7 +52,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_paths_restricts_the_project_wide_scan(): void
     {
-        $classes = GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures', ['Http']);
+        $classes = GlobalMiddlewareDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'), ['Http']);
 
         self::assertContains(DiscoveredGlobalMiddleware::class, $classes);
         self::assertNotContains(UnconventionalMiddleware::class, $classes);
@@ -62,7 +63,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
         putenv('MIDDLEWARE_DISCOVERY_PATHS=Http');
 
         try {
-            $classes = GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures');
+            $classes = GlobalMiddlewareDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
             self::assertContains(DiscoveredGlobalMiddleware::class, $classes);
             self::assertNotContains(UnconventionalMiddleware::class, $classes);
@@ -76,7 +77,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
         putenv('MIDDLEWARE_DISCOVERY_PATHS=DoesNotExist');
 
         try {
-            $classes = GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures', []);
+            $classes = GlobalMiddlewareDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'), []);
 
             self::assertContains(DiscoveredGlobalMiddleware::class, $classes);
             self::assertContains(UnconventionalMiddleware::class, $classes);
@@ -89,7 +90,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_discover_all_buckets_by_which_attribute_a_class_carries(): void
     {
-        $middleware = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures');
+        $middleware = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
         self::assertContains(DiscoveredGlobalMiddleware::class, $middleware['global']);
         self::assertNotContains(DiscoveredGlobalMiddleware::class, $middleware['openApi']);
@@ -98,8 +99,8 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
     public function test_discover_wraps_discover_all_and_returns_only_the_global_list(): void
     {
         self::assertSame(
-            GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['global'],
-            GlobalMiddlewareDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures'),
+            GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'))['global'],
+            GlobalMiddlewareDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures')),
         );
     }
 
@@ -107,14 +108,14 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_discovers_a_named_group_and_its_members(): void
     {
-        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+        $groups = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'))['groups'];
 
         self::assertSame([GroupedAuthMiddleware::class], $groups['auth']);
     }
 
     public function test_orders_a_groups_members_by_priority_descending(): void
     {
-        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+        $groups = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'))['groups'];
 
         // GroupedAuthMiddleware declares priority 90 in 'admin',
         // GroupedAdminMiddleware 50 — auth runs more outer.
@@ -126,7 +127,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_members_sharing_a_priority_are_ordered_alphabetically(): void
     {
-        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+        $groups = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'))['groups'];
 
         self::assertSame(
             [GroupedAuditMiddleware::class, GroupedTracingMiddleware::class],
@@ -136,7 +137,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_one_class_can_belong_to_several_groups(): void
     {
-        $groups = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures')['groups'];
+        $groups = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'))['groups'];
 
         self::assertContains(GroupedAuthMiddleware::class, $groups['auth']);
         self::assertContains(GroupedAuthMiddleware::class, $groups['admin']);
@@ -144,7 +145,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
 
     public function test_group_membership_does_not_make_a_class_global_middleware(): void
     {
-        $middleware = GlobalMiddlewareDiscovery::discoverAll(dirname(__DIR__, 2) . '/Cache/Fixtures');
+        $middleware = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
         self::assertNotContains(GroupedAuthMiddleware::class, $middleware['global']);
         self::assertNotContains(GroupedAuthMiddleware::class, $middleware['openApi']);
@@ -157,7 +158,7 @@ final class GlobalMiddlewareDiscoveryTest extends TestCase
      */
     public function test_only_the_builtin_group_exists_when_the_project_root_does_not_exist(): void
     {
-        $groups = GlobalMiddlewareDiscovery::discoverAll(__DIR__ . '/does-not-exist')['groups'];
+        $groups = GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(__DIR__ . '/does-not-exist'))['groups'];
 
         self::assertSame([GlobalMiddlewareDiscovery::OPENAPI_GROUP], array_keys($groups));
         self::assertSame([], $groups[GlobalMiddlewareDiscovery::OPENAPI_GROUP]);

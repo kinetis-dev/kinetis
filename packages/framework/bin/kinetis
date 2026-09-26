@@ -7,6 +7,8 @@ use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\DiscoveryContext;
+use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Console\CommandDiscovery;
@@ -70,20 +72,23 @@ if ($env->isProduction()) {
     // and $compile runs exactly once. See its own docblock. The OpenAPI
     // document is never part of this — it's generated and cached
     // separately, see docs/caching.md.
-    $resolved = BootSequence::resolveCli($store, static fn (): CompiledCache => (new Compiler())->compileProject($projectRoot));
+    $resolved = BootSequence::resolveCli(
+        $store,
+        static fn (): CompiledCache => (new Compiler())->compileProject(new DiscoveryContext($projectRoot)),
+    );
 
     $registry = $resolved['registry'];
     $listenerRegistry = $resolved['listenerRegistry'];
     $pluginInstances = $resolved['pluginInstances'];
     $packageBootstraps = $resolved['packageBootstraps'];
 } else {
-    $registry = CommandDiscovery::discover($projectRoot);
-    $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
-    // null = discover the package bootstrap list live, alongside the rest.
-    $packageBootstraps = null;
-    // Same sentinel BootSequence::run() reads as "discover and
-    // reconstruct live".
-    $pluginInstances = null;
+    // One context for this invocation's whole discovery, dropped with it.
+    $context = new DiscoveryContext($projectRoot);
+    $registry = CommandDiscovery::discover($context);
+    $listenerRegistry = EventListenerDiscovery::discover($context);
+    $pluginInstances = PluginDiscovery::reconstruct(PluginDiscovery::discover($context));
+    $packageBootstraps = $context->packageBootstraps();
+    unset($context);
 }
 
 $commandName = $argv[1] ?? null;

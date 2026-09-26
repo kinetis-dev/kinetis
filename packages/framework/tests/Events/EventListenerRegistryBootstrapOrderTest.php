@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Events;
 
 use Kinetis\Cache\BootSequence;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventDispatcher;
@@ -20,7 +21,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * The discovered EventListenerRegistry must be bound before the
  * package/application bootstrap chain runs, the same precedence
- * PluginDiscovery::bind() already gets right — otherwise a bootstrap.php
+ * the plugin instances already get — otherwise a bootstrap.php
  * override (or a $beforeBoot test double) is silently clobbered by a
  * later, unconditional rebind. `Kinetis\Cache\BootSequence` is the one
  * place this ordering lives, shared by every framework-managed entry
@@ -151,11 +152,11 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
     public function test_boot_sequence_augments_a_compiled_cache_reconstructed_registry_with_bootstrap_enabled(): void
     {
         $listenerRegistry = EventListenerRegistry::fromArray(
-            EventListenerDiscovery::discover(self::AUGMENTING_ROOT)->toArray(),
+            EventListenerDiscovery::discover(new DiscoveryContext(self::AUGMENTING_ROOT))->toArray(),
         );
 
         $app = $this->app();
-        BootSequence::run($app, self::AUGMENTING_ROOT, $app->get(Config::class), $listenerRegistry, null, null);
+        BootSequence::run($app, self::AUGMENTING_ROOT, $app->get(Config::class), $listenerRegistry, [], []);
         $app->boot();
 
         $messages = $this->dispatchAndRecord($app);
@@ -174,10 +175,10 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
      */
     public function test_boot_sequence_augments_a_live_discovered_registry_with_bootstrap_enabled(): void
     {
-        $listenerRegistry = EventListenerDiscovery::discover(self::AUGMENTING_ROOT);
+        $listenerRegistry = EventListenerDiscovery::discover(new DiscoveryContext(self::AUGMENTING_ROOT));
 
         $app = $this->app();
-        BootSequence::run($app, self::AUGMENTING_ROOT, $app->get(Config::class), $listenerRegistry, null, null);
+        BootSequence::run($app, self::AUGMENTING_ROOT, $app->get(Config::class), $listenerRegistry, [], []);
         $app->boot();
 
         $messages = $this->dispatchAndRecord($app);
@@ -193,7 +194,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
      * normally — but the *entire* bootstrap chain must never run, not
      * just the application's own bootstrap.php. Run against Augmenting
      * with a real PackageBootstrap given as $packageBootstraps (rather
-     * than null, which would give this nothing to skip): if bootstrap:
+     * than an empty list, which would give this nothing to skip): if bootstrap:
      * false only gated the application half of the chain, this package
      * bootstrap would still run and "package" would leak into the
      * result. Augmenting/bootstrap.php itself must never run either, so
@@ -202,7 +203,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
      */
     public function test_boot_sequence_with_bootstrap_disabled_still_binds_a_live_discovered_registry_but_skips_the_whole_chain(): void
     {
-        $listenerRegistry = EventListenerDiscovery::discover(self::AUGMENTING_ROOT);
+        $listenerRegistry = EventListenerDiscovery::discover(new DiscoveryContext(self::AUGMENTING_ROOT));
 
         $app = $this->app();
         BootSequence::run(
@@ -210,7 +211,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
             self::AUGMENTING_ROOT,
             $app->get(Config::class),
             $listenerRegistry,
-            null,
+            [],
             [PackageBootstrap::class],
             runBootstrap: false,
         );
@@ -231,7 +232,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
     public function test_boot_sequence_with_bootstrap_disabled_still_binds_a_compiled_cache_reconstructed_registry_but_skips_the_whole_chain(): void
     {
         $listenerRegistry = EventListenerRegistry::fromArray(
-            EventListenerDiscovery::discover(self::AUGMENTING_ROOT)->toArray(),
+            EventListenerDiscovery::discover(new DiscoveryContext(self::AUGMENTING_ROOT))->toArray(),
         );
 
         $app = $this->app();
@@ -240,7 +241,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
             self::AUGMENTING_ROOT,
             $app->get(Config::class),
             $listenerRegistry,
-            null,
+            [],
             [PackageBootstrap::class],
             runBootstrap: false,
         );
@@ -270,7 +271,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
      */
     public function test_a_package_bootstrap_can_augment_the_discovered_registry(): void
     {
-        $listenerRegistry = EventListenerDiscovery::discover(self::DISCOVERED_ROOT);
+        $listenerRegistry = EventListenerDiscovery::discover(new DiscoveryContext(self::DISCOVERED_ROOT));
 
         $app = $this->app();
         BootSequence::run(
@@ -278,7 +279,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
             self::DISCOVERED_ROOT,
             $app->get(Config::class),
             $listenerRegistry,
-            null,
+            [],
             [PackageBootstrap::class],
         );
         $app->boot();
@@ -301,7 +302,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
      */
     public function test_the_applications_own_bootstrap_php_wins_last_over_a_package_bootstraps_augmentation(): void
     {
-        $listenerRegistry = EventListenerDiscovery::discover(self::OVERRIDING_ROOT);
+        $listenerRegistry = EventListenerDiscovery::discover(new DiscoveryContext(self::OVERRIDING_ROOT));
 
         $app = $this->app();
         BootSequence::run(
@@ -309,7 +310,7 @@ final class EventListenerRegistryBootstrapOrderTest extends TestCase
             self::OVERRIDING_ROOT,
             $app->get(Config::class),
             $listenerRegistry,
-            null,
+            [],
             [PackageBootstrap::class],
         );
         $app->boot();

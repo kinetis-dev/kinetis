@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Console;
 
-use Kinetis\Cache\NamespaceScanner;
-use Kinetis\Cache\PackageDiscovery;
+use Kinetis\Cache\DiscoveryContext;
 
 /**
  * Builds a CommandRegistry from every class found in a project — no
@@ -28,22 +27,22 @@ final class CommandDiscovery
     /**
      * @param list<string>|null $paths
      */
-    public static function discover(string $projectRoot, ?array $paths = null): CommandRegistry
+    public static function discover(DiscoveryContext $context, ?array $paths = null): CommandRegistry
     {
         $registry = new CommandRegistry();
 
         // Deduped across both passes: when the project root and framework
         // root are the same repository, a class under Kinetis\Console
-        // can surface from both classesInProject() and
-        // classesUnderFrameworkSegment(). CommandRegistry::register()
+        // can surface from both projectClasses() and
+        // frameworkClasses(). CommandRegistry::register()
         // throws on a duplicate command name.
         /** @var array<class-string, true> $seen */
         $seen = [];
 
         foreach ([
-            ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
-            ...NamespaceScanner::classesUnderFrameworkSegment('Console'),
-            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
+            ...$context->projectClasses($paths ?? self::pathsFromEnv()),
+            ...$context->frameworkClasses('Console'),
+            ...$context->packageClasses(),
         ] as $class) {
             if (isset($seen[$class])) {
                 continue;

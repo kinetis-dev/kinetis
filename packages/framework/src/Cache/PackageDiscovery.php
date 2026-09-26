@@ -34,32 +34,65 @@ namespace Kinetis\Cache;
  *
  * Reads vendor/composer/installed.json — Composer's own generated record
  * of what is installed, the one place `extra` and each package's
- * autoload map and install path all live together. Declared prefixes
- * resolve against the *declaring package's own* PSR-4 map, so this stays
- * a set of targeted lookups: packages without `extra.kinetis` are never
- * touched, and nothing here ever walks vendor/ blindly. In production
- * the resolved result ships inside the AOT cache (see Compiler), so no
- * composer file is read per request at all.
+ * autoload map and install path all live together — once per
+ * {@see DiscoveryContext}, which owns this inventory; scan roots,
+ * bootstrap classes and discovery sections all derive from that one
+ * parse, each resolved once. Declared prefixes resolve against the
+ * *declaring package's own* PSR-4 map, so this stays a set of targeted
+ * lookups: packages without `extra.kinetis` are never touched, and
+ * nothing here ever walks vendor/ blindly. In production the resolved
+ * result ships inside the AOT cache (see Compiler), so no composer file
+ * is read per request at all.
  *
  * A declared prefix that doesn't match the package's own PSR-4 roots is
  * a package-author mistake — surfaced via error_log() and skipped, never
- * fatal for the consuming application (the same error_log() constraint
- * NamespaceScanner::warnIfNoPsr4Root() documents: static context, no
- * container to resolve a logger from).
+ * fatal for the consuming application (discovery runs before the
+ * container is booted, so there is no logger to resolve yet). Each
+ * mistake is reported once per inventory.
+ *
+ * @internal Owned by {@see DiscoveryContext}.
  */
 final class PackageDiscovery
 {
+    /** @var list<array{name: string, path: string, autoload: array<mixed, mixed>, kinetis: array<mixed, mixed>}> */
+    private readonly array $participants;
+
+    /** @var ?list<array{prefix: string, directory: string}> */
+    private ?array $scanRoots = null;
+
+    /** @var ?list<class-string> */
+    private ?array $bootstrapClasses = null;
+
+    /** @var ?list<class-string<CacheableDiscoveryInterface>> */
+    private ?array $discoveryClasses = null;
+
+    /** @var array<string, array{package: string, reason: string}> keyed by the declared class */
+    private array $skippedDiscovery = [];
+
+    public function __construct(string $projectRoot)
+    {
+        $this->participants = self::participants($projectRoot);
+    }
+
     /**
      * Directory roots offered for discovery by installed packages, as
      * prefix/directory pairs NamespaceScanner can walk.
      *
      * @return list<array{prefix: string, directory: string}>
      */
-    public static function scanRoots(string $projectRoot): array
+    public function scanRoots(): array
+    {
+        return $this->scanRoots ??= $this->resolveScanRoots();
+    }
+
+    /**
+     * @return list<array{prefix: string, directory: string}>
+     */
+    private function resolveScanRoots(): array
     {
         $roots = [];
 
-        foreach (self::participants($projectRoot) as $package) {
+        foreach ($this->participants as $package) {
             $scan = $package['kinetis']['scan'] ?? null;
 
             if (!is_string($scan) || $scan === '') {
@@ -96,11 +129,19 @@ final class PackageDiscovery
      *
      * @return list<class-string>
      */
-    public static function bootstrapClasses(string $projectRoot): array
+    public function bootstrapClasses(): array
+    {
+        return $this->bootstrapClasses ??= $this->resolveBootstrapClasses();
+    }
+
+    /**
+     * @return list<class-string>
+     */
+    private function resolveBootstrapClasses(): array
     {
         $classes = [];
 
-        foreach (self::participants($projectRoot) as $package) {
+        foreach ($this->participants as $package) {
             $bootstrap = $package['kinetis']['bootstrap'] ?? null;
 
             if (!is_string($bootstrap) || $bootstrap === '') {
@@ -125,31 +166,76 @@ final class PackageDiscovery
 
     /**
      * Classes declared by installed packages implementing
-     * {@see CacheableDiscoveryInterface} — the entire package-side
-     * surface of the pluggable AOT-cache mechanism. Everything else
-     * (calling `compile()`, writing/loading the shared cache file,
-     * binding the reconstructed instance into `AppScope`) is the
-     * framework's own job; see {@see PluginDiscovery}.
+     * {@see CacheableDiscoveryInterface}, in Composer's recorded order —
+     * the entire package-side surface of the pluggable AOT-cache
+     * mechanism. Everything else (compiling each through
+     * {@see DiscoveryContext::compiled()}, writing/loading the shared
+     * cache file, binding the reconstructed instance into `AppScope`) is
+     * the framework's own job; see {@see PluginDiscovery}.
      *
-     * A declared class that doesn't exist or doesn't implement the
-     * interface is a package-author mistake — surfaced via error_log()
-     * and skipped, the same tolerance `scanRoots()`/`bootstrapClasses()`
-     * already give their own malformed declarations.
+     * A declared class that doesn't exist, isn't autoloadable, or doesn't
+     * implement the interface is a package-author mistake — surfaced via
+     * error_log() and skipped, the same tolerance
+     * `scanRoots()`/`bootstrapClasses()` already give their own malformed
+     * declarations. The skip is remembered, so a section that reads the
+     * skipped class fails naming the package that declared it and which
+     * of the two mistakes it was.
      *
      * @return list<class-string<CacheableDiscoveryInterface>>
      */
-    public static function discoveryClasses(string $projectRoot): array
+    public function discoveryClasses(): array
+    {
+        return $this->discoveryClasses ??= $this->resolveDiscoveryClasses();
+    }
+
+    /**
+     * The package whose `discovery` declaration named $class and was
+     * skipped by discoveryClasses(), with the reason, or null when no
+     * package declared it.
+     *
+     * @return ?array{package: string, reason: string}
+     */
+    public function skippedDiscoveryDeclaration(string $class): ?array
+    {
+        $this->discoveryClasses();
+
+        return $this->skippedDiscovery[$class] ?? null;
+    }
+
+    /**
+     * @return list<class-string<CacheableDiscoveryInterface>>
+     */
+    private function resolveDiscoveryClasses(): array
     {
         $classes = [];
 
-        foreach (self::participants($projectRoot) as $package) {
+        foreach ($this->participants as $package) {
             $discovery = $package['kinetis']['discovery'] ?? null;
 
             if (!is_string($discovery) || $discovery === '') {
                 continue;
             }
 
-            if (!class_exists($discovery) || !is_a($discovery, CacheableDiscoveryInterface::class, true)) {
+            if (!class_exists($discovery)) {
+                $this->skippedDiscovery[$discovery] = [
+                    'package' => $package['name'],
+                    'reason' => 'no such class is autoloadable',
+                ];
+
+                error_log(
+                    "Kinetis\\Cache\\PackageDiscovery: package \"{$package['name']}\" declares discovery class "
+                    . "\"{$discovery}\" in extra.kinetis, but no such class is autoloadable — skipped.",
+                );
+
+                continue;
+            }
+
+            if (!is_a($discovery, CacheableDiscoveryInterface::class, true)) {
+                $this->skippedDiscovery[$discovery] = [
+                    'package' => $package['name'],
+                    'reason' => 'it does not implement CacheableDiscoveryInterface',
+                ];
+
                 error_log(
                     "Kinetis\\Cache\\PackageDiscovery: package \"{$package['name']}\" declares discovery class "
                     . "\"{$discovery}\" in extra.kinetis, but it does not implement CacheableDiscoveryInterface — skipped.",
@@ -166,14 +252,14 @@ final class PackageDiscovery
     }
 
     /**
-     * @return iterable<array{name: string, path: string, autoload: array<mixed, mixed>, kinetis: array<mixed, mixed>}>
+     * @return list<array{name: string, path: string, autoload: array<mixed, mixed>, kinetis: array<mixed, mixed>}>
      */
-    private static function participants(string $projectRoot): iterable
+    private static function participants(string $projectRoot): array
     {
         $installedJsonPath = $projectRoot . '/vendor/composer/installed.json';
 
         if (!is_file($installedJsonPath)) {
-            return;
+            return [];
         }
 
         /** @var mixed $decoded */
@@ -181,8 +267,10 @@ final class PackageDiscovery
         $packages = is_array($decoded) ? ($decoded['packages'] ?? null) : null;
 
         if (!is_array($packages)) {
-            return;
+            return [];
         }
+
+        $participants = [];
 
         foreach ($packages as $package) {
             if (!is_array($package)) {
@@ -199,7 +287,7 @@ final class PackageDiscovery
 
             $psr4 = $package['autoload']['psr-4'] ?? null;
 
-            yield [
+            $participants[] = [
                 'name' => $name,
                 // install-path is relative to vendor/composer/.
                 'path' => $projectRoot . '/vendor/composer/' . $installPath,
@@ -207,6 +295,8 @@ final class PackageDiscovery
                 'kinetis' => $kinetis,
             ];
         }
+
+        return $participants;
     }
 
     /**

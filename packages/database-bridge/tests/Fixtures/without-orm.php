@@ -9,6 +9,7 @@ declare(strict_types=1);
  */
 
 use Composer\Autoload\ClassLoader;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
@@ -26,7 +27,7 @@ $loader->setPsr4('Kinetis\\Orm\\', []);
 
 $observed = [
     'ormInstalled' => class_exists('Kinetis\\Orm\\OrmFactory'),
-    'compiled' => OrmMetadata::compile(__DIR__ . '/OrmProject'),
+    'compiled' => OrmMetadata::compile(new DiscoveryContext(__DIR__ . '/OrmProject')),
     'emptyEntryReconstructs' => PluginDiscovery::reconstruct([OrmMetadata::class => []])[OrmMetadata::class] instanceof OrmMetadata,
 ];
 

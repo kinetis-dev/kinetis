@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 /**
- * Proves PluginDiscovery::bind() is genuinely wired into
+ * Proves live plugin discovery and binding are wired into
  * TestApplication::boot() — a real, skeleton-equivalent boot, not just
  * PluginDiscovery's own unit tests, which never go through boot() at all.
  */
@@ -29,7 +29,7 @@ final class TestApplicationTest extends TestCase
         self::assertInstanceOf(AcmeCacheableDiscovery::class, $instance);
         // This fixture root has no bootstrap.php at all, so nothing could
         // have touched the binding after discovery — the value proves
-        // PluginDiscovery::bind() itself ran, not just that *something*
+        // the live discovery binding itself ran, not just that *something*
         // is bound under this id.
         self::assertSame('from-compile:' . self::PLAIN_DISCOVERY_ROOT, $instance->source);
     }
@@ -37,11 +37,9 @@ final class TestApplicationTest extends TestCase
     /**
      * The fixture at OVERRIDING_BOOTSTRAP_ROOT's own bootstrap.php
      * re-registers AcmeCacheableDiscovery — this only proves anything if
-     * PluginDiscovery::bind() ran *before* the bootstrap chain, so the
-     * discovered instance was already there to be overwritten rather
-     * than asserted again afterward. Before this fix, TestApplication
-     * never called PluginDiscovery::bind() at all, so this fixture's own
-     * override had nothing to win against.
+     * the discovered instance was bound *before* the bootstrap chain, so it
+     * was already there to be overwritten rather than asserted again
+     * afterward.
      */
     public function test_the_applications_own_bootstrap_php_overrides_the_discovered_instance(): void
     {

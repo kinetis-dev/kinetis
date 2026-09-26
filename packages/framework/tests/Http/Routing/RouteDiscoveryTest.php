@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Http\Routing;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Tests\Http\Fixtures\VersionedMiddleware;
@@ -18,7 +19,7 @@ final class RouteDiscoveryTest extends TestCase
      */
     public function test_discovers_only_the_frameworks_own_routes_when_the_project_root_does_not_exist(): void
     {
-        $router = RouteDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures/does-not-exist');
+        $router = RouteDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures/does-not-exist'));
 
         self::assertSame(
             ['/openapi', '/openapi.json'],
@@ -39,7 +40,7 @@ final class RouteDiscoveryTest extends TestCase
 
     public function test_discovers_a_projects_own_controllers_anywhere_under_its_psr4_root(): void
     {
-        $router = RouteDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures');
+        $router = RouteDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
         $match = $router->match('GET', '/fixture-ping');
         self::assertSame('ping', $match->route->controllerMethod);
@@ -50,7 +51,7 @@ final class RouteDiscoveryTest extends TestCase
 
     public function test_paths_restricts_the_project_wide_scan(): void
     {
-        $router = RouteDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures', ['Http']);
+        $router = RouteDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'), ['Http']);
 
         $match = $router->match('GET', '/fixture-ping');
         self::assertSame('ping', $match->route->controllerMethod);
@@ -64,7 +65,7 @@ final class RouteDiscoveryTest extends TestCase
         putenv('ROUTE_DISCOVERY_PATHS=Http');
 
         try {
-            $router = RouteDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures');
+            $router = RouteDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'));
 
             $match = $router->match('GET', '/fixture-ping');
             self::assertSame('ping', $match->route->controllerMethod);
@@ -81,7 +82,7 @@ final class RouteDiscoveryTest extends TestCase
         putenv('ROUTE_DISCOVERY_PATHS=DoesNotExist');
 
         try {
-            $router = RouteDiscovery::discover(dirname(__DIR__, 2) . '/Cache/Fixtures', []);
+            $router = RouteDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'), []);
 
             $match = $router->match('GET', '/fixture-unconventional');
             self::assertSame('ping', $match->route->controllerMethod);
@@ -100,7 +101,7 @@ final class RouteDiscoveryTest extends TestCase
         // finds nothing extra" — not duplicate-row counting — but it's the
         // exact call CommandDiscoveryTest's own regression would have
         // crashed on, run here against the sibling discovery class.
-        $router = RouteDiscovery::discover(dirname(__DIR__, 3));
+        $router = RouteDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 3)));
 
         // Exactly one row each: the framework root and the project root
         // are the same repository here, so a missing cross-pass dedupe
@@ -111,7 +112,7 @@ final class RouteDiscoveryTest extends TestCase
     public function test_global_middleware_is_threaded_through_to_every_discovered_controller(): void
     {
         $router = RouteDiscovery::discover(
-            dirname(__DIR__, 2) . '/Cache/Fixtures',
+            new DiscoveryContext(dirname(__DIR__, 2) . '/Cache/Fixtures'),
             globalMiddleware: [VersionedMiddleware::class],
         );
 

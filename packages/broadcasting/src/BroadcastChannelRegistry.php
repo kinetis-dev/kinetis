@@ -7,6 +7,7 @@ namespace Kinetis\Broadcasting;
 use Kinetis\Broadcasting\Attributes\BroadcastChannel;
 use Kinetis\Broadcasting\Exception\InvalidChannelAuthorizerException;
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\ArtifactValidation;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
@@ -104,9 +105,9 @@ final class BroadcastChannelRegistry implements CacheableDiscoveryInterface
      * class.
      */
     #[\Override]
-    public static function compile(string $projectRoot): array
+    public static function compile(DiscoveryContext $context): array
     {
-        return BroadcastChannelDiscovery::discover($projectRoot)->toArray();
+        return BroadcastChannelDiscovery::discover($context)->toArray();
     }
 
     /**

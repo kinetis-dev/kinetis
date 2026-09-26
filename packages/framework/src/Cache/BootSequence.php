@@ -32,15 +32,14 @@ use Kinetis\Runtime\ProjectRoot;
  * `HttpStartup`/`bin/kinetis`, or after `$beforeBoot` for
  * `TestApplication`.
  *
- * $listenerRegistry and $pluginInstances are already-decided values —
- * live-discovered, or reconstructed exactly once from the compiled
- * artifact or a fresh compile by `resolveHttp()`/`resolveCli()` below —
- * since which of those an entry point uses depends on `AppEnvironment`/
- * cache-presence logic specific to that entry point, not something this
- * shared step needs to know about. Both shapes are bound identically
- * either way. `null` for `$pluginInstances` means "discover and
- * reconstruct live, right here" — the one case with no earlier
- * reconstruction to reuse.
+ * $listenerRegistry, $pluginInstances and $packageBootstraps are
+ * already-decided values — discovered live through the entry point's own
+ * {@see DiscoveryContext}, or reconstructed exactly once from the
+ * compiled artifact or a fresh compile by `resolveHttp()`/`resolveCli()`
+ * below — since which of those an entry point uses depends on
+ * `AppEnvironment`/cache-presence logic specific to that entry point, not
+ * something this shared step needs to know about. Both shapes are bound
+ * identically either way.
  *
  * `$projectRoot` is bound on `AppScope` as a {@see ProjectRoot} first, so
  * every package bootstrap, the application's `bootstrap.php` and every
@@ -70,23 +69,20 @@ use Kinetis\Runtime\ProjectRoot;
 final class BootSequence
 {
     /**
-     * @param array<class-string, object>|null $pluginInstances
-     * @param list<class-string>|null $packageBootstraps
+     * @param array<class-string, object> $pluginInstances
+     * @param list<class-string> $packageBootstraps
      */
     public static function run(
         AppScope $app,
         string $projectRoot,
         Config $config,
         EventListenerRegistry $listenerRegistry,
-        ?array $pluginInstances,
-        ?array $packageBootstraps,
+        array $pluginInstances,
+        array $packageBootstraps,
         bool $runBootstrap = true,
     ): void {
         $app->instance(ProjectRoot::class, new ProjectRoot($projectRoot));
-        PluginDiscovery::bindInstances(
-            $app,
-            $pluginInstances ?? PluginDiscovery::reconstruct(PluginDiscovery::discover($projectRoot)),
-        );
+        PluginDiscovery::bindInstances($app, $pluginInstances);
         $app->instance(EventListenerRegistry::class, $listenerRegistry);
 
         if ($runBootstrap) {

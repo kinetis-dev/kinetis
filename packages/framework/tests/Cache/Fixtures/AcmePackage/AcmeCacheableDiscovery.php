@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Cache\Fixtures\AcmePackage;
 
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 
 final readonly class AcmeCacheableDiscovery implements CacheableDiscoveryInterface
 {
@@ -13,9 +14,9 @@ final readonly class AcmeCacheableDiscovery implements CacheableDiscoveryInterfa
     ) {}
 
     #[\Override]
-    public static function compile(string $projectRoot): array
+    public static function compile(DiscoveryContext $context): array
     {
-        return ['source' => 'from-compile:' . $projectRoot];
+        return ['source' => 'from-compile:' . $context->projectRoot];
     }
 
     #[\Override]

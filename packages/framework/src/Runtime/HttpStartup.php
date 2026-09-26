@@ -8,6 +8,8 @@ use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\CompiledCache;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\DiscoveryContext;
+use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Container\AppScope;
@@ -42,8 +44,10 @@ use Throwable;
  * 1. `.env` loads before `AppEnvironment::detect()`, because `APP_ENV`
  *    itself may be defined for the first time in `.env` rather than
  *    already set in the real process environment.
- * 2. Development discovers routes, middleware and listeners live from
- *    source on every boot. Production resolves them through
+ * 2. Development discovers routes, middleware, listeners, plugin
+ *    sections and package bootstraps live from source on every boot,
+ *    through one {@see DiscoveryContext} that lives only as long as that
+ *    discovery. Production resolves them through
  *    {@see BootSequence::resolveHttp()} — the published artifact, or one
  *    fresh compile published as the very artifact `kinetis build`
  *    produces when there is none this build can use.
@@ -146,7 +150,6 @@ final class HttpStartup
             $app->instance(Config::class, $config);
 
             $httpCache = null;
-            $pluginInstances = null;
 
             if ($env->isProduction()) {
                 // resolveHttp() is the entire "use the artifact, or compile
@@ -158,7 +161,7 @@ final class HttpStartup
                 // docblock.
                 $resolved = BootSequence::resolveHttp(
                     new CacheStore($projectRoot . '/.kinetis-cache'),
-                    static fn (): CompiledCache => new Compiler()->compileProject($projectRoot),
+                    static fn (): CompiledCache => new Compiler()->compileProject(new DiscoveryContext($projectRoot)),
                 );
 
                 $httpCache = $resolved['httpCache'];
@@ -171,22 +174,21 @@ final class HttpStartup
                 $packageBootstraps = $resolved['packageBootstraps'];
             } else {
                 $phaseStart = microtime(true);
+                $context = new DiscoveryContext($projectRoot);
                 // Middleware before routes: RouteDiscovery needs the global
                 // middleware list to resolve any #[RoutePrefix] those classes
                 // declare into every route's own path — see
-                // Router::register()'s own doc comment. That one scan also
+                // Router::register()'s own doc comment. That one pass also
                 // covers #[AsOpenApiMiddleware] and #[AsMiddlewareGroup], so
                 // all three lists come out of it at once.
-                $discovered = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
-                $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $discovered['global']);
+                $discovered = GlobalMiddlewareDiscovery::discoverAll($context);
+                $router = RouteDiscovery::discover($context, globalMiddleware: $discovered['global']);
                 $globalMiddleware = $discovered['global'];
                 $openApiMiddleware = $discovered['openApi'];
                 $middlewareGroups = $discovered['groups'];
-                $listenerRegistry = EventListenerDiscovery::discover($projectRoot);
-                // null = discover the package bootstrap list live, and
-                // discover and reconstruct the plugin instances live, both
-                // alongside the rest.
-                $packageBootstraps = null;
+                $listenerRegistry = EventListenerDiscovery::discover($context);
+                $pluginInstances = PluginDiscovery::reconstruct(PluginDiscovery::discover($context));
+                $packageBootstraps = $context->packageBootstraps();
                 $phases['bootstrap.discovery'] = [$phaseStart, microtime(true)];
             }
 

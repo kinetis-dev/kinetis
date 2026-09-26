@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Cache\Fixtures\StrictPlugin;
 
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 use LogicException;
 
 /**
@@ -19,7 +20,7 @@ use LogicException;
 final readonly class BuggyCacheableDiscovery implements CacheableDiscoveryInterface
 {
     #[\Override]
-    public static function compile(string $projectRoot): array
+    public static function compile(DiscoveryContext $context): array
     {
         return [];
     }

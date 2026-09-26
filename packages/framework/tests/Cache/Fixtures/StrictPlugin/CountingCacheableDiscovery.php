@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Cache\Fixtures\StrictPlugin;
 
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 
 /**
  * A CacheableDiscoveryInterface implementation whose fromArray() counts
@@ -20,7 +21,7 @@ final class CountingCacheableDiscovery implements CacheableDiscoveryInterface
     public static int $constructions = 0;
 
     #[\Override]
-    public static function compile(string $projectRoot): array
+    public static function compile(DiscoveryContext $context): array
     {
         return ['value' => 'compiled'];
     }
