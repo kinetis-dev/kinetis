@@ -140,4 +140,17 @@ final class NamespaceScannerTest extends TestCase
         // so this is the abstract check firing and not an empty scan.
         self::assertContains('Kinetis\\Tests\\Cache\\Fixtures\\Http\\DiscoveredPingController', $classes);
     }
+
+    public function test_a_raw_hash_bracket_byte_outside_any_attribute_does_not_make_a_class_discoverable(): void
+    {
+        // RawMarkerNoAttribute contains the literal "#[" bytes in a
+        // comment and a string, with no real attribute anywhere — the
+        // byte-level pre-filter must not treat that as proof of one.
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses();
+
+        self::assertNotContains('Kinetis\Tests\Cache\Fixtures\Domain\Orders\RawMarkerNoAttribute', $classes);
+        // The sibling command in the same directory still is yielded, so
+        // this is the marker check firing and not an empty scan.
+        self::assertContains('Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalPingCommand', $classes);
+    }
 }
