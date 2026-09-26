@@ -319,11 +319,7 @@ final class NamespaceScanner
     {
         $source = file_get_contents($path);
 
-        if ($source === false) {
-            return false;
-        }
-
-        if (!str_contains($source, '#[')) {
+        if ($source === false || !str_contains($source, '#[')) {
             return false;
         }
 
