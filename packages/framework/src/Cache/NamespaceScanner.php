@@ -308,12 +308,18 @@ final class NamespaceScanner
      * `use`-statement parsing, and the cost of occasionally reflecting a
      * class with an unrelated attribute is negligible next to the cost of
      * ever missing a real match.
+     *
+     * The raw "#[" byte check ahead of it is a negative-only guard: its
+     * absence proves T_ATTRIBUTE can't appear, so tokenizing is skipped
+     * outright. Its presence proves nothing (a comment or string literal
+     * can contain "#[" without any attribute existing) and always falls
+     * through to the real tokenizer below.
      */
     private static function fileHasAnyAttribute(string $path): bool
     {
         $source = file_get_contents($path);
 
-        if ($source === false) {
+        if ($source === false || !str_contains($source, '#[')) {
             return false;
         }
 
