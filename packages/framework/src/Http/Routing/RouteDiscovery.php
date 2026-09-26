@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Http\Routing;
 
-use Kinetis\Cache\NamespaceScanner;
-use Kinetis\Cache\PackageDiscovery;
+use Kinetis\Cache\DiscoveryContext;
 
 /**
  * Builds a Router from every class found in a project — no namespace/
@@ -38,7 +37,7 @@ use Kinetis\Cache\PackageDiscovery;
  * external `$seen` set — the project root and framework root being the
  * same repository (developing Kinetis itself) is exactly the case that
  * makes a class under `Kinetis\Http` surface from both
- * `classesInProject()` and `classesUnderFrameworkSegment()`, and
+ * `projectClasses()` and `frameworkClasses()`, and
  * `register()` alone is what makes that harmless now.
  */
 final class RouteDiscovery
@@ -47,14 +46,14 @@ final class RouteDiscovery
      * @param list<string>|null $paths
      * @param list<class-string> $globalMiddleware
      */
-    public static function discover(string $projectRoot, ?array $paths = null, array $globalMiddleware = []): Router
+    public static function discover(DiscoveryContext $context, ?array $paths = null, array $globalMiddleware = []): Router
     {
         $router = new Router();
 
         foreach ([
-            ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
-            ...NamespaceScanner::classesUnderFrameworkSegment('Http'),
-            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
+            ...$context->projectClasses($paths ?? self::pathsFromEnv()),
+            ...$context->frameworkClasses('Http'),
+            ...$context->packageClasses(),
         ] as $class) {
             $router->register($class, $globalMiddleware);
         }

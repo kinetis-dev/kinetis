@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Cache;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Container\AppScope;
@@ -19,7 +20,7 @@ final class PluginDiscoveryTest extends TestCase
 
     public function test_discover_calls_compile_on_every_declared_discovery_class(): void
     {
-        $data = PluginDiscovery::discover(self::FIXTURE_ROOT);
+        $data = PluginDiscovery::discover(new DiscoveryContext(self::FIXTURE_ROOT));
 
         self::assertSame(
             ['source' => 'from-compile:' . self::FIXTURE_ROOT],
@@ -27,37 +28,6 @@ final class PluginDiscoveryTest extends TestCase
         );
     }
 
-    public function test_bind_reconstructs_and_binds_each_entry_from_precomputed_data(): void
-    {
-        $app = new AppScope();
-
-        PluginDiscovery::bind($app, self::FIXTURE_ROOT, [
-            AcmeCacheableDiscovery::class => ['source' => 'from-cache'],
-        ]);
-        $app->boot();
-
-        $instance = $app->get(AcmeCacheableDiscovery::class);
-        self::assertInstanceOf(AcmeCacheableDiscovery::class, $instance);
-        self::assertSame('from-cache', $instance->source);
-    }
-
-    public function test_bind_discovers_live_when_data_is_null(): void
-    {
-        $app = new AppScope();
-
-        PluginDiscovery::bind($app, self::FIXTURE_ROOT, null);
-        $app->boot();
-
-        $instance = $app->get(AcmeCacheableDiscovery::class);
-        self::assertInstanceOf(AcmeCacheableDiscovery::class, $instance);
-        self::assertSame('from-compile:' . self::FIXTURE_ROOT, $instance->source);
-    }
-
-    /**
-     * bind() itself is layered on top of this now — the same algorithm,
-     * reused, not reimplemented — so this pins reconstruct()'s own
-     * behavior independently of bind()'s AppScope wiring.
-     */
     public function test_reconstruct_builds_a_live_instance_per_entry(): void
     {
         $instances = PluginDiscovery::reconstruct([

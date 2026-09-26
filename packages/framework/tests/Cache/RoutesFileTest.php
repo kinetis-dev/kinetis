@@ -16,7 +16,7 @@ final class RoutesFileTest extends TestCase
     {
         $app = new AppScope();
 
-        RoutesFile::loadBootstrap(__DIR__ . '/Fixtures')($app, new Config([]));
+        RoutesFile::loadBootstrap(__DIR__ . '/Fixtures', [])($app, new Config([]));
 
         self::assertTrue($app->has(BootstrapMarker::class));
     }
@@ -25,7 +25,7 @@ final class RoutesFileTest extends TestCase
     {
         $app = new AppScope();
 
-        RoutesFile::loadBootstrap(__DIR__ . '/Fixtures/does-not-exist')($app, new Config([]));
+        RoutesFile::loadBootstrap(__DIR__ . '/Fixtures/does-not-exist', [])($app, new Config([]));
 
         self::assertFalse($app->has(BootstrapMarker::class));
     }

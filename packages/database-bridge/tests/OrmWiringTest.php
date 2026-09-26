@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\DatabaseBridge\Tests;
 
 use Fiber;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\Exception\ContainerException;
@@ -234,7 +235,7 @@ final class OrmWiringTest extends TestCase
     {
         $app = new AppScope();
         $app->instance(LoggerInterface::class, new NullLogger());
-        $app->instance(OrmMetadata::class, OrmMetadata::fromArray(OrmMetadata::compile(__DIR__ . '/Fixtures/OrmProject')));
+        $app->instance(OrmMetadata::class, OrmMetadata::fromArray(OrmMetadata::compile(new DiscoveryContext(__DIR__ . '/Fixtures/OrmProject'))));
         new PackageBootstrap()->register($app, new Config($config));
 
         if ($config !== []) {

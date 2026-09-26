@@ -5,9 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\DatabaseBridge;
 
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
-use Kinetis\Cache\NamespaceScanner;
-use Kinetis\Cache\PackageDiscovery;
 use Kinetis\Orm\Attributes\Entity;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
@@ -33,7 +32,7 @@ final readonly class OrmMetadata implements CacheableDiscoveryInterface
      * scan roots that carries #[Entity], mapped by MetadataRegistry.
      */
     #[\Override]
-    public static function compile(string $projectRoot): array
+    public static function compile(DiscoveryContext $context): array
     {
         if (!class_exists(MetadataRegistry::class)) {
             return [];
@@ -42,8 +41,8 @@ final readonly class OrmMetadata implements CacheableDiscoveryInterface
         $entities = [];
 
         foreach ([
-            ...NamespaceScanner::classesInProject($projectRoot),
-            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
+            ...$context->projectClasses(),
+            ...$context->packageClasses(),
         ] as $class) {
             if (new ReflectionClass($class)->getAttributes(Entity::class) !== []) {
                 $entities[$class] = true;

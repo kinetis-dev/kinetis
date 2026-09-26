@@ -11,8 +11,8 @@ namespace Kinetis\Cache;
  * class itself.
  *
  * The package supplies only these two static methods; everything else —
- * finding the declaration, calling `compile()` to build the shared cache
- * file, loading it back, and binding the reconstructed instance into
+ * finding the declaration, compiling it into the shared cache file,
+ * loading it back, and binding the reconstructed instance into
  * `AppScope` — is the framework's own job (see {@see PluginDiscovery}
  * and {@see Compiler}). A package's own `PackageBootstrapInterface`
  * implementation never touches this data at all: by the time it runs,
@@ -22,13 +22,29 @@ interface CacheableDiscoveryInterface
 {
     /**
      * Runs live discovery and returns plain, `var_export()`-safe data —
-     * no objects, no closures. Called by `Compiler` to build the shared
-     * cache file, and by `PluginDiscovery::discover()` as the
-     * development-mode/no-cache-yet equivalent.
+     * no objects, no closures. Called once per discovery operation, by
+     * {@see DiscoveryContext::compiled()} only: `Compiler` to build the
+     * shared cache file, and `PluginDiscovery::discover()` for a
+     * development boot, both go through it.
+     *
+     * `$context` is the operation's own. Scan classes through it
+     * (`projectClasses()`, `frameworkClasses()`, `packageClasses()`) to
+     * share the walk every other discoverer in the operation makes. A
+     * section that consumes another section reads that section's
+     * compiled data through it:
+     *
+     *     $upstream = $context->compiled(UpstreamSection::class);
+     *
+     * which compiles the upstream section first, once, and returns the
+     * same array on every later read. The upstream section must be
+     * declared by an installed package, and the reads must not form a
+     * cycle; either failure throws
+     * {@see \Kinetis\Cache\Exception\DiscoverySectionException} naming
+     * the sections involved.
      *
      * @return array<array-key, mixed>
      */
-    public static function compile(string $projectRoot): array;
+    public static function compile(DiscoveryContext $context): array;
 
     /**
      * Reconstructs a live instance from `compile()`'s own output —

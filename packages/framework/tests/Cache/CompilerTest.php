@@ -6,6 +6,7 @@ namespace Kinetis\Tests\Cache;
 
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Dispatcher;
 use Kinetis\Http\Routing\Exception\RouteNotFoundException;
@@ -58,7 +59,7 @@ final class CompilerTest extends TestCase
 
     public function test_compile_project_discovers_routes_and_commands_by_namespace(): void
     {
-        $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures');
+        $compiled = (new Compiler())->compileProject(new DiscoveryContext(__DIR__ . '/Fixtures'));
 
         // Routes and commands are discovered by namespace — Fixtures/Http/
         // and Fixtures/Console/ are found via Fixtures/composer.json's own
@@ -87,7 +88,7 @@ final class CompilerTest extends TestCase
 
     public function test_compile_project_discovers_a_packages_own_declared_discovery_class(): void
     {
-        $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures/PackageVendor');
+        $compiled = (new Compiler())->compileProject(new DiscoveryContext(__DIR__ . '/Fixtures/PackageVendor'));
 
         self::assertArrayHasKey(
             'Kinetis\Tests\Cache\Fixtures\AcmePackage\AcmeCacheableDiscovery',
@@ -97,7 +98,7 @@ final class CompilerTest extends TestCase
 
     public function test_compile_project_discovers_named_middleware_groups(): void
     {
-        $compiled = (new Compiler())->compileProject(__DIR__ . '/Fixtures');
+        $compiled = (new Compiler())->compileProject(new DiscoveryContext(__DIR__ . '/Fixtures'));
 
         self::assertSame(
             [

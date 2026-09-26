@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Broadcasting;
 
-use Kinetis\Cache\NamespaceScanner;
-use Kinetis\Cache\PackageDiscovery;
+use Kinetis\Cache\DiscoveryContext;
 
 /**
  * Mirrors `Kinetis\Mcp\McpDiscovery` exactly: an unrestricted scan of the
@@ -26,15 +25,15 @@ final class BroadcastChannelDiscovery
     /**
      * @param ?list<string> $paths
      */
-    public static function discover(string $projectRoot, ?array $paths = null): BroadcastChannelRegistry
+    public static function discover(DiscoveryContext $context, ?array $paths = null): BroadcastChannelRegistry
     {
         $registry = new BroadcastChannelRegistry();
         $seen = [];
 
         foreach ([
-            ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
-            ...NamespaceScanner::classesUnderFrameworkSegment('Broadcasting'),
-            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
+            ...$context->projectClasses($paths ?? self::pathsFromEnv()),
+            ...$context->frameworkClasses('Broadcasting'),
+            ...$context->packageClasses(),
         ] as $class) {
             if (isset($seen[$class])) {
                 continue;

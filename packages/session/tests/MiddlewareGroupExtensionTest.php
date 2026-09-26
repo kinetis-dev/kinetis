@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Session\Tests;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
@@ -102,7 +103,7 @@ final class MiddlewareGroupExtensionTest extends TestCase
      */
     private function discoveredGroup(): array
     {
-        return GlobalMiddlewareDiscovery::discoverAll(self::PROJECT_ROOT)['groups']['session'];
+        return GlobalMiddlewareDiscovery::discoverAll(new DiscoveryContext(self::PROJECT_ROOT))['groups']['session'];
     }
 
     private function client(): TestClient

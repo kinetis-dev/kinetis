@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
  *
  * Each test builds a throwaway, self-contained consumer project in a
  * real temp directory: its own composer.json (a single App\ PSR-4 root,
- * which is all NamespaceScanner::classesInProject() needs to find a
+ * which is all the project class scan needs to find a
  * command — no real `composer install` required), a bootstrap.php
  * binding a custom logger that writes to a known file (so the
  * subprocess's own log calls are observable after it exits, since the

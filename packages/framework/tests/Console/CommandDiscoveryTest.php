@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Console;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Console\CommandDiscovery;
 use PHPUnit\Framework\TestCase;
 
@@ -11,7 +12,7 @@ final class CommandDiscoveryTest extends TestCase
 {
     public function test_discovers_the_built_in_commands(): void
     {
-        $registry = CommandDiscovery::discover(__DIR__ . '/Fixtures/does-not-exist');
+        $registry = CommandDiscovery::discover(new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist'));
 
         self::assertNotNull($registry->findCommand('build'));
         self::assertNotNull($registry->findCommand('routes:list'));
@@ -19,7 +20,7 @@ final class CommandDiscoveryTest extends TestCase
 
     public function test_discovers_a_projects_own_commands_anywhere_under_its_psr4_root(): void
     {
-        $registry = CommandDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures');
+        $registry = CommandDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'));
 
         self::assertNotNull($registry->findCommand('fixture:ping'));
         self::assertNotNull($registry->findCommand('fixture:unconventional'));
@@ -27,7 +28,7 @@ final class CommandDiscoveryTest extends TestCase
 
     public function test_paths_restricts_the_project_wide_scan(): void
     {
-        $registry = CommandDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures', ['Console']);
+        $registry = CommandDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'), ['Console']);
 
         self::assertNotNull($registry->findCommand('fixture:ping'));
         self::assertNull($registry->findCommand('fixture:unconventional'));
@@ -38,7 +39,7 @@ final class CommandDiscoveryTest extends TestCase
         putenv('COMMAND_DISCOVERY_PATHS=Console');
 
         try {
-            $registry = CommandDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures');
+            $registry = CommandDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'));
 
             self::assertNotNull($registry->findCommand('fixture:ping'));
             self::assertNull($registry->findCommand('fixture:unconventional'));
@@ -52,7 +53,7 @@ final class CommandDiscoveryTest extends TestCase
         putenv('COMMAND_DISCOVERY_PATHS=DoesNotExist');
 
         try {
-            $registry = CommandDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures', []);
+            $registry = CommandDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'), []);
 
             self::assertNotNull($registry->findCommand('fixture:ping'));
             self::assertNotNull($registry->findCommand('fixture:unconventional'));
@@ -68,7 +69,7 @@ final class CommandDiscoveryTest extends TestCase
         // surface from classesInProject() *and* classesUnderFrameworkSegment()
         // — a real crash (InvalidCommandException: duplicate name) caught by
         // actually running bin/kinetis against this monorepo, not by review.
-        $registry = CommandDiscovery::discover(dirname(__DIR__, 2));
+        $registry = CommandDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2)));
 
         self::assertNotNull($registry->findCommand('build'));
         self::assertNotNull($registry->findCommand('routes:list'));

@@ -125,36 +125,36 @@ final class Compiler
 
     /**
      * The one entry point every lazy-first-run/build path calls — "compile
-     * everything" doesn't exist twice, they all just call this. Routes,
-     * commands, #[AsGlobalMiddleware]/#[AsOpenApiMiddleware]/
-     * #[AsMiddlewareGroup]-attributed classes, and #[Listener]-attributed
-     * methods are all discovered by namespace — see
-     * RouteDiscovery/CommandDiscovery/GlobalMiddlewareDiscovery/EventListenerDiscovery.
-     * GlobalMiddlewareDiscovery::discoverAll() performs exactly one scan
-     * for all three middleware attributes rather than three, and its
-     * result is handed to compile() whole rather than destructured per
-     * bucket. kinetis/mcp is one example of the pluggable mechanism
-     * below, not a special case this method knows anything about: its
-     * McpRegistry declares itself as that package's own
-     * CacheableDiscoveryInterface class, so PluginDiscovery::discover()
-     * compiles its tool/resource definitions into PluginCache here too.
-     * Any package declaring its own CacheableDiscoveryInterface class
-     * (see PackageDiscovery::discoveryClasses()) is compiled the same
-     * way — that's the whole point of the mechanism.
+     * everything" doesn't exist twice, they all just call this, each with
+     * a fresh DiscoveryContext of its own. Routes, commands,
+     * #[AsGlobalMiddleware]/#[AsOpenApiMiddleware]/#[AsMiddlewareGroup]-
+     * attributed classes, and #[Listener]-attributed methods are all
+     * discovered by namespace — see RouteDiscovery/CommandDiscovery/
+     * GlobalMiddlewareDiscovery/EventListenerDiscovery — through that one
+     * context, so a root they share is walked once.
+     * GlobalMiddlewareDiscovery::discoverAll() buckets all three
+     * middleware attributes from one candidate list, and its result is
+     * handed to compile() whole rather than destructured per bucket.
+     * kinetis/mcp is one example of the pluggable mechanism below, not a
+     * special case this method knows anything about: its McpRegistry
+     * declares itself as that package's own CacheableDiscoveryInterface
+     * class, so PluginDiscovery::discover() compiles its tool/resource
+     * definitions into PluginCache here too, through the same context.
+     * Any package declaring its own CacheableDiscoveryInterface class is
+     * compiled the same way — that's the whole point of the mechanism.
      */
-    public function compileProject(string $projectRoot): CompiledCache
+    public function compileProject(DiscoveryContext $context): CompiledCache
     {
         // Discovered first, not alongside the others: RouteDiscovery needs
         // the global middleware list itself, to resolve any #[RoutePrefix]
         // those classes declare into every route's own compiled path — see
         // Router::register()'s own doc comment.
-        $middleware = GlobalMiddlewareDiscovery::discoverAll($projectRoot);
-        $router = RouteDiscovery::discover($projectRoot, globalMiddleware: $middleware['global']);
-        $commands = CommandDiscovery::discover($projectRoot);
-        $listeners = EventListenerDiscovery::discover($projectRoot);
-        $packageBootstraps = PackageDiscovery::bootstrapClasses($projectRoot);
-        $pluginData = PluginDiscovery::discover($projectRoot);
+        $middleware = GlobalMiddlewareDiscovery::discoverAll($context);
+        $router = RouteDiscovery::discover($context, globalMiddleware: $middleware['global']);
+        $commands = CommandDiscovery::discover($context);
+        $listeners = EventListenerDiscovery::discover($context);
+        $pluginData = PluginDiscovery::discover($context);
 
-        return $this->compile($router, $commands, $listeners, $middleware, $packageBootstraps, $pluginData);
+        return $this->compile($router, $commands, $listeners, $middleware, $context->packageBootstraps(), $pluginData);
     }
 }

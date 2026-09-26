@@ -7,6 +7,7 @@ namespace Kinetis\Console;
 use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Compiler;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Runtime\ProjectRoot;
 
@@ -38,7 +39,7 @@ final readonly class BuildCommand
         // Compiles from the project's own source every time, never from
         // whatever artifact happens to be sitting there — the published
         // file is an output of this command, never an input to it.
-        $compiled = new Compiler()->compileProject($projectRoot);
+        $compiled = new Compiler()->compileProject(new DiscoveryContext($projectRoot));
 
         // The whole artifact, through the same reconstruction contracts a
         // boot enforces, before any of it is written: a section whose

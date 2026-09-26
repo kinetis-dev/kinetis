@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Cache;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\PackageDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Console\CommandDiscovery;
@@ -21,7 +22,7 @@ final class PackageDiscoveryTest extends TestCase
 
     public function test_scan_roots_resolve_a_declared_prefix_through_the_packages_own_psr4_map(): void
     {
-        $roots = PackageDiscovery::scanRoots(self::FIXTURE_ROOT);
+        $roots = new PackageDiscovery(self::FIXTURE_ROOT)->scanRoots();
 
         self::assertCount(1, $roots);
         self::assertSame('Kinetis\Tests\Cache\Fixtures\AcmePackage\Console\\', $roots[0]['prefix']);
@@ -34,31 +35,48 @@ final class PackageDiscoveryTest extends TestCase
         // acme/bad-prefix declares "Totally\Unrelated\Namespace\" — no
         // root of its own matches, so it contributes nothing (and the
         // acme/plain package with no extra.kinetis is invisible).
-        $prefixes = array_column(PackageDiscovery::scanRoots(self::FIXTURE_ROOT), 'prefix');
+        $prefixes = array_column(new PackageDiscovery(self::FIXTURE_ROOT)->scanRoots(), 'prefix');
 
         self::assertSame(['Kinetis\Tests\Cache\Fixtures\AcmePackage\Console\\'], $prefixes);
+    }
+
+    public function test_a_skipped_prefix_is_reported_once_per_inventory(): void
+    {
+        $logFile = tempnam(sys_get_temp_dir(), 'kinetis_package_discovery_test_');
+        $previous = ini_set('error_log', $logFile);
+
+        try {
+            $context = new DiscoveryContext(self::FIXTURE_ROOT);
+            $context->packageClasses();
+            $context->packageClasses();
+
+            self::assertSame(1, substr_count((string) file_get_contents($logFile), 'acme/bad-prefix'));
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+            unlink($logFile);
+        }
     }
 
     public function test_bootstrap_classes_come_from_extra_kinetis(): void
     {
         self::assertSame(
             [AcmeFixtureBootstrap::class],
-            PackageDiscovery::bootstrapClasses(self::FIXTURE_ROOT),
+            new PackageDiscovery(self::FIXTURE_ROOT)->bootstrapClasses(),
         );
     }
 
     public function test_a_root_without_installed_json_yields_nothing(): void
     {
-        self::assertSame([], PackageDiscovery::scanRoots('/nonexistent-root'));
-        self::assertSame([], PackageDiscovery::bootstrapClasses('/nonexistent-root'));
-        self::assertSame([], PackageDiscovery::discoveryClasses('/nonexistent-root'));
+        self::assertSame([], new PackageDiscovery('/nonexistent-root')->scanRoots());
+        self::assertSame([], new PackageDiscovery('/nonexistent-root')->bootstrapClasses());
+        self::assertSame([], new PackageDiscovery('/nonexistent-root')->discoveryClasses());
     }
 
     public function test_discovery_classes_come_from_extra_kinetis(): void
     {
         self::assertSame(
             [AcmeCacheableDiscovery::class],
-            PackageDiscovery::discoveryClasses(self::FIXTURE_ROOT),
+            new PackageDiscovery(self::FIXTURE_ROOT)->discoveryClasses(),
         );
     }
 
@@ -67,15 +85,32 @@ final class PackageDiscoveryTest extends TestCase
         // acme/bad-discovery declares AcmeMarker, a plain value object —
         // it doesn't implement CacheableDiscoveryInterface, so it
         // contributes nothing rather than crashing every request.
+        $discovery = new PackageDiscovery(self::FIXTURE_ROOT);
+
+        self::assertSame([AcmeCacheableDiscovery::class], $discovery->discoveryClasses());
         self::assertSame(
-            [AcmeCacheableDiscovery::class],
-            PackageDiscovery::discoveryClasses(self::FIXTURE_ROOT),
+            ['package' => 'acme/bad-discovery', 'reason' => 'it does not implement CacheableDiscoveryInterface'],
+            $discovery->skippedDiscoveryDeclaration(AcmeMarker::class),
+        );
+    }
+
+    public function test_a_discovery_class_that_does_not_exist_is_skipped_with_its_own_reason(): void
+    {
+        // acme/missing-discovery declares a class no autoloader can find,
+        // a distinct mistake from acme/bad-discovery's real-but-wrong
+        // class — the two must not collapse into one diagnostic.
+        $discovery = new PackageDiscovery(self::FIXTURE_ROOT);
+
+        self::assertSame([AcmeCacheableDiscovery::class], $discovery->discoveryClasses());
+        self::assertSame(
+            ['package' => 'acme/missing-discovery', 'reason' => 'no such class is autoloadable'],
+            $discovery->skippedDiscoveryDeclaration('Kinetis\Tests\Cache\Fixtures\AcmePackage\DoesNotExistDiscovery'),
         );
     }
 
     public function test_command_discovery_finds_a_package_provided_command(): void
     {
-        $registry = CommandDiscovery::discover(self::FIXTURE_ROOT);
+        $registry = CommandDiscovery::discover(new DiscoveryContext(self::FIXTURE_ROOT));
 
         $definition = $registry->findCommand('acme:ping');
 
@@ -88,7 +123,7 @@ final class PackageDiscoveryTest extends TestCase
         $app = new AppScope();
         $config = new Config([]);
 
-        RoutesFile::loadBootstrap(self::FIXTURE_ROOT)($app, $config);
+        RoutesFile::loadBootstrap(self::FIXTURE_ROOT, new DiscoveryContext(self::FIXTURE_ROOT)->packageBootstraps())($app, $config);
         $app->boot();
 
         // The package's binding survives where the app didn't touch it...

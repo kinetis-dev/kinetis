@@ -1,0 +1,23 @@
+{
+    "packages": [
+        {
+            "name": "acme/consumer",
+            "install-path": "../acme/consumer",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\ConsumerSection"
+                }
+            }
+        },
+        {
+            "name": "acme/upstream",
+            "install-path": "../acme/upstream",
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\Sections\\UpstreamSection"
+                }
+            }
+        }
+    ],
+    "dev": true
+}

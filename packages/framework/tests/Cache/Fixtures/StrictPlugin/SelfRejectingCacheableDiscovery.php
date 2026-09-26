@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Cache\Fixtures\StrictPlugin;
 
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 
 /**
@@ -27,7 +28,7 @@ final readonly class SelfRejectingCacheableDiscovery implements CacheableDiscove
     ) {}
 
     #[\Override]
-    public static function compile(string $projectRoot): array
+    public static function compile(DiscoveryContext $context): array
     {
         return ['values' => ['compiled']];
     }

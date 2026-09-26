@@ -47,6 +47,20 @@
                     "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\AcmeMarker"
                 }
             }
+        },
+        {
+            "name": "acme/missing-discovery",
+            "install-path": "../../../AcmePackage",
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\": ""
+                }
+            },
+            "extra": {
+                "kinetis": {
+                    "discovery": "Kinetis\\Tests\\Cache\\Fixtures\\AcmePackage\\DoesNotExistDiscovery"
+                }
+            }
         }
     ],
     "dev": true

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Cache;
 
-use Kinetis\Cache\NamespaceScanner;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Tests\Cache\Fixtures\Http\AbstractScannedController;
 use PHPUnit\Framework\TestCase;
 
@@ -12,7 +12,7 @@ final class NamespaceScannerTest extends TestCase
 {
     public function test_finds_classes_anywhere_under_the_projects_own_psr4_root(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures'));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses();
 
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Console\DiscoveredPingCommand', $classes);
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Http\DiscoveredPingController', $classes);
@@ -20,14 +20,14 @@ final class NamespaceScannerTest extends TestCase
 
     public function test_finds_a_class_in_a_deliberately_unconventional_location(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures'));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses();
 
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalPingCommand', $classes);
     }
 
     public function test_paths_restricts_the_scan_to_the_given_sub_paths(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures', ['Console']));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses(['Console']);
 
         self::assertContains('Kinetis\Tests\Cache\Fixtures\Console\DiscoveredPingCommand', $classes);
         self::assertNotContains('Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalPingCommand', $classes);
@@ -35,14 +35,14 @@ final class NamespaceScannerTest extends TestCase
 
     public function test_yields_nothing_for_a_path_with_no_matching_directory(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures', ['DoesNotExist']));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses(['DoesNotExist']);
 
         self::assertSame([], $classes);
     }
 
     public function test_yields_nothing_when_the_project_has_no_composer_json(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures/does-not-exist'));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist')->projectClasses();
 
         self::assertSame([], $classes);
     }
@@ -56,11 +56,32 @@ final class NamespaceScannerTest extends TestCase
         $previous = ini_set('error_log', $logFile);
 
         try {
-            iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures/does-not-exist'));
+            new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist')->projectClasses();
 
             $logged = (string) file_get_contents($logFile);
             self::assertStringContainsString('found no PSR-4 root to scan', $logged);
             self::assertStringContainsString('autoload', $logged);
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+            unlink($logFile);
+        }
+    }
+
+    public function test_warns_once_per_context_however_many_discoverers_scan(): void
+    {
+        $logFile = tempnam(sys_get_temp_dir(), 'kinetis_namespace_scanner_test_');
+        $previous = ini_set('error_log', $logFile);
+
+        try {
+            $context = new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist');
+            $context->projectClasses();
+            $context->projectClasses(['Console']);
+
+            self::assertSame(1, substr_count((string) file_get_contents($logFile), 'found no PSR-4 root to scan'));
+
+            new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist')->projectClasses();
+
+            self::assertSame(2, substr_count((string) file_get_contents($logFile), 'found no PSR-4 root to scan'));
         } finally {
             ini_set('error_log', $previous === false ? '' : $previous);
             unlink($logFile);
@@ -73,7 +94,7 @@ final class NamespaceScannerTest extends TestCase
         $previous = ini_set('error_log', $logFile);
 
         try {
-            iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures'));
+            new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses();
 
             self::assertSame('', file_get_contents($logFile));
         } finally {
@@ -84,7 +105,7 @@ final class NamespaceScannerTest extends TestCase
 
     public function test_deduplicates_classes_found_through_overlapping_paths(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures', ['Console', 'Console']));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses(['Console', 'Console']);
 
         self::assertSame(
             ['Kinetis\Tests\Cache\Fixtures\Console\DiscoveredPingCommand'],
@@ -92,31 +113,18 @@ final class NamespaceScannerTest extends TestCase
         );
     }
 
-    public function test_scans_a_fixed_segment_under_the_given_framework_root(): void
+    public function test_a_framework_segment_scan_covers_kinetiss_own_package_root(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesUnderFrameworkSegment(
-            'Console',
-            __DIR__ . '/Fixtures',
-        ));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist')->frameworkClasses('Console');
 
-        self::assertContains('Kinetis\Tests\Cache\Fixtures\Console\DiscoveredPingCommand', $classes);
+        self::assertContains('Kinetis\Console\BuildCommand', $classes);
     }
 
     public function test_a_framework_segment_scan_ignores_classes_outside_that_segment(): void
     {
-        $classes = iterator_to_array(NamespaceScanner::classesUnderFrameworkSegment(
-            'Console',
-            __DIR__ . '/Fixtures',
-        ));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures/does-not-exist')->frameworkClasses('Console');
 
-        self::assertNotContains('Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalPingCommand', $classes);
-    }
-
-    public function test_the_real_kinetis_framework_root_is_scanned_by_default(): void
-    {
-        $classes = iterator_to_array(NamespaceScanner::classesUnderFrameworkSegment('Console'));
-
-        self::assertContains('Kinetis\Console\BuildCommand', $classes);
+        self::assertNotContains('Kinetis\Http\OpenApi\DocumentationController', $classes);
     }
 
     public function test_does_not_yield_a_class_that_cannot_be_registered(): void
@@ -125,7 +133,7 @@ final class NamespaceScannerTest extends TestCase
         // enum under a scanned namespace has to be skipped rather than
         // fail the application — AttributeScope::reflect() is what fails
         // loudly when one is registered by name instead.
-        $classes = iterator_to_array(NamespaceScanner::classesInProject(__DIR__ . '/Fixtures'));
+        $classes = new DiscoveryContext(__DIR__ . '/Fixtures')->projectClasses();
 
         self::assertNotContains(AbstractScannedController::class, $classes);
         // The concrete controller in the same directory still is yielded,

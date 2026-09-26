@@ -6,13 +6,14 @@ namespace Kinetis\Broadcasting\Tests;
 
 use Kinetis\Broadcasting\BroadcastChannelDiscovery;
 use Kinetis\Broadcasting\Tests\DiscoveryFixtureProject\DiscoveredChannelAuthorizer;
+use Kinetis\Cache\DiscoveryContext;
 use PHPUnit\Framework\TestCase;
 
 final class BroadcastChannelDiscoveryTest extends TestCase
 {
     public function test_discovers_a_projects_own_channel_authorizer_anywhere_under_its_psr4_root(): void
     {
-        $registry = BroadcastChannelDiscovery::discover(__DIR__ . '/DiscoveryFixtureProject');
+        $registry = BroadcastChannelDiscovery::discover(new DiscoveryContext(__DIR__ . '/DiscoveryFixtureProject'));
 
         $match = $registry->match('discovered.7');
 
@@ -23,7 +24,7 @@ final class BroadcastChannelDiscoveryTest extends TestCase
 
     public function test_discovers_nothing_when_the_project_root_has_no_matching_classes(): void
     {
-        $registry = BroadcastChannelDiscovery::discover(sys_get_temp_dir());
+        $registry = BroadcastChannelDiscovery::discover(new DiscoveryContext(sys_get_temp_dir()));
 
         self::assertNull($registry->match('discovered.7'));
     }
@@ -43,7 +44,7 @@ final class BroadcastChannelDiscoveryTest extends TestCase
         // call that would have thrown one without that dedup.
         $frameworkRoot = dirname(__DIR__, 2) . '/framework';
 
-        $registry = BroadcastChannelDiscovery::discover($frameworkRoot);
+        $registry = BroadcastChannelDiscovery::discover(new DiscoveryContext($frameworkRoot));
 
         self::assertNull($registry->match('does-not-exist'));
     }

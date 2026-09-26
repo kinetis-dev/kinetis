@@ -9,30 +9,33 @@ use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Container\AppScope;
 
 /**
- * The runtime half of the pluggable AOT-cache mechanism — mirrors the
- * `null`-means-discover-live convention `RoutesFile::loadBootstrap()`'s
- * own `$packageBootstraps` parameter already establishes, so
- * {@see \Kinetis\Runtime\HttpStartup}/`bin/kinetis` need only compute one
- * nullable array per environment branch and call `bind()`, identically
- * either way.
+ * The runtime half of the pluggable AOT-cache mechanism.
  *
- * `discover()` is the live path: every installed package's declared
- * {@see CacheableDiscoveryInterface} class, called fresh — the same
- * method {@see Compiler::compileProject()} calls to build the shared
- * cache file in the first place, so there is exactly one algorithm
- * producing this data, not two.
+ * `discover()` compiles every installed package's declared
+ * {@see CacheableDiscoveryInterface} section through one
+ * {@see DiscoveryContext} — the same method {@see Compiler::compileProject()}
+ * calls to build the shared cache file, so there is exactly one algorithm
+ * producing this data, not two. `reconstruct()` turns that data, fresh or
+ * read back from the artifact, into live instances, and
+ * `bindInstances()` binds them.
  */
 final class PluginDiscovery
 {
     /**
-     * @return array<class-string, array<array-key, mixed>>
+     * Every installed section's compiled data, keyed by section class in
+     * Composer's recorded order. Each is obtained through
+     * {@see DiscoveryContext::compiled()}, so a section another one
+     * already read is not compiled again, and a section's dependencies
+     * finish compiling before it does, whatever Composer's order.
+     *
+     * @return array<class-string<CacheableDiscoveryInterface>, array<array-key, mixed>>
      */
-    public static function discover(string $projectRoot): array
+    public static function discover(DiscoveryContext $context): array
     {
         $data = [];
 
-        foreach (PackageDiscovery::discoveryClasses($projectRoot) as $class) {
-            $data[$class] = $class::compile($projectRoot);
+        foreach ($context->discoverySections() as $class) {
+            $data[$class] = $context->compiled($class);
         }
 
         return $data;
@@ -40,16 +43,16 @@ final class PluginDiscovery
 
     /**
      * Reconstructs every entry via its own class's `fromArray()` — the
-     * one reconstruction algorithm `bind()` below and
+     * one reconstruction algorithm every live development boot and
      * `BootSequence`'s cache-bundle validation both use, rather than
      * each repeating this loop. Propagates whatever a class's own
      * `fromArray()` throws for malformed data unchanged: this method has
      * no fallback of its own to offer, so the caller decides what a
      * failure means (a cache-bundle load treats it as corruption and
-     * falls back to a fresh compile; `bind()` below simply lets it
+     * falls back to a fresh compile; a development boot simply lets it
      * propagate, since a package's own `fromArray()` failing against
-     * data it *itself* just produced via `compile()` — the live path —
-     * is a real bug, not something to paper over).
+     * data it *itself* just produced via `compile()` is a real bug, not
+     * something to paper over).
      *
      * The map itself is validated before any dynamic dispatch, the same
      * discipline `EventListenerRegistry::fromArray()` already applies to
@@ -94,14 +97,11 @@ final class PluginDiscovery
      * `PackageBootstrapInterface::register()` never touches this: by the
      * time it runs, the binding already exists.
      *
-     * The pure binding half of what `bind()` below does, split out so a
-     * caller that already reconstructed instances once — `BootSequence::
-     * run()`, given `resolveHttp()`/`resolveCli()`'s own already-
-     * reconstructed result — never reconstructs them a second time.
-     * `fromArray()` is object construction, not a guaranteed pure
-     * validator: a second call could have side effects the first
-     * already had, cost real construction time twice, or even fail
-     * where the first succeeded.
+     * Binding only, never reconstruction: `fromArray()` is object
+     * construction, not a guaranteed pure validator, so the caller that
+     * reconstructed instances once — `BootSequence::run()`, given
+     * `resolveHttp()`/`resolveCli()`'s result or a development boot's
+     * `reconstruct()` — binds exactly those.
      *
      * @param array<class-string, object> $instances
      */
@@ -110,24 +110,5 @@ final class PluginDiscovery
         foreach ($instances as $class => $instance) {
             $app->instance($class, $instance);
         }
-    }
-
-    /**
-     * Reconstructs each entry (via `reconstruct()` above) and binds it
-     * via `bindInstances()`. A convenience for a caller with raw data
-     * (or none) that doesn't need reconstruct-once-reuse-twice — see
-     * `bindInstances()` for the caller that does.
-     *
-     * $data null means "no precompiled data available" (development, or
-     * production with nothing cached yet) — discovered live instead, the
-     * exact tolerance `Hydrator`'s own binding plans already give a class
-     * absent from a supplied plan map: the cache never has to be complete
-     * for correctness.
-     *
-     * @param ?array<class-string, array<array-key, mixed>> $data
-     */
-    public static function bind(AppScope $app, string $projectRoot, ?array $data): void
-    {
-        self::bindInstances($app, self::reconstruct($data ?? self::discover($projectRoot)));
     }
 }

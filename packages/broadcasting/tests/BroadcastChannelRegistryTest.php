@@ -20,6 +20,7 @@ use Kinetis\Broadcasting\Tests\Fixtures\TeamPresenceAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\WrongParameterCountAuthorizer;
 use Kinetis\Broadcasting\Tests\Fixtures\WrongParameterNameAuthorizer;
 use Kinetis\Cache\CacheableDiscoveryInterface;
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\Exception\CacheArtifactExceptionInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -292,7 +293,7 @@ final class BroadcastChannelRegistryTest extends TestCase
 
     public function test_compile_delegates_to_discovery_and_reduces_it_to_plain_data(): void
     {
-        $data = BroadcastChannelRegistry::compile(__DIR__ . '/DiscoveryFixtureProject');
+        $data = BroadcastChannelRegistry::compile(new DiscoveryContext(__DIR__ . '/DiscoveryFixtureProject'));
 
         $reloaded = BroadcastChannelRegistry::fromArray($data);
         $match = $reloaded->match('discovered.7');

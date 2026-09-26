@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Events;
 
-use Kinetis\Cache\NamespaceScanner;
-use Kinetis\Cache\PackageDiscovery;
+use Kinetis\Cache\DiscoveryContext;
 
 /**
  * Builds an EventListenerRegistry from every class found anywhere under a
@@ -29,7 +28,7 @@ final class EventListenerDiscovery
     /**
      * @param list<string>|null $paths
      */
-    public static function discover(string $projectRoot, ?array $paths = null): EventListenerRegistry
+    public static function discover(DiscoveryContext $context, ?array $paths = null): EventListenerRegistry
     {
         $registry = new EventListenerRegistry();
 
@@ -40,9 +39,9 @@ final class EventListenerDiscovery
         // class, so a repeated name across sources is simply a no-op on
         // its second and later occurrences.
         foreach ([
-            ...NamespaceScanner::classesInProject($projectRoot, $paths ?? self::pathsFromEnv()),
-            ...NamespaceScanner::classesUnderFrameworkSegment('Events'),
-            ...NamespaceScanner::classesUnderPackageRoots(PackageDiscovery::scanRoots($projectRoot)),
+            ...$context->projectClasses($paths ?? self::pathsFromEnv()),
+            ...$context->frameworkClasses('Events'),
+            ...$context->packageClasses(),
         ] as $class) {
             $registry->register($class);
         }

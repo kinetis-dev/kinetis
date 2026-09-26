@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Events;
 
+use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Events\EventListenerDiscovery;
 use Kinetis\Tests\Cache\Fixtures\Domain\Orders\UnconventionalListener;
 use Kinetis\Tests\Cache\Fixtures\Events\DiscoveredEvent;
@@ -16,14 +17,14 @@ final class EventListenerDiscoveryTest extends TestCase
 {
     public function test_discovers_no_listeners_when_the_project_root_does_not_exist(): void
     {
-        $registry = EventListenerDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures/does-not-exist');
+        $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures/does-not-exist'));
 
         self::assertSame([], $registry->listenersFor(DiscoveredEvent::class));
     }
 
     public function test_discovers_a_projects_own_listeners_anywhere_under_its_psr4_root(): void
     {
-        $registry = EventListenerDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures');
+        $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'));
 
         $classes = array_column($registry->listenersFor(DiscoveredEvent::class), 'class');
 
@@ -33,7 +34,7 @@ final class EventListenerDiscoveryTest extends TestCase
 
     public function test_orders_by_priority_descending_with_class_name_as_a_tiebreak(): void
     {
-        $registry = EventListenerDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures');
+        $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'));
 
         $classes = array_column($registry->listenersFor(DiscoveredEvent::class), 'class');
 
@@ -54,7 +55,7 @@ final class EventListenerDiscoveryTest extends TestCase
 
     public function test_paths_restricts_the_project_wide_scan(): void
     {
-        $registry = EventListenerDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures', ['Events']);
+        $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'), ['Events']);
 
         $classes = array_column($registry->listenersFor(DiscoveredEvent::class), 'class');
 
@@ -67,7 +68,7 @@ final class EventListenerDiscoveryTest extends TestCase
         putenv('LISTENER_DISCOVERY_PATHS=Events');
 
         try {
-            $registry = EventListenerDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures');
+            $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'));
 
             $classes = array_column($registry->listenersFor(DiscoveredEvent::class), 'class');
 
@@ -83,7 +84,7 @@ final class EventListenerDiscoveryTest extends TestCase
         putenv('LISTENER_DISCOVERY_PATHS=DoesNotExist');
 
         try {
-            $registry = EventListenerDiscovery::discover(dirname(__DIR__) . '/Cache/Fixtures', []);
+            $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__) . '/Cache/Fixtures'), []);
 
             $classes = array_column($registry->listenersFor(DiscoveredEvent::class), 'class');
 
@@ -102,7 +103,7 @@ final class EventListenerDiscoveryTest extends TestCase
         // Kinetis\Events carries #[Listener] today, so this can only
         // prove "runs without error" — but it's the exact call that would
         // have silently double-registered before the cross-pass dedup fix.
-        $registry = EventListenerDiscovery::discover(dirname(__DIR__, 2));
+        $registry = EventListenerDiscovery::discover(new DiscoveryContext(dirname(__DIR__, 2)));
 
         self::assertSame([], $registry->listenersFor(DiscoveredEvent::class));
     }
