@@ -482,7 +482,14 @@ final class EntityPlan
         if ($value === null) {
             return $property['nullable']
                 ? null
-                : throw MappingException::invalidValue($this->class, $property['name'], self::expected($property), $value);
+                : throw MappingException::invalidValue(
+                    $this->class,
+                    $property['name'],
+                    $this->table,
+                    $property['column'],
+                    self::expected($property),
+                    $value,
+                );
         }
 
         if ($enum !== null && $value instanceof $enum) {
@@ -499,7 +506,14 @@ final class EntityPlan
         };
 
         if ($converted === null) {
-            throw MappingException::invalidValue($this->class, $property['name'], self::expected($property), $value);
+            throw MappingException::invalidValue(
+                $this->class,
+                $property['name'],
+                $this->table,
+                $property['column'],
+                self::expected($property),
+                $value,
+            );
         }
 
         if ($enum === null) {
@@ -508,7 +522,14 @@ final class EntityPlan
 
         /** @var int|string $converted a backed enum's type is its backing type */
         return $enum::tryFrom($converted)
-            ?? throw MappingException::unknownEnumCase($this->class, $property['name'], $enum, $value);
+            ?? throw MappingException::unknownEnumCase(
+                $this->class,
+                $property['name'],
+                $this->table,
+                $property['column'],
+                $enum,
+                $value,
+            );
     }
 
     private static function databaseValue(mixed $converted): null|bool|int|float|string

@@ -12,9 +12,9 @@ use RuntimeException;
  * target or an entity's property value to write outside the mapping
  * contract. Every one is thrown before SQL runs or before an entity is
  * allocated, but a missing or ambiguous relationship target, which is thrown
- * after its select and before the relationship is assigned. A message names
- * the class, property and column, and describes a value only by its kind: a
- * column can hold a secret.
+ * after its select and before the relationship is assigned. A mapped-value
+ * message names the class, property, table and column, and describes the
+ * value only by its kind: a column can hold a secret.
  */
 final class MappingException extends RuntimeException
 {
@@ -225,16 +225,39 @@ final class MappingException extends RuntimeException
         return new self("A row loaded for {$class} has a null identifier.");
     }
 
-    public static function invalidValue(string $class, string $property, string $expected, mixed $value): self
+    public static function invalidValue(
+        string $class,
+        string $property,
+        string $table,
+        string $column,
+        string $expected,
+        mixed $value,
+    ): self
     {
-        return new self("{$class}::\${$property} takes {$expected}, got " . get_debug_type($value) . '.');
+        return new self(
+            "{$class}::\${$property} takes {$expected}, got " . get_debug_type($value) . '. '
+            . self::mappingContext($table, $column),
+        );
     }
 
     /** @param class-string $enum */
-    public static function unknownEnumCase(string $class, string $property, string $enum, mixed $value): self
+    public static function unknownEnumCase(
+        string $class,
+        string $property,
+        string $table,
+        string $column,
+        string $enum,
+        mixed $value,
+    ): self
     {
         return new self(
-            "{$class}::\${$property} takes a {$enum} case, and the " . get_debug_type($value) . ' value names none.',
+            "{$class}::\${$property} takes a {$enum} case, and the " . get_debug_type($value) . ' value names none. '
+            . self::mappingContext($table, $column),
         );
+    }
+
+    private static function mappingContext(string $table, string $column): string
+    {
+        return "It maps to table \"{$table}\", column \"{$column}\".";
     }
 }
