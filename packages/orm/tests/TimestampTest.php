@@ -29,6 +29,10 @@ final class TimestampTest extends TestCase
 {
     private const string EXPECTED = 'takes a DateTimeImmutable, or a UTC "Y-m-d H:i:s" string with up to six fraction digits and no offset, in UTC years 0001 to 9999';
 
+    private const string OCCURRED_AT = ' It maps to table "events", column "occurred_at".';
+
+    private const string ARCHIVED_AT = ' It maps to table "events", column "archived_at".';
+
     private string $defaultZone;
 
     private SpyMysqlLink $link;
@@ -119,7 +123,7 @@ final class TimestampTest extends TestCase
             $this->entities->repository(Event::class)->query()->get();
             self::fail('The result was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Event::class . '::$occurredAt ' . self::EXPECTED . ', got ' . get_debug_type($value) . '.', $e->getMessage());
+            self::assertSame(Event::class . '::$occurredAt ' . self::EXPECTED . ', got ' . get_debug_type($value) . '.' . self::OCCURRED_AT, $e->getMessage());
         }
 
         gc_collect_cycles();
@@ -161,7 +165,7 @@ final class TimestampTest extends TestCase
             $query->where('archivedAt', '=', $value)->get();
             self::fail('The value was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Event::class . '::$archivedAt ' . self::EXPECTED . ', or null, got ' . get_debug_type($value) . '.', $e->getMessage());
+            self::assertSame(Event::class . '::$archivedAt ' . self::EXPECTED . ', or null, got ' . get_debug_type($value) . '.' . self::ARCHIVED_AT, $e->getMessage());
         }
 
         self::assertSame([], $this->link->calls);
@@ -210,7 +214,7 @@ final class TimestampTest extends TestCase
             $this->entities->repository(Event::class)->query()->cursorPaginate(2, $cursor, 'occurredAt');
             self::fail('The cursor was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Event::class . '::$occurredAt ' . self::EXPECTED . ', got string.', $e->getMessage());
+            self::assertSame(Event::class . '::$occurredAt ' . self::EXPECTED . ', got string.' . self::OCCURRED_AT, $e->getMessage());
         }
 
         self::assertSame([], $this->link->calls);
@@ -250,7 +254,7 @@ final class TimestampTest extends TestCase
             $this->entities->persist($late);
             self::fail('The instant was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Event::class . '::$occurredAt ' . self::EXPECTED . ', got DateTimeImmutable.', $e->getMessage());
+            self::assertSame(Event::class . '::$occurredAt ' . self::EXPECTED . ', got DateTimeImmutable.' . self::OCCURRED_AT, $e->getMessage());
         }
 
         self::assertFalse($this->entities->contains($late));

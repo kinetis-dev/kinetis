@@ -495,11 +495,12 @@ final class RelationshipTest extends TestCase
      */
     public static function refusedBeforeSql(): iterable
     {
-        $entity = Post::class . '::$author takes a string, got ' . Author::class . '.';
+        $mapping = ' It maps to table "posts", column "written_by".';
+        $entity = Post::class . '::$author takes a string, got ' . Author::class . '.' . $mapping;
 
         yield 'an entity as a predicate value' => [static fn (EntityQuery $q): mixed => $q->where('author', '=', self::newAuthor('ada')), $entity];
         yield 'an entity in whereIn()' => [static fn (EntityQuery $q): mixed => $q->whereIn('author', ['ada', self::newAuthor('ada')]), $entity];
-        yield 'null on a non-nullable relationship' => [static fn (EntityQuery $q): mixed => $q->where('author', '=', null), Post::class . '::$author takes a string, got null.'];
+        yield 'null on a non-nullable relationship' => [static fn (EntityQuery $q): mixed => $q->where('author', '=', null), Post::class . '::$author takes a string, got null.' . $mapping];
         yield 'an empty path' => [static fn (EntityQuery $q): mixed => $q->with(''), MappingException::invalidRelationPath(Post::class, '')->getMessage()];
         yield 'an empty segment' => [static fn (EntityQuery $q): mixed => $q->with('author', 'author..organization'), MappingException::invalidRelationPath(Post::class, 'author..organization')->getMessage()];
         yield 'an unknown property' => [static fn (EntityQuery $q): mixed => $q->with('writer'), MappingException::unknownProperty(Post::class, 'writer')->getMessage()];

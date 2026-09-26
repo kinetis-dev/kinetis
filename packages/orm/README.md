@@ -346,8 +346,9 @@ Every entity query selects all mapped columns. Loading a row:
 | `Date` | a `Date`, or a string `YYYY-MM-DD` naming a day that exists, loaded as a `Date` (see "Dates") |
 | `?T` | also `null` |
 
-A message names the class, property and column, and describes a value by
-its type only.
+A mapped-value message names the class, property, table and column, and
+describes the value by its type only — never by its potentially secret
+contents.
 
 ## Repositories and queries
 

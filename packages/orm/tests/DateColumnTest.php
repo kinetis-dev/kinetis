@@ -27,6 +27,10 @@ final class DateColumnTest extends TestCase
 {
     private const string EXPECTED = 'takes a Kinetis\\Orm\\Date, or a "Y-m-d" string naming a day that exists in years 0001 to 9999';
 
+    private const string ARRIVES_ON = ' It maps to table "bookings", column "arrives_on".';
+
+    private const string CANCELLED_ON = ' It maps to table "bookings", column "cancelled_on".';
+
     private SpyMysqlLink $link;
 
     private SpyMysqlTransaction $transaction;
@@ -108,7 +112,7 @@ final class DateColumnTest extends TestCase
             $this->entities->repository(Booking::class)->query()->get();
             self::fail('The result was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Booking::class . '::$arrivesOn ' . self::EXPECTED . ', got ' . get_debug_type($value) . '.', $e->getMessage());
+            self::assertSame(Booking::class . '::$arrivesOn ' . self::EXPECTED . ', got ' . get_debug_type($value) . '.' . self::ARRIVES_ON, $e->getMessage());
         }
     }
 
@@ -150,7 +154,7 @@ final class DateColumnTest extends TestCase
             $this->entities->repository(Booking::class)->query()->where('cancelledOn', '=', $value)->get();
             self::fail('The value was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Booking::class . '::$cancelledOn ' . self::EXPECTED . ', or null, got ' . get_debug_type($value) . '.', $e->getMessage());
+            self::assertSame(Booking::class . '::$cancelledOn ' . self::EXPECTED . ', or null, got ' . get_debug_type($value) . '.' . self::CANCELLED_ON, $e->getMessage());
         }
 
         self::assertSame([], $this->link->calls);
@@ -171,7 +175,7 @@ final class DateColumnTest extends TestCase
             $this->entities->repository(Booking::class)->query()->cursorPaginate(2, '2026-09-25 00:00:00', 'arrivesOn');
             self::fail('The cursor was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Booking::class . '::$arrivesOn ' . self::EXPECTED . ', got string.', $e->getMessage());
+            self::assertSame(Booking::class . '::$arrivesOn ' . self::EXPECTED . ', got string.' . self::ARRIVES_ON, $e->getMessage());
         }
 
         self::assertSame([], $this->link->calls);
