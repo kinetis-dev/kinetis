@@ -378,8 +378,10 @@ searches a directory tree.
 
 A success reports `status: "ok"`, `package`, `version`, `path`, `query`,
 `startLine`, `matches` and `hasMore`. `matches` is a source-ordered list
-of `{"line": <integer>, "content": <string>}`, each line without the
-`\n` or `\r\n` the file stores after it, and at most 50 of them.
+of `{"line": <integer>, "content": <string>}`, and at most 50 of them.
+Content is the whole line without its terminator when it fits in 2048
+UTF-8 bytes. A longer line is a valid UTF-8 excerpt containing the first
+literal match and also carries `"truncated": true`.
 Finding nothing is a success with `matches: []` and `hasMore: false`,
 not a refusal. `hasMore: true` means a later line matches as well: no
 cursor comes back, so continue with `startLine` set to the last
@@ -418,7 +420,9 @@ does: literal, case-sensitive, without the line's terminator.
 A success reports `status: "ok"`, `package`, `version`, `path`, `query`,
 `matches` and `hasMore`. `matches` is a list of
 `{"path": <string>, "line": <integer>, "content": <string>}` in bytewise
-order of `path` and then ascending `line`, at most 50 of them. Each
+order of `path` and then ascending `line`, at most 50 of them. Content
+has the same 2048-byte excerpt and `"truncated": true` behavior as the
+single-file search. Each
 `path` is relative to the package root and spelled by the names the
 walk took from the named `path`, a link's own name included, so it is
 the path a window of that file takes. Finding nothing is a success with `matches: []` and
