@@ -98,6 +98,7 @@ sitemap_excludes = [
     "agent-workflow.html",
     "application-recipes.html",
     "agent-correctness.html",
+    "vector.html",
 ]
 
 html_theme_options = {
