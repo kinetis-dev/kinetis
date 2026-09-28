@@ -74,6 +74,7 @@ final class DocsCatalogue
             new DocsPage('mcp', 'Model Context Protocol (MCP)', 'Expose application tools and resources over stdio or guarded HTTP'),
             new DocsPage('mcp-docs', 'MCP Documentation Server', 'Install the standalone server and read Kinetis pages as MCP resources, whole, as bounded line windows or through a literal search of one page'),
             new DocsPage('orbitron', 'Orbitron', 'kinetis/orbitron: a development-only construction harness — what it is, the skeleton quick start, and where the full command and MCP contract lives'),
+            new DocsPage('vector', 'Vector', 'kinetis/vector: routing for the optional schema-driven admin package — the installed-package gate, task routing across resources, jobs, files and UI modes, and the correctness boundaries an agent must prove'),
             new DocsPage('agent-workflow', 'Agent Workflow', 'Entry point for an agent: the current-main/installed-version boundary, and where to route a task'),
             new DocsPage('application-recipes', 'Application Recipes', 'Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each'),
             new DocsPage('agent-correctness', 'Agent Correctness Review', 'A review checklist for persistent-worker, I/O, security and integrity correctness before calling a change done'),

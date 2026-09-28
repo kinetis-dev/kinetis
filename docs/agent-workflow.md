@@ -133,3 +133,5 @@ server does that.
   how to register it on its own.
 - {doc}`mcp` — exposing a project's own application as MCP tools and
   resources.
+- {doc}`vector` — routing for the optional `kinetis/vector` admin
+  package, once `orbitron_inspect` confirms it is installed.

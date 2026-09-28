@@ -119,6 +119,21 @@ final class DocsCatalogueTest extends TestCase
         self::assertStringContainsStringIgnoringCase('trust boundary', $page->description);
     }
 
+    /**
+     * Vector is optional: the catalogue entry names the package and
+     * says so, rather than reading as a page every Kinetis project's
+     * agent must follow.
+     */
+    public function test_the_vector_page_is_catalogued_as_an_optional_package_resource(): void
+    {
+        $page = DocsCatalogue::find(DocsCatalogue::URI_PREFIX . 'vector');
+
+        self::assertInstanceOf(DocsPage::class, $page);
+        self::assertSame('Vector', $page->name);
+        self::assertStringContainsString('kinetis/vector', $page->description);
+        self::assertStringContainsStringIgnoringCase('optional', $page->description);
+    }
+
     public function test_a_page_builds_its_own_uri_and_source_url_from_its_slug(): void
     {
         $page = new DocsPage('routing-validation', 'Routing & Validation', 'Attribute-based routes');
