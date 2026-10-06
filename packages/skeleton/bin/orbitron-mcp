@@ -30,25 +30,40 @@
 #
 # --rm removes the one-off container when this script's process ends.
 # --no-deps starts only this one container, not the rest of the stack.
-# --entrypoint php bypasses the skeleton entrypoint's unconditional
-# `composer install`, which this container must not repeat or race
-# against the `app` container's own.
+# --entrypoint sh bypasses the skeleton entrypoint, whose unconditional
+# `composer install` would run on every launch. This container installs
+# only when the shared vendor volume has never been populated — a fresh
+# clone — under the same `vendor/.install.lock` the entrypoint takes, so
+# it never writes the tree while the `app` container's own install does.
+# Composer's output goes to stderr, and --progress quiet keeps
+# Compose's own, including an image build's, off stdout: stdout carries
+# only the protocol.
 # -T is required, not cosmetic: an allocated TTY would rewrite the
 # newline-delimited JSON-RPC frames the protocol depends on.
 #
-# The stack's initial `docker compose up --build -d` must have
-# completed at least once, so the image is available and its shared
-# vendor volume is populated with dependencies. Before that, this
-# command still runs and can build the image itself, but fails — the
-# entrypoint's `composer install` has never populated the volume,
-# so `vendor/bin/kinetis-orbitron-mcp` does not exist — which is the
-# outcome AGENTS.md tells the agent to act on.
+# A fresh clone therefore needs no setup before its first launch: a
+# missing .env is copied from .env.example, which is what the README's
+# own first step does, and Compose builds the image when it is absent.
+# That first launch is as slow as the build and the install, and a
+# client whose server start-up timeout is shorter reports the server as
+# failed; `docker compose up --build -d` beforehand avoids that.
 set -e
 
 project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 checkout_root=$(CDPATH='' cd -- "$project_directory" && pwd -P)
 
-exec docker compose --project-directory "$project_directory" \
-    run --rm -T --no-deps --entrypoint php \
-    -e KINETIS_ORBITRON_CHECKOUT_ROOT="$checkout_root" app \
-    vendor/bin/kinetis-orbitron-mcp
+if [ ! -e "$project_directory/.env" ]; then
+    cp "$project_directory/.env.example" "$project_directory/.env"
+fi
+
+exec docker compose --progress quiet --project-directory "$project_directory" \
+    run --rm -T --no-deps --entrypoint sh \
+    -e KINETIS_ORBITRON_CHECKOUT_ROOT="$checkout_root" app -c '
+        set -e
+        if [ ! -e vendor/autoload.php ]; then
+            mkdir -p vendor
+            flock vendor/.install.lock \
+                composer install --no-interaction --no-progress >&2
+        fi
+        exec php vendor/bin/kinetis-orbitron-mcp
+    '

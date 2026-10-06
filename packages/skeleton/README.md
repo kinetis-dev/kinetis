@@ -102,10 +102,12 @@ That initialization follows the order starting the server needs:
 1. **Complete the stack's initial setup** — `docker compose up --build
    -d`, so the `app` image is built and its shared vendor volume is
    populated. The MCP server runs in a disposable container derived from
-   that image, not in `app` itself.
+   that image, not in `app` itself. On a fresh clone the launcher can do
+   this part itself, but its first launch then takes as long as the
+   build and the install.
 2. **Reload, restart or reconnect the client** when this configuration
    arrived or changed after the session started, or when an earlier
-   launch was attempted before the stack's initial setup completed. A
+   launch failed before the stack's initial setup completed. A
    client launches one server process per session, and Docker itself
    stopping or the client's own termination always end it — nothing the
    agent can do from inside that session brings it back. An `app`
@@ -145,15 +147,20 @@ Already correct for whatever path you cloned into:
   `.codex/config.toml` and `.gemini/settings.json`. Each registers one
   stdio MCP server named `orbitron`, launched as `./bin/orbitron-mcp`.
 
-`bin/orbitron-mcp` runs `docker compose run --rm -T --no-deps
---entrypoint php -e KINETIS_ORBITRON_CHECKOUT_ROOT=<checkout> app
-vendor/bin/kinetis-orbitron-mcp` against this project's own directory:
+`bin/orbitron-mcp` runs `docker compose --progress quiet run --rm -T --no-deps
+--entrypoint sh -e KINETIS_ORBITRON_CHECKOUT_ROOT=<checkout> app`, which
+execs `php vendor/bin/kinetis-orbitron-mcp`, against this project's own
+directory:
 a disposable container built from `app`'s own image, sharing its project
 and vendor mounts but not its process lifecycle, so restarting,
 recreating or rebuilding `app` does not disconnect an established
-session. `--entrypoint php` skips the skeleton entrypoint's `composer
-install`, and `--no-deps` keeps a generic project from starting services
-it does not need. The container sees every checkout as `/app`, so
+session. `--entrypoint sh` skips the skeleton entrypoint's `composer
+install` on every launch, and `--no-deps` keeps a generic project from
+starting services it does not need. On a fresh clone the launcher sets
+itself up: it copies a missing `.env` from `.env.example`, and when the
+vendor volume has never been populated it runs `composer install` under
+the entrypoint's own `vendor/.install.lock`, with its output on stderr,
+so it never writes the tree while `app` does. The container sees every checkout as `/app`, so
 `<checkout>` is this checkout's physical host path, which
 `orbitron_inspect` reports back as `checkoutRoot`. The server still
 lives next to the code it reports on, so your host still needs no PHP
@@ -284,12 +291,12 @@ for every document's shape and exit code.
 
 ### Diagnostics
 
-**The stack has not completed its initial setup.** `bin/orbitron-mcp`
-launches a disposable container from the `app` service's image, so a
-first attempt before that image exists, or before its vendor volume is
-populated, fails — Compose can build the image and create the volume,
-but `vendor/bin/kinetis-orbitron-mcp` does not exist inside it yet. Bring
-the stack up from this directory and restart the client:
+**The server fails to start on a fresh clone.** `bin/orbitron-mcp`
+launches a disposable container from the `app` service's image, so its
+first launch builds that image when it is absent and installs the
+dependencies into an empty vendor volume, and a client whose server
+start-up timeout is shorter reports it as failed. Bring the stack up
+from this directory and restart the client:
 
 ```sh
 docker compose up --build -d

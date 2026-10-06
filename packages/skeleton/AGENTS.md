@@ -42,9 +42,11 @@ hold, say so and wait rather than working around it.
 1. **The stack has completed its initial setup.** `bin/orbitron-mcp`
    launches a disposable container built from the `app` service's own
    image, sharing its project and vendor mounts but not its process
-   lifecycle. `docker compose up --build -d` must have completed at
-   least once, so the image is available and its vendor mount is
-   populated with dependencies. Confirm the stack is up, and run that
+   lifecycle. On a fresh clone the launcher builds that image when it
+   is absent, creates a missing `.env` from `.env.example`, and installs
+   the dependencies into an empty vendor mount, but that first launch
+   takes as long as the build and the install, and a client may time it
+   out. Confirm the stack is up, and run that
    command from this directory when it is not:
 
    ```sh
@@ -54,8 +56,8 @@ hold, say so and wait rather than working around it.
 
 2. **The client connected after that.** Ask the user to reload, restart
    or reconnect their client when the MCP configuration arrived or
-   changed after their session started, or when an earlier launch was
-   attempted before the stack's initial setup completed. Docker itself
+   changed after their session started, or when an earlier launch
+   failed before the stack's initial setup completed. Docker itself
    stopping, and the client's own termination, always end an Orbitron
    session; an `app` restart, recreation or rebuild does not, because the
    launcher no longer runs inside that container. A complete `docker
