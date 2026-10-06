@@ -676,10 +676,21 @@ set -e
 project_directory=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 checkout_root=$(CDPATH='' cd -- "$project_directory" && pwd -P)
 
-exec docker compose --project-directory "$project_directory" \
-    run --rm -T --no-deps --entrypoint php \
-    -e KINETIS_ORBITRON_CHECKOUT_ROOT="$checkout_root" app \
-    vendor/bin/kinetis-orbitron-mcp
+if [ ! -e "$project_directory/.env" ]; then
+    cp "$project_directory/.env.example" "$project_directory/.env"
+fi
+
+exec docker compose --progress quiet --project-directory "$project_directory" \
+    run --rm -T --no-deps --entrypoint sh \
+    -e KINETIS_ORBITRON_CHECKOUT_ROOT="$checkout_root" app -c '
+        set -e
+        if [ ! -e vendor/autoload.php ]; then
+            mkdir -p vendor
+            flock vendor/.install.lock \
+                composer install --no-interaction --no-progress >&2
+        fi
+        exec php vendor/bin/kinetis-orbitron-mcp
+    '
 ```
 
 Save it as `bin/orbitron-mcp`, `chmod +x` it, and commit it. Every part
@@ -706,20 +717,29 @@ of it is load-bearing:
 - `--rm` removes that one-off container when the process ends;
 - `--no-deps` starts only this one container, not a generic project's
   other services;
-- `--entrypoint php` bypasses the application entrypoint's unconditional
-  `composer install`, which this container must not repeat or race
-  against the `app` container's own;
+- `--entrypoint sh` bypasses the application entrypoint, whose
+  unconditional `composer install` would run on every launch. The
+  container installs only when the vendor volume has never been
+  populated — a fresh clone — and under `vendor/.install.lock`, so the
+  application entrypoint must take the same lock (the skeleton's runs
+  `flock vendor/.install.lock composer install`) for the two never to
+  write the tree at once. Composer's output goes to stderr, because
+  stdout carries only the protocol;
+- `--progress quiet` keeps Compose's own progress off stdout, the
+  build of an absent image included, which would otherwise corrupt the
+  protocol stream;
+- a missing `.env` is copied from `.env.example`, the same first step
+  the project's own setup takes, because Compose refuses to start a
+  service whose `env_file` does not exist;
 - `-T` is required: an allocated TTY would rewrite the
   newline-delimited JSON-RPC frames the protocol depends on.
 
-`docker compose up --build -d` must have completed at least once, so
-the image is available and its vendor volume is populated with
-dependencies. Before that, this command still runs and fails: Compose
-can build the image and create the volume itself, but
-`vendor/bin/kinetis-orbitron-mcp` does not exist inside it, because
-nothing has run the entrypoint's `composer install`. The client reports
-the server as unavailable, and the agent is expected to say so rather
-than proceed.
+A fresh clone therefore needs no setup before its first launch:
+Compose builds the image when it is absent, and the launcher installs
+the dependencies. That first launch is as slow as the build and the
+install, and a client whose server start-up timeout is shorter reports
+the server as unavailable — the agent is expected to say so rather than
+proceed. `docker compose up --build -d` beforehand avoids it.
 
 Name the service to match your own Compose file if it is not `app`.
 
@@ -880,9 +900,10 @@ is the handshake.
 
 1. **Complete the stack's initial setup.** `bin/orbitron-mcp` launches a
    disposable container built from the `app` service's image, sharing
-   its project and vendor mounts. `docker compose up --build -d` must
-   have completed at least once, so the image is available and its
-   vendor mount is populated with dependencies:
+   its project and vendor mounts. On a fresh clone the launcher builds
+   the image and installs the dependencies itself, but that first launch
+   can outlast the client's start-up timeout, so bring the stack up
+   first:
 
    ```console
    docker compose ps
@@ -891,7 +912,7 @@ is the handshake.
 
 2. **Reload, restart or reconnect the client** — when the MCP
    configuration arrived or changed after the session started, or when
-   an earlier launch was attempted before the stack's initial setup
+   an earlier launch failed before the stack's initial setup
    completed. Docker itself stopping, and the client ending this
    script's process, always end an Orbitron session; an `app` restart,
    recreation or rebuild does not, because the launcher no longer runs
@@ -920,7 +941,7 @@ agent there. These failures cover what actually happens:
 
 | Symptom | What it means | What to do |
 |---|---|---|
-| The server fails to start | The stack has not completed its initial setup — the `app` image is not built, or its vendor volume has no dependencies installed | `docker compose up --build -d`, then restart the client |
+| The server fails to start on a fresh clone | Its first launch builds the `app` image and installs the dependencies into an empty vendor volume, which outlasted the client's start-up timeout | `docker compose up --build -d`, then restart the client |
 | The server was there and is gone | Docker stopped, or the client itself ended | Restart or reconnect the client; an `app` restart, recreation or rebuild alone does not cause this |
 | `docker compose down` exits nonzero over a network still in use | A live Orbitron session keeps its one-off container attached to the project network, so `down` removed `app` but cannot remove the network yet | End or close the client session, then run `down` again; relaunch the client once the stack is back up |
 | The server shows as disconnected | The bridge or the client, not yet distinguished | Run the launcher by hand (below). A handshake reply puts it on the client side: its trust or approval policy, or a tool catalog that has not refreshed |

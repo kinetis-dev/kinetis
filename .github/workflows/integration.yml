@@ -988,9 +988,14 @@ jobs:
       # get-binary itself leaves the downloaded file without the execute
       # bit — confirmed directly against a real fetch, not assumed —
       # so RoadRunnerDriver's own proc_open() call would fail to spawn
-      # it without this.
+      # it without this. get-binary lists releases through the GitHub API,
+      # which refuses an anonymous runner once the shared rate limit is
+      # spent, so the step passes the job token, which roadrunner-cli
+      # reads from GITHUB_TOKEN.
       - name: Fetch a real rr binary
         working-directory: packages/roadrunner-adapter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           php vendor/bin/rr get-binary --no-config --no-interaction -o linux -a amd64
           chmod +x rr
