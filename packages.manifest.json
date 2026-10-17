@@ -27,7 +27,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.21.1",
+            "version": "1.21.2",
             "bin": [
                 "bin/kinetis"
             ],
@@ -518,7 +518,7 @@
             "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchOpenSearch\\",
             "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
-            "version": "1.2.3",
+            "version": "1.2.4",
             "requires": [
                 "framework",
                 "search"
@@ -778,7 +778,7 @@
             "description": "RoadRunner runtime adapter for Kinetis — speaks the PSR7Worker/Goridge protocol and converts to/from PSR-7.",
             "namespace": "Kinetis\\RoadRunnerAdapter\\",
             "testNamespace": "Kinetis\\RoadRunnerAdapter\\Tests\\",
-            "version": "1.2.1",
+            "version": "1.2.2",
             "requires": [
                 "framework"
             ],
