@@ -21,6 +21,7 @@ use Kinetis\Http\Routing\Router;
 use Kinetis\Http\StreamedResponse;
 use Kinetis\Instrumentation\NullTelemetry;
 use Kinetis\Instrumentation\Telemetry;
+use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
 use Kinetis\Tests\Fixtures\ThrowingLogger;
@@ -70,7 +71,7 @@ final class KernelTest extends TestCase
      */
     private const array JSON_HEADERS = ['Content-Type' => 'application/json'];
 
-    private function kernel(?bool $exposeOpenApi = null): Kernel
+    private function kernel(?OpenApiAccess $access = null): Kernel
     {
         $app = new AppScope();
         $app->boot();
@@ -79,7 +80,7 @@ final class KernelTest extends TestCase
         $router->register(UserController::class);
         $router->register(DocumentationController::class);
 
-        return new Kernel($app, $router, exposeOpenApi: $exposeOpenApi);
+        return new Kernel($app, ($access ?? OpenApiAccess::disabled())->routes($router));
     }
 
     public function test_handles_a_registered_route_end_to_end(): void
@@ -223,7 +224,7 @@ final class KernelTest extends TestCase
 
     public function test_serves_the_openapi_document_at_openapi_json(): void
     {
-        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi.json'));
+        $response = $this->kernel(OpenApiAccess::enabled())->handle(new ServerRequest('GET', '/openapi.json'));
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
@@ -235,7 +236,7 @@ final class KernelTest extends TestCase
 
     public function test_serves_the_swagger_ui_page_at_docs(): void
     {
-        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi'));
+        $response = $this->kernel(OpenApiAccess::enabled())->handle(new ServerRequest('GET', '/openapi'));
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('text/html', $response->getHeaderLine('Content-Type'));
@@ -251,7 +252,7 @@ final class KernelTest extends TestCase
      */
     public function test_the_docs_page_carries_a_policy_matching_its_own_inline_script(): void
     {
-        $response = $this->kernel(exposeOpenApi: true)->handle(new ServerRequest('GET', '/openapi'));
+        $response = $this->kernel(OpenApiAccess::enabled())->handle(new ServerRequest('GET', '/openapi'));
         $csp = $response->getHeaderLine('Content-Security-Policy');
         $body = (string) $response->getBody();
 
@@ -267,7 +268,7 @@ final class KernelTest extends TestCase
 
     public function test_each_docs_request_gets_a_fresh_nonce(): void
     {
-        $kernel = $this->kernel(exposeOpenApi: true);
+        $kernel = $this->kernel(OpenApiAccess::enabled());
 
         $first = $kernel->handle(new ServerRequest('GET', '/openapi'))->getHeaderLine('Content-Security-Policy');
         $second = $kernel->handle(new ServerRequest('GET', '/openapi'))->getHeaderLine('Content-Security-Policy');
@@ -293,7 +294,7 @@ final class KernelTest extends TestCase
         $router = new Router();
         $router->register(UserController::class);
         $router->register(DocumentationController::class);
-        $kernel = new Kernel($app, $router);
+        $kernel = new Kernel($app, OpenApiAccess::enabled()->routes($router));
 
         $docs = $kernel->handle(new ServerRequest('GET', '/openapi'));
         self::assertStringContainsString('cdn.jsdelivr.net', $docs->getHeaderLine('Content-Security-Policy'));
@@ -324,15 +325,7 @@ final class KernelTest extends TestCase
 
     public function test_openapi_routes_can_be_disabled(): void
     {
-        $app = new AppScope();
-        $app->boot();
-
-        $router = new Router();
-        $router->register(UserController::class);
-
-        $kernel = new Kernel($app, $router, exposeOpenApi: false);
-
-        $response = $kernel->handle(new ServerRequest('GET', '/openapi.json'));
+        $response = $this->kernel(OpenApiAccess::disabled())->handle(new ServerRequest('GET', '/openapi.json'));
 
         self::assertSame(404, $response->getStatusCode());
     }
@@ -350,7 +343,7 @@ final class KernelTest extends TestCase
         $router->register(UserController::class);
         $router->register(DocumentationController::class);
 
-        return new Kernel($app, $router);
+        return new Kernel($app, OpenApiAccess::fromConfig(new Config($config))->routes($router));
     }
 
     public function test_openapi_routes_are_blocked_when_no_environments_are_configured(): void
@@ -358,8 +351,8 @@ final class KernelTest extends TestCase
         foreach (['/openapi.json', '/openapi'] as $path) {
             $response = $this->kernelWithConfig(['APP_ENV' => 'development'])->handle(new ServerRequest('GET', $path));
 
-            // 404 rather than 403: a blocked path falls through to
-            // routing, so nothing confirms it would exist elsewhere.
+            // 404 rather than 403: a blocked path is absent from the
+            // route table, so nothing confirms it would exist elsewhere.
             self::assertSame(404, $response->getStatusCode(), $path);
         }
     }
@@ -421,20 +414,6 @@ final class KernelTest extends TestCase
                 var_export($list, true),
             );
         }
-    }
-
-    public function test_an_explicit_argument_wins_over_the_configuration(): void
-    {
-        $app = new AppScope();
-        $app->instance(Config::class, new Config(['APP_ENV' => 'production', 'OPENAPI_ENVIRONMENTS' => 'production']));
-        $app->boot();
-
-        $router = new Router();
-        $router->register(UserController::class);
-
-        $kernel = new Kernel($app, $router, exposeOpenApi: false);
-
-        self::assertSame(404, $kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
     }
 
     public function test_forces_a_gc_cycle_at_the_end_of_a_request_when_persistent(): void
@@ -844,7 +823,7 @@ final class KernelTest extends TestCase
         $router->register(UserController::class);
         $router->register(DocumentationController::class);
 
-        $kernel = new Kernel($app, $router, exposeOpenApi: true, discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
+        $kernel = new Kernel($app, OpenApiAccess::enabled()->routes($router), discoveredOpenApiMiddleware: [OpenApiScopedMiddleware::class]);
 
         RecordingMiddleware::$log = [];
         $kernel->handle(new ServerRequest('GET', '/openapi.json'));
@@ -876,7 +855,7 @@ final class KernelTest extends TestCase
         $router->register(UserController::class);
         $router->register(DocumentationController::class);
 
-        $kernel = new Kernel($app, $router, exposeOpenApi: true);
+        $kernel = new Kernel($app, OpenApiAccess::enabled()->routes($router));
 
         RecordingMiddleware::$log = [];
         $kernel->handle(new ServerRequest('GET', '/openapi.json'));

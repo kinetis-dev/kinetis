@@ -9,6 +9,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
+use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Http\Fixtures\RecordingMiddleware;
 use Kinetis\Tests\OpenApi\Fixtures\GroupedTokenAuthMiddleware;
@@ -39,8 +40,7 @@ final class KernelOpenApiSecurityTest extends TestCase
 
         return new Kernel(
             $app,
-            $router,
-            exposeOpenApi: true,
+            OpenApiAccess::enabled()->routes($router),
             discoveredGlobalMiddleware: $globalMiddleware,
             middlewareGroups: $groups,
         );

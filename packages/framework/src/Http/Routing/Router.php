@@ -346,6 +346,30 @@ final class Router
     }
 
     /**
+     * A copy holding every route except those $controllerClass handles,
+     * in the same matching order. The class is forgotten entirely, so the
+     * copy accepts a later register() for it as a first registration.
+     * This Router is left unchanged.
+     *
+     * @param class-string $controllerClass
+     */
+    public function withoutController(string $controllerClass): self
+    {
+        $router = clone $this;
+        $router->routes = array_values(array_filter(
+            $this->routes,
+            static fn (Route $route): bool => $route->controllerClass !== $controllerClass,
+        ));
+        $router->routesByConflictKey = array_filter(
+            $this->routesByConflictKey,
+            static fn (Route $route): bool => $route->controllerClass !== $controllerClass,
+        );
+        unset($router->registrationContexts[$controllerClass]);
+
+        return $router;
+    }
+
+    /**
      * Dumps every registered route's constructor scalars — not the compiled
      * regex/paramNames, since Route's own constructor cheaply recomputes
      * those regardless of provenance. Used by Kinetis\Cache\Compiler to

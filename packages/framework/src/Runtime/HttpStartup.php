@@ -20,6 +20,7 @@ use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Instrumentation\Telemetry;
+use Kinetis\OpenApi\OpenApiAccess;
 use Throwable;
 
 /**
@@ -71,6 +72,11 @@ use Throwable;
  * 7. The adapter is detected before the Kernel is constructed, so its
  *    `isPersistent()` is a constructor argument rather than something
  *    patched in afterwards.
+ * 8. {@see OpenApiAccess} is decided from the booted container's
+ *    `Config`, which a `bootstrap.php` may have replaced, and applied to
+ *    the route table both branches of step 2 produce, so the Kernel
+ *    receives a table that already lacks the documentation routes when
+ *    this process does not serve them.
  */
 final class HttpStartup
 {
@@ -212,9 +218,12 @@ final class HttpStartup
             $detectAdapter ??= RuntimeDetector::detect(...);
             $adapter = $detectAdapter($trustedProxies);
 
+            /** @var Config $bootedConfig */
+            $bootedConfig = $app->get(Config::class);
+
             $kernel = new Kernel(
                 $app,
-                $router,
+                OpenApiAccess::fromConfig($bootedConfig)->routes($router),
                 isPersistent: $adapter->isPersistent(),
                 httpCache: $httpCache,
                 discoveredGlobalMiddleware: $globalMiddleware,

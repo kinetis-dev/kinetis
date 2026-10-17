@@ -755,4 +755,84 @@ final class RouterTest extends TestCase
 
         Router::fromArray([$entry]);
     }
+
+    public function test_without_controller_keeps_every_other_route_in_matching_order(): void
+    {
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DuplicateRouteControllerA::class);
+        $router->register(PrefixedOrderController::class);
+        $before = $router->routes();
+
+        $filtered = $router->withoutController(DuplicateRouteControllerA::class);
+
+        self::assertSame(
+            array_values(array_filter(
+                $before,
+                static fn ($route): bool => $route->controllerClass !== DuplicateRouteControllerA::class,
+            )),
+            $filtered->routes(),
+        );
+        self::assertSame($before, $router->routes());
+    }
+
+    public function test_a_path_only_the_removed_controller_served_is_not_found_for_any_method(): void
+    {
+        $router = new Router();
+        $router->register(UserController::class);
+        $router->register(DuplicateRouteControllerA::class);
+
+        $filtered = $router->withoutController(DuplicateRouteControllerA::class);
+
+        foreach (['GET', 'POST'] as $method) {
+            try {
+                $filtered->match($method, '/dup/1');
+                self::fail("Expected a RouteNotFoundException for {$method}.");
+            } catch (RouteNotFoundException) {
+                // Not MethodNotAllowedException: nothing is left on the path.
+            }
+        }
+
+        self::assertSame('show', $router->match('GET', '/dup/1')->route->controllerMethod);
+    }
+
+    public function test_the_removed_controllers_requests_are_free_to_claim_on_the_copy_only(): void
+    {
+        $router = new Router();
+        $router->register(DuplicateRouteControllerA::class);
+
+        $filtered = $router->withoutController(DuplicateRouteControllerA::class);
+        $filtered->register(DuplicateRouteControllerB::class);
+
+        self::assertSame('find', $filtered->match('GET', '/dup/1')->route->controllerMethod);
+
+        $this->expectException(DuplicateRouteException::class);
+        $router->register(DuplicateRouteControllerB::class);
+    }
+
+    /**
+     * Includes a router rebuilt from a compiled artifact, whose classes
+     * carry no recorded registration context and would otherwise reject
+     * any live register() call.
+     */
+    public function test_the_removed_controller_registers_again_on_the_copy_as_a_first_registration(): void
+    {
+        $live = new Router();
+        $live->register(DuplicateRouteControllerA::class);
+
+        foreach ([$live, Router::fromArray($live->toArray())] as $router) {
+            $filtered = $router->withoutController(DuplicateRouteControllerA::class);
+            $filtered->register(DuplicateRouteControllerA::class, [VersionedMiddleware::class]);
+
+            self::assertSame('/v1/dup/{id}', $filtered->match('GET', '/v1/dup/1')->route->pathTemplate);
+        }
+    }
+
+    public function test_without_a_controller_that_has_no_routes_returns_an_equal_table(): void
+    {
+        $router = new Router();
+        $router->register(UserController::class);
+
+        self::assertSame($router->routes(), $router->withoutController(DuplicateRouteControllerA::class)->routes());
+    }
 }

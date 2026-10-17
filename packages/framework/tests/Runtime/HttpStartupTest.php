@@ -63,9 +63,13 @@ final class HttpStartupTest extends TestCase
 
     private string|false $appEnv;
 
+    private string|false $openApiEnvironments;
+
     protected function setUp(): void
     {
         $this->appEnv = getenv('APP_ENV');
+        $this->openApiEnvironments = getenv('OPENAPI_ENVIRONMENTS');
+        putenv('OPENAPI_ENVIRONMENTS');
         $this->projectRoot = sys_get_temp_dir() . '/kinetis_http_startup_' . bin2hex(random_bytes(8));
 
         self::copyDirectory(self::SOURCE_PROJECT, $this->projectRoot);
@@ -74,6 +78,9 @@ final class HttpStartupTest extends TestCase
     protected function tearDown(): void
     {
         $this->appEnv === false ? putenv('APP_ENV') : putenv("APP_ENV={$this->appEnv}");
+        $this->openApiEnvironments === false
+            ? putenv('OPENAPI_ENVIRONMENTS')
+            : putenv("OPENAPI_ENVIRONMENTS={$this->openApiEnvironments}");
         Telemetry::global()->swap(new NullTelemetry());
         self::removeDirectory($this->projectRoot);
     }
@@ -172,6 +179,61 @@ final class HttpStartupTest extends TestCase
         $republished = new CacheStore($this->projectRoot . '/.kinetis-cache')->load();
         self::assertNotNull($republished);
         self::assertContains('/startup-ping', array_column($republished->http->routes, 'pathTemplate'));
+    }
+
+    // --- The documentation routes ---
+
+    /**
+     * The artifact keeps both routes whatever environment compiled it;
+     * the Kernel this boot builds has neither, whether its table came
+     * from the compile or from reading the published artifact back.
+     */
+    public function test_a_production_boot_that_does_not_serve_the_documentation_drops_its_routes(): void
+    {
+        putenv('APP_ENV=production');
+
+        $compiled = HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+        $published = new CacheStore($this->projectRoot . '/.kinetis-cache')->load();
+        self::assertNotNull($published);
+        self::assertContains('/openapi.json', array_column($published->http->routes, 'pathTemplate'));
+        self::assertContains('/openapi', array_column($published->http->routes, 'pathTemplate'));
+
+        $loaded = HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+
+        foreach ([$compiled, $loaded] as $started) {
+            foreach (['GET', 'POST'] as $method) {
+                $response = $started->kernel->handle(new ServerRequest($method, '/openapi.json'));
+
+                self::assertSame(404, $response->getStatusCode(), $method);
+                self::assertFalse($response->hasHeader('Allow'), $method);
+            }
+        }
+    }
+
+    public function test_a_production_boot_in_a_named_environment_serves_the_documentation(): void
+    {
+        putenv('APP_ENV=production');
+        putenv('OPENAPI_ENVIRONMENTS=production');
+
+        $started = HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+
+        self::assertSame(200, $started->kernel->handle(new ServerRequest('GET', '/openapi.json'))->getStatusCode());
+        self::assertSame(405, $started->kernel->handle(new ServerRequest('POST', '/openapi.json'))->getStatusCode());
+    }
+
+    public function test_a_development_boot_that_does_not_serve_the_documentation_drops_its_routes(): void
+    {
+        putenv('APP_ENV=development');
+        putenv('OPENAPI_ENVIRONMENTS=production');
+
+        $started = HttpStartup::assemble($this->projectRoot, $this->adapter(...));
+
+        foreach (['GET', 'HEAD'] as $method) {
+            $response = $started->kernel->handle(new ServerRequest($method, '/openapi'));
+
+            self::assertSame(404, $response->getStatusCode(), $method);
+            self::assertFalse($response->hasHeader('Allow'), $method);
+        }
     }
 
     // --- What reaches the runtime adapter and the Kernel ---

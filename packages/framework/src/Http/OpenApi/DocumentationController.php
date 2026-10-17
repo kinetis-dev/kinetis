@@ -7,14 +7,11 @@ namespace Kinetis\Http\OpenApi;
 use Kinetis\Http\Attributes\Get;
 use Kinetis\Http\Attributes\Hidden;
 use Kinetis\Http\Attributes\Middleware;
-use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Responses\JsonResponse;
-use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\OpenApi\OpenApiDocumentProvider;
 use Kinetis\OpenApi\SwaggerUiPage;
 use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
-use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * Serves the generated OpenAPI document and the Swagger UI page that
@@ -28,6 +25,11 @@ use Psr\Http\Message\ServerRequestInterface;
  * here and nowhere else — GlobalMiddlewareDiscovery publishes those
  * classes as the built-in `openapi` group.
  *
+ * Whether these routes are served is decided before a Kernel exists:
+ * {@see \Kinetis\OpenApi\OpenApiAccess::routes()} removes them from the
+ * route table of a process that does not serve them, so every request
+ * that reaches this class is one it answers.
+ *
  * The document itself comes from {@see OpenApiDocumentProvider}, which
  * Kernel builds for its own Router and registers on every request scope.
  */
@@ -36,27 +38,18 @@ use Psr\Http\Message\ServerRequestInterface;
 final readonly class DocumentationController
 {
     public function __construct(
-        private OpenApiAccess $access,
         private OpenApiDocumentProvider $documents,
     ) {}
 
     #[Get('/openapi.json')]
-    public function document(ServerRequestInterface $request): ResponseInterface
+    public function document(): ResponseInterface
     {
-        if (!$this->access->isEnabled()) {
-            return $this->closed($request);
-        }
-
         return JsonResponse::create($this->documents->document());
     }
 
     #[Get('/openapi')]
-    public function ui(ServerRequestInterface $request): ResponseInterface
+    public function ui(): ResponseInterface
     {
-        if (!$this->access->isEnabled()) {
-            return $this->closed($request);
-        }
-
         $page = SwaggerUiPage::create();
 
         // The page's own policy, not the application's: an application-wide
@@ -68,19 +61,5 @@ final readonly class DocumentationController
             headers: ['Content-Type' => 'text/html', 'Content-Security-Policy' => $page['csp']],
             body: $page['html'],
         );
-    }
-
-    /**
-     * Indistinguishable from a path that was never registered: a closed
-     * endpoint that answered 403 would confirm it exists elsewhere.
-     */
-    private function closed(ServerRequestInterface $request): ResponseInterface
-    {
-        // Byte-identical to Kernel's own message for an unmatched path,
-        // so a closed endpoint cannot be told from an absent one.
-        return ErrorResponse::create(404, sprintf(
-            'No route matches path "%s".',
-            $request->getUri()->getPath(),
-        ));
     }
 }

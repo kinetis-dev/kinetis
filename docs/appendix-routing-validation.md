@@ -2081,8 +2081,8 @@ framework ships, found by the same route discovery that finds yours — so
 they appear in `kinetis routes:list` alongside your own routes, and
 middleware attached to them behaves like middleware anywhere else. The
 `openapi` middleware group runs through the normal pipeline, and `Kernel`
-registers `OpenApiAccess` and `OpenApiDocumentProvider` on each request
-scope for the controller's constructor to be autowired from.
+registers `OpenApiDocumentProvider` on each request scope for the
+controller's constructor to be autowired from.
 
 The Swagger UI page at `/openapi` loads Swagger UI from a CDN and sends
 its own `Content-Security-Policy` permitting exactly that — see
@@ -2095,22 +2095,28 @@ compared ignoring case and surrounding space. It is matched against
 `APP_ENV` itself rather than against Kinetis's own `AppEnvironment`,
 which resolves every unfamiliar name to production — so a `staging`
 deployment can name itself and mean it. Unset, empty, or naming an
-environment you are not running in, both paths fall through to routing
-and 404 — nothing confirms that they would exist somewhere else.
+environment you are not running in, both paths answer every method
+exactly as a path that was never registered does: `404`, with no
+`Allow` header and no `openapi` group middleware run — nothing confirms
+that they would exist somewhere else. A route of your own on either
+path, under another method, is unaffected.
 
-An explicit argument decides outright and ignores the variable, which is
-what a test or a documentation-only service wants:
+Route discovery and `kinetis build` always include both routes, so
+`routes:list` shows them either way and a production image never answers
+according to whichever environment compiled it. The decision is applied
+when the process starts: `HttpStartup` reads it from the booted `Config`
+and removes the two routes from the route table before constructing the
+`Kernel`. A changed `APP_ENV` or `OPENAPI_ENVIRONMENTS` takes effect
+when the worker restarts.
+
+A test or a documentation-only service that assembles its own `Kernel`
+decides outright by applying `OpenApiAccess` to its router:
 
 ```{code-block} php
-new Kinetis\Http\Kernel($app, $router, exposeOpenApi: true);
-```
+use Kinetis\OpenApi\OpenApiAccess;
 
-The check runs per request rather than when routes are registered.
-Registering the routes conditionally would push the decision into
-`kinetis build`, and a production image would then answer according to
-whichever environment compiled it rather than the one it is running in.
-The routes always exist — `routes:list` shows them either way — and a
-closed one answers exactly as an unregistered path does.
+new Kinetis\Http\Kernel($app, OpenApiAccess::enabled()->routes($router));
+```
 
 ### When the document is generated
 
