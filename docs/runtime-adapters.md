@@ -72,14 +72,6 @@ docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
 truncates the body before Kinetis runs, and the adapter refuses to serve.
 `kinetis/pingpong`'s image uses this command and ships the same file.
 
-```{warning}
-FrankenPHP serves a request that matches no static file by running the
-front controller classically unless a worker handles that same script.
-`--worker` (or a Caddyfile `worker` directive) must name the same
-`public/index.php` as the front controller. A different script leaves
-every request on the classic path, with no error to say so.
-```
-
 A worker keeps `public/index.php`, including route discovery, loaded
 across requests, so a code change needs a container restart. Use PHP-FPM
 while editing code constantly.
