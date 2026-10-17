@@ -693,7 +693,7 @@ OPENAPI_ENVIRONMENTS=development,staging
 
 Each value is compared with `APP_ENV`, ignoring case. When
 `OPENAPI_ENVIRONMENTS` is unset or names no running environment, both
-paths answer `404`. The document describes your whole route table, so
+paths answer `404` to every method. The document describes your whole route table, so
 name an environment only where that is acceptable, and add middleware
 for these two paths with `#[AsOpenApiMiddleware]` where they need
 protection (see [Middleware groups](middleware.md#middleware-groups)).

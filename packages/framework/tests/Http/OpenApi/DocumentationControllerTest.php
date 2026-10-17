@@ -9,6 +9,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Http\Kernel;
 use Kinetis\Http\OpenApi\DocumentationController;
 use Kinetis\Http\Routing\Router;
+use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Tests\Http\Fixtures\NoteController;
 use Kinetis\Tests\Http\Fixtures\UserController;
@@ -22,9 +23,11 @@ use Psr\Http\Message\ResponseInterface;
  * directly would skip the dispatch it depends on — including the
  * OpenApiDocumentProvider the Kernel builds for its own Router.
  *
- * Registering a controller on a Router a Kernel already holds stands in
- * for a route table that changed; a second Kernel over that same Router
- * stands in for the deployment that would really produce one.
+ * The configured access is applied to each Router before its Kernel is
+ * built, as a composition root applies it. Registering a controller on a
+ * Router a Kernel already holds stands in for a route table that
+ * changed; a second Kernel over that same Router stands in for the
+ * deployment that would really produce one.
  */
 final class DocumentationControllerTest extends TestCase
 {
@@ -41,7 +44,7 @@ final class DocumentationControllerTest extends TestCase
         $app->instance(AppEnvironment::class, AppEnvironment::detect($config['APP_ENV'] ?? null));
         $app->boot();
 
-        return new Kernel($app, $router);
+        return new Kernel($app, OpenApiAccess::fromConfig(new Config($config))->routes($router));
     }
 
     private static function router(): Router

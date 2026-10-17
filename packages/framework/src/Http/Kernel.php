@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Kinetis\Http;
 
 use Kinetis\Cache\HttpCache;
-use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\Attributes\Middleware;
@@ -19,7 +18,6 @@ use Kinetis\Http\Responses\ErrorResponse;
 use Kinetis\Http\Routing\Route;
 use Kinetis\Http\Routing\Router;
 use Kinetis\Logging\SafeLogger;
-use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\OpenApi\OpenApiDocumentProvider;
 use Kinetis\Runtime\AppEnvironment;
 use Kinetis\Runtime\StreamableResponseInterface;
@@ -42,10 +40,14 @@ use Throwable;
  * first, see `deferDisposal()` and `settlePendingStream()`.
  * `/openapi.json` and `/openapi` are ordinary routes on a discovered
  * controller ({@see \Kinetis\Http\OpenApi\DocumentationController}), not
- * something this class intercepts — what it still owns is the access
- * policy, which folds $exposeOpenApi over OPENAPI_ENVIRONMENTS, and the
- * {@see \Kinetis\OpenApi\OpenApiDocumentProvider} bound to this Kernel's
- * own Router. Both reach that controller through the request scope.
+ * something this class intercepts. Whether they are served is decided by
+ * the composition root, which applies {@see \Kinetis\OpenApi\OpenApiAccess}
+ * before constructing this class: a closed process hands it a Router
+ * without those routes. The table is fixed for this Kernel's lifetime, so
+ * a changed APP_ENV or OPENAPI_ENVIRONMENTS takes effect when the worker
+ * restarts. What this class owns is the
+ * {@see \Kinetis\OpenApi\OpenApiDocumentProvider} bound to its own Router,
+ * which reaches that controller through the request scope.
  * Every request's RequestScope comes from AppScope::createRequestScope(),
  * so every initializer packages registered through
  * AppScope::onRequestScopeCreated() has run on it.
@@ -85,8 +87,6 @@ use Throwable;
  */
 final class Kernel
 {
-    private readonly OpenApiAccess $openApiAccess;
-
     private readonly OpenApiDocumentProvider $openApiDocuments;
 
     /** @var array<string, list<class-string>> */
@@ -99,8 +99,6 @@ final class Kernel
     public function __construct(
         private readonly AppScope $app,
         private readonly Router $router,
-        /** true or false decides outright; null defers to OPENAPI_ENVIRONMENTS — see {@see OpenApiAccess}. */
-        ?bool $exposeOpenApi = null,
         private readonly bool $isPersistent = false,
         private readonly ?HttpCache $httpCache = null,
         /** @var list<class-string> */
@@ -110,16 +108,6 @@ final class Kernel
         /** @var array<string, list<class-string>> #[AsMiddlewareGroup]-declared groups, each already priority-sorted — see GlobalMiddlewareDiscovery::discoverAll()'s `groups` bucket. */
         private readonly array $middlewareGroups = [],
     ) {
-        $this->openApiAccess = match ($exposeOpenApi) {
-            true => OpenApiAccess::enabled(),
-            false => OpenApiAccess::disabled(),
-            null => $app->has(Config::class) && ($config = $app->get(Config::class)) instanceof Config
-                ? OpenApiAccess::fromConfig($config)
-                // No configuration to consult — a Kernel on a scope that
-                // was never booted — so both paths stay closed.
-                : OpenApiAccess::disabled(),
-        };
-
         // The built-in `openapi` group: what discovery found, plus this
         // application's own AppScope::openApiMiddleware() registrations,
         // which discovery cannot see. Always defined even when empty —
@@ -143,9 +131,8 @@ final class Kernel
         // only ever describe the route table this process dispatches
         // against — a deployment brings a new Kernel and with it a new
         // provider, which is the whole invalidation story. A scope that
-        // was never booted has no AppEnvironment to consult, the same
-        // case that leaves both paths closed above; Production is the
-        // side AppEnvironment itself lands an unrecognized name on.
+        // was never booted has no AppEnvironment to consult; Production
+        // is the side AppEnvironment itself lands an unrecognized name on.
         //
         // The global order and the group map are the ones this Kernel
         // dispatches against, as class-strings: what protects a route is
@@ -257,13 +244,11 @@ final class Kernel
 
         // Kinetis\Http\OpenApi\DocumentationController is discovered and
         // dispatched like any other controller, so what it needs has to
-        // be resolvable — and none of these can come from AppScope: the
-        // Router is built after boot() has locked it, the access policy
-        // folds in $exposeOpenApi, which Kernel owns, and the document
-        // provider is tied to that same Router. Registering them here
-        // keeps every entry point unchanged.
+        // be resolvable — and neither can come from AppScope: the Router
+        // is built after boot() has locked it, and the document provider
+        // is tied to that same Router. Registering them here keeps every
+        // entry point unchanged.
         $scope->instance(Router::class, $this->router);
-        $scope->instance(OpenApiAccess::class, $this->openApiAccess);
         $scope->instance(OpenApiDocumentProvider::class, $this->openApiDocuments);
 
         try {
@@ -381,9 +366,8 @@ final class Kernel
                 throw $e;
             }
 
-            // Same known nullsafe.neverNull false positive as the
-            // /openapi.json branch above — $this->httpCache is genuinely
-            // nullable here.
+            // A known nullsafe.neverNull false positive — $this->httpCache
+            // is nullable here.
             // @phpstan-ignore-next-line nullsafe.neverNull
             $httpBindingPlans = $this->httpCache?->httpBindingPlans ?? [];
             // @phpstan-ignore-next-line nullsafe.neverNull

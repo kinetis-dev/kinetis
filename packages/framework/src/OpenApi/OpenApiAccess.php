@@ -5,15 +5,19 @@ declare(strict_types=1);
 namespace Kinetis\OpenApi;
 
 use Kinetis\Config\Config;
+use Kinetis\Http\OpenApi\DocumentationController;
+use Kinetis\Http\Routing\Router;
 
 /**
  * Whether this process serves `/openapi.json` and `/openapi`.
  *
- * Decided at request time rather than when routes are registered. The
- * routes themselves always exist — registering them conditionally would
- * push the decision into `bin/kinetis build`, and a production image
- * would then answer according to whichever environment compiled it
- * rather than the one it is running in.
+ * Discovery always registers both routes, and `kinetis build` always
+ * compiles them — registering them conditionally would push the decision
+ * into the build, and a production image would then answer according to
+ * whichever environment compiled it rather than the one it is running
+ * in. The decision is applied where a process composes its Kernel:
+ * {@see routes()} removes the routes from the table that Kernel serves,
+ * so a closed path is a path that does not exist, for every method.
  */
 final readonly class OpenApiAccess
 {
@@ -57,8 +61,12 @@ final readonly class OpenApiAccess
         return new self(false);
     }
 
-    public function isEnabled(): bool
+    /**
+     * $router itself when enabled; otherwise a copy without
+     * {@see DocumentationController}'s routes.
+     */
+    public function routes(Router $router): Router
     {
-        return $this->enabled;
+        return $this->enabled ? $router : $router->withoutController(DocumentationController::class);
     }
 }

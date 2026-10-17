@@ -15,6 +15,7 @@ use Kinetis\Http\Kernel;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
+use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\Runtime\AppEnvironment;
 use Throwable;
 
@@ -123,9 +124,14 @@ final class TestApplication
             throw $e;
         }
 
+        // Read back from the booted scope, as HttpStartup does: a
+        // bootstrap or $beforeBoot may have replaced the Config.
+        /** @var Config $bootedConfig */
+        $bootedConfig = $app->get(Config::class);
+
         $kernel = new Kernel(
             $app,
-            $router,
+            OpenApiAccess::fromConfig($bootedConfig)->routes($router),
             discoveredGlobalMiddleware: $middleware['global'],
             discoveredOpenApiMiddleware: $middleware['openApi'],
             middlewareGroups: $middleware['groups'],
@@ -150,7 +156,7 @@ final class TestApplication
         /** @var Config $config */
         $config = $app->get(Config::class);
 
-        return new self($app, new Kernel($app, $router), $config);
+        return new self($app, new Kernel($app, OpenApiAccess::fromConfig($config)->routes($router)), $config);
     }
 
     public function client(): TestClient
