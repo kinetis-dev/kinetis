@@ -16,9 +16,11 @@ use Kinetis\Runtime\ProjectRoot;
 /**
  * The one piece of assembly every framework-managed entry point
  * ({@see \Kinetis\Runtime\HttpStartup}, `bin/kinetis`,
- * {@see \Kinetis\Testing\TestApplication}) delegates to, rather than each
- * repeating it inline: `PluginDiscovery::bindInstances()` and the
- * discovered `EventListenerRegistry` must both be bound *before* the
+ * {@see \Kinetis\Testing\TestApplication},
+ * {@see \Kinetis\Console\RoutesListCommand}'s own scope) delegates to,
+ * rather than each repeating it inline:
+ * `PluginDiscovery::bindInstances()` and the discovered
+ * `EventListenerRegistry` must both be bound *before* the
  * package/application bootstrap chain runs, or `bootstrap.php`'s own
  * last-write-wins override (resolving and augmenting a discovered
  * instance, or replacing it outright) has nothing yet bound to act on

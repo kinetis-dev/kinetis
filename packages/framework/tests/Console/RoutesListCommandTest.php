@@ -12,6 +12,8 @@ use Kinetis\Tests\Cache\Fixtures\Http\DiscoveredGlobalMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\HighPriorityMiddleware;
 use Kinetis\Tests\Cache\Fixtures\Http\RouteLevelMiddlewareA;
 use Kinetis\Tests\Cache\Fixtures\Http\RouteLevelMiddlewareB;
+use Kinetis\Tests\Console\Fixtures\DiscoveredStatePackageBootstrap;
+use Kinetis\Tests\Console\Fixtures\PrivateConstructorDiscovery;
 use Kinetis\Tests\Runtime\Fixtures\ProjectRootPackageBootstrap;
 use PHPUnit\Framework\TestCase;
 
@@ -237,6 +239,70 @@ final class RoutesListCommandTest extends TestCase
         } finally {
             @unlink($root . '/' . ProjectRootPackageBootstrap::MARKER);
             unlink($root . '/vendor/composer/installed.json');
+            rmdir($root . '/vendor/composer');
+            rmdir($root . '/vendor');
+            rmdir($root);
+        }
+    }
+
+    /**
+     * A package bootstrap runs after the discovered plugin instances and
+     * EventListenerRegistry are bound, here as in every other entry
+     * point, and sees what this command's own live scan discovered.
+     */
+    public function test_a_package_bootstrap_resolves_discovered_plugin_instances_and_listeners(): void
+    {
+        $root = sys_get_temp_dir() . '/kinetis_routes_list_plugin_' . bin2hex(random_bytes(8));
+        mkdir($root . '/vendor/composer', recursive: true);
+        mkdir($root . '/src/Events', recursive: true);
+
+        file_put_contents($root . '/composer.json', json_encode([
+            'autoload' => ['psr-4' => ['App\\' => 'src/']],
+        ]));
+
+        file_put_contents($root . '/vendor/composer/installed.json', json_encode([
+            'packages' => [[
+                'name' => 'acme/plugin-reader',
+                'install-path' => '../acme/plugin-reader',
+                'extra' => ['kinetis' => [
+                    'discovery' => PrivateConstructorDiscovery::class,
+                    'bootstrap' => DiscoveredStatePackageBootstrap::class,
+                ]],
+            ]],
+        ]));
+
+        file_put_contents($root . '/src/Events/RoutesListPluginListener.php', <<<'PHP'
+            <?php
+            declare(strict_types=1);
+            namespace App\Events;
+            use Kinetis\Events\Listener;
+            use Kinetis\Tests\Cache\Fixtures\Events\DiscoveredEvent;
+            final class RoutesListPluginListener
+            {
+                #[Listener]
+                public function onDiscoveredEvent(DiscoveredEvent $event): void
+                {
+                }
+            }
+            PHP);
+        // Discovery registers only classes that load; nothing autoloads
+        // this temporary project.
+        require $root . '/src/Events/RoutesListPluginListener.php';
+
+        try {
+            $this->runCommand($root);
+
+            self::assertSame(
+                ['plugin' => 'from-compile:' . $root, 'listeners' => ['App\\Events\\RoutesListPluginListener']],
+                json_decode((string) file_get_contents($root . '/' . DiscoveredStatePackageBootstrap::MARKER), true),
+            );
+        } finally {
+            @unlink($root . '/' . DiscoveredStatePackageBootstrap::MARKER);
+            unlink($root . '/src/Events/RoutesListPluginListener.php');
+            unlink($root . '/vendor/composer/installed.json');
+            unlink($root . '/composer.json');
+            rmdir($root . '/src/Events');
+            rmdir($root . '/src');
             rmdir($root . '/vendor/composer');
             rmdir($root . '/vendor');
             rmdir($root);

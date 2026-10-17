@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Kinetis\Console;
 
+use Kinetis\Cache\BootSequence;
 use Kinetis\Cache\DiscoveryContext;
-use Kinetis\Cache\RoutesFile;
+use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Container\AppScope;
+use Kinetis\Events\EventListenerDiscovery;
 use Kinetis\Http\Attributes\Middleware;
 use Kinetis\Http\Middleware\GlobalMiddlewareDiscovery;
 use Kinetis\Http\Middleware\GlobalMiddlewareOrder;
@@ -25,9 +27,12 @@ use Kinetis\Runtime\ProjectRoot;
  * Constructs its own AppScope and runs bootstrap.php to read
  * AppScope::middlewares(): AppScope is never registered onto the
  * RequestScope a command is dispatched through, so there's no way to
- * reach the real one from here. The command declares bootstrap: false —
- * this internal run is the only one, so listing routes never executes
- * the application's bootstrap twice.
+ * reach the real one from here. That scope is assembled through
+ * BootSequence::run() from this scan's own discovery results, so the
+ * bootstrap chain sees the same bindings as in every other entry point.
+ * The command declares bootstrap: false — this internal run is the only
+ * one, so listing routes never executes the application's bootstrap
+ * twice.
  *
  * $output is injectable (defaulting to STDOUT) for testability against
  * php://memory — a #[Command] method must take zero parameters or
@@ -53,10 +58,14 @@ final readonly class RoutesListCommand
         $app = new AppScope();
         $config = Config::fromEnvironment();
         $app->instance(Config::class, $config);
-        // Bound as BootSequence::run() binds it, since this chain runs
-        // package bootstraps without it.
-        $app->instance(ProjectRoot::class, $this->projectRoot);
-        RoutesFile::loadBootstrap($projectRoot, $context->packageBootstraps())($app, $config);
+        BootSequence::run(
+            $app,
+            $projectRoot,
+            $config,
+            EventListenerDiscovery::discover($context),
+            PluginDiscovery::reconstruct(PluginDiscovery::discover($context)),
+            $context->packageBootstraps(),
+        );
         $app->boot();
 
         // Discovered before routes, not after: RouteDiscovery needs the
