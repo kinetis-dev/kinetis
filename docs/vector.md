@@ -7,146 +7,248 @@ myst:
 
 # Vector
 
-Routing guidance for an AI coding agent working on a Kinetis application
-that may also use `kinetis/vector`, the optional schema-driven admin
-package. Vector is not part of every Kinetis project.
+Operating and routing guidance for an AI coding agent working on a
+Kinetis application that installs `kinetis/vector`, the optional
+schema-driven admin package. This is not a human tutorial: a developer
+wants the [Vector manual](https://kinetis.dev/vector/docs/) instead.
+Read {doc}`agent-workflow` first; this page adds what Vector needs on
+top of it.
 
-**Before anything else**, call `orbitron_inspect` where Orbitron is
-registered, or read the project's own `composer.lock`, and confirm
-`kinetis/vector` is actually installed. When it is absent, nothing on
-this page applies — an application with no admin package has no Vector
-correctness surface, and installing Vector because this page exists is
-not a reason: install it only when the task or the user actually asks
-for an admin.
+## Confirm the package is installed
 
-## The version boundary
+Call `orbitron_inspect` where {doc}`orbitron` is registered, or read the
+project's own `composer.lock`, and confirm that `kinetis/vector` is
+installed. When it is not, nothing on this page applies. This page is
+no reason to install Vector: install it only when the task or the user
+asks for an admin.
 
-This page is fetched from `main` on every read, the same as every page
-{doc}`agent-workflow` routes through, so it can describe a Vector newer
-than the one installed. Once `orbitron_inspect` confirms the package,
-read the *installed* `kinetis/vector` package's own `README.md` and
-source — with `orbitron_read_package_source`,
-`orbitron_search_package_source`, `orbitron_search_package_source_tree`
-and `orbitron_list_package_source`, or the project's own
-`vendor/kinetis/vector` when Orbitron is unavailable — for the exact
-contract this page only routes to. The separately installed
-`@kinetis/vector-ui` (a standalone deployment's own npm package) is
-JavaScript neither this server nor Orbitron's installed-source tools
-reach; inspect its `package.json`, lockfile and source with the
-project's own file-reading tools instead.
+## Where the guidance comes from
+
+This page is `kinetis://docs/vector`, read with `kinetis_read_doc` like
+every page {doc}`agent-workflow` routes through. The Vector manual it
+links to is published on the web, not served as `kinetis://docs/*`
+resources. Both describe `main`, so either can describe a newer Vector
+than the one installed.
+
+The installed package is the authority for the exact contract:
+
+1. **Read `kinetis/vector`'s own `composer.json`** with
+   `orbitron_read_package_source` for its requirements, its
+   `Kinetis\Vector\` autoload root under `src/`, and `extra.kinetis`.
+2. **Read its `README.md`** for the installed version's setup and
+   feature summary.
+3. **Settle a signature, a default, a config key or a failure code in
+   `src/`** with `orbitron_search_package_source_tree` when the file is
+   unknown, `orbitron_search_package_source` when it is known, and a
+   window around the reported line with `orbitron_read_package_source`.
+   `orbitron_list_package_source` lists a directory when the layout is
+   what you need. The descriptor's JSON schema is
+   `resources/schema/descriptor.schema.json`.
+
+Without Orbitron, read the same files under the project's own
+`vendor/kinetis/vector`.
+
+`@kinetis/vector-ui`, the npm package a standalone admin is built from,
+is JavaScript that neither documentation server nor Orbitron's
+installed-source tools reach. Read its `package.json`, the lockfile and
+its source with your own file-reading tools.
+
+## Workflow
+
+1. **Confirm the installed version** of `kinetis/vector` and of every
+   Kinetis package the task touches.
+2. **Route the task** through the list below to the manual page that
+   covers it, and read that section.
+3. **Read the installed source** for anything version-sensitive.
+4. **Make the smallest change.** A resource, dashboard, settings group,
+   policy or action is ordinary application code, discovered from its
+   attribute where it has one; there is no registry to edit.
+5. **Run the verification checklist** below, then review the change
+   against {doc}`agent-correctness`.
 
 ## Task routing
 
-Each item names where the installed README documents the contract; read
-that section before writing code.
+- **Install and migrations.** `vendor/bin/kinetis vector:install`
+  publishes Vector's migrations and the hosted UI bundle a released
+  package ships, and is idempotent: run it again after every upgrade,
+  then `migrate`. `--connection=<name>` puts Vector's tables on a named
+  connection, read at runtime from `VECTOR_DB_CONNECTION`.
+  [Getting started](https://kinetis.dev/vector/docs/getting-started.html#install),
+  [Databases](https://kinetis.dev/vector/docs/databases.html#vector-s-own-tables).
+- **Resources, fields, forms, lists, records, actions, dashboards,
+  settings and audit.** A `#[Resource]` class extending `VectorResource`
+  declares `fields()`, `actions()` and `widgets()`; a `#[Dashboard]`
+  class extending `VectorDashboard` and a `#[Settings]` class extending
+  `SettingsGroup` add dashboards and settings groups. All of them compile
+  into the descriptor.
+  [Resources](https://kinetis.dev/vector/docs/resources.html),
+  [Fields](https://kinetis.dev/vector/docs/fields.html),
+  [Forms](https://kinetis.dev/vector/docs/forms.html),
+  [Lists](https://kinetis.dev/vector/docs/lists.html),
+  [Records](https://kinetis.dev/vector/docs/records.html),
+  [Actions](https://kinetis.dev/vector/docs/actions.html),
+  [Dashboards and widgets](https://kinetis.dev/vector/docs/dashboards.html),
+  [Settings](https://kinetis.dev/vector/docs/settings.html),
+  [Audit trail and impersonation](https://kinetis.dev/vector/docs/audit.html).
+- **Authentication, authorization and field concealment.** The
+  application's authentication middleware joins the `vector` middleware
+  group and registers `Kinetis\Http\CurrentUserInterface`; Vector's
+  `VectorAccessMiddleware` then asks the application's
+  `VectorAccessInterface` whether that user may enter the admin at all.
+  What an admitted user sees is the resource's `policy()` class (a
+  `ResourcePolicyInterface`), its `scope()` for rows, and the policy's
+  `viewField()` for fields.
+  [Authentication](https://kinetis.dev/vector/docs/authentication.html#the-vector-middleware-group),
+  [Authorization](https://kinetis.dev/vector/docs/authorization.html),
+  [Field visibility](https://kinetis.dev/vector/docs/authorization.html#field-visibility).
+- **The REST API and the MCP tools.** Every route is under `/vector`.
+  The MCP tools — `vector_resources`, `vector_describe`, `vector_query`,
+  `vector_get`, `vector_create`, `vector_update`, `vector_delete`,
+  `vector_run_action` and `vector_widget` — call the same services and
+  policies under the caller's identity. Over HTTP (`POST /mcp`) the
+  authentication middleware joins the `mcp` group as well as `vector`.
+  [REST API](https://kinetis.dev/vector/docs/rest-api.html),
+  [MCP tools](https://kinetis.dev/vector/docs/mcp.html),
+  [Serving them](https://kinetis.dev/vector/docs/mcp.html#serving-them),
+  {doc}`mcp`.
+- **Files, imports and exports.** Uploads are checked by their bytes,
+  never their name, and stored privately under a generated key. Export
+  is CSV or Excel (XLSX), and every XLSX export runs as a job; import is
+  CSV only, and always a job.
+  [Files and images](https://kinetis.dev/vector/docs/files.html),
+  [Export and import](https://kinetis.dev/vector/docs/lists.html#export-and-import),
+  [Excel exports](https://kinetis.dev/vector/docs/jobs.html#excel-exports),
+  [Imports](https://kinetis.dev/vector/docs/jobs.html#imports).
+- **Jobs: queued or inline, terminal state, reaping.** Actions that
+  declare `queued()`, exports above the resource's `exportLimit()`, every
+  XLSX export and every import run on the application's queue as the
+  admin who started them; everything else runs in the request.
+  [Background jobs](https://kinetis.dev/vector/docs/jobs.html),
+  [Delivery](https://kinetis.dev/vector/docs/jobs.html#delivery),
+  [Stalled jobs](https://kinetis.dev/vector/docs/jobs.html#stalled-jobs),
+  [How an action runs](https://kinetis.dev/vector/docs/actions.html#how-it-runs).
+- **Hosted or standalone UI, and the customization tiers.** Standalone
+  is a Nuxt application extending `@kinetis/vector-ui` on its own
+  origin, signing in with a bearer token; hosted is the bundle the PHP
+  application serves at `/vector/ui` behind its session. Customization
+  has three tiers: descriptor and settings, runtime extensions, and the
+  application's own build.
+  [Deployment](https://kinetis.dev/vector/docs/deployment.html),
+  [Customizing the UI](https://kinetis.dev/vector/docs/customizing-the-ui.html).
+- **Database, queue and storage topology.** An entity on a named
+  connection, Vector's own tables on another (`VECTOR_DB_CONNECTION`),
+  Vector's jobs on a named queue (`VECTOR_QUEUE`) or queue connection
+  (`VECTOR_QUEUE_CONNECTION`), and uploads on a named storage connection
+  (`VECTOR_STORAGE_CONNECTION`).
+  [Databases](https://kinetis.dev/vector/docs/databases.html),
+  [Where the jobs go](https://kinetis.dev/vector/docs/jobs.html#where-the-jobs-go),
+  [Configuration](https://kinetis.dev/vector/docs/configuration.html#environment-keys).
+- **Exact shapes and bounds.** Every route, envelope and error is in the
+  [REST API](https://kinetis.dev/vector/docs/rest-api.html), every
+  environment key in
+  [Configuration](https://kinetis.dev/vector/docs/configuration.html),
+  and every enforced bound in
+  [Limits](https://kinetis.dev/vector/docs/limits.html).
 
-- **Install, migrations, and Vector's own connection** — `vector:install`
-  (idempotent, re-run after every upgrade), `migrate`, and
-  `VECTOR_DB_CONNECTION` when Vector's tables live apart from the
-  application's default connection: the README's "Installation" and
-  "Multi-database applications".
-- **Resources, fields, records, lists, forms, actions, dashboards,
-  settings, audit** — a `VectorResource` subclass's `fields()`,
-  `actions()`, `widgets()` and a `SettingsGroup` compile into the
-  descriptor at build time: the README's "Resources", "Settings groups"
-  and "The REST contract".
-- **Authentication/authorization and concealment** — the `vector`
-  middleware group and `VectorAccessInterface` decide who enters at all;
-  a resource's `policy()`, `scope()` and `viewField()` decide what an
-  admitted user sees: the README's "Authentication and authorization"
-  and "Policies".
-- **REST and application MCP** — every route sits under `/vector` in the
-  `vector` group; `vector_resources`, `vector_describe`, `vector_query`
-  and the write tools call the same services under the same identity:
-  the README's "The REST contract" and "MCP tools".
-- **Files/images plus CSV/XLSX import/export** — upload/download
-  endpoints, format detection from bytes, and XLSX's job-only path: the
-  README's "Files and images" and "XLSX exports".
-- **Synchronous versus queued work, terminal job state, and reaping** —
-  which actions and exports run inline versus in a job, how a job claims
-  its row, and how a stalled row is reaped: the README's "Background
-  jobs" and "Lifecycle guarantees and limits".
-- **Hosted versus standalone UI and runtime extensions** — the two
-  deployment modes and the three customisation tiers: the installed
-  `docs/deployment-modes.md` and the README's own deployment section.
-- **Named/multiple database, queue and storage topology** — an entity on
-  a named connection, Vector's own tables on another connection, and the
-  `VECTOR_QUEUE`/`VECTOR_QUEUE_CONNECTION`/`VECTOR_STORAGE_CONNECTION`
-  keys: the README's "Multi-database applications" and "Configuration
-  keys".
+## Correctness boundaries
 
-## Correctness boundaries this campaign established
-
-- **Definitions are compiled and request-neutral.** The descriptor
-  compiles once — at `kinetis build`, or on first boot in development —
-  and is immutable; a resource's compile-time methods return the same
-  data for every request. {doc}`caching`.
-- **Request-time identity and policy remain request-scoped.**
-  `CurrentUserInterface`, a policy decision, and an impersonation are
-  resolved fresh per request, or reconstructed fresh per job by
-  `ActorResolverInterface`; none of them is cached on `AppScope` or held
-  in a resident Fiber. {doc}`container`.
-- **Vector's own database connection is explicit.** `VECTOR_DB_CONNECTION`
-  is a deliberate setting (default: the application's default
-  connection), never inferred from an administered entity's own
-  connection.
-- **ORM relationships and atomic transactions do not span databases.** A
-  relation the ORM would have to map across two connections fails at
-  build time, and each connection commits on its own — Vector's own rows
-  (audit, action log, jobs) commit separately, after the entity write
-  they describe. {doc}`orm`, {doc}`persistence`.
-- **Queue acceptance is not business completion.** A queued action,
-  export or import answers only that the job was pushed; the job's own
-  terminal state, not the push, is what proves the work happened.
+- **Definitions are compiled and request-neutral.** The descriptor is
+  compiled by `kinetis build` (or at boot, in development) from every
+  resource, settings group and dashboard, and is immutable. A
+  resource's definition methods return the same data for every request;
+  what varies per request belongs in its request-time hooks.
+  [The descriptor](https://kinetis.dev/vector/docs/core-concepts.html#the-descriptor),
+  [Request-time hooks](https://kinetis.dev/vector/docs/resources.html#request-time-hooks),
+  {doc}`caching`.
+- **Identity and policy stay request-scoped.** `CurrentUserInterface`
+  is what the application's authentication middleware registers for
+  each request, and policies, hooks, actions and widgets are built by
+  the request container. The `VectorAccessInterface` implementation is
+  bound on the application scope and answers for every request, so it
+  holds no request state. A job carries only the actor's id, and
+  `ActorResolverInterface` rebuilds the user in the worker.
+  [Request scope](https://kinetis.dev/vector/docs/core-concepts.html#request-scope),
+  {doc}`container`.
+- **Vector's own database connection is explicit.**
+  `VECTOR_DB_CONNECTION` names it, `default` when unset; it is never
+  inferred from an administered entity's connection.
+  [Vector's own tables](https://kinetis.dev/vector/docs/databases.html#vector-s-own-tables).
+- **Relations and transactions do not span databases.** The ORM refuses
+  a relation across two connections at build time, and each connection
+  commits on its own: Vector's own rows (action log, audit, jobs) commit
+  on its connection after the entity changes they describe.
+  [Entities on several connections](https://kinetis.dev/vector/docs/databases.html#entities-on-several-connections),
+  {doc}`orm`, {doc}`persistence`.
+- **A queued job is not finished work.** A queued action, export or
+  import answers only that the job was pushed. Its row moves through
+  `queued`, `running`, and then `done` or `failed`; a job is pushed for
+  one attempt and claims its row with one conditional write, so a
+  duplicate delivery does not run twice.
+  [Delivery](https://kinetis.dev/vector/docs/jobs.html#delivery),
   {doc}`queue`.
-- **Actor reconstruction and terminal job state must be proven.** A job
-  runs as the admin `ActorResolverInterface` rebuilds from an id, and a
-  worker that dies mid-job leaves the row `running` until
-  `vector:jobs:reap` closes it as `stalled` — neither is established by
-  a passing push.
-- **Files, spreadsheets, queues and UI modes are optional capabilities.**
-  The descriptor's own `capabilities` (`uploads`, `exportFormats`,
-  `queue`) report what is actually configured; do not assume uploads,
-  XLSX or queued work from a field or action declaration alone.
-- **Hosted/standalone authentication and CSP are separate deployment
-  concerns.** A bearer token on another origin and a session cookie with
-  CSRF under the hosted shell are not interchangeable, and the hosted
-  shell's Content-Security-Policy is the deploying application's own
-  header, not something Vector supplies.
+- **The actor and the terminal state have to be proven.** Without
+  `kinetis/queue` and an `ActorResolverInterface` binding, queued actions
+  and imports answer `403` and large exports are refused. A worker that
+  dies mid-job leaves the row `running`; once it has reported no progress
+  for the configured minutes it is answered as `stalled`, and
+  `vector:jobs:reap`, run by a scheduler, marks it `failed`.
+  [Stalled jobs](https://kinetis.dev/vector/docs/jobs.html#stalled-jobs).
+- **Uploads, export formats and the queue are optional capabilities.**
+  The descriptor's `capabilities` (`uploads`, `exportFormats`, `queue`)
+  report what this deployment has configured; a change that needs one
+  does not assume it.
+  [Requirements](https://kinetis.dev/vector/docs/jobs.html#requirements),
+  {doc}`storage`.
+- **Hosted and standalone authentication, and the CSP, are deployment
+  concerns.** Standalone sends `Authorization: Bearer …` from another
+  origin and needs CORS; hosted sends the session cookie with
+  `X-CSRF-Token` and needs a login page (`VECTOR_LOGIN_URL`). One
+  middleware may accept both. The hosted shell runs under the
+  application's own `SECURITY_CSP` with its nonce, or under
+  `VECTOR_SHELL_CSP` for that page alone.
+  [Deployment](https://kinetis.dev/vector/docs/deployment.html),
+  [Content Security Policy](https://kinetis.dev/vector/docs/deployment.html#content-security-policy),
+  [One API, both modes](https://kinetis.dev/vector/docs/authentication.html#one-api-both-modes).
 
 ## Verification checklist
 
-- **Boot/compile** — the application boots, or `kinetis build` compiles,
-  with every resource, action, widget and settings group the change
-  touches; a deliberate build-time mistake (an unmapped field, an
-  unregistered relation target) fails with the class and field named.
-- **Authorization and concealment** — a user a resource policy or
-  `viewField()` restricts gets the same refusal through the REST route
-  and the MCP tool alike, and a concealed field is absent everywhere:
-  the descriptor, records, audit, exports and filters/sorts naming it.
-- **Real backend ownership** — a database, queue or storage claim is
-  checked against the connection, queue name or filesystem Vector uses,
-  rather than inferred from configuration; see
-  {doc}`agent-correctness`'s "Read installed source to settle a fact".
-- **Failure/settlement semantics** — a queued action, export or import
-  is verified to its own terminal state (finished, failed, or
-  stalled-then-reaped), never to the push alone.
-- **Persistent request isolation** — nothing about one request's
-  identity, impersonation or record selection is read back on a later
-  request or a resident Fiber; see {doc}`agent-correctness`'s "Request
-  state leakage".
-- **The chosen UI mode** — hosted or standalone, whichever the change
-  actually touched — only when the change touches UI behavior.
+- **Boot and compile.** The application boots, or `kinetis build`
+  compiles, with every resource, action, widget, dashboard and settings
+  group the change touches; `vendor/bin/kinetis vector:list` prints what
+  compiled. A deliberate definition mistake fails naming the class and
+  field.
+  [Checked at build](https://kinetis.dev/vector/docs/resources.html#checked-at-build).
+- **Authorization and concealment.** A restricted user gets the same
+  refusal through REST and MCP, and a field `viewField()` hides is absent
+  everywhere: the descriptor, records, the audit trail, exports and MCP
+  results, with a filter, sort, grouping, column or written value naming
+  it refused as unknown.
+  [Field visibility](https://kinetis.dev/vector/docs/authorization.html#field-visibility),
+  {doc}`authorization`.
+- **The real backend.** A claim about the database, queue or storage is
+  checked against the connection, queue or filesystem Vector actually
+  uses: "Read installed source to settle a fact" in
+  {doc}`agent-correctness`.
+- **Settlement.** Queued work is followed to its terminal state — `done`,
+  `failed`, or stalled and then reaped as `failed` — never the push
+  alone.
+- **Request isolation.** No identity, impersonation or record selection
+  is read back on a later request or in a resident Fiber: "Request state
+  leakage" in {doc}`agent-correctness`.
+- **The UI mode.** Hosted or standalone is exercised only when the
+  change touches UI behavior.
 
 ## See also
 
-- {doc}`agent-workflow` — establishing installed versions and reading
-  installed source before any claim on this page governs a decision.
-- {doc}`application-recipes` — the framework-level recipes Vector's own
-  database, queue, storage and MCP wiring sit on top of.
-- {doc}`agent-correctness` — the review checklist this page's
-  correctness boundaries draw from.
+- {doc}`agent-workflow` — the version boundary and the installed-source
+  tools this page builds on.
+- {doc}`agent-correctness` — the review checklist the boundaries above
+  draw from.
+- {doc}`application-recipes` — the framework recipes Vector's database,
+  queue, storage and MCP wiring sit on.
+- {doc}`orbitron` — the project-local harness that serves this page.
 - {doc}`persistence`, {doc}`orm`, {doc}`queue`, {doc}`storage`,
-  {doc}`authorization`, {doc}`mcp`, {doc}`caching`, {doc}`container` — the
-  Kinetis foundations Vector runs on; none of them documents Vector's
-  own resource, field or job contract.
+  {doc}`authorization`, {doc}`mcp`, {doc}`caching`, {doc}`container` —
+  the Kinetis foundations Vector runs on.
+- The [Vector manual](https://kinetis.dev/vector/docs/), the user guide
+  every route above links into.
