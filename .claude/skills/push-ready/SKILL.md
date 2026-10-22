@@ -160,7 +160,7 @@ python3 -c \
 - **Unmoved** — bump it once:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine \
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine \
   php tools/generate-composer.php --bump=<pkg1>,<pkg2>,... --patch
 ```
 
@@ -178,7 +178,7 @@ re-derive the arithmetic by hand.
 ## 4. Regenerate composer.json
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine \
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine \
   php tools/generate-composer.php
 ```
 
@@ -237,7 +237,7 @@ while IFS= read -r -d '' f; do
 done < <({ git diff --no-renames --name-only -z "$BASE"
            git ls-files --others --exclude-standard -z; })
 
-[ "${#FILES[@]}" -eq 0 ] || docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine \
+[ "${#FILES[@]}" -eq 0 ] || docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine \
   sh -c 'for f in "$@"; do php -l "$f" || exit 1; done' sh "${FILES[@]}"
 ```
 
@@ -321,7 +321,7 @@ or Psalm ever loads.
 Then the suite:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
+docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
   php vendor/bin/phpunit
 ```
 
@@ -333,7 +333,7 @@ own matrix records:
   above errors rather than skipping:
 
   ```sh
-  docker run --rm -v "$PWD":/app -w /app/packages/persistence php:8.4-cli-alpine sh -c \
+  docker run --rm -v "$PWD":/app -w /app/packages/persistence php:8.4.27-cli-alpine sh -c \
     "apk add --no-cache --virtual .build \$PHPIZE_DEPS linux-headers >/dev/null && docker-php-ext-install sockets >/dev/null && php vendor/bin/phpunit"
   ```
 
@@ -341,7 +341,7 @@ own matrix records:
   Alpine ships none:
 
   ```sh
-  docker run --rm -v "$PWD":/app -w /app/packages/mcp-docs php:8.4-cli-alpine sh -c \
+  docker run --rm -v "$PWD":/app -w /app/packages/mcp-docs php:8.4.27-cli-alpine sh -c \
     "apk add --no-cache bash >/dev/null && php vendor/bin/phpunit"
   ```
 
@@ -354,13 +354,13 @@ own matrix records:
   ```sh
   docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
-  docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
+  docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine sh -c \
     "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
-  docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine \
+  docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine \
     php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
-  docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine \
+  docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine \
     php vendor/bin/psalm --no-progress
-  docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine \
+  docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine \
     php vendor/bin/psalm --no-progress --taint-analysis
   ```
 
@@ -373,7 +373,7 @@ test with no live service configured — is expected, not a failure.
 ## 9. PHPStan every affected package
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
+docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
   php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 ```
 
@@ -385,9 +385,9 @@ suppresses every ordinary issue type, so the plain run is what catches
 those.
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
+docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
   php vendor/bin/psalm --no-progress
-docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4-cli-alpine \
+docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
   php vendor/bin/psalm --no-progress --taint-analysis
 ```
 
@@ -436,7 +436,7 @@ pass the same `$BASE`, so the branch is judged as one change:
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+  -v "$PWD":/app -w /app php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
@@ -456,7 +456,7 @@ From a worktree, add the step 1 mount, or every history read fails with
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -v "$COMMON":"$COMMON" -w /app php:8.4-cli-alpine sh -c \
+  -v "$PWD":/app -v "$COMMON":"$COMMON" -w /app php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
