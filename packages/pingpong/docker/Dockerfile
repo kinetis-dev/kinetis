@@ -1,4 +1,4 @@
-FROM dunglas/frankenphp:latest
+FROM dunglas/frankenphp:1.13.2-php8.5.12
 
 # curl/ext-curl (needed by pusher/pusher-php-server) is already built into
 # this base image — unzip is for Composer's package extraction. mysqli and

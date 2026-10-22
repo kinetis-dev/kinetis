@@ -188,10 +188,10 @@ never run on the host:
 
 ```sh
 # tests
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php vendor/bin/phpunit
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php vendor/bin/phpunit
 
 # static analysis (PHPStan level 8)
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php vendor/bin/phpstan analyse --no-progress
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php vendor/bin/phpstan analyse --no-progress
 ```
 
 ## License

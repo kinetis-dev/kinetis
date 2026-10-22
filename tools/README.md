@@ -111,7 +111,7 @@ Step by step, from the manifest edit to the commit:
    `docs/appendix-contributing.md`.
 3. Regenerate:
    ```sh
-   docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php
+   docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php tools/generate-composer.php
    ```
    Writes every package's `composer.json` — only the ones you actually
    touched will show a diff.
@@ -143,13 +143,13 @@ Step by step, from the manifest edit to the commit:
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+  -v "$PWD":/app -w /app php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php"
 ```
 
 Runs every check locally — the exact same thing CI runs. `git`
 needs installing inside the container every time; the base
-`php:8.4-cli-alpine` image doesn't ship it (CI does the same install
+`php:8.4.27-cli-alpine` image doesn't ship it (CI does the same install
 step). The `GIT_CONFIG_*` triple is what keeps git from refusing a
 checkout whose owner differs from the container's user.
 
@@ -160,7 +160,7 @@ branch is judged as one change:
 ```sh
 BASE=$(git merge-base HEAD refs/remotes/origin/main)
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -w /app php:8.4-cli-alpine sh -c \
+  -v "$PWD":/app -w /app php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
@@ -177,7 +177,7 @@ at its own path as well:
 ```sh
 COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -v "$COMMON":"$COMMON" -w /app php:8.4-cli-alpine sh -c \
+  -v "$PWD":/app -v "$COMMON":"$COMMON" -w /app php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
 ```
 
@@ -187,7 +187,7 @@ For a release where nothing else in a package's manifest entry
 changed — its source code changed but not its declared dependencies:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php \
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php tools/generate-composer.php \
   --bump=<key>[,<key>,...]|all --minor|--patch
 ```
 
@@ -200,7 +200,7 @@ throughout incubation, so there is no major bump to ask for.
 For an explicit target version instead of a relative bump:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php \
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php tools/generate-composer.php \
   --set-version=<key>=<version>
 ```
 
@@ -226,13 +226,13 @@ the version-bump check always allows without further validation.
 The suite shells out to `git` — the version and content checks compare
 against a real commit, and several tests build a scratch repository, a
 local remote and a real split to exercise that — which
-`php:8.4-cli-alpine` doesn't ship. `git subtree` is its own Alpine
+`php:8.4.27-cli-alpine` doesn't ship. `git subtree` is its own Alpine
 package alongside it, and it is the publication's splitter:
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
   -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
-docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
+docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```
 

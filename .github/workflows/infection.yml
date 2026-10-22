@@ -218,7 +218,7 @@ jobs:
           # ext-sockets for the same requirement ci.yml's matrix records,
           # and under Alpine that needs linux-headers on top of
           # $PHPIZE_DEPS.
-          docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:8.4-cli-alpine sh -c "
+          docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:8.4.27-cli-alpine sh -c "
             apk add --no-cache bash git curl
             git config --global safe.directory '*'
             if [ -n '${{ matrix.package.needsSockets }}' ]; then

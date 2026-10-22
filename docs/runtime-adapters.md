@@ -64,7 +64,7 @@ enable_post_data_reading=0
 ```{code-block} bash
 docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
     -v "$PWD/docker/kinetis.ini":/usr/local/etc/php/conf.d/zz-kinetis.ini:ro \
-    dunglas/frankenphp:latest \
+    dunglas/frankenphp:1.13.2-php8.5.12 \
     frankenphp php-server --listen :8080 --root /app/public --worker /app/public/index.php
 ```
 
@@ -136,7 +136,7 @@ needs a body limit at least as large as `MAX_BODY_SIZE`:
 ```{code-block} dockerfile
 :caption: docker/Dockerfile
 
-FROM php:8.4-fpm-alpine
+FROM php:8.4.27-fpm-alpine
 WORKDIR /app
 COPY docker/kinetis.ini /usr/local/etc/php/conf.d/zz-kinetis.ini
 CMD ["php-fpm", "-F"]
@@ -244,7 +244,7 @@ body between the two limits reaches PHP and is refused there.
 `docker-php-ext-install sockets` also needs `linux-headers`:
 
 ```{code-block} dockerfile
-FROM php:8.4-cli-alpine
+FROM php:8.4.27-cli-alpine
 RUN apk add --no-cache $PHPIZE_DEPS linux-headers \
  && docker-php-ext-install sockets
 ```

@@ -368,7 +368,7 @@ stands, mid-job included. Decide four things:
 - **The signal the supervisor actually sends.** Docker, systemd and
   Kubernetes all send `SIGTERM` by default, but a Docker image can
   declare its own `STOPSIGNAL` and the official PHP FPM images declare
-  `SIGQUIT`. A worker image built `FROM php:8.4-fpm` inherits that, and
+  `SIGQUIT`. A worker image built `FROM php:8.4.27-fpm` inherits that, and
   `docker compose stop` then kills the worker mid-job while every
   default in the stack still says `SIGTERM`. Put it back explicitly —
   `STOPSIGNAL SIGTERM` in the image, or `stop_signal: SIGTERM` on the
