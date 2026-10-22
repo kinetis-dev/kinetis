@@ -167,7 +167,7 @@ Three files get `docker compose` running PHP-FPM behind nginx:
 ```{code-block} dockerfile
 :caption: docker/Dockerfile
 
-FROM php:8.4-fpm-alpine
+FROM php:8.4.27-fpm-alpine
 
 # unzip is what Composer extracts downloaded packages with. pcntl is
 # what lets the queue-worker service below stop gracefully; the official
@@ -888,7 +888,7 @@ Graceful shutdown — the worker finishing the job in flight instead of
 being cut off mid-job — needs both halves: `ext-pcntl` loaded, and
 `SIGTERM` or `SIGINT` delivered. The image above installs the
 extension. `stop_signal` is the other half, because the
-`php:8.4-fpm-alpine` base declares `STOPSIGNAL SIGQUIT`, which this
+`php:8.4.27-fpm-alpine` base declares `STOPSIGNAL SIGQUIT`, which this
 worker does not handle: without the line, `docker compose stop` kills it
 mid-job and leaves the ping for the backend to redeliver. See
 {doc}`queue`'s "Deploys and restarts" for the production form of both.

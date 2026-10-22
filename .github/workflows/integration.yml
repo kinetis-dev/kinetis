@@ -605,10 +605,13 @@ jobs:
       fail-fast: false
       matrix:
         php-version: ['8.4', '8.5']
+        include:
+          - { php-version: '8.4', php-image: '8.4.27' }
+          - { php-version: '8.5', php-image: '8.5.12' }
     # Redis advertises container-internal addresses for cluster redirects.
     # The PHP job therefore joins the service container's Docker network.
     container:
-      image: php:${{ matrix.php-version }}-cli-alpine
+      image: php:${{ matrix.php-image }}-cli-alpine
     services:
       redis-cluster:
         image: grokzen/redis-cluster:7.0.10
@@ -854,7 +857,7 @@ jobs:
     #
     # The same shape as the local verification: the SAPI under test (one
     # FrankenPHP container; nginx plus a PHP-FPM container for the FPM
-    # leg), and a php:8.4-cli-alpine runner on the same Docker network
+    # leg), and a php:8.4.27-cli-alpine runner on the same Docker network
     # running RemoteSuperglobalsConformanceTest against it. Every
     # container mounts the checkout at /app, so the fixture's state
     # directory is the same path on every side.
@@ -889,7 +892,7 @@ jobs:
                 -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
                 -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
                 -e TRUSTED_PROXIES="$CONFORMANCE_TRUSTED_PROXIES" \
-                dunglas/frankenphp:latest \
+                dunglas/frankenphp:1.13.2-php8.5.12 \
                 frankenphp php-server --listen :8080 --root "$FIXTURES" --worker "$FIXTURES/index.php"
               ;;
             fpm)
@@ -898,7 +901,7 @@ jobs:
                 -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
                 -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
                 -e TRUSTED_PROXIES="$CONFORMANCE_TRUSTED_PROXIES" \
-                php:8.4-fpm-alpine
+                php:8.4.27-fpm-alpine
               docker run -d --name sapi --network conformance \
                 -v "$PWD":/app:ro \
                 -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/nginx.conf.template":/etc/nginx/templates/default.conf.template:ro \
@@ -916,7 +919,7 @@ jobs:
         # same endpoint itself; this step exists to fail with a clear
         # message and the SAPI's logs if the stack never comes up.
         run: |
-          docker run --rm --network conformance php:8.4-cli-alpine php -r '
+          docker run --rm --network conformance php:8.4.27-cli-alpine php -r '
             $deadline = microtime(true) + 90; $last = "no connection";
             while (microtime(true) < $deadline) {
               if ($s = @stream_socket_client("tcp://sapi:8080", $e, $m, 1)) {
@@ -939,7 +942,7 @@ jobs:
           docker run --rm --network conformance -v "$PWD":/app -w /app/packages/framework \
             -e KINETIS_CONFORMANCE_HOST=sapi:8080 \
             -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
-            php:8.4-cli-alpine sh -c 'export KINETIS_CONFORMANCE_CLIENT_IP=$(hostname -i); php vendor/bin/phpunit --filter RemoteSuperglobalsConformanceTest'
+            php:8.4.27-cli-alpine sh -c 'export KINETIS_CONFORMANCE_CLIENT_IP=$(hostname -i); php vendor/bin/phpunit --filter RemoteSuperglobalsConformanceTest'
 
       - name: SAPI logs
         if: failure()
@@ -1057,12 +1060,12 @@ jobs:
           case "${{ matrix.sapi }}" in
             frankenphp)
               docker run -d --name php --network-alias sapi "${PHP_ARGS[@]}" \
-                --entrypoint sh dunglas/frankenphp:latest \
+                --entrypoint sh dunglas/frankenphp:1.13.2-php8.5.12 \
                 -c "install-php-extensions mysqli pdo_mysql && exec frankenphp php-server --listen :8080 --root $FIXTURE --worker $FIXTURE/index.php,1"
               ;;
             fpm)
               docker run -d --name php "${PHP_ARGS[@]}" \
-                php:8.4-fpm-alpine sh -c "apk add --no-cache \$PHPIZE_DEPS >/dev/null && docker-php-ext-install mysqli pdo_mysql >/dev/null && exec php-fpm"
+                php:8.4.27-fpm-alpine sh -c "apk add --no-cache \$PHPIZE_DEPS >/dev/null && docker-php-ext-install mysqli pdo_mysql >/dev/null && exec php-fpm"
               docker run -d --name sapi --network "${{ job.services.mysql.network }}" -v "$PWD":/app:ro \
                 -v "$CONFORMANCE/nginx.conf.template":/etc/nginx/templates/default.conf.template:ro \
                 -e NGINX_PORT=8080 -e FPM_UPSTREAM=php:9000 -e FIXTURE_PATH="$FIXTURE/index.php" \
@@ -1075,7 +1078,7 @@ jobs:
         # the fixture's own response carries X-Worker: nginx answers 502
         # until PHP-FPM is up.
         run: |
-          docker run --rm --network "${{ job.services.mysql.network }}" php:8.4-cli-alpine php -r '
+          docker run --rm --network "${{ job.services.mysql.network }}" php:8.4.27-cli-alpine php -r '
             $deadline = microtime(true) + 240; $last = "no response";
             while (microtime(true) < $deadline) {
               @file_get_contents("http://sapi:8080/", false, stream_context_create(["http" => ["ignore_errors" => true, "timeout" => 2]]));

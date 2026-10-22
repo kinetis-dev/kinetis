@@ -43,7 +43,8 @@ The installed package is the authority for the exact contract:
    window around the reported line with `orbitron_read_package_source`.
    `orbitron_list_package_source` lists a directory when the layout is
    what you need. The descriptor's JSON schema is
-   `resources/schema/descriptor.schema.json`.
+   `resources/schema/descriptor.schema.json`; its `version` is the
+   contract number, and the admin refuses a descriptor of any other.
 
 Without Orbitron, read the same files under the project's own
 `vendor/kinetis/vector`.
@@ -51,7 +52,11 @@ Without Orbitron, read the same files under the project's own
 `@kinetis/vector-ui`, the npm package a standalone admin is built from,
 is JavaScript that neither documentation server nor Orbitron's
 installed-source tools reach. Read its `package.json`, the lockfile and
-its source with your own file-reading tools.
+its source with your own file-reading tools. Require at least the
+`@kinetis/vector-ui` version whose hosted bundle the installed
+`kinetis/vector` ships, named in that package's `CHANGELOG.md`: an
+older one can lack what the API now requires, such as the `record` part
+of an upload.
 
 ## Workflow
 
@@ -80,8 +85,18 @@ its source with your own file-reading tools.
   declares `fields()`, `actions()` and `widgets()`; a `#[Dashboard]`
   class extending `VectorDashboard` and a `#[Settings]` class extending
   `SettingsGroup` add dashboards and settings groups. All of them compile
-  into the descriptor.
+  into the descriptor. A list's `q` matches the resource's `searchable()`
+  fields, a searchable `belongsTo` by its target's title, and the fields
+  `fullText()` names by whole words through a full-text index the
+  application creates. `withoutCount()` pages by number without a COUNT
+  and `cursorPaging()` pages the admin's list by cursor; an uncounted
+  page answers `total` and `lastPage` as `null` with `hasMore`. An
+  action's `openUrl()` opens only an http(s), `mailto:` or relative URL,
+  and its `redirect()` only a path of the admin.
   [Resources](https://kinetis.dev/vector/docs/resources.html),
+  [Search](https://kinetis.dev/vector/docs/resources.html#search),
+  [Paging](https://kinetis.dev/vector/docs/lists.html#paging),
+  [Action responses](https://kinetis.dev/vector/docs/actions.html#responses),
   [Fields](https://kinetis.dev/vector/docs/fields.html),
   [Forms](https://kinetis.dev/vector/docs/forms.html),
   [Lists](https://kinetis.dev/vector/docs/lists.html),
@@ -107,15 +122,26 @@ its source with your own file-reading tools.
   `vector_run_action` and `vector_widget` — call the same services and
   policies under the caller's identity. Over HTTP (`POST /mcp`) the
   authentication middleware joins the `mcp` group as well as `vector`.
+  `GET /vector/openapi.json` describes, as OpenAPI 3.1, the resources,
+  fields and actions the caller may see; it is served only where
+  `OPENAPI_ENVIRONMENTS` names `APP_ENV`, as the framework's own
+  [OpenAPI documentation](routing-validation.md#openapi-documentation)
+  is, and answers `404` elsewhere.
   [REST API](https://kinetis.dev/vector/docs/rest-api.html),
+  [OpenAPI document](https://kinetis.dev/vector/docs/rest-api.html#openapi-document),
   [MCP tools](https://kinetis.dev/vector/docs/mcp.html),
   [Serving them](https://kinetis.dev/vector/docs/mcp.html#serving-them),
   {doc}`mcp`.
 - **Files, imports and exports.** Uploads are checked by their bytes,
-  never their name, and stored privately under a generated key. Export
-  is CSV or Excel (XLSX), and every XLSX export runs as a job; import is
-  CSV only, and always a job.
+  never their name, and stored privately under a generated key.
+  Uploading needs permission to create, or to update the record named in
+  the upload's `record` part; listing the resource is not enough.
+  Vector never deletes an upload when a value changes;
+  `vector:files:prune`, run by a scheduler, deletes those no record or
+  audit entry holds. Export is CSV or Excel (XLSX), and every XLSX export
+  runs as a job; import is CSV only, and always a job.
   [Files and images](https://kinetis.dev/vector/docs/files.html),
+  [Cleaning up unused files](https://kinetis.dev/vector/docs/files.html#cleaning-up-unused-files),
   [Export and import](https://kinetis.dev/vector/docs/lists.html#export-and-import),
   [Excel exports](https://kinetis.dev/vector/docs/jobs.html#excel-exports),
   [Imports](https://kinetis.dev/vector/docs/jobs.html#imports).

@@ -1,4 +1,4 @@
-FROM php:8.4-fpm-alpine
+FROM php:8.4.27-fpm-alpine
 
 # unzip is needed by Composer to extract downloaded packages.
 RUN apk add --no-cache unzip

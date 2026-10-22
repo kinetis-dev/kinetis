@@ -22,7 +22,8 @@ release repo — see {doc}`appendix-contributing`).
 ## `ci.yml` — static checks and unit tests, per package
 
 One job per package — every package in `packages.manifest.json`, plus
-`tools/` — matrixed across PHP 8.4 and 8.5 — every check below runs against both,
+`tools/` — matrixed across PHP 8.4 and 8.5 (`php:8.4.27-cli-alpine` and
+`php:8.5.12-cli-alpine`) — every check below runs against both,
 not just one — each running against the exact same Docker images used
 for local development. Every push to `main` runs the whole matrix,
 whatever the push touched: a release round gates on this workflow having
@@ -222,13 +223,13 @@ rather than which form it took.
   slots it changes. The job runs the suite twice against one cluster to
   enforce that isolation.
 - **`runtime-conformance`** (matrix: a `dunglas/frankenphp` worker behind
-  Caddy; `php:8.4-fpm-alpine` behind `nginx:alpine`) — the shared runtime
+  Caddy; `php:8.4.27-fpm-alpine` behind `nginx:alpine`) — the shared runtime
   adapter conformance suite (`Kinetis\Testing\Runtime`, see
   {doc}`testing`) against each real SAPI, where the committed framework
   suite can only spawn `php -S`. The same shape as the local
   verification: the SAPI serving the conformance fixture (one FrankenPHP
   container; nginx plus a PHP-FPM container for the FPM leg), and a
-  `php:8.4-cli-alpine` runner on the same Docker network executing
+  `php:8.4.27-cli-alpine` runner on the same Docker network executing
   `RemoteSuperglobalsConformanceTest` against it, every container
   mounting the checkout at `/app` so the fixture's state directory is
   one path on every side. Readiness is the fixture's own
@@ -258,7 +259,7 @@ rather than which form it took.
   directions by the shared suite, so they are covered here rather than
   skipped. Both are disclosed in `RoadRunnerAdapter`'s own docblock and
   {doc}`runtime-adapters`.
-- **`orm-runtime`** (matrix: a `dunglas/frankenphp` worker; `php:8.4-fpm-alpine`
+- **`orm-runtime`** (matrix: a `dunglas/frankenphp` worker; `php:8.4.27-fpm-alpine`
   behind `nginx:alpine`; MySQL 8.4 as a service) — `kinetis/database-bridge`'s
   `OrmWorkerSequenceTest` against `tests/Fixtures/OrmWorker/index.php`,
   which puts the bridge's `PackageBootstrap` behind a `Kernel` under the
@@ -300,6 +301,9 @@ or in `roadrunner-conformance`'s case a fixed PHP version chosen to
 match the `ext-sockets` requirement — not a bare per-package PHP
 matrix) also runs across PHP 8.4 and 8.5, the same matrix `ci.yml`
 uses — real-backend correctness is checked against both, not just one.
+Jobs on the bare runner get PHP from `shivammathur/setup-php`, which
+selects a minor version, not a patch release; the container images are
+pinned to exact patch releases.
 
 `redis-cluster` is the one job that runs the job itself inside a
 `container:` rather than on the bare runner — a real multi-node Redis

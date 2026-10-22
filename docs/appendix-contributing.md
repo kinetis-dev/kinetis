@@ -75,7 +75,7 @@ git clone https://github.com/kinetis-dev/kinetis.git
 cd kinetis
 
 docker run --rm -v "$PWD":/app -w /app/packages/framework composer:2 install
-docker run --rm -v "$PWD":/app -w /app/packages/framework php:8.4-cli-alpine php vendor/bin/phpunit
+docker run --rm -v "$PWD":/app -w /app/packages/framework php:8.4.27-cli-alpine php vendor/bin/phpunit
 ```
 
 That's the whole setup. Each package's `vendor/` is gitignored and
@@ -116,18 +116,18 @@ own directory:
 
 ```sh
 # Unit tests (PHPUnit)
-docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/phpunit
+docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/phpunit
 
 # Static analysis (PHPStan, level 8 everywhere)
-docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
+docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
 # Type analysis (Psalm)
-docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/psalm --no-progress
+docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/psalm --no-progress
 
 # Data-flow / taint analysis (Psalm again — --taint-analysis reports
 # taint issues only and suppresses every ordinary issue type, so the
 # plain run above is what catches those)
-docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress
+docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress
 ```
 
 `RedisQueue`, `SqlQueue`, `SqsQueue` and `RabbitMqQueue` — one per
@@ -152,12 +152,12 @@ push that touches a package.
 PHPUnit suite. Install its dependencies, then run it with one addition:
 the suite drives real git, including `git subtree split`, which is a
 separate Alpine package, and neither ships in the base
-`php:8.4-cli-alpine` image:
+`php:8.4.27-cli-alpine` image:
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
   -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
-docker run --rm -v "$PWD":/app -w /app/tools php:8.4-cli-alpine sh -c \
+docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```
 
@@ -278,7 +278,7 @@ The full flow:
    size from the version policy above.
 3. Regenerate every package's `composer.json` from the manifest:
    ```sh
-   docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php
+   docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php tools/generate-composer.php
    ```
    Only the package(s) you actually touched will show a diff.
 4. Refresh the lock file with a **scoped** `composer update` — never a
@@ -312,7 +312,7 @@ has a dedicated mode for exactly this, writing *only* the `version`
 field(s):
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app php:8.4-cli-alpine php tools/generate-composer.php \
+docker run --rm -v "$PWD":/app -w /app php:8.4.27-cli-alpine php tools/generate-composer.php \
   --bump=<key>[,<key>,...]|all --minor|--patch
 ```
 
@@ -367,7 +367,7 @@ you're actively working on a change:
   ```sh
   BASE=$(git merge-base HEAD refs/remotes/origin/main)
   docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    -v "$PWD":/app -w /app php:8.4-cli-alpine \
+    -v "$PWD":/app -w /app php:8.4.27-cli-alpine \
     sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/validate-manifest.php --base=$BASE"
   ```
   A base commit git cannot read fails the run rather than passing with
@@ -417,7 +417,7 @@ without writing, tagging, or pushing anything — it's a read-only report:
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -w /app php:8.4-cli-alpine \
+  -v "$PWD":/app -w /app php:8.4.27-cli-alpine \
   sh -c "apk add --no-cache git >/dev/null 2>&1 && php tools/release-plan.php"
 ```
 
