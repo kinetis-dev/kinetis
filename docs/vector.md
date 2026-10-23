@@ -52,11 +52,14 @@ Without Orbitron, read the same files under the project's own
 `@kinetis/vector-ui`, the npm package a standalone admin is built from,
 is JavaScript that neither documentation server nor Orbitron's
 installed-source tools reach. Read its `package.json`, the lockfile and
-its source with your own file-reading tools. Require at least the
-`@kinetis/vector-ui` version whose hosted bundle the installed
-`kinetis/vector` ships, named in that package's `CHANGELOG.md`: an
-older one can lack what the API now requires, such as the `record` part
-of an upload.
+its source with your own file-reading tools. The installed
+`kinetis/vector` pins the `@kinetis/vector-ui` release it expects in
+`resources/ui.json` and publishes it in the descriptor as
+`ui.expected`; keep a standalone admin's `@kinetis/vector-ui` at that
+release, with the `nuxt` version its peer range requires. Another
+release can lack what the API now requires, such as the `record` part of
+an upload; the admin shows a banner naming both versions, and refuses a
+descriptor of another contract version outright.
 
 ## Workflow
 
@@ -74,12 +77,29 @@ of an upload.
 ## Task routing
 
 - **Install and migrations.** `vendor/bin/kinetis vector:install`
-  publishes Vector's migrations and the hosted UI bundle a released
-  package ships, and is idempotent: run it again after every upgrade,
-  then `migrate`. `--connection=<name>` puts Vector's tables on a named
-  connection, read at runtime from `VECTOR_DB_CONNECTION`.
+  publishes Vector's migrations only, and is idempotent: run it again
+  after every upgrade, then `migrate`. `--connection=<name>` puts
+  Vector's tables on a named connection, read at runtime from
+  `VECTOR_DB_CONNECTION`. It also says when the served admin UI is
+  missing, has no `vector-bundle.json`, or is not the pinned release.
   [Getting started](https://kinetis.dev/vector/docs/getting-started.html#install),
   [Databases](https://kinetis.dev/vector/docs/databases.html#vector-s-own-tables).
+- **The hosted UI bundle.** `vendor/bin/kinetis vector:install-ui`
+  installs the pinned `@kinetis/vector-ui` release from the npm registry
+  into `VECTOR_UI_DIR` (`public/vector/ui` by default), checked against
+  the registry's sha512 `dist.integrity` and the bundle's
+  `vector-bundle.json` before anything served changes. Run it after
+  every upgrade too, then restart the workers: a worker reads
+  `index.html` once, when it boots. `--version`, `--from` (a tarball,
+  with `--integrity`, or a built `dist/static` directory) and `--force`
+  choose what to install; `--check` verifies the served directory
+  offline. Exit codes are 0 (done or in sync), 1 (refused or failed) and
+  2 (usage). `VECTOR_UI_REGISTRY` and `VECTOR_UI_REGISTRY_TOKEN` name a
+  private registry. Neither command needs Node.
+  [Hosted](https://kinetis.dev/vector/docs/deployment.html#hosted),
+  [Upgrading](https://kinetis.dev/vector/docs/deployment.html#upgrading),
+  [What vector:install-ui checks](https://kinetis.dev/vector/docs/deployment.html#what-vector-install-ui-checks),
+  [Private registries and air-gapped installs](https://kinetis.dev/vector/docs/deployment.html#private-registries-and-air-gapped-installs).
 - **Resources, fields, forms, lists, records, actions, dashboards,
   settings and audit.** A `#[Resource]` class extending `VectorResource`
   declares `fields()`, `actions()` and `widgets()`; a `#[Dashboard]`
@@ -155,12 +175,14 @@ of an upload.
   [How an action runs](https://kinetis.dev/vector/docs/actions.html#how-it-runs).
 - **Hosted or standalone UI, and the customization tiers.** Standalone
   is a Nuxt application extending `@kinetis/vector-ui` on its own
-  origin, signing in with a bearer token; hosted is the bundle the PHP
-  application serves at `/vector/ui` behind its session. Customization
-  has three tiers: descriptor and settings, runtime extensions, and the
-  application's own build.
+  origin, signing in with a bearer token, and is upgraded with the
+  package and rebuilt; hosted is the bundle `vector:install-ui` installs
+  and the PHP application serves at `/vector/ui` behind its session.
+  Customization has three tiers: descriptor and settings, runtime
+  extensions, and the application's own build.
   [Deployment](https://kinetis.dev/vector/docs/deployment.html),
-  [Customizing the UI](https://kinetis.dev/vector/docs/customizing-the-ui.html).
+  [Customizing the UI](https://kinetis.dev/vector/docs/customizing-the-ui.html),
+  [Keeping the layer at the pinned release](https://kinetis.dev/vector/docs/customizing-the-ui.html#keeping-the-layer-at-the-pinned-release).
 - **Database, queue and storage topology.** An entity on a named
   connection, Vector's own tables on another (`VECTOR_DB_CONNECTION`),
   Vector's jobs on a named queue (`VECTOR_QUEUE`) or queue connection
@@ -262,7 +284,9 @@ of an upload.
   is read back on a later request or in a resident Fiber: "Request state
   leakage" in {doc}`agent-correctness`.
 - **The UI mode.** Hosted or standalone is exercised only when the
-  change touches UI behavior.
+  change touches UI behavior. Where the hosted UI is served,
+  `vendor/bin/kinetis vector:install-ui --check` exits 0 once the
+  installed bundle is the pinned release.
 
 ## See also
 
