@@ -1,11 +1,8 @@
 # Kinetis
 
 <style>
-article[role="main"] section > p > strong:only-child { color: #D97706; }
-@media (prefers-color-scheme: dark) {
-  body:not([data-theme="light"]) article[role="main"] section > p > strong:only-child { color: #F59E0B; }
-}
-body[data-theme="dark"] article[role="main"] section > p > strong:only-child { color: #F59E0B; }
+.bd-article section > p > strong:only-child { color: #D97706; }
+html[data-theme="dark"] .bd-article section > p > strong:only-child { color: #F59E0B; }
 </style>
 
 *Persistent Workers, Non-Blocking I/O.*

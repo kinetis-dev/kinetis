@@ -12,6 +12,7 @@ extensions = [
     "sphinx_design",
     "sphinxext.opengraph",
     "sphinx_sitemap",
+    "sphinx.ext.intersphinx",
 ]
 
 myst_enable_extensions = [
@@ -31,7 +32,6 @@ source_suffix = {
     ".md": "markdown",
 }
 
-templates_path = ["_templates"]
 exclude_patterns = ["_build", "baseline", "tools", "Thumbs.db", ".DS_Store"]
 
 
@@ -51,20 +51,16 @@ def setup(app):
 
 # -- HTML output -------------------------------------------------------------
 
-html_theme = "furo"
+html_theme = "kinetis_website_theme"
 html_static_path = ["_static"]
-# Copied verbatim to the site root (not under _static/), so it's served at
-# /llms.txt — the flat, plain-text index AI coding tools look for there,
-# per https://llmstxt.org's convention.
+# Copied verbatim to the build root (not under _static/), which is served
+# under /docs/, so this is /docs/llms.txt — the flat, plain-text index AI
+# coding tools look for, per https://llmstxt.org's convention. The
+# site-root /llms.txt belongs to kinetis-website.
 html_extra_path = ["_extra"]
 html_css_files = ["custom.css"]
-html_logo = "_static/logo.svg"
-# Deliberately unset: the favicon is kinetis-website's own
-# /assets/favicon.svg, not a file this build ships. Sphinx always renders
-# html_favicon's <link> with a page-relative pathto() href anyway, with no
-# leading-slash option, so it couldn't point at a site-root asset even if
-# one existed here. docs/_templates/page.html's `extrahead` block emits
-# the real <link rel="icon"> instead (see its comment for why).
+# No logo or favicon is set here: the theme supplies the navbar logo and
+# the links to kinetis-website's own /assets/favicon.* files.
 html_title = "Kinetis"
 
 # The real, deployed URL — required by sphinx-sitemap to build sitemap.xml
@@ -92,7 +88,9 @@ ogp_image = "_static/og-image.png"
 
 # -- Sitemap ------------------------------------------------------------------
 # Written to sitemap.xml at the build root; html_baseurl above is all it
-# needs. robots.txt (docs/_extra/robots.txt) points crawlers at it.
+# needs. kinetis-website's /robots.txt points crawlers at
+# https://kinetis.dev/sitemap.xml, a sitemap index that lists
+# /docs/sitemap.xml.
 sitemap_url_scheme = "{link}"
 sitemap_excludes = [
     "agent-workflow.html",
@@ -101,21 +99,14 @@ sitemap_excludes = [
     "vector.html",
 ]
 
-html_theme_options = {
-    # The logo's own secondary-title color (.brand-sub, "FRAMEWORK" in
-    # logo.svg) — same hex in both modes, matching how the logo itself
-    # stays legible on both light and dark backgrounds unchanged.
-    "light_css_variables": {
-        "color-brand-primary": "#D97706",
-        "color-brand-content": "#D97706",
-        "color-brand-visited": "#D97706",
-    },
-    "dark_css_variables": {
-        "color-brand-primary": "#D97706",
-        "color-brand-content": "#D97706",
-        "color-brand-visited": "#D97706",
-    },
-}
+# -- Intersphinx --------------------------------------------------------------
+# Only explicit inv:vector:... links resolve against the live Vector
+# inventory; with every reftype disabled, a plain {doc} or {ref} stays
+# local. Links into the Vector docs stay absolute URLs: these pages are
+# also served as raw Markdown through mcp-docs, where an inv: target would
+# reach an agent as unresolvable text.
+intersphinx_mapping = {"vector": ("https://kinetis.dev/vector/docs/", None)}
+intersphinx_disabled_reftypes = ["*"]
 
 # -- LaTeX / PDF output ------------------------------------------------------
 # `make latexpdf` — theme choice above only affects HTML; this section is

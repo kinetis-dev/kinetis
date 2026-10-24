@@ -108,8 +108,8 @@ the path list step 6 reads. Derive:
 
 - **Touched packages** — every distinct `packages/<name>/` in the diff.
 - **Docs touched** — anything under `docs/`, not only `docs/*.md`:
-  `conf.py`, `requirements.txt`, `_static/`, `_templates/` and
-  `_extra/` all change what step 11 builds.
+  `conf.py`, `requirements.txt`, `_static/` and `_extra/` all change
+  what step 11 builds.
 - **Manifest touched** — `packages.manifest.json` itself.
 - **Tooling touched** — anything under `tools/`, which has its own
   suite (step 8) and no manifest entry.

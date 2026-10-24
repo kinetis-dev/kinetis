@@ -59,13 +59,9 @@ the build), so a broken docs page can't merge silently.
 whole repository once (not per package — Semgrep doesn't need to know
 about Composer package boundaries). Same SARIF upload as Psalm's.
 
-Four paths are suppressed in `.semgrepignore`, with the reasoning
+Three paths are suppressed in `.semgrepignore`, with the reasoning
 recorded there:
 
-- `docs/_templates/page.html` — mirrors the Furo Sphinx theme's own
-  footer template verbatim; the flagged template variables are
-  Sphinx-internal, build-time navigation values, never live request
-  input, since this renders to static HTML.
 - `packages/auth-jwt/tests/Fixtures/RsaKeyPair.php` and
   `UndersizedRsaKeyPair.php` — synthetic RSA key pairs generated solely
   to test RS256 verification and the undersized-key refusal, not real

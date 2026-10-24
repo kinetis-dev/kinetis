@@ -44,10 +44,8 @@ robots.txt remove-pending
 """,
     "external-anchors.txt": """\
 # Anchors and pages other sites link to. index.html is served as /docs/.
-# The two anchors below are linked externally but absent from the current
-# build; they stay disabled until the docs restore them or a redirect lands.
-# routing-validation.html#zero-config-openapi-swagger-ui
-# concurrency.html#the-suspend-resume-pattern
+routing-validation.html#openapi-documentation
+appendix-runtime.html#the-suspend-resume-pattern
 """
     + "".join(
         f"{name}.html\n"
