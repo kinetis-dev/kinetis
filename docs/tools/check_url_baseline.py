@@ -15,7 +15,9 @@ import re
 import sys
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
+# Parses only the Sphinx-built sitemap or the kinetis.dev one, never
+# third-party XML; ElementTree does not resolve external entities.
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -277,7 +279,8 @@ def catalogue_slugs(catalogue):
 
 def reconcile_live(url, baseline=BASELINE):
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        # url is the operator's --live argument, not untrusted input.
+        with urllib.request.urlopen(url, timeout=30) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             live = set(sitemap_locs(response.read()))
     except OSError as error:
         return [f"live sitemap {url}: fetch failed: {error}"]
