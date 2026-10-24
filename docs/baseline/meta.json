@@ -1,0 +1,610 @@
+{
+ "pages": {
+  "agent-correctness.html": {
+   "canonical": "https://kinetis.dev/docs/agent-correctness.html",
+   "description": "Review guidance for an AI coding agent: a checklist to run over a change before calling it done. Each item names what to look for and routes to the page that holds its actual contract, rather than ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/agent-correctness.html",
+   "title": "Agent Correctness Review - Kinetis"
+  },
+  "agent-workflow.html": {
+   "canonical": "https://kinetis.dev/docs/agent-workflow.html",
+   "description": "Operating and routing guidance for an AI coding agent working in a project that uses Kinetis — not a human tutorial. This is the entry point for that agent: start here, then follow the routes below...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/agent-workflow.html",
+   "title": "Agent Workflow - Kinetis"
+  },
+  "appendix-authentication.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-authentication.html",
+   "description": "The contracts behind Authentication and JWT Authentication: the accepted Authorization header, the JWT key and algorithm rules, every check a token passes before it authenticates, JWK Set validatio...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-authentication.html",
+   "title": "Appendix: Authentication - Kinetis"
+  },
+  "appendix-aws-sigv4.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-aws-sigv4.html",
+   "description": "The exact origin, signing, transport and failure contracts behind AWS request signing (SigV4). Start with the guide to configure an origin, credentials and a signed Amazon OpenSearch Service client...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-aws-sigv4.html",
+   "title": "Appendix: AWS SigV4 contracts - Kinetis"
+  },
+  "appendix-ci.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-ci.html",
+   "description": "This project’s CI runs entirely on GitHub Actions — no separate CI service to configure. A reference map of what runs on every push/PR and what it checks, for the CI configuration itself, not the f...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-ci.html",
+   "title": "Appendix: Continuous Integration - Kinetis"
+  },
+  "appendix-configuration.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-configuration.html",
+   "description": "Every key Kinetis and its packages read from the environment, the exact mechanics behind a named connection, and why.env sits outside the AOT cache. For the task-first path —.env loading, typed Con...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-configuration.html",
+   "title": "Appendix: Configuration Reference - Kinetis"
+  },
+  "appendix-contributing.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-contributing.html",
+   "description": "How the kinetis-dev/kinetis monorepo is structured, how to set up a development environment, how to test a change, how the release tooling works, and how branching, PRs, and CI fit together. Every ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-contributing.html",
+   "title": "Appendix: Contributing to Kinetis - Kinetis"
+  },
+  "appendix-database.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-database.html",
+   "description": "The complete contract behind Database: which package owns what, using the packages without Kinetis, and how the drivers, transactions and TransactionGuard behave. The guides — Database, Query Build...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-database.html",
+   "title": "Appendix: Databases - Kinetis"
+  },
+  "appendix-http-client.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-http-client.html",
+   "description": "The exact request, response and transport contracts behind HTTP Client. Start with the guide to install the client, send a request and handle failures. What the client validates: The client owns th...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-http-client.html",
+   "title": "Appendix: HTTP client contracts - Kinetis"
+  },
+  "appendix-mcp-docs.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-mcp-docs.html",
+   "description": "The mechanics behind MCP Documentation Server: how the setup script decides it may write to a directory, how installs and updates share that directory, the methods and errors the server answers, th...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-mcp-docs.html",
+   "title": "Appendix: MCP Documentation Server Reference - Kinetis"
+  },
+  "appendix-mcp.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-mcp.html",
+   "description": "The contracts behind Model Context Protocol (MCP): the protocol revision and its request grammar, Streamable HTTP and its status codes, the error catalogue, progress streaming, the mcp middleware g...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-mcp.html",
+   "title": "Appendix: MCP Reference - Kinetis"
+  },
+  "appendix-middleware.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-middleware.html",
+   "description": "The pipeline mechanics and built-in middleware contracts behind Middleware. That guide covers choosing, declaring and configuring middleware; this page is the reference it links to. Pipeline constr...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-middleware.html",
+   "title": "Appendix: Middleware - Kinetis"
+  },
+  "appendix-observability.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-observability.html",
+   "description": "The mechanics behind Telemetry: when spans are exported and what an export can block, how span scopes cross Fibers, each span’s lifecycle, the framework hook boundary, and how fingerprints and voca...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-observability.html",
+   "title": "Appendix: Observability Reference - Kinetis"
+  },
+  "appendix-orbitron.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-orbitron.html",
+   "description": "The complete kinetis/orbitron contract behind Orbitron: the four commands and their document schemas, the four installed-source tools, the full MCP tool and resource catalogue, wiring an existing p...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-orbitron.html",
+   "title": "Appendix: Orbitron - Kinetis"
+  },
+  "appendix-packages.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-packages.html",
+   "description": "A reference map of what exists in each optional satellite package, by namespace. For core ( kinetis/framework itself), see Appendix: System Layout. Two entries under packages/ are not mapped here, ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-packages.html",
+   "title": "Appendix: Satellite Packages - Kinetis"
+  },
+  "appendix-query-builder.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-query-builder.html",
+   "description": "The complete kinetis/query-builder contract behind Query Builder: row mapping, the clauses and writes the builder compiles, what each dialect receives, and every combination refused before a statem...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-query-builder.html",
+   "title": "Appendix: Query Builder - Kinetis"
+  },
+  "appendix-queue.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-queue.html",
+   "description": "The delivery, worker and backend contracts behind Queue. That guide covers writing, pushing and running jobs, and each backend guide covers its setup; this page is the reference they link to. Deliv...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-queue.html",
+   "title": "Appendix: Queue Contracts - Kinetis"
+  },
+  "appendix-redis.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-redis.html",
+   "description": "The complete kinetis/redis and kinetis/cache-redis contract behind Redis: using the transport directly, what its failures mean and carry, how the operation budget and cluster routing behave, and wh...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-redis.html",
+   "title": "Appendix: Redis - Kinetis"
+  },
+  "appendix-routing-validation.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-routing-validation.html",
+   "description": "The route, binding, validation and OpenAPI rules behind Routing & Validation. That guide covers declaring routes, binding and validating input, responses and the generated document; this page i...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-routing-validation.html",
+   "title": "Appendix: Routing & Validation - Kinetis"
+  },
+  "appendix-runtime.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-runtime.html",
+   "description": "The contracts behind Runtime Adapters, Concurrency and Caching & AOT Compilation: how a request body is staged, counted and parsed, how forwarded headers and Lambda events become a request’s id...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-runtime.html",
+   "title": "Appendix: Runtime Reference - Kinetis"
+  },
+  "appendix-search.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-search.html",
+   "description": "The configuration, client and transport contracts behind Search engines. Start with the guide to install an engine, index a document and search it. Installing both is possible — two named connectio...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-search.html",
+   "title": "Appendix: Search contracts - Kinetis"
+  },
+  "appendix-sessions.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-sessions.html",
+   "description": "The contracts behind Sessions & CSRF: expiry, cookie name prefixes, how a presented cookie id is verified, how a CSRF check interacts with the session lifecycle, when writes reach the store, an...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-sessions.html",
+   "title": "Appendix: Sessions Reference - Kinetis"
+  },
+  "appendix-storage.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-storage.html",
+   "description": "The contracts behind Storage and Storage (S3): how the local driver runs, how a write is published, the path and symlink rules, the exception each operation reports, and S3’s failure and credential...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-storage.html",
+   "title": "Appendix: Storage Reference - Kinetis"
+  },
+  "appendix-testing.html": {
+   "canonical": "https://kinetis.dev/docs/appendix-testing.html",
+   "description": "The procedures and contracts behind Testing: how the test client builds a request, how to prove an operation keeps the event loop responsive, and how a runtime adapter is held to the shared conform...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix-testing.html",
+   "title": "Appendix: Testing Reference - Kinetis"
+  },
+  "appendix.html": {
+   "canonical": "https://kinetis.dev/docs/appendix.html",
+   "description": "A reference map of what exists in core, by namespace. For the optional satellite packages ( kinetis/auth, kinetis/queue, kinetis/storage, and so on), see Appendix: Satellite Packages. Kinetis\\Conta...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/appendix.html",
+   "title": "Appendix: System Layout - Kinetis"
+  },
+  "application-recipes.html": {
+   "canonical": "https://kinetis.dev/docs/application-recipes.html",
+   "description": "Routing guidance for an AI coding agent: compact routes for tasks that recur across Kinetis applications. Each recipe names the pages that hold the actual contract and routes to them rather than re...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/application-recipes.html",
+   "title": "Application Recipes - Kinetis"
+  },
+  "auth-jwt.html": {
+   "canonical": "https://kinetis.dev/docs/auth-jwt.html",
+   "description": "kinetis/auth-jwt authenticates requests with signed JSON Web Tokens. JwtIssuer signs a token when a user logs in, JwtAuthMiddleware guards a route by verifying the Authorization: Bearer <token&g...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/auth-jwt.html",
+   "title": "JWT Authentication - Kinetis"
+  },
+  "auth.html": {
+   "canonical": "https://kinetis.dev/docs/auth.html",
+   "description": "Bearer/opaque-token authentication: a PSR-15 route middleware that validates an Authorization: Bearer <token> header and registers the resolved user on the current request as CurrentUserInter...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/auth.html",
+   "title": "Authentication - Kinetis"
+  },
+  "authorization.html": {
+   "canonical": "https://kinetis.dev/docs/authorization.html",
+   "description": "Use Gate to check a user against your own policy before changing a resource. It accepts a callable that returns an allow/deny decision. The route below must first run authentication middleware that...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/authorization.html",
+   "title": "Authorization - Kinetis"
+  },
+  "aws-sigv4.html": {
+   "canonical": "https://kinetis.dev/docs/aws-sigv4.html",
+   "description": "Install the package: Kinetis\\AwsSigV4\\SigV4SigningClient is a PSR-18 client that signs every request with AWS Signature Version 4 and sends it to one configured origin. Use it with a library that a...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/aws-sigv4.html",
+   "title": "AWS request signing (SigV4) - Kinetis"
+  },
+  "benchmarks.html": {
+   "canonical": "https://kinetis.dev/docs/benchmarks.html",
+   "description": "Kinetis wins five of six TechEmpower-style benchmark tests against eight other PHP frameworks — Laravel, Laravel Octane, Symfony, CodeIgniter, Yii2, CakePHP, and Slim on two runtimes — measured on ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/benchmarks.html",
+   "title": "Benchmarks - Kinetis"
+  },
+  "bootstrapping.html": {
+   "canonical": "https://kinetis.dev/docs/bootstrapping.html",
+   "description": "Most applications never write bootstrap.php. Installing kinetis/database-bridge and configuring a DB_* connection — DB_CONNECTION plus whatever credentials the dialect requires — gets you a databas...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/bootstrapping.html",
+   "title": "Bootstrapping - Kinetis"
+  },
+  "broadcasting.html": {
+   "canonical": "https://kinetis.dev/docs/broadcasting.html",
+   "description": "Real-time updates over the Pusher Channels wire protocol — Soketi, Laravel Reverb, and Pusher’s own hosted service all implement it identically, so one driver covers all three; only the host, port,...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/broadcasting.html",
+   "title": "Broadcasting - Kinetis"
+  },
+  "caching.html": {
+   "canonical": "https://kinetis.dev/docs/caching.html",
+   "description": "This page owns build-time compilation and nothing else. The runtime key-value cache an application reads and writes — Psr\\SimpleCache\\CacheInterface, Redis-backed — is Redis. Those two pages are th...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/caching.html",
+   "title": "Caching & AOT Compilation - Kinetis"
+  },
+  "cli.html": {
+   "canonical": "https://kinetis.dev/docs/cli.html",
+   "description": "Kinetis ships one binary, bin/kinetis, installed as vendor/bin/kinetis once you composer require kinetis/framework. Running it with no arguments, or an unrecognized one, lists every available comma...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/cli.html",
+   "title": "CLI - Kinetis"
+  },
+  "concurrency.html": {
+   "canonical": "https://kinetis.dev/docs/concurrency.html",
+   "description": "A request often needs several independent answers — a row, a count, a cached value, an upstream call. concurrently() starts them together and returns every result: concurrently() is declared@templa...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/concurrency.html",
+   "title": "Concurrency - Kinetis"
+  },
+  "config.html": {
+   "canonical": "https://kinetis.dev/docs/config.html",
+   "description": "Two independent pieces: loading a.env file into the real process environment, and typed access to whatever’s in it..env loading:.env, at your project root, A missing.env is not an error — loading i...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/config.html",
+   "title": "Configuration - Kinetis"
+  },
+  "container.html": {
+   "canonical": "https://kinetis.dev/docs/container.html",
+   "description": "Kinetis splits dependency injection across two containers with different lifetimes. AppScope lives for as long as the execution context that booted it, and holds what every request shares. RequestS...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/container.html",
+   "title": "Appendix: Container Lifecycle - Kinetis"
+  },
+  "core-concepts.html": {
+   "canonical": "https://kinetis.dev/docs/core-concepts.html",
+   "description": "Boot-and-die and persistent workers: A boot-and-die runtime — PHP-FPM here — runs one request per script execution, not one per process. An FPM worker process serves many requests in sequence, but ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/core-concepts.html",
+   "title": "Core Concepts - Kinetis"
+  },
+  "events.html": {
+   "canonical": "https://kinetis.dev/docs/events.html",
+   "description": "A plain PSR-14 event dispatcher — Psr\\EventDispatcher\\EventDispatcherInterface — with attribute-driven listener registration. Writing an event and a listener: An event is a plain object, no base cl...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/events.html",
+   "title": "Events - Kinetis"
+  },
+  "genindex.html": {
+   "canonical": "https://kinetis.dev/docs/genindex.html",
+   "description": null,
+   "og:image": null,
+   "og:url": null,
+   "title": "Index - Kinetis"
+  },
+  "index.html": {
+   "canonical": "https://kinetis.dev/docs/index.html",
+   "description": "Persistent Workers, Non-Blocking I/O. Optimized for long-running processes, but equally snappy on PHP-FPM and serverless environments. One codebase — any runtime. Typed requests and responses., Ope...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/index.html",
+   "title": "Kinetis"
+  },
+  "logging.html": {
+   "canonical": "https://kinetis.dev/docs/logging.html",
+   "description": "Kinetis’s logging is plain PSR-3 — Psr\\Log\\LoggerInterface — not a Kinetis-specific contract. Any PSR-3 logger works: register it once, and everything inside Kinetis that logs uses it automatically...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/logging.html",
+   "title": "Logging - Kinetis"
+  },
+  "mailer.html": {
+   "canonical": "https://kinetis.dev/docs/mailer.html",
+   "description": "Mail sending via Symfony\\Component\\Mailer. A single DSN selects the transport — SMTP, or any of Symfony’s own API-based bridges (Sendgrid, Mailgun, Postmark, SES, …). Configuring: Or, using an API-...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/mailer.html",
+   "title": "Mailer - Kinetis"
+  },
+  "mcp-docs.html": {
+   "canonical": "https://kinetis.dev/docs/mcp-docs.html",
+   "description": "kinetis/mcp-docs owns the catalogue of this documentation and the fetch behind it, and serves every page as an MCP resource — plus a tool that returns a bounded line window of a page and one that f...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/mcp-docs.html",
+   "title": "MCP Documentation Server - Kinetis"
+  },
+  "mcp.html": {
+   "canonical": "https://kinetis.dev/docs/mcp.html",
+   "description": "kinetis/mcp lets an AI agent discover and call your application’s code over the Model Context Protocol. Mark a method with#[McpTool] or#[McpResource], and the kinetis mcp:serve stdio command and th...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/mcp.html",
+   "title": "Model Context Protocol (MCP) - Kinetis"
+  },
+  "middleware.html": {
+   "canonical": "https://kinetis.dev/docs/middleware.html",
+   "description": "Kinetis middleware is plain PSR-15: a class implementing Psr\\Http\\Server\\MiddlewareInterface. Existing PSR-15 middleware works unmodified. process() either calls$handler->handle($request) and wo...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/middleware.html",
+   "title": "Middleware - Kinetis"
+  },
+  "migrations.html": {
+   "canonical": "https://kinetis.dev/docs/migrations.html",
+   "description": "A thin runner for versioned schema changes: raw SQL up()/ down() migrations, tracked in a kinetis_migrations table in each database, run through migrate* commands the package registers on vendor/bi...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/migrations.html",
+   "title": "Migrations - Kinetis"
+  },
+  "orbitron.html": {
+   "canonical": "https://kinetis.dev/docs/orbitron.html",
+   "description": "Kinetis does not hand you a generic dashboard or force your application into a prebuilt scaffold. It gives you something more adaptable: Orbitron, the development harness that equips your chosen AI...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/orbitron.html",
+   "title": "Orbitron - Kinetis"
+  },
+  "orm.html": {
+   "canonical": "https://kinetis.dev/docs/orm.html",
+   "description": "A data mapper over Query Builder: classes marked#[Entity] load through typed repositories and entity queries without running their constructors, and each unit of work holds one object per row, trac...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/orm.html",
+   "title": "ORM - Kinetis"
+  },
+  "performance-tuning.html": {
+   "canonical": "https://kinetis.dev/docs/performance-tuning.html",
+   "description": "Kinetis exposes three capacity knobs that multiply into one deployment envelope: worker count, per-worker connection pool width, and the database server’s own limits behind them. This page covers h...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/performance-tuning.html",
+   "title": "Performance tuning - Kinetis"
+  },
+  "persistence.html": {
+   "canonical": "https://kinetis.dev/docs/persistence.html",
+   "description": "A Kinetis application reaches MySQL, MariaDB and PostgreSQL through kinetis/database-bridge: configure DB_*, inject the connection, and query it directly, through Query Builder, or through ORM. Mig...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/persistence.html",
+   "title": "Database - Kinetis"
+  },
+  "query-builder.html": {
+   "canonical": "https://kinetis.dev/docs/query-builder.html",
+   "description": "A parameterized SQL builder over the connections Database sets up. It compiles the SQL that MySQL 8.4, MariaDB 11.4 and PostgreSQL 16 share, runs it on the connection or transaction you pass in, an...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/query-builder.html",
+   "title": "Query Builder - Kinetis"
+  },
+  "queue-rabbitmq.html": {
+   "canonical": "https://kinetis.dev/docs/queue-rabbitmq.html",
+   "description": "Adds RabbitMQ as a backend for Queue. Switching to it changes configuration, not application code. Every AMQP call this backend makes, including a worker checking for its next job, suspends the cal...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/queue-rabbitmq.html",
+   "title": "Queue (RabbitMQ) - Kinetis"
+  },
+  "queue-redis.html": {
+   "canonical": "https://kinetis.dev/docs/queue-redis.html",
+   "description": "Adds Redis as a backend for Queue. Switching to it changes configuration, not application code. Redis transport and Cluster: kinetis/queue-redis sends every command through kinetis/redis( Redis), w...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/queue-redis.html",
+   "title": "Queue (Redis) - Kinetis"
+  },
+  "queue-sql.html": {
+   "canonical": "https://kinetis.dev/docs/queue-sql.html",
+   "description": "Adds MySQL or Postgres as a backend for Queue, storing jobs in a database you already run. Switching to it changes configuration, not application code. pop() reserves a job with SELECT ... FOR UPDA...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/queue-sql.html",
+   "title": "Queue (SQL) - Kinetis"
+  },
+  "queue-sqs.html": {
+   "canonical": "https://kinetis.dev/docs/queue-sqs.html",
+   "description": "Adds Amazon SQS as a backend for Queue. Switching to it changes configuration, not application code. Every SQS request, including a worker waiting for its next job, suspends the calling Fiber inste...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/queue-sqs.html",
+   "title": "Queue (SQS) - Kinetis"
+  },
+  "queue.html": {
+   "canonical": "https://kinetis.dev/docs/queue.html",
+   "description": "Push a job from application code, and a separate kinetis queue:work process runs it later, possibly on another machine. kinetis/queue holds the Kinetis\\Queue\\QueueInterface contract, the worker and...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/queue.html",
+   "title": "Queue - Kinetis"
+  },
+  "redis.html": {
+   "canonical": "https://kinetis.dev/docs/redis.html",
+   "description": "kinetis/cache-redis binds Psr\\SimpleCache\\CacheInterface to Redis from REDIS_* configuration, which is how a Kinetis application normally uses Redis. The kinetis/redis transport underneath it also ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/redis.html",
+   "title": "Redis - Kinetis"
+  },
+  "reference.html": {
+   "canonical": "https://kinetis.dev/docs/reference.html",
+   "description": "The guides show how to build and operate an application. These pages describe the contracts and internal workings behind them. Open a guide first, then use its linked reference when you need exact ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/reference.html",
+   "title": "Reference - Kinetis"
+  },
+  "revolt-http-client.html": {
+   "canonical": "https://kinetis.dev/docs/revolt-http-client.html",
+   "description": "Install the package: Kinetis\\RevoltHttpClient\\Http calls other services over HTTP. A request suspends the calling Fiber while it waits on the network, so a worker keeps serving other requests durin...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/revolt-http-client.html",
+   "title": "HTTP Client - Kinetis"
+  },
+  "routing-validation.html": {
+   "canonical": "https://kinetis.dev/docs/routing-validation.html",
+   "description": "Routes, request binding and validation are attributes on your controller classes and request DTOs. There is no route file to keep in sync. This page covers the everyday path; Appendix: Routing &...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/routing-validation.html",
+   "title": "Routing & Validation - Kinetis"
+  },
+  "runtime-adapters.html": {
+   "canonical": "https://kinetis.dev/docs/runtime-adapters.html",
+   "description": "One public/index.php serves a Kinetis application under FrankenPHP, PHP-FPM, RoadRunner and AWS Lambda: public/index.php, HttpStartup detects the runtime once per boot and drives it through its ada...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/runtime-adapters.html",
+   "title": "Runtime Adapters - Kinetis"
+  },
+  "search-elasticsearch.html": {
+   "canonical": "https://kinetis.dev/docs/search-elasticsearch.html",
+   "description": "Install the Elasticsearch engine package:.env, With SEARCH_ELASTICSEARCH_HOST set, Kinetis binds both the engine-neutral Kinetis\\Search\\SearchClient and the real Elastic\\Elasticsearch\\Client. Injec...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/search-elasticsearch.html",
+   "title": "Search (Elasticsearch) - Kinetis"
+  },
+  "search-engines.html": {
+   "canonical": "https://kinetis.dev/docs/search-engines.html",
+   "description": "Kinetis supports OpenSearch and Elasticsearch through separate packages. Install the package for the engine you run; it also installs the shared kinetis/search contract: The package binds its engin...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/search-engines.html",
+   "title": "Search engines - Kinetis"
+  },
+  "search-opensearch.html": {
+   "canonical": "https://kinetis.dev/docs/search-opensearch.html",
+   "description": "Install the OpenSearch engine package:.env, With SEARCH_OPENSEARCH_HOST set, Kinetis binds both the engine-neutral Kinetis\\Search\\SearchClient and the real OpenSearch\\Client. Inject SearchClient fo...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/search-opensearch.html",
+   "title": "Search (OpenSearch) - Kinetis"
+  },
+  "search.html": {
+   "canonical": "https://kinetis.dev/docs/search.html",
+   "description": null,
+   "og:image": null,
+   "og:url": null,
+   "title": "Search - Kinetis"
+  },
+  "session.html": {
+   "canonical": "https://kinetis.dev/docs/session.html",
+   "description": "Cookie-backed sessions and CSRF protection for browser applications — the counterpart to the token-based Authentication and JWT Authentication packages. Appendix: Sessions Reference holds the lifec...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/session.html",
+   "title": "Sessions & CSRF - Kinetis"
+  },
+  "storage-s3.html": {
+   "canonical": "https://kinetis.dev/docs/storage-s3.html",
+   "description": "Adds Amazon S3 and S3-compatible services as a backend for Storage. The package brings kinetis/storage with it, and application code keeps injecting the same FilesystemOperator; only configuration ...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/storage-s3.html",
+   "title": "Storage (S3) - Kinetis"
+  },
+  "storage.html": {
+   "canonical": "https://kinetis.dev/docs/storage.html",
+   "description": "kinetis/storage gives an application one League\\Flysystem\\FilesystemOperator for writing, reading, listing and deleting files. The local driver runs on Amp\\File, so a call suspends the calling Fibe...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/storage.html",
+   "title": "Storage - Kinetis"
+  },
+  "telemetry.html": {
+   "canonical": "https://kinetis.dev/docs/telemetry.html",
+   "description": "OpenTelemetry tracing for a Kinetis application, exported over OTLP to any tracing backend — Jaeger, Grafana Tempo, Datadog, Honeycomb, or anything else that speaks the protocol. Requests, SQL quer...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/telemetry.html",
+   "title": "Telemetry - Kinetis"
+  },
+  "testing.html": {
+   "canonical": "https://kinetis.dev/docs/testing.html",
+   "description": "Kinetis tests an application through the application — the real container, the real discovery, the real middleware pipeline — rather than against a hand-assembled approximation of it. A test that p...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/testing.html",
+   "title": "Testing - Kinetis"
+  },
+  "tutorial.html": {
+   "canonical": "https://kinetis.dev/docs/tutorial.html",
+   "description": "This tutorial builds a small real-time application from an empty directory, one working piece at a time: a reply that comes back immediately, one that comes back later through a queue, one that fir...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/tutorial.html",
+   "title": "Tutorial - Kinetis"
+  },
+  "vector.html": {
+   "canonical": "https://kinetis.dev/docs/vector.html",
+   "description": "Operating and routing guidance for an AI coding agent working on a Kinetis application that installs kinetis/vector, the optional schema-driven admin package. This is not a human tutorial: a develo...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/vector.html",
+   "title": "Vector - Kinetis"
+  },
+  "views.html": {
+   "canonical": "https://kinetis.dev/docs/views.html",
+   "description": "Kinetis deliberately has no template language of its own. There are already excellent engines in the PHP ecosystem, so the framework chooses to re-use, not re-invent. The view packages give control...",
+   "og:image": "https://kinetis.dev/docs/_static/og-image.png",
+   "og:url": "https://kinetis.dev/docs/views.html",
+   "title": "Views - Kinetis"
+  }
+ },
+ "sitemap": {
+  "excluded": [
+   "agent-correctness.html",
+   "agent-workflow.html",
+   "application-recipes.html",
+   "vector.html"
+  ],
+  "locs": [
+   "https://kinetis.dev/docs/appendix-authentication.html",
+   "https://kinetis.dev/docs/appendix-aws-sigv4.html",
+   "https://kinetis.dev/docs/appendix-ci.html",
+   "https://kinetis.dev/docs/appendix-configuration.html",
+   "https://kinetis.dev/docs/appendix-contributing.html",
+   "https://kinetis.dev/docs/appendix-database.html",
+   "https://kinetis.dev/docs/appendix-http-client.html",
+   "https://kinetis.dev/docs/appendix-mcp-docs.html",
+   "https://kinetis.dev/docs/appendix-mcp.html",
+   "https://kinetis.dev/docs/appendix-middleware.html",
+   "https://kinetis.dev/docs/appendix-observability.html",
+   "https://kinetis.dev/docs/appendix-orbitron.html",
+   "https://kinetis.dev/docs/appendix-packages.html",
+   "https://kinetis.dev/docs/appendix-query-builder.html",
+   "https://kinetis.dev/docs/appendix-queue.html",
+   "https://kinetis.dev/docs/appendix-redis.html",
+   "https://kinetis.dev/docs/appendix-routing-validation.html",
+   "https://kinetis.dev/docs/appendix-runtime.html",
+   "https://kinetis.dev/docs/appendix-search.html",
+   "https://kinetis.dev/docs/appendix-sessions.html",
+   "https://kinetis.dev/docs/appendix-storage.html",
+   "https://kinetis.dev/docs/appendix-testing.html",
+   "https://kinetis.dev/docs/appendix.html",
+   "https://kinetis.dev/docs/auth-jwt.html",
+   "https://kinetis.dev/docs/auth.html",
+   "https://kinetis.dev/docs/authorization.html",
+   "https://kinetis.dev/docs/aws-sigv4.html",
+   "https://kinetis.dev/docs/benchmarks.html",
+   "https://kinetis.dev/docs/bootstrapping.html",
+   "https://kinetis.dev/docs/broadcasting.html",
+   "https://kinetis.dev/docs/caching.html",
+   "https://kinetis.dev/docs/cli.html",
+   "https://kinetis.dev/docs/concurrency.html",
+   "https://kinetis.dev/docs/config.html",
+   "https://kinetis.dev/docs/container.html",
+   "https://kinetis.dev/docs/core-concepts.html",
+   "https://kinetis.dev/docs/events.html",
+   "https://kinetis.dev/docs/genindex.html",
+   "https://kinetis.dev/docs/index.html",
+   "https://kinetis.dev/docs/logging.html",
+   "https://kinetis.dev/docs/mailer.html",
+   "https://kinetis.dev/docs/mcp-docs.html",
+   "https://kinetis.dev/docs/mcp.html",
+   "https://kinetis.dev/docs/middleware.html",
+   "https://kinetis.dev/docs/migrations.html",
+   "https://kinetis.dev/docs/orbitron.html",
+   "https://kinetis.dev/docs/orm.html",
+   "https://kinetis.dev/docs/performance-tuning.html",
+   "https://kinetis.dev/docs/persistence.html",
+   "https://kinetis.dev/docs/query-builder.html",
+   "https://kinetis.dev/docs/queue-rabbitmq.html",
+   "https://kinetis.dev/docs/queue-redis.html",
+   "https://kinetis.dev/docs/queue-sql.html",
+   "https://kinetis.dev/docs/queue-sqs.html",
+   "https://kinetis.dev/docs/queue.html",
+   "https://kinetis.dev/docs/redis.html",
+   "https://kinetis.dev/docs/reference.html",
+   "https://kinetis.dev/docs/revolt-http-client.html",
+   "https://kinetis.dev/docs/routing-validation.html",
+   "https://kinetis.dev/docs/runtime-adapters.html",
+   "https://kinetis.dev/docs/search-elasticsearch.html",
+   "https://kinetis.dev/docs/search-engines.html",
+   "https://kinetis.dev/docs/search-opensearch.html",
+   "https://kinetis.dev/docs/search.html",
+   "https://kinetis.dev/docs/session.html",
+   "https://kinetis.dev/docs/storage-s3.html",
+   "https://kinetis.dev/docs/storage.html",
+   "https://kinetis.dev/docs/telemetry.html",
+   "https://kinetis.dev/docs/testing.html",
+   "https://kinetis.dev/docs/tutorial.html",
+   "https://kinetis.dev/docs/views.html"
+  ]
+ }
+}

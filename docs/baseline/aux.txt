@@ -1,0 +1,5 @@
+# <path> <keep|remove-pending|remove>
+# keep: must be present. remove: must be absent. remove-pending: may be present.
+llms.txt keep
+robots.txt remove-pending
+404.html remove-pending

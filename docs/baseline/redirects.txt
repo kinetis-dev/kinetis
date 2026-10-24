@@ -1,0 +1,3 @@
+# <old-path> <new-url>
+# The old path may then be served by a stub whose meta refresh or canonical
+# link points at the new URL; its baselined anchors and head fields are skipped.

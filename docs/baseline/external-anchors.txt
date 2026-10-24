@@ -1,0 +1,46 @@
+# Anchors and pages other sites link to. index.html is served as /docs/.
+# The two anchors below are linked externally but absent from the current
+# build; they stay disabled until the docs restore them or a redirect lands.
+# routing-validation.html#zero-config-openapi-swagger-ui
+# concurrency.html#the-suspend-resume-pattern
+index.html
+appendix.html
+appendix-ci.html
+appendix-contributing.html
+appendix-packages.html
+auth.html
+auth-jwt.html
+authorization.html
+aws-sigv4.html
+benchmarks.html
+broadcasting.html
+caching.html
+cli.html
+concurrency.html
+config.html
+container.html
+core-concepts.html
+events.html
+logging.html
+mailer.html
+mcp.html
+middleware.html
+migrations.html
+performance-tuning.html
+persistence.html
+query-builder.html
+queue.html
+queue-rabbitmq.html
+queue-redis.html
+queue-sql.html
+queue-sqs.html
+revolt-http-client.html
+routing-validation.html
+runtime-adapters.html
+search-opensearch.html
+session.html
+storage.html
+storage-s3.html
+telemetry.html
+testing.html
+tutorial.html
