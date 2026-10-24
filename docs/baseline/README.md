@@ -6,8 +6,10 @@ change must not drop any of it:
 
 - `urls.txt`: every built page, plus `sitemap.xml`, `objects.inv` and
   `searchindex.js`.
-- `anchors.json`: the ids inside each page's `<article role="main">`. The
-  article's own id and positional sphinx-design `sd-*` ids are excluded.
+- `anchors.json`: the ids inside each page's main landmark, the outermost
+  `<main>` or `role="main"` element. The landmark's own id, positional
+  sphinx-design `sd-*` ids and ids inside a `data-pagefind-ignore` subtree
+  are excluded.
 - `meta.json`: each page's `<title>`, canonical link, `og:url`, `og:image`
   and description, plus the sitemap locs and the `sitemap_excludes` pages.
 - `sources.txt`: the `docs/*.md` names that the `mcp-docs` catalogue fetches.

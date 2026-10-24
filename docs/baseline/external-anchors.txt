@@ -42,3 +42,7 @@ storage-s3.html
 telemetry.html
 testing.html
 tutorial.html
+orbitron.html
+appendix-orbitron.html
+appendix-orbitron.html#orbitron-verify
+vector.html

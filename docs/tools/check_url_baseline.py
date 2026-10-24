@@ -5,6 +5,9 @@
   check <build-dir>     fail when a baselined URL, anchor or head field
                         disappeared or changed
 
+Baselined anchors are the ids inside each page's main landmark (<main> or
+role="main"); see PageParser.
+
 See docs/baseline/README.md for the rules around re-capturing.
 """
 
@@ -67,18 +70,33 @@ robots.txt remove-pending
 }
 
 
+# Elements without an end tag; one marked data-pagefind-ignore is skipped
+# alone instead of opening a subtree that never closes.
+VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+
 class PageParser(HTMLParser):
-    """Collects head metadata, all ids, and ids inside <article role="main">."""
+    """Collects head metadata, all ids, and the ids inside the main landmark.
+
+    The main landmark is the outermost element that is a <main> tag or has
+    role="main": pydata's <main>, or Furo's <article role="main">. Its own id,
+    sd- ids and ids inside a data-pagefind-ignore subtree are not collected.
+    """
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.meta = {"title": None, "canonical": None, "og:url": None, "og:image": None, "description": None}
         self.refresh = None
         self.ids = set()
-        self.article_ids = set()
+        self.main_ids = set()
         self._in_head = False
         self._title = None
-        self._article_depth = 0
+        # Each region is tracked by its opening element's tag name, so nested
+        # same-name tags close it at the right end tag.
+        self._main_tag = None
+        self._main_depth = 0
+        self._ignore_tag = None
+        self._ignore_depth = 0
 
     def handle_starttag(self, tag, attrs):
         a = {k: (v or "") for k, v in attrs}
@@ -86,17 +104,21 @@ class PageParser(HTMLParser):
             self._in_head = True
         elif tag == "body":
             self._in_head = False
-        elif tag == "article" and self._article_depth:
-            self._article_depth += 1
-        elif tag == "article" and a.get("role") == "main":
-            self._article_depth = 1
-            if "id" in a:
-                self.ids.add(a["id"])
-            return
         if "id" in a:
             self.ids.add(a["id"])
-            if self._article_depth and not a["id"].startswith("sd-"):
-                self.article_ids.add(a["id"])
+        if self._main_depth:
+            if tag == self._main_tag:
+                self._main_depth += 1
+            if self._ignore_depth:
+                self._ignore_depth += tag == self._ignore_tag
+            elif "data-pagefind-ignore" in a:
+                if tag not in VOID_TAGS:
+                    self._ignore_tag, self._ignore_depth = tag, 1
+            elif "id" in a and not a["id"].startswith("sd-"):
+                self.main_ids.add(a["id"])
+        elif tag == "main" or a.get("role") == "main":
+            self._main_tag, self._main_depth = tag, 1
+            return
         if not self._in_head:
             return
         if tag == "title" and self.meta["title"] is None:
@@ -118,8 +140,12 @@ class PageParser(HTMLParser):
         elif tag == "title" and self._title is not None:
             self.meta["title"] = " ".join("".join(self._title).split())
             self._title = None
-        elif tag == "article" and self._article_depth:
-            self._article_depth -= 1
+        if self._ignore_depth and tag == self._ignore_tag:
+            self._ignore_depth -= 1
+        if self._main_depth and tag == self._main_tag:
+            self._main_depth -= 1
+            if not self._main_depth:
+                self._ignore_depth = 0
 
     def handle_data(self, data):
         if self._title is not None:
@@ -188,7 +214,7 @@ def capture(build, baseline=BASELINE, docs=DOCS):
             "excluded": sitemap_excludes(docs / "conf.py"),
         },
     }
-    anchors = {page: sorted(p.article_ids) for page, p in parsed.items()}
+    anchors = {page: sorted(p.main_ids) for page, p in parsed.items()}
     (baseline / "urls.txt").write_text("".join(f"{u}\n" for u in urls), encoding="utf-8")
     (baseline / "anchors.json").write_text(json.dumps(anchors, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     (baseline / "meta.json").write_text(json.dumps(meta, indent=1, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -228,8 +254,8 @@ def check(build, baseline=BASELINE, docs=DOCS, catalogue=None):
         if path in redirects or page(path) is None:
             continue
         for anchor in ids:
-            if anchor not in page(path).article_ids:
-                errors.append(f"anchor {path}#{anchor}: missing from <article role=\"main\">")
+            if anchor not in page(path).main_ids:
+                errors.append(f"anchor {path}#{anchor}: missing from the main landmark")
 
     meta = json.loads((baseline / "meta.json").read_text(encoding="utf-8"))
     for path, fields in meta["pages"].items():
