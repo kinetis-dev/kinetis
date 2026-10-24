@@ -6,15 +6,31 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
+
+# One deployment at a time, never cancelled: a cancelled `s3 sync
+# --delete` would leave the docs half old, half new. A later push waits
+# and then publishes its own build over this one.
+concurrency:
+  group: deploy-docs
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Build and deploy docs
     runs-on: ubuntu-latest
+    # The OIDC token for the AWS role, on this job only.
+    permissions:
+      id-token: write
+      contents: read
+    # No `environment:` here, on purpose. The role's OIDC trust policy is
+    # pinned to this repository's main branch, and a job that declares an
+    # environment presents an environment subject instead, which the role
+    # refuses. workflow_dispatch from any branch but main is refused the
+    # same way.
     steps:
       - uses: actions/checkout@v7
 
@@ -26,15 +42,12 @@ jobs:
       - name: Check URL baseline
         run: python3 docs/tools/check_url_baseline.py check docs/_build/html --catalogue packages/mcp-docs/src/DocsCatalogue.php
 
-      # Same role as before (github-actions-kinetis-docs-deploy is
-      # already OIDC-trust-scoped to this exact repo/branch — that trust
-      # is per-repo and can't be swapped for kinetis-website's own role,
-      # whose trust condition names a different repo ID outright). What
-      # changed is the role's *permission* policy: it now carries the
-      # same statements as kinetis-website's own website-deploy policy
-      # (S3 object actions on the whole kinetis.dev bucket, invalidation
-      # on E3SMHJBBV2860Z) rather than the narrower, now-stale grant it
-      # had for the old docs.kinetis.dev bucket/distribution.
+      # github-actions-kinetis-docs-deploy is this repository's own role:
+      # its OIDC trust is per repository, so it can't be swapped for
+      # kinetis-website's role, whose trust names a different repository.
+      # The role allows only what this job does: ListBucket under the
+      # docs/ prefix, Get/Put/Delete on kinetis.dev/docs/*, and
+      # invalidation on the kinetis.dev distribution.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
