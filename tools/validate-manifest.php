@@ -562,8 +562,8 @@ const SKELETON_EXPORT_IGNORES = [
  * export-ignored phpstan.neon, phpunit.xml or tests hands the user a
  * project with no test suite and no static analysis — and with it none
  * of the defaults.phpstanRules that guard persistent-worker correctness
- * in application code. The monorepo
- * never reads the archive, so nothing else here would notice.
+ * in application code. The monorepo never reads the archive, so nothing
+ * else here would notice.
  *
  * The policy is the exact file rather than a set of entries to look for,
  * because every way of losing a path is a different pattern: a glob, a
@@ -591,7 +591,7 @@ function checkSkeletonArchive(string $gitattributesPath): array
 const PHPSTAN_RULE_REGISTRATION = '/^[ \t]*(?:class:|-)[ \t]*(Kinetis\\\\Linting\\\\\w+)[ \t]*$/m';
 
 /**
- * Check 9. mcp-docs and mcp-protocol require no Kinetis package and
+ * Check 9. mcp-docs and mcp-protocol do not depend on kinetis/framework and
  * register no Kinetis rule, so registering one is what puts a package
  * under the rule.
  *

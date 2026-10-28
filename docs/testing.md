@@ -58,8 +58,8 @@ A project created from the skeleton archive arrives with `tests/`,
 three rules are guardrails over three specific mistakes — a `static`
 property, a call that waits synchronously, and a reach past the PSR-7
 request and response into the process or SAPI — not a proof that the
-application keeps request isolation or stays non-blocking. The suite you write is
-the evidence, and {doc}`agent-correctness` is the review.
+application keeps request isolation or stays non-blocking. The suite
+you write is the evidence, and {doc}`agent-correctness` is the review.
 
 ## Testing a route
 

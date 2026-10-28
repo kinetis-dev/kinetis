@@ -477,9 +477,8 @@ behaves differently under each runtime:
   empty, and reading the scheme or client address from `$_SERVER` skips
   the `TRUSTED_PROXIES` policy above.
 - **SAPI header, cookie, and session functions** never reach the client
-  under RoadRunner, which redirects them to STDERR, or Lambda, whose CLI
-  SAPI discards them. Under PHP-FPM and FrankenPHP they bypass the
-  response Kinetis emits.
+  under RoadRunner and Lambda, whose CLI SAPI discards them. Under PHP-FPM
+  and FrankenPHP they bypass the response Kinetis emits.
 
 `Kinetis\Linting\NoProcessGlobalsRule` is a PHPStan rule that flags each
 of these. It ships under the framework's main autoload beside

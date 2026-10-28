@@ -30,12 +30,12 @@ final class NoProcessGlobalsRuleTest extends RuleTestCase
         . 'under PHP-FPM and FrankenPHP the required enable_post_data_reading=0 leaves $_POST and $_FILES empty. '
         . 'Use %s.';
 
-    private const string HEADERS = '%s writes to the SAPI rather than the response: RoadRunner redirects it to '
-        . 'STDERR, Lambda\'s CLI SAPI discards it, and under PHP-FPM and FrankenPHP it bypasses the response '
+    private const string HEADERS = '%s writes to the SAPI rather than the response: RoadRunner and Lambda run '
+        . 'on the CLI SAPI, which discards it, and under PHP-FPM and FrankenPHP it bypasses the response '
         . 'Kinetis emits. Set the status and headers on the returned ResponseInterface.';
 
-    private const string COOKIES = '%s writes to the SAPI rather than the response: RoadRunner redirects it to '
-        . 'STDERR, Lambda\'s CLI SAPI discards it, and under PHP-FPM and FrankenPHP it bypasses the response '
+    private const string COOKIES = '%s writes to the SAPI rather than the response: RoadRunner and Lambda run '
+        . 'on the CLI SAPI, which discards it, and under PHP-FPM and FrankenPHP it bypasses the response '
         . 'Kinetis emits. Add a Set-Cookie header to the returned ResponseInterface.';
 
     private const string SESSION = '%s drives PHP\'s native session, which reads and writes SAPI cookies and '

@@ -442,7 +442,12 @@ docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_
 
 Every check must read `OK`: `manifest-schema`, `cycle`,
 `version-consistency`, `generated-drift`, `version-bump`,
-`content-bump`, `workflow-coverage`.
+`content-bump`, `workflow-coverage`, `skeleton-archive`,
+`phpstan-rules`.
+
+`phpstan-rules` reads every package's `phpstan.neon`: a package that
+registers any `Kinetis\Linting` rule must register every rule in the
+manifest's `defaults.phpstanRules`.
 
 `version-bump` and `content-bump` are the two that read `$BASE`, and
 between them they enforce the whole of step 3. An empty or unreadable

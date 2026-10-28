@@ -139,8 +139,9 @@ specific choice in the project.
   pass says nothing about request isolation, non-blocking I/O, route
   uniqueness or any behavior. The same holds for `phpstan.neon`'s
   `NoStaticPropertiesRule`, `NoBlockingIoRule` and
-  `NoProcessGlobalsRule`: three guardrails, not a proof. Report readiness as what was actually established.
-  {doc}`orbitron`, {doc}`testing`.
+  `NoProcessGlobalsRule`: three guardrails, not a proof. Report
+  readiness as what was actually established. {doc}`orbitron`,
+  {doc}`testing`.
 - **Read the driver a task depends on, not the contract above it.** Which
   database driver `DB_DRIVER=auto` selects decides where the blocking
   boundary is: the native drivers suspend on query I/O but still block
