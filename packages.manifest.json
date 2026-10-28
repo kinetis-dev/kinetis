@@ -18,7 +18,8 @@
         },
         "phpstanRules": [
             "Kinetis\\Linting\\NoStaticPropertiesRule",
-            "Kinetis\\Linting\\NoBlockingIoRule"
+            "Kinetis\\Linting\\NoBlockingIoRule",
+            "Kinetis\\Linting\\NoProcessGlobalsRule"
         ]
     },
     "packages": {
@@ -27,7 +28,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.22.1",
+            "version": "1.23.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -59,7 +60,7 @@
             "description": "Runtime-matched MySQL and Postgres clients (mysqli async, ext-pgsql async, PDO) built from a neutral connection definition, with a transaction safety net and injectable SQL instrumentation. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.4.3",
+            "version": "1.4.4",
             "requiresDev": [
                 "framework"
             ],
@@ -80,7 +81,7 @@
             "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
             "namespace": "Kinetis\\DatabaseBridge\\",
             "testNamespace": "Kinetis\\DatabaseBridge\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.4.1",
             "requires": [
                 "framework",
                 "persistence"
@@ -116,7 +117,7 @@
             "description": "A non-replaying, deadline-bounded Redis transport for amphp/redis, with TLS, authentication, and Redis Cluster slot routing. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\Redis\\",
             "testNamespace": "Kinetis\\Redis\\Tests\\",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "requiresDev": [
                 "framework"
             ],
@@ -133,7 +134,7 @@
             "description": "PSR-16 SimpleCache for Kinetis, backed by Redis (single-node or Cluster) over kinetis/redis — non-blocking, Revolt-native, with TLS support.",
             "namespace": "Kinetis\\SimpleCache\\",
             "testNamespace": "Kinetis\\SimpleCache\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework",
                 "redis"
@@ -151,7 +152,7 @@
             "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
-            "version": "1.2.2",
+            "version": "1.2.3",
             "requires": [
                 "framework"
             ],
@@ -166,7 +167,7 @@
             "description": "A thin, parameterized SQL query builder over kinetis/persistence's MySQL and Postgres drivers, with portable row-to-DTO mapping and pagination envelopes. Usable standalone. Not an ORM: no relationships, no migrations, no change-tracking.",
             "namespace": "Kinetis\\QueryBuilder\\",
             "testNamespace": "Kinetis\\QueryBuilder\\Tests\\",
-            "version": "1.8.0",
+            "version": "1.8.1",
             "requires": [
                 "persistence"
             ],
@@ -180,7 +181,7 @@
             "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, factory-owned transaction sessions with locking entity reads, and per-entity connection affinity with one factory and one manager per connection. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "namespace": "Kinetis\\Orm\\",
             "testNamespace": "Kinetis\\Orm\\Tests\\",
-            "version": "1.12.0",
+            "version": "1.12.1",
             "requires": [
                 "persistence",
                 "query-builder"
@@ -195,7 +196,7 @@
             "description": "Ability-based authorization for Kinetis — Gate wraps a callable Policy check, normalizing a bool/AuthorizationResponse result into an allow/deny decision and raising a denial as an exception that declares its own 403.",
             "namespace": "Kinetis\\Authorization\\",
             "testNamespace": "Kinetis\\Authorization\\Tests\\",
-            "version": "1.0.4",
+            "version": "1.0.5",
             "requires": [
                 "framework"
             ],
@@ -206,7 +207,7 @@
             "description": "Bearer/opaque-token authentication middleware for Kinetis, built entirely on interfaces core already requires (PSR-7/PSR-15). See kinetis/auth-jwt for stateless JWT verification instead.",
             "namespace": "Kinetis\\Auth\\",
             "testNamespace": "Kinetis\\Auth\\Tests\\",
-            "version": "1.3.0",
+            "version": "1.3.1",
             "requires": [
                 "framework"
             ],
@@ -222,7 +223,7 @@
             "description": "Stateless JWT authentication middleware for Kinetis (HS256/RS256, optional per-token revocation), verifying signed tokens via firebase/php-jwt. See kinetis/auth instead for opaque Bearer-token validation against your own storage.",
             "namespace": "Kinetis\\AuthJwt\\",
             "testNamespace": "Kinetis\\AuthJwt\\Tests\\",
-            "version": "1.5.0",
+            "version": "1.5.1",
             "requires": [
                 "framework"
             ],
@@ -241,7 +242,7 @@
             "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations for the default connection and named ones, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.4.1",
             "requires": [
                 "framework",
                 "persistence",
@@ -267,7 +268,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.8.0",
+            "version": "1.8.1",
             "requires": [
                 "framework",
                 "mcp-protocol"
@@ -310,7 +311,7 @@
             "description": "A development-only application construction harness for Kinetis: a CLI and a standalone MCP server that hand any coding agent a portable Kinetis context document, the Kinetis documentation pages as MCP resources, as bounded line windows and through a literal search of one page, the installed kinetis/* package inventory, a bounded live read of one installed package's own source, a literal search inside one such file or across a bounded directory tree of such a package, and a listing of one directory of such a package (MCP only), a deterministic verification of the project's Composer layout, and one previewable health-endpoint scaffold, with no model of its own.",
             "namespace": "Kinetis\\Orbitron\\",
             "testNamespace": "Kinetis\\Orbitron\\Tests\\",
-            "version": "1.11.2",
+            "version": "1.11.3",
             "bin": [
                 "bin/kinetis-orbitron-mcp"
             ],
@@ -331,7 +332,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.7.0",
+            "version": "1.7.1",
             "requires": [
                 "framework"
             ],
@@ -353,7 +354,7 @@
             "description": "A Redis-backed queue implementation for kinetis/queue's QueueInterface — finite leases over pending/leased/delayed keys, so a crashed worker's job is redelivered rather than stranded.",
             "namespace": "Kinetis\\QueueRedis\\",
             "testNamespace": "Kinetis\\QueueRedis\\Tests\\",
-            "version": "1.8.1",
+            "version": "1.8.2",
             "requires": [
                 "framework",
                 "queue",
@@ -370,7 +371,7 @@
             "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for atomic reservation, token-fenced settlement, and a finite visibility timeout that redelivers a crashed worker's job.",
             "namespace": "Kinetis\\QueueSql\\",
             "testNamespace": "Kinetis\\QueueSql\\Tests\\",
-            "version": "1.6.3",
+            "version": "1.6.4",
             "requires": [
                 "framework",
                 "queue",
@@ -384,7 +385,7 @@
             "description": "File storage for Kinetis, built on League\\Flysystem — local storage through an Amp\\File-backed adapter whose driver calls suspend the Fiber; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "namespace": "Kinetis\\Storage\\",
             "testNamespace": "Kinetis\\Storage\\Tests\\",
-            "version": "1.2.4",
+            "version": "1.2.5",
             "requires": [
                 "framework"
             ],
@@ -407,7 +408,7 @@
             "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
             "namespace": "Kinetis\\RevoltHttpClient\\",
             "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
-            "version": "1.4.1",
+            "version": "1.4.2",
             "requiresDev": [
                 "framework"
             ],
@@ -424,7 +425,7 @@
             "description": "S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3 — every S3 call travels on a Revolt-native HTTP transport.",
             "namespace": "Kinetis\\StorageS3\\",
             "testNamespace": "Kinetis\\StorageS3\\Tests\\",
-            "version": "1.1.4",
+            "version": "1.1.5",
             "requires": [
                 "framework",
                 "storage",
@@ -444,7 +445,7 @@
             "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueSqs\\",
             "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
-            "version": "1.5.0",
+            "version": "1.5.1",
             "requires": [
                 "framework",
                 "queue",
@@ -461,7 +462,7 @@
             "description": "A Fiber-native non-blocking RabbitMQ (AMQP 0-9-1) backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueRabbitMq\\",
             "testNamespace": "Kinetis\\QueueRabbitMq\\Tests\\",
-            "version": "1.6.0",
+            "version": "1.6.1",
             "requires": [
                 "framework",
                 "queue"
@@ -477,7 +478,7 @@
             "description": "Non-blocking mail sending for Kinetis — Symfony\\Component\\Mailer over any DSN-selected transport, with API-based transports going through kinetis/revolt-http-client instead of blocking.",
             "namespace": "Kinetis\\Mailer\\",
             "testNamespace": "Kinetis\\Mailer\\Tests\\",
-            "version": "1.1.3",
+            "version": "1.1.4",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -497,7 +498,7 @@
             "description": "Engine-neutral search contracts for Kinetis: the single-origin, deadline-bounded, non-blocking HTTP transport an engine client is built on, and a narrow client interface over indexing, retrieval, deletion, search, and bulk.",
             "namespace": "Kinetis\\Search\\",
             "testNamespace": "Kinetis\\Search\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -518,7 +519,7 @@
             "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchOpenSearch\\",
             "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
-            "version": "1.2.4",
+            "version": "1.2.5",
             "requires": [
                 "framework",
                 "search"
@@ -539,7 +540,7 @@
             "description": "Fiber-native non-blocking Elasticsearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchElasticsearch\\",
             "testNamespace": "Kinetis\\SearchElasticsearch\\Tests\\",
-            "version": "1.0.3",
+            "version": "1.0.4",
             "requires": [
                 "framework",
                 "search"
@@ -562,7 +563,7 @@
             "description": "A PSR-18 client that signs outgoing requests with AWS Signature Version 4 (SigV4) for one configured origin — checked against AWS's published SigV4 test vectors, non-blocking via kinetis/revolt-http-client. Usable standalone, not only with Kinetis.",
             "namespace": "Kinetis\\AwsSigV4\\",
             "testNamespace": "Kinetis\\AwsSigV4\\Tests\\",
-            "version": "1.3.2",
+            "version": "1.3.3",
             "requires": [
                 "revolt-http-client"
             ],
@@ -585,7 +586,7 @@
             "description": "Engine-neutral view rendering for Kinetis controllers, with safe logical view names, HTML responses, and asset URLs.",
             "namespace": "Kinetis\\Views\\",
             "testNamespace": "Kinetis\\Views\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "framework"
             ],
@@ -598,7 +599,7 @@
             "description": "Pure PHP templates for kinetis/views.",
             "namespace": "Kinetis\\ViewsPhp\\",
             "testNamespace": "Kinetis\\ViewsPhp\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "views"
             ],
@@ -616,7 +617,7 @@
             "description": "Latte templates for kinetis/views.",
             "namespace": "Kinetis\\ViewsLatte\\",
             "testNamespace": "Kinetis\\ViewsLatte\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "views"
             ],
@@ -637,7 +638,7 @@
             "description": "Twig templates for kinetis/views.",
             "namespace": "Kinetis\\ViewsTwig\\",
             "testNamespace": "Kinetis\\ViewsTwig\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.0.1",
             "requires": [
                 "views"
             ],
@@ -658,7 +659,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, mapped entities and a request-scoped unit of work over kinetis/orm, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.4.4",
+            "version": "1.4.5",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -695,7 +696,7 @@
             "description": "The smallest possible runnable Kinetis application: nginx + PHP-FPM, one controller, one route, a welcome page.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.6.4",
+            "version": "1.6.5",
             "type": "project",
             "requires": [
                 "framework"
@@ -714,7 +715,7 @@
             "description": "OpenTelemetry tracing for Kinetis — request spans, framework instrumentation hooks, decorators for the cache, session, HTTP and search boundaries, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.6.0",
+            "version": "1.6.1",
             "requires": [
                 "framework",
                 "revolt-http-client"
@@ -749,7 +750,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, Redis, and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.3.1",
+            "version": "1.3.2",
             "requires": [
                 "framework"
             ],
@@ -778,7 +779,7 @@
             "description": "RoadRunner runtime adapter for Kinetis — speaks the PSR7Worker/Goridge protocol and converts to/from PSR-7.",
             "namespace": "Kinetis\\RoadRunnerAdapter\\",
             "testNamespace": "Kinetis\\RoadRunnerAdapter\\Tests\\",
-            "version": "1.2.2",
+            "version": "1.2.3",
             "requires": [
                 "framework"
             ],
@@ -798,7 +799,7 @@
             "description": "Real-time broadcasting for Kinetis over the Pusher Channels protocol (Soketi, Laravel Reverb, or Pusher itself) - attribute-based private/presence channel authorization and a non-blocking driver over kinetis/revolt-http-client.",
             "namespace": "Kinetis\\Broadcasting\\",
             "testNamespace": "Kinetis\\Broadcasting\\Tests\\",
-            "version": "1.6.0",
+            "version": "1.6.1",
             "requires": [
                 "framework",
                 "revolt-http-client"

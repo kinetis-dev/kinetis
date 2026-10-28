@@ -458,6 +458,69 @@ TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
 {ref}`runtime-reference-forwarded-headers` describes how each adapter
 applies the policy.
 
+(process-globals)=
+## Process and SAPI globals
+
+Application code reads the request from the PSR-7
+`ServerRequestInterface` it is given and answers with the
+`ResponseInterface` it returns. The adapter owns the process and the
+SAPI on both sides of that exchange, so code that reaches them directly
+behaves differently under each runtime:
+
+- **`exit` and `die`** end the PHP process before the response is sent
+  or the request scope is disposed. Under FrankenPHP and RoadRunner that
+  is the worker, with every request in flight on its event loop; under
+  Lambda it fails the invocation in flight.
+- **Request superglobals** are not the request under RoadRunner and
+  Lambda, which never fill them. Under PHP-FPM and FrankenPHP the
+  required `enable_post_data_reading=0` leaves `$_POST` and `$_FILES`
+  empty, and reading the scheme or client address from `$_SERVER` skips
+  the `TRUSTED_PROXIES` policy above.
+- **SAPI header, cookie, and session functions** never reach the client
+  under RoadRunner and Lambda, whose CLI SAPI discards them. Under PHP-FPM
+  and FrankenPHP they bypass the response Kinetis emits.
+
+`Kinetis\Linting\NoProcessGlobalsRule` is a PHPStan rule that flags each
+of these. It ships under the framework's main autoload beside
+`NoStaticPropertiesRule` and `NoBlockingIoRule`, and `kinetis/skeleton`'s
+`phpstan.neon` registers all three; an existing project adds it to its
+own:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+rules:
+    - Kinetis\Linting\NoProcessGlobalsRule
+```
+
+| Identifier | Reported | Use instead |
+|---|---|---|
+| `kinetis.exit` | `exit` and `die`, with or without a status, and `\exit()` | return a response or throw from a handler; a console command returns its exit code |
+| `kinetis.superglobal` | `$_GET`, `$_POST`, `$_COOKIE`, `$_FILES`, `$_REQUEST`, `$_SESSION`, `$_SERVER`, read or written | `getQueryParams()`, `getParsedBody()`, `getCookieParams()`, `getUploadedFiles()`, and `getServerParams()` or a request header on `ServerRequestInterface`; `Kinetis\Session\Session` from {doc}`session`; `getenv()` for the environment |
+| `kinetis.sapiCall` | `header()`, `header_remove()`, `http_response_code()`, `setcookie()`, `setrawcookie()`, and every global `session_*()` function | the status and headers, `Set-Cookie` included, on the returned `ResponseInterface`; `Kinetis\Session\Session` |
+
+Function names resolve the way PHP resolves them, so an unqualified
+`header()` inside a namespace that declares its own `header()` is not
+reported. A method, property, or static call that shares a reported
+name, a variable named by an expression, `$_ENV`, `$GLOBALS`, `getenv()`,
+and the output functions (`echo`, `flush()`, `ob_*()`) are not reported.
+
+Code that owns the process or the SAPI — a console entrypoint that sets
+its exit code, an adapter bridging a real SAPI — is exempted with
+PHPStan's standard ignores, by identifier and path, with the reason
+beside it:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+parameters:
+    ignoreErrors:
+        # A console entrypoint; it hands its command's exit code to exit.
+        -
+            identifier: kinetis.exit
+            path: bin/console
+```
+
 ## Choose an adapter explicitly
 
 A deployment that wants one adapter rather than detection passes a

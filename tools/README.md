@@ -39,8 +39,12 @@ root) — the canonical source of truth for every `packages/*/composer.json`
   would hand the user a project with no test suite and no static
   analysis. The validator compares the whole file rather than looking
   for entries, because every way of losing a path is a different
-  pattern. It also owns the two history reads the version and content
-  checks need: the comparison base, and the file-level diff against it.
+  pattern. A package whose `phpstan.neon` registers any
+  `Kinetis\Linting` rule must register every rule in the manifest's
+  `defaults.phpstanRules`, so a new rule reaches every package analysed
+  with the framework's rules. It also owns the two history reads the
+  version and content checks need: the comparison base, and the
+  file-level diff against it.
 - `release-plan.php` — computes which packages this round has to look
   at, read-only and unauthenticated. A package is a candidate when its
   version changed since the comparison base, or when its split
