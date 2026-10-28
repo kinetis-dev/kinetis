@@ -209,7 +209,7 @@ three files, which are how it is published rather than part of an
 application: `.gitattributes`, `composer.lock` and
 `docker-compose.monorepo.yml`. What that leaves is the application and
 the means to check it — `tests/` with the welcome controller's test,
-`phpunit.xml`, and `phpstan.neon` at level 8 with two Kinetis rules
+`phpunit.xml`, and `phpstan.neon` at level 8 with three Kinetis rules
 registered.
 
 ### Verifying a change
@@ -221,14 +221,16 @@ docker compose exec app vendor/bin/phpunit
 docker compose exec app vendor/bin/phpstan analyse
 ```
 
-`phpstan.neon` runs at level 8 and adds two rules a general-purpose
+`phpstan.neon` runs at level 8 and adds three rules a general-purpose
 analyser has no reason to carry.
 `NoStaticPropertiesRule` flags a `static` property, which survives every
 request the worker goes on to handle; `NoBlockingIoRule` flags a call
 that waits synchronously instead of yielding, holding the event loop and
-everything else on it until it returns.
+everything else on it until it returns; `NoProcessGlobalsRule` flags
+`exit`, the request superglobals, and the SAPI `header()`, cookie and
+session functions, which bypass the PSR-7 request and response.
 
-They are guardrails over two specific mistakes, not a complete proof of
+They are guardrails over three specific mistakes, not a complete proof of
 persistent-worker correctness. `AGENTS.md` asks for a closing pass by
 hand as well — request-scoped state stays request-scoped, waits yield,
 credentials stay where they belong, and the documentation still matches

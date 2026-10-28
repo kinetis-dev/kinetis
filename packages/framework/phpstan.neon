@@ -54,6 +54,22 @@ parameters:
         -
             identifier: kinetis.blockingCall
             path: src/Testing/Runtime/ResponseSpec.php
+        # SuperglobalsBridge is the PHP-FPM and FrankenPHP bridge, the one
+        # owner of the SAPI's request and response: it builds the PSR-7
+        # request from the superglobals and emits the response through
+        # http_response_code() and header(). Everything else reads the
+        # request it built.
+        -
+            identifier: kinetis.superglobal
+            path: src/Runtime/SuperglobalsBridge.php
+        -
+            identifier: kinetis.sapiCall
+            path: src/Runtime/SuperglobalsBridge.php
+        # The console entrypoint is a short-lived process that owns its own
+        # exit code: commands return one, and this script hands it to exit.
+        -
+            identifier: kinetis.exit
+            path: bin/kinetis
 
 services:
     -
@@ -62,5 +78,9 @@ services:
             - phpstan.rules.rule
     -
         class: Kinetis\Linting\NoBlockingIoRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: Kinetis\Linting\NoProcessGlobalsRule
         tags:
             - phpstan.rules.rule

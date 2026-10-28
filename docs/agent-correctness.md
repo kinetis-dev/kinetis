@@ -41,6 +41,11 @@ These hold regardless of adapter, driver, or use case.
   query, an HTTP request, a filesystem read — goes through a driver that
   suspends rather than blocks, or is flagged and audited as the
   exception to that rule. {doc}`concurrency`.
+- **Process and SAPI globals.** Application code reads the request from
+  the PSR-7 request it is given and answers through the response it
+  returns: no `exit` or `die`, no request superglobal, and no
+  `header()`, `setcookie()` or native `session_*()` call.
+  {ref}`process-globals`.
 - **Deadlines, cancellation, and backpressure.** An outbound call has an
   explicit timeout below whatever is waiting on it, and nothing waits on
   an unbounded response body. {doc}`revolt-http-client`.
@@ -133,8 +138,8 @@ specific choice in the project.
   Composer layout is the narrow one Orbitron supports — and a layout
   pass says nothing about request isolation, non-blocking I/O, route
   uniqueness or any behavior. The same holds for `phpstan.neon`'s
-  `NoStaticPropertiesRule` and `NoBlockingIoRule`: two guardrails, not a
-  proof. Report readiness as what was actually established.
+  `NoStaticPropertiesRule`, `NoBlockingIoRule` and
+  `NoProcessGlobalsRule`: three guardrails, not a proof. Report readiness as what was actually established.
   {doc}`orbitron`, {doc}`testing`.
 - **Read the driver a task depends on, not the contract above it.** Which
   database driver `DB_DRIVER=auto` selects decides where the blocking

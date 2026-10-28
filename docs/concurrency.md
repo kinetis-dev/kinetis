@@ -175,8 +175,9 @@ enforces meanwhile. Only calls that wait on the loop, such as `Socket`,
 `Kinetis\Linting\NoBlockingIoRule` is a PHPStan rule for application code.
 It ships under the framework's main autoload for the same reason
 `NoStaticPropertiesRule` does (see {doc}`container`) and needs nothing
-beyond PHPStan. `kinetis/skeleton`'s `phpstan.neon` registers both rules;
-an existing project adds it to its own:
+beyond PHPStan. `kinetis/skeleton`'s `phpstan.neon` registers it beside
+`NoStaticPropertiesRule` and `NoProcessGlobalsRule`
+({ref}`process-globals`); an existing project adds it to its own:
 
 ```{code-block} yaml
 :caption: phpstan.neon

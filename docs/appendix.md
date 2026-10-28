@@ -219,6 +219,7 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
 
 - `NoStaticPropertiesRule` — a PHPStan rule flagging `static` property declarations, shipped under the main autoload for consumer projects to add to their own `phpstan.neon`.
 - `NoBlockingIoRule` — a PHPStan rule, identifier `kinetis.blockingCall`, flagging blocking sleep, socket, curl-wait, database-connection and child-process calls, and HTTP client construction or discovery that is not guaranteed a Revolt-backed transport. Registered by `kinetis/skeleton`'s `phpstan.neon`; categories, replacements and limitations in {doc}`concurrency`.
+- `NoProcessGlobalsRule` — a PHPStan rule flagging `exit` and `die` (identifier `kinetis.exit`), the request superglobals (`kinetis.superglobal`), and the SAPI header, cookie and `session_*` functions (`kinetis.sapiCall`). Registered by `kinetis/skeleton`'s `phpstan.neon`; what each kind breaks under each runtime and its replacement in {ref}`process-globals`.
 
 ## `Kinetis\Testing`
 

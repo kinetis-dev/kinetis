@@ -44,6 +44,10 @@ declare(strict_types=1);
  *      Composer dist archive, so its .gitattributes decides what a
  *      generated application actually contains, and it is held to one
  *      exact content.
+ *   9. PHPStan rule registration. A package whose phpstan.neon
+ *      registers any Kinetis\Linting rule registers every rule in
+ *      defaults.phpstanRules, so a rule added to the framework reaches
+ *      every package that analyses with the framework's rules.
  *
  * A separate check — does each package's committed composer.lock still
  * match its composer.json — is just `composer validate --strict`, run
@@ -556,9 +560,9 @@ const SKELETON_EXPORT_IGNORES = [
  * leave its tests and quality configuration behind. The skeleton is the
  * opposite: its archive *is* the generated application, so an
  * export-ignored phpstan.neon, phpunit.xml or tests hands the user a
- * project with no test suite and no static analysis — and with it no
- * NoStaticPropertiesRule and no NoBlockingIoRule, the two rules that
- * guard persistent-worker correctness in application code. The monorepo
+ * project with no test suite and no static analysis — and with it none
+ * of the defaults.phpstanRules that guard persistent-worker correctness
+ * in application code. The monorepo
  * never reads the archive, so nothing else here would notice.
  *
  * The policy is the exact file rather than a set of entries to look for,
@@ -581,6 +585,40 @@ function checkSkeletonArchive(string $gitattributesPath): array
     return ['packages/skeleton/.gitattributes must read exactly, and only: '
         . implode(', ', SKELETON_EXPORT_IGNORES)
         . ' — a generated application needs everything else, tests, phpunit.xml and phpstan.neon included.'];
+}
+
+/** A rule registered as a `services` class or a `rules` list entry. */
+const PHPSTAN_RULE_REGISTRATION = '/^[ \t]*(?:class:|-)[ \t]*(Kinetis\\\\Linting\\\\\w+)[ \t]*$/m';
+
+/**
+ * Check 9. mcp-docs and mcp-protocol require no Kinetis package and
+ * register no Kinetis rule, so registering one is what puts a package
+ * under the rule.
+ *
+ * @param list<string> $rules defaults.phpstanRules
+ * @param array<string, string> $neonByPackage package key => its phpstan.neon contents
+ * @return list<string>
+ */
+function checkPhpstanRules(array $rules, array $neonByPackage): array
+{
+    $problems = [];
+
+    foreach ($neonByPackage as $key => $neon) {
+        preg_match_all(PHPSTAN_RULE_REGISTRATION, $neon, $matches);
+
+        if ($matches[1] === []) {
+            continue;
+        }
+
+        $missing = array_values(array_diff($rules, $matches[1]));
+
+        if ($missing !== []) {
+            $problems[] = "packages/{$key}/phpstan.neon registers a Kinetis\\Linting rule but not "
+                . implode(', ', $missing) . ' — register every rule in defaults.phpstanRules.';
+        }
+    }
+
+    return $problems;
 }
 
 /** A git read that could not answer the question it was asked. */
@@ -918,6 +956,15 @@ function validatorMain(array $argv = []): int
 
     reportCheck('workflow-coverage', $coverageProblems, $ok);
     reportCheck('skeleton-archive', checkSkeletonArchive(packageDirectory('skeleton') . '/.gitattributes'), $ok);
+
+    $neonByPackage = [];
+
+    foreach (array_keys($manifest['packages']) as $key) {
+        $key = (string) $key;
+        $neonByPackage[$key] = (string) @file_get_contents(packageDirectory($key) . '/phpstan.neon');
+    }
+
+    reportCheck('phpstan-rules', checkPhpstanRules($manifest['defaults']['phpstanRules'], $neonByPackage), $ok);
 
     return $ok ? 0 : 1;
 }

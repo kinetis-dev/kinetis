@@ -52,11 +52,13 @@ composer require --dev phpunit/phpunit
 
 A project created from the skeleton archive arrives with `tests/`,
 `phpunit.xml` and a `phpstan.neon` at level 8 that registers
-`Kinetis\Linting\NoStaticPropertiesRule` ({doc}`container`) and
-`Kinetis\Linting\NoBlockingIoRule` ({doc}`concurrency`). Those two
-rules are guardrails over two specific mistakes — a `static` property,
-and a call that waits synchronously — not a proof that the application
-keeps request isolation or stays non-blocking. The suite you write is
+`Kinetis\Linting\NoStaticPropertiesRule` ({doc}`container`),
+`Kinetis\Linting\NoBlockingIoRule` ({doc}`concurrency`) and
+`Kinetis\Linting\NoProcessGlobalsRule` ({ref}`process-globals`). Those
+three rules are guardrails over three specific mistakes — a `static`
+property, a call that waits synchronously, and a reach past the PSR-7
+request and response into the process or SAPI — not a proof that the
+application keeps request isolation or stays non-blocking. The suite you write is
 the evidence, and {doc}`agent-correctness` is the review.
 
 ## Testing a route

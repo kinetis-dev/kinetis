@@ -195,6 +195,9 @@ between requests. FrankenPHP repopulates every superglobal on each call
 into the worker, and `Kinetis\Runtime\SuperglobalsBridge` reads them on
 that basis. RoadRunner has none to reset: `RoadRunnerAdapter` builds the
 PSR-7 request from RoadRunner's own protocol and never touches one.
+Application code reads the PSR-7 request rather than a superglobal;
+{ref}`process-globals` gives the reasons per runtime and the rule that
+flags it.
 
 What is left is narrower than "any global state": state your own
 application code introduces outside the container's request-scoping

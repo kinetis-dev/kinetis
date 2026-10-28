@@ -405,6 +405,50 @@ final class ValidateManifestTest extends TestCase
         )));
     }
 
+    public function test_every_package_registering_a_kinetis_rule_registers_them_all(): void
+    {
+        $manifest = loadManifest();
+        $neonByPackage = [];
+
+        foreach (array_keys($manifest['packages']) as $key) {
+            $key = (string) $key;
+            $neonByPackage[$key] = (string) @file_get_contents(packageDirectory($key) . '/phpstan.neon');
+        }
+
+        self::assertSame([], checkPhpstanRules($manifest['defaults']['phpstanRules'], $neonByPackage));
+    }
+
+    public function test_a_missing_rule_registration_is_named(): void
+    {
+        $neon = "services:\n    -\n        class: Kinetis\\Linting\\NoStaticPropertiesRule\n"
+            . "        tags:\n            - phpstan.rules.rule\n";
+
+        self::assertSame(
+            ['packages/demo/phpstan.neon registers a Kinetis\\Linting rule but not Kinetis\\Linting\\NoBlockingIoRule '
+                . '— register every rule in defaults.phpstanRules.'],
+            checkPhpstanRules(
+                ['Kinetis\\Linting\\NoStaticPropertiesRule', 'Kinetis\\Linting\\NoBlockingIoRule'],
+                ['demo' => $neon],
+            ),
+        );
+    }
+
+    public function test_a_rules_list_entry_counts_as_a_registration(): void
+    {
+        self::assertSame([], checkPhpstanRules(
+            ['Kinetis\\Linting\\NoStaticPropertiesRule'],
+            ['demo' => "rules:\n    - Kinetis\\Linting\\NoStaticPropertiesRule\n"],
+        ));
+    }
+
+    public function test_a_package_registering_no_kinetis_rule_is_not_held_to_them(): void
+    {
+        self::assertSame([], checkPhpstanRules(
+            ['Kinetis\\Linting\\NoStaticPropertiesRule'],
+            ['demo' => "# No Kinetis\\Linting\\NoStaticPropertiesRule here.\nparameters:\n    level: 8\n"],
+        ));
+    }
+
     public function test_an_explicit_base_wins_over_the_environment(): void
     {
         $repository = self::scratchRepository();

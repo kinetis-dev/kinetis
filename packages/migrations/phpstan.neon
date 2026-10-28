@@ -2,9 +2,24 @@ parameters:
     level: 8
     paths:
         - src
+    ignoreErrors:
+        # The Postgres advisory-lock poll sleeps between attempts outside
+        # any Fiber, where Timer::delay() would throw FiberError. See the
+        # comment in acquireLock() for why the sleep stalls no other work.
+        -
+            identifier: kinetis.blockingCall
+            path: src/MigrationRunner.php
 
 services:
     -
         class: Kinetis\Linting\NoStaticPropertiesRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: Kinetis\Linting\NoBlockingIoRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: Kinetis\Linting\NoProcessGlobalsRule
         tags:
             - phpstan.rules.rule

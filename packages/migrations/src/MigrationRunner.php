@@ -267,10 +267,11 @@ final readonly class MigrationRunner
         // Postgres has no timeout parameter on its own advisory-lock
         // functions, unlike MySQL's GET_LOCK — pg_try_advisory_lock is
         // the non-blocking primitive, polled with a short sleep between
-        // attempts, the same "no native blocking-with-timeout" shape
-        // Kinetis\QueueSql\SqlQueue::pop() already uses. The ::int cast
-        // makes the answer a plain 0/1 on both drivers, which represent
-        // a SQL boolean differently.
+        // attempts. The sleep blocks: the migrate:* commands run this
+        // outside any Fiber on a single-session PDO link, in a
+        // short-lived process with no other work to stall. The ::int
+        // cast makes the answer a plain 0/1 on both drivers, which
+        // represent a SQL boolean differently.
         $deadline = microtime(true) + $this->lockTimeoutSeconds;
 
         while (true) {
