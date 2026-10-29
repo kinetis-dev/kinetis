@@ -112,15 +112,12 @@ also covers a `SqlQueue` constructed directly around a link the
 application already has.
 
 {doc}`appendix-queue`'s "Multiple backends" shows the same registration
-where several backends run side by side. `pushOn()` takes a raw
-{doc}`persistence` transaction; an {doc}`orm` transaction session does
-not expose its transaction. If ORM work must schedule a job atomically,
-map an application outbox intent as an entity with a `#[BelongsTo]` to
-what it depends on, persist both and flush once, then publish after the
-transaction returns —
-[Locking rows, or entities and SQL in one
-transaction](orm.md#locking-rows-or-entities-and-sql-in-one-transaction)
-covers the composition.
+where several backends run side by side. `pushOn()` takes any
+{doc}`persistence` `SqlTransaction`. An {doc}`orm` transaction session
+passes its `SessionTransaction` as the callback's second argument —
+[Enqueueing a job with the
+session](orm.md#enqueueing-a-job-with-the-session) shows it, and what a
+job can carry from entities the session inserts.
 
 ## Visibility timeout
 

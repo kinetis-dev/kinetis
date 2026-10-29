@@ -8,11 +8,14 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Kinetis\Orm\EntityManager;
 use Kinetis\Orm\EntityRepository;
+use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Exception\OptimisticLockException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Orm\OrmFactory;
+use Kinetis\Orm\SessionTransaction;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
+use Kinetis\Orm\Tests\Fixtures\IndexDocument;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\StoredArticle;
 use Kinetis\Orm\Tests\Fixtures\StoredAuthor;
@@ -34,9 +37,11 @@ use Kinetis\Persistence\ConnectionDefinition;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Persistence\Exception\QueryException;
+use Kinetis\Persistence\Exception\TransactionException;
 use Kinetis\Persistence\SqlConnectionFactory;
 use Kinetis\QueryBuilder\LockWait;
 use Kinetis\QueryBuilder\Query;
+use Kinetis\QueueSql\SqlQueue;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -894,6 +899,143 @@ final class RealBackendTest extends TestCase
 
         self::assertSame(2, $stored->version);
         self::assertSame(['satin'], array_map(static fn (StoredRibbon $ribbon): string => $ribbon->name, $stored->ribbons));
+    }
+
+    /**
+     * The queue is built on a second client, as an application's queue has a
+     * connection of its own: only the session's transaction can make the job
+     * commit and roll back with the entity.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_job_pushed_on_the_session_transaction_commits_with_the_entity(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $other = $this->other = $this->connect($dialect, $driver);
+        $queue = self::queue($other, $dialect);
+        $visibleBeforeCommit = null;
+
+        $kept = $factory->transaction(static function (EntityManager $entities, SessionTransaction $tx) use ($queue, $other, &$visibleBeforeCommit): SessionTransaction {
+            $document = new StoredDocument();
+            [$document->id, $document->title] = [self::NEW_UUID, 'Indexed'];
+            $entities->persist($document);
+            $entities->flush();
+            $queue->pushOn($tx, new IndexDocument(self::NEW_UUID));
+            $visibleBeforeCommit = self::queuedJobs($other);
+
+            return $tx;
+        });
+
+        self::assertSame([], $visibleBeforeCommit, 'the job is not visible to another connection before COMMIT');
+        self::assertSame(1, self::documents($other, self::NEW_UUID));
+        self::assertSame([IndexDocument::class . ' ' . json_encode(['documentId' => self::NEW_UUID])], self::queuedJobs($other));
+        self::assertFalse($kept->isActive());
+
+        try {
+            $kept->execute('SELECT 1');
+            self::fail('A SessionTransaction ran a statement after its session ended.');
+        } catch (TransactionException) {
+        }
+    }
+
+    /**
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_callback_throw_after_push_on_rolls_the_job_back_with_the_entity(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $other = $this->other = $this->connect($dialect, $driver);
+        $queue = self::queue($other, $dialect);
+        $failure = new \DomainException('The index is unavailable.');
+
+        try {
+            $factory->transaction(static function (EntityManager $entities, SessionTransaction $tx) use ($queue, $failure): never {
+                $document = new StoredDocument();
+                [$document->id, $document->title] = [self::NEW_UUID, 'Indexed'];
+                $entities->persist($document);
+                $entities->flush();
+                $queue->pushOn($tx, new IndexDocument(self::NEW_UUID));
+
+                throw $failure;
+            });
+        } catch (\DomainException $e) {
+            self::assertSame($failure, $e);
+        }
+
+        self::assertSame(0, self::documents($other, self::NEW_UUID));
+        self::assertSame([], self::queuedJobs($other));
+    }
+
+    /**
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_a_commit_through_the_session_transaction_is_refused_and_the_session_decides(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $other = $this->other = $this->connect($dialect, $driver);
+        $queue = self::queue($other, $dialect);
+        $session = static function (bool $catch) use ($factory, $queue): void {
+            $factory->transaction(static function (EntityManager $entities, SessionTransaction $tx) use ($queue, $catch): void {
+                $queue->pushOn($tx, new IndexDocument($catch ? 'caught' : 'uncaught'));
+
+                try {
+                    $tx->commit();
+                } catch (InvalidEntityStateException $e) {
+                    self::assertTrue($tx->isActive());
+
+                    if (!$catch) {
+                        throw $e;
+                    }
+                }
+            });
+        };
+
+        $session(true);
+
+        try {
+            $session(false);
+            self::fail('The uncaught refusal did not leave the session.');
+        } catch (InvalidEntityStateException $e) {
+            self::assertStringContainsString('SessionTransaction::commit()', $e->getMessage());
+        }
+
+        self::assertSame([IndexDocument::class . ' ' . json_encode(['documentId' => 'caught'])], self::queuedJobs($other));
+    }
+
+    /** A SqlQueue on $link over a fresh `kinetis_queue_jobs` table with the columns its INSERT writes. */
+    private static function queue(MysqlLink|PostgresLink $link, string $dialect): SqlQueue
+    {
+        $link->execute('DROP TABLE IF EXISTS kinetis_queue_jobs');
+        $link->execute(
+            'CREATE TABLE kinetis_queue_jobs (id ' . ($dialect === 'mysql' ? 'BIGINT AUTO_INCREMENT' : 'BIGSERIAL')
+            . ' PRIMARY KEY, class VARCHAR(255) NOT NULL, queue VARCHAR(255) NOT NULL, args TEXT NOT NULL, '
+            . 'available_at TIMESTAMP NOT NULL, reserved_at TIMESTAMP NULL, reserved_token VARCHAR(32) NULL, '
+            . 'attempts INT NOT NULL, max_attempts INT NULL, metadata TEXT NULL, created_at TIMESTAMP NOT NULL)',
+        );
+
+        return new SqlQueue($link);
+    }
+
+    /**
+     * @return list<string> each committed job's class and arguments, in insertion order
+     */
+    private static function queuedJobs(MysqlLink|PostgresLink $link): array
+    {
+        return array_map(
+            static fn (array $row): string => $row['class'] . ' ' . $row['args'],
+            new Query($link)->table('kinetis_queue_jobs')->select('class', 'args')->orderBy('id')->get(),
+        );
+    }
+
+    private static function documents(MysqlLink|PostgresLink $link, string $id): int
+    {
+        return new Query($link)->table('kin_orm_documents')->where('id', '=', $id)->count();
     }
 
     /** The manifest with $code, read through $manager with its ribbons loaded. */

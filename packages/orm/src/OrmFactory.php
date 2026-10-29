@@ -87,13 +87,13 @@ final class OrmFactory
 
     /**
      * Begins a transaction on the client, passes $callback an EntityManager
-     * bound to it, and commits once the callback returns. The manager is
-     * closed and its entities detached before this returns or throws. The
-     * package README's "Transaction sessions" states the contract and every
-     * failure.
+     * bound to it and a SessionTransaction over it, and commits once the
+     * callback returns. The manager is closed and its entities detached
+     * before this returns or throws. The package README's "Transaction
+     * sessions" states the contract and every failure.
      *
      * @template TResult
-     * @param callable(EntityManager): TResult $callback
+     * @param callable(EntityManager, SessionTransaction): TResult $callback
      * @return TResult
      * @throws InvalidEntityStateException when the calling Fiber is already inside transaction() on this factory
      * @throws ClosedEntityManagerException when the callback closed the manager
@@ -132,7 +132,7 @@ final class OrmFactory
 
     /**
      * @template TResult
-     * @param callable(EntityManager): TResult $callback
+     * @param callable(EntityManager, SessionTransaction): TResult $callback
      * @return TResult
      */
     private function session(callable $callback): mixed
@@ -141,7 +141,7 @@ final class OrmFactory
         $manager = EntityManager::bind($transaction, $this->plans);
 
         try {
-            $result = $callback($manager);
+            $result = $callback($manager, SessionTransaction::of($transaction));
         } catch (Throwable $callbackFailure) {
             // A recorded ORM failure stays primary: the callback may have
             // caught it before throwing an exception of its own.

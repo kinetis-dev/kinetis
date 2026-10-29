@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "b18d444d33779b6fba29d1fcfc025a8a",
+    "content-hash": "a005beae1431fcb88e9eb16cc94bad82",
     "packages": [
         {
             "name": "kinetis/persistence",
@@ -2217,6 +2217,70 @@
             "time": "2023-02-03T21:26:53+00:00"
         },
         {
+            "name": "kinetis/database-bridge",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../database-bridge",
+                "reference": "26a4bb0df20121233e6bdec480ec259d2d178533"
+            },
+            "require": {
+                "kinetis/framework": "dev-main",
+                "kinetis/persistence": "dev-main",
+                "php": "^8.4",
+                "psr/log": "^3.0.2"
+            },
+            "conflict": {
+                "kinetis/orm": "<1.10.0"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "kinetis/mcp": "dev-main",
+                "kinetis/mcp-protocol": "dev-main",
+                "kinetis/orm": "dev-main",
+                "kinetis/query-builder": "dev-main",
+                "kinetis/queue": "dev-main",
+                "nyholm/psr7": "^1.8.2",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "suggest": {
+                "kinetis/migrations": "Migration runner and migrate commands, connecting through this package's connection policy.",
+                "kinetis/orm": "Attributed entities and typed repositories, with entity metadata compiled into the AOT cache: an OrmFactoryRegistry for the worker and a request-scoped EntityManagerRegistry over the default link and every named connection an entity declares, with OrmFactory and EntityManager as the default connection's entries.",
+                "kinetis/query-builder": "Parameterized queries and row-to-DTO mapping over the MysqlLink/PostgresLink this package binds."
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": {
+                    "bootstrap": "Kinetis\\DatabaseBridge\\PackageBootstrap",
+                    "discovery": "Kinetis\\DatabaseBridge\\OrmMetadata"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\DatabaseBridge\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\DatabaseBridge\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
             "name": "kinetis/framework",
             "version": "dev-main",
             "dist": {
@@ -2276,6 +2340,108 @@
                 }
             ],
             "description": "The Runtime-Aware PHP Framework",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/queue",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../queue",
+                "reference": "11c21be62d3773b6ea070f566cb29845cec966ce"
+            },
+            "require": {
+                "kinetis/framework": "dev-main",
+                "php": "^8.4",
+                "psr/container": "^2.0.2",
+                "psr/log": "^3.0.2",
+                "revolt/event-loop": "^1.0.9"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "suggest": {
+                "ext-pcntl": "Lets `kinetis queue:work` stop gracefully on SIGTERM, finishing the job in flight instead of being killed mid-job. Not loaded by default in the official PHP Docker images."
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": {
+                    "scan": "Kinetis\\Queue\\Console\\",
+                    "bootstrap": "Kinetis\\Queue\\PackageBootstrap"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\Queue\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\Queue\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "kinetis/queue-sql",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "../queue-sql",
+                "reference": "a6b1089cb501ee2326ea34cca52cc20a01166f23"
+            },
+            "require": {
+                "kinetis/database-bridge": "dev-main",
+                "kinetis/framework": "dev-main",
+                "kinetis/persistence": "dev-main",
+                "kinetis/queue": "dev-main",
+                "php": "^8.4"
+            },
+            "require-dev": {
+                "infection/infection": "^0.35.0",
+                "phpstan/phpstan": "^2.2.8",
+                "phpunit/phpunit": "^13.3.3",
+                "vimeo/psalm": "^6.17"
+            },
+            "type": "library",
+            "extra": {
+                "kinetis": []
+            },
+            "autoload": {
+                "psr-4": {
+                    "Kinetis\\QueueSql\\": "src/"
+                }
+            },
+            "autoload-dev": {
+                "psr-4": {
+                    "Kinetis\\QueueSql\\Tests\\": "tests/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Alon Noy"
+                }
+            ],
+            "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for atomic reservation, token-fenced settlement, and a finite visibility timeout that redelivers a crashed worker's job.",
             "transport-options": {
                 "relative": true
             }
@@ -6365,16 +6531,16 @@
         },
         {
             "name": "symfony/polyfill-mbstring",
-            "version": "v1.38.2",
+            "version": "v1.43.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/polyfill-mbstring.git",
-                "reference": "d3d318bad5e7a1bfbd026009c8bfb8d8f99ae6b6"
+                "reference": "122889ed24dc000165bcbfd77ec412f15cbdfc6a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/polyfill-mbstring/zipball/d3d318bad5e7a1bfbd026009c8bfb8d8f99ae6b6",
-                "reference": "d3d318bad5e7a1bfbd026009c8bfb8d8f99ae6b6",
+                "url": "https://api.github.com/repos/symfony/polyfill-mbstring/zipball/122889ed24dc000165bcbfd77ec412f15cbdfc6a",
+                "reference": "122889ed24dc000165bcbfd77ec412f15cbdfc6a",
                 "shasum": ""
             },
             "require": {
@@ -6426,7 +6592,7 @@
                 "shim"
             ],
             "support": {
-                "source": "https://github.com/symfony/polyfill-mbstring/tree/v1.38.2"
+                "source": "https://github.com/symfony/polyfill-mbstring/tree/v1.43.3"
             },
             "funding": [
                 {
@@ -6446,20 +6612,20 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-05-27T06:59:30+00:00"
+            "time": "2026-10-28T09:35:49+00:00"
         },
         {
             "name": "symfony/polyfill-php80",
-            "version": "v1.37.0",
+            "version": "v1.43.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/polyfill-php80.git",
-                "reference": "dfb55726c3a76ea3b6459fcfda1ec2d80a682411"
+                "reference": "9c6a5d6b01ca51d486c813e9a9c0ed55f208bb74"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/polyfill-php80/zipball/dfb55726c3a76ea3b6459fcfda1ec2d80a682411",
-                "reference": "dfb55726c3a76ea3b6459fcfda1ec2d80a682411",
+                "url": "https://api.github.com/repos/symfony/polyfill-php80/zipball/9c6a5d6b01ca51d486c813e9a9c0ed55f208bb74",
+                "reference": "9c6a5d6b01ca51d486c813e9a9c0ed55f208bb74",
                 "shasum": ""
             },
             "require": {
@@ -6510,7 +6676,7 @@
                 "shim"
             ],
             "support": {
-                "source": "https://github.com/symfony/polyfill-php80/tree/v1.37.0"
+                "source": "https://github.com/symfony/polyfill-php80/tree/v1.43.0"
             },
             "funding": [
                 {
@@ -6530,7 +6696,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-04-10T16:19:22+00:00"
+            "time": "2026-09-25T15:50:05+00:00"
         },
         {
             "name": "symfony/polyfill-php84",
@@ -7247,16 +7413,16 @@
         },
         {
             "name": "vlucas/phpdotenv",
-            "version": "v5.7.0",
+            "version": "v5.8.0",
             "source": {
                 "type": "git",
-                "url": "https://github.com/vlucas/phpdotenv.git",
-                "reference": "301c07936b16d88628b126b01d082ba153cf4c40"
+                "url": "https://github.com/phpdotenv/phpdotenv.git",
+                "reference": "96149103e62ac67e915f6d2ef59b72dee2e011e0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/301c07936b16d88628b126b01d082ba153cf4c40",
-                "reference": "301c07936b16d88628b126b01d082ba153cf4c40",
+                "url": "https://api.github.com/repos/phpdotenv/phpdotenv/zipball/96149103e62ac67e915f6d2ef59b72dee2e011e0",
+                "reference": "96149103e62ac67e915f6d2ef59b72dee2e011e0",
                 "shasum": ""
             },
             "require": {
@@ -7283,7 +7449,7 @@
                     "forward-command": false
                 },
                 "branch-alias": {
-                    "dev-master": "5.6-dev"
+                    "dev-master": "5.8-dev"
                 }
             },
             "autoload": {
@@ -7314,8 +7480,8 @@
                 "environment"
             ],
             "support": {
-                "issues": "https://github.com/vlucas/phpdotenv/issues",
-                "source": "https://github.com/vlucas/phpdotenv/tree/v5.7.0"
+                "issues": "https://github.com/phpdotenv/phpdotenv/issues",
+                "source": "https://github.com/phpdotenv/phpdotenv/tree/v5.8.0"
             },
             "funding": [
                 {
@@ -7327,7 +7493,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-08-24T18:07:49+00:00"
+            "time": "2026-10-25T16:26:19+00:00"
         },
         {
             "name": "webmozart/assert",
@@ -7399,9 +7565,12 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
+        "kinetis/database-bridge": 20,
         "kinetis/framework": 20,
         "kinetis/persistence": 20,
-        "kinetis/query-builder": 20
+        "kinetis/query-builder": 20,
+        "kinetis/queue": 20,
+        "kinetis/queue-sql": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,

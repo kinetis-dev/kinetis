@@ -13,7 +13,8 @@ use Throwable;
  * a relationship target the EntityManager does not hold, a conflicting or
  * changed identifier, a changed or exhausted version, a
  * call while flush() runs, a locking read outside a transaction session, a
- * nested session, a call after a session's flush or failure — an owned
+ * nested session, a session's transaction ended or nested through its
+ * SessionTransaction, a call after a session's flush or failure — an owned
  * relationship whose two sides disagree, whose database state the manager
  * never loaded, or that holds a row this manager already deleted, an owning
  * join collection the manager never loaded or holding one row twice, a
@@ -37,6 +38,15 @@ final class InvalidEntityStateException extends RuntimeException
         return new self(
             'This Fiber is already inside OrmFactory::transaction() on this factory, and sessions do not nest. Use '
             . 'the EntityManager the running callback received.',
+        );
+    }
+
+    public static function sessionOwnsTransaction(string $method): self
+    {
+        return new self(
+            "SessionTransaction::{$method}() is refused: the OrmFactory::transaction() session commits or rolls back "
+            . 'its own transaction, and sessions do not nest. Return from the callback to commit, or throw to roll '
+            . 'back.',
         );
     }
 
