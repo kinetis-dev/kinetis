@@ -483,6 +483,7 @@ can be bounded, since by the time the adapter runs it holds the whole
 body with nothing left to read incrementally. RoadRunner's own default is
 1000 MB.
 
+(streaming-numeric-header-names-and-cookie-order)=
 ### Streaming and cookie order
 
 `Worker::create()`'s default `interceptSideEffects: true` installs a
