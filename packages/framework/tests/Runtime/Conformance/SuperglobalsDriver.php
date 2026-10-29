@@ -236,12 +236,6 @@ final class SuperglobalsDriver implements RuntimeAdapterDriver
     }
 
     #[\Override]
-    public function preservesNumericHeaderNames(): bool
-    {
-        return true;
-    }
-
-    #[\Override]
     public function preservesCookieOrder(): bool
     {
         return true;

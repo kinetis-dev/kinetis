@@ -198,7 +198,7 @@ composer require kinetis/roadrunner-adapter
 ```
 ````
 
-The package brings `spiral/roadrunner-worker` and `spiral/roadrunner-http`.
+The package brings `roadrunner/worker` and `roadrunner/http`.
 `rr serve` sets `RR_MODE=http` for the worker it spawns, which selects
 the adapter. Two settings in `.rr.yaml` are required:
 
@@ -240,7 +240,7 @@ body between the two limits reaches PHP and is refused there.
 
 ### `ext-sockets` under an Alpine-based image
 
-`spiral/roadrunner-worker` requires `ext-sockets`. On an Alpine image,
+`roadrunner/worker` requires `ext-sockets`. On an Alpine image,
 `docker-php-ext-install sockets` also needs `linux-headers`:
 
 ```{code-block} dockerfile
@@ -268,8 +268,6 @@ worker's total lifetime; RoadRunner's default is `0s`, unlimited.
 
 - **Response streaming.** A `StreamableResponseInterface` is answered
   with `501`, never buffered or dropped silently.
-- **A purely-numeric header name** such as `123`. RoadRunner's PHP
-  library drops it before the adapter sees the request.
 - **Cookie order.** Names and values arrive intact; their order may not.
 
 {ref}`runtime-reference-forwarded-headers` and the RoadRunner section of

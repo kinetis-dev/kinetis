@@ -981,35 +981,27 @@ jobs:
         working-directory: packages/roadrunner-adapter
         run: composer install --no-interaction --prefer-dist
 
-      # spiral/roadrunner-cli, a require-dev dependency — never fetched
+      # roadrunner/cli, a require-dev dependency — never fetched
       # via docker-php-ext-install or a package manager: composer.json's
       # own `filter`/`stability` are left at their real defaults
       # (`--no-config` only, so it doesn't also generate a `.rr.yaml`
       # RoadRunnerDriver::start() would just overwrite with its own per-
       # test-run one), confirmed for real during local development —
       # see this package's own tests/Conformance/RoadRunnerDriver.php.
-      # get-binary itself leaves the downloaded file without the execute
-      # bit — confirmed directly against a real fetch, not assumed —
-      # so RoadRunnerDriver's own proc_open() call would fail to spawn
-      # it without this. get-binary lists releases through the GitHub API,
-      # which refuses an anonymous runner once the shared rate limit is
-      # spent, so the step passes the job token, which roadrunner-cli
-      # reads from GITHUB_TOKEN.
+      # get-binary lists releases through the GitHub API, which refuses an
+      # anonymous runner once the shared rate limit is spent, so the step
+      # passes the job token, which roadrunner/cli reads from GITHUB_TOKEN.
       - name: Fetch a real rr binary
         working-directory: packages/roadrunner-adapter
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          php vendor/bin/rr get-binary --no-config --no-interaction -o linux -a amd64
-          chmod +x rr
+        run: php vendor/bin/rr get-binary --no-config --no-interaction -o linux -a amd64
 
-      # The whole suite, unfiltered. The two behaviors this environment
-      # cannot deliver — a purely-numeric header name, which
-      # spiral/roadrunner-http's own request decoding drops before this
-      # adapter exists, and cookie order, which RoadRunner loses to a Go
-      # map on the way to PHP — are declared by RoadRunnerDriver and
-      # asserted in both directions by the shared suite, so they are
-      # covered here rather than skipped.
+      # The whole suite, unfiltered. The one behavior this environment
+      # cannot deliver — cookie order, which RoadRunner loses to a Go map
+      # on the way to PHP — is declared by RoadRunnerDriver and asserted
+      # in both directions by the shared suite, so it is covered here
+      # rather than skipped.
       - name: Run the runtime conformance suite against it
         working-directory: packages/roadrunner-adapter
         run: php vendor/bin/phpunit tests/RoadRunnerConformanceTest.php

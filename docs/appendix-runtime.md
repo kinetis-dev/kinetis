@@ -483,7 +483,7 @@ can be bounded, since by the time the adapter runs it holds the whole
 body with nothing left to read incrementally. RoadRunner's own default is
 1000 MB.
 
-### Streaming, numeric header names and cookie order
+### Streaming and cookie order
 
 `Worker::create()`'s default `interceptSideEffects: true` installs a
 global output-buffer redirect (`StdoutHandler::register()`) sending every
@@ -499,18 +499,11 @@ is a different, lower-level generator-based API than
 `PSR7Worker::respond()`, and bridging one onto the other needs its own
 design pass.
 
-`"123"` is a valid RFC 9110 header name, but `spiral/roadrunner-http`'s
-own request decoding drops it before the adapter sees the request: PHP
-coerces a numeric string array key to an `int`, and that library's
-`is_string($key)` filter then deletes it. Recovering it would mean
-reimplementing that library's JSON/protobuf request decoding instead of
-using `PSR7Worker`. RoadRunner represents cookies as a Go
-`map[string]string` on the way to PHP, and Go randomizes map iteration
-order, so a request's cookies can arrive re-ordered. The conformance
-driver declares both, and the shared suite asserts both directions:
-the numeric header must be absent rather than renamed, and cookie names
-and values are checked on every run, their order only where the
-environment keeps it.
+RoadRunner represents cookies as a Go `map[string]string` on the way to
+PHP, and Go randomizes map iteration order, so a request's cookies can
+arrive re-ordered. The conformance driver declares this, and the shared
+suite checks cookie names and values on every run, their order only
+where the environment keeps it.
 
 ### Worker processes
 

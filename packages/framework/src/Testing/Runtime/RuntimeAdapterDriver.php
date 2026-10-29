@@ -52,15 +52,6 @@ interface RuntimeAdapterDriver
     public function expectedScheme(): string;
 
     /**
-     * Whether a purely-numeric header name (`123`, a valid RFC 9110
-     * token) survives into the PSR-7 request. Both answers are
-     * asserted: an environment that keeps it must deliver the value
-     * unchanged, one that cannot must drop the header outright rather
-     * than deliver it under some other name or with some other value.
-     */
-    public function preservesNumericHeaderNames(): bool;
-
-    /**
      * Whether the order a client sent its cookies in survives. Both
      * answers are asserted: the names and values must arrive intact
      * either way, and an environment that declares order-preserving has

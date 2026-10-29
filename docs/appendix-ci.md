@@ -247,13 +247,12 @@ rather than which form it took.
   container or Docker network — one runner, `shivammathur/setup-php`
   providing a real, prebuilt `ext-sockets` (it compiles under Alpine
   too, just not worth doing here — see {doc}`runtime-adapters`), a real
-  binary fetched via `spiral/roadrunner-cli`'s `vendor/bin/rr get-binary`,
-  and the suite itself. The whole suite runs, unfiltered: the two
-  behaviors this environment cannot deliver — a purely-numeric
-  header name, dropped by an upstream bug, and cookie order, lost to a
-  Go map — are declared by `RoadRunnerDriver` and asserted in both
-  directions by the shared suite, so they are covered here rather than
-  skipped. Both are disclosed in `RoadRunnerAdapter`'s own docblock and
+  binary fetched via `roadrunner/cli`'s `vendor/bin/rr get-binary`,
+  and the suite itself. The whole suite runs, unfiltered: the one
+  behavior this environment cannot deliver — cookie order, lost to a Go
+  map — is declared by `RoadRunnerDriver` and asserted in both
+  directions by the shared suite, so it is covered here rather than
+  skipped. It is disclosed in `RoadRunnerAdapter`'s own docblock and
   {doc}`runtime-adapters`.
 - **`orm-runtime`** (matrix: a `dunglas/frankenphp` worker; `php:8.4.27-fpm-alpine`
   behind `nginx:alpine`; MySQL 8.4 as a service) — `kinetis/database-bridge`'s

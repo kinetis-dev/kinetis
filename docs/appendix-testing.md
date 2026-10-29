@@ -220,7 +220,6 @@ interface RuntimeAdapterDriver
     public function expectedClientIp(): string;
     public function supportsStreaming(): bool;
     public function expectedScheme(): string;
-    public function preservesNumericHeaderNames(): bool;
     public function preservesCookieOrder(): bool;
     public function trustsTheConnectingClient(): bool;
     public function supportsPlaintextRequests(): bool;
@@ -231,11 +230,11 @@ Everything after `dispatch()` is a fact the environment decides, not the
 test: the address it reports as `REMOTE_ADDR` (a real socket's peer for
 a SAPI, whatever the driver injects as `sourceIp` for Lambda), the
 scheme it serves over when nothing forwards one, whether a
-`StreamedResponse` can reach the client incrementally, whether a
-purely-numeric header name and the client's cookie order survive its own
-request decoding, whether the peer the driver connects from is a trusted
-edge whose `X-Forwarded-Proto` may decide the request's scheme, and
-whether a plaintext request can reach the environment at all.
+`StreamedResponse` can reach the client incrementally, whether the
+client's cookie order survives its own request decoding, whether the peer
+the driver connects from is a trusted edge whose `X-Forwarded-Proto` may
+decide the request's scheme, and whether a plaintext request can reach
+the environment at all.
 
 A parsed form body's raw bytes are not among them. The staged body is
 seekable and rewound, so `getBody()` after `getParsedBody()` is the
@@ -252,17 +251,14 @@ in kinetis/roadrunner-adapter.
 
 A declaration never becomes a skip. A streaming environment must deliver
 every chunk in order; a non-streaming one must refuse the response rather
-than buffer it. An environment that keeps a numeric header name must
-deliver its value unchanged; one that cannot must drop the header
-outright, never deliver it under another name or with another value. An
-environment that treats this client as an edge must honor a forwarded
-scheme, `http` and `https` alike; one that does not must ignore it
-completely and serve the scheme it serves itself, which on an environment
-already terminating TLS leaves the request `https`. An environment no
-plaintext request can reach — `supportsPlaintextRequests()` says so — has
-nothing to honor and nothing to ignore when a forwarded scheme names
-`http`: that names a request it cannot have received, and it is refused
-before the handler. Every method runs on every adapter.
+than buffer it. An environment that treats this client as an edge must
+honor a forwarded scheme, `http` and `https` alike; one that does not
+must ignore it completely and serve the scheme it serves itself, which on
+an environment already terminating TLS leaves the request `https`. An
+environment no plaintext request can reach — `supportsPlaintextRequests()`
+says so — has nothing to honor and nothing to ignore when a forwarded
+scheme names `http`: that names a request it cannot have received, and
+it is refused before the handler. Every method runs on every adapter.
 
 ### Over-limit and malformed bodies
 
