@@ -15,7 +15,10 @@
     },
     "require-dev": {
         "infection/infection": "^0.35.0",
+        "kinetis/database-bridge": "dev-main",
         "kinetis/framework": "dev-main",
+        "kinetis/queue": "dev-main",
+        "kinetis/queue-sql": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^13.3.3",
         "vimeo/psalm": "^6.17"
@@ -37,6 +40,18 @@
         {
             "type": "path",
             "url": "../framework"
+        },
+        {
+            "type": "path",
+            "url": "../queue"
+        },
+        {
+            "type": "path",
+            "url": "../database-bridge"
+        },
+        {
+            "type": "path",
+            "url": "../queue-sql"
         },
         {
             "type": "path",

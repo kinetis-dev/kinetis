@@ -670,41 +670,43 @@ an application table.
 The README's "Transaction sessions" and "When a session fails" give the
 complete contract.
 
-An outbox row for {doc}`queue-sql` follows the same rule:
-`$entities->builder()` runs a statement when called, on this
-transaction, while a pending entity's INSERT is emitted only by the
-closing `flush()` above. A builder row whose foreign key names a
-still-pending entity fails regardless of how its id is assigned — the
-referenced row is not there yet on this connection. A generated
-identifier is additionally unavailable until `COMMIT` returns, since it
-reaches the object only then.
+### Enqueueing a job with the session
 
-Map the outbox row as an entity instead, with a `#[BelongsTo]` naming
-the entity it depends on, and persist both:
+The callback's second argument is the session's transaction as a
+`Kinetis\Orm\SessionTransaction`. {doc}`queue-sql`'s `SqlQueue::pushOn()`
+takes it, so the job row commits or rolls back with the entity writes:
 
 ```{code-block} php
-$order = new Order();
-// ...
+use Kinetis\Orm\EntityManager;
+use Kinetis\Orm\SessionTransaction;
 
-$outbox = new OutboxRow();
-$outbox->order = $order;   // #[BelongsTo] — order_id
-
-$entities->persist($order);
-$entities->persist($outbox);
-$entities->flush();        // INSERT order, then outbox, one transaction
+$this->orm->transaction(function (EntityManager $entities, SessionTransaction $tx) use ($id): void {
+    $entities->repository(Order::class)->findOrFail($id)->ship();
+    $this->queue->pushOn($tx, new SendShippingNotice($id));
+    $entities->flush();
+});
 ```
 
-Entities persisted separately need no ordering of their own: `flush()`
-orders every pending row by its foreign keys and inserts the entity a
-`#[BelongsTo]` names before the row that references it, on every
-supported backend — the README's "Aggregates" is the complete contract.
+`$this->queue` is the `SqlQueue` that {doc}`queue-sql`'s "Enqueueing
+inside a transaction" registers, and `SendShippingNotice` an application
+job. A callback exception or an ORM failure rolls the job back with
+the rest of the session, and `CommitNotAcknowledgedException` leaves it
+unknown with the rest. `SessionTransaction` refuses `commit()`,
+`rollback()`, `close()` and `beginTransaction()`: the session ends its own
+transaction. `QueueInterface::push()` runs on the queue's own connection
+and is not enlisted, and the Redis, SQS and RabbitMQ backends cannot
+join a SQL transaction.
 
-`QueueInterface::push()` inside the callback is wrong here: it runs on
-the queue's own connection rather than this one, so it is not enlisted
-in the transaction and a rollback does not undo it. Publish the pending
-outbox rows once `transaction()` returns and mark them sent; [A job can
-run more than once](queue.md#a-job-can-run-more-than-once) owns replay
-and idempotency for that step.
+A job can carry a loaded entity's identifier or one the application
+assigns, such as a UUID: its arguments reference no row, while a
+persisted entity's row exists on the transaction only after `flush()`.
+It cannot carry the generated key of an entity inserted in the same
+session: the key reaches the object only once `COMMIT` returns. For that case, map the job intent as an outbox entity
+with a `#[BelongsTo]` to the new entity, persist both and flush once —
+`flush()` inserts the referenced row first — then push the job after
+`transaction()` returns and mark the intent sent.
+[A job can run more than once](queue.md#a-job-can-run-more-than-once)
+owns replay and idempotency for that step.
 
 ## Without a database
 

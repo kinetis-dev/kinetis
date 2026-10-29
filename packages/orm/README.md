@@ -1505,8 +1505,9 @@ $shipped = $orm->transaction(function (EntityManager $entities) use ($id): bool 
 `Order` is the entity under "Optimistic locking", and `order_events` an
 application table. `OrmFactory::transaction(callable $callback): mixed`
 begins one transaction on the factory's client, passes the callback an
-`EntityManager` bound to it, commits once the callback returns, and
-returns the callback's result.
+`EntityManager` bound to it and a `SessionTransaction` over it, commits
+once the callback returns, and returns the callback's result. A callback
+that needs only the manager declares one parameter.
 
 - **One transaction.** Every read, identity-map miss, locking read and
   flush statement of the bound manager, and every statement of its
@@ -1539,6 +1540,24 @@ returns the callback's result.
   so it takes no lock: lock through `query()`. The relationships the query
   loads are read on the transaction without a lock (see "Loading
   relationships").
+- **The session's transaction.** The callback's second argument,
+  `Kinetis\Orm\SessionTransaction`, is that transaction as a
+  `Kinetis\Persistence\Contract\SqlTransaction`, for code that takes one,
+  such as `kinetis/queue-sql`'s `SqlQueue::pushOn()`. Its `query()` and
+  `execute()` run on the transaction, so their statements commit or roll
+  back with the session, and `isActive()` and `isClosed()` report it.
+  `commit()`, `rollback()`, `close()` and `beginTransaction()` throw
+  `InvalidEntityStateException` without reaching the transaction: the
+  session alone ends it. It carries no dialect marker, so
+  `kinetis/query-builder` does not take it; `builder()` is the query
+  builder on the transaction. After the session ends, the transaction
+  refuses its statements. A persisted entity's row exists on the
+  transaction only after `flush()`, however its identifier is assigned,
+  so a statement whose foreign key names a pending entity finds no
+  referenced row before then. A value that references no pending row, such as a queued
+  job's arguments, can carry a loaded entity's identifier or an assigned
+  one, but not the generated key of an entity inserted in the same
+  session, which reaches the object only once COMMIT returns.
 - **Raw SQL.** A raw write is not reconciled with the manager: it changes
   no snapshot or version the manager holds, so the flush can overwrite it
   or conflict with it, and keeping the two consistent is the caller's
@@ -1552,8 +1571,9 @@ returns the callback's result.
   `MappingException` from `where()`, `whereIn()`, `orderBy()`, `with()`, a
   `find()` identifier or a cursor property is thrown before the terminal
   reaches the query builder and does not fail the session.
-- **Raw failures.** The manager cannot see a raw `Query` fail. When the
-  callback catches one, COMMIT decides: MySQL and MariaDB keep the
+- **Raw failures.** The manager cannot see a raw `Query` or a
+  `SessionTransaction` statement fail. When the callback catches one,
+  COMMIT decides: MySQL and MariaDB keep the
   transaction open after an ordinary statement error and commit the rest
   of its work, while PostgreSQL aborts the transaction, and a lost
   connection, a deadlock or a MySQL lock-wait timeout end it. An ended or
