@@ -195,6 +195,22 @@ directly — {doc}`routing-validation`, {doc}`session`,
   exponentially-backed-off delay `QUEUE_RETRY_BASE_DELAY_SECONDS`
   produces, so a retry lands later rather than at once.
 
+## Scheduled console command
+
+- **Guides**: {doc}`cli`, "Running commands on a schedule", and
+  {doc}`persistence` for the unique key that claims a run.
+- **Lifecycle/I-O**: the scheduler lives outside Kinetis and starts
+  `vendor/bin/kinetis <command>` in its own process, which ends with the
+  command. The exit code is what the scheduler sees.
+- **Security/integrity**: every scheduler can run a command twice or let two
+  runs overlap, so the command is idempotent or claims its run under a
+  unique key. A host-local lock does not cover several replicas; run the
+  schedule in one place.
+- **Verification**: run the command twice for the same slot and assert one
+  effect, and assert a non-zero exit code on failure.
+- **Non-goal**: a built-in scheduler or an in-process cron loop inside an
+  HTTP worker.
+
 ## Outbound HTTP integration with deadline/cancellation/uncertain-write semantics
 
 - **Guides**: {doc}`revolt-http-client`, {doc}`appendix-http-client`.
