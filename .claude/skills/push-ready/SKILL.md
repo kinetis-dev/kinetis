@@ -315,7 +315,7 @@ docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_
 From a worktree, that install takes `-v "$COMMON":"$COMMON"` too — see
 step 1. `roadrunner-adapter` additionally takes
 `--ignore-platform-req=ext-sockets`, a hard `require` of
-`spiral/roadrunner-worker` that nothing in its committed suite, PHPStan
+`roadrunner/worker` that nothing in its committed suite, PHPStan
 or Psalm ever loads.
 
 Then the suite:

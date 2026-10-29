@@ -30,12 +30,12 @@ use PHPUnit\Framework\TestCase;
  * helpers here.
  *
  * Facts the environment decides (the client IP it reports, the scheme it
- * serves, whether it can stream, whether a numeric header name or cookie
- * order survives, what it cannot parse) come from the driver and are
- * asserted against in *both* directions, so every method here runs on
- * every adapter — none is skipped for an environment that "doesn't do"
- * something, and an environment that cannot do something has to fail at
- * it visibly rather than quietly.
+ * serves, whether it can stream, whether cookie order survives, what it
+ * cannot parse) come from the driver and are asserted against in *both*
+ * directions, so every method here runs on every adapter — none is
+ * skipped for an environment that "doesn't do" something, and an
+ * environment that cannot do something has to fail at it visibly rather
+ * than quietly.
  *
  * Two ceilings, two answers, everywhere. A body that cannot be parsed is
  * a `400` carrying {@see RuntimeAdapterInterface::MALFORMED_BODY_MESSAGE}
@@ -261,26 +261,15 @@ abstract class RuntimeAdapterConformanceTestCase extends TestCase
      * "123" is an RFC 9110-valid header name (a token, which includes
      * digits). It takes the int-array-key route on the way in, and an
      * adapter that forgets to cast it back hands PSR-7 an int it
-     * rejects. An environment whose own request decoding drops the
-     * header before the adapter exists cannot recover it — that answer
-     * is declared, and asserted: the header has to be gone, not present
-     * under a different name or carrying a different value, which is
-     * the outcome an application could act on without knowing.
+     * rejects.
      */
-    final public function test_a_purely_numeric_header_name_survives_or_is_dropped_as_declared(): void
+    final public function test_a_purely_numeric_header_name_survives(): void
     {
         $outcome = $this->dispatch(new WireRequest(headers: [['123', 'ok'], ['X-Marker', 'present']]));
 
         $observed = $this->observed($outcome);
         self::assertSame(['present'], $observed->header('X-Marker'), 'the request itself reached the handler');
-
-        if ($this->driver()->preservesNumericHeaderNames()) {
-            self::assertSame(['ok'], $observed->header('123'));
-
-            return;
-        }
-
-        self::assertSame([], $observed->header('123'), 'an environment that cannot carry this header must drop it, not reshape it');
+        self::assertSame(['ok'], $observed->header('123'));
     }
 
     // --- Cookies --------------------------------------------------------

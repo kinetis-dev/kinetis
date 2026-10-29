@@ -90,7 +90,7 @@ jobs:
           - { name: redis, dir: packages/redis, phpunit: true }
           - { name: cache-redis, dir: packages/cache-redis, phpunit: true }
           - { name: bref-adapter, dir: packages/bref-adapter, phpunit: true }
-          # ext-sockets — a real, hard `require` of spiral/roadrunner-worker
+          # ext-sockets — a real, hard `require` of roadrunner/worker
           # — compiles under Alpine fine, but needs `linux-headers` on top
           # of the usual `$PHPIZE_DEPS` (confirmed directly; see
           # docs/runtime-adapters.md), and every step below is its own

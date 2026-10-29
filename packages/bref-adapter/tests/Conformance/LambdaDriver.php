@@ -124,12 +124,6 @@ final class LambdaDriver implements RuntimeAdapterDriver
     }
 
     #[\Override]
-    public function preservesNumericHeaderNames(): bool
-    {
-        return true;
-    }
-
-    #[\Override]
     public function preservesCookieOrder(): bool
     {
         // Payload format 2.0 carries cookies as an ordered JSON list.
