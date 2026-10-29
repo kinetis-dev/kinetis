@@ -22,11 +22,10 @@ Available commands:
 
 ## Writing your own commands
 
-Kinetis deliberately doesn't schedule anything itself — that's your
-infrastructure's job (cron, a Kubernetes CronJob, an EventBridge rule,
-whatever you already use). What it gives you is a stable, named way to
-define a command so that infrastructure — or you, by hand — can actually
-run it:
+Kinetis does not schedule commands. Your infrastructure does that; see
+[Running commands on a schedule](#running-commands-on-a-schedule). What
+Kinetis gives you is a stable, named way to define a command so that
+infrastructure, or you by hand, can run it:
 
 ```{code-block} php
 namespace App\Console;
@@ -229,6 +228,134 @@ The exit code is the command's own contract. `130` for an observed
 `128 + signal` convention and are worth adopting when the command says so;
 a command that treats a signalled stop as an ordinary completion returns
 `0`. The disposal rules above apply on top of whichever code it returns.
+
+## Running commands on a schedule
+
+Add one scheduler entry per command, each running
+`php vendor/bin/kinetis <command>`. The scheduler sees the command's
+[exit code](#writing-your-own-commands), so a failing command is a failed
+run. In production the command reads the `.kinetis-cache/compiled.php` the
+deploy built with [`kinetis build`](#kinetis-build). The examples run
+`app:cleanup-sessions` from above.
+
+### Cron on one host
+
+```{code-block} text
+:caption: crontab
+
+*/15 * * * * cd /var/www/app && flock -n /tmp/cleanup-sessions.lock php vendor/bin/kinetis app:cleanup-sessions >> /var/log/app/cleanup-sessions.log 2>&1
+```
+
+`flock -n` fails at once when the lock is held, so a run that starts while
+the previous one is still going exits instead of overlapping it. The lock
+is a local file: it guards one machine only.
+
+Cron starts commands with a nearly empty environment. `bin/kinetis` loads
+the project's `.env` before it reads `APP_ENV`, so the command still gets
+its settings from that file; see
+[`.env` loading](config.md#env-loading). A real environment variable
+always wins over the file.
+
+### Several hosts or containers
+
+A crontab baked into every app replica runs the job once per replica, and
+`flock` cannot see the other replicas. Run the schedule in exactly one
+place: a dedicated scheduler host or container, or the platform scheduler
+below.
+
+Cron cannot express an interval under a minute. A single supervised
+container running a loop can; the tutorial's `cron` service does exactly
+that, see
+[Replying on a schedule](tutorial.md#replying-on-a-schedule-a-console-command).
+
+### Kubernetes CronJob
+
+```{code-block} yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup-sessions
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cleanup-sessions
+              image: registry.example.com/app:1.4.0
+              command: ["php", "vendor/bin/kinetis", "app:cleanup-sessions"]
+```
+
+- `concurrencyPolicy: Forbid` skips a run while the previous Job is still
+  active.
+- `startingDeadlineSeconds` skips a run that could not start within that
+  many seconds of its scheduled time, instead of starting it late.
+- `backoffLimit` is how many times a failed Pod is retried before the Job
+  fails.
+- `activeDeadlineSeconds` bounds the whole Job. When it expires,
+  Kubernetes terminates the running Pods and the Job fails. Termination
+  starts with `SIGTERM`; how the command reacts, and why the Pod's
+  `terminationGracePeriodSeconds` matters, is in
+  [Long-running commands and signals](#long-running-commands-and-signals).
+- `restartPolicy: Never` leaves retries to the Job, so each attempt is a
+  new Pod.
+
+A CronJob creates a Job approximately once per scheduled time. In rare
+cases it creates two Jobs, or none. The command must be safe to run twice.
+
+### AWS
+
+Use EventBridge Scheduler with an Amazon ECS `RunTask` target on the app's
+own task definition, and override the container command to run the
+command. The `overrides` parameter of `RunTask` looks like this:
+
+```{code-block} json
+{
+  "containerOverrides": [
+    {
+      "name": "app",
+      "command": ["php", "vendor/bin/kinetis", "app:cleanup-sessions"]
+    }
+  ]
+}
+```
+
+EventBridge Scheduler does not stop overlapping runs, and it delivers at
+least once, so a schedule can fire more than once.
+
+A Lambda function running `kinetis/bref-adapter` cannot run a console
+command on a schedule. The adapter accepts only HTTP API and Function URL
+events; any other event is reported to Lambda as an invocation error, see
+[Running on AWS Lambda](runtime-adapters.md#running-on-aws-lambda).
+
+### Make the command safe to run twice
+
+Every scheduler above can run a command twice or let two runs overlap. The
+fix belongs in the command. Make its work idempotent, for example by
+deleting everything older than a cutoff or by upserting.
+
+When the work cannot be idempotent, claim the run first: insert a row
+keyed by the job name and the scheduled slot under a unique key, and exit
+`0` without doing the work when the insert hits the duplicate.
+
+```{code-block} sql
+CREATE TABLE job_runs (
+    job  VARCHAR(100) NOT NULL,
+    slot DATETIME     NOT NULL,
+    PRIMARY KEY (job, slot)
+);
+```
+
+The command rounds the current time to the schedule's interval to get
+`slot`, inserts `('app:send-report', '2026-01-01 09:00:00')`, and returns
+`0` when that insert raises a unique violation. See
+[Unique violations](persistence.md#unique-violations).
 
 ## `kinetis build`
 
