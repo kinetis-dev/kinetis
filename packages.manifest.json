@@ -388,14 +388,14 @@
             "description": "File storage for Kinetis, built on League\\Flysystem — local storage through an Amp\\File-backed adapter whose driver calls suspend the Fiber; remote backends (S3, etc.) live in kinetis/storage-s3.",
             "namespace": "Kinetis\\Storage\\",
             "testNamespace": "Kinetis\\Storage\\Tests\\",
-            "version": "1.2.5",
+            "version": "1.2.6",
             "requires": [
                 "framework"
             ],
             "require": {
                 "league/flysystem": "^3.35.3",
                 "league/mime-type-detection": "^1.17.0",
-                "amphp/file": "^3.2.0",
+                "amphp/file": "^4.0.0",
                 "amphp/byte-stream": "^2.1.2"
             },
             "suggest": {
@@ -428,7 +428,7 @@
             "description": "S3 (and S3-compatible) file storage for Kinetis, plugging into kinetis/storage's FILESYSTEM_DRIVER=s3 — every S3 call travels on a Revolt-native HTTP transport.",
             "namespace": "Kinetis\\StorageS3\\",
             "testNamespace": "Kinetis\\StorageS3\\Tests\\",
-            "version": "1.1.5",
+            "version": "1.1.6",
             "requires": [
                 "framework",
                 "storage",
