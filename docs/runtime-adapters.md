@@ -261,8 +261,8 @@ ratios measured for FrankenPHP have not been re-measured for processes.
 
 An exception a handler throws is reported to RoadRunner with
 `Worker::error()`, which answers that one client with an error, and the
-worker keeps serving. A short `pool.supervisor.exec_ttl` still bounds a
-worker's total lifetime; RoadRunner's default is `0s`, unlimited.
+worker keeps serving. [Recycling persistent workers](#recycling-persistent-workers)
+covers the settings that replace a worker.
 
 ### What isn't supported
 
@@ -360,6 +360,47 @@ What Lambda does not support:
 {ref}`runtime-reference-lambda` lists every validated event field, how
 the request's host, port and target are derived, and how each field maps
 to PSR-7.
+
+## Recycling persistent workers
+
+Kinetis disposes request state at request end and never restarts a
+worker itself. A worker's memory can still grow from outside Kinetis: an
+extension, a library's own cache, or allocator fragmentation left by one
+large request. Recycling replaces such a worker between requests, before
+`memory_limit` fails a request with a fatal error.
+
+- **RoadRunner.** Soft limits under `http.pool` replace a worker after
+  the request in flight: `supervisor.max_worker_memory` in megabytes,
+  `supervisor.ttl` for its age, and `max_jobs` for its request count.
+  Prefer `max_worker_memory`: it targets the symptom and fires only when
+  memory actually grows. `supervisor.exec_ttl` is a hard limit on one
+  request, which it interrupts, not a recycling limit. All
+  four default to unlimited.
+
+  ```{code-block} yaml
+  :caption: .rr.yaml
+
+  http:
+    pool:
+      supervisor:
+        max_worker_memory: 256
+  ```
+
+- **FrankenPHP.** No setting recycles a worker. `FrankenPhpAdapter`
+  serves until FrankenPHP stops the worker script, and FrankenPHP
+  restarts a worker script that exits with an error, including one that
+  passed `memory_limit`.
+- **Lambda.** One PHP process serves every invocation its execution
+  environment receives. Lambda replaces environments on its own schedule,
+  and no setting recycles one sooner. A process that exits with an
+  error, including one that passed `memory_limit`, is reinitialized by
+  Lambda.
+- **PHP-FPM.** Each request boots Kinetis fresh, so no Kinetis state
+  outlives it.
+- **`queue:work`.** The worker has no job-count or memory limit. Its
+  supervisor recycles it by sending `SIGTERM`, which stops it after the
+  job in flight — see {doc}`queue`'s
+  [Deploys and restarts](queue.md#deploys-and-restarts).
 
 ## Request bodies: one contract under every runtime
 
