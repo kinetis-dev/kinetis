@@ -37,7 +37,7 @@ jobs:
       - name: Build Sphinx docs
         run: |
           docker run --rm -v "$PWD/docs":/app -w /app python:3.12-slim \
-            bash -c "pip install -q -r requirements.txt && sphinx-build -M html . _build -W --keep-going"
+            bash -c "pip install -q -r requirements.txt && sphinx-build -M html . _build -W --keep-going && python -m pagefind --site _build/html"
 
       - name: Check URL baseline
         run: python3 docs/tools/check_url_baseline.py check docs/_build/html --catalogue packages/mcp-docs/src/DocsCatalogue.php
