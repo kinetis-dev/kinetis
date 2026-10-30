@@ -1326,13 +1326,16 @@
             "dist": {
                 "type": "path",
                 "url": "../database-bridge",
-                "reference": "f4461772fd7604fa0e2eb917facaf1901e9d5104"
+                "reference": "26a4bb0df20121233e6bdec480ec259d2d178533"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
                 "php": "^8.4",
                 "psr/log": "^3.0.2"
+            },
+            "conflict": {
+                "kinetis/orm": "<1.10.0"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -1348,7 +1351,7 @@
             },
             "suggest": {
                 "kinetis/migrations": "Migration runner and migrate commands, connecting through this package's connection policy.",
-                "kinetis/orm": "Attributed entities, typed repositories and a request-scoped EntityManager over the link this package binds, with entity metadata compiled into the AOT cache.",
+                "kinetis/orm": "Attributed entities and typed repositories, with entity metadata compiled into the AOT cache: an OrmFactoryRegistry for the worker and a request-scoped EntityManagerRegistry over the default link and every named connection an entity declares, with OrmFactory and EntityManager as the default connection's entries.",
                 "kinetis/query-builder": "Parameterized queries and row-to-DTO mapping over the MysqlLink/PostgresLink this package binds."
             },
             "type": "library",
@@ -1376,7 +1379,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata and a lazy request-scoped EntityManager.",
+            "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
             "transport-options": {
                 "relative": true
             }
@@ -1548,7 +1551,7 @@
             "dist": {
                 "type": "path",
                 "url": "../migrations",
-                "reference": "aee7435123f49ea7beb752b14306c37a5fe73178"
+                "reference": "d7628a88d63330aa80192714d4e7d29b2622670f"
             },
             "require": {
                 "kinetis/database-bridge": "dev-main",
@@ -1561,6 +1564,10 @@
                 "phpstan/phpstan": "^2.2.8",
                 "phpunit/phpunit": "^13.3.3",
                 "vimeo/psalm": "^6.17"
+            },
+            "suggest": {
+                "ext-pdo_mysql": "Required by the migrate* commands when DB_CONNECTION=mysql; migrations always hold one PDO session, whatever DB_DRIVER says.",
+                "ext-pdo_pgsql": "Required by the migrate* commands when DB_CONNECTION=pgsql; migrations always hold one PDO session, whatever DB_DRIVER says."
             },
             "type": "library",
             "extra": {
@@ -1586,7 +1593,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations, no fluent DDL builder, no schema-diffing.",
+            "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations for the default connection and named ones, no fluent DDL builder, no schema-diffing.",
             "transport-options": {
                 "relative": true
             }
@@ -1597,7 +1604,7 @@
             "dist": {
                 "type": "path",
                 "url": "../orm",
-                "reference": "52318541e8113d08b3a475e4fe667aabe897dc44"
+                "reference": "2cf059a65b4ca33a882a275e399ae5cc0476631a"
             },
             "require": {
                 "kinetis/persistence": "dev-main",
@@ -1606,7 +1613,10 @@
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
+                "kinetis/database-bridge": "dev-main",
                 "kinetis/framework": "dev-main",
+                "kinetis/queue": "dev-main",
+                "kinetis/queue-sql": "dev-main",
                 "phpstan/phpstan": "^2.2.8",
                 "phpunit/phpunit": "^13.3.3",
                 "vimeo/psalm": "^6.17"
@@ -1633,7 +1643,7 @@
                     "name": "Alon Noy"
                 }
             ],
-            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, and factory-owned transaction sessions with locking entity reads. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
+            "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, factory-owned transaction sessions with locking entity reads, and per-entity connection affinity with one factory and one manager per connection. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "transport-options": {
                 "relative": true
             }
@@ -1741,13 +1751,14 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "fbe77612b78b9c1b764247d2f1d42c167a9677d6"
+                "reference": "11c21be62d3773b6ea070f566cb29845cec966ce"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "php": "^8.4",
                 "psr/container": "^2.0.2",
-                "psr/log": "^3.0.2"
+                "psr/log": "^3.0.2",
+                "revolt/event-loop": "^1.0.9"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -2300,16 +2311,16 @@
         },
         {
             "name": "monolog/monolog",
-            "version": "3.12.0",
+            "version": "3.12.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/Seldaek/monolog.git",
-                "reference": "72c534fc0ab181ef52d92a68382318631e301608"
+                "reference": "d7059e4c691d05ea1222b5124bed0f961be46e15"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/Seldaek/monolog/zipball/72c534fc0ab181ef52d92a68382318631e301608",
-                "reference": "72c534fc0ab181ef52d92a68382318631e301608",
+                "url": "https://api.github.com/repos/Seldaek/monolog/zipball/d7059e4c691d05ea1222b5124bed0f961be46e15",
+                "reference": "d7059e4c691d05ea1222b5124bed0f961be46e15",
                 "shasum": ""
             },
             "require": {
@@ -2389,7 +2400,7 @@
             ],
             "support": {
                 "issues": "https://github.com/Seldaek/monolog/issues",
-                "source": "https://github.com/Seldaek/monolog/tree/3.12.0"
+                "source": "https://github.com/Seldaek/monolog/tree/3.12.1"
             },
             "funding": [
                 {
@@ -2401,7 +2412,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-09-09T08:34:20+00:00"
+            "time": "2026-09-29T19:21:12+00:00"
         },
         {
             "name": "nyholm/psr7",
