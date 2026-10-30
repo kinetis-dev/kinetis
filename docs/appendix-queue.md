@@ -662,6 +662,9 @@ event's serialized constructor arguments, so:
   the process that dispatched the event;
 - each attempt constructs and invokes the listener again, so it needs
   the same idempotency as any handler;
+- a final failure logs the listener, the method and the event class, with
+  the event's arguments as `[redacted]` whole: `#[Sensitive]` on the
+  event's own parameters is not consulted;
 - it cannot stop propagation, which the dispatching process decides on
   its own event object while the worker holds a rebuilt copy. A listener
   that must stop propagation runs inline.
