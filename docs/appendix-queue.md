@@ -665,6 +665,10 @@ event's serialized constructor arguments, so:
 - it cannot stop propagation, which the dispatching process decides on
   its own event object while the worker holds a rebuilt copy. A listener
   that must stop propagation runs inline.
+- it is pushed when the event is dispatched, outside any transaction the
+  caller holds, so a dispatch inside one can run before the commit or
+  survive a rollback — see {doc}`events`'s
+  [Dispatching inside a transaction](events.md#dispatching-inside-a-transaction).
 
 ### Connection ownership
 

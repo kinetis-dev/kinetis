@@ -701,12 +701,30 @@ A job can carry a loaded entity's identifier or one the application
 assigns, such as a UUID: its arguments reference no row, while a
 persisted entity's row exists on the transaction only after `flush()`.
 It cannot carry the generated key of an entity inserted in the same
-session: the key reaches the object only once `COMMIT` returns. For that case, map the job intent as an outbox entity
-with a `#[BelongsTo]` to the new entity, persist both and flush once —
-`flush()` inserts the referenced row first — then push the job after
-`transaction()` returns and mark the intent sent.
-[A job can run more than once](queue.md#a-job-can-run-more-than-once)
-owns replay and idempotency for that step.
+session: the key reaches the object only once `COMMIT` returns. For that
+case, map the job intent as an entity with an application-assigned `#[Id]`
+and a `#[BelongsTo]` to the new entity, persist both and flush once —
+`flush()` inserts the referenced row first — and push a job carrying the
+intent's id on the session's transaction:
+
+```{code-block} php
+$this->orm->transaction(function (EntityManager $entities, SessionTransaction $tx) use ($order): void {
+    $shipment = new Shipment($order);
+    $intentId = bin2hex(random_bytes(16));
+
+    $entities->persist($shipment);
+    $entities->persist(new ShipmentIntent($intentId, $shipment));
+    $this->queue->pushOn($tx, new ForwardShipment($intentId), maxAttempts: 10);
+    $entities->flush();
+});
+```
+
+`ForwardShipment` runs after the commit: it loads the intent by id,
+reaches the shipment's generated key through the relationship, and
+performs the step no transaction can cover. {doc}`queue-sql`'s "Handing
+off to another backend atomically" owns the retry cap, the
+single-database requirement, replay and unknown-`COMMIT` rules for that
+job.
 
 ## Without a database
 

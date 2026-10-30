@@ -176,6 +176,23 @@ propagation" above), so a queued listener cannot stop the listeners
 behind it; and the event has to survive serialization to reach the
 worker, under the wire-value contract {doc}`queue` documents.
 
+### Dispatching inside a transaction
+
+`QueuedListenerInvoker` pushes when the event is dispatched, and
+`QueueInterface::push()` is not enlisted in a transaction the caller has
+open — on every backend, SQL included, since its `push()` uses the
+queue's own connection. Dispatching an event for a `ShouldQueue` listener
+inside a transaction therefore has two failure modes: a worker can pop
+and run the job before the `COMMIT`, so the listener sees rows that do
+not exist yet, and a rollback leaves a job for work that never happened.
+
+Dispatch the event after the transaction commits, accepting that a crash
+between the commit and the dispatch loses it. For atomic hand-off, leave
+the listener inline — not `ShouldQueue` — and push a job with
+`SqlQueue::pushOn()` from the code that holds the transaction, or relay
+to another backend; {doc}`queue-sql`'s "Handing off to another backend
+atomically" covers both.
+
 ## Events Kinetis itself dispatches
 
 Everything above is about events *you* define, like `OrderPlaced`. A
