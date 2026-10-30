@@ -119,6 +119,93 @@ passes its `SessionTransaction` as the callback's second argument —
 session](orm.md#enqueueing-a-job-with-the-session) shows it, and what a
 job can carry from entities the session inserts.
 
+## Handing off to another backend atomically
+
+`pushOn()` is atomic only for a job that runs from the SQL queue. A
+transactional outbox for work that belongs on Redis, SQS or RabbitMQ, or
+that is a broadcast, uses a *relay job*: inside the transaction,
+`pushOn()` a SQL job whose handler performs the step no transaction can
+cover. The SQL row commits or rolls back with the business write; the SQL
+queue's retries then carry the hand-off through.
+
+```{code-block} php
+use Kinetis\Queue\Job;
+use Kinetis\Queue\QueueInterface;
+
+final readonly class ForwardInvoice implements Job
+{
+    public function __construct(public string $invoiceId) {}
+
+    public function handle(QueueInterface $queue): void
+    {
+        $queue->push(new GenerateInvoicePdf($this->invoiceId));
+    }
+}
+```
+
+```{code-block} php
+$this->transactions->transaction($this->db, function (SqlTransaction $tx) use ($invoiceId): void {
+    $tx->execute('UPDATE invoices SET status = ? WHERE id = ?', ['issued', $invoiceId]);
+
+    $this->queue->pushOn($tx, new ForwardInvoice($invoiceId), maxAttempts: 10);
+});
+```
+
+`handle()` resolves `QueueInterface` from the container, so the relay
+reaches Redis, SQS or RabbitMQ only if that is the bound backend. Do not
+register the SQL queue under `QueueInterface::class` here, as the section
+above does: the relay would push back into the SQL queue. Build it on a
+named connection and register it under `SqlQueue::class` alone;
+`QueueInterface` stays on the downstream backend, the behavior "Binding
+only `SqlQueue::class` leaves the default `QueueInterface` binding in
+place" describes above:
+
+```{code-block} text
+QUEUE_CONNECTION=redis
+QUEUE_LEDGER_CONNECTION=sql
+DB_LEDGER_CONNECTION=pgsql
+DB_LEDGER_HOST=10.0.0.6
+```
+
+```{code-block} php
+$queue = SqlQueueFactory::fromConfig($config, 'ledger');
+
+$app->instance(SqlQueue::class, $queue);
+$app->onDispose($queue->dispose(...));
+```
+
+{doc}`appendix-queue`'s "Multiple backends" covers the keys and
+`QUEUE_CONNECTION_NAME`. A SQL queue worker must run, naming that
+connection: `vendor/bin/kinetis queue:work --connection=ledger`.
+
+- **Set a retry cap.** `QUEUE_MAX_ATTEMPTS` defaults to `0`, so a relay
+  job that fails once, because the downstream backend is down, is given
+  up on, and the default `NullLogger` records nothing. Pass `maxAttempts`
+  to `pushOn()`, and make the final failure visible with a durable logger
+  or a `JobFailedPermanently` listener — see {doc}`queue`'s
+  [Retries and failures](queue.md#retries-and-failures).
+- **Use one database.** The transaction must address the database that
+  holds `kinetis_queue_jobs`. With the SQL queue on a named connection,
+  the writes belong on that same database: an ORM entity declares it with
+  `#[Entity(connection: 'ledger')]` and runs through
+  `OrmFactoryRegistry::factory('ledger')->transaction()` ({doc}`orm`'s
+  "Entities on other connections"). A session on `default` cannot enlist a
+  queue on another database.
+- **Make the downstream step idempotent.** Delivery stays at least once
+  across the hop: the relay can run again, including after the downstream
+  `push()` had an unknown outcome, so the downstream job may be enqueued
+  twice. Idempotency belongs to that job — see {doc}`queue`'s
+  [A job can run more than once](queue.md#a-job-can-run-more-than-once).
+  A relayed broadcast arrives at least one SQL poll interval after the
+  commit and can fan out twice. Many applications prefer a direct
+  broadcast after the commit and accept losing the occasional real-time
+  hint.
+- **Do not re-push after an unknown `COMMIT`.** The queue row shares the
+  business write's fate, which is what the pattern buys. Establish what
+  the database holds first — see {doc}`persistence`'s
+  [When a write's outcome is unknown](persistence.md#when-a-writes-outcome-is-unknown).
+  A second `pushOn()` after a commit that did land enqueues a second relay.
+
 ## Visibility timeout
 
 `QUEUE_VISIBILITY_TIMEOUT_SECONDS` (default `300`, at least `1`) is how
