@@ -128,7 +128,9 @@ exact rules.
 
 When a job is given up on, the worker logs its arguments. Mark any
 parameter holding a token, an address or customer data
-`Kinetis\Queue\Attributes\Sensitive`, and it is logged as `[redacted]`:
+`Kinetis\Queue\Attributes\Sensitive`, and it is logged as `[redacted]`
+— in the log line, in `JobFailedPermanently`, and in what
+`queue:failed` prints:
 
 ```{code-block} php
 use Kinetis\Queue\Attributes\Sensitive;
@@ -172,8 +174,9 @@ account and issue a new reset. A marked array or object is redacted
 whole.
 
 `#[Sensitive]` governs logging, not storage. The backend stores every
-argument in full, because the worker needs it, so protect the backend
-like the database. When a secret must not reach queue storage at all,
+argument in full, because the worker needs it, and so does
+{doc}`queue-failed-jobs`, because a retry needs it, so protect both like
+the database. When a secret must not reach queue storage at all,
 pass an identifier and load the secret inside `handle()`.
 
 ## Push a job
@@ -313,15 +316,16 @@ is logged with them:
 }
 ```
 
-That log entry is the only persistent record of a job given up on; there
-is no dead-letter queue. The production default `NullLogger` discards
-it, so a permanent failure leaves no durable record unless the
-application binds a durable logger ({doc}`logging`) or handles
-`JobFailedPermanently`. `QueueWorker` dispatches
-`Kinetis\Queue\Events\JobFailedPermanently` at the same moment with the
-same data, so a listener can alert someone or write your own dead-letter
-row. `JobSucceeded` and `JobReleased` report the other outcomes — see
-{doc}`events`. A throwing listener, telemetry backend or logger never
+Install {doc}`queue-failed-jobs` to keep every job given up on in a
+table, with commands to list, retry, forget and prune the records; the
+worker records the job before the backend deletes it. Without it, that
+log entry is the only persistent record, and the production default
+`NullLogger` discards it unless the application binds a durable logger
+({doc}`logging`). `QueueWorker` dispatches
+`Kinetis\Queue\Events\JobFailedPermanently` once the backend has deleted
+the job, with the same redacted data and the failed-job record's id, so
+a listener can alert someone. `JobSucceeded` and `JobReleased` report
+the other outcomes — see {doc}`events`. A throwing listener, telemetry backend or logger never
 changes a job's outcome
 ([observers](appendix-queue.md#observers-never-decide-or-rewrite-the-outcome)).
 
@@ -425,7 +429,12 @@ again when:
   worker starts it;
 - a RabbitMQ retry stops between publishing the replacement and
   discarding the original;
-- you push again after a `push()` whose outcome was unknown.
+- you push again after a `push()` whose outcome was unknown;
+- with {doc}`queue-failed-jobs` installed, a job given up on is recorded
+  and then not deleted — the worker dies in between, or the delete fails
+  or is lost — so it runs again and can leave more than one record, even
+  for a job that later succeeds; an interrupted `queue:retry` pushes the
+  job again on the next retry ([duplicate records](queue-failed-jobs.md#duplicate-records)).
 
 Write every handler so that running it twice, or twice at once, has no
 duplicate effect:
@@ -606,6 +615,8 @@ anything to pop from it.
 - {doc}`appendix-queue` — delivery, worker and backend contracts.
 - {doc}`queue-redis`, {doc}`queue-sql`, {doc}`queue-sqs` and
   {doc}`queue-rabbitmq` — backend setup.
+- {doc}`queue-failed-jobs` — keeping, listing and retrying jobs given up
+  on.
 - {doc}`persistence` — connecting to MySQL and Postgres.
 - {doc}`redis` — the Redis transport under `kinetis/queue-redis`.
 - {doc}`migrations` — running the SQL backend's migration.

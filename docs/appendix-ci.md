@@ -154,6 +154,13 @@ rather than which form it took.
 - **`queue-sql`** (MySQL 8.4, MariaDB 11.4) — `SqlQueue`: the same
   push/pop/ack/release/fail surface over `FOR UPDATE SKIP LOCKED`,
   reservation tokens, and priority ordering.
+- **`queue-failed-jobs`** (MySQL 8.4 or MariaDB 11.4, plus Postgres 16)
+  — `SqlFailedJobStore` over the shipped migration stubs on both
+  engines: record/find/list/forget/prune, keyset paging across records
+  failed in the same second, the connection and queue filters, and the
+  store on a named database connection distinct from `default`; then
+  `tests-integration/run.php` retries a record onto a named queue
+  connection backed by `kinetis/queue-sql` and pops it back.
 - **`queue-rabbitmq`** (RabbitMQ) — `RabbitMqQueue`: push/pop/ack/
   release/fail, `maxAttempts` round-tripping through message headers,
   priority cycling across two real queues, real delays through the delay
@@ -283,8 +290,8 @@ rather than which form it took.
   container ponged it, and the `cron` container's own row (created and
   ponged with no HTTP request involved at all) polled the same way.
 
-`query-builder`, `orm`, `queue-sql`, `persistence-and-cache-redis`, and
-`migrations` each run twice — once against MySQL, once against
+`query-builder`, `orm`, `queue-sql`, `queue-failed-jobs`,
+`persistence-and-cache-redis`, and `migrations` each run twice — once against MySQL, once against
 MariaDB — via a matrix over the database image, not separate jobs or
 duplicated scripts. Only the service container's image and health-check
 command (`mysqladmin` vs. `mariadb-admin`) differ between the two matrix
@@ -360,6 +367,7 @@ above the number here by design:
 | `persistence` | 75% |
 | `query-builder` | 80% |
 | `queue` | 60% |
+| `queue-failed-jobs` | 50% |
 | `queue-rabbitmq` | 50% |
 | `queue-redis` | 55% |
 | `queue-sql` | 50% |

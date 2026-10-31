@@ -181,8 +181,9 @@ connection: `vendor/bin/kinetis queue:work --connection=ledger`.
 - **Set a retry cap.** `QUEUE_MAX_ATTEMPTS` defaults to `0`, so a relay
   job that fails once, because the downstream backend is down, is given
   up on, and the default `NullLogger` records nothing. Pass `maxAttempts`
-  to `pushOn()`, and make the final failure visible with a durable logger
-  or a `JobFailedPermanently` listener — see {doc}`queue`'s
+  to `pushOn()`, and keep the final failure: install
+  {doc}`queue-failed-jobs` to record it for retry, or make it visible
+  with a durable logger or a `JobFailedPermanently` listener — see {doc}`queue`'s
   [Retries and failures](queue.md#retries-and-failures).
 - **Use one database.** The transaction must address the database that
   holds `kinetis_queue_jobs`. With the SQL queue on a named connection,

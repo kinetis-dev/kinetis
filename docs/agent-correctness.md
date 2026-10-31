@@ -58,7 +58,8 @@ These hold regardless of adapter, driver, or use case.
   handler that can run more than once, which includes every queue job,
   has no duplicate effect. Exhausting `maxAttempts` is a terminal outcome,
   not eventual delivery; when correctness depends on completion, the design
-  includes a permanent-failure recovery, dead-letter or reconciliation path.
+  includes a permanent-failure recovery, dead-letter or reconciliation path,
+  such as {doc}`queue-failed-jobs` with a retry procedure.
   {doc}`persistence`, {doc}`revolt-http-client`, {doc}`queue`.
 - **Direct dependencies.** A new dependency points toward the contract
   it consumes; application code does not reach past that contract into

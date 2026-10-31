@@ -44,7 +44,8 @@ html[data-theme="dark"] .bd-article section > p > strong:only-child { color: #F5
 - **Data** — a fluent query builder with pagination, database migrations,
   and request-scoped transaction safety.
 - **Background work** — queues on Redis, SQL, Amazon SQS, or RabbitMQ,
-  with retries, delays, priorities, and graceful shutdown.
+  with retries, delays, priorities, graceful shutdown, and failed jobs
+  kept for retry.
 - **Auth** — bearer tokens or JWT, refresh tokens, and per-token
   revocation.
 - **Web essentials** — sessions with CSRF protection, rate limiting, CORS,
@@ -190,6 +191,7 @@ queue-redis
 queue-sql
 queue-sqs
 queue-rabbitmq
+queue-failed-jobs
 ```
 
 ```{toctree}

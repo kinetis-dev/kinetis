@@ -346,7 +346,8 @@ that call removed. It never removes a reservation, including one past
 its timeout: a clear has no handover to make, and the worker holding it
 may still be running the job. The return value is not a `size()` taken alongside
 it — the queue accepts pushes throughout, so the two are separate
-observations of a moving number. There is no dead-letter copy.
+observations of a moving number. A cleared job is not copied anywhere,
+not even with {doc}`queue-failed-jobs` installed.
 
 `queue:clear` checks the capability first and, against a backend
 without it, names that backend and the missing interface and exits 1
@@ -377,7 +378,8 @@ refuses to run without `--force`, and clears each queue in turn.
 6. Stop the heartbeat: cancel the watcher and wait out any renewal still
    in flight, so nothing of it survives into the settlement. A wait that
    fails propagates from here, and step 7 never runs.
-7. Settle the delivery, then report the outcome — a renewal failure
+7. Settle the delivery — recording a job given up on first, when a
+   recorder is bound — then report the outcome, a renewal failure
    included, after the settlement attempt and never instead of it.
 8. Dispose the scope and run `gc_collect_cycles()`.
 
@@ -386,7 +388,9 @@ so a test or a process-N-then-exit script can drive single iterations.
 
 ### One transition per delivery
 
-Only step 5 decides the outcome. A job that returns is acked. A job that
+Only step 5 decides the outcome. The one other durable write is a
+failed-job record, made before `fail()` and never instead of it (see
+[Recording a job before `fail()`](#recording-a-job-before-fail)). A job that returns is acked. A job that
 throws is failed when `QueuedJob::$attempts` has reached the effective
 cap — the job's own `maxAttempts`, else the worker's default — and
 released otherwise. The default is `QueueWorker`'s `$defaultMaxAttempts`
@@ -425,6 +429,30 @@ transition with the job's arguments, redacted per `#[Sensitive]`; a
 failure with attempts remaining is logged without them, since the
 backend still holds the payload.
 
+### Recording a job before `fail()`
+
+With a `Kinetis\Queue\FailedJobRecorderInterface` bound — which
+installing {doc}`queue-failed-jobs` does — the final-failure path runs in
+this order:
+
+1. Log the final failure, best-effort as above.
+2. `record()` a `Kinetis\Queue\FailedJob`: the `--connection` the worker
+   runs (`null` for the bound queue), queue, class, raw arguments,
+   `maxAttempts` as pushed, attempt number, exception class and message.
+   An exception from `record()` propagates and nothing is settled, so the
+   backend still holds the job and redelivers it once its reservation
+   expires.
+3. `fail()`. A stale `fail()` is reported as above and the record stays;
+   any other exception propagates with the record in place.
+4. Dispatch `JobFailedPermanently`, carrying the record's id.
+
+A job the worker gives up on is therefore held by the backend, recorded,
+or both, never neither. The worker never deletes a record, so a crash
+between steps 2 and 3, or a `fail()` that throws or is stale, leaves a
+record for a job the backend later delivers again; that redelivery is
+recorded again if it also reaches the cap. Without a binding, step 2 is
+skipped and the event's id is `null`.
+
 When the backend answers with `StaleJobHandleException`, nothing was
 written, so none of those three events is dispatched and the loop
 continues:
@@ -440,7 +468,8 @@ continues:
 
 Any other exception from `ack()`, `release()` or `fail()` propagates out
 of `processNext()` and `run()` and stops the worker. The worker cannot
-tell whether that settlement was applied.
+tell whether that settlement was applied. The same holds for `record()`,
+which runs before `fail()` and settles nothing when it throws.
 
 ### Shutdown
 
@@ -487,6 +516,10 @@ reflecting a job's `#[Sensitive]` parameters throws while building the
 final failure log line, every argument is logged as `[redacted]` instead,
 with no separate report. `processNext()` moves on to the next job
 regardless.
+
+`FailedJobRecorderInterface::record()` is not an observer. It is a
+durable write that precedes `fail()`, so it is not contained: its
+exception propagates and stops the worker, as a failing settlement does.
 
 ### A disposal failure never rewrites the outcome or stops the worker
 
@@ -557,12 +590,13 @@ propagates as the transport failure it is.
 | `Kinetis\Redis\Exception\ConnectionFailed` | A Redis command was never dispatched | Unchanged | Propagates; stops a worker |
 | `Kinetis\Redis\Exception\OutcomeUnknown` | A Redis command was written and no reply arrived | Unknown | Propagates; stops a worker |
 | Any other exception from a settlement | A transport or backend failure | Unknown | Propagates; stops the worker |
+| Any exception from `FailedJobRecorderInterface::record()` | The failed-job store refused or could not take the write | The reserved delivery, unsettled; redelivered once its reservation expires | Propagates; stops the worker |
 
 | Event | Dispatched when |
 |---|---|
 | `JobSucceeded` | `handle()` returned and `ack()` was accepted |
 | `JobReleased` | `handle()` threw with attempts remaining and `release()` was accepted |
-| `JobFailedPermanently` | `handle()` threw at the cap and `fail()` was accepted; carries the redacted arguments |
+| `JobFailedPermanently` | `handle()` threw at the cap and `fail()` was accepted; carries the redacted arguments and `failedJobId`, the record's id or `null` without a recorder |
 | `JobSettlementLost` | The backend rejected the settlement as stale |
 
 At most one of the four is dispatched per delivery. {doc}`events` lists

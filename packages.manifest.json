@@ -28,7 +28,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.24.1",
+            "version": "1.24.2",
             "bin": [
                 "bin/kinetis"
             ],
@@ -297,7 +297,7 @@
             "description": "A standalone Model Context Protocol server exposing the Kinetis documentation over stdio: a tool that returns a bounded line window of a page, which is how a page is read, a tool that reports the lines of one page containing a literal string, and the same pages whole as MCP resources. Framework-agnostic: it depends on kinetis/mcp-protocol alone and contributes no application bootstrap.",
             "namespace": "Kinetis\\McpDocs\\",
             "testNamespace": "Kinetis\\McpDocs\\Tests\\",
-            "version": "1.9.1",
+            "version": "1.9.2",
             "bin": [
                 "bin/kinetis-mcp-docs"
             ],

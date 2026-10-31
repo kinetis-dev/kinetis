@@ -590,8 +590,8 @@ Installing a package is what opts it in — there is no separate
 allow-list. If you install a package, you trust what it registers, the
 same trust already extended to any code Composer autoloads.
 
-`kinetis/migrations`, `kinetis/queue`, and `kinetis/session` ship their
-commands this way:
+`kinetis/migrations`, `kinetis/queue`, `kinetis/queue-failed-jobs` and
+`kinetis/session` ship their commands this way:
 
 ```{code-block} sh
 vendor/bin/kinetis migrate                        # apply pending migrations
@@ -602,6 +602,11 @@ vendor/bin/kinetis queue:work --queue=high,default
 vendor/bin/kinetis queue:work --connection=ledger    # a named queue connection
 vendor/bin/kinetis queue:stats --queue=high,default
 vendor/bin/kinetis queue:clear --queue=default --force
+vendor/bin/kinetis queue:failed --queue=mail       # list failed jobs, oldest first
+vendor/bin/kinetis queue:retry <id> <id>           # push failed jobs back, then forget them
+vendor/bin/kinetis queue:retry --all --bound       # every failed job from the bound queue
+vendor/bin/kinetis queue:forget <id>               # delete a failed job without retrying it
+vendor/bin/kinetis queue:prune --hours=168         # delete failed jobs older than a week
 vendor/bin/kinetis session:gc                     # delete expired sessions
 vendor/bin/kinetis views:warm                      # compile every configured view
 vendor/bin/kinetis views:clear                     # empty the selected view cache
@@ -623,8 +628,9 @@ bound `QueueInterface`, checking queues in the given priority order;
 instead, built from its own `QUEUE_{NAME}_CONNECTION` selector, or
 `QUEUE_CONNECTION` for `default`. `queue:clear` needs a backend that can
 clear, which `sqs` is not — it names the backend and exits 1 there
-instead. Full docs in {doc}`migrations`, {doc}`queue`, and
-{doc}`session`. The view commands come from `kinetis/views`, run the normal
+instead. The four failed-job commands read the table
+`kinetis/queue-failed-jobs` keeps. Full docs in {doc}`migrations`,
+{doc}`queue`, {doc}`queue-failed-jobs` and {doc}`session`. The view commands come from `kinetis/views`, run the normal
 application bootstrap to resolve its configured adapter, and delegate the
 vendor-specific work to that adapter; see {doc}`views`.
 
