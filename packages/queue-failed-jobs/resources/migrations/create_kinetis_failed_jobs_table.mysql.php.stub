@@ -18,7 +18,10 @@ use Kinetis\Migrations\Migration;
 // byte-exactly already — see the .pgsql. sibling stub.
 //
 // `args` holds each job's payload in full, #[Sensitive] values included.
-// Give this table the access controls the queue's own storage has.
+// Give this table the access controls the queue's own storage has. It is
+// MEDIUMTEXT because TEXT stops at 64 KiB, below what SQS, Redis and
+// RabbitMQ admit, and a record the table cannot hold stops every worker
+// that pops the job.
 
 return new class implements Migration
 {
@@ -30,7 +33,7 @@ return new class implements Migration
                 queue_connection VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NULL,
                 queue VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
                 class VARCHAR(255) NOT NULL,
-                args TEXT NOT NULL,
+                args MEDIUMTEXT NOT NULL,
                 max_attempts INT UNSIGNED NULL,
                 attempts INT UNSIGNED NOT NULL,
                 exception_class VARCHAR(255) NOT NULL,

@@ -70,7 +70,10 @@ worker stops with the job still on its queue.
 No stack trace is stored. **The table holds each job's arguments in
 full, `#[Sensitive]` values included**, because a retry rebuilds the job
 from them; `#[Sensitive]` governs what is logged, not what is stored.
-Give the table the access controls the queue's own storage has.
+Give the table the access controls the queue's own storage has. The
+MySQL stub stores arguments as `MEDIUMTEXT`, up to 16 MiB; a job whose
+arguments the table cannot hold stops every worker that pops it, so keep
+the column at least as large as your queue backend's largest message.
 
 ## Commands
 

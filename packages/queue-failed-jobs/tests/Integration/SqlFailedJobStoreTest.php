@@ -78,6 +78,23 @@ final class SqlFailedJobStoreTest extends TestCase
     }
 
     /**
+     * An SQS message admits 256 KiB, so the arguments column must hold
+     * more than MySQL TEXT's 64 KiB.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     */
+    #[DataProvider('dialects')]
+    public function test_a_job_as_large_as_an_sqs_message_is_recorded_in_full(string $dialect): void
+    {
+        $store = $this->store($dialect);
+        $job = new FailedJob(null, 'default', SensitiveJob::class, ['userId' => 1, 'token' => str_repeat('x', 256 * 1024)], 3, 3, RuntimeException::class, 'boom', time());
+
+        $id = $store->record($job);
+
+        self::assertEquals(new StoredFailedJob($id, $job), $store->find($id));
+    }
+
+    /**
      * @param 'mysql'|'pgsql' $dialect
      */
     #[DataProvider('dialects')]
