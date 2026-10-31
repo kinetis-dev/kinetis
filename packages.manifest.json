@@ -345,7 +345,8 @@
                 "revolt/event-loop": "^1.0.9"
             },
             "suggest": {
-                "ext-pcntl": "Lets `kinetis queue:work` stop gracefully on SIGTERM, finishing the job in flight instead of being killed mid-job. Not loaded by default in the official PHP Docker images."
+                "ext-pcntl": "Lets `kinetis queue:work` stop gracefully on SIGTERM, finishing the job in flight instead of being killed mid-job. Not loaded by default in the official PHP Docker images.",
+                "kinetis/queue-failed-jobs": "Records every job the worker gives up on in a MySQL/Postgres table before the backend deletes it, with queue:failed, queue:retry, queue:forget and queue:prune."
             },
             "kinetis": {
                 "scan": "Kinetis\\Queue\\Console\\",
@@ -475,6 +476,30 @@
                 "thesis/amqp": "^1.0.2"
             },
             "kinetis": []
+        },
+        "queue-failed-jobs": {
+            "name": "kinetis/queue-failed-jobs",
+            "description": "Retained failed jobs for kinetis/queue — every job the worker gives up on is recorded in a MySQL/Postgres table before the backend deletes it, with commands to list, retry, forget and prune the records.",
+            "namespace": "Kinetis\\QueueFailedJobs\\",
+            "testNamespace": "Kinetis\\QueueFailedJobs\\Tests\\",
+            "version": "1.0.0",
+            "requires": [
+                "framework",
+                "queue",
+                "persistence",
+                "database-bridge"
+            ],
+            "requiresDev": [
+                "queue-sql",
+                "migrations"
+            ],
+            "require": {
+                "psr/container": "^2.0.2"
+            },
+            "kinetis": {
+                "scan": "Kinetis\\QueueFailedJobs\\Console\\",
+                "bootstrap": "Kinetis\\QueueFailedJobs\\PackageBootstrap"
+            }
         },
         "mailer": {
             "name": "kinetis/mailer",
