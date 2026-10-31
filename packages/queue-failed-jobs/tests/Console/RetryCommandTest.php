@@ -73,6 +73,20 @@ final class RetryCommandTest extends CommandTestCase
         self::assertStringNotContainsString('a@example.com', self::contents($output));
     }
 
+    public function test_a_push_the_backend_refuses_keeps_its_record_and_fails_the_command(): void
+    {
+        $id = $this->store->record(self::failedJob());
+        $this->boundQueue->refusePush = true;
+        $output = self::memoryStream();
+
+        $exit = $this->command($output)->run(CommandArguments::parse([$id]));
+
+        self::assertSame(1, $exit);
+        self::assertNotNull($this->store->find($id));
+        self::assertStringContainsString("Could not retry \"{$id}\"", self::contents($output));
+        self::assertStringContainsString('The backend refused the push.', self::contents($output));
+    }
+
     public function test_a_connection_no_longer_configured_keeps_its_record_and_fails_the_command(): void
     {
         $id = $this->store->record(self::failedJob(connection: 'jobs'));

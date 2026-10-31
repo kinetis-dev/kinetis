@@ -8,19 +8,27 @@ use Kinetis\Queue\Job;
 use Kinetis\Queue\QueuedJob;
 use Kinetis\Queue\QueueInterface;
 use LogicException;
+use RuntimeException;
 
 /**
- * Keeps what each push() was given; nothing else is reachable.
+ * Keeps what each push() was given, or refuses it when $refusePush is
+ * set; nothing else is reachable.
  */
 final class RecordingQueue implements QueueInterface
 {
     /** @var list<array{job: Job, queue: string, maxAttempts: ?int}> */
     public array $pushed = [];
 
+    public bool $refusePush = false;
+
     #[\Override]
     public function push(Job $job, int $delaySeconds = 0, string $queue = 'default', ?int $maxAttempts = null): void
     {
-        $this->pushed[] = ['job' => $job, 'queue' => $queue, 'maxAttempts' => $maxAttempts];
+        if ($this->refusePush) {
+            throw new RuntimeException('The backend refused the push.');
+        }
+
+        $this->pushed[] =['job' => $job, 'queue' => $queue, 'maxAttempts' => $maxAttempts];
     }
 
     #[\Override]
