@@ -1,0 +1,50 @@
+<?php
+
+declare(strict_types=1);
+
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Migrations\Migration;
+
+// Postgres version. Copy this file into your own migrations/ directory
+// (see kinetis/migrations) — migrations/<name>/ when
+// FAILED_JOBS_DB_CONNECTION_NAME selects a named connection — renaming it
+// with a timestamp prefix, e.g.
+// 20260810143000_create_kinetis_failed_jobs_table.php.
+// Required by Kinetis\QueueFailedJobs\SqlFailedJobStore.
+//
+// Postgres has no UNSIGNED integer type and no inline INDEX clause inside
+// CREATE TABLE, and its default collation already compares `id`,
+// `queue_connection` and `queue` byte-exactly, which the .mysql. sibling
+// stub has to ask for. `failed_at` is unix seconds.
+//
+// `args` holds each job's payload in full, #[Sensitive] values included.
+// Give this table the access controls the queue's own storage has.
+
+return new class implements Migration
+{
+    public function up(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute(<<<'SQL'
+            CREATE TABLE kinetis_failed_jobs (
+                id VARCHAR(32) NOT NULL PRIMARY KEY,
+                queue_connection VARCHAR(255) NULL,
+                queue VARCHAR(255) NOT NULL,
+                class VARCHAR(255) NOT NULL,
+                args TEXT NOT NULL,
+                max_attempts INT NULL,
+                attempts INT NOT NULL,
+                exception_class VARCHAR(255) NOT NULL,
+                exception_message TEXT NOT NULL,
+                failed_at BIGINT NOT NULL
+            )
+            SQL);
+
+        $db->execute('CREATE INDEX kinetis_failed_jobs_failed_at_id_index ON kinetis_failed_jobs (failed_at, id)');
+    }
+
+    public function down(MysqlLink|PostgresLink $db): void
+    {
+        $db->execute('DROP TABLE kinetis_failed_jobs');
+    }
+};

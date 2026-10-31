@@ -1,0 +1,77 @@
+{
+    "name": "kinetis/queue-failed-jobs",
+    "description": "Retained failed jobs for kinetis/queue — every job the worker gives up on is recorded in a MySQL/Postgres table before the backend deletes it, with commands to list, retry, forget and prune the records.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alon Noy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kinetis/framework": "dev-main",
+        "kinetis/queue": "dev-main",
+        "kinetis/persistence": "dev-main",
+        "kinetis/database-bridge": "dev-main",
+        "psr/container": "^2.0.2"
+    },
+    "require-dev": {
+        "infection/infection": "^0.35.0",
+        "kinetis/migrations": "dev-main",
+        "kinetis/queue-sql": "dev-main",
+        "phpstan/phpstan": "^2.2.8",
+        "phpunit/phpunit": "^13.3.3",
+        "vimeo/psalm": "^6.17"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kinetis\\QueueFailedJobs\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kinetis\\QueueFailedJobs\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "kinetis": {
+            "scan": "Kinetis\\QueueFailedJobs\\Console\\",
+            "bootstrap": "Kinetis\\QueueFailedJobs\\PackageBootstrap"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../queue-sql"
+        },
+        {
+            "type": "path",
+            "url": "../migrations"
+        },
+        {
+            "type": "path",
+            "url": "../framework"
+        },
+        {
+            "type": "path",
+            "url": "../queue"
+        },
+        {
+            "type": "path",
+            "url": "../persistence"
+        },
+        {
+            "type": "path",
+            "url": "../database-bridge"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -129,6 +129,7 @@ jobs:
           - { name: storage-s3, dir: packages/storage-s3, phpunit: true }
           - { name: queue-sqs, dir: packages/queue-sqs, phpunit: true }
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, phpunit: true }
+          - { name: queue-failed-jobs, dir: packages/queue-failed-jobs, phpunit: true }
           - { name: mailer, dir: packages/mailer, phpunit: true }
           - { name: broadcasting, dir: packages/broadcasting, phpunit: true }
           - { name: search, dir: packages/search, phpunit: true }

@@ -156,6 +156,14 @@ visibility timeout: `ChangeMessageVisibility`'s request field accepts up
 to 43200 seconds (12 hours), wider than the send-time delay, and a
 larger value throws before anything is sent.
 
+A job the worker gives up on is deleted with `DeleteMessage`; with
+{doc}`queue-failed-jobs` installed it is recorded first. An SQS redrive
+policy on the queue still catches a message whose worker dies on every
+receive, which never reaches either path, but only when its
+`maxReceiveCount` exceeds every job's effective `maxAttempts`. A lower
+count moves a message to the dead-letter queue while the worker would
+still retry it.
+
 Being within that field's range is not the same as being accepted. SQS
 refuses a timeout longer than the time left in that received message's
 own 12-hour maximum and does not recalculate down to it, so a long

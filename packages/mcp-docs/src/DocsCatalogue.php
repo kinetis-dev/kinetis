@@ -49,6 +49,7 @@ final class DocsCatalogue
             new DocsPage('queue-sql', 'Queue (SQL)', 'kinetis/queue-sql: a MySQL/Postgres backend for kinetis/queue\'s QueueInterface'),
             new DocsPage('queue-sqs', 'Queue (SQS)', 'kinetis/queue-sqs: an Amazon SQS backend for kinetis/queue\'s QueueInterface'),
             new DocsPage('queue-rabbitmq', 'Queue (RabbitMQ)', 'kinetis/queue-rabbitmq: a RabbitMQ backend for kinetis/queue\'s QueueInterface'),
+            new DocsPage('queue-failed-jobs', 'Failed Jobs', 'kinetis/queue-failed-jobs: keep every job the worker gives up on in a SQL table, then list, retry, forget and prune the records'),
             new DocsPage('auth', 'Authentication', 'kinetis/auth: opaque Bearer-token authentication middleware'),
             new DocsPage('auth-jwt', 'JWT Authentication', 'kinetis/auth-jwt: stateless JWT authentication (HS256/RS256), with optional per-token revocation'),
             new DocsPage('authorization', 'Authorization', 'Authorize a user against an application policy with Gate'),

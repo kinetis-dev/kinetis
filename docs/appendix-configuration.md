@@ -53,7 +53,9 @@ unscoped — `DB_CONNECTION`, `FILESYSTEM_DRIVER`, `MAILER_DSN`,
 `QUEUE_CONNECTION_NAME` names, `default` when unset, gated on that
 connection's own scoped `QUEUE_CONNECTION` selector;
 `queue:work --connection=<name>` builds any other (see "Queue" below).
-Beyond those, the one named connection resolved automatically is a SQL
+`kinetis/queue-failed-jobs` builds the one SQL connection
+`FAILED_JOBS_DB_CONNECTION_NAME` names, `default` when unset (see
+"Failed jobs" below). Beyond those, the one named connection resolved automatically is a SQL
 connection an ORM entity names with `#[Entity(connection: ...)]`: with
 `kinetis/orm` installed, `kinetis/database-bridge` builds it from its
 scoped `DB_*` keys, or takes the application's `db.<name>` binding, when
@@ -300,6 +302,17 @@ selector unset leaves core's inline default in place (see {doc}`events`).
 
 AWS credentials are never read from `Config` — the SQS (and S3) clients
 use AWS's own default credential provider chain.
+
+### Failed jobs (`kinetis/queue-failed-jobs`)
+
+Read when the failed-job store is first resolved — by `queue:work`
+before it prints that it started, and by the `queue:failed`,
+`queue:retry`, `queue:forget` and `queue:prune` commands. Installing the
+package turns recording on; there is no on/off key.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `FAILED_JOBS_DB_CONNECTION_NAME` | `default` | The database connection the store uses: the `DB_*` keys for `default`, which an unset or blank value selects, and `DB_{NAME}_*` for any other name (see "Database" above). Validated against the connection-name grammar before the link is built. `DB_*_CONNECTION` is that connection's dialect, hence the `_CONNECTION_NAME` suffix. |
 
 ### Migrations (`kinetis/migrations`)
 

@@ -43,6 +43,7 @@ tutorial, then read whichever section you have reached.
 - [Queue (SQL)](https://kinetis.dev/docs/queue-sql.html): kinetis/queue-sql: a MySQL/Postgres backend for kinetis/queue's QueueInterface.
 - [Queue (SQS)](https://kinetis.dev/docs/queue-sqs.html): kinetis/queue-sqs: an Amazon SQS backend for kinetis/queue's QueueInterface.
 - [Queue (RabbitMQ)](https://kinetis.dev/docs/queue-rabbitmq.html): kinetis/queue-rabbitmq: a RabbitMQ backend for kinetis/queue's QueueInterface.
+- [Failed Jobs](https://kinetis.dev/docs/queue-failed-jobs.html): kinetis/queue-failed-jobs: keep every job the worker gives up on in a SQL table, then list, retry, forget and prune the records.
 
 ## Authentication and sessions
 

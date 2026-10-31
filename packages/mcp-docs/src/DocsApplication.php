@@ -45,7 +45,7 @@ final class DocsApplication implements McpApplication
     public const string SERVER_NAME = 'kinetis-mcp-docs';
 
     /** Paired against this package's manifest version by the suite. */
-    public const string SERVER_VERSION = '1.9.1';
+    public const string SERVER_VERSION = '1.9.2';
 
     /**
      * The documentation-window tool's name. Exported because
